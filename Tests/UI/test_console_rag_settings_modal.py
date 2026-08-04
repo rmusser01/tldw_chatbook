@@ -224,3 +224,122 @@ def test_dedicated_query_still_wins_over_the_composer_draft():
     screen._set_console_library_rag_query.assert_not_called()
     request = screen._execute_console_library_rag_search.call_args.args[0]
     assert request.query == "explicit query"
+
+
+@pytest.mark.unit
+def test_modal_open_prefills_a_normal_question_draft():
+    """Sanity companion to the guard tests below: an ordinary question
+    draft still prefills the RAG settings modal (the chip-open site,
+    ``_open_console_rag_settings`` -- the run-fallback site's equivalent
+    is already covered by ``test_visible_run_action_falls_back_to_the_
+    composer_draft``)."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = Mock()
+    screen._console_library_rag_query = ""
+    screen._pending_console_launch_context = None
+    screen._console_library_rag_scope_label.return_value = "Scope: notes"
+    composer = Mock()
+    composer.draft_text.return_value = "  what   changed in auth  "
+    screen._console_composer_or_none.return_value = composer
+
+    ChatScreen._open_console_rag_settings(screen)
+
+    modal = screen.app.push_screen.call_args.args[0]
+    assert modal._query == "what changed in auth"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "unsafe_draft",
+    [
+        pytest.param("/Users/x/notes.md", id="absolute-path"),
+        pytest.param("file:///Users/x/notes.md", id="file-uri"),
+        pytest.param("https://example.com/incident-notes", id="bare-url"),
+        pytest.param("x" * 201, id="oversized-201-chars"),
+    ],
+)
+def test_prefill_guards_reject_paths_urls_and_oversized_drafts_at_both_sites(
+    unsafe_draft,
+):
+    """RAG-43: a composer draft that IS (in its entirety) a dropped file
+    path, a ``file://`` URI, a bare URL, or longer than 200 chars must
+    never silently become the retrieval query -- live UAT saw a fixture
+    path prefill verbatim into the query field. Both prefill sites --
+    the RAG chip's modal-open prefill and the visible Run Library RAG
+    action's queryless fallback -- share one guard, so both must refuse
+    these drafts the same way.
+
+    Post-Task-2, the run-fallback's empty branch opens the settings
+    modal instead of toasting, so a guarded draft must land there too
+    (queryless, exactly like an empty draft) rather than being silently
+    stored and run.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    # Site 1: the RAG chip's modal-open prefill.
+    modal_screen = Mock()
+    modal_screen._console_library_rag_query = ""
+    modal_screen._pending_console_launch_context = None
+    modal_screen._console_library_rag_scope_label.return_value = "Scope: notes"
+    modal_composer = Mock()
+    modal_composer.draft_text.return_value = unsafe_draft
+    modal_screen._console_composer_or_none.return_value = modal_composer
+
+    ChatScreen._open_console_rag_settings(modal_screen)
+
+    modal = modal_screen.app.push_screen.call_args.args[0]
+    assert modal._query == ""
+
+    # Site 2: the visible Run Library RAG action's queryless fallback.
+    run_screen = Mock()
+    run_screen._console_library_rag_query = ""
+    run_composer = Mock()
+    run_composer.draft_text.return_value = unsafe_draft
+    run_screen._console_composer_or_none.return_value = run_composer
+
+    ChatScreen._run_console_library_rag_from_visible_action(run_screen)
+
+    run_screen._set_console_library_rag_query.assert_not_called()
+    run_screen._stage_console_library_rag_launch.assert_not_called()
+    run_screen.app_instance.notify.assert_not_called()
+    run_screen._open_console_rag_settings.assert_called_once()
+
+
+@pytest.mark.unit
+def test_prefill_allows_a_question_that_merely_mentions_a_url():
+    """Borderline ruling (RAG-43): only drafts that ARE a path/URL in
+    their *entirety* are guarded, not drafts that merely contain one
+    alongside other text. A question like this is still exactly the
+    text the user is about to send -- retrieval should look for it too,
+    same as any other question draft -- so it is deliberately NOT
+    guarded even though it embeds a URL."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    draft = "check out https://example.com/incident-notes for context"
+
+    # Site 1: modal-open prefill.
+    modal_screen = Mock()
+    modal_screen._console_library_rag_query = ""
+    modal_screen._pending_console_launch_context = None
+    modal_screen._console_library_rag_scope_label.return_value = "Scope: notes"
+    modal_composer = Mock()
+    modal_composer.draft_text.return_value = draft
+    modal_screen._console_composer_or_none.return_value = modal_composer
+
+    ChatScreen._open_console_rag_settings(modal_screen)
+
+    modal = modal_screen.app.push_screen.call_args.args[0]
+    assert modal._query == draft
+
+    # Site 2: run-fallback stores and runs with the draft as-is.
+    run_screen = Mock()
+    run_screen._console_library_rag_query = ""
+    run_composer = Mock()
+    run_composer.draft_text.return_value = draft
+    run_screen._console_composer_or_none.return_value = run_composer
+
+    ChatScreen._run_console_library_rag_from_visible_action(run_screen)
+
+    run_screen._set_console_library_rag_query.assert_called_once_with(draft)
+    run_screen._open_console_rag_settings.assert_not_called()

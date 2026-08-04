@@ -13,6 +13,7 @@ import re
 import threading
 import time
 from typing import Any, Dict, Iterable, Literal, Optional, TYPE_CHECKING
+from urllib.parse import urlparse
 import uuid
 
 import toml
@@ -1587,6 +1588,59 @@ def _sanitize_console_library_rag_query(value: Any) -> str:
     ):
         return ""
     return query
+
+
+#: RAG-43: above this length a composer draft reads as a paste/attachment,
+#: not a retrieval question -- well under ``CONSOLE_LIBRARY_RAG_QUERY_MAX_
+#: LENGTH`` (2000, a safety ceiling for an explicitly-typed query, not a
+#: "does this look like a question" heuristic for an implicit prefill).
+CONSOLE_LIBRARY_RAG_DRAFT_PREFILL_MAX_LENGTH = 200
+
+
+def _console_draft_looks_like_rag_query(draft: Any) -> bool:
+    """Return whether a composer draft is safe to prefill as a RAG query.
+
+    RAG-43: live UAT saw a fixture file path prefill verbatim into the
+    Library RAG query -- the modal-open prefill and the visible Run
+    Library RAG action's queryless fallback both used to hand the raw
+    composer draft straight to ``_sanitize_console_library_rag_query``.
+    This is the one guard both sites call before doing that.
+
+    Detection reuses the Console's own path-paste shape detector,
+    ``extract_dropped_path`` (``Chat/console_paste_attach.py``, which
+    already recognizes bare absolute paths, quoted paths, backslash-
+    escaped paths, and ``file://`` URIs -- Unix and Windows/UNC alike),
+    plus the ``urlparse(...).scheme in ("http", "https")`` URL check
+    already used for Library ingest sources (``library_screen.py``). No
+    new regex family.
+
+    Ruling on drafts that merely *mention* a path or URL alongside other
+    text (e.g. "check out https://example.com/notes for context"): those
+    still prefill. Only a draft that IS a path/URL in its entirety is
+    guarded -- a question is exactly the text the user is about to send,
+    same as any other question draft, and the whitespace surrounding an
+    embedded path/URL already keeps it out of both entirety checks below.
+
+    Args:
+        draft: Raw composer draft text (unsanitized).
+
+    Returns:
+        True when the draft is reasonable to sanitize and use as a
+        Library RAG query; False when it should be dropped (left
+        queryless) instead of silently prefilled.
+    """
+    stripped = str(draft or "").strip()
+    if not stripped:
+        return False
+    if len(stripped) > CONSOLE_LIBRARY_RAG_DRAFT_PREFILL_MAX_LENGTH:
+        return False
+    if extract_dropped_path(stripped) is not None:
+        return False
+    if not any(character.isspace() for character in stripped):
+        parsed = urlparse(stripped)
+        if parsed.scheme in ("http", "https") and parsed.netloc:
+            return False
+    return True
 
 
 def _apply_console_message_attachments(
@@ -9073,7 +9127,9 @@ class ChatScreen(BaseAppScreen):
         if not prefill:
             composer = self._console_composer_or_none()
             if composer is not None:
-                prefill = _sanitize_console_library_rag_query(composer.draft_text())
+                draft_text = composer.draft_text()
+                if _console_draft_looks_like_rag_query(draft_text):
+                    prefill = _sanitize_console_library_rag_query(draft_text)
         pending = self._pending_console_launch_context
         self.app.push_screen(
             ConsoleRagSettingsModal(
@@ -14245,9 +14301,10 @@ class ChatScreen(BaseAppScreen):
         query = _sanitize_console_library_rag_query(self._console_library_rag_query)
         if not query:
             composer = self._console_composer_or_none()
+            draft_text = composer.draft_text() if composer is not None else ""
             draft_query = (
-                _sanitize_console_library_rag_query(composer.draft_text())
-                if composer is not None
+                _sanitize_console_library_rag_query(draft_text)
+                if _console_draft_looks_like_rag_query(draft_text)
                 else ""
             )
             if draft_query:
