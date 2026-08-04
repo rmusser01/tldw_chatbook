@@ -18,7 +18,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
-from textual.events import DescendantFocus, Key
+from textual.events import DescendantFocus, Key, Resize
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.screen import ModalScreen
@@ -30,6 +30,7 @@ from textual.widgets import (
     Checkbox,
     Collapsible,
     Input,
+    Rule,
     Select,
     SelectionList,
     Static,
@@ -912,7 +913,7 @@ _RAG_GROUP_BY_COLLAPSIBLE_ID: dict[str, str] = {
 # thin scrollbar sliver hinting at it (worst case: only "Purpose:" visible,
 # Consequences/Saved-as/Validation all clipped). Maps each guided category
 # to its guide block's FIRST row id -- every id below already exists (see
-# `_render_category_guidance`'s per-category "Focused field guide" loops) and is
+# `_render_impact_pane`'s per-category "Focused field guide" loops) and is
 # rendered unconditionally (the fallback rows use the same ids when no
 # specific field is focused), so scrolling to it is meaningful even when
 # `_active_settings_field_id` resolves to the generic fallback.
@@ -947,7 +948,7 @@ _FIELD_GUIDE_FIRST_ROW_ID: dict[SettingsCategoryId, str] = {
 # queued and delivered once the widget starts running) -- which is exactly
 # how the "Search" group (collapsed=False, expanded-by-default) composes.
 # That message reaches `handle_settings_library_rag_collapsible_toggled`
-# before the first guidance render pass finishes, so
+# before the first `_render_impact_pane` pass finishes, so
 # `_active_rag_scope_group` is ALREADY "search" at first paint, not None.
 # Reusing the fallback tuple for "search" makes that a no-op: first paint
 # reads identically whether the resolved group is None or "search".
@@ -1764,11 +1765,6 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_appearance_defaults = False
         self._syncing_storage_defaults = False
         self._active_settings_field_id: str | None = None
-        #: User toggle for the collapsed-by-default "Domain Defaults" nav
-        #: group (the nine read-only ownership-contract categories). Search
-        #: and an active domain category override it -- see
-        #: _domain_group_is_expanded.
-        self._domain_group_expanded = False
         #: Task 3 (541 v2 UX AC3): the last-expanded Library/RAG Collapsible
         #: group (a key into `_RAG_GROUP_GUIDANCE`, e.g. "chunking"), used by
         #: `_rag_field_guidance_rows()` as the fallback scope when no RAG
@@ -2171,6 +2167,7 @@ class SettingsScreen(BaseAppScreen):
         # mounted) -- `_select_category` alone only covers a later in-session
         # switch INTO the category.
         self._maybe_refresh_rag_index_status_on_show()
+        self.call_after_refresh(self._update_inspector_overflow_hint)
 
     def on_screen_resume(self) -> None:
         self._queue_sync_rows_refresh()
@@ -4068,6 +4065,22 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             pass
         self._update_category_state_banner(category)
+        try:
+            category_status = (
+                "Unsaved"
+                if has_unsaved_changes
+                else self._category_summary_by_id(category).status
+            )
+            category_status_widget = self.query_one(
+                f"#settings-category-{category.value}-status", Static
+            )
+            category_status_widget.update(f"Status: {category_status}")
+            if has_unsaved_changes:
+                category_status_widget.add_class("settings-dirty-category")
+            else:
+                category_status_widget.remove_class("settings-dirty-category")
+        except QueryError:
+            pass
         self._refresh_category_button_label(category)
         if category is self._active_category_id():
             self._update_guided_action_widgets()
@@ -4229,16 +4242,11 @@ class SettingsScreen(BaseAppScreen):
         query = self._category_search_text()
         for group_title, category_ids in self._category_groups():
             group_visible = False
-            is_domain_group = group_title == self.DOMAIN_DEFAULTS_GROUP_TITLE
-            group_expanded = (
-                not is_domain_group or bool(query) or self._domain_group_is_expanded()
-            )
             for category_id in category_ids:
                 summary = summaries_by_id[category_id]
                 rank = self._category_search_rank(summary)
-                matches = rank is not None
-                group_visible = group_visible or matches
-                is_visible = matches and group_expanded
+                is_visible = rank is not None
+                group_visible = group_visible or is_visible
                 visible_count += int(is_visible)
                 try:
                     button = self.query_one(
@@ -4256,14 +4264,9 @@ class SettingsScreen(BaseAppScreen):
                 except QueryError:
                     pass
             try:
-                # Untyped: the Domain Defaults heading is a toggle Button,
-                # the other group headings are plain Statics.
-                group_heading = self.query_one(
-                    f"#{self._category_group_dom_id(group_title)}"
-                )
-                group_heading.display = group_visible
-                if is_domain_group and isinstance(group_heading, Button):
-                    group_heading.label = self._domain_group_toggle_label()
+                self.query_one(
+                    f"#{self._category_group_dom_id(group_title)}", Static
+                ).display = group_visible
             except QueryError:
                 pass
 
@@ -5745,6 +5748,11 @@ class SettingsScreen(BaseAppScreen):
             self.call_after_refresh(self._restore_focus_after_sync_rows, focused_id)
 
     def _restore_focus_after_sync_rows(self, widget_id: str | None) -> None:
+        # task-1716 (critique r4): the sync-rows recompose mints a fresh,
+        # hidden fold indicator AFTER on_mount's evaluation ran -- Overview
+        # (the only category whose pane recomposes on these rows) showed a
+        # mid-sentence inspector cut with no indicator.
+        self.call_after_refresh(self._update_inspector_overflow_hint)
         pending = self._pending_navigation_focus_selector
         self._pending_navigation_focus_selector = None
         if self.app.focused is not None:
@@ -5822,6 +5830,12 @@ class SettingsScreen(BaseAppScreen):
             )
             return
         self._apply_manual_sync_result(result)
+
+    @staticmethod
+    def _column_divider(identifier: str) -> Rule:
+        divider = Rule(orientation="vertical", id=identifier)
+        divider.add_class("destination-pane-divider")
+        return divider
 
     def _config_path(self) -> Path:
         """Return the active CLI config path.
@@ -8789,67 +8803,27 @@ class SettingsScreen(BaseAppScreen):
             )
         return _INSPECTOR_GUIDANCE_FALLBACK
 
-    DOMAIN_DEFAULTS_GROUP_TITLE = "Domain Defaults"
-
-    def _domain_group_is_expanded(self) -> bool:
-        """Domain Defaults nav group visibility.
-
-        Expanded when the user toggled it open or when the active category is
-        itself a domain category (navigation, restored state, deep links).
-        """
-        if self._domain_group_expanded:
-            return True
-        try:
-            active = SettingsCategoryId(self.active_category)
-        except ValueError:
-            return False
-        return active in DOMAIN_SETTINGS_CATEGORY_IDS
-
-    def _domain_group_toggle_label(self) -> str:
-        summaries = self._category_summaries()
-        count = sum(
-            1 for summary in summaries if summary.category in DOMAIN_SETTINGS_CATEGORY_IDS
-        )
-        indicator = "▾" if self._domain_group_is_expanded() else "▸"
-        return f"{self.DOMAIN_DEFAULTS_GROUP_TITLE} {indicator} ({count})"
-
     def _render_category_buttons(self) -> ComposeResult:
         summaries_by_id = {
             summary.category: summary for summary in self._category_summaries()
         }
         visible_count = 0
-        search_active = bool(self._category_search_text())
         for group_title, category_ids in self._category_groups():
             visible_categories = tuple(
                 category_id
                 for category_id in category_ids
                 if self._category_matches_search(summaries_by_id[category_id])
             )
-            is_domain_group = group_title == self.DOMAIN_DEFAULTS_GROUP_TITLE
-            if is_domain_group:
-                group_heading = Button(
-                    self._domain_group_toggle_label(),
-                    id=self._category_group_dom_id(group_title),
-                    classes="settings-category-group-title settings-category-group-toggle",
-                    tooltip=(
-                        "Show or hide the Domain Defaults categories "
-                        "(read-only ownership contracts)."
-                    ),
-                )
-            else:
-                group_heading = Static(
-                    group_title,
-                    id=self._category_group_dom_id(group_title),
-                    classes="settings-category-group-title",
-                )
+            group_heading = Static(
+                group_title,
+                id=self._category_group_dom_id(group_title),
+                classes="settings-category-group-title",
+            )
             group_heading.display = bool(visible_categories)
             yield group_heading
-            group_expanded = (
-                not is_domain_group or search_active or self._domain_group_is_expanded()
-            )
             for category_id in category_ids:
                 summary = summaries_by_id[category_id]
-                is_visible = category_id in visible_categories and group_expanded
+                is_visible = category_id in visible_categories
                 visible_count += int(is_visible)
                 is_active = summary.category.value == self.active_category
                 button = Button(
@@ -8869,6 +8843,15 @@ class SettingsScreen(BaseAppScreen):
                         button.add_class("settings-secondary-search-match")
                 button.display = is_visible
                 yield button
+                if summary.status:
+                    status = Static(
+                        f"Status: {self._category_status(summary)}",
+                        id=f"settings-category-{summary.category.value}-status",
+                        classes="destination-section settings-status-row settings-category-status-hidden",
+                    )
+                    if self._category_has_unsaved_changes(summary.category):
+                        status.add_class("settings-dirty-category")
+                    yield status
         empty_state = Static(
             f"No Settings categories match: {self._category_search_text()}",
             id="settings-category-search-empty",
@@ -11893,17 +11876,21 @@ class SettingsScreen(BaseAppScreen):
             return f"Mode: {summary.title} | Runtime controls stay in MCP and ACP"
         return f"Mode: {summary.title}"
 
-    def _render_detail_action_strip(self) -> ComposeResult:
-        """Pinned (non-scrolling) action strip at the top of the detail pane.
+    def _render_impact_pane_header(self) -> ComposeResult:
+        """Fixed (non-scrolling) inspector header (task-1560/task-1562).
 
-        Retired-third-pane successor of the old inspector header
-        (task-1560/task-1562): draft status, guided-action state, and the
-        Save/Revert pair stay pinned above the scrollable detail body so the
-        commit affordance can never scroll out of sight -- the critique's
-        live dirty-state capture showed the rail scrolled with no visible
-        Save anywhere.
+        Identity, draft status, guided-action state, and the Save/Revert
+        pair are pinned above the scrollable body so the commit affordance
+        can never scroll out of sight -- the critique's live dirty-state
+        capture showed the rail scrolled with no visible Save anywhere.
         """
         summary = self._active_summary()
+        yield Static(
+            "Scope Inspector", classes="destination-section settings-column-title"
+        )
+        yield Static(
+            f"Selected category: {summary.title}", classes="destination-section"
+        )
         yield Static(
             "Unsaved changes"
             if self._category_has_unsaved_changes(summary.category)
@@ -11928,21 +11915,18 @@ class SettingsScreen(BaseAppScreen):
                 tooltip="Save changes for the selected Settings category.",
             )
             save_button.disabled = not self._guided_actions_enabled(summary.category)
+            yield save_button
             revert_button = Button(
                 self._guided_action_label("Revert (r)", dirty=dirty),
                 id="settings-revert-category",
                 tooltip="Discard unsaved changes for the selected Settings category.",
             )
             revert_button.disabled = not self._guided_actions_enabled(summary.category)
-            with Horizontal(
-                id="settings-category-actions", classes="settings-action-row"
-            ):
-                yield save_button
-                yield revert_button
+            yield revert_button
         elif summary.category is SettingsCategoryId.OVERVIEW:
             # task-1714 (critique r4 P1): this was a bare "Theme" noun-chip
             # whose verb lived in a mouse-only tooltip; the label now names
-            # the action. It stays in the pinned strip because the 32-row
+            # the action. It stays in the pinned header because the 32-row
             # compact contract requires a painted recovery action
             # (test_compact_overview_keeps_a_painted_recovery_action).
             yield Button(
@@ -11963,14 +11947,8 @@ class SettingsScreen(BaseAppScreen):
             id="settings-local-scope-note",
         )
 
-    def _render_category_guidance(self) -> ComposeResult:
-        """Collapsed-by-default guidance: guides, ownership, boundaries.
-
-        Rendered inside ``#settings-category-guidance`` at the bottom of the
-        scrollable detail body (the retired third "impact" pane used to host
-        this); the Focused-field-guide refresh handlers update these rows in
-        place regardless of the collapsed state.
-        """
+    def _render_impact_pane_body(self) -> ComposeResult:
+        """Scrollable inspector remainder: guides, ownership, boundaries."""
         summary = self._active_summary()
         ownership = self._ownership_record(summary.category)
         if summary.category is SettingsCategoryId.CONSOLE_BEHAVIOR:
@@ -12220,6 +12198,10 @@ class SettingsScreen(BaseAppScreen):
                 with Vertical(
                     id="settings-category-pane", classes="destination-workbench-pane"
                 ):
+                    yield Static(
+                        "Settings Sections",
+                        classes="destination-section settings-column-title",
+                    )
                     yield SettingsCategorySearchInput(
                         value=self.category_search_query,
                         placeholder="Filter categories (/)",
@@ -12237,6 +12219,7 @@ class SettingsScreen(BaseAppScreen):
                         classes="settings-category-list",
                     ):
                         yield from self._render_category_buttons()
+                yield self._column_divider("settings-category-detail-divider")
                 detail_pane_container = (
                     Vertical
                     if active_summary.category is SettingsCategoryId.ADVANCED_CONFIG
@@ -12245,36 +12228,57 @@ class SettingsScreen(BaseAppScreen):
                 detail_pane = Vertical(
                     id="settings-detail-pane", classes="destination-workbench-pane"
                 )
-                # Inline height: under the real CSS bundle the pane class
-                # sizes a scroll container, not a plain Vertical -- without
-                # this the 1fr body below collapses to zero (StyledSettings
-                # harness caught it; the plain harness cannot).
+                # Inline height: same bundle-collapse guard as the impact
+                # pane below.
                 detail_pane.styles.height = "100%"
                 with detail_pane:
+                    yield Static(
+                        "Preference Detail",
+                        classes="destination-section settings-column-title",
+                    )
                     # task-1716 (critique r4): ONE pinned State banner --
                     # previously each category composed its own inside the
                     # scrollable content, so the persistence badge (the
                     # save-contract carrier) scrolled away mid-task (RAG
                     # showed no State line at all in evidence).
                     yield self._render_category_state_banner(active_summary.category)
-                    # task-1560/1562: Save/Revert (or the Overview recovery
-                    # action) stay pinned between the banner and the
-                    # scrollable body -- never scrolled away.
-                    yield from self._render_detail_action_strip()
                     detail_body = detail_pane_container(id="settings-detail-pane-body")
                     detail_body.styles.height = "1fr"
                     detail_body.styles.scrollbar_size_vertical = 1
                     with detail_body:
                         yield from self._render_detail_pane()
-                        # Retired third "impact" pane: the guidance now lives
-                        # in a collapsed disclosure at the bottom of the
-                        # detail body.
-                        with Collapsible(
-                            title="About this category",
-                            collapsed=True,
-                            id="settings-category-guidance",
-                        ):
-                            yield from self._render_category_guidance()
+                yield self._column_divider("settings-detail-impact-divider")
+                impact_pane = Vertical(
+                    id="settings-impact-pane",
+                    classes="destination-workbench-pane ds-inspector",
+                )
+                # Explicit height: under the real CSS bundle the pane class
+                # sizes a scroll container, not a plain Vertical -- without
+                # this the 1fr body below collapses to zero (StyledSettings
+                # harness caught it; the plain harness cannot).
+                impact_pane.styles.height = "100%"
+                with impact_pane:
+                    yield from self._render_impact_pane_header()
+                    impact_body = VerticalScroll(id="settings-impact-pane-body")
+                    # Inline styles, not CSS: the app-tier bundle outranks
+                    # screen CSS and a 100%-height default would collapse
+                    # inside the auto-flow wrapper (same guard as the image
+                    # viewer modal).
+                    impact_body.styles.height = "1fr"
+                    impact_body.styles.scrollbar_size_vertical = 1
+                    with impact_body:
+                        yield from self._render_impact_pane_body()
+                    # task-1623: reserved fold-indicator row -- 8 of 26
+                    # critique captures ended the inspector mid-sentence
+                    # with nothing saying more content exists.
+                    overflow_hint = Static(
+                        "▼ more — scroll the inspector",
+                        id="settings-impact-overflow-hint",
+                    )
+                    overflow_hint.styles.height = 1
+                    overflow_hint.styles.color = "gray"
+                    overflow_hint.display = False
+                    yield overflow_hint
 
     def _category_value_from_button(self, button: Button) -> str | None:
         if not button.id or not button.has_class("settings-category-button"):
@@ -12691,6 +12695,9 @@ class SettingsScreen(BaseAppScreen):
             self._image_gen_raw_section_cache = None
         if restore_focus:
             self.call_after_refresh(self._focus_category, category_value)
+        # task-1623: the recompose minted a fresh (hidden) fold indicator;
+        # re-evaluate it against the new category's inspector content.
+        self.call_after_refresh(self._update_inspector_overflow_hint)
 
     @on(DescendantFocus)
     def handle_descendant_focus(self, event: DescendantFocus) -> None:
@@ -12717,7 +12724,7 @@ class SettingsScreen(BaseAppScreen):
                 widget_id if widget_id in appearance_field_ids else None
             )
             self._refresh_appearance_field_guidance()
-            self._scroll_detail_pane_to_field_guide(active_category)
+            self._scroll_impact_pane_to_field_guide(active_category)
             return
         if active_category is SettingsCategoryId.STORAGE:
             storage_field_ids = {
@@ -12734,7 +12741,7 @@ class SettingsScreen(BaseAppScreen):
                 widget_id if widget_id in storage_field_ids else None
             )
             self._refresh_storage_field_guidance()
-            self._scroll_detail_pane_to_field_guide(active_category)
+            self._scroll_impact_pane_to_field_guide(active_category)
             return
         if active_category is SettingsCategoryId.LIBRARY_RAG:
             # Task 3 (541 v2 UX AC3): membership uses the shared
@@ -12745,7 +12752,7 @@ class SettingsScreen(BaseAppScreen):
                 widget_id if widget_id in _RAG_FIELD_GROUP_BY_ID else None
             )
             self._refresh_rag_field_guidance()
-            self._scroll_detail_pane_to_field_guide(active_category)
+            self._scroll_impact_pane_to_field_guide(active_category)
             return
         if active_category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             console_behavior_field_ids = {
@@ -12757,7 +12764,7 @@ class SettingsScreen(BaseAppScreen):
                 widget_id if widget_id in console_behavior_field_ids else None
             )
             self._refresh_console_behavior_field_guidance()
-            self._scroll_detail_pane_to_field_guide(active_category)
+            self._scroll_impact_pane_to_field_guide(active_category)
             return
         if active_category is not SettingsCategoryId.PROVIDERS_MODELS:
             self._active_settings_field_id = None
@@ -12789,26 +12796,19 @@ class SettingsScreen(BaseAppScreen):
             widget_id if widget_id in provider_field_ids else None
         )
         self._refresh_provider_field_guidance()
-        self._scroll_detail_pane_to_field_guide(active_category)
+        self._scroll_impact_pane_to_field_guide(active_category)
 
-    def _scroll_detail_pane_to_field_guide(self, category: SettingsCategoryId) -> None:
-        """Scroll the detail pane so the Focused field guide is visible.
+    def _scroll_impact_pane_to_field_guide(self, category: SettingsCategoryId) -> None:
+        """Scroll the Scope Inspector so the Focused field guide is visible.
 
         Fleet-UX expert review F6 (task-1234): focusing a guided field
         already refreshes the guide row TEXT in place (the ``_refresh_*_
         field_guidance`` methods above, no recompose) but never moved the
         pane's own scroll position, so the guide block could sit below
-        the pane's fold with only a thin scrollbar sliver
+        ``#settings-impact-pane``'s fold with only a thin scrollbar sliver
         hinting at it -- reported live as "focusing Max parallel shows only
         Purpose:". Same disease task-1140 fixed for the fleet line, in a
         second location.
-
-        Two-pane rework: the guide rows now live inside the collapsed
-        ``#settings-category-guidance`` Collapsible at the bottom of
-        ``#settings-detail-pane-body``, so the scroll first expands that
-        disclosure (focusing a field is an explicit request to see the
-        guidance) and then targets the detail body instead of the retired
-        impact pane.
 
         Qodo PR #1074 finding 2: scrolling to only the FIRST row was
         insufficient on its own -- ``scroll_to_widget`` no-ops once its
@@ -12832,8 +12832,8 @@ class SettingsScreen(BaseAppScreen):
         in ``library_screen.LibraryScreen._preserve_library_rail_scroll``:
         an unforced ``scroll_to_widget`` clamps to 0 when a container's
         scroll bounds haven't been (re)computed yet -- relevant here
-        because a CATEGORY switch recomposes the detail pane
-        from scratch, and focus can land on the
+        because a CATEGORY switch recomposes ``#settings-impact-pane``
+        from scratch (``_render_impact_pane``), and focus can land on the
         new category's first field before that layout has settled.
 
         Args:
@@ -12848,14 +12848,10 @@ class SettingsScreen(BaseAppScreen):
 
         def _scroll() -> None:
             try:
-                guidance = self.query_one("#settings-category-guidance", Collapsible)
-                pane = self.query_one("#settings-detail-pane-body")
+                pane = self.query_one("#settings-impact-pane-body")
                 first_row = self.query_one(f"#{row_id}")
             except Exception:
                 return
-            # The guide rows live inside the collapsed guidance disclosure;
-            # focusing a guided field is an explicit request to see them.
-            guidance.collapsed = False
             # Guide rows are a fixed-length, contiguous block of Static
             # widgets rendered unconditionally (see the per-category
             # ``*_field_guidance_rows`` methods) -- find the last one by
@@ -12879,6 +12875,11 @@ class SettingsScreen(BaseAppScreen):
             pane.scroll_to_widget(first_row, animate=False, force=True, top=True)
 
         self.call_after_refresh(_scroll)
+        # Qodo PR #1139: focus-driven guidance refreshes change the body's
+        # height in place (a real entry's wrapped Consequences vs the short
+        # fallback), so the fold indicator must be re-evaluated here too --
+        # mount/resize/category-switch alone leave it stale.
+        self.call_after_refresh(self._update_inspector_overflow_hint)
 
     @on(Collapsible.Toggled)
     def handle_settings_library_rag_collapsible_toggled(
@@ -12945,6 +12946,29 @@ class SettingsScreen(BaseAppScreen):
             self._speech_tts_original_state = None
             self._settings_drafts.pop(category, None)
         self._update_draft_status_widgets(category)
+
+    def _update_inspector_overflow_hint(self) -> None:
+        """Show the fold indicator only while the inspector body overflows.
+
+        Safe to call any time; queries are guarded and sizes are read from
+        the laid-out scroll container, so callers should route through
+        ``call_after_refresh`` when a recompose is in flight.
+        """
+        try:
+            body = self.query_one("#settings-impact-pane-body", VerticalScroll)
+            hint = self.query_one("#settings-impact-overflow-hint", Static)
+        except QueryError:
+            return
+        hint.display = body.virtual_size.height > body.container_size.height
+
+    def on_resize(self, event: Resize) -> None:
+        """Re-evaluate the inspector fold indicator on viewport changes.
+
+        Args:
+            event: The resize event; sizes are re-read after the refresh
+                completes, so only the notification matters here.
+        """
+        self.call_after_refresh(self._update_inspector_overflow_hint)
 
     def _refresh_theme_modified_widgets(self) -> None:
         """In-place refresh of the Theme dirty displays (rail marker, inspector row).
@@ -13220,18 +13244,6 @@ class SettingsScreen(BaseAppScreen):
         category_value = self._category_value_from_button(event.button)
         if category_value is not None:
             self._select_category(category_value, restore_focus=event.button.has_focus)
-
-    @on(Button.Pressed, "#settings-category-group-domain-defaults")
-    def handle_domain_group_toggle_pressed(self, event: Button.Pressed) -> None:
-        """Expand or collapse the Domain Defaults rail group.
-
-        Args:
-            event: The toggle button press; stopped so the press never
-                reaches category-selection handling.
-        """
-        event.stop()
-        self._domain_group_expanded = not self._domain_group_expanded
-        self._apply_category_search_filter()
 
     @on(Button.Pressed, ".settings-workspace-row")
     def handle_workspace_row_pressed(self, event: Button.Pressed) -> None:

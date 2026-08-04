@@ -916,23 +916,22 @@ def test_settings_compact_select_uses_non_clipping_row_contract():
     assert "text-style: bold underline;" in selected_option
 
 
-def test_settings_detail_pane_and_category_list_scroll_long_content():
-    """The scroll containers carry the scroll + scrollbar contract.
+def test_settings_detail_and_inspector_panes_scroll_long_content():
+    """Both panes' scroll BODIES carry the scroll + scrollbar contract.
 
-    Qodo PR #1147: the detail pane is a fixed header over a scrollable body
-    (task-1716), so the theming belongs on the -body child that actually
-    scrolls; the outer panes only hold their column width and clip. The
-    two-pane rework retired the inspector body -- the category list is the
-    second long-content scroller now.
+    Qodo PR #1147: each pane is a fixed header over a scrollable body
+    (detail since task-1716, inspector since task-1560), so the theming
+    belongs on the -body children that actually scroll; the outer panes
+    only hold their column width and clip.
     """
     text = AGENTIC.read_text(encoding="utf-8")
     bodies = "\n".join(
         css_blocks(text, "#settings-detail-pane-body")
-        + css_blocks(text, "#settings-category-list")
+        + css_blocks(text, "#settings-impact-pane-body")
     )
     outers = "\n".join(
         css_blocks(text, "#settings-detail-pane")
-        + css_blocks(text, "#settings-category-pane")
+        + css_blocks(text, "#settings-impact-pane")
     )
 
     assert "overflow-y: auto;" in bodies

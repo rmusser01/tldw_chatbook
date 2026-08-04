@@ -722,6 +722,7 @@ ConsoleRunLogModal {
 #skills-inspector-pane,
 #settings-category-pane,
 #settings-detail-pane,
+#settings-impact-pane,
 #ccp-character-library-pane,
 #ccp-behavior-detail-pane,
 #ccp-attachment-inspector-pane {
@@ -746,8 +747,7 @@ ConsoleRunLogModal {
 }
 
 #settings-category-pane {
-    width: 30;
-    max-width: 34;
+    width: 3fr;
     overflow-y: hidden;
     overflow-x: hidden;
 }
@@ -768,17 +768,25 @@ ConsoleRunLogModal {
     scrollbar-color-active: $ds-action-focus;
 }
 
-/* Qodo PR #1147: the detail pane is fixed-header-over-scroll-body (since
-   task-1716) -- the scrollbar theming has to sit on the -body child that
-   actually scrolls, or the real scroll container renders stock scrollbars.
-   The outer pane keeps only its column width and clip. */
+/* Qodo PR #1147: both panes are fixed-header-over-scroll-body now (the
+   detail pane since task-1716, the impact pane since task-1560) -- the
+   scrollbar theming has to sit on the -body children that actually
+   scroll, or the real scroll containers render stock scrollbars. The
+   outer panes keep only their column width and clip. */
 #settings-detail-pane {
-    width: 1fr;
+    width: 6fr;
     overflow-y: hidden;
     overflow-x: hidden;
 }
 
-#settings-detail-pane-body {
+#settings-impact-pane {
+    width: 2fr;
+    overflow-y: hidden;
+    overflow-x: hidden;
+}
+
+#settings-detail-pane-body,
+#settings-impact-pane-body {
     width: 100%;
     overflow-y: auto;
     overflow-x: hidden;
@@ -3718,13 +3726,6 @@ ConsoleCitationSourcesModal {
     background: $ds-surface-panel;
 }
 
-/* Settings runs a 2-pane workbench: the panes themselves carry borders and
-   padding, so the frame would only double them up. */
-#settings-workbench {
-    padding: 0;
-    border: none;
-}
-
 #artifacts-list-pane,
 #artifacts-detail-pane,
 #artifacts-inspector-pane,
@@ -3959,10 +3960,10 @@ Button.settings-category-button.settings-secondary-search-match {
 
 #settings-category-search {
     width: 100%;
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
+    height: 3;
+    min-height: 3;
+    max-height: 3;
+    margin: 0 0 1 0;
     padding: 0 1;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
@@ -3983,12 +3984,19 @@ Button.settings-category-button.settings-secondary-search-match {
     color: $ds-text-primary;
 }
 
-.settings-category-search-status {
+.settings-category-search-help {
     width: 100%;
-    height: 1;
     min-height: 1;
     padding: 0 1;
-    margin: 0;
+    margin: 0 0 1 0;
+    color: $ds-text-muted;
+}
+
+.settings-category-search-status {
+    width: 100%;
+    min-height: 2;
+    padding: 0 1;
+    margin: 0 0 1 0;
     color: $ds-text-primary;
     background: $ds-surface-panel;
 }
@@ -4022,60 +4030,11 @@ Button.settings-category-button.settings-secondary-search-match {
     text-style: bold;
 }
 
-/* Collapsible nav-group toggle (Domain Defaults): renders like a group
-   heading but behaves like the compact category buttons. */
-Button.settings-category-group-toggle {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-    padding: 0 1;
-    border: none;
-    content-align: left middle;
-    text-align: left;
-    background: $ds-surface-inspector;
-    color: $ds-text-primary;
-    text-style: bold;
-}
-
-Button.settings-category-group-toggle:focus {
-    outline: none;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-    text-style: bold;
-}
-
-/* Settings density overrides: titles and rows in the settings shell do not
-   pay the extra blank line other destinations keep. */
-#settings-shell .settings-column-title {
-    margin: 0;
-}
-
-/* Section headers inside the settings detail pane get a raised bar and a
-   blank line above, so each content block reads as a distinct section.
-   (The class itself is shared; scope stays inside settings.) */
-#settings-detail-pane .destination-section {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
-    margin: 1 0 0 0;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-    text-style: bold;
-}
-
-/* The collapsed guidance disclosure reads as its own section. */
-#settings-category-guidance {
-    margin: 1 0 0 0;
-}
-
 .settings-state-banner {
     width: 100%;
     min-height: 1;
     padding: 0 1;
-    margin: 0;
+    margin: 0 0 1 0;
     /* task-1625: the State strip reads as a raised status surface (the
        task-345 focus steel at low alpha), not another flat prose row --
        it now leads with the persistence badge (task-1717), so it earns
@@ -4089,7 +4048,7 @@ Button.settings-category-group-toggle:focus {
     width: 100%;
     min-height: 1;
     padding: 0 1;
-    margin: 0;
+    margin: 0 0 1 0;
     background: $ds-surface-panel;
     color: $ds-text-primary;
 }
@@ -4098,14 +4057,14 @@ Button.settings-category-group-toggle:focus {
     width: 100%;
     height: 1;
     min-height: 1;
-    margin: 0;
+    margin: 0 0 1 0;
 }
 
 .settings-select-row {
     width: 100%;
     height: 3;
     min-height: 3;
-    margin: 0;
+    margin: 0 0 1 0;
 }
 
 .settings-input-label {
@@ -4265,13 +4224,17 @@ Button.settings-category-group-toggle:focus {
     width: 100%;
     min-height: 1;
     padding: 0 1;
-    margin: 0;
+    margin: 0 0 1 0;
     background: $ds-surface-inspector;
     color: $ds-text-muted;
 }
 
 .settings-storage-check-result {
     min-height: 7;
+}
+
+.settings-category-status-hidden {
+    display: none;
 }
 
 .settings-dirty-category {
@@ -4334,7 +4297,8 @@ _CredentialClearModal {
 .settings-focus-card {
     width: 100%;
     height: auto;
-    padding: 0 1;
+    min-height: 10;
+    padding: 1;
     margin: 0 0 1 0;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
@@ -4352,7 +4316,8 @@ _CredentialClearModal {
     border-title-style: bold;
     width: 100%;
     height: auto;
-    padding: 0 1;
+    min-height: 6;
+    padding: 1;
     margin: 0 0 1 0;
     border: solid $ds-column-line;
     background: $ds-surface-panel;
@@ -4377,7 +4342,7 @@ _CredentialClearModal {
     width: 100%;
     height: 1;
     min-height: 1;
-    margin: 0;
+    margin: 1 0;
 }
 
 .settings-action-row Button {
@@ -4386,7 +4351,8 @@ _CredentialClearModal {
     margin: 0 1 0 0;
 }
 
-.settings-action-row Button:focus {
+.settings-action-row Button:focus,
+#settings-impact-pane Button:focus {
     background: $ds-surface-raised;
     color: $ds-text-primary;
     text-style: bold underline;

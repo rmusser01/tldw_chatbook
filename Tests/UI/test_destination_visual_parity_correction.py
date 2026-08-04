@@ -1748,7 +1748,7 @@ async def test_watchlists_right_rail_does_not_clip_action_labels(size):
         (
             "settings",
             "#settings-workbench",
-            ("Overview",),
+            ("Settings Sections", "Preference Detail", "Overview", "Scope Inspector"),
         ),
         # The legacy ccp route/screen was retired; its workbench is the Personas
         # destination, covered by Tests/UI/test_personas_workbench.py.
@@ -2430,6 +2430,7 @@ async def test_mcp_forced_loading_state_stays_inside_workbench(monkeypatch):
             (
                 "#settings-category-pane",
                 "#settings-detail-pane",
+                "#settings-impact-pane",
             ),
             ("#settings-open-appearance",),
         ),
@@ -2473,10 +2474,11 @@ async def test_runtime_and_settings_destinations_use_pane_layouts(
             (
                 "#settings-category-pane",
                 "#settings-detail-pane",
+                "#settings-impact-pane",
             ),
             ("#settings-open-appearance",),
-            ("#settings-category-state-banner",),
-            "#settings-detail-pane",
+            ("#settings-boundary-note",),
+            "#settings-impact-pane",
         ),
     ],
 )
@@ -2514,19 +2516,11 @@ async def test_settings_dirty_category_status_has_visual_marker_class():
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _click_settings_category(screen, pilot, "console-behavior")
-        # press() instead of pilot.click: the unstyled harness overlaps the
-        # toggle with neighbouring rows, so hit-testing misses it.
-        screen.query_one("#settings-console-collapse-large-pastes-toggle", Button).press()
-        await pilot.pause()
+        await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        status = screen.query_one("#settings-category-console-behavior-status")
 
-        banner = screen.query_one("#settings-category-state-banner")
-        assert banner.has_class("settings-dirty-category")
-        draft_status = screen.query_one("#settings-selected-category-draft-status")
-        assert "Unsaved changes" in str(draft_status.renderable)
-        category_button = screen.query_one(
-            "#settings-category-console-behavior", Button
-        )
-        assert str(category_button.label).endswith(" *")
+        assert "Status: Unsaved" in str(status.renderable)
+        assert status.has_class("settings-dirty-category")
 
 
 @pytest.mark.asyncio
