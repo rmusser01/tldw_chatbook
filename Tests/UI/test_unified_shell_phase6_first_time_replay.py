@@ -139,7 +139,7 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
             )
 
             nav_buttons = list(
-                app.screen.query(MainNavigationBar).first().query(Button)
+                app.screen.query(MainNavigationBar).first().query("Button.nav-button")
             )
             assert [
                 (button.id, str(button.label).strip()) for button in nav_buttons
@@ -149,7 +149,7 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
             assert "Console needs a working model before live AI tasks." in home_text
             assert "Needs Attention" in home_text
             assert "Set up Console model" in home_text
-            assert "More: Ctrl+P" in home_text
+            assert "More ›" in home_text
 
             for button_id, current_tab, screen_name, required_copy in (
                 (

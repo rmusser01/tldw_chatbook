@@ -193,7 +193,7 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             assert card_action.display is True
             assert str(card_action.label) == "Choose model"
             assert not list(app.screen.query("#console-open-provider-settings"))
-            assert "More: Ctrl+P" in _screen_text(app)
+            assert "More ›" in _screen_text(app)
 
             await app.handle_screen_navigation(NavigateToScreen("acp"))
             await _wait_until(

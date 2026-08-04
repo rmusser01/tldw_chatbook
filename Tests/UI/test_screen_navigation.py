@@ -1888,16 +1888,16 @@ def test_screen_lifecycle_methods():
 @pytest.mark.asyncio
 async def test_main_navigation_copy_and_order():
     expected_button_order = [
-        ("nav-home", "1 Home"),
-        ("nav-console", "2 Console"),
-        ("nav-library", "3 Library"),
-        ("nav-artifacts", "4 Artifacts"),
-        ("nav-personas", "5 Roleplay"),
-        ("nav-watchlists_collections", "6 Watchlists"),
-        ("nav-schedules", "7 Schedules"),
-        ("nav-workflows", "8 Workflows"),
-        ("nav-mcp", "9 MCP"),
-        ("nav-acp", "0 ACP"),
+        ("nav-home", "\u23031 Home"),
+        ("nav-console", "\u23032 Console"),
+        ("nav-library", "\u23033 Library"),
+        ("nav-artifacts", "\u23034 Artifacts"),
+        ("nav-personas", "\u23035 Roleplay"),
+        ("nav-watchlists_collections", "\u23036 Watchlists"),
+        ("nav-schedules", "\u23037 Schedules"),
+        ("nav-workflows", "\u23038 Workflows"),
+        ("nav-mcp", "\u23039 MCP"),
+        ("nav-acp", "\u23030 ACP"),
         ("nav-lab", "Lab"),
         ("nav-logs", "Logs"),
         ("nav-settings", "Settings"),
@@ -1918,11 +1918,15 @@ async def test_main_navigation_copy_and_order():
         ]
 
         assert actual_button_order == expected_button_order
-        assert str(app.query_one("#nav-console", Button).label).strip() == "2 Console"
+        assert str(app.query_one("#nav-console", Button).label).strip() == "\u23032 Console"
         assert nav_buttons[0].id == "nav-home"
         assert nav_buttons[1].id == "nav-console"
         assert nav_buttons[-1].id == "nav-settings"
-        assert str(app.query_one("#nav-overflow-hint").renderable) == "More: Ctrl+P"
+        # F-001: the "More ›" affordance is conditional -- at 160 cols every
+        # destination fits, so it stays hidden instead of crowding the edge.
+        overflow_hint = app.query_one("#nav-overflow-hint")
+        assert str(overflow_hint.label).strip() == "More ›"
+        assert overflow_hint.display is False
 
 
 @pytest.mark.asyncio
