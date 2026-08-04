@@ -50,7 +50,7 @@ from tldw_chatbook.MCP.readiness import (
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_mapping
 from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
-from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_inspector import _ORIGIN_SENTENCES, MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     MCPPermissionsMode,
     PermRow,
@@ -280,6 +280,60 @@ _TOOL_TEST_CONFIG_CHANGED_NOTICE = (
 _TOOL_TEST_UNVERIFIABLE_NOTICE = (
     "This tool's definition can't be verified against the catalog — review in Permissions."
 )
+
+# Task 5 (RAG-51): the permission decision under which one Test Tool run
+# dispatched -- named in BOTH the inspector's result note (`_decision_note()`
+# below) and the execution-log entry (`_decision_for_gate()` below), so a
+# user (and the Audit mode table) can see WHY a run happened, not just that
+# it did. `gate`/`ask_approved` are captured synchronously at dispatch time
+# in `on_mcp_inspector_tool_test_requested()` -- both are `None`/`False`-safe
+# so a service with no gate seam at all (`_resolve_test_gate()` returned
+# `None`, the Phase-3 "run immediately" case) produces no note and the
+# unchanged "allowed" decision.
+
+
+def _decision_for_gate(gate: EffectiveToolState | None, ask_approved: bool) -> str:
+    """The execution-log `decision` string for one Test Tool run's gate.
+
+    Reuses the vocabulary the agent-runtime bridge's own Ask-then-approved
+    calls already record (`MCPToolProvider._execute(..., decision="approved")`,
+    `Agents/mcp_tool_provider.py`) -- `mcp_audit_mode.py`'s `_DECISION_
+    OPTIONS`/`_DECISION_KIND` tables already carry a first-class "approved"
+    entry (colored the same "reached the tool" green as "allowed"), so this
+    reuses it rather than inventing a near-synonym the Audit mode filter/
+    color tables would need a matching new entry for. Every other gate
+    (Allow, or no gate at all) keeps recording the original "allowed".
+    """
+    if gate is not None and gate.state == "ask" and ask_approved:
+        return "approved"
+    return "allowed"
+
+
+def _decision_note(gate: EffectiveToolState | None, ask_approved: bool) -> str | None:
+    """The Test Tool result's quiet decision-note sentence for one gate.
+
+    Pure and unit-testable without the UI -- reused by `_run_tool_test()`
+    (Allow/Ask-approved runs) and `on_mcp_inspector_tool_test_requested()`
+    (the Off/blocked short-circuit) alike. `_ORIGIN_SENTENCES` (`mcp_
+    inspector.py`) is the SAME origin-clause copy `_render_permission_
+    container()` already renders in the Permissions block -- reused here
+    rather than duplicated, and `.get(gate.origin, "")` degrades to a bare
+    sentence (via `.strip()` below) for an origin this dict doesn't
+    recognize (e.g. `_resolve_test_gate()`'s synthetic fail-closed
+    "gate_error"), mirroring that call site's own unknown-origin tolerance.
+    `None` (no gate resolved at all -- the Phase-3 "run immediately" case)
+    means no note to show, distinct from an empty string.
+    """
+    if gate is None:
+        return None
+    origin = _ORIGIN_SENTENCES.get(gate.origin, "")
+    if gate.ui_label == "Ask" and ask_approved:
+        return "Ran because you approved this run (the tool is set to Ask)."
+    if gate.ui_label == "Allow":
+        return f"Ran because this tool is set to Allow. {origin}".strip()
+    if gate.ui_label == "Off":
+        return f"This tool is set to Off. {origin}".strip()
+    return None
 
 
 def _import_summary(succeeded: list[str], failed: list[tuple[str, str]]) -> str:
@@ -3164,6 +3218,15 @@ class MCPWorkbench(Container):
             has since resolved to "allow" (e.g. permission granted while the
             panel was open) -- clears that stale arm on its way through.
 
+        Task 5 (RAG-51): `gate` and the ask-armed fact (`inspector.test_run_
+        armed`) are both known synchronously right here -- captured into
+        `ask_approved` BEFORE `disarm_test_run()` clears the arm below, then
+        threaded through `_run_tool_test()` so the eventual result names the
+        permission decision it ran under (`_decision_note()`/`_decision_
+        for_gate()` above) instead of discarding both facts the way Phase 3
+        did. The "deny" short-circuit above builds its own note directly
+        (it never reaches `_run_tool_test()` at all).
+
         task-233: keyed by the `(server_key, tool_name)` tuple `event`
         carries directly -- no packed id to parse or reconstruct.
         """
@@ -3180,6 +3243,7 @@ class MCPWorkbench(Container):
                 server_key=server_key, tool_name=tool_name,
                 ok=False, text=_TOOL_TEST_BLOCKED_TEXT, duration_ms=0,
                 blocked=True,
+                decision_note=_decision_note(gate, ask_approved=False),
             )
             return
         if gate is not None and gate.state == "ask" and not inspector.test_run_armed:
@@ -3191,6 +3255,13 @@ class MCPWorkbench(Container):
                 )
             inspector.require_confirm(notice)
             return
+        # Task 5: this press either IS the confirm for an "ask" gate (the
+        # only way execution reaches this point with `gate.state == "ask"`
+        # -- the branch above returns otherwise) or runs directly under
+        # "allow"/no-gate, where the armed fact is irrelevant. Read BEFORE
+        # `disarm_test_run()` below discards it.
+        armed = inspector.test_run_armed
+        ask_approved = gate is not None and gate.state == "ask" and armed
         inspector.disarm_test_run()
 
         key = (server_key, tool_name)
@@ -3207,15 +3278,35 @@ class MCPWorkbench(Container):
             return
         self._tool_test_in_flight.add(key)
         self.run_worker(
-            self._run_tool_test(server_key, tool_name, dict(event.arguments)),
+            self._run_tool_test(
+                server_key, tool_name, dict(event.arguments),
+                gate=gate, ask_approved=ask_approved,
+            ),
             group="mcp-tool-test",
             exclusive=False,
         )
 
     async def _run_tool_test(
-        self, server_key: str, tool_name: str, arguments: dict[str, Any]
+        self, server_key: str, tool_name: str, arguments: dict[str, Any],
+        *, gate: EffectiveToolState | None = None, ask_approved: bool = False,
     ) -> None:
         """Run one `test_hub_tool()` call and report the outcome.
+
+        Task 5 (RAG-51): `gate`/`ask_approved` (the dispatch-time facts
+        `on_mcp_inspector_tool_test_requested()` captured before consuming
+        the arm) resolve ONCE, as the first step inside the panic-contained
+        try below (not before it -- a malformed `gate` raising here must
+        render as a Failed result like any other test failure, not escape
+        uncaught), into the two things the eventual result needs to name
+        the permission decision it ran under: a
+        `decision_note` for the inspector's result note (`_decision_note()`)
+        and a `decision` string for the execution log
+        (`_decision_for_gate()`) -- passed to `test_hub_tool()` so ask-
+        approved runs are recorded as `"approved"` there instead of the
+        hardcoded `"allowed"` every run used to get regardless of gate.
+        `decision_note` threads through every `_show_tool_test_result()`
+        call below (success, service-call failure, and formatting-failure
+        alike) since it describes the DISPATCH decision, not the outcome.
 
         The WHOLE body is wrapped in `try/except Exception` (not just the
         service call) -- Textual 8.2.7's `run_worker()` defaults to
@@ -3227,55 +3318,114 @@ class MCPWorkbench(Container):
         wall-clock duration for display.
 
         The success-path result-formatting step (`redact_mapping()` then
-        `json.dumps(..., default=str)` or `str(result)`) gets its own
-        try/except too: `default=str` only rescues non-serializable VALUES,
-        not dict KEYS (a tuple key raises `TypeError`), and `redact_mapping`
-        can raise on pathological input too (e.g. `RecursionError` on a
-        self-referential dict). The `builtin:` path runs arbitrary in-process
-        tool code, so a malformed result is reachable, not just theoretical
-        -- treat a formatting failure the same as a service-call failure
-        rather than letting it escape uncaught.
+        `json.dumps(..., default=str)`, OR `str(envelope)[:500]` for a
+        non-mapping envelope) gets its own try/except too, covering BOTH
+        branches: `default=str` only rescues non-serializable VALUES, not
+        dict KEYS (a tuple key raises `TypeError`), `redact_mapping` can
+        raise on pathological input too (e.g. `RecursionError` on a
+        self-referential dict), and a non-mapping envelope's own `__str__`
+        can just as easily raise. The `builtin:` path runs arbitrary
+        in-process tool code, so a malformed result is reachable, not just
+        theoretical -- treat a formatting failure the same as a
+        service-call failure rather than letting it escape uncaught
+        regardless of which branch it came from.
+
+        RAG-49 (PR-5 task 4): the envelope's raw JSON dump (`indent=2`, no
+        longer the flattened 500-char excerpt) is computed HERE, still
+        inside this same try/except -- `show_tool_result()`'s own raw-body
+        cap (`_format_raw_body()`, 20,000 chars) only bounds DISPLAY length,
+        it can't rescue a `json.dumps()` that never returns. `redact_
+        mapping()` is called EXACTLY ONCE per mapping envelope; the `raw`
+        JSON dump AND the `result`/`source` fields fed to the inspector's
+        structured summary line (`_summarize_tool_result()`) are both
+        derived from that SAME redacted copy -- redacting twice, or
+        redacting only the raw dump while handing the summary/
+        interpretation path the original envelope, would let a secret
+        `redact_mapping` hid from the raw JSON reappear in the
+        interpretation line instead (e.g. an error-shaped result whose
+        `"error"` value is itself a secret-keyed mapping). Non-mapping
+        envelopes keep the original flattened-string fallback unchanged.
         """
         started = time.monotonic()
+        # Containment symmetry: `decision_note` defaults to the same "no
+        # note" value `_decision_note()` returns for a gate-less run, so
+        # that if the computation below raises (e.g. a malformed `gate`
+        # whose attribute access blows up), the `except Exception` right
+        # here can still safely reference it -- the failure renders as a
+        # Failed test result, not a panic escaping this panic-contained try.
+        decision_note: str | None = None
         try:
             try:
+                decision_note = _decision_note(gate, ask_approved)
+                decision = _decision_for_gate(gate, ask_approved)
                 service = self._service()
                 if service is None:
                     raise RuntimeError("MCP control-plane service is unavailable.")
-                result = await service.test_hub_tool(server_key, tool_name, arguments)
+                envelope = await service.test_hub_tool(
+                    server_key, tool_name, arguments, decision=decision
+                )
             except Exception as exc:
                 duration_ms = int((time.monotonic() - started) * 1000)
                 self._show_tool_test_result(
                     server_key=server_key, tool_name=tool_name, ok=False,
                     text=_safe_exception_text(exc), duration_ms=duration_ms,
+                    decision_note=decision_note,
                 )
                 return
             duration_ms = int((time.monotonic() - started) * 1000)
             try:
-                if isinstance(result, Mapping):
-                    excerpt = json.dumps(redact_mapping(result), default=str)[:500]
+                if isinstance(envelope, Mapping):
+                    # Redact ONCE and derive everything else (the raw dump
+                    # AND the structured result/source fed to the summary)
+                    # from that SAME redacted copy -- redacting twice (or
+                    # redacting only the raw dump while handing the
+                    # summary/interpretation path the original, unredacted
+                    # envelope) would let a secret that `redact_mapping`
+                    # hid from the raw JSON reappear in the interpretation
+                    # line (e.g. an error-shaped result whose "error" value
+                    # is itself a secret-keyed mapping). `_redact_sequence`
+                    # (MCP/redaction.py) preserves sequence length/type, and
+                    # "error" itself is never a secret-looking key, so the
+                    # count/error-shape logic downstream still matches the
+                    # redacted copy exactly as it would the original.
+                    redacted = redact_mapping(envelope)
+                    raw_json = json.dumps(redacted, indent=2, default=str)
                 else:
-                    excerpt = str(result)[:500]
+                    excerpt = str(envelope)[:500]
             except Exception as exc:
                 self._show_tool_test_result(
                     server_key=server_key, tool_name=tool_name, ok=False,
                     text=_safe_exception_text(exc), duration_ms=duration_ms,
+                    decision_note=decision_note,
                 )
                 return
-            self._show_tool_test_result(
-                server_key=server_key, tool_name=tool_name, ok=True,
-                text=excerpt, duration_ms=duration_ms,
-            )
+            if isinstance(envelope, Mapping):
+                self._show_tool_test_result(
+                    server_key=server_key, tool_name=tool_name, ok=True,
+                    duration_ms=duration_ms,
+                    result=redacted.get("result"), source=redacted.get("source"),
+                    raw=raw_json,
+                    decision_note=decision_note,
+                )
+            else:
+                self._show_tool_test_result(
+                    server_key=server_key, tool_name=tool_name, ok=True,
+                    text=excerpt, duration_ms=duration_ms,
+                    decision_note=decision_note,
+                )
         finally:
             self._tool_test_in_flight.discard((server_key, tool_name))
 
     def _show_tool_test_result(
-        self, *, server_key: str, tool_name: str, ok: bool, text: str, duration_ms: int
+        self, *, server_key: str, tool_name: str, ok: bool, duration_ms: int,
+        text: str | None = None, result: object = None, source: str | None = None,
+        raw: str | None = None, decision_note: str | None = None,
     ) -> None:
         try:
             self.query_one(MCPInspector).show_tool_result(
-                server_key=server_key, tool_name=tool_name, ok=ok, text=text,
-                duration_ms=duration_ms,
+                server_key=server_key, tool_name=tool_name, ok=ok,
+                duration_ms=duration_ms, text=text, result=result, source=source, raw=raw,
+                decision_note=decision_note,
             )
         except Exception as exc:
             logger.warning(f"MCP tool test result render failed: {exc}")

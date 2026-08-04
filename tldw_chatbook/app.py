@@ -119,6 +119,10 @@ from .config import (
     get_writing_db_path,
 )
 from .Logging_Config import configure_application_logging
+from tldw_chatbook.Utils.instance_lock import (
+    InstanceLockStatus,
+    acquire_profile_instance_lock,
+)
 from tldw_chatbook.Constants import (
     ALL_TABS,
     TAB_CCP,
@@ -3664,6 +3668,27 @@ class TldwCli(
         phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
+        # RAG-53 (task-7): advisory per-profile instance lock. The profile
+        # (and thus its data dir) is final as soon as config is loaded --
+        # earliest sound point for this. Detection only: never blocks,
+        # never raises, never prevents boot -- the owner runs concurrent
+        # instances deliberately, so any acquisition failure here defaults
+        # to "acquired" (no false warning) rather than surfacing as a boot
+        # error. The status (and its open file handle, when acquired) is
+        # kept referenced on the app instance for the process lifetime --
+        # closing/GC'ing that handle would silently release the OS lock and
+        # disarm detection for any instance that starts afterward.
+        try:
+            self._instance_lock_status = acquire_profile_instance_lock(
+                get_user_data_dir()
+            )
+        except Exception as _instance_lock_exc:
+            logger.debug(
+                "Instance lock acquisition failed unexpectedly ({}): {}",
+                type(_instance_lock_exc).__name__,
+                _instance_lock_exc,
+            )
+            self._instance_lock_status = InstanceLockStatus(acquired=True)
         self.tts_service = build_default_tts_service(self.app_config)
         self._tts_binding_active = False
         self._tts_profile_repository = TTSProfileRepository(get_tts_profiles_db_path())
@@ -7545,6 +7570,31 @@ class TldwCli(
         except Exception as e:
             logger.error(f"First-run wizard offer failed: {e}")
 
+    def _maybe_warn_second_instance(self) -> None:
+        """Warn (never block) when another instance already holds this profile.
+
+        RAG-53 (task-7): several stores (AgentRuns reconcile sweeps, library
+        ingest restart sweeps, MCP permission store) are last-write-wins /
+        accepted-but-unwarned under concurrent instances by design -- the
+        owner runs concurrent instances deliberately. This is a one-time
+        advisory toast, never a lock-out.
+        """
+        status = getattr(self, "_instance_lock_status", None)
+        if status is None or status.acquired:
+            return
+        detail = ""
+        if status.holder_pid:
+            detail = f" (pid {status.holder_pid})"
+        self.notify(
+            "Another copy of tldw is already using this profile"
+            f"{detail}. Everything keeps working, but the last instance to "
+            "change settings or permissions wins, and a restart sweep may mark "
+            "the other instance's running jobs as interrupted.",
+            title="Profile already open",
+            severity="warning",
+            timeout=10,
+        )
+
     def _push_first_run_wizard(self) -> None:
         from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import FirstRunSetupWizard
 
@@ -7655,6 +7705,10 @@ class TldwCli(
             f" (target={resolved_screen_name})"
         )
         self._maybe_offer_first_run_wizard()
+        try:
+            self._maybe_warn_second_instance()
+        except Exception as e:
+            logger.error(f"Second-instance warning failed: {e}")
 
     async def _run_no_splash_post_mount_setup(self) -> None:
         """Run screen startup and post-mount setup when the splash screen is disabled."""

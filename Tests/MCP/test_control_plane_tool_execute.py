@@ -266,3 +266,55 @@ async def test_hub_tool_argument_values_are_never_captured_regardless_setting(
     assert records[0]["argument_names"] == []
     assert records[0]["unknown_argument_count"] == 1
     assert "sensitive input" not in repr(records[0])
+
+
+# -- Task 5 (RAG-51): name the permission decision -- `test_hub_tool()` used
+# to hardcode `decision="allowed"` regardless of what actually authorized
+# the run; the Hub workbench now passes the real decision for an Ask-gated
+# tool the user just confirmed.
+
+
+@pytest.mark.asyncio
+async def test_hub_tool_default_decision_is_still_allowed(tmp_path):
+    """Every existing caller (no `decision=` kwarg) keeps recording
+    "allowed" -- byte-identical to the pre-Task-5 hardcoded value."""
+    service, fake, client, store = _service(tmp_path)
+
+    await service.test_hub_tool("local:docs", "search", {"q": "hi"})
+
+    records = _log_records(store)
+    assert records and records[0]["decision"] == "allowed"
+
+
+@pytest.mark.asyncio
+async def test_hub_tool_ask_approved_decision_is_recorded_not_allowed(tmp_path):
+    """A `decision="approved"` call (the Hub workbench's Ask-then-confirmed
+    case) records THAT decision in the execution log entry, not the
+    hardcoded "allowed" every run used to get regardless of gate."""
+    service, fake, client, store = _service(tmp_path)
+
+    result = await service.test_hub_tool(
+        "local:docs", "search", {"q": "hi"}, decision="approved"
+    )
+
+    assert result == client.call_tool_response
+    records = _log_records(store)
+    assert records and records[0]["decision"] == "approved"
+    assert records[0]["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_hub_tool_approved_decision_recorded_on_failure_too(tmp_path):
+    """The decision is recorded on a FAILED run too -- it describes why the
+    call dispatched, not whether it succeeded."""
+    service, fake, client, store = _service(tmp_path)
+    client.call_tool_error = "boom from server"
+
+    with pytest.raises(RuntimeError, match="boom from server"):
+        await service.test_hub_tool(
+            "local:docs", "search", {}, decision="approved"
+        )
+
+    records = _log_records(store)
+    assert records and records[0]["decision"] == "approved"
+    assert records[0]["ok"] is False

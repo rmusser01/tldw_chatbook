@@ -13,7 +13,10 @@ import tldw_chatbook.MCP.client as mcp_client_module
 from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
 from tldw_chatbook.MCP.local_runtime_delegate import LocalMCPRuntimeDelegate
 from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile, LocalMCPStore
-from tldw_chatbook.MCP.server import describe_local_mcp_capabilities
+from tldw_chatbook.MCP.server import (
+    _signature_to_input_schema,
+    describe_local_mcp_capabilities,
+)
 
 
 class FakeLocalStore:
@@ -601,6 +604,16 @@ def test_local_manifest_helper_stays_aligned_with_registered_server_surface():
                                 }
                                 if decorator_name == "resource":
                                     entry["uri"] = decorator.args[0].value
+                                if decorator_name == "tool":
+                                    # Reuse the real mapper here -- this
+                                    # mirror's job is pinning the AST *walk*
+                                    # (does it find the same
+                                    # functions/decorators), not
+                                    # re-deriving the schema mapping rules a
+                                    # second time.
+                                    entry["inputSchema"] = _signature_to_input_schema(
+                                        nested
+                                    )
                                 entries.append(entry)
                                 break
                         return entries
@@ -625,6 +638,31 @@ def test_local_manifest_helper_stays_aligned_with_registered_server_surface():
         item["description"] == "Generate a prompt to summarize a conversation."
         for item in helper_manifest["prompts"]
     )
+
+
+def test_manifest_tools_carry_input_schema():
+    manifest = describe_local_mcp_capabilities()
+    tools = {t["name"]: t for t in manifest["tools"]}
+    # search_rag: query is required str; media_types is Optional[List[str]]
+    schema = tools["search_rag"]["inputSchema"]
+    assert schema["type"] == "object"
+    assert schema["properties"]["query"] == {"type": "string"}
+    assert "query" in schema["required"]
+    mt = schema["properties"]["media_types"]
+    assert mt["type"] == ["array", "null"] and mt["items"] == {"type": "string"}
+    assert "media_types" not in schema["required"]
+
+
+def test_every_builtin_tool_has_object_schema():
+    for tool in describe_local_mcp_capabilities()["tools"]:
+        assert tool["inputSchema"]["type"] == "object", tool["name"]
+
+
+def test_schema_defaults_recorded():
+    tools = {t["name"]: t for t in describe_local_mcp_capabilities()["tools"]}
+    # search_rag's limit param defaults to 10 (int, literal default)
+    prop = tools["search_rag"]["inputSchema"]["properties"]["limit"]
+    assert prop.get("default") is not None
 
 
 def test_local_control_service_exposes_overview_external_servers_and_governance():

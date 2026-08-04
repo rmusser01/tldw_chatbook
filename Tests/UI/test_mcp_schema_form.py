@@ -372,6 +372,186 @@ def test_parse_schema_enum_with_null_is_nullable_and_filters_null_choice():
     assert fields[0].choices == ("fast", "slow")
 
 
+# -- array support (RAG-48 part 3) -------------------------------------------
+
+ARRAY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"tags": {"type": "array", "items": {"type": "string"}}},
+    "required": ["tags"],
+}
+OPTIONAL_ARRAY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "media_types": {"type": ["array", "null"], "items": {"type": "string"}}
+    },
+    "required": [],
+}
+ANYOF_ARRAY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "media_types": {
+            "anyOf": [
+                {"type": "array", "items": {"type": "string"}},
+                {"type": "null"},
+            ]
+        }
+    },
+    "required": [],
+}
+
+
+def test_parse_schema_accepts_array_of_strings():
+    fields = parse_schema(ARRAY_SCHEMA)
+    assert fields is not None
+    assert fields[0] == SchemaField(
+        name="tags",
+        kind="array",
+        required=True,
+        description="",
+        default=None,
+        item_kind="string",
+    )
+
+
+def test_parse_schema_accepts_optional_array_both_idioms():
+    type_list_fields = parse_schema(OPTIONAL_ARRAY_SCHEMA)
+    assert type_list_fields is not None
+    assert type_list_fields[0].kind == "array"
+    assert type_list_fields[0].required is False
+    assert type_list_fields[0].nullable is True
+    assert type_list_fields[0].item_kind == "string"
+
+    anyof_fields = parse_schema(ANYOF_ARRAY_SCHEMA)
+    assert anyof_fields is not None
+    assert anyof_fields[0].kind == "array"
+    assert anyof_fields[0].required is False
+    assert anyof_fields[0].nullable is True
+    assert anyof_fields[0].item_kind == "string"
+
+
+def test_parse_schema_still_rejects_array_of_objects():
+    nested = {
+        "type": "object",
+        "properties": {"rows": {"type": "array", "items": {"type": "object"}}},
+        "required": [],
+    }
+    assert parse_schema(nested) is None
+
+
+def test_parse_schema_still_rejects_array_of_enum_items():
+    """An item spec that is itself an enum can't be represented by a single
+    comma-split Input either -- same honesty rule as array-of-objects."""
+    nested = {
+        "type": "object",
+        "properties": {
+            "modes": {"type": "array", "items": {"enum": ["fast", "slow"]}}
+        },
+        "required": [],
+    }
+    assert parse_schema(nested) is None
+
+
+ARRAY_FORM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "media_types": {"type": ["array", "null"], "items": {"type": "string"}},
+        "counts": {"type": "array", "items": {"type": "integer"}},
+    },
+    "required": ["tags"],
+}
+
+
+@pytest.mark.asyncio
+async def test_widget_renders_array_field_as_comma_separated_input():
+    app = SchemaFormApp(schema=ARRAY_FORM_SCHEMA)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        form = app.query_one(MCPSchemaForm)
+        assert form.is_raw_mode is False
+
+        tags_input = app.query_one("#mcp-schema-field-0", Input)  # tags
+        assert tags_input.placeholder == "comma-separated"
+        media_types_input = app.query_one("#mcp-schema-field-1", Input)  # media_types
+        assert media_types_input.placeholder == "comma-separated"
+
+        labels = [str(s.renderable) for s in app.query(".form-label")]
+        assert "tags *" in labels  # required
+        assert "media_types" in labels
+        assert "media_types *" not in labels  # optional
+
+
+@pytest.mark.asyncio
+async def test_collect_arguments_array_parses_comma_separated_values():
+    app = SchemaFormApp(schema=ARRAY_FORM_SCHEMA)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        form = app.query_one(MCPSchemaForm)
+        app.query_one("#mcp-schema-field-0", Input).value = "a, b"
+        result = form.collect_arguments()
+        assert result["tags"] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_collect_arguments_array_strips_whitespace_and_drops_empty_segments():
+    app = SchemaFormApp(schema=ARRAY_FORM_SCHEMA)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        form = app.query_one(MCPSchemaForm)
+        app.query_one("#mcp-schema-field-0", Input).value = " a ,, b "
+        result = form.collect_arguments()
+        assert result["tags"] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_collect_arguments_empty_optional_array_is_omitted():
+    app = SchemaFormApp(schema=ARRAY_FORM_SCHEMA)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        form = app.query_one(MCPSchemaForm)
+        app.query_one("#mcp-schema-field-0", Input).value = "a"  # tags (required)
+        # media_types (#1, optional+nullable) and counts (#2, optional) left blank.
+        result = form.collect_arguments()
+        assert "media_types" not in result
+        assert "counts" not in result
+        assert result["tags"] == ["a"]
+
+
+@pytest.mark.asyncio
+async def test_collect_arguments_empty_required_array_sends_empty_list():
+    app = SchemaFormApp(schema=ARRAY_FORM_SCHEMA)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        form = app.query_one(MCPSchemaForm)
+        # tags (#0, required) left blank.
+        result = form.collect_arguments()
+        assert result["tags"] == []
+
+
+@pytest.mark.asyncio
+async def test_collect_arguments_array_casts_items_per_item_kind():
+    app = SchemaFormApp(schema=ARRAY_FORM_SCHEMA)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        form = app.query_one(MCPSchemaForm)
+        app.query_one("#mcp-schema-field-0", Input).value = "a"
+        app.query_one("#mcp-schema-field-2", Input).value = "1, 2, 3"
+        result = form.collect_arguments()
+        assert result["counts"] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_collect_arguments_array_item_cast_failure_raises_value_error():
+    app = SchemaFormApp(schema=ARRAY_FORM_SCHEMA)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        form = app.query_one(MCPSchemaForm)
+        app.query_one("#mcp-schema-field-0", Input).value = "a"
+        app.query_one("#mcp-schema-field-2", Input).value = "1, not-a-number"
+        with pytest.raises(ValueError):
+            form.collect_arguments()
+
+
 @pytest.mark.asyncio
 async def test_collect_arguments_sends_null_for_blank_required_nullable_field():
     """A required-but-nullable field (Pydantic T|None, no default, in the

@@ -68,6 +68,63 @@ def _load_server_module_ast() -> ast.Module:
     return ast.parse(Path(__file__).read_text(encoding="utf-8"))
 
 
+_AST_SIMPLE_TYPES = {"str": "string", "int": "integer", "float": "number", "bool": "boolean"}
+
+
+def _annotation_to_property(node: ast.expr | None) -> dict:
+    """Best-effort JSON-schema fragment for one annotation AST node.
+
+    Returns {} for anything unrecognised so the form layer falls back to
+    raw JSON for that tool instead of rendering a wrong field.
+    """
+    if isinstance(node, ast.Name) and node.id in _AST_SIMPLE_TYPES:
+        return {"type": _AST_SIMPLE_TYPES[node.id]}
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+        inner = node.slice
+        if node.value.id == "Optional":
+            base = _annotation_to_property(inner)
+            if isinstance(base.get("type"), str):
+                return {**base, "type": [base["type"], "null"]}
+            return {}
+        if node.value.id in ("List", "list"):
+            items = _annotation_to_property(inner)
+            if items:
+                return {"type": "array", "items": items}
+    return {}
+
+
+def _signature_to_input_schema(fn: ast.AsyncFunctionDef | ast.FunctionDef) -> dict:
+    """Synthesize a JSON-schema ``inputSchema`` fragment from a tool function's AST signature.
+
+    Keyword-only args (``fn.args.kwonlyargs``/``kw_defaults``) are
+    intentionally unhandled: none of the ten built-in ``@self.mcp.tool()``
+    registrations in this module use them (verified by reading
+    ``server.py``'s ``_register_tools`` body), so there is nothing to map
+    yet -- add support here if a future tool introduces one.
+    """
+    properties: dict = {}
+    required: list[str] = []
+    args = fn.args.args
+    defaults: list = fn.args.defaults
+    first_default_index = len(args) - len(defaults)
+    for index, arg in enumerate(args):
+        if arg.arg in ("self", "cls"):
+            continue
+        prop = _annotation_to_property(arg.annotation)
+        if index >= first_default_index:
+            default_node = defaults[index - first_default_index]
+            try:
+                default_value = ast.literal_eval(default_node)
+            except (ValueError, SyntaxError):
+                default_value = None
+            if default_value is not None and prop:
+                prop = {**prop, "default": default_value}
+        else:
+            required.append(arg.arg)
+        properties[arg.arg] = prop
+    return {"type": "object", "properties": properties, "required": required}
+
+
 def _extract_registered_entries(
     method_name: str, decorator_name: str
 ) -> list[dict[str, Any]]:
@@ -101,6 +158,8 @@ def _extract_registered_entries(
                             first_arg.value, str
                         ):
                             entry["uri"] = first_arg.value
+                    if decorator_name == "tool":
+                        entry["inputSchema"] = _signature_to_input_schema(nested)
                     entries.append(entry)
                     break
             return entries
