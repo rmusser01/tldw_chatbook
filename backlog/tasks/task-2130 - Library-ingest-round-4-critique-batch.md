@@ -76,7 +76,12 @@ options trust first, then everything in this pass.
 - [x] The queue tally shows in-flight work during a batch (not just the
       done count).
 - [x] The duplicate-forecast area does not shift layout when the async
-      annotation lands (placeholder reserved or equivalent).
+      annotation lands (finding: the annotation is computed synchronously
+      INSIDE the pre-flight worker before apply — there is no async
+      landing; the observed late line was a re-triggered second pre-flight
+      generation applying, inherent to re-analysis. The related real bug —
+      the 20-candidate cap presenting as the total — is fixed with
+      "at least N" copy).
 - [x] An expanded details row stays expanded across a Retry press
       (finding: the expanded set already retains the job id through retry;
       the observed collapse is the inherent no-error interim while the job
