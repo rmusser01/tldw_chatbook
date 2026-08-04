@@ -10,6 +10,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 from textual.containers import VerticalScroll
+from textual.css.query import QueryError
 from textual.events import Key
 from textual.widgets import (
     Button,
@@ -100,9 +101,26 @@ async def _settle_settings_mount_storm(pilot) -> None:
     await pilot.pause()
 
 
+async def _reveal_settings_category_button(screen, pilot, selector: str) -> None:
+    """Expand the Domain Defaults rail group when the target button is collapsed away."""
+    try:
+        button = screen.query_one(selector)
+    except QueryError:
+        return
+    if button.display:
+        return
+    toggles = screen.query("#settings-category-group-domain-defaults")
+    if toggles:
+        # press() instead of pilot.click: hit-testing is unreliable in the
+        # unstyled harness near the viewport edge.
+        toggles.first().press()
+        await pilot.pause()
+
+
 async def _open_settings_category(pilot, selector: str) -> None:
     """Click a Settings category rail button with the mount storm settled."""
     await _settle_settings_mount_storm(pilot)
+    await _reveal_settings_category_button(pilot.app.screen, pilot, selector)
     try:
         button = pilot.app.screen.query_one(selector)
         category_list = pilot.app.screen.query_one("#settings-category-list")
@@ -316,6 +334,7 @@ async def _select_settings_category(
     )
     button_selector = f"#settings-category-{category_value}"
     await _wait_for_selector(screen, pilot, button_selector, timeout=timeout)
+    await _reveal_settings_category_button(screen, pilot, button_selector)
     try:
         category_list = screen.query_one("#settings-category-list")
         category_list.scroll_to_widget(
@@ -2992,12 +3011,26 @@ async def test_settings_console_behavior_focus_reveals_full_guide_when_purpose_s
         guide_span = (
             last_measured.virtual_region.y + last_measured.virtual_region.height
         ) - first_measured.virtual_region.y
+
+        # Switch back to the FALLBACK guide and measure where its row 0 sits.
+        # The pane height must satisfy TWO constraints: tall enough that the
+        # interior viewport holds the whole focused guide, yet no taller
+        # than row 0's virtual bottom edge -- otherwise the flush-with-bottom
+        # precondition below is geometrically unachievable (the +8 pad alone
+        # proved too tall once density CSS changed the guide's wrap).
+        other_field.focus()
+        await pilot.pause()
+        await pilot.pause()
+        fallback_row0 = screen.query_one(guide_ids[0])
+        fallback_row0_bottom = (
+            fallback_row0.virtual_region.y + fallback_row0.virtual_region.height
+        )
         # +8, not the guide's span alone: `scrollable_content_region` (the
         # interior window scrolling actually targets) is smaller than
         # `styles.height` by the pane's own border + padding overhead
         # (2 + 2 rows here) -- pad past that so the interior window itself
         # ends up taller than the guide, not just the outer style value.
-        pane.styles.height = guide_span + 8
+        pane.styles.height = min(guide_span + 8, fallback_row0_bottom)
         await pilot.pause()
         viewport_height = pane.scrollable_content_region.height
         assert viewport_height >= guide_span, (
@@ -3006,11 +3039,7 @@ async def test_settings_console_behavior_focus_reveals_full_guide_when_purpose_s
             f"guide_span={guide_span})"
         )
 
-        # Return to the FALLBACK guide (the content shown before "Max
-        # parallel" is ever focused) and reset scroll to a known baseline.
-        other_field.focus()
-        await pilot.pause()
-        await pilot.pause()
+        # Reset scroll to a known baseline.
         pane.scroll_to(y=0, animate=False, force=True)
         await pilot.pause()
 
@@ -3299,9 +3328,99 @@ async def test_settings_category_search_escape_clears_filter():
 
         search = screen.query_one("#settings-category-search", Input)
         assert search.value == ""
+        # Clearing the filter restores the collapsed Domain Defaults group:
+        # only non-domain categories are visible until the group is expanded.
+        expected_visible = sum(
+            1
+            for summary in screen._category_summaries()
+            if summary.category
+            not in settings_screen_module.DOMAIN_SETTINGS_CATEGORY_IDS
+        )
         assert sum(
             1 for button in screen.query(".settings-category-button") if button.display
-        ) == len(screen._category_summaries())
+        ) == expected_visible
+
+
+@pytest.mark.asyncio
+async def test_settings_domain_defaults_group_toggle_expands_and_collapses():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _settle_settings_mount_storm(pilot)
+
+        domain_values = {
+            category.value
+            for category in settings_screen_module.DOMAIN_SETTINGS_CATEGORY_IDS
+        }
+
+        def visible_domain_buttons() -> list[Button]:
+            return [
+                button
+                for button in screen.query(".settings-category-button")
+                if button.id
+                and button.id.removeprefix("settings-category-") in domain_values
+                and button.display
+            ]
+
+        assert not visible_domain_buttons()
+
+        # press() instead of pilot.click: hit-testing is unreliable in the
+        # unstyled harness near the viewport edge; the toggle handler is what
+        # is under test here.
+        toggle = screen.query_one("#settings-category-group-domain-defaults", Button)
+        toggle.press()
+        await pilot.pause()
+        assert len(visible_domain_buttons()) == len(domain_values)
+        assert "▾" in str(toggle.label)
+
+        toggle.press()
+        await pilot.pause()
+        assert not visible_domain_buttons()
+
+
+@pytest.mark.asyncio
+async def test_settings_domain_group_expands_when_restored_to_domain_category():
+    app = _build_test_app()
+    host = DestinationHarness(
+        app, "settings", restored_state={"active_category": "personas"}
+    )
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _settle_settings_mount_storm(pilot)
+
+        button = screen.query_one("#settings-category-personas", Button)
+        assert button.display
+        assert screen.active_category == SettingsCategoryId.PERSONAS.value
+
+
+@pytest.mark.asyncio
+async def test_settings_category_search_reveals_domain_matches():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _settle_settings_mount_storm(pilot)
+
+        personas_button = screen.query_one("#settings-category-personas", Button)
+        assert not personas_button.display
+
+        await pilot.press("/")
+        await _wait_for_settings_search_focus(screen, pilot)
+        await pilot.press(*"personas")
+        await pilot.pause()
+        assert personas_button.display
+        # The indicator reflects the search-forced expansion (Qodo PR #1310).
+        toggle = screen.query_one("#settings-category-group-domain-defaults", Button)
+        assert "▾" in str(toggle.label)
+
+        search = screen.query_one("#settings-category-search", Input)
+        search.value = ""
+        await pilot.pause()
+        assert not personas_button.display
 
 
 @pytest.mark.asyncio
@@ -7251,7 +7370,7 @@ def test_settings_pane_widths_are_owned_by_stylesheet_not_inline_python():
 
     assert ".styles.width" not in source
     for selector, expected_width in (
-        ("#settings-category-pane", "3fr"),
+        ("#settings-category-pane", "30"),
         ("#settings-detail-pane", "6fr"),
         ("#settings-impact-pane", "2fr"),
     ):
