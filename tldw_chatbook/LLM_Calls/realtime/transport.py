@@ -21,6 +21,16 @@ from typing import Any
 import websockets
 from loguru import logger
 
+# Imported from its defining module rather than the top-level package: the
+# `realtime` extra's floor is `websockets>=14.0` (the release where the
+# asyncio client -- and with it `connect(additional_headers=...)`, used
+# below -- became what the top-level `connect` resolves to; 12/13's legacy
+# client takes `extra_headers` and raises TypeError on ours). This module
+# path is where `ClientConnection` actually lives across that whole
+# supported range, so the annotation resolves at the floor and not only on
+# newer releases that also re-export it at package level.
+from websockets.asyncio.client import ClientConnection
+
 
 class WsTransport:
     """Thin async WebSocket wrapper: connect, send JSON, receive-loop, close.
@@ -32,7 +42,7 @@ class WsTransport:
 
     def __init__(self) -> None:
         """Initialize a transport with no active connection."""
-        self._ws: websockets.ClientConnection | None = None
+        self._ws: ClientConnection | None = None
         self._closed = False
 
     async def connect(self, url: str, headers: dict[str, str]) -> None:

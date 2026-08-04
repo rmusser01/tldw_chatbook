@@ -608,9 +608,10 @@ turns, and replies begin in well under a second instead of the pipeline's
 ~4 s pause-to-send budget — same loop, a different engine underneath.
 Entry and exit are unchanged and **engine-transparent**: **`Ctrl+Shift+H`**
 starts and ends the loop exactly as described above regardless of which
-engine is running, and the same chip states apply — `connecting…`, the
-ordinary recording indicator, `hands-free · thinking…`, then `hands-free ·
-speaking`.
+engine is running. The chip names the engine while it runs — `realtime ·
+connecting…`, `realtime · listening`, `realtime · thinking…`, `realtime ·
+speaking`, and `realtime · reconnecting…` — so it is always visible which
+engine you are actually talking to.
 
 **Off by default, and only OpenAI Realtime today.** Enabling it is an
 explicit opt-in (`realtime.enabled`, never inferred from an API key merely
@@ -672,6 +673,16 @@ realtime session from the conversation's existing history (and reseeds it
 on reconnect) so context carries over both ways.
 
 **Configuration:**
+
+Install the extra first — it carries the WebSocket transport plus the
+audio capture/playback backends the realtime engine needs, none of which
+come with a plain install:
+
+```bash
+pip install -e ".[realtime]"        # from a checkout
+pip install "tldw_chatbook[realtime]"   # from a release
+```
+
 ```toml
 [realtime]
 enabled = true                # off by default; explicit opt-in only

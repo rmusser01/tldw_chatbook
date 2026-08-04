@@ -252,7 +252,9 @@ speech_recording = [
     "webrtcvad-wheels>=2.0.14",  # Voice activity detection (drop-in `webrtcvad` fork; upstream webrtcvad 2.0.10 imports pkg_resources, which setuptools>=81 removed)
 ]
 realtime = [
-    "websockets>=12.0",  # Transport for the realtime voice engine (LLM_Calls/realtime); imported lazily by transport/session modules, never at package-import time
+    "websockets>=14.0",  # Transport for the realtime voice engine (LLM_Calls/realtime); imported lazily by transport/session modules, never at package-import time. Floor is 14.0, NOT 12: `transport.py` calls `connect(additional_headers=...)`, which only the asyncio client accepts, and 14.0 is the release where the top-level `connect` resolves to it -- on 12/13 the legacy client takes `extra_headers` and raises TypeError at connect time
+    "sounddevice>=0.4.6",  # Reply-audio output (Audio/streaming_sink.py) AND the realtime mic tap's capture backend -- nothing else a realtime-only install pulls in provides an audio device
+    "numpy",  # Required by AudioRecordingService (the mic tap refuses to construct without it) and by the sink's frame handling
 ]
 ocr_docext = [
     "docext",  # NanoNets document extraction toolkit

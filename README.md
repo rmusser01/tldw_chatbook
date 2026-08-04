@@ -487,7 +487,7 @@ Talk to the Console instead of typing. Three layers, each usable on its own:
 - **Dictation**: press the mic button in the Console composer and speak; the transcript lands in your draft.
 - **Spoken commands**: "Console, send.", "Console, stop.", "Console, discard.", and more — drive the capture by voice.
 - **Hands-free loop** (`Ctrl+Shift+H` or "Console, hands free."): speak, pause, it sends; the reply is spoken back sentence by sentence; the microphone reopens for your next turn. Any key interrupts the reply; `Esc`, the mic button, or `Ctrl+Shift+H` exit.
-- **Realtime engine** (optional, off by default): swap the hands-free loop's engine for a live OpenAI Realtime connection — sub-second turns instead of the pipeline's ~4 s pause-to-send. Opt in with `[realtime]` in config or the Settings screen; see [Realtime engine](Docs/Features/Speech-Services-Guide.md#realtime-engine) for the privacy and cost trade-offs before enabling it.
+- **Realtime engine** (optional, off by default): swap the hands-free loop's engine for a live OpenAI Realtime connection — sub-second turns instead of the pipeline's ~4 s pause-to-send. Install the `realtime` pip extra (`pip install -e ".[realtime]"`), then opt in with the `[realtime]` config section or the Settings screen; see [Realtime engine](Docs/Features/Speech-Services-Guide.md#realtime-engine) for the privacy and cost trade-offs before enabling it.
 
 Quickstart:
 1. **Microphone + STT**: `pip install -e ".[speech_recording,transcription_parakeet]"` (macOS; use `transcription_faster_whisper` elsewhere). The first-run wizard's Speech step can also set this up.
