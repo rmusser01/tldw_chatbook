@@ -45,6 +45,12 @@ from .provider_model_resolution import (
     resolve_provider_model_options,
 )
 from .settings_config_models import SettingsCategoryId
+from ..Console_Modules.frame import (
+    CONSOLE_FRAME_BORDER,
+    CONSOLE_FRAME_COLOR,
+    CONSOLE_QUIET_FRAME_BORDER,
+    frame_console_region,
+)
 from ...Chat.chat_persistence_service import ChatPersistenceService
 from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import ConsoleChatController
@@ -568,9 +574,11 @@ CONSOLE_COMPACT_HEIGHT_ROWS = 35
 #: TASK-365: trailing affordance marking the clickable rail system-prompt line as
 #: interactive (matches the ▸ the rail uses for its other actionable controls).
 CONSOLE_RAIL_SYSTEM_EDIT_AFFORDANCE = "▸"
-CONSOLE_FRAME_COLOR = "#6f7782"
-CONSOLE_FRAME_BORDER = ("solid", CONSOLE_FRAME_COLOR)
-CONSOLE_QUIET_FRAME_BORDER = ("none", CONSOLE_FRAME_COLOR)
+# CONSOLE_FRAME_COLOR / CONSOLE_FRAME_BORDER / CONSOLE_QUIET_FRAME_BORDER now
+# live in `UI.Console_Modules.frame` (wave-1 console decomposition, task 2)
+# alongside `frame_console_region`, which is their only consumer that needs
+# them as a module-level default; imported above for the other call sites in
+# this file that still reference them directly.
 # TASK-359: the F6 rail stop focuses the collapse button inside an
 # INLINE-framed region — CSS :focus-within can never win against
 # widget.styles.border, so the pane-stop accent (matching the transcript/
@@ -14254,20 +14262,23 @@ class ChatScreen(BaseAppScreen):
         top: bool = True,
         variant: str = "solid",
     ) -> Any:
-        """Apply a visible Textual-native workbench frame."""
-        if variant == "quiet":
-            widget.add_class("console-frame-quiet")
-            widget.styles.border = CONSOLE_QUIET_FRAME_BORDER
-            return widget
-        widget.add_class("console-frame-solid")
-        widget.styles.border = (
-            CONSOLE_QUIET_FRAME_BORDER
-            if isinstance(widget, ConsoleComposerBar) and widget.collapsed
-            else CONSOLE_FRAME_BORDER
-        )
-        if not top:
-            widget.styles.border_top = ("none", CONSOLE_FRAME_COLOR)
-        return widget
+        """Apply a visible Textual-native workbench frame.
+
+        Delegates to `UI.Console_Modules.frame.frame_console_region` (wave-1
+        console decomposition, task 2). Kept as a thin shim so the
+        not-yet-extracted call sites in `compose_content` are untouched;
+        removed in task 6 once every call site imports the module function
+        directly.
+
+        Args:
+            widget: The Console shell region widget to frame in place.
+            top: When False, suppresses the top border.
+            variant: ``"solid"`` or ``"quiet"`` framing.
+
+        Returns:
+            The same `widget`, mutated in place with frame styling applied.
+        """
+        return frame_console_region(widget, top=top, variant=variant)
 
     @staticmethod
     def _staged_context_frame_variant(_state: ConsoleStagedContextState) -> str:
