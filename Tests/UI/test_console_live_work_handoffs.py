@@ -10,11 +10,13 @@ from textual.app import App
 
 from Tests.UI.test_destination_shells import DestinationHarness, _wait_for_selector
 from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     SchedulesWorkbench,
 )
@@ -1783,6 +1785,250 @@ async def test_console_renders_pending_launch_context():
         assert isinstance(screen._pending_console_launch_context, ConsoleLiveWorkLaunch)
         assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
         assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_LIVE_WORK) is None
+
+
+def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
+    """Build a native-console screen shell for direct restore-path calls.
+
+    Mirrors ``test_console_native_chat_flow.py``'s own ``_bare_console_
+    screen`` helper: bypasses ``ChatScreen.__init__`` (heavy, requires a
+    mounted Textual app) while resolving the class's inherited restore/
+    consume helpers normally, so the D3 (staged-evidence-survives-
+    navigation) tests below can drive
+    ``_restore_native_console_state``/``_consume_pending_console_launch``
+    as plain, fast calls instead of a full pilot-driven screen.
+
+    Unlike that helper, this one also accepts ``app_instance`` -- the whole
+    point of the regression tests below is proving a *restored* launch does
+    NOT reach back into the real ``PendingHandoffStore`` on ``app_instance``,
+    which ``_consume_pending_console_launch`` only touches when
+    ``_pending_console_launch_context`` is still ``None``.
+
+    Args:
+        app_instance: The (real or fake) app instance to attach, or ``None``
+            for callers that never exercise the handoff-store seam.
+
+    Returns:
+        ChatScreen: A bare ChatScreen instance suitable for unit-level
+            restore-path testing.
+    """
+    screen = ChatScreen.__new__(ChatScreen)
+    screen.app_instance = app_instance
+    screen._console_chat_store = ConsoleChatStore()
+    screen._console_visible_draft_session_id = None
+    screen._console_composer_or_none = lambda: None
+    screen._task_resume_state = TaskResumeState()
+    return screen
+
+
+@pytest.mark.asyncio
+async def test_console_staged_launch_with_evidence_bundle_survives_screen_recreation_without_reclaiming_handoff():
+    """D3: a staged live-work launch (with its real evidence bundle) must
+    survive screen re-creation, and a restored launch must NOT re-claim the
+    ``PendingHandoffStore`` channel.
+
+    ``ChatScreen`` instances are never reused across navigation --
+    ``TldwCli._create_navigation_screen`` builds a fresh one on every
+    ``NavigateToScreen`` -- so continuity depends entirely on
+    ``save_state``/``restore_state`` carrying
+    ``_pending_console_launch_context`` (and its sibling
+    ``_console_evidence_sent_notice``) across. Before this fix, neither
+    ``_serialize_native_console_state`` nor ``_restore_native_console_state``
+    touched either field at all: ANY navigation away from Console silently
+    dropped staged evidence with no error and no user-visible warning.
+
+    The decoy handoff staged into the store AFTER the original was consumed
+    is the proof that a restored launch doesn't re-claim: if the early
+    return in ``_consume_pending_console_launch`` (``self.
+    _pending_console_launch_context is not None``) were ever weakened, this
+    test would catch it by the decoy silently vanishing, not by an unrelated
+    crash.
+    """
+    ConsoleLiveWorkLaunch = _load_console_live_work_contract()
+    from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
+        build_library_rag_console_live_work_payload,
+    )
+
+    app = _build_test_app()
+    result = {
+        "result_id": "note-42:chunk-7",
+        "title": "Incident Review",
+        "snippet": "Expired credential caused the incident.",
+        "source_id": "note-42",
+        "chunk_id": "chunk-7",
+        "score": 0.93,
+        "runtime_backend": "local-fts",
+    }
+    # Built the exact same way `library_screen.py::_stage_library_rag_
+    # result_in_console` builds it, so `evidence_bundle` is real
+    # `to_payload()`-shaped data, not a hand-rolled stand-in.
+    launch_payload = build_library_rag_console_live_work_payload(
+        result, query="Why did the incident happen?"
+    )
+    original_launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title=result["title"],
+        payload=launch_payload,
+        status="staged",
+        recovery="Review citations before sending.",
+        action_label="Review evidence in Console",
+    )
+    app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, original_launch)
+
+    async with app.run_test(size=(180, 40)) as pilot:
+        screen1 = await _wait_for_production_chat_screen(app, pilot)
+        await _wait_for_selector(screen1, pilot, "#console-pending-launch-card")
+
+        launch1 = screen1._pending_console_launch_context
+        assert isinstance(launch1, ConsoleLiveWorkLaunch)
+        assert launch1.title == "Incident Review"
+        assert launch1.payload.get("evidence_bundle", {}).get("references")
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+
+        # Simulate a leftover "evidence sent" memory from an earlier send in
+        # this same screen instance (PR-4/task-1) coexisting with the launch
+        # just consumed via the handoff store --
+        # `_consume_pending_console_launch` never touches this field, unlike
+        # `_stage_console_library_rag_launch`, which clears it on new staging.
+        screen1._console_evidence_sent_notice = 2
+
+        state = screen1.save_state()
+        saved = state["native_console_state"]
+        assert saved["pending_console_launch"]["title"] == "Incident Review"
+        assert (
+            saved["pending_console_launch"]["payload"]["evidence_bundle"]
+            == launch1.payload["evidence_bundle"]
+        )
+        assert saved["console_evidence_sent_notice"] == 2
+
+        # Stage a decoy AFTER the original was consumed and acknowledged --
+        # the store's slot is empty at this point, so this is a legitimate
+        # fresh stage, not an overwrite of anything still owned by screen1.
+        decoy_launch = ConsoleLiveWorkLaunch.from_values(
+            source="decoy-source",
+            title="Decoy launch",
+            payload={},
+            status="pending",
+        )
+        app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, decoy_launch)
+
+        screen2 = _bare_console_screen_for_restore(app)
+        screen2._restore_native_console_state(saved)
+
+        launch2 = screen2._pending_console_launch_context
+        assert isinstance(launch2, ConsoleLiveWorkLaunch)
+        assert launch2.title == "Incident Review"
+        assert launch2.source == "Library Search/RAG"
+        assert launch2.payload["evidence_bundle"] == launch1.payload["evidence_bundle"]
+        assert screen2._console_evidence_sent_notice == 2
+
+        consumed = screen2._consume_pending_console_launch()
+        assert consumed is launch2
+
+        # The decoy must still be sitting there, untouched.
+        assert app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+        remaining_claim = app.pending_handoffs.claim(HandoffChannel.CONSOLE_LIVE_WORK)
+        assert remaining_claim is not None
+        assert remaining_claim.value.source == "decoy-source"
+
+        strip_state = screen2._build_console_staged_evidence_strip_state(launch2)
+        assert strip_state.visible is True
+        assert strip_state.rows
+        assert strip_state.rows[0].title == "Incident Review"
+
+
+@pytest.mark.asyncio
+async def test_console_armed_sent_notice_round_trips_to_a_fresh_screen():
+    """D3: the one-send "Evidence sent with this message" memory
+    (``_console_evidence_sent_notice``) must also survive screen
+    re-creation, independent of any staged launch.
+
+    Unlike the staged-launch case above, a sent notice has nothing to do
+    with ``PendingHandoffStore`` -- it is purely local memory of what the
+    LAST send consumed (PR-4/task-1) -- so this is a plain serialize/
+    restore round trip, mirroring the existing unit-level round-trip tests
+    in ``test_console_native_chat_flow.py``.
+    """
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+
+    store = ConsoleChatStore()
+    session = ConsoleChatSession(id="session-a", title="Chat 1")
+    store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: []},
+        active_session_id=session.id,
+    )
+    screen = _bare_console_screen_for_restore()
+    screen._console_chat_store = store
+    screen._pending_console_launch_context = None
+    screen._console_evidence_sent_notice = 5
+
+    payload = screen._serialize_native_console_state()
+    assert payload is not None
+    assert payload["pending_console_launch"] is None
+    assert payload["console_evidence_sent_notice"] == 5
+
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen_for_restore()
+    restored_screen._console_chat_store = restored_store
+    restored_screen._restore_native_console_state(payload)
+
+    assert restored_screen._pending_console_launch_context is None
+    assert restored_screen._console_evidence_sent_notice == 5
+
+    strip_state = restored_screen._build_console_staged_evidence_strip_state(
+        restored_screen._pending_console_launch_context
+    )
+    assert strip_state.visible is True
+    assert strip_state.notice == "Evidence sent with this message · 5 sources"
+
+
+def test_console_native_state_restore_tolerates_legacy_payload_without_launch_or_notice_keys():
+    """D3 legacy tolerance: a payload saved before this fix (no
+    ``pending_console_launch``/``console_evidence_sent_notice`` keys at all)
+    must restore cleanly to "nothing staged, nothing sent" instead of
+    raising.
+    """
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+
+    store = ConsoleChatStore()
+    session = ConsoleChatSession(id="session-a", title="Chat 1")
+    store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: []},
+        active_session_id=session.id,
+    )
+    legacy_payload = {
+        "version": "1.0",
+        "active_session_id": session.id,
+        "task_resume_state": {},
+        "sessions": [
+            {
+                "id": session.id,
+                "title": "Chat 1",
+                "workspace_id": "default",
+                "persisted_conversation_id": None,
+                "draft": "",
+                "settings": None,
+                "updated_at": None,
+                "character_id": None,
+                "character_name": None,
+            }
+        ],
+        "messages_by_session": {session.id: []},
+        "image_view_modes": {},
+        # Deliberately no "pending_console_launch"/"console_evidence_sent_
+        # notice" keys -- this is what every payload saved before PR-T1
+        # task-3 looks like.
+    }
+
+    screen = _bare_console_screen_for_restore()
+    screen._console_chat_store = store
+
+    screen._restore_native_console_state(legacy_payload)
+
+    assert screen._pending_console_launch_context is None
+    assert screen._console_evidence_sent_notice is None
 
 
 @pytest.mark.asyncio

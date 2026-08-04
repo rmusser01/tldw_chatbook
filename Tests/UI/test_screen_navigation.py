@@ -2093,6 +2093,85 @@ async def test_library_screen_round_trip_restores_rag_query_and_rail_selection()
 
 
 @pytest.mark.asyncio
+async def test_console_staged_live_work_launch_survives_navigate_away_and_back():
+    """D3 (RAG-truth staged-evidence critique): a staged Console live-work
+    launch must survive a REAL screen swap, not merely a same-screen
+    refresh.
+
+    ``ChatScreen`` is never cached/reused across navigation (see
+    ``test_screen_navigation_always_constructs_fresh_instances`` above) --
+    ``_create_navigation_screen`` builds a brand new instance every time, so
+    ``_pending_console_launch_context`` (screen-instance state set in
+    ``ChatScreen.__init__``) started life on the OLD instance and is gone
+    unless ``save_state``/``restore_state`` carries it to the new one.
+    Before this fix, neither method touched the launch at all, so
+    navigating chat -> home -> chat silently dropped a staged live-work
+    item with no error and no user-visible warning -- the live critique
+    blamed Library's "Run" action for this, but Run is pure; screen
+    teardown on ANY navigation away was the actual destroyer.
+    """
+    from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+
+    app = _build_test_app()
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        ConsoleLiveWorkLaunch.from_values(
+            source="workflows",
+            title="Daily digest",
+            payload={"attempt": 2, "run_id": "run-1"},
+            status="running",
+            recovery="Workflow is starting.",
+            action_label="Open workflow run",
+        ),
+    )
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "ChatScreen" and app.screen.query(
+                "#console-pending-launch-card"
+            ):
+                break
+        assert type(app.screen).__name__ == "ChatScreen"
+        first_screen = app.screen
+        assert first_screen._pending_console_launch_context is not None
+        assert first_screen._pending_console_launch_context.title == "Daily digest"
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+
+        app.post_message(NavigateToScreen("home"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "HomeScreen":
+                break
+        assert type(app.screen).__name__ == "HomeScreen"
+        assert app.screen is not first_screen
+
+        app.post_message(NavigateToScreen("chat"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "ChatScreen" and app.screen.query(
+                "#console-pending-launch-card"
+            ):
+                break
+
+        restored_screen = app.screen
+        assert type(restored_screen).__name__ == "ChatScreen"
+        # A genuinely fresh instance, not a cached/reused one.
+        assert restored_screen is not first_screen
+        assert restored_screen._pending_console_launch_context is not None
+        assert restored_screen._pending_console_launch_context.title == "Daily digest"
+        assert restored_screen.query_one("#console-pending-launch-card")
+        assert (
+            restored_screen.query_one("#console-live-work-title").renderable
+            == "Title: Daily digest"
+        )
+        # The restore must not have re-claimed the handoff channel -- it was
+        # already empty (consumed by `first_screen`) and stays that way.
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+
+
+@pytest.mark.asyncio
 async def test_prompts_route_lands_on_library_with_prompts_row_selected():
     """``NavigateToScreen("prompts")`` must land on Library with the prompts
     rail row selected. The Personas "prompts" mode chip is retired (Task 7)

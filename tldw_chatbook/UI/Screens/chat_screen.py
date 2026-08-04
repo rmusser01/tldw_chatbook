@@ -3653,7 +3653,19 @@ class ChatScreen(BaseAppScreen):
             return
 
     def _consume_pending_console_launch(self) -> Optional[ConsoleLiveWorkLaunch]:
-        """Accept one-shot live-work launch context from another destination."""
+        """Accept one-shot live-work launch context from another destination.
+
+        PR-T1/task-3 (D3): this early return is also what makes a launch
+        restored by `_restore_native_console_state` (a tab-switch survivor,
+        not a fresh handoff) safe to re-enter here. `restore_state` runs
+        BEFORE this screen is ever composed/mounted (see
+        `TldwCli._complete_screen_navigation`), so by the time
+        `compose_content()` calls this method, a restored launch has already
+        set `_pending_console_launch_context` to a non-`None` value -- this
+        branch returns it as-is and never reaches `store.claim(...)` below,
+        so a restored launch can never re-claim (or double-consume) the
+        `PendingHandoffStore` channel.
+        """
         if self._pending_console_launch_context is not None:
             return self._pending_console_launch_context
 
@@ -15934,6 +15946,9 @@ class ChatScreen(BaseAppScreen):
         }
         image_state.prune(live_ids)
 
+        pending_launch = getattr(self, "_pending_console_launch_context", None)
+        sent_notice = getattr(self, "_console_evidence_sent_notice", None)
+
         return {
             "version": NATIVE_CONSOLE_STATE_VERSION,
             "active_session_id": store.active_session_id,
@@ -15954,6 +15969,27 @@ class ChatScreen(BaseAppScreen):
             # otherwise "Prompts on" silently reverts the next time the user
             # comes back and retrieval quietly reads something else.
             "library_rag_source_types": list(_console_library_rag_source_scope(self)),
+            # PR-T1/task-3 (D3): `_pending_console_launch_context` and
+            # `_console_evidence_sent_notice` are screen-INSTANCE state set in
+            # `ChatScreen.__init__`, not app-owned -- and screens are never
+            # cached/reused (`TldwCli._create_navigation_screen` builds a
+            # fresh instance on every navigation). Without carrying them here,
+            # ANY navigation away from Console silently dropped staged
+            # evidence, with no error and no user-visible warning. Both are
+            # read via `getattr` (not a bare attribute access) so this method
+            # keeps working against the bare screen shells several existing
+            # tests build with `ChatScreen.__new__` to exercise serialize/
+            # restore without a mounted app.
+            # `to_pending_payload()` is the exact shape `PendingHandoffStore`
+            # already stores a Console live-work launch in, so restoring it
+            # via `ConsoleLiveWorkLaunch.from_pending` is the same
+            # reconstruction a handoff claim goes through.
+            "pending_console_launch": (
+                pending_launch.to_pending_payload()
+                if pending_launch is not None
+                else None
+            ),
+            "console_evidence_sent_notice": sent_notice,
         }
 
     def _console_session_from_state(
@@ -16126,6 +16162,35 @@ class ChatScreen(BaseAppScreen):
         # A legacy payload has no key at all -> the unchanged default.
         self._console_library_rag_source_types = normalize_console_rag_source_types(
             payload.get("library_rag_source_types")
+        )
+        # PR-T1/task-3 (D3): restore the staged live-work launch and the
+        # "evidence sent" memory `_serialize_native_console_state` saved
+        # above. `ConsoleLiveWorkLaunch.from_pending` returns `None` for a
+        # legacy payload (key absent entirely) exactly as it does for an
+        # explicit `None`, so an old save restores cleanly to "nothing
+        # staged" -- no `NATIVE_CONSOLE_STATE_VERSION` gating needed here,
+        # matching every other field in this method (each tolerates an
+        # absent key with `payload.get(...)` rather than branching on
+        # "version").
+        #
+        # A non-`None` result is a fully reconstructed `ConsoleLiveWorkLaunch`,
+        # not a `PendingHandoffStore` claim -- `_consume_pending_console_
+        # launch`'s early return (`self._pending_console_launch_context is
+        # not None`) treats it as already-claimed and never reaches back into
+        # the store for it, so restoring a launch here can never re-trigger
+        # `store.claim()`/`store.acknowledge()`. `_pending_console_launch_
+        # auto_open_inspector` is reset to its `__init__` default (`False`):
+        # the auto-open-once behavior is for a launch that JUST arrived via a
+        # live handoff, not one merely surviving a tab switch.
+        self._pending_console_launch_context = ConsoleLiveWorkLaunch.from_pending(
+            payload.get("pending_console_launch")
+        )
+        self._pending_console_launch_auto_open_inspector = False
+        raw_sent_notice = payload.get("console_evidence_sent_notice")
+        self._console_evidence_sent_notice = (
+            raw_sent_notice
+            if isinstance(raw_sent_notice, int) and not isinstance(raw_sent_notice, bool)
+            else None
         )
 
     def _rehydrate_console_message_image(self, message: ConsoleChatMessage) -> None:
