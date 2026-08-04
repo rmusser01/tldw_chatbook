@@ -335,6 +335,7 @@ from ...Library.library_rag_service import (
     run_library_rag_search,
     scope_empty_recovery_state,
 )
+from ...Library.library_rag_state import library_rag_source_scope_summary
 from ...Notes.notes_scope_service import ScopeType
 from ...Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
@@ -403,8 +404,11 @@ from ...Widgets.Console.console_generation_card import (
     generation_card_signature,
 )
 from ...Widgets.Console.console_rag_settings_modal import (
+    CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
+    CONSOLE_RAG_SOURCE_SUMMARY_PREFIX,
     ConsoleRagSettingsModal,
     ConsoleRagSettingsResult,
+    normalize_console_rag_source_types,
 )
 from ...Widgets.Console.console_status_chips import (
     ConsoleModelChip,
@@ -542,7 +546,14 @@ CONSOLE_DICTATION_MAX_BYTES = int(
     * CONSOLE_DICTATION_MAX_SECONDS
     * CONSOLE_DICTATION_BUFFER_HEADROOM
 )
-CONSOLE_LIBRARY_RAG_SOURCE_SCOPE = ("notes", "media", "conversations")
+#: The Console's DEFAULT Library RAG source kinds, unchanged by RAG-44's
+#: editable toggles: this same tuple is the settings modal's default
+#: (`CONSOLE_RAG_DEFAULT_SOURCE_TYPES` -- one object, not a second copy),
+#: so retrieval reads exactly what it always did until a user edits it.
+#: This is a `source_types` selection (which KINDS of sources), NOT the
+#: retrieval item scope (`EffectiveScope`, conversation ∩ workspace) that
+#: `_resolve_console_library_rag_scope` resolves separately.
+CONSOLE_LIBRARY_RAG_SOURCE_SCOPE = CONSOLE_RAG_DEFAULT_SOURCE_TYPES
 CONSOLE_LIBRARY_RAG_RECOVERY_COPY = "Review citations before sending."
 CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
 # TASK-346: below this terminal height the composer row was clipped out of
@@ -1588,6 +1599,26 @@ def _sanitize_console_library_rag_query(value: Any) -> str:
     ):
         return ""
     return query
+
+
+def _console_library_rag_source_scope(screen: Any) -> tuple[str, ...]:
+    """Return a Console screen's stored Library RAG source kinds (RAG-44).
+
+    The ONE read seam for `_console_library_rag_source_types`, so every
+    caller (the readiness-card label, the settings modal, the retrieval
+    request) sees the same normalized tuple, and a screen that predates
+    the attribute -- or never ran ``__init__`` -- still retrieves over the
+    unchanged default instead of raising.
+
+    Args:
+        screen: The Console `ChatScreen` (or a stand-in) holding the state.
+
+    Returns:
+        The normalized, non-empty selection of Library source kinds.
+    """
+    return normalize_console_rag_source_types(
+        getattr(screen, "_console_library_rag_source_types", None)
+    )
 
 
 #: RAG-43: above this length a composer draft reads as a paste/attachment,
@@ -3142,6 +3173,14 @@ class ChatScreen(BaseAppScreen):
         self._console_control_provider: Optional[Any] = None
         self._console_control_model: Optional[Any] = None
         self._console_library_rag_query = ""
+        # RAG-44: which KINDS of Library sources "Run Library RAG" reads.
+        # Console-local (the Library screen keeps its own screen-local
+        # selection; neither is promoted to shared state), editable in the
+        # RAG settings modal, and restored with the rest of the native
+        # Console screen state. Defaults to today's three -- prompts OFF.
+        self._console_library_rag_source_types: tuple[str, ...] = (
+            CONSOLE_LIBRARY_RAG_SOURCE_SCOPE
+        )
         self._console_chat_store: ConsoleChatStore | None = None
         # task-9: cache of persisted-conversation RAG retrieval scopes,
         # keyed by conversation id -- populated off-loop at resume time and
@@ -9134,7 +9173,7 @@ class ChatScreen(BaseAppScreen):
         self.app.push_screen(
             ConsoleRagSettingsModal(
                 query=prefill,
-                scope_label=self._console_library_rag_scope_label(),
+                source_types=_console_library_rag_source_scope(self),
                 # Matches the chip exactly: the chip's "RAG: on" derives from
                 # this same pending-launch source test.
                 rag_active=_source_mentions_rag(
@@ -9169,12 +9208,34 @@ class ChatScreen(BaseAppScreen):
         else:
             run_button.disabled = not query
 
+    def _set_console_library_rag_source_scope(self, source_types: Any) -> None:
+        """Store which Library source kinds retrieval reads, and re-label.
+
+        The single writer, mirroring `_set_console_library_rag_query`: the
+        readiness card's source line is updated in place so it cannot
+        disagree with what the next retrieval will actually read.
+
+        Args:
+            source_types: The chosen selection (normalized here, so an
+                empty or unknown value falls back to the default rather
+                than retrieving over nothing).
+        """
+        self._console_library_rag_source_types = normalize_console_rag_source_types(
+            source_types
+        )
+        try:
+            scope_label = self.query_one("#console-library-rag-scope", Static)
+        except QueryError:
+            return
+        scope_label.update(self._console_library_rag_scope_label())
+
     def _apply_console_rag_settings_choice(
         self, result: ConsoleRagSettingsResult | None
     ) -> None:
-        """Store the modal's query and optionally run retrieval now."""
+        """Store the modal's query and sources, then optionally run now."""
         if result is None:
             return
+        self._set_console_library_rag_source_scope(result.source_types)
         self._set_console_library_rag_query(
             _sanitize_console_library_rag_query(result.query)
         )
@@ -13656,7 +13717,19 @@ class ChatScreen(BaseAppScreen):
         yield self._build_console_live_work_status_card(launch)
 
     def _console_library_rag_scope_label(self) -> str:
-        return f"Scope: {', '.join(CONSOLE_LIBRARY_RAG_SOURCE_SCOPE)}"
+        """Return the readiness card's Library RAG source line (RAG-44).
+
+        Library's scope-summary grammar (`library_rag_source_scope_summary`
+        -- selected sources in canonical order, the deselected ones named
+        as off) under the Console's own noun: "Sources", never "Scope",
+        which this screen already spends on the retrieval ITEM scope
+        ("Scope: 2 items"). The settings modal's own summary line is the
+        same builder on the same state -- two seams, one builder.
+        """
+        return library_rag_source_scope_summary(
+            _console_library_rag_source_scope(self),
+            prefix=CONSOLE_RAG_SOURCE_SUMMARY_PREFIX,
+        )
 
     @staticmethod
     def _hidden_static(text: str, *, id: str, classes: str = "") -> Static:
@@ -14315,7 +14388,7 @@ class ChatScreen(BaseAppScreen):
             return
         request = LibraryRagSearchRequest(
             query=query,
-            source_types=CONSOLE_LIBRARY_RAG_SOURCE_SCOPE,
+            source_types=_console_library_rag_source_scope(self),
             mode="rag",
             top_k=5,
             include_citations=True,
@@ -15815,6 +15888,11 @@ class ChatScreen(BaseAppScreen):
                 for session in store.sessions()
             },
             "image_view_modes": image_state.serialize(),
+            # RAG-44: an edited Library RAG source selection is Console-local,
+            # but it must survive a tab switch like the sessions around it --
+            # otherwise "Prompts on" silently reverts the next time the user
+            # comes back and retrieval quietly reads something else.
+            "library_rag_source_types": list(_console_library_rag_source_scope(self)),
         }
 
     def _console_session_from_state(
@@ -15980,6 +16058,13 @@ class ChatScreen(BaseAppScreen):
         cache.clear()
         self._task_resume_state = TaskResumeState.from_dict(
             payload.get("task_resume_state")
+        )
+        # Plain assignment, not `_set_console_library_rag_source_scope`: the
+        # readiness card is (re)built after a restore, and this path also
+        # runs against screen shells that never mounted a DOM to query.
+        # A legacy payload has no key at all -> the unchanged default.
+        self._console_library_rag_source_types = normalize_console_rag_source_types(
+            payload.get("library_rag_source_types")
         )
 
     def _rehydrate_console_message_image(self, message: ConsoleChatMessage) -> None:

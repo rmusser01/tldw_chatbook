@@ -2829,8 +2829,15 @@ async def test_console_inspector_source_readiness_rows_fit_without_tooltip_overl
 
         assert run_rag.disabled is True
         assert str(run_rag.tooltip or "") == ""
-        scope_plain = getattr(scope.render(), "plain", str(scope.render()))
-        assert len(scope_plain) <= scope.region.width
+        # RAG-44: the source line now carries Library's summary grammar
+        # ("Sources: Notes, Media, Conversations (Prompts off)"), which is
+        # wider than this 35-column rail, so it is held to the same
+        # no-clipping rule as the source rows below rather than to a
+        # single-line rule it can no longer meet.
+        scope_lines = _wrapped_plain_lines(scope.render(), scope.region.width)
+        assert scope_lines
+        assert len(scope_lines) <= scope.region.height
+        assert all(len(line) <= scope.region.width for line in scope_lines)
         assert rows
         for row in rows:
             lines = _wrapped_plain_lines(row.render(), row.region.width)
@@ -3764,7 +3771,14 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result()
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        assert "Scope: notes, media, conversations" in _visible_text(console)
+        # RAG-44: the readiness card's source line is now Library's
+        # scope-summary grammar under the Console's own "Sources" noun
+        # ("Scope" here already means the retrieval ITEM scope), and it
+        # names what is off -- the default still being today's three.
+        assert (
+            "Sources: Notes, Media, Conversations (Prompts off)"
+            in _visible_text(console)
+        )
         query_input = console.query_one("#console-library-rag-query-input", Input)
         query_input.value = query
         await pilot.pause(0.1)
@@ -4103,6 +4117,55 @@ async def test_console_control_bar_run_library_rag_opens_settings_modal_when_bla
         assert host.screen is console
         assert console._console_library_rag_query == ""
         assert service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request():
+    """RAG-44 end to end: the settings modal's source toggles decide what
+    retrieval actually reads. Switching Media off and running must send a
+    request WITHOUT media to the search service (and leave the Inspector's
+    source line saying so) -- the critique's complaint was that Library
+    offered these toggles while the Console showed a read-only line."""
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService({"results": []})
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-run-library-rag")
+
+        # Queryless control-bar action opens the settings modal (task-2).
+        await pilot.click("#console-control-run-library-rag")
+        await pilot.pause()
+        modal = host.screen
+        assert isinstance(modal, ConsoleRagSettingsModal)
+
+        modal.query_one("#console-rag-settings-query", Input).value = "why did it fail"
+        await pilot.pause()
+        await pilot.click("#console-rag-settings-source-media")
+        await pilot.pause()
+        await pilot.click("#console-rag-settings-run")
+        for _ in range(10):
+            await pilot.pause()
+
+        assert service.calls == [
+            {
+                "query": "why did it fail",
+                "scope": ("notes", "conversations"),
+                "mode": "rag",
+                "top_k": 5,
+                "include_citations": True,
+            }
+        ]
+        assert console._console_library_rag_source_types == ("notes", "conversations")
+        # The staged live-work card reports the same narrowed selection the
+        # request carried, so what ran is visible after the fact too.
+        assert "source_scope: notes, conversations" in _visible_text(console)
+        assert (
+            ChatScreen._console_library_rag_scope_label(console)
+            == "Sources: Notes, Conversations (Media, Prompts off)"
+        )
 
 
 @pytest.mark.asyncio

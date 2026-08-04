@@ -140,7 +140,18 @@ the staging itself is done from the Library screen.
 To gather evidence *before* sending, use the Inspector's **Live work
 sources** card: type a question into "Ask Library sources before sending"
 and press **Run Library RAG** (also a control-bar action). It searches
-your Library (notes, media, conversations) and stages what it finds.
+your Library and stages what it finds.
+
+Which *kinds* of sources it searches is shown on that card's **Sources:**
+line — by default "Sources: Notes, Media, Conversations (Prompts off)" —
+and is editable: the **RAG** chip (or **Run Library RAG** with nothing
+typed) opens the **Library RAG** settings modal, which carries the query
+box plus a toggle per source kind (**✓ Notes**, **○ Media**,
+**✓ Conversations**, **○ Prompts**). Running keeps the edited selection
+(it also survives leaving and returning to Console); **Cancel** discards
+it. Run stays disabled until there is both a query and at least one
+source kind. Note this is a different setting from **RAG scope** above:
+"Sources" picks the source *kinds*, "Scope" picks the *items*.
 
 ### Citations
 

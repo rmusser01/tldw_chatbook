@@ -9,11 +9,19 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Library.library_rag_state import (
+    LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
+    LIBRARY_RAG_SOURCE_TYPES,
+)
 from tldw_chatbook.Widgets.Console.console_rag_settings_modal import (
+    CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
+    CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX,
     ConsoleRagSettingsModal,
     ConsoleRagSettingsResult,
+    console_rag_source_toggle_label,
+    normalize_console_rag_source_types,
 )
 
 
@@ -29,7 +37,7 @@ async def test_run_returns_the_query_and_is_gated_on_non_blank_text():
     app = RagHost()
     async with app.run_test(size=(120, 40)) as pilot:
         await app.push_screen(
-            ConsoleRagSettingsModal(scope_label="Scope: notes, media"),
+            ConsoleRagSettingsModal(source_types=("notes", "media")),
             callback=received.append,
         )
         await pilot.pause()
@@ -49,7 +57,11 @@ async def test_run_returns_the_query_and_is_gated_on_non_blank_text():
         await pilot.pause()
 
     assert received == [
-        ConsoleRagSettingsResult(query="incident retro notes", run=True)
+        ConsoleRagSettingsResult(
+            query="incident retro notes",
+            run=True,
+            source_types=("notes", "media"),
+        )
     ]
 
 
@@ -114,6 +126,409 @@ async def test_cancel_escape_and_backdrop_all_dismiss_without_changes():
         assert app.screen is not modal
 
     assert received == [None]
+
+
+def _static_plain_text(widget: Static) -> str:
+    rendered = widget.render()
+    return str(getattr(rendered, "plain", rendered))
+
+
+def _toggle_labels(modal: ConsoleRagSettingsModal) -> list[str]:
+    return [
+        str(button.label)
+        for button in modal.query(".console-rag-settings-source-toggle").results(Button)
+    ]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_modal_shows_one_toggle_per_library_source_with_display_labels():
+    """(a) RAG-44: the read-only "Scope: notes, media, conversations" line
+    is now a toggle per Library source, in Library's four-source
+    vocabulary, with Library's display-cased labels -- the checked ones
+    are exactly the current selection."""
+
+    class RagHost(App):
+        pass
+
+    app = RagHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleRagSettingsModal(source_types=("notes", "conversations"))
+        )
+        await pilot.pause()
+        modal = app.screen
+
+        assert _toggle_labels(modal) == [
+            "✓ Notes",
+            "○ Media",
+            "✓ Conversations",
+            "○ Prompts",
+        ]
+        # No fifth vocabulary: the ids are Library's source-type keys and
+        # the labels come from Library's one label table.
+        assert [
+            str(button.id or "").removeprefix(CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX)
+            for button in modal.query(".console-rag-settings-source-toggle").results(
+                Button
+            )
+        ] == list(LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_every_source_toggle_fits_inside_the_modal_box():
+    """Four toggles on one row inside a 64-column modal: each must land
+    inside the box AND have room to actually draw its label.
+
+    The content-box assertions are the load-bearing ones: the first cut
+    of this row rendered every toggle as two Button border rows with a
+    ZERO-height content area -- clickable, correctly labelled in the
+    widget tree, and completely invisible on screen. Region geometry
+    alone would have passed that.
+    """
+
+    class RagHost(App):
+        pass
+
+    app = RagHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(ConsoleRagSettingsModal())
+        await pilot.pause()
+        modal = app.screen
+        box = modal.query_one("#console-rag-settings")
+        toggles = list(
+            modal.query(".console-rag-settings-source-toggle").results(Button)
+        )
+
+        assert len(toggles) == 4
+        for toggle in toggles:
+            assert toggle.content_size.height >= 1, f"{toggle.id} draws no rows"
+            assert toggle.content_size.width >= len(str(toggle.label))
+            assert toggle.region.right <= box.region.right
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_toggling_a_source_off_returns_the_reduced_source_types():
+    """(b) modal half: switching Media off and running returns a
+    ``source_types`` without media (the screen then sends exactly that to
+    retrieval)."""
+
+    class RagHost(App):
+        pass
+
+    received: list[ConsoleRagSettingsResult | None] = []
+    app = RagHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleRagSettingsModal(
+                query="what changed in auth",
+                source_types=CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
+            ),
+            callback=received.append,
+        )
+        await pilot.pause()
+        modal = app.screen
+
+        await pilot.click(f"#{CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX}media")
+        await pilot.pause()
+        assert _toggle_labels(modal)[1] == "○ Media"
+
+        await pilot.click("#console-rag-settings-run")
+        await pilot.pause()
+        await pilot.pause()
+
+    assert received == [
+        ConsoleRagSettingsResult(
+            query="what changed in auth",
+            run=True,
+            source_types=("notes", "conversations"),
+        )
+    ]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_cancel_discards_toggle_changes():
+    """(c) modal half: toggles changed then cancelled return nothing at
+    all, so the screen's stored scope cannot move."""
+
+    class RagHost(App):
+        pass
+
+    received: list[ConsoleRagSettingsResult | None] = []
+    app = RagHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleRagSettingsModal(
+                query="what changed in auth",
+                source_types=CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
+            ),
+            callback=received.append,
+        )
+        await pilot.pause()
+
+        await pilot.click(f"#{CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX}prompts")
+        await pilot.click(f"#{CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX}notes")
+        await pilot.pause()
+
+        await pilot.click("#console-rag-settings-cancel")
+        await pilot.pause()
+        await pilot.pause()
+
+    assert received == [None]
+
+
+@pytest.mark.unit
+def test_cancel_leaves_the_screens_stored_scope_untouched():
+    """(c) screen half: the ``None`` callback writes neither the query nor
+    the source scope."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = Mock()
+    ChatScreen._apply_console_rag_settings_choice(screen, None)
+
+    screen._set_console_library_rag_query.assert_not_called()
+    screen._set_console_library_rag_source_scope.assert_not_called()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_run_is_gated_on_at_least_one_selected_source():
+    """Running with every source switched off would retrieve from nothing;
+    the Run action is gated on a selection the same way it is gated on a
+    non-blank query."""
+
+    class RagHost(App):
+        pass
+
+    app = RagHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleRagSettingsModal(
+                query="what changed in auth",
+                source_types=("notes",),
+            )
+        )
+        await pilot.pause()
+        modal = app.screen
+        run = modal.query_one("#console-rag-settings-run", Button)
+        assert run.disabled is False
+
+        await pilot.click(f"#{CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX}notes")
+        await pilot.pause()
+        assert run.disabled is True
+
+        await pilot.click(f"#{CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX}media")
+        await pilot.pause()
+        assert run.disabled is False
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_modal_summary_line_and_readiness_card_share_one_builder():
+    """Two seams, one builder (the PR-2 scope-summary lesson): the modal's
+    own summary line and the Inspector readiness card's label are the same
+    string for the same selection, and both track a toggle."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    class RagHost(App):
+        pass
+
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._console_library_rag_source_types = ("notes", "conversations")
+
+    app = RagHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleRagSettingsModal(source_types=("notes", "conversations"))
+        )
+        await pilot.pause()
+        modal = app.screen
+        summary = modal.query_one("#console-rag-settings-scope", Static)
+
+        assert _static_plain_text(summary) == (
+            ChatScreen._console_library_rag_scope_label(screen)
+        )
+        assert _static_plain_text(summary) == (
+            "Sources: Notes, Conversations (Media, Prompts off)"
+        )
+
+        await pilot.click(f"#{CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX}media")
+        await pilot.pause()
+        screen._console_library_rag_source_types = ("notes", "media", "conversations")
+        assert _static_plain_text(summary) == (
+            ChatScreen._console_library_rag_scope_label(screen)
+        )
+
+
+@pytest.mark.unit
+def test_readiness_card_label_uses_the_library_summary_grammar():
+    """(d) the readiness-card label reflects the STORED scope in Library's
+    summary grammar (selected in canonical order, deselected named as
+    off), under Console's own "Sources" noun -- "Scope" is already spent
+    on the Console's item scope ("Scope: 2 items")."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = ChatScreen.__new__(ChatScreen)
+
+    screen._console_library_rag_source_types = ("notes", "conversations")
+    assert (
+        ChatScreen._console_library_rag_scope_label(screen)
+        == "Sources: Notes, Conversations (Media, Prompts off)"
+    )
+
+    screen._console_library_rag_source_types = ("notes", "media", "conversations")
+    assert (
+        ChatScreen._console_library_rag_scope_label(screen)
+        == "Sources: Notes, Media, Conversations (Prompts off)"
+    )
+
+    screen._console_library_rag_source_types = LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES
+    assert (
+        ChatScreen._console_library_rag_scope_label(screen)
+        == "Sources: all local sources"
+    )
+
+
+@pytest.mark.unit
+def test_default_console_source_scope_is_todays_three():
+    """(e) zero behavior change until a toggle is touched: with nothing
+    stored, retrieval still runs over exactly notes/media/conversations
+    (prompts OFF), and the default is ONE tuple shared by the screen and
+    the modal."""
+    from tldw_chatbook.UI.Screens.chat_screen import (
+        CONSOLE_LIBRARY_RAG_SOURCE_SCOPE,
+        ChatScreen,
+    )
+
+    assert CONSOLE_RAG_DEFAULT_SOURCE_TYPES == ("notes", "media", "conversations")
+    assert CONSOLE_LIBRARY_RAG_SOURCE_SCOPE is CONSOLE_RAG_DEFAULT_SOURCE_TYPES
+
+    screen = Mock()
+    screen._console_library_rag_query = "what changed in auth"
+    ChatScreen._run_console_library_rag_from_visible_action(screen)
+
+    request = screen._execute_console_library_rag_search.call_args.args[0]
+    assert request.source_types == ("notes", "media", "conversations")
+
+
+@pytest.mark.unit
+def test_stored_source_scope_is_what_retrieval_receives():
+    """(b) screen half: the stored selection -- not the constant -- is what
+    the retrieval request carries."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = Mock()
+    screen._console_library_rag_query = "what changed in auth"
+    screen._console_library_rag_source_types = ("notes", "conversations")
+
+    ChatScreen._run_console_library_rag_from_visible_action(screen)
+
+    request = screen._execute_console_library_rag_search.call_args.args[0]
+    assert request.source_types == ("notes", "conversations")
+
+
+@pytest.mark.unit
+def test_modal_choice_stores_the_source_scope_before_running():
+    """The modal's Run stores the chosen sources through the one writer,
+    then delegates the run -- so the retrieval that follows uses them."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = Mock()
+    ChatScreen._apply_console_rag_settings_choice(
+        screen,
+        ConsoleRagSettingsResult(
+            query="what changed",
+            run=True,
+            source_types=("notes", "prompts"),
+        ),
+    )
+
+    screen._set_console_library_rag_source_scope.assert_called_once_with(
+        ("notes", "prompts")
+    )
+    screen._run_console_library_rag_from_visible_action.assert_called_once()
+
+
+@pytest.mark.unit
+def test_source_scope_survives_a_screen_state_round_trip():
+    """A customized source scope is Console-local state, but it must not
+    evaporate on a tab switch: it round-trips through the native Console
+    screen state next to the sessions themselves."""
+    from tldw_chatbook.Chat.console_chat_store import (
+        ConsoleChatSession,
+        ConsoleChatStore,
+    )
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
+
+    def _bare_screen(store: ConsoleChatStore) -> ChatScreen:
+        screen = ChatScreen.__new__(ChatScreen)
+        screen._console_chat_store = store
+        screen._console_visible_draft_session_id = None
+        screen._console_composer_or_none = lambda: None
+        screen._task_resume_state = TaskResumeState()
+        return screen
+
+    store = ConsoleChatStore()
+    session = ConsoleChatSession(id="session-a", title="Chat 1")
+    store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: []},
+        active_session_id=session.id,
+    )
+    screen = _bare_screen(store)
+    screen._console_library_rag_source_types = ("notes", "prompts")
+
+    payload = screen._serialize_native_console_state()
+    assert payload is not None
+
+    restored = _bare_screen(ConsoleChatStore())
+    restored._restore_native_console_state(payload)
+
+    assert restored._console_library_rag_source_types == ("notes", "prompts")
+    assert (
+        ChatScreen._console_library_rag_scope_label(restored)
+        == "Sources: Notes, Prompts (Media, Conversations off)"
+    )
+
+
+@pytest.mark.unit
+def test_source_type_normalization_refuses_unknown_values_and_falls_back():
+    """The Console's stored scope is normalized at every boundary: unknown
+    values are dropped, order is canonical, and an unusable value (legacy
+    screen state, an empty selection) falls back to the default rather
+    than retrieving from nothing."""
+    assert normalize_console_rag_source_types(["prompts", "notes"]) == (
+        "notes",
+        "prompts",
+    )
+    assert normalize_console_rag_source_types(["Notes", "notes"]) == ("notes",)
+    assert (
+        normalize_console_rag_source_types(["workspaces", "bogus"])
+        == CONSOLE_RAG_DEFAULT_SOURCE_TYPES
+    )
+    assert normalize_console_rag_source_types([]) == CONSOLE_RAG_DEFAULT_SOURCE_TYPES
+    assert normalize_console_rag_source_types(None) == CONSOLE_RAG_DEFAULT_SOURCE_TYPES
+    assert (
+        normalize_console_rag_source_types(object()) == CONSOLE_RAG_DEFAULT_SOURCE_TYPES
+    )
+
+
+@pytest.mark.unit
+def test_toggle_labels_come_from_the_one_library_label_table():
+    """No fifth vocabulary: every toggle label is Library's display label
+    for that source type."""
+    labels = dict(LIBRARY_RAG_SOURCE_TYPES)
+    for source_type in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES:
+        assert console_rag_source_toggle_label(source_type, True) == (
+            f"✓ {labels[source_type]}"
+        )
+        assert console_rag_source_toggle_label(source_type, False) == (
+            f"○ {labels[source_type]}"
+        )
 
 
 @pytest.mark.unit
