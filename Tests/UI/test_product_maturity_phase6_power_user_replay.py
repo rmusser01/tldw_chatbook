@@ -193,7 +193,7 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
             library_text = _screen_text(app)
             assert "Search / RAG" in library_text
             assert "Study decks" in library_text
-            assert "Import media" in library_text
+            assert "Add content…" in library_text
             assert "Collections" in library_text
             assert not app.screen.query("#library-row-ingest-import-export")
 

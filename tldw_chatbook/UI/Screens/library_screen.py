@@ -4429,7 +4429,9 @@ class LibraryScreen(BaseAppScreen):
                         )
                     with Horizontal(id="library-hub-actions", classes="ds-toolbar"):
                         for label, tooltip, row_id, target_id, button_id in (
-                            ("Import media", "Import media files into the Library.",
+                            # task-2235 (R2): the canonical ingest CTA label
+                            # and tooltip match the rail-top primary button.
+                            ("Add content…", "Add files, links, and transcripts to your Library.",
                              LIBRARY_ROW_INGEST_MEDIA, "ingest-media",
                              "library-hub-action-import"),
                             ("Search", "Search everything in the Library.",

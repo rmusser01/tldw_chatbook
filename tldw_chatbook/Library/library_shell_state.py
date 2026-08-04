@@ -334,7 +334,11 @@ def build_library_shell_state(
         LibraryRailRow(
             row_id=LIBRARY_ROW_INGEST_MEDIA,
             section_id="ingest",
-            title="Import media",
+            # task-2235 (R2): one canonical label for the ingest CTA across
+            # rail, landing hub, and command palette -- F-013's plain
+            # "Add content…". "Import media" survives only inside the
+            # ingest flow itself (canvas header, file-picker title).
+            title="Add content…",
             target_kind="canvas",
             target_id="ingest-media",
             count=None,

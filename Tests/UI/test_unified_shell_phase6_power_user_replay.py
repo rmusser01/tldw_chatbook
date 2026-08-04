@@ -93,7 +93,7 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
             # The placeholder Import/Export row itself is retired outright
             # (see the inventory verdict); Import media absorbed its slot.
             library_text = _screen_text(app)
-            assert "Import media" in library_text
+            assert "Add content…" in library_text
             assert "Search / RAG" in library_text
             assert not app.screen.query("#library-row-ingest-import-export")
 

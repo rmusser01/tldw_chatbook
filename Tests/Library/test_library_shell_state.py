@@ -115,7 +115,7 @@ def test_shell_sections_rows_and_targets_are_fixed():
     assert all(r.target_kind == "handoff" for r in study.rows)
     assert [r.target_id for r in study.rows] == ["study", "flashcards", "quizzes"]
     ingest = shell.sections[3]
-    assert [r.title for r in ingest.rows] == ["Import media", "Export"]
+    assert [r.title for r in ingest.rows] == ["Add content…", "Export"]
     assert (ingest.rows[0].target_kind, ingest.rows[0].target_id) == (
         "canvas",
         "ingest-media",

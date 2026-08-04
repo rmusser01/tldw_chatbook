@@ -491,6 +491,49 @@ async def test_landing_hub_shows_the_error_instead_of_false_zero_counts():
 
 
 @pytest.mark.asyncio
+async def test_ingest_cta_uses_one_canonical_label_everywhere():
+    """task-2235 (R2): the ingest canvas's CTA is one label across the
+    rail-top primary button, the landing hub action row, the Import /
+    Export rail row, and the command palette -- 'Add content…' (the
+    F-013 plain-language pick). 'Import media' survives only inside the
+    ingest flow itself (canvas header, file-picker title)."""
+    from tldw_chatbook.Library.library_shell_state import (
+        LIBRARY_ROW_INGEST_MEDIA,
+        LibraryShellInput,
+        build_library_shell_state,
+    )
+
+    # Pure state: the rail row title is canonical.
+    shell = build_library_shell_state(LibraryShellInput())
+    row = next(
+        r
+        for s in shell.sections
+        for r in s.rows
+        if r.row_id == LIBRARY_ROW_INGEST_MEDIA
+    )
+    assert row.title == "Add content…"
+
+    # Palette entry is canonical.
+    from tldw_chatbook.app import LibraryIngestProvider
+
+    assert LibraryIngestProvider.COMMANDS[0][0] == "Library: Add content…"
+
+    # Rendered: rail-top button and hub action row share the label.
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        top = screen.query_one("#library-ingest-top-button", Button)
+        hub = screen.query_one("#library-hub-action-import", Button)
+        assert str(top.label) == "Add content…"
+        assert str(hub.label) == "Add content…"
+
+
+@pytest.mark.asyncio
 async def test_library_landing_hub_shows_next_actions_counts_and_recents():
     """F-010: the landing canvas is the wired hub, not a one-line void --
     actionable next-step rows (Import media / Search / New note) plus the

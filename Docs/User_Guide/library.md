@@ -48,7 +48,7 @@ pages:
   - four sections — **Browse** (Media, Conversations, Notes, Prompts,
     Skills, Collections, Search / RAG), **Create** (New note, New prompt,
     New skill), **Study** (Study decks, Flashcards, Quizzes), and
-    **Import / Export** (Import media, Export). Each row is one line: the
+    **Import / Export** (Add content…, Export). Each row is one line: the
     title with its count, plus a dim plain-language gloss on the jargon
     rows (e.g. "Search / RAG — search everything"). On narrow terminals
     the gloss shortens first and the title ellipsizes, so the count
@@ -61,7 +61,7 @@ pages:
 - **Canvas** (the right pane) — there are no tabs here: the canvas swaps
   to match whichever rail row is selected. Before you pick one it shows
   the landing hub: per-source counts, recent items when the Library has
-  content, and quick actions (Import media / Search / New note), under
+  content, and quick actions (Add content… / Search / New note), under
   the guidance line "Search everything, pick a section on the left, or
   add something new."
 - **Footer** — shows the keys that work where you are: "/ focus search"
@@ -112,7 +112,7 @@ File Notes workspace — see [File Notes](library/file-notes.md).
 
 | Row | What it does |
 |---|---|
-| **Import media** | The full ingest flow: path or URL, pre-flight check, per-type options, queue — see [Import & export](library/import-and-export.md). |
+| **Add content…** | The full ingest flow: path or URL, pre-flight check, per-type options, queue — see [Import & export](library/import-and-export.md). |
 | **Export** | The "Export chatbook" canvas: package local content into a portable file — see [Import & export](library/import-and-export.md). Disabled in server mode. |
 
 ### Details
