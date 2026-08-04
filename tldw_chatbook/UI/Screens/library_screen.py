@@ -14298,11 +14298,11 @@ class LibraryScreen(BaseAppScreen):
             self._library_ingest_expanded_details.add(job_id)
         self._update_library_ingest_dynamic_regions()
 
-    @on(Button.Pressed, "#library-ingest-clear-finished")
     #: Presses landing this soon after the arming press are the same
     #: physical gesture (a double-click), not a decision (task-2160).
     _CLEAR_FINISHED_DEAD_ZONE_SECONDS = 0.3
 
+    @on(Button.Pressed, "#library-ingest-clear-finished")
     def handle_library_ingest_clear_finished(self, event: Button.Pressed) -> None:
         """Clear every done+failed ingest job in one shot (L3b AB wave, B2).
 
