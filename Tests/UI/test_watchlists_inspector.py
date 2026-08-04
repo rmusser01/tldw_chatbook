@@ -27,6 +27,7 @@ from Tests.UI.full_app_destination_context import (
     StaticWatchlistsScopeService,
 )
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_watchlists_check_now_failure import Notified
 from Tests.UI.test_watchlists_item_actions import OTHER_ENTITIES, REAL_ITEM
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 from tldw_chatbook.Subscriptions.noise_defaults import DEFAULT_IGNORE_SELECTORS
@@ -37,6 +38,7 @@ from tldw_chatbook.UI.Watchlists_Modules import inspector_pane as inspector_pane
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     BreadcrumbScopeSelected,
     InspectorPane,
+    ResumeSourceRequested,
     SaveNoiseSelectorsRequested,
 )
 from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected, ItemsPane
@@ -1752,3 +1754,319 @@ async def test_the_queued_indicator_renders_from_the_normalized_flag_on_load():
         assert table.get_row(row_key)[4] == ItemsPane._QUEUED_GLYPH, (
             "a pre-queued item must show the glyph as soon as it loads"
         )
+
+
+# -- task-2050: Resume affordance for auto-paused sources --------------------
+#
+# Auto-pause itself (task-1394/1410) and its data-layer recourse (a
+# successful manual re-check clearing `is_paused`, see the task-1410 review
+# fix wave) already exist. This is the explicit UI affordance: a paused
+# source has to be visibly distinct in the Sources table (normalizer tests,
+# `Tests/Subscriptions/test_watchlist_normalizers.py`) and offer a one-press
+# Resume here in the Inspector, wired through
+# `LocalWatchlistsService.resume_source` -> `SubscriptionsDB.
+# reset_subscription_errors`, not a direct DB write from the UI layer.
+
+_PAUSED_SUBSCRIPTION = {
+    "id": "local:subscription:1",
+    "entity_kind": "subscription",
+    "name": "Dead feed",
+    "source_type": "rss",
+    "url": "http://example.com/feed",
+    "active": False,
+    "paused": True,
+}
+
+_HEALTHY_SUBSCRIPTION = {
+    "id": "local:subscription:2",
+    "entity_kind": "subscription",
+    "name": "Healthy feed",
+    "source_type": "rss",
+    "url": "http://example.com/feed2",
+    "active": True,
+    "paused": False,
+}
+
+# A server-backed source, shaped like `normalize_server_watchlist_source`'s
+# output -- `entity_kind: "watchlist_source"`, not `"subscription"`. Carries
+# `paused: True` anyway (something no real server normalizer would ever
+# produce today, since that normalizer always stamps `False`) specifically
+# to prove the gate reads `entity_kind`, not just the `paused` flag alone.
+_PAUSED_LOOKING_SERVER_SOURCE = {
+    "id": "server:watchlist_source:3",
+    "entity_kind": "watchlist_source",
+    "name": "Server feed",
+    "source_type": "rss",
+    "url": "http://example.com/feed3",
+    "active": False,
+    "paused": True,
+}
+
+
+@pytest.mark.asyncio
+async def test_resume_button_renders_only_for_a_paused_local_subscription():
+    """AC#1/#2: the Resume affordance is selectively visible -- present for
+    a paused local subscription, absent for a healthy one, absent for a
+    server-backed source even if its (never-real) `paused` flag were set,
+    and absent for a non-source entity kind.
+
+    Mutation (a): drop the `entity.get("paused")`/`entity_kind` gate in
+    `InspectorPane._is_paused_subscription` (e.g. always return True) --
+    reddens on the healthy-source and server-source assertions below.
+    """
+    sources = [
+        _PAUSED_SUBSCRIPTION,
+        _HEALTHY_SUBSCRIPTION,
+        _PAUSED_LOOKING_SERVER_SOURCE,
+    ]
+    app = _app_with_watchlists(sources)
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause()
+
+        sources_pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        sources_pane.sources = sources
+        await pilot.pause()
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+
+        sources_pane.select_source_by_id(_PAUSED_SUBSCRIPTION["id"])
+        await pilot.pause()
+        assert inspector.query_one("#inspector-resume-button", Button), (
+            "a paused local subscription must offer Resume"
+        )
+
+        sources_pane.select_source_by_id(_HEALTHY_SUBSCRIPTION["id"])
+        await pilot.pause()
+        assert not inspector.query("#inspector-resume-button"), (
+            "a healthy source must not offer Resume"
+        )
+
+        sources_pane.select_source_by_id(_PAUSED_LOOKING_SERVER_SOURCE["id"])
+        await pilot.pause()
+        assert not inspector.query("#inspector-resume-button"), (
+            "a server-backed source must never offer Resume, regardless of "
+            "its paused flag -- only a local subscription has a pause "
+            "concept at all"
+        )
+
+        # Absent for a non-source entity kind too (Task 1120's own
+        # discriminator, exercised the same way `OTHER_ENTITIES` proves the
+        # item-only queue button is item-only).
+        screen.post_message(
+            RuleSelected(
+                {"rule_id": 9, "name": "Price drop", "condition_type": "keyword"}
+            )
+        )
+        await pilot.pause()
+        assert inspector.query_one("#inspector-edit-rule-button", Button), (
+            "precondition: the rule's own action set is what is showing"
+        )
+        assert not inspector.query("#inspector-resume-button")
+
+
+@pytest.mark.asyncio
+async def test_pressing_resume_posts_resume_source_requested():
+    """The real press, the real message -- not just that the button exists."""
+    app = _app_with_watchlists([_PAUSED_SUBSCRIPTION])
+    host = DestinationHarness(app, "watchlists_collections")
+    captured = []
+
+    def capture_message(message):
+        captured.append(message)
+        return True
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause()
+
+        sources_pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        sources_pane.sources = [_PAUSED_SUBSCRIPTION]
+        await pilot.pause()
+        sources_pane.select_source_by_id(_PAUSED_SUBSCRIPTION["id"])
+        await pilot.pause()
+
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        original_post_message = inspector.post_message
+        inspector.post_message = capture_message
+        try:
+            button = inspector.query_one("#inspector-resume-button", Button)
+            inspector.on_button_pressed(Button.Pressed(button))
+        finally:
+            inspector.post_message = original_post_message
+
+        assert any(
+            isinstance(msg, ResumeSourceRequested)
+            and (msg.entity or {}).get("id") == _PAUSED_SUBSCRIPTION["id"]
+            for msg in captured
+        )
+
+
+async def _seed_paused_source(app):
+    """Create one real, already auto-paused local subscription (task-2050).
+
+    Goes through the real `LocalWatchlistsService.create_source` -- the same
+    path the create form uses -- then flips `is_paused` and the failure
+    counters directly on the row, the identical shortcut task-1410's own
+    `test_record_check_result_success_resumes_an_auto_paused_subscription`
+    (`Tests/DB/test_subscriptions_db.py`) and
+    `test_local_watchlists_service_successful_manual_recheck_resumes_a_
+    paused_source` (`Tests/Subscriptions/test_local_watchlists_service.py`)
+    use to reach an already-paused state without driving three real failing
+    checks first.
+
+    Returns:
+        `(db, service, source_id)`.
+    """
+    service = app.local_watchlists_service
+    source = await service.create_source(
+        {
+            "name": "Dead feed",
+            "url": "https://dead.example/feed",
+            "source_type": "rss",
+        }
+    )
+    db = service._db()
+    source_id = int(source["source_id"])
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE subscriptions
+            SET is_paused = 1, error_count = 3, consecutive_failures = 3,
+                last_error = 'connection refused'
+            WHERE id = ?
+            """,
+            (source_id,),
+        )
+    return db, service, source_id
+
+
+@pytest.mark.asyncio
+async def test_pressing_resume_clears_the_pause_and_reloads_sources():
+    """AC#2/#3 end to end: the real button, the real service call, the real
+    row -- not a hand-built entity and not a mocked service. Same style as
+    `test_a_failed_fetch_is_reported_as_a_failure_and_leaves_a_trace`
+    (`Tests/UI/test_watchlists_check_now_failure.py`), Check now's own
+    real-DB end-to-end test for this screen.
+
+    Mutation (b): make `WatchlistsCollectionsScreen._resume_source` skip the
+    `service.resume_source(...)` call -- reddens on the `is_paused`/counter
+    assertions below, since nothing in `subscriptions` would ever change.
+    """
+    app = _build_test_app()
+    db, _service, source_id = await _seed_paused_source(app)
+    notified = Notified()
+    app.notify = notified
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        for _ in range(40):
+            await pilot.pause()
+            if pane.sources:
+                break
+        assert pane.sources, "the seeded paused source must reach the Sources pane"
+
+        row_key = f"local:subscription:{source_id}"
+        pane.select_source_by_id(row_key)
+        await pilot.pause(0.2)
+
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        resume_button = inspector.query_one("#inspector-resume-button", Button)
+        resume_button.press()
+
+        for _ in range(60):
+            await pilot.pause()
+            if notified.calls:
+                break
+
+        assert notified.calls, "pressing Resume must produce a toast"
+        assert not notified.errors, f"Resume must succeed, got: {notified.calls!r}"
+        assert any("resumed" in message.lower() for message, _ in notified.calls), (
+            f"the toast must say the source was resumed, got: {notified.calls!r}"
+        )
+
+        row = db.get_subscription(source_id)
+        for _ in range(60):
+            await pilot.pause()
+            row = db.get_subscription(source_id)
+            if row["is_paused"] == 0:
+                break
+
+        assert row["is_paused"] == 0, "the press must reach reset_subscription_errors"
+        assert row["error_count"] == 0
+        assert row["consecutive_failures"] == 0
+        assert row["last_error"] is None
+
+        # The Sources table's Status column must no longer say "paused"
+        # once the reload lands -- same reload Check now performs for the
+        # same reason (`_load_sources_preserving_selection`).
+        status_cell = ""
+        for _ in range(120):
+            await pilot.pause()
+            try:
+                table = screen.query_one("#sources-table", DataTable)
+                if not table.row_count:
+                    continue
+                status_cell = str(table.get_cell_at((0, 2)))
+            except Exception:
+                continue
+            if status_cell and "paused" not in status_cell.lower():
+                break
+
+        assert "paused" not in status_cell.lower(), (
+            f"Status column must clear once resumed; read {status_cell!r}"
+        )
+
+        # And the Resume button itself must disappear: the reload's
+        # `SourceSelected` refreshes `selected_entity` with the fresh,
+        # now-unpaused entity, and the Inspector's own gate stops rendering
+        # it.
+        for _ in range(40):
+            await pilot.pause()
+            if not inspector.query("#inspector-resume-button"):
+                break
+        assert not inspector.query("#inspector-resume-button"), (
+            "Resume must not still be offered once the source is resumed"
+        )
+
+
+@pytest.mark.asyncio
+async def test_resume_on_a_source_that_is_not_paused_is_a_harmless_no_op():
+    """The DB-level consistency guard: `resume_source` on a healthy source
+    must not corrupt anything -- it zeroes counters that are already zero
+    and clears an already-clear pause. The UI never offers this path for a
+    non-paused source (the button simply does not render, pinned by
+    `test_resume_button_renders_only_for_a_paused_local_subscription`), so
+    this exercises the service method directly, the way a defensive/future
+    caller might.
+    """
+    app = _build_test_app()
+    service = app.local_watchlists_service
+    source = await service.create_source(
+        {
+            "name": "Healthy feed",
+            "url": "https://ok.example/feed",
+            "source_type": "rss",
+        }
+    )
+    source_id = int(source["source_id"])
+    db = service._db()
+    before = db.get_subscription(source_id)
+    assert before["is_paused"] == 0
+
+    resumed = await service.resume_source(source_id)
+
+    after = db.get_subscription(source_id)
+    assert after["is_paused"] == 0
+    assert after["error_count"] == 0
+    assert after["consecutive_failures"] == 0
+    assert resumed["paused"] is False

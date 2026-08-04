@@ -83,14 +83,38 @@ def _local_source_settings(row: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def normalize_local_subscription_row(row: Mapping[str, Any]) -> dict[str, Any]:
-    """Normalize a local subscriptions DB row as a watch item."""
+    """Normalize a local subscriptions DB row as a watch item.
+
+    task-2050 (AC#1): `status_summary` precedence is
+    ``paused > error > inactive > active``. A source auto-paused by repeated
+    check failures (`SubscriptionsDB._advance_failure_and_maybe_pause`,
+    task-1410) always still carries the `last_error` that caused the pause,
+    so an error-first precedence would render ``"error (10)"`` on a source
+    that has actually STOPPED being retried -- indistinguishable from one
+    that is merely having a bad day but is still being checked on schedule.
+    That is the one fact a paused source's status needs to lead with: it
+    needs an explicit Resume, not just time. Note this is a real trade-off,
+    not a free win: today NEITHER `last_error` NOR `error_count` is
+    surfaced anywhere else in the watchlists UI for a source (only a run's
+    own `error_count` renders, in the Runs pane) -- so for the window a
+    source is both paused and carrying the error that caused it, this
+    precedence trades away the only place that error text was visible at
+    all, in exchange for the Status column no longer implying the source is
+    still being retried when it is not. The underlying `last_error`/
+    `error_count` columns are untouched by this normalizer either way, and
+    remain available to a future source-detail affordance.
+    """
     source_id = row["id"]
-    active = bool(row.get("is_active", True)) and not bool(row.get("is_paused", False))
+    paused = bool(row.get("is_paused", False))
+    active = bool(row.get("is_active", True)) and not paused
     error_count = int(row.get("error_count") or 0)
     last_error = row.get("last_error")
-    status_summary = "active" if active else "inactive"
-    if last_error:
+    if paused:
+        status_summary = "paused"
+    elif last_error:
         status_summary = f"error ({error_count})" if error_count else "error"
+    else:
+        status_summary = "active" if active else "inactive"
 
     return {
         "id": build_watchlist_item_id("local", "subscription", source_id),
@@ -102,6 +126,15 @@ def normalize_local_subscription_row(row: Mapping[str, Any]) -> dict[str, Any]:
         "source_type": row.get("type"),
         "url": row.get("source"),
         "active": active,
+        # task-2050 AC#1: an inactive (is_active=0) source and an
+        # auto-paused one both read `active: False` and, before this task,
+        # both fell into the same "inactive" status text -- nothing told
+        # them apart, and a paused source's only real recourse (task-1410's
+        # data-layer resume-on-success) had no UI trigger at all. Carried
+        # as its own field, distinct from `status_summary`, so a consumer
+        # that only cares about the boolean (e.g. the Resume button's
+        # visibility gate) does not have to string-match status text.
+        "paused": paused,
         "tags": _coerce_tags(row.get("tags")),
         "group_ids": [],
         "settings": _local_source_settings(row),
@@ -129,6 +162,13 @@ def normalize_server_watchlist_source(
         "source_type": payload.get("source_type"),
         "url": payload.get("url"),
         "active": bool(payload.get("active", True)),
+        # task-2050: the server watchlist source model has no auto-pause
+        # concept (no `is_paused` equivalent on the response payload) --
+        # always False here, which is also why the Resume affordance never
+        # renders for a server-backed source
+        # (`InspectorPane._is_paused_subscription` gates on `entity_kind ==
+        # "subscription"`, the local-only kind this field is meaningful for).
+        "paused": False,
         "tags": _coerce_tags(payload.get("tags")),
         "group_ids": list(payload.get("group_ids") or []),
         "settings": dict(payload.get("settings") or {}),
