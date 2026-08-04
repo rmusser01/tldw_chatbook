@@ -63,6 +63,14 @@ briefly back to `live`/`thinking`/`speaking` -- gives up outright:
 `ExitLoop(reason="connection-lost")`. The once-flag is scoped to one loop
 entry: only a fresh `enter()` (a brand new loop, after a full exit) resets
 it, exactly matching the design doc's "no infinite retry" rule.
+`on_connect_failed()` shares this SAME give-up exit when it arrives while
+`reconnecting` (Task 5's wiring reuses one connect code path for both the
+first connect and every reconnect attempt) -- the reconnect-once allowance
+is already spent by definition whenever state is `reconnecting`, so a
+failed reconnect attempt is exactly as terminal as a second transport
+drop would be; without this, a failed reconnect attempt would strand the
+loop in `reconnecting` forever, since `tick()`'s idle ceiling only ever
+evaluates `live`.
 
 ## Idle ceiling (`tick`)
 
@@ -75,14 +83,23 @@ same way V3's `_armed_at` anchors its countdown: `enter()` and
 pending (`None`) and the FIRST subsequent `tick(now)` call adopts that
 `now` as the anchor rather than firing immediately. `on_turn_committed(now)`
 and `on_reply_done(now)` DO receive `now` directly and re-anchor to it
-immediately -- both are genuine activity. Once `now - _last_activity >=
+immediately -- both are genuine activity. A barge-in returning to `live`
+(`_barge_in_if_reply_outstanding`, driven by `on_keypress`/
+`on_speech_started`) also marks the anchor pending rather than leaving the
+pre-reply anchor in place -- a barge-in IS a reply-audio end, which the
+spec's idle definition counts as activity, and stamping nothing here would
+otherwise let the very next `tick()` fire `idle-timeout` against a
+long-stale anchor moments after the user's own keypress proved the session
+attended (review F1). Once `now - _last_activity >=
 idle_timeout_seconds` while still `live`, `tick()` emits `ExitLoop(reason
 ="idle-timeout")` -- an unattended session must not bill indefinitely.
 """
 
 from __future__ import annotations
 
-from typing import Callable, Literal, Optional
+from typing import Callable, Literal
+
+from loguru import logger
 
 from tldw_chatbook.Chat.console_hands_free import ExitLoop, ModeChanged, SilenceSpeech
 
@@ -138,7 +155,7 @@ class RealtimeLoopController:
         self._idle_timeout_seconds = idle_timeout_seconds
 
         self._state: RealtimeLoopState = "idle"
-        self._last_activity: Optional[float] = None
+        self._last_activity: float | None = None
         self._reconnect_attempted: bool = False
 
     # -- public state -----------------------------------------------------
@@ -165,7 +182,7 @@ class RealtimeLoopController:
     # -- transition chokepoint ---------------------------------------------
 
     def _transition(
-        self, new_state: RealtimeLoopState, *, reason: Optional[str] = None
+        self, new_state: RealtimeLoopState, *, reason: str | None = None
     ) -> None:
         """The SOLE place `self._state` is assigned outside `__init__`.
         Always emits `ModeChanged`, mirroring V3's `_transition()`
@@ -182,7 +199,7 @@ class RealtimeLoopController:
         self._state = new_state
         self._emit(ModeChanged(new_state, reason=reason))
 
-    def _exit(self, reason: Optional[str] = None) -> None:
+    def _exit(self, reason: str | None = None) -> None:
         """Emit `ExitLoop(reason)` then transition to `idle` (which itself
         emits a trailing `ModeChanged("idle")`, exactly like V3's own
         `_exit()`) -- the sole path back to `idle` from any other state.
@@ -232,15 +249,35 @@ class RealtimeLoopController:
 
     def on_connect_failed(self) -> None:
         """The realtime session's connection attempt failed outright.
-        Meaningful only during the FIRST connect (`connecting`) -- a failed
-        RECONNECT attempt instead surfaces through
-        `on_transport_closed(error=True)`'s own second-failure exit (see
-        the module docstring's "Reconnect-once-then-exit" section), so this
-        method is a no-op in every other state.
+
+        Meaningful during BOTH the first connect (`connecting`) and a
+        reconnect attempt (`reconnecting` -- Task 5's wiring shares the
+        same connect code path for both, so this callback WILL arrive here
+        too): a `connecting` failure exits with `reason="connect-failed"`;
+        a `reconnecting` failure routes to the SAME give-up exit a second
+        `on_transport_closed(error=True)` would (`reason=
+        "connection-lost"`) -- the reconnect-once allowance is already
+        spent by definition whenever this state is `reconnecting`, since
+        `on_transport_closed`'s own first-failure path is what put it
+        there (review F2: a `reconnecting`-only no-op left the loop
+        permanently stranded there forever, since `tick()` only ever
+        evaluates the idle ceiling while `live`).
+
+        A no-op in every other state (e.g. a stray arrival with no connect
+        attempt outstanding at all, `live` or `speaking`) -- logged at
+        debug so a wiring bug that fires this unexpectedly is still
+        observable without ever changing behavior.
         """
-        if self._state != "connecting":
+        if self._state == "connecting":
+            self._exit(reason="connect-failed")
             return
-        self._exit(reason="connect-failed")
+        if self._state == "reconnecting":
+            self._exit(reason="connection-lost")
+            return
+        logger.debug(
+            f"RealtimeLoopController.on_connect_failed: ignored, no connect "
+            f"attempt outstanding: op=on_connect_failed state={self._state!r}"
+        )
 
     def on_turn_committed(self, now: float) -> None:
         """The user's input turn was committed server-side. Moves `live` to
@@ -317,10 +354,23 @@ class RealtimeLoopController:
         """Shared by `on_speech_started` (once already gated on acoustic
         mode) and `on_keypress` (ungated): emit `SilenceSpeech` -- stop the
         audio output; generation itself is untouched -- then return to
-        `live`. A no-op if no reply is outstanding."""
+        `live`. A no-op if no reply is outstanding.
+
+        Review F1: a barge-in IS a reply-audio end (`SilenceSpeech` stops
+        the audio right there), which the idle-ceiling spec counts as
+        activity -- but neither `_transition` nor `live` itself stamps a
+        `now` here (this method takes none), so leaving the OLD, possibly
+        long-stale activity anchor in place made the very next `tick()`
+        measure elapsed time from before the reply even started, firing
+        `idle-timeout` moments after the user's own keypress proved the
+        session attended. Fixed with this file's own established idiom --
+        `enter()`/`on_session_ready()` already mark the anchor pending
+        (`None`) rather than stamping a `now` they don't have -- so the
+        NEXT `tick(now)` adopts a fresh anchor instead of an ExitLoop."""
         if self._state not in _REPLY_OUTSTANDING_STATES:
             return
         self._emit(SilenceSpeech())
+        self._last_activity = None
         self._transition("live")
 
     def on_transport_closed(self, *, error: bool) -> None:

@@ -483,3 +483,121 @@ def test_exit_request_reason_defaults_to_none():
     c.on_exit_request()
     exits = [e for e in ev if isinstance(e, ExitLoop)]
     assert exits[0].reason is None
+
+
+# ---------------------------------------------------------------------------
+# Review fix wave (task-4-review): F1 High, F2 Medium-High, F3 Low
+# ---------------------------------------------------------------------------
+
+
+def test_barge_in_mid_reply_refreshes_activity_so_idle_ceiling_does_not_fire_immediately():
+    """F1 (review, HIGH): reproduces the reviewer's live finding --
+    on_keypress() mid-reply at t=361 (long after a short idle_timeout would
+    have elapsed while the reply was outstanding, which tick() correctly
+    ignores per `test_idle_ceiling_never_fires_mid_reply_even_past_
+    deadline`), then the FIRST tick(now) after the barge-in's return to
+    `live` fired ExitLoop(reason="idle-timeout") half a second later --
+    punishing the user for the exact keypress that proves the session is
+    attended. The spec's idle definition counts "reply-audio end" as
+    activity, and a barge-in IS a reply-audio end (SilenceSpeech stops the
+    audio right there). Fixed with the file's own established idiom:
+    `enter()`/`on_session_ready()` already mark the idle-ceiling anchor
+    pending (None) rather than stamping a `now` they don't have --
+    `_barge_in_if_reply_outstanding` now does the same before returning to
+    `live`, so the NEXT tick(now) adopts it fresh instead of measuring
+    against a stale pre-reply anchor. Mutation evidence: reverting the
+    pending-anchor reset makes this fail exactly as the reviewer
+    reproduced it (immediate exit on the tick right after the barge-in)."""
+    c, ev = _make(idle=10.0)
+    c.enter()
+    c.on_session_ready()
+    c.tick(now=0.0)  # anchors last_activity at 0.0
+    c.on_turn_committed(now=0.0)
+    c.on_first_audio()
+    assert c.state == "speaking"
+
+    # The reply has been outstanding well past what idle_timeout_seconds
+    # would allow -- tick() correctly never evaluates it mid-reply.
+    ev.clear()
+    c.on_keypress()  # barge-in at t~361, analogous to the review's repro
+    assert c.state == "live"
+    assert any(isinstance(e, SilenceSpeech) for e in ev)
+
+    ev.clear()
+    c.tick(now=361.5)  # first tick after the barge-in: must NOT exit
+    assert c.state == "live"
+    assert not any(isinstance(e, ExitLoop) for e in ev)
+
+    # But genuine silence for a full fresh idle window afterward still exits.
+    ev.clear()
+    c.tick(now=361.5 + 10.0)
+    assert c.state == "idle"
+    assert any(
+        isinstance(e, ExitLoop) and e.reason == "idle-timeout" for e in ev
+    )
+
+
+def test_connect_failed_while_reconnecting_exits_with_connection_lost():
+    """F2 (review, MEDIUM-HIGH): reproduces the reviewer's permanent-strand
+    finding -- a failed RECONNECT attempt (Task 5's wiring shares the same
+    connect code path for first-connect and reconnect, so on_connect_failed
+    WILL arrive while `reconnecting`) used to be silently swallowed
+    (on_connect_failed only acted on `connecting`), leaving the loop stuck
+    in `reconnecting` forever: no ExitLoop, and tick() only ever evaluates
+    `live`, so nothing could ever rescue it. The reconnect-once allowance
+    is already spent by definition whenever this state is `reconnecting`
+    (on_transport_closed's own first-failure path is what put it there), so
+    a failed reconnect attempt routes to the SAME give-up exit a second
+    on_transport_closed(error=True) would: ExitLoop(reason=
+    "connection-lost")."""
+    c, ev = _make()
+    c.enter()
+    c.on_session_ready()
+    c.on_transport_closed(error=True)  # 1st failure -> reconnecting
+    assert c.state == "reconnecting"
+
+    ev.clear()
+    c.on_connect_failed()  # the reconnect attempt itself failed to connect
+    assert c.state == "idle"
+    exits = [e for e in ev if isinstance(e, ExitLoop)]
+    assert exits and exits[-1].reason == "connection-lost"
+
+
+def test_connect_failed_is_a_noop_while_live_or_speaking():
+    """F2 (continued): pins the OTHER half of the contract so it cannot
+    silently flip either way later -- a stray on_connect_failed() arriving
+    while there is no connect attempt outstanding at all (`live` or
+    `speaking`) must still be a pure no-op (dropped, no state change)."""
+    c, ev = _make()
+    c.enter()
+    c.on_session_ready()
+    ev.clear()
+    c.on_connect_failed()
+    assert ev == []
+    assert c.state == "live"
+
+    c.on_turn_committed(now=0.0)
+    c.on_first_audio()
+    assert c.state == "speaking"
+    ev.clear()
+    c.on_connect_failed()
+    assert ev == []
+    assert c.state == "speaking"
+
+
+def test_keypress_barges_in_identically_in_acoustic_mode():
+    """F3 (review, LOW): keyboard barge-in must work identically whether or
+    not acoustic_barge_in is enabled -- V3's keyboard-first,
+    speaker-safe-by-default discipline is not conditional on the mode."""
+    c, ev = _make(acoustic=True)
+    c.enter()
+    c.on_session_ready()
+    c.on_turn_committed(now=0.0)
+    c.on_first_audio()
+    assert c.state == "speaking"
+
+    ev.clear()
+    c.on_keypress()
+    assert any(isinstance(e, SilenceSpeech) for e in ev)
+    assert any(isinstance(e, ModeChanged) and e.state == "live" for e in ev)
+    assert c.state == "live"
