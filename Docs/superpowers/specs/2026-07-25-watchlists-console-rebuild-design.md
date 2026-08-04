@@ -326,20 +326,34 @@ rather than `SubscriptionsDB`.
 
 ### Tabs
 
-`1`–`5` select Read / Sources / Runs / Rules / Artifacts, preserving the digit muscle memory of the
-current screen. Only **Read** uses the three-pane split. Sources, Runs, Rules, and Artifacts take
-the full centre width — they have no collection→feed→item relationship.
+> **Decision (task-1346, owner ruling 2026-08-03): the spec adopts the shipped strip.** Phase C
+> deliberately kept the pre-existing section strip rather than this section's original five-tab
+> layout, and that divergence was never recorded — it was rediscovered in Phase D when a task went
+> looking for the original "Artifacts tab names the next slice" empty state. Rather than reshape
+> the shipped UI to match an earlier sketch, this section now describes what ships; the original
+> five-tab text is preserved in git history.
 
-**Artifacts is empty-state-only in spec #1**, stating plainly that generation arrives in the next
-slice. It lists artifacts produced by the selected watchlist and navigates to the Artifacts screen;
-it never stores or renders artifacts itself.
+`1`–`7` select **Overview / Sources / Items / Runs / Rules / Notifications / Artifacts** — the
+seven sections of `watchlists_tab_strip.SECTIONS`, one digit per tab in strip order. "Read" in
+prose and code comments refers to the **Items** section (the reader lives there). Only Items uses
+the three-pane split; every other section takes the full centre width — they have no
+collection→feed→item relationship. That rule is enforced, not aspirational (task-1344): FEEDS and
+CONTENT are unmounted off the Items tab, and every centre-region layout gesture (`z`/`Z`/chevron)
+off Items is refused with a notify rather than silently persisting a layout for panes that are not
+on screen.
 
-Deep-linking needs care. `NavigateToScreen` does accept a `screen_context` dict
-(`main_navigation.py:47`), but the Artifacts screen does not read it — it consumes an app attribute,
-`pending_artifacts_chatbook_target_id` (`artifacts_screen.py:72-85`), and that attribute is
-**chatbook-specific**. Selecting a watchlist artifact therefore requires a parallel pending
-attribute and a consumer on the Artifacts screen. That work belongs to spec #2, since spec #1 has no
-artifacts to link to; it is recorded here so spec #2 does not discover it late.
+Beyond the original five: **Overview** is the landing section (health cards, failed runs, and the
+first-run guidance that replaces empty chrome — TASK-998), and **Notifications** hosts the
+notification rules and log the original sketch had no home for.
+
+**Artifacts is a fully built section, not the empty-state placeholder spec #1 planned.** Spec #2
+shipped in full: the section generates and lists text briefings, casts scripts, synthesizes
+per-speaker audio, exports the podcast feed directory (with an opt-in localhost server,
+task-1760), persists kept briefings/scripts to ChaChaNotes (task-1780), and schedules generation.
+Artifacts render **in this screen** — the original plan to navigate out to the chatbook Artifacts
+screen, and the `pending_artifacts_chatbook_target_id` deep-linking concern that came with it, are
+both moot; section deep-linking into this screen goes through the shell's validated
+`screen_context` (`_apply_navigation_context`, which accepts any of the seven section ids).
 
 ### Action scopes
 
@@ -423,7 +437,8 @@ throughout the workflow while showing what was honestly captured.
 
 ### Key bindings
 
-Preserved from today: `1`–`5`, `?`, `n`, `d`, `c`, `p`.
+Preserved from today: the section digits (shipped as `1`–`7`, one per tab — see Tabs), `?`, `n`,
+`d`, `c`, `p`.
 Added: `e` edit, `s` stage, `i` ingest, `P` pause, `z` collapse, `Z` solo, `/` search, `j`/`k`
 next/previous item, `[` / `]` rail toggles.
 
@@ -433,9 +448,11 @@ bindings are weakly discoverable — the footer hint bar carries them.
 
 ### Empty states
 
-First run has no watchlists. The tree shows **All sources** with an inline "Add your first feed"
-affordance rather than an empty box. Items with no captured body explain why and how to fix it.
-The Artifacts tab names the next slice instead of showing a bare empty table.
+First run has no watchlists. The Overview section carries the first-run guidance (what a watchlist
+is and the two steps to a working one — TASK-998/TASK-1347), and the tree shows **All sources**
+rather than an empty box. Items with no captured body explain why and how to fix it. The Artifacts
+tab's empty state is actionable, not a bare table: "No briefings yet. Press Generate to write one."
+(The original "names the next slice" wording is superseded — the slice shipped; see Tabs above.)
 
 ## Data flow
 
