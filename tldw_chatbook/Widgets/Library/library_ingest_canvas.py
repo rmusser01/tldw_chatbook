@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from pathlib import PurePath
 from typing import Any
 
 from rich.markup import escape as escape_markup
@@ -17,9 +19,6 @@ from tldw_chatbook.Library.ingest_capabilities import (
     get_capabilities,
 )
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
-from datetime import datetime, timezone
-from pathlib import PurePath
-
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age,
 )

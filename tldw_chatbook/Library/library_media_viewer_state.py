@@ -175,6 +175,9 @@ def build_library_media_viewer_state(
             media item is loaded yet. Tolerated to have missing/None fields.
         now: Reference time for the "Updated" relative-age label; defaults
             to the current UTC time.
+        arrival_note: One-shot context line rendered FIRST in the metadata
+            lines (task-2223: e.g. reaching this item via a dedup-matched
+            ingest row); empty renders nothing extra.
 
     Returns:
         Immutable viewer state: title, ordered metadata lines, content,

@@ -78,7 +78,6 @@ from ...Widgets.Library.library_ingest_canvas import (
     ingest_scope_label,
 )
 from ...Library.library_ingest_jobs import (
-    INGEST_DUPLICATE_PROGRESS_PREFIX,
     IngestJobState,
     LibraryIngestJob,
     count_duplicate_done_jobs,
@@ -14076,9 +14075,10 @@ class LibraryScreen(BaseAppScreen):
         deduplicated and therefore has no stamped ``media_id``. Defensively
         skips fallback when the media database is unavailable.
         """
-        if str(getattr(job, "progress", "") or "").startswith(
-            INGEST_DUPLICATE_PROGRESS_PREFIX
-        ):
+        # Delegate to the tally's own predicate: ``progress`` is a dict
+        # with the marker under ["message"] (Qodo caught a str() check that
+        # could never match).
+        if count_duplicate_done_jobs((job,)):
             self._library_media_arrival_note = (
                 "Matched an existing item — nothing new was imported."
             )
