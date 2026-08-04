@@ -15,6 +15,7 @@ from .library_prompts_canvas import LibraryPromptsListCanvas
 from .library_rail import LIBRARY_RAIL_ROW_PREFIX, LibraryRail, library_dim_label_text
 from .library_search_rag_panel import (
     LibrarySearchRagPanel,
+    library_rag_answer_children,
     library_rag_coverage_note_children,
     library_rag_history_children,
     library_rag_query_shows_full_recovery,
@@ -75,6 +76,7 @@ __all__ = [
     "skill_trust_unlock_enabled",
     "skill_user_invocable_label",
     "library_dim_label_text",
+    "library_rag_answer_children",
     "library_rag_coverage_note_children",
     "library_rag_history_children",
     "library_rag_query_shows_full_recovery",

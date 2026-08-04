@@ -195,6 +195,52 @@ def test_query_state_blocks_empty_query_and_runtime_blockers() -> None:
     assert ready_query.run_action.enabled is True
 
 
+def test_query_state_provider_gate_is_rag_only() -> None:
+    """(PR-3 task 2) `provider_ready` feeds the ONE existing blocked branch
+    at `Library/library_rag_state.py:893-897` -- and that branch is gated on
+    `normalized_mode == "rag"`. A not-ready provider must therefore block
+    `rag` mode with the pre-existing "Select a provider/model..." copy, and
+    must leave `search` (keyword) mode completely unaffected: keyword mode
+    never calls a provider at all, so gating it on one would block a query
+    that could otherwise run.
+    """
+    blocked_rag = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_ready=False,
+    )
+
+    assert blocked_rag.status == "blocked"
+    assert blocked_rag.run_action.enabled is False
+    assert blocked_rag.run_action.disabled_reason == (
+        "Select a provider/model before asking for a RAG answer."
+    )
+    assert "Owner: LLM provider." in blocked_rag.recovery_copy
+    assert (
+        "Next: Select a provider and model before running a RAG answer."
+        in blocked_rag.recovery_copy
+    )
+
+    unaffected_search = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="search",
+        provider_ready=False,
+    )
+
+    assert unaffected_search.status == "ready"
+    assert unaffected_search.run_action.enabled is True
+    assert unaffected_search.run_action.disabled_reason == ""
+
+    ready_rag = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_ready=True,
+    )
+
+    assert ready_rag.status == "ready"
+    assert ready_rag.run_action.enabled is True
+
+
 def test_query_state_blocked_is_empty_query_and_no_scope_properties() -> None:
     """A1: `blocked_is_empty_query`/`blocked_is_no_scope` key the Search
     canvas's single quiet line, distinct from real-failure blockers (which
@@ -582,7 +628,7 @@ def test_row_badge_label_bare_source_type_when_no_signal() -> None:
         }
     )
 
-    assert row.row_badge_label == "media"
+    assert row.row_badge_label == "Media"
 
 
 def test_row_badge_label_includes_citations_only_when_present() -> None:
@@ -594,7 +640,7 @@ def test_row_badge_label_includes_citations_only_when_present() -> None:
         }
     )
 
-    assert row.row_badge_label == "media · 2 citations"
+    assert row.row_badge_label == "Media · 2 citations"
 
 
 def test_row_badge_label_maps_blocked_eligibility_to_excluded_from_context() -> None:
@@ -605,7 +651,7 @@ def test_row_badge_label_maps_blocked_eligibility_to_excluded_from_context() -> 
         }
     )
 
-    assert row.row_badge_label == "media · excluded from context"
+    assert row.row_badge_label == "Media · excluded from context"
 
 
 def test_row_badge_label_includes_non_default_workspace() -> None:
@@ -616,7 +662,7 @@ def test_row_badge_label_includes_non_default_workspace() -> None:
         }
     )
 
-    assert row.row_badge_label == "media · workspace-a"
+    assert row.row_badge_label == "Media · workspace-a"
 
 
 def test_row_badge_label_joins_with_middle_dot_not_pipe() -> None:
@@ -634,7 +680,7 @@ def test_row_badge_label_joins_with_middle_dot_not_pipe() -> None:
 
     assert (
         row.row_badge_label
-        == "media · workspace-a · 1 citation · excluded from context"
+        == "Media · workspace-a · 1 citation · excluded from context"
     )
     assert "|" not in row.row_badge_label
 
@@ -722,6 +768,84 @@ def test_panel_state_searching_status_overrides_run_action_only_when_reached() -
     assert searching_blocked.retrieval_status == "blocked"
     assert searching_blocked.query_state.run_action.label == "Run"
     assert searching_blocked.query_state.run_action.enabled is False
+
+
+def test_panel_state_answering_status_overrides_run_action_only_when_reached() -> None:
+    """PR-3 Task 3: the new "answering" retrieval status (set while the RAG
+    Answer worker's provider call is in flight) mirrors "searching" -- see
+    `test_panel_state_searching_status_overrides_run_action_only_when_reached`
+    above -- one more explicit-status branch in the same normalizer, not a
+    forked copy of it. It overrides an otherwise-open run gate with a
+    disabled, distinctly-labeled run action, but a query that's ALSO
+    blocked (e.g. no source scope) keeps its real blocked label, since the
+    gate ladder never reaches the answering branch for it.
+    """
+    answering_ready = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Find policy evidence",
+        mode="rag",
+        retrieval_status="answering",
+    )
+    assert answering_ready.retrieval_status == "answering"
+    assert answering_ready.query_state.run_action.label == "Answering…"
+    assert answering_ready.query_state.run_action.enabled is False
+    assert answering_ready.query_state.run_action.widget_id == "library-rag-run-query"
+
+    answering_blocked = LibraryRagPanelState.from_values(
+        source_counts={"notes": 0},
+        query="Find policy evidence",
+        mode="rag",
+        retrieval_status="answering",
+    )
+    assert answering_blocked.retrieval_status == "blocked"
+    assert answering_blocked.query_state.run_action.label == "Run"
+    assert answering_blocked.query_state.run_action.enabled is False
+
+
+def test_panel_state_answering_keeps_selected_evidence_usable_in_console() -> None:
+    """PR-3 Task 4 review: generation must not disable "Use in Console" for
+    already-selected evidence. Retrieval has settled and its bundle is
+    frozen by the time answering starts, so the answer cannot change what is
+    stageable -- and the disabled copy ("Run a query and select usable
+    evidence before sending to Console.") would be a plain falsehood in a
+    state where a query HAS run and evidence IS selected. Only the run
+    action is in-flight-disabled here.
+    """
+    result = LibraryRagResultRow.from_result(
+        {
+            "title": "Incident Review",
+            "snippet": "Expired credential caused the incident.",
+            "score": 0.93,
+            "source_id": "note-42",
+            "chunk_id": "chunk-7",
+        }
+    )
+    answering = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        results=(result,),
+        selected_result_id=result.result_id,
+        retrieval_status="answering",
+    )
+
+    assert answering.retrieval_status == "answering"
+    assert answering.selected_result == result
+    assert answering.use_in_console_action.enabled is True
+    assert answering.use_in_console_action.disabled_reason == ""
+    # ...while the run gate itself stays honestly in-flight.
+    assert answering.query_state.run_action.enabled is False
+    assert answering.query_state.run_action.label == "Answering…"
+
+    # With nothing selected, "answering" is no more usable than "ready" is.
+    nothing_selected = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        results=(result,),
+        retrieval_status="answering",
+    )
+    assert nothing_selected.use_in_console_action.enabled is False
 
 
 def test_panel_state_defaults_stable_selectors_for_recovery_paths() -> None:
@@ -874,7 +998,7 @@ class TestUpdateSearchHistory:
 
 class TestSearchingStatusLine:
     def test_lists_selected_sources(self):
-        assert searching_status_line(("notes", "media")) == "searching · notes, media…"
+        assert searching_status_line(("notes", "media")) == "searching · Notes, Media…"
 
     def test_empty_scope_still_reads_searching(self):
         assert searching_status_line(()) == "searching…"

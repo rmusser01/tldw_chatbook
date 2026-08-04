@@ -10,6 +10,7 @@ from typing import Any, Mapping, Sequence
 
 from rich.markup import escape as escape_markup
 
+from tldw_chatbook.Library.library_rag_answer_service import LibraryRagAnswer
 from tldw_chatbook.Utils.input_validation import (
     sanitize_string,
     validate_number_range,
@@ -45,7 +46,6 @@ LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES: tuple[str, ...] = (
 )
 LIBRARY_RAG_DEFAULT_TOP_K = 5
 LIBRARY_RAG_RUN_ACTION_ID = "library-rag-run-query"
-LIBRARY_RAG_USE_IN_CONSOLE_ACTION_ID = "library-rag-use-in-console"
 LIBRARY_RAG_SERVICE_ERROR_SELECTOR = "library-rag-service-error"
 LIBRARY_RAG_EMPTY_STATE_SELECTOR = "library-rag-empty-state"
 LIBRARY_RAG_USE_IN_CONSOLE_DISABLED_REASON = (
@@ -121,6 +121,10 @@ LIBRARY_RAG_NO_SOURCES_GATE_COPY = (
 )
 _NO_SOURCES_NEXT_ACTION = "Import media or create notes, then search."
 LIBRARY_RAG_SEARCHING_LABEL = "Searching…"
+#: PR-3 Task 3: the RAG Answer worker's in-flight label (mirrors
+#: `LIBRARY_RAG_SEARCHING_LABEL`) -- reached once retrieval has already
+#: landed and the single grounded-answer provider call is running.
+LIBRARY_RAG_ANSWERING_LABEL = "Answering…"
 _OPEN_SOURCE_TYPE_MAP = {
     "note": "notes",
     "notes": "notes",
@@ -162,9 +166,15 @@ def searching_status_line(source_types: Sequence[str]) -> str:
         source_types: Selected source type IDs for the in-flight query.
 
     Returns:
-        User-facing status line, e.g. `searching · notes, media…`.
+        User-facing status line, e.g. `searching · Notes, Media…`. Source
+        type IDs are rendered through `_source_type_display_label` (task-7
+        PR-2 leftover) so this line matches the capitalized vocabulary the
+        Sources toggles and scope-summary strip already use, instead of
+        the raw lowercase identifier.
     """
-    labels = ", ".join(str(s) for s in source_types if str(s).strip())
+    labels = ", ".join(
+        _source_type_display_label(str(s)) for s in source_types if str(s).strip()
+    )
     return f"searching · {labels}…" if labels else "searching…"
 
 
@@ -386,6 +396,58 @@ def _escape_all_brackets(text: str) -> str:
     if escaped.endswith("\\") and not escaped.endswith("\\\\"):
         escaped += "\\"
     return escaped
+
+
+#: `ANSWER_MAX_TOKENS` (1200, `library_rag_answer_service.py`) at up to ~5
+#: chars/token leaves headroom for a full grounded answer without
+#: truncating it mid-sentence or mid-citation.
+LIBRARY_RAG_ANSWER_DISPLAY_MAX_LENGTH = 8_000
+
+
+def library_rag_answer_display_text(text: Any) -> str:
+    """Sanitize and terminally escape one Library RAG answer's raw text.
+
+    The shared escaping seam for `LibraryRagAnswer.text`/`.error` and
+    `AnswerCitationValidation.recovery` copy on their way into a `Static` --
+    all three are untrusted (`.text`/`.error` are model/provider output;
+    `.recovery` is run through here too, defensively, even though it is
+    presently always one of a handful of fixed sentences).
+
+    Unlike `LibraryRagResultRow.display_snippet`, this does NOT strip
+    Markdown structure: the answer is short generated prose, not an
+    arbitrary-length ingested document, and `LIBRARY_RAG_ANSWER_SYSTEM_
+    PROMPT` already asks the model for plain prose with no preamble.
+
+    It DOES need the fuller `_escape_all_brackets` guarantee rather than
+    plain `escape_markup`, and for a reason `display_snippet` does not
+    share: a WORKING answer is expected to routinely carry bracketed
+    citation markers by design -- the system prompt asks the model to cite
+    with a label like `[S1]`. Rich's own `escape_markup` only escapes a `[`
+    that looks tag-shaped by ITS OWN narrower grammar (`[a-z#/@]`); an
+    uppercase citation label like `[S1]` does not match it and would sail
+    through unescaped. `Static` renders through Textual's own tokenizer,
+    though, which opens a tag on ANY unescaped `[` regardless of what
+    follows -- so the citation markers this whole feature exists to show
+    are exactly what a narrower escape would leave live and dangerous.
+    `_escape_all_brackets` neutralizes every `[`, tag-shaped or not.
+
+    Args:
+        text: Raw text to sanitize and escape for display.
+
+    Returns:
+        Sanitized, escaped, display-ready text; `""` for empty or unsafe
+        input (e.g. an embedded `<script>` block).
+    """
+    plain = _sanitize_display_text(
+        text,
+        "",
+        max_length=LIBRARY_RAG_ANSWER_DISPLAY_MAX_LENGTH,
+        preserve_newlines=True,
+        escape=False,
+    )
+    if not plain:
+        return ""
+    return _escape_all_brackets(plain)
 
 
 def _clamp_display_text(
@@ -1063,8 +1125,16 @@ class LibraryRagResultRow:
 
     @property
     def source_type_badge_label(self) -> str:
-        """Compact source type label for evidence rows."""
-        return (
+        """Compact source type label for evidence rows.
+
+        Routed through `_source_type_display_label` (task-7 PR-2 leftover)
+        so the badge reads "Media"/"Notes" like the rest of the panel's
+        vocabulary instead of the raw lowercase provenance identifier. An
+        unrecognized/already-escaped value (e.g. a markup-escaping test's
+        deliberately hostile `source_type`) falls through unchanged --
+        `_source_type_display_label` only rewrites values it recognizes.
+        """
+        return _source_type_display_label(
             _provenance_text(self.provenance, "source_type")
             or _provenance_text(self.provenance, "item_type")
             or _provenance_text(self.provenance, "type")
@@ -1135,22 +1205,6 @@ class LibraryRagResultRow:
         return " · ".join(parts)
 
     @property
-    def source_identity_label(self) -> str:
-        """User-facing source/chunk identity for selected evidence inspection."""
-        if self.source_id and self.chunk_id:
-            return f"Source: {self.source_id} / {self.chunk_id}"
-        if self.source_id:
-            return f"Source: {self.source_id}"
-        if self.chunk_id:
-            return f"Chunk: {self.chunk_id}"
-        return "Source: unavailable"
-
-    @property
-    def runtime_label(self) -> str:
-        """User-facing runtime/backend identity for selected evidence inspection."""
-        return f"Runtime: {self.runtime_backend or 'local'}"
-
-    @property
     def authority_display_label(self) -> str:
         """User-facing authority label aligned with evidence handoff metadata."""
         explicit_label = _provenance_text(self.provenance, "authority_label")
@@ -1191,11 +1245,6 @@ class LibraryRagResultRow:
         ):
             return "Eligibility: blocked until an active workspace is available"
         return "Eligibility: available for active context"
-
-    @property
-    def handoff_label(self) -> str:
-        """User-facing statement of what the Console handoff preserves."""
-        return "Handoff: snippet + citations + source/chunk IDs"
 
     @property
     def open_source_type(self) -> str:
@@ -1362,6 +1411,12 @@ class LibraryRagPanelState:
     #: so every pre-existing call site that never distinguished the two
     #: keeps its exact prior behavior.
     searched_query: str = ""
+    #: PR-3 Task 1's grounded-answer outcome (`generate_library_rag_answer`),
+    #: when one has landed for the query `results` were retrieved for.
+    #: `None` before any rag-mode answer has been generated, and always
+    #: `None` in keyword (search) mode -- rag mode is the only mode Task 1's
+    #: answer service is ever invoked for.
+    answer: LibraryRagAnswer | None = None
 
     @classmethod
     def from_values(
@@ -1383,6 +1438,7 @@ class LibraryRagPanelState:
         history: Sequence[str] = (),
         history_collapsed: bool = False,
         diagnostics: Mapping[str, Any] | None = None,
+        answer: LibraryRagAnswer | None = None,
     ) -> "LibraryRagPanelState":
         """Build full Library Search/RAG panel display state.
 
@@ -1418,6 +1474,9 @@ class LibraryRagPanelState:
                 `semantic_scope_coverage` (Task 8). `None` (the default --
                 every call site that predates Task 8) renders no coverage
                 note.
+            answer: PR-3 Task 1's grounded-answer outcome for the current
+                `results`, or `None` before one has landed (every call site
+                that predates Task 3).
 
         Returns:
             Display state for the destination-native Library Search/RAG panel.
@@ -1481,6 +1540,15 @@ class LibraryRagPanelState:
             normalized_status = "searching"
             recovery_copy = ""
             next_action = "Wait for retrieval results."
+        elif explicit_status == "answering":
+            # PR-3 Task 3: reached once retrieval already landed and the RAG
+            # Answer worker's single provider call is in flight -- one more
+            # explicit-status branch alongside "searching" above, not a
+            # forked copy of it (see the run-action override below, which
+            # extends the same `if` rather than adding a second one).
+            normalized_status = "answering"
+            recovery_copy = ""
+            next_action = "Wait for the RAG answer."
         elif explicit_status in {"blocked", "failed"}:
             normalized_status = explicit_status
             recovery_copy = explicit_recovery_copy or _recovery_copy(
@@ -1522,24 +1590,38 @@ class LibraryRagPanelState:
             recovery_copy = ""
             next_action = "Run Search/RAG over the selected Library sources."
 
-        if normalized_status == "searching":
+        if normalized_status in {"searching", "answering"}:
             # C2: the run action itself carries the in-flight state -- label
-            # "Searching…" (an ellipsis character, one unit), disabled, so
-            # the canvas never shows an enabled Run button while a query is
-            # already running. Only reachable when the run gate was open
-            # (query_state.status != "blocked"), so there is always a
-            # well-formed prior run_action to replace.
+            # "Searching…"/"Answering…" (an ellipsis character, one unit),
+            # disabled, so the canvas never shows an enabled Run button while
+            # a query (or its RAG answer) is already running. Only reachable
+            # when the run gate was open (query_state.status != "blocked"),
+            # so there is always a well-formed prior run_action to replace.
+            in_flight_label, in_flight_reason = (
+                (LIBRARY_RAG_ANSWERING_LABEL, "Answer generation in progress.")
+                if normalized_status == "answering"
+                else (LIBRARY_RAG_SEARCHING_LABEL, "Search in progress.")
+            )
             query_state = replace(
                 query_state,
                 run_action=LibraryRagActionState(
-                    label=LIBRARY_RAG_SEARCHING_LABEL,
+                    label=in_flight_label,
                     enabled=False,
                     widget_id=LIBRARY_RAG_RUN_ACTION_ID,
-                    disabled_reason="Search in progress.",
+                    disabled_reason=in_flight_reason,
                 ),
             )
 
-        can_use_console = normalized_status == "ready" and selected_result is not None
+        # "answering" counts as usable evidence (PR-3 Task 4 review): the
+        # retrieval that produced `selected_result` has already settled and
+        # its bundle is frozen -- generation cannot change what is stageable.
+        # Disabling the action mid-generation greyed the button AND made the
+        # `u` key answer "Run a query and select usable evidence before
+        # sending to Console.", which is false in that state: a query HAS
+        # run and evidence IS selected.
+        can_use_console = (
+            normalized_status in {"ready", "answering"} and selected_result is not None
+        )
         return cls(
             scope=scope,
             query_state=query_state,
@@ -1549,7 +1631,16 @@ class LibraryRagPanelState:
             use_in_console_action=LibraryRagActionState(
                 label="Use in Console",
                 enabled=can_use_console,
-                widget_id=LIBRARY_RAG_USE_IN_CONSOLE_ACTION_ID,
+                # The panel mounts exactly one Console-handoff button per
+                # evidence result -- the results-lane one below the
+                # selected row (`library_rag_result_row_children`'s
+                # sibling in `library_rag_results_body_children`), never a
+                # separate inspector-column button. This must match that
+                # mounted id, not an id no widget actually carries (task-7
+                # PR-2 leftover: `LIBRARY_RAG_USE_IN_CONSOLE_ACTION_ID`
+                # pointed at a retired 3-pane inspector button that was
+                # never rebuilt for this canvas).
+                widget_id="library-rag-use-selected-in-console",
                 disabled_reason=(
                     ""
                     if can_use_console
@@ -1564,6 +1655,7 @@ class LibraryRagPanelState:
             history_collapsed=bool(history_collapsed),
             coverage_note=coverage_note,
             searched_query=normalized_searched_query,
+            answer=answer,
         )
 
 

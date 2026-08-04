@@ -299,3 +299,44 @@ the ABSOLUTE venv python path, never bare `python3`. And when a feature degrades
 without a dependency, the warning must state the actual current consequences — copy
 written for an old architecture ("commands execute when you stop") becomes actively
 misleading after a rework and nobody re-reads it unless a review targets it.
+
+---
+
+## Scratch-profile live launches: copy `chromadb/` too, expect a config rewrite, and the real provider lever is `[API] default_api` (PR-3 Task 8, 2026-08-03)
+
+**Incident.** Live-verifying the Library's honest RAG answering (PR-3 Task 8) needed a
+scratch profile pointed at a copy of the real Library DBs, with a real provider
+configured, launched via `TLDW_CONFIG_PATH`. Three things about that recipe were wrong
+on the first attempt, each costing a full relaunch to diagnose.
+
+**1. The DB-copy recipe must copy `chromadb/` too, BEFORE first launch.** The plan
+copied only the SQLite DB files. The app auto-creates an empty `chromadb/` directory
+the moment it boots against a scratch profile with none present. Copying the real
+`chromadb/` directory in AFTER that first boot nests it under the auto-created one
+instead of replacing it, so embeddings resolve against the empty nested copy and
+retrieval looks broken for a reason that has nothing to do with the code under test.
+This is exactly what happened on the first attempt. Copy `chromadb/` in the same
+pre-launch pass as the DB files, never after.
+
+**2. The app rewrites its scratch config on boot.** A scratch `config.toml` written by
+hand with an `[API]` table already present gets a SECOND `[API]` table appended by the
+app's own startup config-write path. A duplicate table is enough to make the first-run
+wizard reappear on the next launch, overriding the scratch config's intent (skip
+first-run, use a real provider). Do not hand-author a config and trust it to survive
+untouched — expect the app to rewrite it, and diff the file AFTER first boot, not just
+before.
+
+**3. The real-provider lever is the legacy `[API] default_api` key, not
+`[llm_api_settings] default_api_endpoint`.** The verification plan pointed a scratch
+config at the latter, which the running app never reads for this purpose, so the
+provider stayed unconfigured despite the file looking correct.
+`resolve_library_rag_answer_provider()` (`Library/library_rag_answer_service.py`) reads
+`config.default_api_endpoint`, which `config.py` resolves from `[API] default_api` — the
+legacy key, still the one a live launch actually honors.
+
+**What to do.** For any scratch-profile live TUI verification against real Library data
+and a real provider: copy `chromadb/` alongside the SQLite DBs in the SAME pre-launch
+pass, before the scratch profile is ever launched; treat the scratch `config.toml` as
+something the app WILL rewrite on boot and diff it AFTER first launch rather than
+trusting the hand-authored version; and set the provider via `[API] default_api`, not
+`[llm_api_settings] default_api_endpoint`.

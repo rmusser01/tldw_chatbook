@@ -4888,6 +4888,31 @@ ListItem.personas-library-row.is-active.-highlight {
     min-height: 8;
 }
 
+/* PR-3 Task 3: the Answer region mounts as its own sibling BETWEEN
+ * `#library-rag-source-scope` and `#library-rag-results` (never inside the
+ * latter -- see the mount-point comment in `LibrarySearchRagPanel.compose()`
+ * and `library_rag_answer_children`'s docstring). Auto-height like its
+ * sibling regions above: absent entirely on the idle/keyword-mode canvas,
+ * one quiet line while generating, a full card once an answer lands. */
+#library-rag-answer {
+    height: auto;
+    min-height: 0;
+}
+
+/* The answer IS the headline of rag mode (PR-3 Task 3) -- a raised card,
+ * not a muted status line, so a grounded answer reads as this panel's
+ * primary content rather than one more line among many. Reuses the same
+ * surface/text tokens `.library-rag-result-row` already uses for its own
+ * content-card treatment. */
+#library-rag-answer-text {
+    width: 100%;
+    height: auto;
+    padding: 1 1;
+    margin: 0 0 1 0;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
 #library-rag-query-input {
     width: 100%;
     min-width: 0;
@@ -4949,6 +4974,18 @@ ListItem.personas-library-row.is-active.-highlight {
     background: $ds-status-warning 10%;
 }
 
+/* PR-3 Task 3 (carried Task 1 review ruling): an uncited/unverified
+ * `ready` answer must show its citation-recovery copy at LEAST as
+ * prominently as the answer text itself. Reuses the same bordered box and
+ * warning token as `.is-blocked` above, under its own modifier name -- this
+ * state is not a run-gate block (the query ran, and produced an answer);
+ * keeping the two meanings distinct in the stylesheet matches the render
+ * code, which never conflates "blocked" and "needs scrutiny" either. */
+.library-rag-callout.is-caution {
+    border: solid $ds-status-warning;
+    background: $ds-status-warning 10%;
+}
+
 .library-rag-quiet-line {
     padding: 0 1;
     margin: 0 0 1 0;
@@ -5004,10 +5041,22 @@ ListItem.personas-library-row.is-active.-highlight {
     border-bottom: solid $ds-focus-accent;
 }
 
+/* task-7 PR-2 leftover: this title Static used to draw its own
+ * `border: solid $ds-grid-line` base border, immediately nested inside
+ * `.library-rag-result-card`'s own `border: solid $ds-grid-line` a few
+ * cells out -- two thin boxes of the identical color/style, one drawn
+ * right inside the other, reading as a rendering glitch rather than
+ * intentional structure. The card is now the row's only box in the
+ * unselected state. `.is-selected` below is untouched and still reads
+ * as selected on its own: it fully overrides `border` with its own
+ * `heavy $ds-focus-accent` value (plus the focus-bg/focus-fg/bold
+ * treatment), so it never depended on this rule's now-removed border for
+ * legibility -- it draws a heavy highlighted box around just the
+ * selected row's title line, nested inside the card's thin border,
+ * exactly as before. */
 .library-rag-result-row {
     padding: 0 1;
     margin: 1 0 0 0;
-    border: solid $ds-grid-line;
     background: $ds-surface-panel;
 }
 

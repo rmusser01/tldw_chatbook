@@ -17,6 +17,7 @@ from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextAr
 
 from tldw_chatbook.app import LibraryIngestQueueMixin
 from Tests.Library.test_library_ingest_runner import _FakeIngestParsePool
+from tldw_chatbook import config as app_config
 from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
@@ -816,12 +817,22 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_search_rag_mode_keeps_run_enabled_without_runtime():
+async def test_library_shell_search_rag_mode_keeps_run_enabled_without_runtime(
+    monkeypatch,
+):
     """Cycling to ``rag`` mode keeps Run enabled even though the app fake has
     no ``_rag_service`` attribute (task-249): the runtime initializes lazily
     at query time, and the retrieval service owns the recovery state when it
-    cannot -- the old provider gate that pre-disabled Run is retired.
+    cannot. That `dependencies_ready`/`index_ready` retirement is unaffected
+    by PR-3 task 2 -- but this test's `provider_ready` leg is now the REAL
+    gate (`Library.library_rag_answer_service.
+    library_rag_answer_provider_ready`), not a hardcoded `True`, so it is
+    satisfied here with an explicitly configured ready provider rather than
+    leaning on config.py's own "openai" fallback. See
+    `test_library_shell_search_rag_mode_blocks_run_without_a_ready_provider`
+    for the blocked path this gate now actually reaches.
     """
+    monkeypatch.setattr(app_config, "default_api_endpoint", "openai", raising=False)
     app = _build_test_app()
     assert getattr(app, "_rag_service", None) is None
     _seed_conversations(app, _two_conversations())
@@ -852,6 +863,48 @@ async def test_library_shell_search_rag_mode_keeps_run_enabled_without_runtime()
         await pilot.pause()
         assert screen.query_one("#library-rag-run-query", Button).disabled is False
         assert "Select a provider/model" not in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_search_rag_mode_blocks_run_without_a_ready_provider(
+    monkeypatch,
+):
+    """(PR-3 task 2) The negative path the previous test's docstring used to
+    claim was retired: with no default LLM endpoint configured, cycling to
+    ``rag`` mode now disables Run and surfaces the pre-existing "Select a
+    provider/model..." copy (`Library/library_rag_state.py:893-897`) --
+    keyword ``search`` mode is unaffected by the same gate.
+    """
+    monkeypatch.setattr(app_config, "default_api_endpoint", "", raising=False)
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+        screen.query_one("#library-rag-query-input", Input).value = "policy question"
+        await _wait_for_library_rag_query_ready(screen, pilot, "policy question")
+        # Still keyword (search) mode -- unaffected by the provider gate.
+        assert screen.query_one("#library-rag-run-query", Button).disabled is False
+
+        screen.query_one("#library-rag-mode-toggle", Button).press()
+        for _ in range(120):
+            toggles = list(screen.query("#library-rag-mode-toggle"))
+            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Mode toggle never switched to RAG Answer.")
+
+        await pilot.pause()
+        await pilot.pause()
+        assert screen.query_one("#library-rag-run-query", Button).disabled is True
+        assert "Select a provider/model" in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -1246,7 +1299,7 @@ async def test_library_shell_search_searching_line_shows_while_gated():
         try:
             await _wait_for_selector(screen, pilot, "#library-rag-searching-line")
             line = str(screen.query_one("#library-rag-searching-line").renderable)
-            assert line == "searching · notes, media, conversations…"
+            assert line == "searching · Notes, Media, Conversations…"
         finally:
             service.release_event.set()
 

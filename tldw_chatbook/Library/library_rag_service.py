@@ -266,10 +266,21 @@ def _empty_results_recovery_state() -> DestinationRecoveryState:
         recovery_action="Query input or source scope",
         authority_owner="Library retrieval",
         stable_selector=LIBRARY_RAG_EMPTY_STATE_SELECTOR,
-        disabled_tooltip=(
-            "No evidence matched the current query. "
-            "Revise the query or broaden the source scope."
-        ),
+        # task-7 PR-2 leftover: nothing on this state's render path reads
+        # `.disabled_tooltip` -- the panel's "empty" branch
+        # (`library_rag_results_body_children` in
+        # `library_search_rag_panel.py`) renders the RAG-33/Task 11 quiet
+        # copy (`library_rag_empty_state_quiet_copy`) instead, and even
+        # `LibraryRagPanelState.recovery_copy` (`library_screen.py`) is
+        # built from `.visible_copy`, never `.disabled_tooltip`. Left
+        # empty rather than carrying the pre-RAG-33 formal-register
+        # sentence this field held before -- that text has no reader and
+        # keeping it around risks a future caller mistaking it for live
+        # copy. `disabled_tooltip` stays a required field on
+        # `DestinationRecoveryState` for the OTHER recovery states this
+        # module builds (e.g. `_service_unavailable_recovery_state`),
+        # which is why this constructor call still has to supply one.
+        disabled_tooltip="",
     )
 
 
