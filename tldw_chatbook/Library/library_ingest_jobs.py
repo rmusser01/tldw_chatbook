@@ -484,6 +484,7 @@ class LibraryIngestJobRegistry:
         detected_type: str = "",
         ingest_options: dict[str, Any] | None = None,
         origin: str = "local",
+        batch_id: str | None = None,
     ) -> LibraryIngestJob:
         """Append a new ``QUEUED`` job.
 
@@ -521,6 +522,7 @@ class LibraryIngestJobRegistry:
             detected_type=detected_type,
             ingest_options=ingest_options or {},
             origin=origin,
+            batch_id=batch_id,
         )
         self._jobs.append(job)
         self._notify_listeners()

@@ -2822,3 +2822,30 @@ def test_worker_initializer_silences_import_noise(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert "MARKER-OK" in result.stdout
     assert "should not reach stderr" not in result.stderr
+
+
+@pytest.mark.asyncio
+async def test_folder_submission_shares_one_batch_id(tmp_path: Path) -> None:
+    """(task-2221 owner ruling) Every file expanded from one folder
+    submission carries the same minted batch id, so the queue can group
+    the run under one header; a single-file submission stays batchless."""
+    db = _make_db(tmp_path)
+    folder = tmp_path / "run"
+    folder.mkdir()
+    _write_text_file(folder, "a.txt", "Document A.")
+    _write_text_file(folder, "b.txt", "Document B.")
+    solo = _write_text_file(tmp_path, "solo.txt", "Solo document.")
+    app = _IngestRunnerHarness(db, worker_count=2)
+
+    async with app.run_test() as pilot:
+        app.submit_library_ingest_job(source_path=str(folder))
+        solo_job = app.submit_library_ingest_job(source_path=str(solo))
+
+        jobs = {Path(j.source_path).name: j for j in app.library_ingest_jobs.jobs()}
+        assert jobs["a.txt"].batch_id is not None
+        assert jobs["a.txt"].batch_id == jobs["b.txt"].batch_id
+        assert jobs["a.txt"].batch_id.startswith("local-")
+        assert jobs["solo.txt"].batch_id is None
+        assert solo_job.batch_id is None
+
+        await _wait_for_runner_idle(app, pilot)

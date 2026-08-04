@@ -2001,3 +2001,51 @@ def test_skips_only_queue_still_offers_clear_finished():
     )
     state = build_library_ingest_state((skipped,), form=LibraryIngestFormState())
     assert state.queue_show_clear_finished is True
+
+
+def test_queue_groups_batches_with_headers_and_latest_line():
+    """(task-2221 owner ruling) Contiguous same-batch runs become one
+    headed group (source, count, age, outcomes); singles stay bare; the
+    latest-batch line leads with the newest batch's outcomes."""
+    single = _job(
+        job_id="ingest-job-1",
+        state=IngestJobState.DONE,
+        source_path="/tmp/solo.txt",
+    )
+    b1 = _job(
+        job_id="ingest-job-2",
+        state=IngestJobState.DONE,
+        source_path="/data/folder_a/one.txt",
+        batch_id="local-aaa",
+        submitted_at=100.0,
+    )
+    b2 = _job(
+        job_id="ingest-job-3",
+        state=IngestJobState.SKIPPED,
+        source_path="/data/folder_a/pic.jpg",
+        batch_id="local-aaa",
+        submitted_at=101.0,
+    )
+    state = build_library_ingest_state(
+        (single, b1, b2), form=LibraryIngestFormState()
+    )
+    assert len(state.queue_groups) == 2
+    bare, headed = state.queue_groups
+    assert bare.header_line == ""
+    assert bare.job_ids == ("ingest-job-1",)
+    assert headed.batch_id == "local-aaa"
+    assert headed.job_ids == ("ingest-job-2", "ingest-job-3")
+    assert headed.header_line.startswith("▸ folder_a — 2 files")
+    assert "1 done" in headed.header_line
+    assert "1 skipped" in headed.header_line
+    assert state.latest_batch_line == "Latest batch: 1 done · 1 skipped"
+
+
+def test_single_file_submission_reads_naturally_without_header():
+    """(task-2221) A batchless single job renders exactly as before: one
+    bare group, no header, no latest-batch line."""
+    solo = _job(job_id="ingest-job-1", state=IngestJobState.DONE)
+    state = build_library_ingest_state((solo,), form=LibraryIngestFormState())
+    assert len(state.queue_groups) == 1
+    assert state.queue_groups[0].header_line == ""
+    assert state.latest_batch_line == ""
