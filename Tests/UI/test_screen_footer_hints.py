@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from textual.widgets import Static
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
@@ -75,6 +76,16 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 screen_footer = screen.query_one(AppFooterStatus)
                 assert "mode" in screen_footer.shortcut_text
                 assert "a add server" in screen_footer.shortcut_text
+                # F-003: the Tokens chip is meaningful only in chat contexts --
+                # on MCP it stays hidden, never a "Tokens: --" placeholder.
+                token_chip = screen.query_one("#footer-token-count", Static)
+                assert token_chip.display is False
+                assert "Tokens: --" not in str(token_chip.renderable)
+                # Past the 0.5s one-shot updater tick (which writes "" on
+                # non-chat tabs), still hidden.
+                await pilot.pause(0.7)
+                assert token_chip.display is False
+                assert "Tokens: --" not in str(token_chip.renderable)
 
                 await app.handle_screen_navigation(NavigateToScreen("library"))
                 screen = await _wait_for_screen(

@@ -147,6 +147,39 @@ async def test_footer_db_indicator_collapses_when_empty_and_stays_down():
 
 
 @pytest.mark.asyncio
+async def test_footer_token_chip_hidden_until_a_real_count_lands():
+    """F-003: the Tokens chip is meaningful only where token counts exist
+    (chat contexts). It now starts empty and hidden -- never a
+    "Tokens: --" placeholder -- appears when a real count is pushed, and
+    hides again when the count clears (non-chat tabs write "" via the
+    periodic updater)."""
+
+    class TestApp(App):
+        def compose(self):
+            yield AppFooterStatus(id="footer")
+
+    app = TestApp()
+    async with app.run_test(size=(100, 12)) as pilot:
+        footer = app.query_one("#footer", AppFooterStatus)
+        chip = app.query_one("#footer-token-count", Static)
+
+        # Fresh footer: no placeholder text, no chip.
+        assert str(chip.renderable) == ""
+        assert chip.display is False
+
+        # A real count reveals the chip...
+        footer.update_token_count("Tokens: 1,234")
+        await pilot.pause()
+        assert "Tokens: 1,234" in str(chip.renderable)
+        assert chip.display is True
+
+        # ...and clearing it (the non-chat updater path) hides it again.
+        footer.update_token_count("")
+        await pilot.pause()
+        assert chip.display is False
+
+
+@pytest.mark.asyncio
 async def test_footer_memory_stats_yield_to_key_hints_when_narrow():
     """A narrow footer hides the debug memory stats to preserve the key hints."""
 
@@ -193,7 +226,10 @@ async def test_footer_reflows_when_counts_change_without_a_resize():
             yield AppFooterStatus(id="footer")
 
     app = TestApp()
-    async with app.run_test(size=(100, 12)) as pilot:
+    # F-003 recalibration: the width budget below used to include the
+    # "Tokens: --" placeholder's 10 cells; the chip now starts hidden and
+    # empty, so the same push-over-the-edge exercise runs at 90 cols.
+    async with app.run_test(size=(90, 12)) as pilot:
         footer = app.query_one("#footer", AppFooterStatus)
         footer.update_db_sizes_display("P: 144.0 KB | C/N: 904.0 KB | M: 376.0 KB")
         await pilot.pause()

@@ -88,9 +88,13 @@ class AppFooterStatus(Widget):
         self._shortcut_source: str | None = None
         self._shortcut_display = Static(self._shortcut_text, id="footer-key-quit")
         self._word_count_display: Static = Static("", id="footer-word-count")
-        self._token_count_display: Static = Static(
-            "Tokens: --", id="footer-token-count"
-        )
+        self._token_count_display: Static = Static("", id="footer-token-count")
+        # F-003: the Tokens chip is meaningful only where token counts exist
+        # (chat contexts). It starts empty and hidden -- no "Tokens: --"
+        # placeholder -- and `update_token_count` reveals it once a real
+        # count lands (the periodic updater writes "" on non-chat tabs, so
+        # authoring/config destinations never render dead chrome).
+        self._token_count_display.display = False
         self._db_status_display: Static = Static("", id="internal-db-size-indicator")
         # F-014: the DB-size readout left user chrome (telemetry lives in
         # the Library Details disclosure and the logs now), so the indicator
@@ -223,6 +227,8 @@ class AppFooterStatus(Widget):
                 self._token_count_display.update(f"{display_text} | ")
             else:
                 self._token_count_display.update("")
+            # F-003: the chip takes footer space only while it has content.
+            self._token_count_display.display = bool(display_text)
             self._reflow_footer_priority()
         except Exception as e:
             print(f"Error updating token count display: {e}")

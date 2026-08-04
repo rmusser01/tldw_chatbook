@@ -5,7 +5,7 @@ from loguru import logger
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
-from textual.widgets import Button, Static
+from textual.widgets import Button
 from textual.message import Message
 from textual import on
 
@@ -25,19 +25,25 @@ if TYPE_CHECKING:
 #: labels stay unnumbered.
 NAV_HOTKEY_DIGITS: tuple[str, ...] = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
 
+#: F-002: the tab labels used to read "1 Home", implying a bare-digit key
+#: while the actual binding (app.py SHELL_DESTINATION_HOTKEYS) is ctrl+digit.
+#: The UP ARROWHEAD glyph (⌃, the macOS control convention) makes the label
+#: honest at zero extra width per tab -- "⌃1" reads "ctrl+1".
+NAV_HOTKEY_GLYPH = "⌃"
+
 
 def nav_button_label(index: int, label: str) -> str:
-    """Prefix a destination label with its hotkey digit when it has one.
+    """Prefix a destination label with its hotkey affordance when it has one.
 
     Args:
         index: Position of the destination in SHELL_DESTINATION_ORDER.
         label: Compact destination label from the shell destination model.
 
     Returns:
-        ``"<digit> <label>"`` for the first ten destinations, else ``label``.
+        ``"⌃<digit> <label>"`` for the first ten destinations, else ``label``.
     """
     if 0 <= index < len(NAV_HOTKEY_DIGITS):
-        return f"{NAV_HOTKEY_DIGITS[index]} {label}"
+        return f"{NAV_HOTKEY_GLYPH}{NAV_HOTKEY_DIGITS[index]} {label}"
     return label
 
 
@@ -145,10 +151,20 @@ class MainNavigationBar(Container):
 
     .nav-overflow-hint {
         width: auto;
+        min-width: 0;
         padding: 0 1;
         height: 3;
+        min-height: 3;
         content-align: center middle;
         color: $text-muted;
+        background: transparent;
+        border: none;
+    }
+
+    .nav-overflow-hint:hover {
+        color: $text;
+        background: $surface;
+        text-style: bold;
     }
     """
 
@@ -182,17 +198,72 @@ class MainNavigationBar(Container):
                 if destination.destination_id == self.active_destination_id:
                     button.add_class("is-active")
                 yield button
-        # Docked outside the scrollable strip so the hint stays visible at the
-        # right edge exactly when the destinations overflow.
-        overflow_hint = Static(
-            "More: Ctrl+P", id="nav-overflow-hint", classes="nav-overflow-hint"
+        # Docked outside the scrollable strip so the affordance stays at the
+        # right edge exactly when the destinations overflow. F-001: it is a
+        # real control now, not just a hint -- pressing it pages the strip
+        # right (wrapping at the far end) so every destination stays
+        # mouse/keyboard-reachable at narrow widths, and it hides when all
+        # destinations fit instead of crowding the edge.
+        overflow_hint = Button(
+            "More ›",
+            id="nav-overflow-hint",
+            classes="nav-overflow-hint",
+            compact=True,
+            tooltip="Show more destinations (Ctrl+P for the full list)",
         )
-        overflow_hint.tooltip = "Open command palette"
+        # Hidden until `_sync_overflow_hint` (post-layout) knows whether the
+        # strip actually overflows -- never a flash of affordance chrome on
+        # a bar where every destination fits.
+        overflow_hint.display = False
         yield overflow_hint
 
     def on_mount(self) -> None:
         """Scroll the initially active destination's button into view."""
         self.call_after_refresh(self._scroll_active_destination_into_view)
+        self.call_after_refresh(self._sync_overflow_hint)
+
+    def on_resize(self) -> None:
+        """Re-sync the overflow affordance when the bar's width changes.
+
+        The strip's overflow (``max_scroll_x``) is a function of the bar's
+        rendered width, so every resize re-evaluates whether the
+        "More ›" control shows (F-001).
+        """
+        self._sync_overflow_hint()
+
+    def _sync_overflow_hint(self) -> None:
+        """Show the "More ›" affordance exactly when the strip overflows."""
+        try:
+            strip = self.query_one("#nav-destination-strip", Horizontal)
+            hint = self.query_one("#nav-overflow-hint", Button)
+        except Exception:
+            return
+        hint.display = strip.max_scroll_x > 0
+
+    @on(Button.Pressed, "#nav-overflow-hint")
+    def _page_destination_overflow(self, event: Button.Pressed) -> None:
+        """Page the strip right; at the far end, wrap back to the start."""
+        event.stop()
+        try:
+            strip = self.query_one("#nav-destination-strip", Horizontal)
+        except Exception:
+            return
+        max_scroll = strip.max_scroll_x
+        if max_scroll <= 0:
+            return
+        if strip.scroll_offset.x >= max_scroll - 1:
+            # Already at the far end: wrap so the control keeps working.
+            strip.scroll_to(x=0, animate=False)
+            return
+        visible_width = max(strip.scrollable_content_region.width, 1)
+        # NOTE: `scrollable_content_region` reads like "the full scrollable
+        # content" but is the VISIBLE viewport (region minus gutter and
+        # scrollbar) -- the correct page increment. The virtual content is
+        # wider by exactly max_scroll (PR #1322 review).
+        strip.scroll_to(
+            x=min(strip.scroll_offset.x + visible_width, max_scroll),
+            animate=False,
+        )
 
     def _scroll_active_destination_into_view(self) -> None:
         """Bring the active destination's button into the strip's visible scroll window."""

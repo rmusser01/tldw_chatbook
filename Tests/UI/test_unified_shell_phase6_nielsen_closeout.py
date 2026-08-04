@@ -73,7 +73,7 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             )
 
             nav_buttons = list(
-                app.screen.query("MainNavigationBar").first().query(Button)
+                app.screen.query("MainNavigationBar").first().query("Button.nav-button")
             )
             assert [
                 (button.id, str(button.label).strip()) for button in nav_buttons
@@ -84,7 +84,7 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             assert "Model: Blocked" in home_text
             assert "Needs Attention" in home_text
             assert "Set up Console model" in home_text
-            assert "More: Ctrl+P" in home_text
+            assert "More ›" in home_text
 
             app.screen.query_one("#nav-console", Button).press()
             await _wait_until(

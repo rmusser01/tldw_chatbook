@@ -145,7 +145,7 @@ def _has_visual_chrome(app: "TldwCli") -> bool:
     nav_bars = list(app.screen.query(MainNavigationBar))
     if not nav_bars or not list(app.screen.query("#screen-content")):
         return False
-    nav_buttons = tuple(button.id for button in nav_bars[0].query(Button))
+    nav_buttons = tuple(button.id for button in nav_bars[0].query("Button.nav-button"))
     # The docked overflow hint mounts a tick after the nav strip; treat the
     # chrome as incomplete until it is present too.
     if len(app.screen.query("#nav-overflow-hint")) != 1:
@@ -204,16 +204,27 @@ async def _wait_until(
     )
 
 
-def _assert_visual_snapshot_is_healthy(
-    app: "TldwCli", destination_id: str, size_label: str
+async def _assert_visual_snapshot_is_healthy(
+    app: "TldwCli", destination_id: str, size_label: str, pilot
 ) -> None:
     nav_bar = app.screen.query_one(MainNavigationBar)
-    nav_ids = tuple(button.id.removeprefix("nav-") for button in nav_bar.query(Button))
+    nav_ids = tuple(
+        button.id.removeprefix("nav-") for button in nav_bar.query("Button.nav-button")
+    )
     assert nav_ids == TOP_LEVEL_DESTINATION_IDS
     assert nav_bar.query_one(f"#nav-{destination_id}", Button).has_class("is-active")
-    assert "Ctrl+P" in str(
-        app.screen.query_one("#nav-overflow-hint", Static).renderable
+    # F-001: the "More ›" affordance is on duty exactly when the strip
+    # overflows (compact/laptop sizes), hidden when every destination fits.
+    # Polled: navigation composes a fresh bar per visit, and its post-layout
+    # display sync lands a tick after the body does.
+    await _wait_until(
+        pilot,
+        lambda: app.screen.query_one("#nav-overflow-hint").display
+        == (app.screen.query_one("#nav-destination-strip").max_scroll_x > 0),
+        context=f"{size_label}:{destination_id}:overflow-hint",
     )
+    overflow_hint = app.screen.query_one("#nav-overflow-hint")
+    assert "More" in str(overflow_hint.label)
     _assert_destination_body_mounted(app, destination_id, size_label)
 
     text = _screen_text(app)
@@ -288,8 +299,8 @@ async def test_clean_run_top_level_visual_snapshots_survive_terminal_size(
                     context=f"{size_label}:{destination.destination_id}:body",
                 )
 
-                _assert_visual_snapshot_is_healthy(
-                    app, destination.destination_id, size_label
+                await _assert_visual_snapshot_is_healthy(
+                    app, destination.destination_id, size_label, pilot
                 )
 
 
