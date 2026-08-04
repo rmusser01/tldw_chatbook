@@ -16679,11 +16679,6 @@ class LibraryScreen(BaseAppScreen):
             return None
         return record if isinstance(record, Mapping) else None
 
-    @on(Button.Pressed, "#library-rag-use-in-console")
-    def use_library_rag_result_in_console(self, event: Button.Pressed) -> None:
-        """Stage the selected Library Search/RAG evidence result in Console."""
-        self._use_library_rag_result_in_console(event)
-
     @on(Button.Pressed, "#library-rag-use-selected-in-console")
     def use_selected_library_rag_result_in_console(
         self,

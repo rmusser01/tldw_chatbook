@@ -1299,7 +1299,7 @@ async def test_library_shell_search_searching_line_shows_while_gated():
         try:
             await _wait_for_selector(screen, pilot, "#library-rag-searching-line")
             line = str(screen.query_one("#library-rag-searching-line").renderable)
-            assert line == "searching · notes, media, conversations…"
+            assert line == "searching · Notes, Media, Conversations…"
         finally:
             service.release_event.set()
 

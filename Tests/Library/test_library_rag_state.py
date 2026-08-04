@@ -628,7 +628,7 @@ def test_row_badge_label_bare_source_type_when_no_signal() -> None:
         }
     )
 
-    assert row.row_badge_label == "media"
+    assert row.row_badge_label == "Media"
 
 
 def test_row_badge_label_includes_citations_only_when_present() -> None:
@@ -640,7 +640,7 @@ def test_row_badge_label_includes_citations_only_when_present() -> None:
         }
     )
 
-    assert row.row_badge_label == "media · 2 citations"
+    assert row.row_badge_label == "Media · 2 citations"
 
 
 def test_row_badge_label_maps_blocked_eligibility_to_excluded_from_context() -> None:
@@ -651,7 +651,7 @@ def test_row_badge_label_maps_blocked_eligibility_to_excluded_from_context() -> 
         }
     )
 
-    assert row.row_badge_label == "media · excluded from context"
+    assert row.row_badge_label == "Media · excluded from context"
 
 
 def test_row_badge_label_includes_non_default_workspace() -> None:
@@ -662,7 +662,7 @@ def test_row_badge_label_includes_non_default_workspace() -> None:
         }
     )
 
-    assert row.row_badge_label == "media · workspace-a"
+    assert row.row_badge_label == "Media · workspace-a"
 
 
 def test_row_badge_label_joins_with_middle_dot_not_pipe() -> None:
@@ -680,7 +680,7 @@ def test_row_badge_label_joins_with_middle_dot_not_pipe() -> None:
 
     assert (
         row.row_badge_label
-        == "media · workspace-a · 1 citation · excluded from context"
+        == "Media · workspace-a · 1 citation · excluded from context"
     )
     assert "|" not in row.row_badge_label
 
@@ -998,7 +998,7 @@ class TestUpdateSearchHistory:
 
 class TestSearchingStatusLine:
     def test_lists_selected_sources(self):
-        assert searching_status_line(("notes", "media")) == "searching · notes, media…"
+        assert searching_status_line(("notes", "media")) == "searching · Notes, Media…"
 
     def test_empty_scope_still_reads_searching(self):
         assert searching_status_line(()) == "searching…"

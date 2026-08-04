@@ -115,7 +115,7 @@ Four outcomes:
   already re-triggers both retrieval and the answer step.
 
 The same retrieval-coverage line shown above the evidence rows below
-(e.g. "Semantic search found nothing from: notes.", "No strong semantic
+(e.g. "Semantic search found nothing from: Notes.", "No strong semantic
 matches — results below are weak.") is also handed to the model as part
 of its prompt, so it can tell "your notes say nothing about this" apart
 from "your notes were never searched."
@@ -140,7 +140,7 @@ Each hit is one block:
   `| match: moderate` (≥ 0.2), or `| match: weak (0.09)` — the weak band
   keeps the raw number so you can see how weak. Keyword ("Search") mode
   rows carry no score, so nothing is appended.
-- **Badge line** — the source type first (e.g. "media"), then a workspace
+- **Badge line** — the source type first (e.g. "Media"), then a workspace
   name when it isn't "all workspaces", a citation count ("2 citations")
   when the hit carries citations, and "excluded from context" when the row
   can't be used in the active workspace.
@@ -169,7 +169,7 @@ Owner block described above.
 In RAG Answer mode, when results land but the semantic query didn't
 actually touch one of your selected sources (or every hit's match is weak),
 a quiet line appears above the rows, e.g. "Semantic search found nothing
-from: notes, conversations." or "No strong semantic matches — results
+from: Notes, Conversations." or "No strong semantic matches — results
 below are weak." — telling you *why* a source is missing instead of leaving
 you to guess whether it has nothing relevant or was never searched. Search
 mode never shows this line; its keyword leg always queries every selected

@@ -46,7 +46,6 @@ LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES: tuple[str, ...] = (
 )
 LIBRARY_RAG_DEFAULT_TOP_K = 5
 LIBRARY_RAG_RUN_ACTION_ID = "library-rag-run-query"
-LIBRARY_RAG_USE_IN_CONSOLE_ACTION_ID = "library-rag-use-in-console"
 LIBRARY_RAG_SERVICE_ERROR_SELECTOR = "library-rag-service-error"
 LIBRARY_RAG_EMPTY_STATE_SELECTOR = "library-rag-empty-state"
 LIBRARY_RAG_USE_IN_CONSOLE_DISABLED_REASON = (
@@ -167,9 +166,15 @@ def searching_status_line(source_types: Sequence[str]) -> str:
         source_types: Selected source type IDs for the in-flight query.
 
     Returns:
-        User-facing status line, e.g. `searching · notes, media…`.
+        User-facing status line, e.g. `searching · Notes, Media…`. Source
+        type IDs are rendered through `_source_type_display_label` (task-7
+        PR-2 leftover) so this line matches the capitalized vocabulary the
+        Sources toggles and scope-summary strip already use, instead of
+        the raw lowercase identifier.
     """
-    labels = ", ".join(str(s) for s in source_types if str(s).strip())
+    labels = ", ".join(
+        _source_type_display_label(str(s)) for s in source_types if str(s).strip()
+    )
     return f"searching · {labels}…" if labels else "searching…"
 
 
@@ -1120,8 +1125,16 @@ class LibraryRagResultRow:
 
     @property
     def source_type_badge_label(self) -> str:
-        """Compact source type label for evidence rows."""
-        return (
+        """Compact source type label for evidence rows.
+
+        Routed through `_source_type_display_label` (task-7 PR-2 leftover)
+        so the badge reads "Media"/"Notes" like the rest of the panel's
+        vocabulary instead of the raw lowercase provenance identifier. An
+        unrecognized/already-escaped value (e.g. a markup-escaping test's
+        deliberately hostile `source_type`) falls through unchanged --
+        `_source_type_display_label` only rewrites values it recognizes.
+        """
+        return _source_type_display_label(
             _provenance_text(self.provenance, "source_type")
             or _provenance_text(self.provenance, "item_type")
             or _provenance_text(self.provenance, "type")
@@ -1192,22 +1205,6 @@ class LibraryRagResultRow:
         return " · ".join(parts)
 
     @property
-    def source_identity_label(self) -> str:
-        """User-facing source/chunk identity for selected evidence inspection."""
-        if self.source_id and self.chunk_id:
-            return f"Source: {self.source_id} / {self.chunk_id}"
-        if self.source_id:
-            return f"Source: {self.source_id}"
-        if self.chunk_id:
-            return f"Chunk: {self.chunk_id}"
-        return "Source: unavailable"
-
-    @property
-    def runtime_label(self) -> str:
-        """User-facing runtime/backend identity for selected evidence inspection."""
-        return f"Runtime: {self.runtime_backend or 'local'}"
-
-    @property
     def authority_display_label(self) -> str:
         """User-facing authority label aligned with evidence handoff metadata."""
         explicit_label = _provenance_text(self.provenance, "authority_label")
@@ -1248,11 +1245,6 @@ class LibraryRagResultRow:
         ):
             return "Eligibility: blocked until an active workspace is available"
         return "Eligibility: available for active context"
-
-    @property
-    def handoff_label(self) -> str:
-        """User-facing statement of what the Console handoff preserves."""
-        return "Handoff: snippet + citations + source/chunk IDs"
 
     @property
     def open_source_type(self) -> str:
@@ -1645,7 +1637,16 @@ class LibraryRagPanelState:
             use_in_console_action=LibraryRagActionState(
                 label="Use in Console",
                 enabled=can_use_console,
-                widget_id=LIBRARY_RAG_USE_IN_CONSOLE_ACTION_ID,
+                # The panel mounts exactly one Console-handoff button per
+                # evidence result -- the results-lane one below the
+                # selected row (`library_rag_result_row_children`'s
+                # sibling in `library_rag_results_body_children`), never a
+                # separate inspector-column button. This must match that
+                # mounted id, not an id no widget actually carries (task-7
+                # PR-2 leftover: `LIBRARY_RAG_USE_IN_CONSOLE_ACTION_ID`
+                # pointed at a retired 3-pane inspector button that was
+                # never rebuilt for this canvas).
+                widget_id="library-rag-use-selected-in-console",
                 disabled_reason=(
                     ""
                     if can_use_console
