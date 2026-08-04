@@ -73,7 +73,14 @@ async def test_slash_opens_popup_and_typing_filters():
         await pilot.press("/")
         await pilot.pause()
         assert popup.is_open
-        assert _popup_labels(popup) == ["/prompt", "/system", "/skills"]
+        assert _popup_labels(popup) == [
+            "/prompt",
+            "/system",
+            "/skills",
+            "/prefill",
+            "/generate-image",
+            "/rewind",
+        ]
 
         await pilot.press("s", "y", "s")
         await pilot.pause()
@@ -164,10 +171,12 @@ async def test_skill_entries_and_skills_arg_mode():
 
         await pilot.press("/", "w")
         await pilot.pause()
-        assert _popup_labels(popup) == ["/web-search"]
+        # Bare `/skill-name` is not dispatchable on dev (fallback resolver
+        # removed), so the entry completes to the `/skills <name> ` form.
+        assert _popup_labels(popup) == ["/skills web-search"]
         await pilot.press("enter")
         await pilot.pause()
-        assert composer.draft_text() == "/web-search "
+        assert composer.draft_text() == "/skills web-search "
 
         composer.load_draft("/skills w")
         console._sync_console_command_popup()

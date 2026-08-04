@@ -3291,6 +3291,12 @@ class ChatScreen(BaseAppScreen):
         self._console_command_registry: ConsoleCommandRegistry = (
             default_console_registry()
         )
+        # Snapshot of trusted, user-invocable skills for the slash-command
+        # popup's skill entries; refreshed on mount/resume by
+        # `_refresh_console_skill_candidates`. Bare-`/skill-name` resolution
+        # was hard-removed (the `$`-mention migration), so this snapshot only
+        # feeds suggestions, which complete to `/skills <name> `.
+        self._console_skill_candidates: tuple[SkillCommandCandidate, ...] = ()
         self._console_unknown_send_armed: str | None = None
         self._console_image_view_state: ConsoleImageViewState | None = None
         self._console_image_cache: ConsoleImageRenderCache | None = None
@@ -15120,6 +15126,7 @@ class ChatScreen(BaseAppScreen):
         self.call_after_refresh(self._sync_native_console_chat_ui)
         self.call_after_refresh(self._restore_console_workbench_focus)
         self.set_timer(0.2, self._restore_console_workbench_focus)
+        self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
 
     def _notify_console_fleet_teardown_if_any(self) -> None:
         """One-shot toast reporting a fleet the LAST Console instance lost.
@@ -21568,6 +21575,7 @@ class ChatScreen(BaseAppScreen):
         self.set_timer(0.15, self._consume_pending_console_prompt_insert)
         self.set_timer(0.15, self.consume_pending_console_provider_intent)
         self.call_after_refresh(self._restore_console_workbench_focus)
+        self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
         # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
 
     def set_task_resume_state(self, task_state: TaskResumeState) -> None:

@@ -25,12 +25,15 @@ _SKILLS_ARG_MODE_PATTERN = re.compile(
     rf"^{COMMAND_PREFIX}{SKILLS_COMMAND_NAME}[ \t]+(\S*)\Z", re.IGNORECASE
 )
 
-# `ConsoleCommand` carries no description field, so the three built-ins get
-# their popup copy here; skill entries use the resolver snapshot descriptions.
+# `ConsoleCommand` carries no description field, so the built-ins get their
+# popup copy here; skill entries use the resolver snapshot descriptions.
 _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "prompt": "Insert a saved prompt into the composer",
     "system": "Apply a saved system prompt to this session",
     "skills": "List or run a skill",
+    "prefill": "Arm, pin, or clear a response prefill",
+    "generate-image": "Generate an image (optionally via a chosen backend)",
+    "rewind": "Rewind the session to an earlier user prompt",
 }
 
 
@@ -61,8 +64,8 @@ def suggestions_for_draft(
     Returns ``None`` when the draft is in no completion context (caller hides
     the popup); otherwise a possibly-empty list (empty also hides the popup).
     Two contexts: command mode (``^/\\S*\\Z`` — commands then skills, prefix-
-    filtered) and skills-arg mode (``^/skills\\s+\\S*\\Z`` — skill names for
-    the first argument).
+    filtered) and skills-arg mode (``^/skills[ \\t]+\\S*\\Z`` — skill names
+    for the first argument).
     """
     skills_arg_match = _SKILLS_ARG_MODE_PATTERN.match(draft_text)
     if skills_arg_match is not None:
@@ -94,9 +97,13 @@ def suggestions_for_draft(
     ]
     command_names_lower = {name.lower() for name in command_names}
     suggestions.extend(
+        # Bare ``/skill-name`` is NOT a registered command (the fallback
+        # resolver was hard-removed in the `$`-mention migration), so skill
+        # entries complete to the canonical ``/skills <name> `` invocation —
+        # accepting one always yields a dispatchable draft.
         CommandSuggestion(
-            insert_text=f"{COMMAND_PREFIX}{candidate.name} ",
-            label=f"{COMMAND_PREFIX}{candidate.name}",
+            insert_text=f"{COMMAND_PREFIX}{SKILLS_COMMAND_NAME} {candidate.name} ",
+            label=f"{COMMAND_PREFIX}{SKILLS_COMMAND_NAME} {candidate.name}",
             description=candidate.description,
         )
         for candidate in skill_candidates
