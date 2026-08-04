@@ -2,7 +2,7 @@
 id: TASK-2223
 title: >-
   Library ingest rulings small batch (no-op consent line, Recent readability, chunk units, matched receipt, panel naming)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04 05:00'
 labels:
@@ -77,3 +77,8 @@ dedup check; generic panel rename.
   renders it as the first metadata line.
 - Panel renamed "Plain text & HTML" — "documents" now appears once
   across titles; pins updated.
+
+**Qodo round (fixed in `2fc94f5a8`):** REAL bug — the dedup-note check
+ran `str().startswith` against a dict-shaped progress payload (never
+matches); now delegates to `count_duplicate_done_jobs`, the tally's own
+predicate. Plus import order + Args docstring.
