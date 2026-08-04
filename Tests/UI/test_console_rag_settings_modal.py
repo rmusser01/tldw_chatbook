@@ -166,11 +166,13 @@ def test_visible_run_action_falls_back_to_the_composer_draft():
     Run Library RAG action retrieves with the composer draft instead of
     demanding a query the collapsed rail gives no place to type. The
     fallback is STORED so the rail input and this modal agree with what
-    actually ran; with no query anywhere, the warning toast survives."""
-    from tldw_chatbook.UI.Screens.chat_screen import (
-        CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE,
-        ChatScreen,
-    )
+    actually ran.
+
+    RAG-41/42 (2026-08-04): with no query anywhere -- no dedicated query
+    AND an empty composer draft -- this used to toast at an invisible
+    input; it now opens the RAG settings modal instead (the one place a
+    query can actually be typed), and does not toast."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = Mock()
     screen._console_library_rag_query = ""
@@ -190,7 +192,8 @@ def test_visible_run_action_falls_back_to_the_composer_draft():
     request = screen._execute_console_library_rag_search.call_args.args[0]
     assert request.query == "what changed in auth"
 
-    # No dedicated query AND an empty composer: the toast survives.
+    # No dedicated query AND an empty composer: the settings modal opens
+    # instead of toasting, and no retrieval runs underneath it.
     empty = Mock()
     empty._console_library_rag_query = ""
     empty_composer = Mock()
@@ -199,11 +202,8 @@ def test_visible_run_action_falls_back_to_the_composer_draft():
 
     ChatScreen._run_console_library_rag_from_visible_action(empty)
 
-    empty.app_instance.notify.assert_called_once()
-    assert (
-        CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE
-        in empty.app_instance.notify.call_args.args
-    )
+    empty.app_instance.notify.assert_not_called()
+    empty._open_console_rag_settings.assert_called_once()
     empty._stage_console_library_rag_launch.assert_not_called()
 
 

@@ -544,9 +544,6 @@ CONSOLE_DICTATION_MAX_BYTES = int(
 CONSOLE_LIBRARY_RAG_SOURCE_SCOPE = ("notes", "media", "conversations")
 CONSOLE_LIBRARY_RAG_RECOVERY_COPY = "Review citations before sending."
 CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
-CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE = (
-    "Type a Library RAG query before running retrieval."
-)
 # TASK-346: below this terminal height the composer row was clipped out of
 # existence at 97x30 (no input box, no warning). The visible header banner
 # (title + purpose + Ready, ~5 rows) is pure chrome; dropping it below the
@@ -14234,7 +14231,16 @@ class ChatScreen(BaseAppScreen):
         screen while this always-visible action is. The fallback is STORED
         through ``_set_console_library_rag_query`` so the rail input and
         the RAG settings modal agree with what actually ran. An explicit
-        query always wins; the empty-everything warning survives.
+        query always wins.
+
+        RAG-41/42: with no query anywhere -- no dedicated query AND an empty
+        composer draft -- this used to toast "Type a Library RAG query
+        before running retrieval," pointing at an input that may not even
+        be visible. It now opens the RAG settings modal instead (the same
+        surface the RAG chip opens), which is where a query can actually be
+        typed. The modal's own Run callback re-enters this method with the
+        query it collected, so this is a one-shot redirect, not a loop; a
+        Cancel just closes it with nothing stored and nothing run.
         """
         query = _sanitize_console_library_rag_query(self._console_library_rag_query)
         if not query:
@@ -14248,10 +14254,7 @@ class ChatScreen(BaseAppScreen):
                 self._set_console_library_rag_query(draft_query)
                 query = draft_query
         if not query:
-            self.app_instance.notify(
-                CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE,
-                severity="warning",
-            )
+            self._open_console_rag_settings()
             return
         request = LibraryRagSearchRequest(
             query=query,

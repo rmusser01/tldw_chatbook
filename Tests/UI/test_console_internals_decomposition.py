@@ -1,6 +1,7 @@
 # ruff: noqa: F811
 import time
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from rich.console import Console
@@ -52,6 +53,9 @@ from tldw_chatbook.Widgets.Console import (
     ConsoleComposerBar,
     ConsoleSetupModal,
     ConsoleStagedContextTray,
+)
+from tldw_chatbook.Widgets.Console.console_rag_settings_modal import (
+    ConsoleRagSettingsModal,
 )
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
@@ -4060,6 +4064,74 @@ async def test_console_rag_action_without_service_stages_recoverable_blocker(
         assert "Unavailable: Library Search/RAG retrieval." in text
         assert "Owner: Library retrieval service." in text
         assert rag_factory_calls == []
+
+
+@pytest.mark.asyncio
+async def test_console_control_bar_run_library_rag_opens_settings_modal_when_blank():
+    """RAG-41/42: the always-visible control-bar action has no place for a
+    query to live -- it toasted "Type a Library RAG query" at an invisible
+    input. With no dedicated query AND no composer draft, it must now open
+    the same RAG settings modal the chip opens, not toast, and it must not
+    run retrieval underneath the modal (the loop-guard proof: Cancel leaves
+    no query stored and the search service uncalled)."""
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService({"results": []})
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-run-library-rag")
+
+        assert console._console_library_rag_query == ""
+        console.app_instance.notify = Mock()
+
+        await pilot.click("#console-control-run-library-rag")
+        await pilot.pause()
+
+        modal = host.screen
+        assert isinstance(modal, ConsoleRagSettingsModal)
+        console.app_instance.notify.assert_not_called()
+        assert service.calls == []
+
+        # Loop-guard: Cancel dismisses with no changes -- no query gets
+        # stored and the modal's own Run callback (which re-enters
+        # `_run_console_library_rag_from_visible_action`) never fires.
+        await pilot.click("#console-rag-settings-cancel")
+        await pilot.pause()
+
+        assert host.screen is console
+        assert console._console_library_rag_query == ""
+        assert service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_console_inspector_run_library_rag_gating_unaffected_by_modal_seam():
+    """The Inspector's own Run button stays disabled while its query input
+    is blank -- unaffected by the control-bar action now opening the
+    settings modal instead of toasting (this task changes the empty-query
+    path of the SAME `_run_console_library_rag_from_visible_action` method
+    the control-bar and Inspector button both call, so the two entry
+    points' gating must not cross-contaminate)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-run-library-rag")
+
+        run_rag = console.query_one("#console-run-library-rag", Button)
+        assert run_rag.disabled is True
+
+        await pilot.click("#console-control-run-library-rag")
+        await pilot.pause()
+        assert isinstance(host.screen, ConsoleRagSettingsModal)
+        await pilot.click("#console-rag-settings-cancel")
+        await pilot.pause()
+
+        run_rag = console.query_one("#console-run-library-rag", Button)
+        assert run_rag.disabled is True
 
 
 @pytest.mark.asyncio
