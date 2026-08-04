@@ -149,8 +149,9 @@ handsfree_engine = "auto"     # "auto" | "pipeline" | "realtime"
     ordering in the pane stays correct even though the server's transcription
     arrives after the reply has begun (review amendment #2).
   - Model speech: `on_output_transcript_delta` streams into an assistant
-    message through the store's existing streaming-append path. Turns carry
-    engine metadata (`engine="realtime"`, provider, model).
+    message through the store's existing streaming-append path. Provenance
+    (provider, model) rides the usage attached to the row, not message-level
+    metadata — see "Turn metadata deferred" below.
 - **Interruption honesty (review amendment #1):** precise text-at-cut
   trimming is not implementable — transcript streams ahead of audio and no
   ms→chars mapping exists; the API truncates its own context but returns no

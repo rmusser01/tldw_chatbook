@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+from loguru import logger
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -27,6 +28,17 @@ from textual.widget import Widget
 from textual.widgets import Button, Collapsible, Input, Select, Static, Switch
 from textual.worker import NoActiveWorker, get_current_worker
 
+from tldw_chatbook.Chat.console_voice_input import (
+    DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES,
+    DEFAULT_REALTIME_MODEL,
+    DEFAULT_REALTIME_PROVIDER,
+    handsfree_engine as _read_handsfree_engine,
+    realtime_enabled as _read_realtime_enabled,
+    realtime_model as _read_realtime_model,
+    realtime_provider as _read_realtime_provider,
+    realtime_voice as _read_realtime_voice,
+)
+from tldw_chatbook.config import get_cli_setting, save_settings_to_cli_config
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
     STTSSettingsSaveResult,
@@ -97,6 +109,71 @@ _LANGUAGE_OPTIONS = [
 LeaveChoice = Literal["save", "discard", "cancel"]
 _GLOBAL_SPEECH_TTS_STACK_WIDTH = 104
 _COLLAPSIBLE_TITLE_FOCUS_SUFFIX = "::collapsible-title"
+
+_REALTIME_PROVIDER_OPTIONS = [("OpenAI", DEFAULT_REALTIME_PROVIDER)]
+_REALTIME_HANDSFREE_ENGINE_OPTIONS = [
+    ("Auto (realtime when enabled)", "auto"),
+    ("Pipeline (record / transcribe / reply / speak)", "pipeline"),
+    ("Realtime (forced)", "realtime"),
+]
+
+
+@dataclass
+class _RealtimeSettingsDraft:
+    """Local editable copy of the realtime engine's plain config keys.
+
+    `realtime`/`dictation` are plain top-level config sections, not TTS
+    provider adapters -- there is no `GlobalSpeechTTSState` provider entry
+    for them and no TTS service adapter to reconfigure at runtime. This
+    stays a self-contained sibling draft, persisted through the same atomic
+    config writer other Settings surfaces use (`save_settings_to_cli_config`,
+    which is `apply_settings_mutation_to_cli_config` underneath), never a
+    second, bespoke config writer (TASK-2111).
+    """
+
+    enabled: bool
+    provider: str
+    model: str
+    voice: str
+    idle_timeout_minutes: str
+    handsfree_engine: str
+
+    def snapshot(self) -> tuple[bool, str, str, str, str, str]:
+        return (
+            self.enabled,
+            self.provider,
+            self.model,
+            self.voice,
+            self.idle_timeout_minutes,
+            self.handsfree_engine,
+        )
+
+
+@dataclass(frozen=True)
+class _RealtimeSavePayload:
+    """One validated realtime/dictation mutation, ready for the shared writer."""
+
+    section_values: dict[str, dict[str, Any]]
+    delete_keys: dict[str, tuple[str, ...]]
+
+
+def _read_realtime_settings_draft() -> _RealtimeSettingsDraft:
+    """Read the realtime engine's live config into an editable draft."""
+
+    return _RealtimeSettingsDraft(
+        enabled=_read_realtime_enabled(),
+        provider=_read_realtime_provider(),
+        model=_read_realtime_model(),
+        voice=_read_realtime_voice() or "",
+        idle_timeout_minutes=str(
+            get_cli_setting(
+                "realtime",
+                "idle_timeout_minutes",
+                DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES,
+            )
+        ),
+        handsfree_engine=_read_handsfree_engine(),
+    )
 
 
 class _CredentialEditorModal(ModalScreen[str | None]):
@@ -343,6 +420,8 @@ class SpeechTTSSettingsPanel(Vertical):
         self._pending_focus_moved_after_displacement = False
         self._leave_save_waiters: dict[int, asyncio.Future[bool]] = {}
         self._last_focused_control_id: str | None = None
+        self._realtime_original = _read_realtime_settings_draft()
+        self._realtime_draft = replace(self._realtime_original)
 
     def on_mount(self) -> None:
         """Apply responsive layout without performing provider work."""
@@ -1102,6 +1181,8 @@ class SpeechTTSSettingsPanel(Vertical):
             )
             yield from self._compose_provider_form(self.configure_provider)
 
+        yield from self._compose_realtime_section()
+
         with Vertical(id="settings-speech-inspector", classes="settings-focus-card"):
             yield Static("Configuration inspector", classes="destination-section")
             yield Static(
@@ -1160,6 +1241,122 @@ class SpeechTTSSettingsPanel(Vertical):
             classes="settings-status-row",
             markup=False,
         )
+
+    def _compose_realtime_section(self) -> ComposeResult:
+        """Build the Realtime engine block: config keys owned by task 6.
+
+        Deliberately not part of the per-TTS-provider form above -- `realtime`
+        and `dictation` are plain top-level config sections with no adapter to
+        reconfigure, so this reuses only the panel's row/error/draft-field
+        conventions, not `GlobalSpeechTTSState`.
+        """
+        draft = self._realtime_draft
+        with Vertical(
+            id="settings-speech-realtime", classes="settings-focus-card"
+        ):
+            yield Static("Realtime engine", classes="destination-section")
+            yield Static(
+                "Optional low-latency voice engine for the Console's hands-free "
+                "loop (Ctrl+Shift+H). When off, the pipeline engine (record, "
+                "transcribe, reply, speak) is used, as before.",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            yield self._row(
+                "Enable realtime voice engine",
+                Switch(
+                    value=draft.enabled,
+                    id="settings-speech-realtime-enabled",
+                    classes="settings-speech-field settings-speech-draft-field",
+                ),
+                error=self._error("realtime", "enabled"),
+            )
+            yield self._row(
+                "Provider",
+                Select(
+                    _REALTIME_PROVIDER_OPTIONS,
+                    value=DEFAULT_REALTIME_PROVIDER,
+                    id="settings-speech-realtime-provider",
+                    allow_blank=False,
+                    compact=True,
+                    classes="settings-compact-select settings-speech-draft-field",
+                ),
+                classes="settings-select-row",
+                error=self._error("realtime", "provider"),
+            )
+            yield self._row(
+                "Model",
+                Input(
+                    value=draft.model,
+                    id="settings-speech-realtime-model",
+                    placeholder=DEFAULT_REALTIME_MODEL,
+                    classes=(
+                        "settings-compact-input settings-speech-draft-field"
+                    ),
+                ),
+                error=self._error("realtime", "model"),
+            )
+            yield self._row(
+                "Voice (optional)",
+                Input(
+                    value=draft.voice,
+                    id="settings-speech-realtime-voice",
+                    placeholder="Provider default",
+                    classes=(
+                        "settings-compact-input settings-speech-draft-field"
+                    ),
+                ),
+                error=self._error("realtime", "voice"),
+            )
+            yield self._row(
+                "Idle timeout (minutes)",
+                Input(
+                    value=draft.idle_timeout_minutes,
+                    id="settings-speech-realtime-idle-timeout-minutes",
+                    placeholder=str(DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES),
+                    classes=(
+                        "settings-compact-input settings-speech-draft-field"
+                    ),
+                ),
+                error=self._error("realtime", "idle_timeout_minutes"),
+            )
+            yield self._row(
+                "Hands-free engine",
+                Select(
+                    _REALTIME_HANDSFREE_ENGINE_OPTIONS,
+                    value=draft.handsfree_engine,
+                    id="settings-speech-realtime-handsfree-engine",
+                    allow_blank=False,
+                    compact=True,
+                    classes="settings-compact-select settings-speech-draft-field",
+                ),
+                classes="settings-select-row",
+                error=self._error("realtime", "handsfree_engine"),
+            )
+            yield Static(
+                "Spoken commands do not work inside realtime mode -- there is "
+                "no client-side speech-to-text running, so phrases like "
+                '"Console, stop." are never heard. Exit with Esc, the mic '
+                "button, or Ctrl+Shift+H.",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            yield Static(
+                "Privacy: while a realtime session is live, microphone audio "
+                "streams continuously to the provider for the whole session "
+                "(subject to barge-in gating) -- not just after a pause, as "
+                "the pipeline engine does.",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            yield Static(
+                "Cost: realtime sessions are billed by the provider per "
+                "connected minute. The idle timeout above ends an unattended "
+                "session automatically (never while a reply is being spoken); "
+                "an unexpected connection drop is retried once.",
+                classes="settings-detail-row",
+                markup=False,
+            )
 
     def _compose_provider_form(self, provider_id: str) -> ComposeResult:
         with Vertical(
@@ -1489,6 +1686,36 @@ class SpeechTTSSettingsPanel(Vertical):
             elif isinstance(widget, Switch):
                 values[field_id] = widget.value
 
+        self._collect_realtime_visible_state()
+
+    def _collect_realtime_visible_state(self) -> None:
+        """Copy the Realtime block's mounted widget values into its draft."""
+        try:
+            enabled_widget = self.query_one(
+                "#settings-speech-realtime-enabled", Switch
+            )
+            provider_widget = self.query_one(
+                "#settings-speech-realtime-provider", Select
+            )
+            model_widget = self.query_one("#settings-speech-realtime-model", Input)
+            voice_widget = self.query_one("#settings-speech-realtime-voice", Input)
+            idle_widget = self.query_one(
+                "#settings-speech-realtime-idle-timeout-minutes", Input
+            )
+            engine_widget = self.query_one(
+                "#settings-speech-realtime-handsfree-engine", Select
+            )
+        except QueryError:
+            return
+        self._realtime_draft.enabled = bool(enabled_widget.value)
+        if isinstance(provider_widget.value, str):
+            self._realtime_draft.provider = provider_widget.value
+        self._realtime_draft.model = model_widget.value
+        self._realtime_draft.voice = voice_widget.value
+        self._realtime_draft.idle_timeout_minutes = idle_widget.value
+        if isinstance(engine_widget.value, str):
+            self._realtime_draft.handsfree_engine = engine_widget.value
+
     def has_unsaved_changes(self) -> bool:
         """Return whether any non-secret global value differs from its baseline."""
         self._collect_visible_state()
@@ -1518,7 +1745,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 continue
             if proposal.settings or proposal.delete_setting_keys:
                 return True
-        return False
+        return self._realtime_draft.snapshot() != self._realtime_original.snapshot()
 
     def _announce_draft_state(self) -> None:
         """Publish the latest safe draft snapshot to the Settings shell."""
@@ -1612,13 +1839,44 @@ class SpeechTTSSettingsPanel(Vertical):
             self._refresh_status_rows()
             return None
 
+        try:
+            realtime_payload = self._validated_realtime_payload()
+        except GlobalSpeechTTSValidationError as error:
+            self._show_validation_error(error)
+            self._refresh_status_rows()
+            return None
+        realtime_changed = realtime_payload is not None
+
+        if (
+            not defaults_changed
+            and not proposal.settings
+            and not proposal.delete_setting_keys
+            and not realtime_changed
+        ):
+            self._set_result("No global Speech & TTS changes to save.")
+            return None
+
+        if realtime_payload is not None:
+            if not self._persist_realtime_draft(realtime_payload):
+                self._set_result(
+                    "Realtime engine settings were not saved.",
+                    severity="error",
+                )
+                return None
+            self._realtime_original = replace(self._realtime_draft)
+
         if (
             not defaults_changed
             and not proposal.settings
             and not proposal.delete_setting_keys
         ):
-            self._set_result("No global Speech & TTS changes to save.")
+            # Only the realtime/dictation block changed; already persisted
+            # locally above through the same atomic config writer -- no TTS
+            # provider adapter round trip needed.
+            self._set_result("Saved locally. Realtime engine settings updated.")
+            self._announce_draft_state()
             return None
+
         request_id = self._next_request_id
         self._next_request_id += 1
         self._latest_request_id = request_id
@@ -1654,6 +1912,66 @@ class SpeechTTSSettingsPanel(Vertical):
             )
         )
         return request_id
+
+    def _validated_realtime_payload(self) -> _RealtimeSavePayload | None:
+        """Validate the Realtime block draft; ``None`` when unchanged.
+
+        Sibling validation shape to the global defaults' speed field: an
+        invalid value raises `GlobalSpeechTTSValidationError` so it reuses
+        the same inline-error display and refuses the *entire* Save (both
+        this block and the TTS proposal), never a partial write.
+        """
+        if self._realtime_draft.snapshot() == self._realtime_original.snapshot():
+            return None
+        raw_idle = self._realtime_draft.idle_timeout_minutes
+        try:
+            idle_minutes = float(raw_idle)
+        except (TypeError, ValueError):
+            idle_minutes = None
+        if idle_minutes is None or idle_minutes <= 0:
+            raise GlobalSpeechTTSValidationError(
+                "realtime",
+                "idle_timeout_minutes",
+                "Idle timeout must be a positive number of minutes.",
+            )
+        model = self._realtime_draft.model.strip()
+        if not model:
+            raise GlobalSpeechTTSValidationError(
+                "realtime",
+                "model",
+                "The realtime model is required.",
+            )
+        realtime_section: dict[str, Any] = {
+            "enabled": self._realtime_draft.enabled,
+            "provider": self._realtime_draft.provider,
+            "model": model,
+            "idle_timeout_minutes": idle_minutes,
+        }
+        delete_keys: dict[str, tuple[str, ...]] = {}
+        voice = self._realtime_draft.voice.strip()
+        if voice:
+            realtime_section["voice"] = voice
+        else:
+            delete_keys["realtime"] = ("voice",)
+        dictation_section = {"handsfree_engine": self._realtime_draft.handsfree_engine}
+        return _RealtimeSavePayload(
+            section_values={"realtime": realtime_section, "dictation": dictation_section},
+            delete_keys=delete_keys,
+        )
+
+    @staticmethod
+    def _persist_realtime_draft(payload: _RealtimeSavePayload) -> bool:
+        """Write the realtime/dictation draft through the shared config writer."""
+        try:
+            return bool(
+                save_settings_to_cli_config(
+                    payload.section_values,
+                    delete_keys=payload.delete_keys,
+                )
+            )
+        except Exception:
+            logger.exception("Failed to save realtime engine settings")
+            return False
 
     def submit_credential_mutation(
         self,
@@ -2286,6 +2604,7 @@ class SpeechTTSSettingsPanel(Vertical):
 
         self._clear_validation_errors()
         self.state = deepcopy(self.original_state)
+        self._realtime_draft = replace(self._realtime_original)
         self.result_text = "Reverted to the last successfully loaded global values."
 
     async def revert_to_saved(self) -> None:

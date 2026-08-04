@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from textual import on
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Input, Select, Static, Switch
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -17,6 +17,11 @@ from Tests.UI.test_destination_shells import (
     _build_test_app,
     _visible_text,
     _wait_for_selector,
+)
+from tldw_chatbook.Chat.console_voice_input import (
+    DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES,
+    DEFAULT_REALTIME_MODEL,
+    DEFAULT_REALTIME_PROVIDER,
 )
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
@@ -1743,7 +1748,15 @@ async def test_environment_credential_is_read_only_and_editor_starts_empty() -> 
         environment={"OPENAI_API_KEY": "synthetic-environment-value"},
     )
     app = _PanelHarness(configure_provider="openai", state=state)
-    async with app.run_test(size=(150, 120)) as pilot:
+    # Unstyled `_PanelHarness` sections default to Textual's built-in `1fr`
+    # Vertical sizing (no app stylesheet to declare `height: auto`), so each
+    # top-level `.settings-focus-card` competes for a share of the viewport.
+    # Task 6 added one more such section (Realtime engine); 120 rows is no
+    # longer enough headroom for that fr-share split to keep this row's
+    # rendered position matching its cached click region -- 150 restores
+    # the margin `_StyledPanelHarness` (real CSS, `height: auto`) doesn't
+    # need at all.
+    async with app.run_test(size=(150, 150)) as pilot:
         credential = app.query_one("#settings-speech-openai-credential")
         rendered = " ".join(str(node.render()) for node in credential.query(Static))
         assert "Environment" in rendered
@@ -1995,3 +2008,259 @@ async def test_dirty_speech_category_cancel_preserves_owner_draft_and_focus() ->
         )
         assert host.focused is model
         assert panel.has_unsaved_changes() is True
+
+
+# --- Realtime engine block (task 6) ----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_realtime_block_renders_with_config_defaults() -> None:
+    app = _PanelHarness(configure_provider="audio_cpp")
+    async with app.run_test(size=(150, 60)) as pilot:
+        await _settle(pilot)
+        enabled = app.query_one("#settings-speech-realtime-enabled", Switch)
+        provider = app.query_one("#settings-speech-realtime-provider", Select)
+        model = app.query_one("#settings-speech-realtime-model", Input)
+        voice = app.query_one("#settings-speech-realtime-voice", Input)
+        idle_timeout = app.query_one(
+            "#settings-speech-realtime-idle-timeout-minutes", Input
+        )
+        engine = app.query_one("#settings-speech-realtime-handsfree-engine", Select)
+
+        assert enabled.value is False
+        assert provider.value == DEFAULT_REALTIME_PROVIDER
+        assert [value for _label, value in provider._options] == [
+            DEFAULT_REALTIME_PROVIDER
+        ]
+        assert model.value == DEFAULT_REALTIME_MODEL
+        assert voice.value == ""
+        assert idle_timeout.value == str(DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES)
+        assert engine.value == "auto"
+
+
+@pytest.mark.asyncio
+async def test_realtime_toggle_and_save_writes_exact_keys_through_shared_helper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[tuple, dict]] = []
+
+    def _fake_save(*args, **kwargs) -> bool:
+        calls.append((args, kwargs))
+        return True
+
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "save_settings_to_cli_config",
+        _fake_save,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        await _settle(pilot)
+        app.query_one("#settings-speech-realtime-enabled", Switch).value = True
+        app.query_one("#settings-speech-realtime-model", Input).value = "gpt-realtime-mini"
+        app.query_one("#settings-speech-realtime-voice", Input).value = "marin"
+        app.query_one(
+            "#settings-speech-realtime-idle-timeout-minutes", Input
+        ).value = "8"
+        app.query_one(
+            "#settings-speech-realtime-handsfree-engine", Select
+        ).value = "realtime"
+        await pilot.pause()
+        assert panel.has_unsaved_changes() is True
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        # Only the realtime/dictation block changed -- no TTS provider event.
+        assert app.events == []
+        assert len(calls) == 1
+        (section_values,), kwargs = calls[0]
+        assert section_values == {
+            "realtime": {
+                "enabled": True,
+                "provider": "openai",
+                "model": "gpt-realtime-mini",
+                "voice": "marin",
+                "idle_timeout_minutes": 8.0,
+            },
+            "dictation": {"handsfree_engine": "realtime"},
+        }
+        assert kwargs["delete_keys"] == {}
+        assert "Saved" in str(
+            app.query_one("#settings-speech-save-result", Static).renderable
+        )
+        assert panel.has_unsaved_changes() is False
+
+
+@pytest.mark.asyncio
+async def test_realtime_blank_voice_deletes_key_instead_of_empty_string(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "save_settings_to_cli_config",
+        lambda *a, **k: (calls.append((a, k)), True)[1],
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+    async with app.run_test(size=(150, 60)) as pilot:
+        await _settle(pilot)
+        app.query_one("#settings-speech-realtime-enabled", Switch).value = True
+        await pilot.pause()
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        assert len(calls) == 1
+        (section_values,), kwargs = calls[0]
+        assert "voice" not in section_values["realtime"]
+        assert kwargs["delete_keys"] == {"realtime": ("voice",)}
+
+
+@pytest.mark.asyncio
+async def test_realtime_invalid_idle_timeout_refuses_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "save_settings_to_cli_config",
+        lambda *a, **k: (calls.append((a, k)), True)[1],
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        await _settle(pilot)
+        app.query_one(
+            "#settings-speech-realtime-idle-timeout-minutes", Input
+        ).value = "not-a-number"
+        await pilot.pause()
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        assert calls == []
+        assert app.events == []
+        error = app.query_one(
+            "#settings-speech-realtime-idle-timeout-minutes-error", Static
+        ).renderable
+        assert error
+        assert "not-a-number" not in str(error)
+        assert panel.has_unsaved_changes() is True
+
+
+@pytest.mark.asyncio
+async def test_realtime_negative_idle_timeout_refuses_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "save_settings_to_cli_config",
+        lambda *a, **k: (calls.append((a, k)), True)[1],
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+    async with app.run_test(size=(150, 60)) as pilot:
+        await _settle(pilot)
+        app.query_one(
+            "#settings-speech-realtime-idle-timeout-minutes", Input
+        ).value = "-1"
+        await pilot.pause()
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        assert calls == []
+        assert app.events == []
+        error = app.query_one(
+            "#settings-speech-realtime-idle-timeout-minutes-error", Static
+        ).renderable
+        assert error
+
+
+@pytest.mark.asyncio
+async def test_realtime_save_failure_surfaces_error_and_keeps_draft_dirty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "save_settings_to_cli_config",
+        lambda *a, **k: False,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        await _settle(pilot)
+        app.query_one("#settings-speech-realtime-enabled", Switch).value = True
+        await pilot.pause()
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        assert panel.has_unsaved_changes() is True
+        result = str(
+            app.query_one("#settings-speech-save-result", Static).renderable
+        )
+        assert "not saved" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_realtime_block_dirty_state_and_revert() -> None:
+    app = _PanelHarness(configure_provider="audio_cpp")
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        await _settle(pilot)
+        assert panel.has_unsaved_changes() is False
+
+        app.query_one("#settings-speech-realtime-enabled", Switch).value = True
+        await pilot.pause()
+        assert panel.has_unsaved_changes() is True
+
+        await panel.revert_to_saved()
+        await pilot.pause()
+
+        assert (
+            app.query_one("#settings-speech-realtime-enabled", Switch).value is False
+        )
+        assert panel.has_unsaved_changes() is False
+
+
+@pytest.mark.asyncio
+async def test_realtime_and_tts_changes_save_together_in_one_click(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "save_settings_to_cli_config",
+        lambda *a, **k: (calls.append((a, k)), True)[1],
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        await _settle(pilot)
+        app.query_one("#settings-speech-realtime-enabled", Switch).value = True
+        app.query_one(
+            "#settings-speech-audio_cpp-synthesis-timeout-seconds", Input
+        ).value = "321"
+        await pilot.pause()
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        assert len(calls) == 1
+        assert len(app.events) == 1
+        event = app.events[0]
+        assert event.settings["audio_cpp"]["synthesis_timeout_seconds"] == 321.0
+
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=1,
+                persisted=True,
+                provider_statuses={"audio_cpp": "applied"},
+                provider_configuration_revisions={"audio_cpp": 1},
+                provider_runtime_revisions={"audio_cpp": 1},
+            )
+        )
+        assert panel.has_unsaved_changes() is False
