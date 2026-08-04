@@ -6044,8 +6044,11 @@ class LibraryScreen(BaseAppScreen):
                     parts.append(f"{failed} failed")
                 notify = getattr(self.app_instance, "notify", None)
                 if callable(notify):
-                    # (task-2220) Skips are neutral -- only a batch whose
-                    # sole outcome is real failures warns.
+                    # (task-2220) Skips are neutral and never warn on
+                    # their own (failed == 0 -> information). Real failures
+                    # with zero successes DO warn even when skips are also
+                    # present -- something the user pointed at genuinely
+                    # broke and nothing landed.
                     notify(
                         "Ingest finished — " + " · ".join(parts),
                         severity=(

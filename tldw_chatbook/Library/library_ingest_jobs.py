@@ -966,7 +966,7 @@ class LibraryIngestJobRegistry:
         self._jobs[index] = updated
         self._persist(updated)
         self._notify_listeners()
-        return updated
+        return _copy_job(updated)
 
     def requeue(
         self,

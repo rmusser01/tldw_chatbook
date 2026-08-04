@@ -1103,8 +1103,16 @@ def build_library_ingest_state(
         )
         for job in jobs
     )
+    # (task-2220 Qodo round) SKIPPED counts as finished everywhere, so it
+    # must also SHOW the control -- a skips-only queue was unclearble.
     queue_show_clear_finished = any(
-        job.state in (IngestJobState.DONE, IngestJobState.FAILED) for job in jobs
+        job.state
+        in (
+            IngestJobState.DONE,
+            IngestJobState.FAILED,
+            IngestJobState.SKIPPED,
+        )
+        for job in jobs
     )
     finished_count = sum(
         1

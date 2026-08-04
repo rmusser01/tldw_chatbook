@@ -1989,3 +1989,15 @@ def test_commit_summary_splits_skip_from_fail():
         "2 will import · 1 will skip · 1 will fail"
     )
     assert "will be skipped: pic.jpg." in state.unsupported_line
+
+
+def test_skips_only_queue_still_offers_clear_finished():
+    """(task-2220 Qodo round) A queue holding ONLY skipped rows must show
+    the Clear finished control -- skips count as finished everywhere."""
+    skipped = _job(
+        job_id="ingest-job-1",
+        state=IngestJobState.SKIPPED,
+        source_path="/tmp/photo.jpg",
+    )
+    state = build_library_ingest_state((skipped,), form=LibraryIngestFormState())
+    assert state.queue_show_clear_finished is True
