@@ -242,8 +242,11 @@ from ...Chat.console_display_state import (
     ConsoleInspectorState,
     ConsoleRetrievalScopeState,
     ConsoleStagedContextState,
+    ConsoleStagedEvidenceStripState,
     build_console_evidence_display_state,
+    build_console_staged_evidence_strip_state,
     coerce_non_negative_int,
+    console_staged_source_count,
 )
 from ...Chat.console_onboarding_state import (
     ConsoleSetupCardState,
@@ -375,6 +378,7 @@ from ...Widgets.Console import (
     ConsoleSettingsSummary,
     ConsoleSetupModal,
     ConsoleStagedContextTray,
+    ConsoleStagedEvidenceStrip,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceRenameModal,
@@ -3070,6 +3074,14 @@ class ChatScreen(BaseAppScreen):
         self._handoff_consumption_in_progress = False
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
         self._pending_console_launch_auto_open_inspector = False
+        # PR-4/task-1: source count of the evidence the LAST send consumed,
+        # kept only until the next thing happens (a new send, new staging, or
+        # an un-stage). It drives the strip's one-send "Evidence sent with
+        # this message" line, which is the only round-trip confirmation an
+        # unpersisted session gets -- the transcript's "Sources (N)" row
+        # needs a persisted conversation. Deliberately NOT a timer: a timed
+        # clear races the strip's own recompose.
+        self._console_evidence_sent_notice: Optional[int] = None
         # TASK-259: dedupe guard for the scheduled inspector-rail card swap
         # (rapid searching->staged staging would otherwise remove+remount
         # the card once per stage; each swap re-reads the current context).
@@ -5158,13 +5170,60 @@ class ChatScreen(BaseAppScreen):
         return self._console_chat_controller
 
     async def _capture_console_staged_rag(self, draft: str):
-        """Resolve the current staged Library-RAG bundle for one Console send."""
+        """Resolve the current staged Library-RAG bundle for one Console send.
 
-        return await capture_console_staged_evidence_for_chat(
+        This is the ONLY consume-on-send seam. The controller calls it once
+        per accepted send, AFTER every block gate (provider readiness, skill
+        substitution refusal), so a blocked send never reaches this method
+        and keeps its staging -- which is why the release below needs no
+        block check of its own.
+
+        Capture-boundary ruling: the launch is released only when the
+        capture returned a non-empty ``context`` string -- exactly the
+        predicate ``ConsoleChatController._capture_rag_context`` uses to
+        decide whether the evidence is prepended to the provider messages.
+        ``capture_console_staged_evidence_for_chat`` has several honest
+        no-op returns (invalid bundle, no canonical-local references, prompt
+        authority incomplete, empty formatted context) that all yield
+        ``context=None``; releasing on those would silently discard evidence
+        that never reached the model.
+        """
+
+        # Whatever the previous send consumed is no longer "this message".
+        self._clear_console_evidence_sent_notice()
+        launch = self._consume_pending_console_launch()
+        result = await capture_console_staged_evidence_for_chat(
             self.app_instance,
-            self._consume_pending_console_launch(),
+            launch,
             user_message=draft,
         )
+        context = getattr(result, "context", None)
+        if launch is not None and isinstance(context, str) and context.strip():
+            self._release_consumed_console_launch(launch)
+        return result
+
+    def _release_consumed_console_launch(self, launch: ConsoleLiveWorkLaunch) -> None:
+        """Clear the launch context a send just consumed and refresh surfaces.
+
+        Args:
+            launch: The launch handed to the capture adapter for this send.
+                A staging that landed while the capture was awaited wins:
+                the identity check below leaves the newer context alone
+                rather than dropping evidence the user just staged.
+        """
+        if self._pending_console_launch_context is not launch:
+            return
+        self._pending_console_launch_context = None
+        self._pending_console_launch_auto_open_inspector = False
+        self._console_evidence_sent_notice = console_staged_source_count(launch)
+        self._sync_console_pending_launch_surfaces()
+
+    def _clear_console_evidence_sent_notice(self) -> None:
+        """Drop the one-send "evidence sent" line and refresh only the strip."""
+        if self._console_evidence_sent_notice is None:
+            return
+        self._console_evidence_sent_notice = None
+        self._sync_console_staged_evidence_strip()
 
     def _sync_console_chat_core_state(self) -> ConsoleProviderSelection:
         """Push current workspace/provider selection into native Console services."""
@@ -8161,7 +8220,10 @@ class ChatScreen(BaseAppScreen):
             assistant_name=getattr(active_session, "assistant_name", None),
             assistant_id=getattr(active_session, "assistant_id", None),
             rag_enabled=_source_mentions_rag(source),
-            staged_source_count=1 if pending_launch else 0,
+            # RAG UX v2 PR-4: was hardcoded to 1 while the staged bundle
+            # routinely carries several references -- a four-result Library
+            # RAG run advertised "Sources: 1 staged".
+            staged_source_count=console_staged_source_count(pending_launch),
             tool_count=self._console_tool_count(),
             mcp_tool_count=self._console_mcp_tool_count(),
             approval_count=self._console_pending_approval_count(),
@@ -14128,6 +14190,8 @@ class ChatScreen(BaseAppScreen):
             launch: Live-work launch metadata to stage for Console.
         """
         self._pending_console_launch_context = launch
+        # New staging supersedes the previous send's "evidence sent" line.
+        self._console_evidence_sent_notice = None
         if not self._sync_console_pending_launch_surfaces():
             self.refresh(recompose=True)
 
@@ -14143,6 +14207,9 @@ class ChatScreen(BaseAppScreen):
         * ``_build_console_inspector_state`` -> ``ConsoleRunInspector`` rows
           and composer Chatbook action: pushed inside
           ``_sync_console_control_bar``.
+        * ``build_console_staged_evidence_strip_state`` -> the composer-level
+          staged-evidence strip (``_sync_console_staged_evidence_strip``),
+          the main-surface reader added by PR-4/task-1.
         * ``_build_console_staged_context_state`` -> staged-context tray
           (``_sync_console_staged_context_tray``), rail badges/summary and
           the pending-launch inspector auto-open (both applied through the
@@ -14170,12 +14237,55 @@ class ChatScreen(BaseAppScreen):
         if not self._console_live_work_card_swap_scheduled:
             self._console_live_work_card_swap_scheduled = True
             self.call_later(self._apply_console_live_work_card_swap)
+        self._sync_console_staged_evidence_strip()
         self._sync_console_staged_context_tray()
         self._sync_console_control_bar()
         self._sync_console_workspace_context()
         self._sync_console_settings_summary()
         self._sync_console_mode_bar()
         return True
+
+    def _build_console_staged_evidence_strip_state(
+        self,
+        pending_launch: Optional[ConsoleLiveWorkLaunch],
+    ) -> ConsoleStagedEvidenceStripState:
+        """Build the composer-level staged-evidence strip state."""
+        return build_console_staged_evidence_strip_state(
+            pending_launch,
+            sent_source_count=self._console_evidence_sent_notice,
+        )
+
+    def _sync_console_staged_evidence_strip(self) -> None:
+        """Refresh the mounted staged-evidence strip from the launch context."""
+        try:
+            strip = self.query_one(
+                "#console-staged-evidence-strip", ConsoleStagedEvidenceStrip
+            )
+        except QueryError:
+            return
+        strip.sync_state(
+            self._build_console_staged_evidence_strip_state(
+                self._pending_console_launch_context
+            )
+        )
+
+    @on(Button.Pressed, "#console-unstage-evidence")
+    def handle_console_unstage_evidence(self, event: Button.Pressed) -> None:
+        """Drop the whole staged live-work context from the main surface.
+
+        One button clears the entire launch (not per-reference): the bundle
+        is staged, prompted, and captured as ONE unit, so a partial un-stage
+        would advertise a granularity the send path does not have.
+        """
+        event.stop()
+        if self._pending_console_launch_context is None:
+            return
+        self._pending_console_launch_context = None
+        self._pending_console_launch_auto_open_inspector = False
+        self._console_evidence_sent_notice = None
+        if not self._sync_console_pending_launch_surfaces():
+            self.refresh(recompose=True)
+        self.notify("Staged evidence cleared")
 
     async def _apply_console_live_work_card_swap(self) -> None:
         """Swap the inspector-rail live-work card to match the launch context.
@@ -15019,6 +15129,14 @@ class ChatScreen(BaseAppScreen):
                 ephemeral=self._console_active_session_is_ephemeral(),
                 cost_state=initial_cost_state,
                 id="console-status-chips",
+                classes="ds-panel",
+            )
+            # RAG-40: staged evidence belongs on the MAIN surface, directly
+            # above the composer it is about to be prepended to -- not only
+            # in an Inspector rail the staging path never opens.
+            yield ConsoleStagedEvidenceStrip(
+                self._build_console_staged_evidence_strip_state(pending_launch),
+                id="console-staged-evidence-strip",
                 classes="ds-panel",
             )
             composer = ConsoleComposerBar(

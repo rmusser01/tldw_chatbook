@@ -1,0 +1,395 @@
+"""Console staged-evidence strip: visibility, un-stage, and consume-on-send.
+
+Covers RAG-40 (staging was invisible unless the Inspector rail happened to be
+open), the sticky-staging defect (`_consume_pending_console_launch` never
+cleared its field, so one staged bundle rode every later send), and the
+hardcoded `staged_source_count=1` chip lie.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock
+
+import pytest
+from textual.app import App, ComposeResult
+from textual.widgets import Button, Static
+
+from Tests.UI.test_console_dictionary_send_integration import _CapturingGateway
+from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
+from tldw_chatbook.Chat.citation_evidence_models import (
+    EvidenceBundle,
+    EvidenceReference,
+)
+from tldw_chatbook.Chat.console_display_state import (
+    ConsoleStagedEvidenceStripState,
+    build_console_staged_evidence_strip_state,
+    console_staged_source_count,
+)
+from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+    LocalRagContextResult,
+)
+from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+from tldw_chatbook.Widgets.Console.console_staged_context import (
+    ConsoleStagedContextTray,
+)
+from tldw_chatbook.Widgets.Console.console_staged_evidence_strip import (
+    ConsoleStagedEvidenceStrip,
+)
+
+STRIP_ID = "#console-staged-evidence-strip"
+UNSTAGE_ID = "#console-unstage-evidence"
+
+
+def _reference(index: int, *, title: str | None = None) -> EvidenceReference:
+    return EvidenceReference(
+        evidence_id=f"S{index}",
+        source_id=f"media-{index}",
+        source_type="media",
+        title=title if title is not None else f"Source {index}",
+        snippet=f"Body {index}",
+        authority_label="local",
+    )
+
+
+def _bundle(count: int, *, first_title: str | None = None) -> EvidenceBundle:
+    return EvidenceBundle(
+        bundle_id="bundle-1",
+        query="question",
+        source="Library Search/RAG",
+        references=tuple(
+            _reference(index, title=first_title if index == 1 else None)
+            for index in range(1, count + 1)
+        ),
+    )
+
+
+def _launch(count: int, *, first_title: str | None = None) -> ConsoleLiveWorkLaunch:
+    return ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Library Search/RAG retrieval",
+        payload={
+            "query": "question",
+            "evidence_bundle": _bundle(count, first_title=first_title).to_payload(),
+        },
+        status="staged",
+        recovery="Review citations before sending.",
+    )
+
+
+# --------------------------------------------------------------------------
+# (a)+(b)+(f) pure display state
+# --------------------------------------------------------------------------
+
+
+def test_strip_state_hidden_when_nothing_is_staged() -> None:
+    state = build_console_staged_evidence_strip_state(None)
+    assert state.visible is False
+    assert state.rows == ()
+    assert state.notice == ""
+
+
+def test_strip_state_lists_bundle_references_with_overflow() -> None:
+    state = build_console_staged_evidence_strip_state(_launch(5))
+    assert state.visible is True
+    assert len(state.rows) == 3
+    assert [row.title for row in state.rows] == ["Source 1", "Source 2", "Source 3"]
+    assert all(row.source == "media" for row in state.rows)
+    assert state.overflow == "+2 more"
+    assert "5 sources" in state.heading
+
+
+def test_strip_state_escapes_untrusted_library_titles() -> None:
+    state = build_console_staged_evidence_strip_state(
+        _launch(1, first_title="[bold]pwn[/bold] <script>")
+    )
+    row = state.rows[0]
+    # Markup brackets survive verbatim (they are rendered with markup off) and
+    # angle brackets are html-escaped exactly like the Inspector tray does.
+    assert row.title == "[bold]pwn[/bold] &lt;script&gt;"
+
+
+def test_strip_state_falls_back_to_the_launch_when_no_bundle_is_attached() -> None:
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Transformer notes",
+        payload={"source_id": "note-1"},
+        status="ready",
+    )
+    state = build_console_staged_evidence_strip_state(launch)
+    assert state.visible is True
+    assert len(state.rows) == 1
+    assert state.rows[0].title == "Transformer notes"
+    assert state.rows[0].source == "Library Search/RAG"
+    assert state.overflow == ""
+    assert "1 source" in state.heading
+
+
+def test_strip_state_renders_the_one_send_sent_notice() -> None:
+    state = build_console_staged_evidence_strip_state(None, sent_source_count=4)
+    assert state.visible is True
+    assert state.rows == ()
+    assert state.notice == "Evidence sent with this message · 4 sources"
+
+
+def test_strip_state_prefers_new_staging_over_a_stale_sent_notice() -> None:
+    state = build_console_staged_evidence_strip_state(_launch(2), sent_source_count=4)
+    assert state.notice == ""
+    assert len(state.rows) == 2
+
+
+def test_staged_source_count_is_the_bundle_reference_count() -> None:
+    assert console_staged_source_count(None) == 0
+    assert console_staged_source_count(_launch(4)) == 4
+    bundleless = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG", title="Notes", payload={"source_id": "n1"}
+    )
+    assert console_staged_source_count(bundleless) == 1
+
+
+# --------------------------------------------------------------------------
+# widget rendering
+# --------------------------------------------------------------------------
+
+
+class _StripApp(App):
+    def __init__(self, state: ConsoleStagedEvidenceStripState) -> None:
+        super().__init__()
+        self._state = state
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleStagedEvidenceStrip(self._state, id=STRIP_ID.lstrip("#"))
+
+
+@pytest.mark.asyncio
+async def test_strip_widget_is_hidden_and_actionless_without_staging() -> None:
+    app = _StripApp(build_console_staged_evidence_strip_state(None))
+    async with app.run_test(size=(120, 12)):
+        strip = app.query_one(STRIP_ID, ConsoleStagedEvidenceStrip)
+        assert strip.display is False
+        assert not list(strip.query(UNSTAGE_ID))
+
+
+@pytest.mark.asyncio
+async def test_strip_widget_renders_escaped_rows_overflow_and_one_unstage() -> None:
+    app = _StripApp(
+        build_console_staged_evidence_strip_state(
+            _launch(5, first_title="[bold]pwn[/bold]")
+        )
+    )
+    async with app.run_test(size=(120, 12)):
+        strip = app.query_one(STRIP_ID, ConsoleStagedEvidenceStrip)
+        assert strip.display is True
+        row = strip.query_one("#console-staged-evidence-row-0", Static)
+        assert "[bold]pwn[/bold]" in str(row.renderable)
+        # Escaping is TERMINAL: markup parsing stays off at the render step.
+        assert row._render_markup is False
+        assert len(strip.query(".console-staged-evidence-row")) == 3
+        overflow = strip.query_one("#console-staged-evidence-overflow", Static)
+        assert str(overflow.renderable) == "+2 more"
+        assert len(strip.query(UNSTAGE_ID)) == 1
+
+
+@pytest.mark.asyncio
+async def test_strip_widget_sync_state_swaps_rows_for_the_sent_notice() -> None:
+    app = _StripApp(build_console_staged_evidence_strip_state(_launch(2)))
+    async with app.run_test(size=(120, 12)) as pilot:
+        strip = app.query_one(STRIP_ID, ConsoleStagedEvidenceStrip)
+        strip.sync_state(
+            build_console_staged_evidence_strip_state(None, sent_source_count=2)
+        )
+        await pilot.pause()
+        notice = strip.query_one("#console-staged-evidence-notice", Static)
+        assert str(notice.renderable) == "Evidence sent with this message · 2 sources"
+        assert not list(strip.query(UNSTAGE_ID))
+
+        strip.sync_state(build_console_staged_evidence_strip_state(None))
+        await pilot.pause()
+        assert strip.display is False
+
+
+# --------------------------------------------------------------------------
+# screen wiring
+# --------------------------------------------------------------------------
+
+
+def _strip_text(screen) -> str:
+    strip = screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip)
+    return "\n".join(str(child.renderable) for child in strip.query(Static))
+
+
+@pytest.mark.asyncio
+async def test_console_run_staging_fans_out_to_strip_and_truthful_chip() -> None:
+    app = _build_test_app()
+    async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
+        screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, STRIP_ID)
+        assert screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip).display is False
+
+        screen._stage_console_library_rag_launch(_launch(4))
+        await pilot.pause()
+
+        strip = screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip)
+        assert strip.display is True
+        text = _strip_text(screen)
+        assert "Source 1" in text
+        assert "+1 more" in text
+        sources_chip = screen.query_one("#console-sources-label", Static)
+        assert "Sources: 4 staged" in str(sources_chip.renderable)
+
+
+@pytest.mark.asyncio
+async def test_console_unstage_clears_context_strip_chip_and_tray() -> None:
+    app = _build_test_app()
+    async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
+        screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, STRIP_ID)
+        screen._stage_console_library_rag_launch(_launch(3))
+        await pilot.pause()
+
+        screen.query_one(UNSTAGE_ID, Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._pending_console_launch_context is None
+        assert screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip).display is False
+        sources_chip = screen.query_one("#console-sources-label", Static)
+        assert "Sources: 0 staged" in str(sources_chip.renderable)
+        tray = screen.query_one(
+            "#console-staged-context-tray", ConsoleStagedContextTray
+        )
+        assert tray.state.is_empty is True
+
+
+@pytest.mark.asyncio
+async def test_console_library_u_key_handoff_populates_the_strip() -> None:
+    """The Library `u` handoff writes the SAME field, so the strip must list it."""
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+
+    app = _build_test_app()
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        _launch(2).to_pending_payload(),
+    )
+    async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
+        screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, STRIP_ID)
+        assert screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip).display is True
+        assert "Source 1" in _strip_text(screen)
+        sources_chip = screen.query_one("#console-sources-label", Static)
+        assert "Sources: 2 staged" in str(sources_chip.renderable)
+
+
+async def _submit(screen, draft: str):
+    controller = screen._ensure_console_chat_controller()
+    controller.provider_gateway = _CapturingGateway()
+    controller._agent_runtime_enabled = False
+    return await controller.submit_draft(draft)
+
+
+@pytest.mark.asyncio
+async def test_console_send_consumes_staging_and_shows_the_sent_transient(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    launch = _launch(2)
+    capture = AsyncMock(
+        return_value=LocalRagContextResult(
+            context="[S1] MEDIA — Source 1\nBody 1",
+            citation_builder=None,
+        )
+    )
+    monkeypatch.setattr(
+        chat_screen_module, "capture_console_staged_evidence_for_chat", capture
+    )
+
+    async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
+        screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_console_library_rag_launch(launch)
+        await pilot.pause()
+
+        result = await _submit(screen, "question")
+        assert result.accepted is True
+        await pilot.pause()
+
+        # The staged bundle is gone -- the modal's "Running again replaces it"
+        # promise is now true.
+        assert screen._pending_console_launch_context is None
+        assert "Evidence sent with this message · 2 sources" in _strip_text(screen)
+        sources_chip = screen.query_one("#console-sources-label", Static)
+        assert "Sources: 0 staged" in str(sources_chip.renderable)
+
+        # A SECOND send captures nothing: the evidence no longer rides along.
+        await _submit(screen, "follow up")
+        await pilot.pause()
+        assert capture.await_count == 2
+        assert capture.await_args_list[0].args[1] is launch
+        assert capture.await_args_list[1].args[1] is None
+        # The transient is one-send only.
+        assert "Evidence sent with this message" not in _strip_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_console_capture_without_prompt_context_keeps_staging(
+    monkeypatch,
+) -> None:
+    """No prompt context reached the provider -- discarding would lose evidence."""
+    app = _build_test_app()
+    launch = _launch(2)
+    capture = AsyncMock(return_value=LocalRagContextResult(None, None))
+    monkeypatch.setattr(
+        chat_screen_module, "capture_console_staged_evidence_for_chat", capture
+    )
+
+    async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
+        screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_console_library_rag_launch(launch)
+        await pilot.pause()
+
+        await _submit(screen, "question")
+        await pilot.pause()
+
+        assert screen._pending_console_launch_context is launch
+        assert screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip).display is True
+
+
+@pytest.mark.asyncio
+async def test_console_blocked_send_keeps_staged_evidence(monkeypatch) -> None:
+    app = _build_test_app()
+    launch = _launch(2)
+    capture = AsyncMock(
+        return_value=LocalRagContextResult(context="ctx", citation_builder=None)
+    )
+    monkeypatch.setattr(
+        chat_screen_module, "capture_console_staged_evidence_for_chat", capture
+    )
+
+    class _BlockedGateway:
+        async def resolve_for_send(self, _selection):
+            class _R:
+                ready = False
+                visible_copy = "Send blocked: choose a provider."
+
+            return _R()
+
+    async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
+        screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_console_library_rag_launch(launch)
+        await pilot.pause()
+
+        controller = screen._ensure_console_chat_controller()
+        controller.provider_gateway = _BlockedGateway()
+        controller._agent_runtime_enabled = False
+        result = await controller.submit_draft("question")
+        await pilot.pause()
+
+        assert result.accepted is False
+        capture.assert_not_awaited()
+        assert screen._pending_console_launch_context is launch
+        assert screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip).display is True

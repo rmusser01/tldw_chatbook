@@ -25,6 +25,7 @@ from .console_settings_modal import ConsoleSettingsModal
 from .console_setup_modal import ConsoleSetupModal
 from .console_settings_summary import ConsoleSettingsSummary
 from .console_staged_context import ConsoleStagedContextTray
+from .console_staged_evidence_strip import ConsoleStagedEvidenceStrip
 from .console_transcript import ConsoleTranscript
 from .console_workbench_state import build_console_workbench_state
 from .console_workspace_context import ConsoleWorkspaceContextTray
@@ -56,6 +57,7 @@ __all__ = [
     "ConsoleSettingsSummary",
     "ConsoleSetupModal",
     "ConsoleStagedContextTray",
+    "ConsoleStagedEvidenceStrip",
     "ConsoleTranscript",
     "ConsoleTranscriptSurface",
     "ConsoleWorkspaceContextTray",

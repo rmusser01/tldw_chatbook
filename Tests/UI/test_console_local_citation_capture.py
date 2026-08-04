@@ -217,6 +217,10 @@ async def test_console_controller_wires_current_staged_rag_capture(monkeypatch):
         controller._agent_runtime_enabled = False
 
         result = await controller.submit_draft("question")
+        # PR-4/task-1: a send that actually captured prompt context CONSUMES
+        # the staging. Before this, `_consume_pending_console_launch` never
+        # cleared its field, so this one bundle rode every later send.
+        assert screen._pending_console_launch_context is None
 
     assert result.accepted is True
     capture.assert_awaited_once_with(
