@@ -1,7 +1,7 @@
 ---
 id: TASK-2200
 title: Watchlists screen stops full-screen recomposing from background loaders
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04'
 labels:
