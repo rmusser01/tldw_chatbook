@@ -471,16 +471,22 @@ class DirectoryNavigation(OptionList):
         # or the sort order be changed, or something, we're going to keep a
         # parallel copy of *all* possible options for the list and then
         # populate from that.
-        self._entries = []
+        #
+        # (task-2160) Build into a LOCAL list and publish atomically at the
+        # end: two rapid loads (the location and show-files watchers both
+        # fire around mount) used to interleave -- the superseded worker
+        # kept appending into the attribute the fresh worker had just
+        # rebound, double-listing every entry it got to before its
+        # cooperative cancel check.
+        entries: list[DirectoryEntry] = []
 
-        # Now loop over the directory, looking for directories within and
-        # streaming them into the list via the app thread.
+        # Now loop over the directory, looking for directories within.
         worker = get_current_worker()
         styles = self._styles
         try:
             for entry in self._location.iterdir():
                 if is_dir(entry) or (is_file(entry) and self.show_files):
-                    self._entries.append(
+                    entries.append(
                         DirectoryEntry(self._location / entry.name, styles)
                     )
                 if worker.is_cancelled:
@@ -488,8 +494,11 @@ class DirectoryNavigation(OptionList):
         except PermissionError:
             self.post_message(self.PermissionError(self, self._location))
 
-        # Now that we've loaded everything up, let's make the call to update
-        # the display.
+        # Now that we've loaded everything up, publish and make the call to
+        # update the display.
+        if worker.is_cancelled:
+            return
+        self._entries = entries
         self.app.call_from_thread(self._repopulate_display)
 
     def _watch__location(self) -> None:

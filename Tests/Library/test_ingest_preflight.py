@@ -382,3 +382,25 @@ class TestPathErrorsAreMarked:
             result = analyze_path("https://example.com/document.pdf")
         assert result.errors
         assert result.path_invalid is False
+
+
+def test_zero_byte_files_classified_as_empty_not_importable(tmp_path):
+    """(task-2160) A 0-byte file leaves its type group at analysis time
+    and lands in ``empty_files`` -- the forecast used to promise it would
+    import and the pipeline then failed it post-commit."""
+    empty = tmp_path / "empty.txt"
+    empty.write_text("")
+    real = tmp_path / "real.txt"
+    real.write_text("content")
+
+    solo = analyze_path(str(empty))
+    assert solo.empty_files == (str(empty),)
+    assert not solo.type_groups
+    assert solo.total_files == 1
+
+    folder = analyze_path(str(tmp_path))
+    assert folder.empty_files == (str(empty),)
+    assert sorted(
+        path for files in folder.type_groups.values() for path in files
+    ) == [str(real)]
+    assert folder.total_files == 2

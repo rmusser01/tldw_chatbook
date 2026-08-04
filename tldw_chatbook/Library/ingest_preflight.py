@@ -189,6 +189,7 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
     warnings: list[dict[str, Any]] = []
     errors: list[str] = []
     total_size = 0
+    empty_files: list[str] = []
     truncated = False
     total_files = 0
     path_invalid = False
@@ -222,18 +223,26 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
             errors.append(f"Path not found: {path_or_url}")
             path_invalid = True
         elif p.is_file():
-            group = get_type_group(str(p))
-            type_groups.setdefault(group, []).append(str(p))
-            total_size = _safe_size(p)
+            size = _safe_size(p)
+            total_size = size
             total_files = 1
-            warnings.extend(get_tooling_warnings(group))
+            if size == 0:
+                empty_files.append(str(p))
+            else:
+                group = get_type_group(str(p))
+                type_groups.setdefault(group, []).append(str(p))
+                warnings.extend(get_tooling_warnings(group))
         elif p.is_dir():
             files, truncated = _collect_files(p, scan_limit)
             total_files = len(files)
             for file_path in files:
+                size = _safe_size(file_path)
+                total_size += size
+                if size == 0:
+                    empty_files.append(str(file_path))
+                    continue
                 group = get_type_group(str(file_path))
                 type_groups.setdefault(group, []).append(str(file_path))
-                total_size += _safe_size(file_path)
             for group in type_groups:
                 if group == UNSUPPORTED_GROUP:
                     # No amount of installing makes these ingestible, so there
@@ -253,4 +262,5 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
         truncated=truncated,
         total_files=total_files,
         path_invalid=path_invalid,
+        empty_files=tuple(empty_files),
     )

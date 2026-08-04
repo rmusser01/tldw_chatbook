@@ -100,6 +100,13 @@ class LibraryIngestPreflightSummary(Vertical):
                 classes="library-ingest-quiet-line",
                 markup=False,
             )
+        if state.empty_line:
+            yield Static(
+                state.empty_line,
+                id="ingest-empty-summary",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
         if state.duplicate_line:
             yield Static(
                 state.duplicate_line,
