@@ -157,23 +157,21 @@ TextArea:focus {
  * UAT reported for the Items filter, on a different Select for a different
  * reason.
  *
- * The cue is kept and moved to where `Select` actually draws it: the app's
- * focus colours on `SelectCurrent`'s existing `tall` border, so the geometry
- * is byte-identical to Textual's own focused state. The recolouring half
- * (`background`/`color`) stays on the `Select` itself, where it always was.
- *
- * `Select.-textual-compact` is deliberately not given a border here -- it has
- * no row to spend on one; see the TASK-2300 block in components/_lists.tcss
- * for that half, and for the `*:focus` outline that compounds it.
+ * Only the recolouring half is kept, on the `Select` itself where it always
+ * was. The border half is not re-homed onto `SelectCurrent` -- Textual's own
+ * `&:focus > SelectCurrent { border: tall $border; }` already recolours
+ * exactly that border on focus, at exactly the geometry it is already sized
+ * for, so re-stating it here in app colours would buy a shade and cost a
+ * fight: the re-homed rule (`Select:focus > SelectCurrent`, specificity
+ * (0,1,2)) also outranked `.settings-compact-select > SelectCurrent`'s
+ * deliberate `border: none` (0,1,1), putting the frame back INSIDE a control
+ * that draws its own frame outside. Review wave, Critical 1: this family of
+ * rules keeps losing to the fact that "a Select" is three different shapes,
+ * so the app now styles only what every shape has -- its colours.
  */
 Select:focus {
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
-}
-
-Select:focus > SelectCurrent {
-    border: tall $ds-input-focus-border;
-    border-bottom: tall $ds-input-focus-accent;
 }
 
 ToggleButton:focus {

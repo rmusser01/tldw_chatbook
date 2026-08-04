@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import pytest
 from textual.widgets import Button, Select
-from textual.widgets._select import SelectOverlay
+from textual.widgets._select import SelectCurrent, SelectOverlay
 
 from Tests.UI.full_app_destination_context import (
     StaticWatchlistsScopeService,
@@ -33,6 +33,10 @@ from Tests.UI.full_app_destination_context import (
     wait_for_selector as _wait_for_selector,
 )
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_settings_configuration_hub import (
+    StyledSettingsDestinationHarness,
+    _open_settings_category,
+)
 from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
 from tldw_chatbook.UI.Watchlists_Modules.rules_pane import RulesPane
 
@@ -120,8 +124,8 @@ async def test_the_status_filter_still_shows_its_value_when_focused_or_hovered()
     Found in live verification with this file already green, which is the
     point of it being here: the overlay tests above pass while the `Select`
     they hang off paints `┌──────────────┐` over its own only row. A compact
-    `Select` is ONE row tall and three app-wide rules give it a border or an
-    outline on focus and on hover (see the TASK-2300 blocks in
+    `Select` is ONE row tall and the app-wide focus/hover rules gave it a
+    border or an outline anyway (see the TASK-2300 blocks in
     `css/components/_lists.tcss`). Hover matters as much as focus: it fires on
     the way TO clicking, before anything has been chosen.
     """
@@ -143,11 +147,45 @@ async def test_the_status_filter_still_shows_its_value_when_focused_or_hovered()
             "a focused one-row Select must still say what it is set to"
         )
 
-        await pilot.hover("#items-status-select")
-        await pilot.pause()
+        current, rest_background = await _hover(pilot, screen, select)
         assert "All statuses" in _painted_rows(screen, select.region)[0], (
             "and so must a hovered one"
         )
+        assert current.styles.background != rest_background, (
+            "the hover cue must actually land -- see `_hover`"
+        )
+
+
+async def _hover(pilot, screen, select: Select):
+    """Put the pointer on `select`'s value row and confirm hover really landed.
+
+    Review wave, I1. The first version of the hover assertions in this file was
+    vacuous: `pilot.hover("#items-status-select")` leaves
+    `select.mouse_hover == False`, so "the value is still painted" held
+    trivially and could not have detected a hover regression.
+
+    Textual gives `:hover` to the innermost widget under the pointer that has a
+    hover style (`_has_hover_style`, derived from the selector NAMES a rule
+    mentions -- `css/stylesheet.py:506`). For a `Select` that widget is
+    `SelectCurrent`, never the `Select`, which is why a rule written as
+    `Select:hover > SelectCurrent` can never match: naming the child is what
+    makes the child the hover target.
+
+    So this asserts against the widget Textual actually hovers, and returns its
+    pre-hover background so the caller can prove the cue changed something.
+
+    Returns:
+        `(SelectCurrent, background_before_hover)`.
+    """
+    current = select.query_one(SelectCurrent)
+    rest_background = current.styles.background
+    await pilot.hover(f"#{select.id}")
+    await pilot.pause()
+    assert current.mouse_hover, (
+        "the pointer must actually be hovering the widget the cue is written "
+        "against, or this test proves nothing"
+    )
+    return current, rest_background
 
 
 async def test_items_status_filter_covers_every_status_the_backend_produces():
@@ -243,20 +281,34 @@ async def test_the_rule_condition_select_still_shows_its_value_when_focused():
         await _wait_for_selector(screen, pilot, "#rules-create-condition", timeout=5.0)
         select = screen.query_one("#rules-create-condition", Select)
 
-        painted = "".join(_painted_rows(screen, select.region))
-        assert "No items" in painted, "precondition: the value is readable at rest"
+        rest_rows = _painted_rows(screen, select.region)
+        assert "No items" in "".join(rest_rows), (
+            "precondition: the value is readable at rest"
+        )
+        current = select.query_one(SelectCurrent)
+        rest_border = current.styles.border
 
         select.focus()
         await pilot.pause()
         await pilot.pause()
-        assert "No items" in "".join(_painted_rows(screen, select.region)), (
+        focused_rows = _painted_rows(screen, select.region)
+        assert "No items" in "".join(focused_rows), (
             "a focused Select must still say what it is set to"
         )
+        assert len(focused_rows) == len(rest_rows), (
+            "focus must not change the control's height"
+        )
+        assert current.styles.border != rest_border, (
+            "focus must still be indicated -- on the border SelectCurrent "
+            "already reserves room for, which is Textual's own cue"
+        )
 
-        await pilot.hover("#rules-create-condition")
-        await pilot.pause()
+        _current, rest_background = await _hover(pilot, screen, select)
         assert "No items" in "".join(_painted_rows(screen, select.region)), (
             "and so must a hovered one"
+        )
+        assert current.styles.background != rest_background, (
+            "the hover cue must actually land -- see `_hover`"
         )
 
 
@@ -286,3 +338,64 @@ async def test_a_two_option_select_overlay_is_not_painted_away_entirely():
             "a two-option Select must paint its options, not an empty box"
         )
         assert len(painted) == select.query_one(SelectOverlay).option_count
+
+
+async def test_a_bordered_compact_select_keeps_its_frame_under_focus_and_hover():
+    """Review wave, Critical 1. "Compact" is not the same as "has no frame".
+
+    The first fix here opted every `Select.-textual-compact` out of `border`
+    on focus and hover, on the premise that a compact Select has no perimeter
+    to spare. `.settings-compact-select` (components/_agentic_terminal.tcss)
+    disproves it: those Selects are compact AND `height: 3` with a `border` of
+    their own, sized around -- ~21 of them across Settings, Speech, ImageGen
+    and the splash viewer. The blanket opt-out won on specificity ((0,2,1)
+    beats (0,2,0)) and stripped a frame the layout was drawn with, so the value
+    jumped a row and left two blank ones; hovering strobed it, because removing
+    the border moved the pointer's own target out from under it and it
+    oscillated every frame.
+
+    Measured on `#settings-provider-value` at 180x50 with the regression in:
+
+        rest      ┌────────────────────────────┐
+                  │ Manual / custom provider  ▼ │
+                  └────────────────────────────┘
+        focused    Manual / custom provider  ▼        <- frame gone
+
+    Nothing in the existing suite saw it (`test_settings_provider_test_draft.py`
+    stayed green), so it is pinned here, on the painted rows, in all three
+    states.
+    """
+    app = _build_test_app()
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = pilot.app.screen
+        await _wait_for_selector(screen, pilot, "#settings-provider-value", timeout=5.0)
+        select = screen.query_one("#settings-provider-value", Select)
+        assert "-textual-compact" in select.classes, (
+            "precondition: this control is the compact-AND-bordered shape"
+        )
+
+        def _frame() -> tuple[str, str]:
+            rows = _painted_rows(screen, select.region)
+            return rows[0].strip(), rows[-1].strip()
+
+        rest_top, rest_bottom = _frame()
+        assert rest_top and rest_bottom, (
+            "precondition: this Select draws a frame of its own at rest"
+        )
+
+        select.focus()
+        await pilot.pause()
+        await pilot.pause()
+        assert _frame() == (rest_top, rest_bottom), (
+            "a bordered compact Select must keep its own frame on focus; "
+            f"painted {_painted_rows(screen, select.region)!r}"
+        )
+
+        await pilot.hover("#settings-provider-value")
+        await pilot.pause()
+        assert _frame() == (rest_top, rest_bottom), (
+            "and on hover -- a frame that appears and disappears under the "
+            "pointer is a self-sustaining flicker, not a cue"
+        )

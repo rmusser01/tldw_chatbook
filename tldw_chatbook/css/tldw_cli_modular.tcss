@@ -1116,23 +1116,21 @@ TextArea:focus {
  * UAT reported for the Items filter, on a different Select for a different
  * reason.
  *
- * The cue is kept and moved to where `Select` actually draws it: the app's
- * focus colours on `SelectCurrent`'s existing `tall` border, so the geometry
- * is byte-identical to Textual's own focused state. The recolouring half
- * (`background`/`color`) stays on the `Select` itself, where it always was.
- *
- * `Select.-textual-compact` is deliberately not given a border here -- it has
- * no row to spend on one; see the TASK-2300 block in components/_lists.tcss
- * for that half, and for the `*:focus` outline that compounds it.
+ * Only the recolouring half is kept, on the `Select` itself where it always
+ * was. The border half is not re-homed onto `SelectCurrent` -- Textual's own
+ * `&:focus > SelectCurrent { border: tall $border; }` already recolours
+ * exactly that border on focus, at exactly the geometry it is already sized
+ * for, so re-stating it here in app colours would buy a shade and cost a
+ * fight: the re-homed rule (`Select:focus > SelectCurrent`, specificity
+ * (0,1,2)) also outranked `.settings-compact-select > SelectCurrent`'s
+ * deliberate `border: none` (0,1,1), putting the frame back INSIDE a control
+ * that draws its own frame outside. Review wave, Critical 1: this family of
+ * rules keeps losing to the fact that "a Select" is three different shapes,
+ * so the app now styles only what every shape has -- its colours.
  */
 Select:focus {
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
-}
-
-Select:focus > SelectCurrent {
-    border: tall $ds-input-focus-border;
-    border-bottom: tall $ds-input-focus-accent;
 }
 
 ToggleButton:focus {
@@ -1508,64 +1506,60 @@ SelectOverlay:focus {
 
 /* TASK-2300, second instance -- found in live verification, after the
  * overlay above was already fixed and the suite was green. The control
- * itself, not its popup, and a different rule doing the damage.
+ * itself, not its popup.
  *
- * A COMPACT `Select` is ONE row tall: `Select.-textual-compact` strips
- * `SelectCurrent`'s border, and this app's one-row filter strips pin
- * `height: 1` on top of that. So its single rendered line IS its value, and
- * it has no perimeter to spare -- for a border or for anything else.
- *
- * Three app-wide rules each give it one anyway:
- *
- *   Input:focus, TextArea:focus, Select:focus { border: solid ... }
- *                                              components/_forms.tcss
- *   Select:hover                { border: solid ... }  features/_embeddings.tcss
- *   *:focus                     { outline: solid ... } core/_reset.tcss
- *
- * All three are written for the normal three-row `Select`, where the
- * outermost lines are chrome and repainting them is exactly the intent. On a
- * one-row one the border is drawn into a box model with no room for it, so
- * the top edge lands on the only content row there is. Measured at 235x52
- * against the production stylesheet, `#items-status-select`:
+ * A `Select` that is compact AND has not been given a frame of its own is ONE
+ * row tall (`Select.-textual-compact > SelectCurrent { border: none
+ * !important }` in Textual's own CSS, and this app's filter strips pin
+ * `height: 1` on top of that). So its single rendered line IS its value, and
+ * `*:focus { outline: solid ... }` (core/_reset.tcss) -- which paints OVER a
+ * widget's outermost rendered lines at no geometric cost -- lands on it.
+ * Measured at 235x52 against the production stylesheet,
+ * `#items-status-select`:
  *
  *     blurred   'All statuses  ▼    '
  *     focused   '┌──────────────┐   '
  *
- * The control the user just clicked stops saying what it is set to -- and
- * `hover` means it happens on the way TO clicking it, before anything has
- * been chosen at all. That is very likely the larger half of what the UAT
- * described as "a bare border": both the popup and the control it hangs off
- * were painting boxes over their own contents.
+ * The control the user just clicked stops saying what it is set to. Same
+ * substitution as the overlay above and as TASK-1160's table cursor: drop the
+ * cue that overwrites content, keep the ones that recolour it
+ * (`Select:focus`'s background/colour half in components/_forms.tcss).
  *
- * Scoped to `.-textual-compact` -- a normal `Select` keeps all three cues
- * unchanged, because it has the rows to spend on them. The cue is not
- * dropped here either: `_forms.tcss`'s own `background`/`color` half is a
- * recolour, survives untouched, and is what marks focus now; hover takes the
- * same `$surface-lighten-1` this file already gives `OptionList` rows.
- * Recolouring cells a widget already draws can never overwrite one -- the
- * substitution TASK-1160 made for the table cursor.
+ * REVIEW WAVE, Critical 1 -- what this rule must NOT do. It first shipped as
+ *
+ *     Select.-textual-compact:focus,
+ *     Select.-textual-compact:hover { border: none; outline: none; }
+ *
+ * and "compact" turned out to be the wrong predicate for "has no perimeter".
+ * `.settings-compact-select` (components/_agentic_terminal.tcss) is compact
+ * too, and gives its Selects `height: 3` with a `border` of their OWN, sized
+ * around -- so ~21 Settings/Speech/ImageGen/Splash controls lost their frame
+ * on focus, and hovering one strobed it on and off every frame: the pointer
+ * on the border row made the `Select` the hover target, the border went, the
+ * child slid under the pointer, the `Select` un-hovered, the border came
+ * back. Measured on `#settings-provider-value`:
+ *
+ *     rest     ┌────────────────────────┐
+ *              │ Manual / custom provider ▼ │
+ *              └────────────────────────┘
+ *     focused   Manual / custom provider ▼      <- frame gone, two blank rows
+ *
+ * The `border` declarations are gone rather than re-scoped: with the two
+ * rules that used to put a border on a `Select` now moved onto the child that
+ * reserves room for one (components/_forms.tcss, features/_embeddings.tcss),
+ * nothing gives a borderless compact `Select` a border any more, so they were
+ * dead weight whose only remaining effect was to strip a border from Selects
+ * that had asked for one. The `:hover` half goes with them -- `*:focus` is
+ * focus-only, so hover never needed an exemption at all, and a hover rule that
+ * changes geometry is precisely what made the flicker self-sustaining.
+ *
+ * What is left is `outline`, on `:focus`, which is the one cue that genuinely
+ * costs no geometry and therefore genuinely cannot be reserved for.
+ * `.settings-compact-select:focus` sets `outline: none` itself, so this
+ * agrees with it rather than overriding it.
  */
-Select.-textual-compact:focus,
-Select.-textual-compact:hover {
-    border: none;
+Select.-textual-compact:focus {
     outline: none;
-}
-
-Select.-textual-compact:hover {
-    background: $surface-lighten-1;
-}
-
-/* And the same exemption one level in. The `:focus`/`:hover` cues that used
- * to sit on the `Select` now live on `SelectCurrent`, where a three-row
- * `Select` reserves a `tall` border for them -- but a compact one strips that
- * border precisely because it has no row to spend, so the child needs the
- * exemption as much as the parent did. Without this, moving those rules
- * inward just moves the empty box inward with them: measured, the compact
- * filter went straight back to '▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎'.
- */
-Select.-textual-compact:focus > SelectCurrent,
-Select.-textual-compact:hover > SelectCurrent {
-    border: none;
 }
 
 /* ===== MODULE: components/_navigation.tcss ===== */
@@ -13670,16 +13664,33 @@ ModalScreen {
 /* Enhanced hover states */
 /* Button:hover handled in components/_buttons.tcss to fix persistent hover issue */
 
-/* TASK-2300: on `SelectCurrent`, not on the `Select` itself. A `Select` has
- * no border of its own -- it draws one on that child -- so a border here was
- * an ADDITIONAL two rows of chrome around a widget with no rows to spare, and
- * the value it was meant to be highlighting vanished behind it. Worse than
- * the `:focus` twin in components/_forms.tcss (see the long note there),
- * because hover fires on the way TO clicking, before anything is chosen.
- * Same cue, same colour, on the border the widget already reserves room for.
+/* TASK-2300 + review wave I1. This was `Select:hover { border: solid ... }`,
+ * which added two rows of chrome to a widget that has no border of its own
+ * (a `Select` draws one on its child) -- so on a one-row compact Select the
+ * value vanished behind it, on the way TO clicking, before anything had been
+ * chosen.
+ *
+ * The first fix moved it to `Select:hover > SelectCurrent`, which is DEAD:
+ * Textual assigns `:hover` to the innermost widget under the pointer that has
+ * a hover style, and `_has_hover_style` is derived from the selector NAMES a
+ * rule mentions (`css/stylesheet.py:506`). Naming `SelectCurrent` in the rule
+ * is what makes `SelectCurrent` the hover target -- so the `Select` never gets
+ * `:hover` and `Select:hover > ...` can never match. Measured on the
+ * production bundle: `select.mouse_hover=False`, `current.mouse_hover=True`,
+ * painted rows identical at rest and hovered.
+ *
+ * Written to match the mechanism instead of fighting it: the pseudo-class goes
+ * on `SelectCurrent`, which is both the widget Textual actually hovers AND the
+ * one painting the surface a user sees. `background` rather than `border`, so
+ * it recolours cells the widget already draws and moves nothing -- geometry
+ * changes on hover are what made C1's frame strobe, because they move the
+ * pointer's own target out from under it. `$surface-lighten-1` is this app's
+ * established hover background (`ListView ListItem:hover`,
+ * `OptionList > .option-list--option-hover`, `DataTable > .datatable--hover`),
+ * so the cue now reads the same as every other hoverable row.
  */
-Select:hover > SelectCurrent {
-    border: tall $primary-lighten-1;
+Select > SelectCurrent:hover {
+    background: $surface-lighten-1;
 }
 
 

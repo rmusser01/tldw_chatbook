@@ -341,9 +341,23 @@ class LocalWatchlistsService:
         means what it says and reaches `get_new_items(status=None)`, which
         drops the status predicate entirely.
 
+        Review wave, Minor 7 -- the empty string changed meaning too, and it
+        is called out here rather than glossed. Before TASK-2301 any falsey
+        `status` (`None` OR `""`) became `"new"`; now any falsey `status`
+        means EVERY status. `""` is deliberately kept on the same side as
+        `None`: it is not a status any row holds, so the alternative would be
+        a query guaranteed to return nothing. Audited at the time of the
+        change -- `WatchlistsCollectionsScreen._load_items` is the only caller
+        in the tree (via `WatchlistScopeService.list_items` /
+        `WatchlistsBackendController.list_items`) and it passes `None` or a
+        real status, never `""` -- so nothing relied on the old default. A
+        future caller that wants the unread bucket must now ask for it by
+        name.
+
         Args:
             source_id: Restrict to one source, or `None` for all.
-            status: A single item status, or `None` for every status.
+            status: A single item status. Falsey (`None` or `""`) means every
+                status -- NOT `"new"`, which is what it used to mean.
             limit: Page size.
             offset: Page offset.
 
@@ -352,8 +366,6 @@ class LocalWatchlistsService:
         """
         db = self._db()
         subscription_id = int(source_id) if source_id is not None else None
-        # An empty string is still treated as "no filter" (it is not a status
-        # any row holds), but `None` no longer silently becomes `"new"`.
         status_filter = status if status else None
         fetch_limit = int(limit) + int(offset)
         rows = db.get_new_items(

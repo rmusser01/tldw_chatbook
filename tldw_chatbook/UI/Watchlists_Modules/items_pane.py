@@ -79,6 +79,27 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
         ("Error", "error"),
     ]
 
+    #: The one place a stored status becomes a word on screen. Review wave,
+    #: Minor 1: the filter has always said "Read" while the Status column
+    #: wrote the raw `reviewed` straight from the row, so before TASK-2301 the
+    #: two vocabularies were never visible together -- and after it they are,
+    #: in the same frame ("filter = Read" over a row reading "reviewed"). The
+    #: filter's labels are the user-facing vocabulary, so the column is
+    #: derived FROM them rather than given a second list to drift from: add a
+    #: status to `_STATUS_OPTIONS` and its column label comes along.
+    #:
+    #: Unknown values fall through unchanged (see `_status_label`) -- a status
+    #: this pane has never heard of must still be readable, not blank.
+    _STATUS_LABELS = {value: label for label, value in _STATUS_OPTIONS if value != "all"}
+
+    @classmethod
+    def _status_label(cls, status: Any) -> str:
+        """The user-facing word for a stored status value."""
+        text = str(status or "").strip()
+        if not text:
+            return "-"
+        return cls._STATUS_LABELS.get(text.lower(), text)
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         #: The exact sequence `compose()` last turned into table rows, and the
@@ -140,7 +161,9 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
             table.add_row(
                 escape_markup(str(item.get("title") or "Untitled")),
                 escape_markup(str(item.get("source_name") or "-")),
-                escape_markup(str(item.get("status") or "-")),
+                # Displayed through `_status_label` (review wave, Minor 1) so
+                # the column and the filter above it use one vocabulary.
+                escape_markup(self._status_label(item.get("status"))),
                 escape_markup(str(item.get("created_at") or "-")),
                 self._QUEUED_GLYPH if item.get("queued_for_briefing") else "",
                 key=str(item.get("id") or id(item)),
@@ -235,8 +258,12 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
             # `add_row` does -- `DataTable.update_cell` markup-parses its
             # value the same way, so leaving the sibling write site unescaped
             # would silently reopen the sink `compose()` closed (TASK-1348).
+            # Through `_status_label` for the same reason `compose()` is
+            # (review wave, Minor 1): this is the sibling write site for the
+            # same column, so a raw value here would put the two vocabularies
+            # back on screen together the moment a row was repainted.
             table.update_cell(
-                str(item_id), self._column_keys[2], escape_markup(str(status))
+                str(item_id), self._column_keys[2], escape_markup(self._status_label(status))
             )
         except CellDoesNotExist:
             # The row is not currently rendered (filtered out, or the table

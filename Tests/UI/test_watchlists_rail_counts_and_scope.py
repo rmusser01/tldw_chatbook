@@ -407,3 +407,179 @@ def test_the_all_scope_costs_no_extra_query():
 def test_unassigned_bucket_ids_are_the_ones_the_rail_reads():
     """A guard on the two sentinels this suite asserts against."""
     assert ALL_SOURCES_BUCKET != UNASSIGNED_BUCKET
+
+
+# --- review wave minors -----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_scoped_table_is_left_alone_on_the_server_backend():
+    """Review wave, Minor 3. Scoping is a LOCAL-only fact, and says so.
+
+    `scoped_source_rows()` resolves ids through the local bundle service
+    (watchlists/watchlist_sources are local tables), while a server row's
+    `source_id` is a server id from a different namespace. Intersecting them
+    is empty for every non-`all` scope, so a scoped table under the server
+    backend would render empty beneath a header claiming N sources -- the
+    exact defect this fix exists to remove, produced by the fix for it.
+    """
+    from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+        WatchlistsCollectionsScreen,
+    )
+
+    app = _build_test_app()
+    watchlist_id, _assigned, _unassigned = _seed_two_sources_one_assigned(app)
+
+    screen = WatchlistsCollectionsScreen(app)
+    # Server rows carry ids from the server's own namespace; nothing about
+    # them can be matched against a local watchlist_sources row.
+    screen._loaded_sources = [{"source_id": 9001}, {"source_id": 9002}]
+    screen.tree_scope = TreeScope(kind="watchlist", watchlist_id=watchlist_id)
+
+    screen.runtime_backend = "local"
+    assert screen.scoped_loaded_sources() == [], (
+        "precondition: under the local backend these ids scope to nothing"
+    )
+
+    screen.runtime_backend = "server"
+    assert screen.scoped_loaded_sources() == screen._loaded_sources, (
+        "under the server backend the listing must be left unscoped rather "
+        "than silently emptied"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_source_scope_shows_exactly_that_source():
+    """Review wave, Minor 5. `source` scope was untouched by any test.
+
+    `scoped_loaded_sources()` applies to every non-`all` scope, so clicking a
+    single source in the rail collapses the table to that one row. That is
+    intended -- the header names the same one source, so the two still agree,
+    which is the invariant this task is about -- but it is a behaviour change
+    and it is now pinned.
+    """
+    app = _build_test_app()
+    watchlist_id, assigned_id, _unassigned = _seed_two_sources_one_assigned(app)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _mounted(host, pilot)
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+
+        screen._apply_tree_scope(
+            TreeScope(
+                kind="source", watchlist_id=watchlist_id, source_id=assigned_id
+            )
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        assert [row["source_id"] for row in pane.sources] == [assigned_id]
+        assert len(screen.scoped_source_rows()) == len(pane.sources), (
+            "header and table must still agree under a source scope"
+        )
+
+
+@pytest.mark.asyncio
+async def test_opening_items_refreshes_the_rail_once_the_user_pauses():
+    """Review wave, Minor 6. The legend must not out-promise the number.
+
+    Opening an item marks it read, which moves it out of the unread bucket the
+    rail counts -- but that write is deliberately `refresh=False` (it fires on
+    every arrow key). The counts therefore lagged by however many items had
+    been opened, under a legend that says "Counts: unread items" flatly. The
+    lag is removed with a debounce rather than the label weakened: a burst of
+    opens costs one reload after the burst.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+
+    app = _build_test_app()
+    watchlist_id, assigned_id, _unassigned = _seed_two_sources_one_assigned(app)
+    db = app.local_watchlists_service._db()
+    with db.transaction() as conn:
+        for index in range(3):
+            persist_subscription_item(
+                conn,
+                assigned_id,
+                {
+                    "url": f"https://assigned.test/read-{index}/",
+                    "title": f"Readable {index}",
+                    "content_hash": f"hash-read-{index}",
+                },
+                run_id=None,
+                now=f"2026-08-04T09:00:0{index}+00:00",
+            )
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _mounted(host, pilot)
+        screen.active_section = "items"
+        await pilot.pause(0.3)
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        for _ in range(60):
+            await pilot.pause()
+            if len(pane.items) >= 3:
+                break
+        assert screen._tree_counts[watchlist_id]["unread"] == 3
+
+        # Open one item; the write itself is silent and does not reload.
+        pane.select_item_by_id(str(pane.items[0]["id"]))
+
+        for _ in range(80):
+            await pilot.pause(0.05)
+            if screen._tree_counts.get(watchlist_id, {}).get("unread") == 2:
+                break
+
+        assert screen._tree_counts[watchlist_id]["unread"] == 2, (
+            "the rail must catch up on silent mark-read writes once the user "
+            "stops moving, so its legend stays true"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_check_that_is_only_queued_does_not_re_read_the_counts():
+    """Review wave, Minor 4. Don't report a number the action has not reached.
+
+    `check_now` on the server backend delegates to `launch_run` and returns
+    `queued`/`running` -- the toast is already careful about that distinction.
+    Re-reading the rail's counts there would query for items the run has not
+    produced yet, and present the answer with the same authority as a real
+    one. The refresh now waits for a terminal status; a run that finishes
+    later is picked up by the next refresh.
+    """
+    app = _build_test_app()
+    _watchlist_id, assigned_id, _unassigned = _seed_two_sources_one_assigned(app)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _mounted(host, pilot)
+        reloads: list[str] = []
+        real_load_tree = screen._load_tree_data
+        screen._load_tree_data = lambda: reloads.append("x")
+
+        source = next(
+            s for s in screen._loaded_sources if s.get("source_id") == assigned_id
+        )
+
+        async def _queued(*, runtime_backend=None, source_id):
+            return {"status": "queued"}
+
+        screen._controller.check_now = _queued
+        await screen._check_now_source(source)
+        # Let the source reload this method dispatches actually start, so it
+        # is not left as an un-awaited coroutine at teardown.
+        await pilot.pause()
+        assert reloads == [], (
+            "a queued run must not trigger an authoritative count re-read"
+        )
+
+        async def _completed(*, runtime_backend=None, source_id):
+            return {"status": "completed"}
+
+        screen._controller.check_now = _completed
+        await screen._check_now_source(source)
+        await pilot.pause()
+        assert reloads == ["x"], "a finished run must refresh the counts"
+        screen._load_tree_data = real_load_tree

@@ -90,6 +90,11 @@ def _status_column(pane: ItemsPane) -> list[str]:
     Read off the mounted `DataTable`, not off `pane.items`: the pane's
     reactive is what the loader handed it, while this is what the user is
     looking at, and TASK-2301's whole subject is those two disagreeing.
+
+    The cells carry the USER-FACING labels, not the stored values (review
+    wave, Minor 1) -- the filter above the table has always offered "Read"
+    while the column wrote the raw `reviewed`, and TASK-2301 is what first put
+    the two in the same frame.
     """
     table = pane.query_one("#items-table", DataTable)
     status_key = pane._column_keys[2]
@@ -97,6 +102,38 @@ def _status_column(pane: ItemsPane) -> list[str]:
         str(table.get_cell(str(item["id"]), status_key))
         for item in pane.displayed_items()
     ]
+
+
+#: The word the Status column must show for each stored value, written out
+#: rather than derived from `ItemsPane._status_label`. A helper that asks
+#: production code what it displays cannot tell "the column shows the label"
+#: from "the column shows the raw value" -- both sides move together. Caught
+#: by mutation: making `_status_label` return its input left the first version
+#: of this helper green.
+STATUS_LABELS = {
+    "new": "New",
+    "reviewed": "Read",
+    "ingested": "Ingested",
+    "ignored": "Ignored",
+    "error": "Error",
+}
+
+
+def _labels_for(statuses) -> set[str]:
+    """The words the Status column shows for a set of stored status values."""
+    return {STATUS_LABELS[status] for status in statuses}
+
+
+def test_the_status_column_speaks_the_filters_vocabulary():
+    """Review wave, Minor 1. One vocabulary, and unknown values still show."""
+    assert ItemsPane._status_label("reviewed") == "Read"
+    assert ItemsPane._status_label("ingested") == "Ingested"
+    assert {label for label, _v in ItemsPane._STATUS_OPTIONS} >= set(
+        STATUS_LABELS.values()
+    ), "every column label must be a word the filter also offers"
+    assert ItemsPane._status_label("a-status-from-the-future") == (
+        "a-status-from-the-future"
+    ), "an unmapped status must stay readable rather than blank"
 
 
 # --- data layers -----------------------------------------------------------
@@ -169,7 +206,7 @@ async def test_every_status_appears_in_the_list_and_is_distinguishable():
 
         assert pane.status_filter == "all"
         assert len(pane.displayed_items()) == len(SEEDED)
-        assert set(_status_column(pane)) == set(SEEDED), (
+        assert set(_status_column(pane)) == _labels_for(SEEDED), (
             "the Status column must tell the statuses apart on screen, not "
             "only in the pane's own data"
         )
@@ -246,7 +283,8 @@ async def test_ingest_repaints_the_live_row_instead_of_removing_it():
             "includes it"
         )
         assert (
-            str(table.get_cell(str(target["id"]), pane._column_keys[2])) == "ingested"
+            str(table.get_cell(str(target["id"]), pane._column_keys[2]))
+            == ItemsPane._status_label("ingested")
         ), "the row the user acted on must show its new status immediately"
 
 
@@ -312,4 +350,192 @@ async def test_an_ingested_item_survives_the_reload_that_follows():
         assert SEEDED["new"] in titles, (
             "the ingested item must still be in the list after the reload"
         )
-        assert set(_status_column(pane)) == set(SEEDED) - {"new"} | {"ingested"}
+        assert set(_status_column(pane)) == _labels_for(
+            set(SEEDED) - {"new"} | {"ingested"}
+        )
+
+
+# --- paging (review wave, I2) ----------------------------------------------
+
+
+def _seed_many(db, *, ingested: int, new: int) -> tuple[int, list[str]]:
+    """One source with `ingested` triaged items NEWER than `new` unread ones.
+
+    The ordering is the whole fixture: `get_new_items` is `created_at DESC`, so
+    the unread items sit past the end of any mixed page the screen fetches.
+
+    Returns:
+        `(source_id, titles_of_the_unread_items)`.
+    """
+    source_id = db.add_subscription(
+        name="Busy", type="rss", source="https://busy.invalid/feed.xml"
+    )
+    stale_ids: list[int] = []
+    unread_titles: list[str] = []
+    with db.transaction() as conn:
+        for index in range(new):
+            title = f"Unread {index}"
+            unread_titles.append(title)
+            persist_subscription_item(
+                conn,
+                source_id,
+                {
+                    "url": f"https://busy.invalid/unread-{index}",
+                    "title": title,
+                    "content_hash": f"hash-unread-{index}",
+                },
+                run_id=None,
+                now=f"2020-01-01T00:00:00.{index:04d}+00:00",
+            )
+        for index in range(ingested):
+            stale_ids.append(
+                persist_subscription_item(
+                    conn,
+                    source_id,
+                    {
+                        "url": f"https://busy.invalid/filed-{index}",
+                        "title": f"Filed {index}",
+                        "content_hash": f"hash-filed-{index}",
+                    },
+                    run_id=None,
+                    now=f"2026-08-04T09:00:00.{index:04d}+00:00",
+                )
+            )
+    db.bulk_update_items(stale_ids, "ingested")
+    return source_id, unread_titles
+
+
+@pytest.mark.asyncio
+async def test_unread_items_past_the_newest_page_are_still_reachable():
+    """Review wave, I2. The filter must narrow the QUERY, not just the page.
+
+    TASK-2301 made `_load_items` ask for every status, which fixed "triaged
+    items are unreachable" and quietly broke the other direction: the query
+    pages at 100 and `ItemsPane._filtered_items` only filters what arrived, so
+    the page went from "the newest 100 unread" to "the newest 100 of any
+    status". With 120 triaged items newer than every unread one, picking "New"
+    showed ZERO rows -- while the rail, which the same branch made accurate,
+    honestly reported the unread count. Two numbers on one screen disagreeing
+    about the same fact.
+
+    The fixture is deliberately deeper than the 100-row page so nothing here
+    can pass by accident of page size.
+    """
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _source_id, unread_titles = _seed_many(db, ingested=120, new=5)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        pane = await _settled_items_pane(screen, pilot, 100)
+
+        # The precondition that makes this a real test: under "All statuses"
+        # the page is entirely triaged, so an in-memory filter has nothing
+        # unread to find.
+        assert not [
+            row for row in pane.items if row.get("status") == "new"
+        ], "precondition: no unread item is inside the newest-100 page"
+
+        pane.status_filter = "new"
+        for _ in range(80):
+            await pilot.pause(0.05)
+            pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+            if any(row.get("status") == "new" for row in pane.items):
+                break
+
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        titles = [row["title"] for row in pane.displayed_items()]
+        assert set(titles) == set(unread_titles), (
+            "filtering to New must re-page against the unread bucket, not "
+            f"filter the mixed page in memory; showed {titles!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_search_keystroke_does_not_re_page():
+    """The reload is gated on the STATUS moving, not on any filter message.
+
+    `ItemsFilterChanged` also fires per keystroke in the search box, which is
+    a purely in-memory filter; a query per character would be a new defect
+    paying for the fix above.
+    """
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_one_item_per_status(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        pane = await _settled_items_pane(screen, pilot, len(SEEDED))
+
+        calls: list[str | None] = []
+        real_list_items = screen._controller.list_items
+
+        async def _counting(*, runtime_backend=None, status=None, **kwargs):
+            calls.append(status)
+            return await real_list_items(
+                runtime_backend=runtime_backend, status=status, **kwargs
+            )
+
+        screen._controller.list_items = _counting
+
+        pane.search_query = "fresh"
+        await pilot.pause()
+        await pilot.pause()
+        assert calls == [], "a search keystroke must not re-query"
+
+        pane.status_filter = "ingested"
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if calls:
+                break
+        assert calls == ["ingested"], (
+            "a status change must re-page for exactly that status"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_delete_gesture_on_an_item_says_and_does_ignore():
+    """Review wave, Minor 2. The affordance now matches the write.
+
+    `d` over an item opened a dialog saying "Delete <title>?" and then wrote
+    `status="ignored"`. Before TASK-2301 the row vanished on the next reload
+    so it read as a delete; now the row stays, so the gesture looked like it
+    had failed -- and on an already-ignored row it genuinely did nothing
+    observable. It is routed to the Ignore vocabulary instead, through the
+    same dispatch the Inspector's Ignore button uses -- which also puts it
+    behind TASK-1541's per-item drain and terminal-status gate, where the old
+    direct-to-controller write was not.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import DeleteRequested
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    raw_ids = _seed_one_item_per_status(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        pane = await _settled_items_pane(screen, pilot, len(SEEDED))
+
+        toasts: list[str] = []
+        screen.app_instance.notify = lambda message, **kwargs: toasts.append(str(message))
+        dialogs: list[object] = []
+        screen.app.push_screen = lambda *a, **k: dialogs.append(a)
+
+        target = next(item for item in pane.items if item["title"] == SEEDED["new"])
+        screen.handle_delete_requested(DeleteRequested(dict(target)))
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if db.get_item_status(raw_ids["new"]) == "ignored":
+                break
+
+        assert dialogs == [], "an item must not be offered a delete dialog"
+        assert db.get_item_status(raw_ids["new"]) == "ignored"
+        assert any("ignored" in message.lower() for message in toasts), (
+            f"the gesture must report what it did; saw {toasts!r}"
+        )

@@ -498,6 +498,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # unrelated navigation happened to trigger a reload.
         self._loaded_sources: list[dict[str, Any]] = []
         self._loaded_items: list[dict[str, Any]] = []
+        # The single debounce timer behind `_request_tree_counts_refresh`
+        # (review wave, Minor 6). Declared here so the attribute always
+        # exists, rather than springing into being on the first item opened.
+        self._tree_counts_refresh_timer: Any = None
         self._loaded_rules: list[dict[str, Any]] = []
         # Artifacts (spec #2 phase 1, task 4): the same rebuild-survival
         # mirror as the four lists above, plus the selection the pane's
@@ -3902,6 +3906,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         notify = getattr(self.app_instance, "notify", None)
         source_id = source.get("id")
+        #: Whether this check actually finished and therefore actually produced
+        #: (or failed to produce) items. Review wave, Minor 4 -- see the rail
+        #: refresh at the end of this method.
+        reached_terminal = False
         try:
             result = await self._controller.check_now(
                 runtime_backend=self.runtime_backend,
@@ -3922,17 +3930,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 )
                 if callable(notify):
                     notify(f"Check failed: {failure}", severity="error", timeout=10)
-            elif callable(notify):
+            else:
                 # Only claim completion for a terminal status. `check_now` on
                 # the server backend delegates to `launch_run`, which triggers
                 # execution asynchronously and returns `queued`/`running` — so
                 # a fixed "Check complete." would tell the user the fetch had
                 # finished while it was still in flight (Qodo #4 on PR #1047).
                 status = str((result or {}).get("status") or "").lower()
-                if status in self._TERMINAL_RUN_STATUSES:
-                    notify("Check complete.", severity="information")
-                else:
-                    notify("Check started.", severity="information")
+                reached_terminal = status in self._TERMINAL_RUN_STATUSES
+                if callable(notify):
+                    if reached_terminal:
+                        notify("Check complete.", severity="information")
+                    else:
+                        notify("Check started.", severity="information")
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
         # Reload the source list so the Status and Last scraped columns carry
@@ -3954,7 +3964,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # rail count stayed on 0 until the screen was left and re-entered.
         # `_load_tree_data` publishes through TASK-2200's surface-refresh
         # drain, so this is a rail rebuild, not a screen recompose.
-        self._load_tree_data()
+        #
+        # Review wave, Minor 4: only once the run has actually FINISHED. The
+        # local backend runs `check_now` to completion and returns
+        # `completed`, so this fires exactly as before there. The server
+        # backend delegates to `launch_run` and returns `queued`/`running`
+        # (the toast three lines up is careful about the same distinction),
+        # so re-reading the counts here would read them before the items it
+        # is meant to be reporting exist -- an authoritative-looking query
+        # against a state the user's own action has not reached yet. A run
+        # that finishes later is picked up by the next refresh, which is the
+        # same guarantee every other server-backend surface on this screen
+        # gives.
+        if reached_terminal:
+            self._load_tree_data()
 
     async def _load_sources_preserving_selection(self) -> None:
         """Reload the source list without discarding the current selection."""
@@ -4137,11 +4160,26 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         also what lets `watch_tree_scope` re-push without re-querying the
         backend.
 
+        Review wave, Minor 3: LOCAL backend only, and it says so rather than
+        guessing. `scoped_source_rows()` resolves ids through the local
+        `WatchlistBundleService` (the watchlists/watchlist_sources tables live
+        only in the local database), while a server row's `source_id` is a
+        SERVER id from a different namespace entirely
+        (`normalize_server_watchlist_source`). Intersecting the two yields the
+        empty set for every non-`all` scope, so scoping under the server
+        backend would have emptied the table beneath a header claiming N
+        sources -- the exact defect this method exists to remove, produced by
+        the fix for it. There is no server-side membership query to scope
+        with, so the honest answer is to leave the listing unscoped there; the
+        rail's write verbs are already disabled on that backend for the same
+        underlying reason (`_tree_write_disabled_reason`).
+
         Returns:
             The subset of `_loaded_sources` in the current tree scope, in the
-            backend listing's own order.
+            backend listing's own order. Every loaded source when the scope is
+            `all`, or when the runtime backend is not `local`.
         """
-        if self.tree_scope.kind == "all":
+        if self.tree_scope.kind == "all" or self.runtime_backend != "local":
             return list(self._loaded_sources)
         allowed = {
             str(row.get("id")) for row in self.scoped_source_rows() if row.get("id") is not None
@@ -7336,12 +7374,38 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         stop_audio_playback_if_current(Path(str(file_path)))
 
+    def _items_status_query(self) -> str | None:
+        """The status the item PAGE should be fetched for, or `None` for all.
+
+        Review wave, I2. TASK-2301 made `_load_items` ask for every status,
+        which fixed "triaged items are unreachable" and quietly broke a
+        different guarantee: the query pages at 100 rows and the pane's filter
+        is applied in memory afterwards (`ItemsPane._filtered_items` never
+        re-queries), so the page went from "the newest 100 UNREAD items" to
+        "the newest 100 items of any status". On a source with 300 items whose
+        newest 100 have all been triaged, picking "New" showed ZERO rows while
+        the rail -- which this same branch made accurate -- honestly reported
+        200 unread. Two numbers on one screen disagreeing about the same fact,
+        which is the defect class this batch exists to remove.
+
+        Pushing the active filter into the query makes a page 100 rows OF THE
+        FILTERED STATUS, so "New" can reach unread items however deep they sit.
+        "All statuses" is unchanged: it genuinely wants a mixed page.
+
+        The pane keeps its own in-memory filter as well. That is not redundant
+        -- it is what pins the currently-open item into a view its status no
+        longer matches (see `_filtered_items`), and it is what makes the list
+        correct in the window between a filter change and its reload landing.
+        """
+        status = str(self._items_status_filter or "all")
+        return None if status == "all" else status
+
     async def _load_items(self) -> None:
         notify = getattr(self.app_instance, "notify", None)
         try:
             items = await self._controller.list_items(
                 runtime_backend=self.runtime_backend,
-                status=None,
+                status=self._items_status_query(),
                 limit=100,
                 offset=0,
             )
@@ -7445,6 +7509,44 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 patch_item=item,
                 gate=True,
             ),
+        )
+        self._request_tree_counts_refresh()
+
+    #: How long the rail's unread counts may lag behind a run of silent
+    #: mark-read-on-open writes. Long enough that a fast `j`/`j`/`j` walk pays
+    #: for ONE reload rather than one per keystroke; short enough that the
+    #: number is right by the time a reader looks up at it.
+    _TREE_COUNTS_REFRESH_DEBOUNCE_SECONDS = 0.6
+
+    def _request_tree_counts_refresh(self) -> None:
+        """Reload the rail's counts once the user stops opening items.
+
+        Review wave, Minor 6. The rail legend says "Counts: unread items"
+        unconditionally, and opening an item moves it out of the unread bucket
+        -- but `_mark_item_read_on_open` deliberately passes `refresh=False`
+        (it fires on every arrow key, and a reload per keystroke was proven
+        live to detach the mounted `ItemsPane` and drop focus). So the number
+        lagged by however many items had been opened since the last deliberate
+        action, and the honest choices were to weaken the label or to remove
+        the lag.
+
+        This removes the lag, at one query pair per PAUSE rather than per
+        keystroke: each call re-arms a single timer, so a burst of `j`
+        presses collapses into one `_load_tree_data()` after the burst ends.
+        `_load_tree_data` is itself `@work(exclusive=True, group="wc_tree")`
+        and publishes through TASK-2200's surface-refresh drain, so nothing
+        here can stack up rail rebuilds either.
+
+        The timer is stopped before it is replaced -- Textual keeps a live
+        `Timer` running until it is stopped or its node unmounts, and this
+        method can be reached many times a second.
+        """
+        timer = getattr(self, "_tree_counts_refresh_timer", None)
+        if timer is not None:
+            timer.stop()
+        self._tree_counts_refresh_timer = self.set_timer(
+            self._TREE_COUNTS_REFRESH_DEBOUNCE_SECONDS,
+            self._load_tree_data,
         )
 
     @on(UnreadToggleRequested)
@@ -7793,10 +7895,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     @on(ItemsFilterChanged)
     def handle_items_filter_changed(self, event: ItemsFilterChanged) -> None:
-        """Mirror the Items filter/search so a workbench rebuild can restore it."""
+        """Mirror the Items filter/search, and re-page when the STATUS moves.
+
+        Review wave, I2. The status is now part of the query
+        (`_items_status_query`), so changing it has to re-fetch or the pane is
+        left filtering the previous status's page in memory -- which is exactly
+        the "the filter can only narrow what was already fetched" defect this
+        fix removes.
+
+        Gated on the status ACTUALLY changing. This message also fires on every
+        keystroke in the search box, which is a purely in-memory filter and
+        must not cost a query per character.
+        """
         event.stop()
+        status_changed = event.status_filter != self._items_status_filter
         self._items_status_filter = event.status_filter
         self._items_search_query = event.search_query
+        if status_changed:
+            self.run_worker(self._load_items(), exclusive=True)
 
     @on(RefreshItemsRequested)
     def handle_refresh_items_requested(self, event: RefreshItemsRequested) -> None:
@@ -8387,11 +8503,32 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         entity = event.entity
         if entity is None:
             return
-        if InspectorPane._entity_type(entity) == "notification":
+        entity_type = InspectorPane._entity_type(entity)
+        if entity_type == "notification":
             self.app_instance.notify(
                 "Use Dismiss to remove a notification from the inbox.",
                 severity="information",
             )
+            return
+        if entity_type == "item":
+            # Review wave, Minor 2. `d` over an item used to open a dialog
+            # saying "Delete <title>?" and then write `status="ignored"` --
+            # never a delete. Before TASK-2301 the row vanished on the next
+            # reload, so it read as one; now the row stays, so the gesture
+            # looked like it had simply failed (and on an ALREADY-ignored row
+            # it genuinely did nothing observable at all).
+            #
+            # Routed to the vocabulary that matches the write, through the
+            # same `_dispatch_item_status` the Inspector's own Ignore button
+            # uses. That is not only naming: the old `_delete_item` called
+            # `self._controller.update_item_status(...)` DIRECTLY, bypassing
+            # both TASK-1541's per-item drain and the terminal-status gate --
+            # a second, unguarded writer of the one field this screen is
+            # careful about. It is gone; this is now the only path.
+            item_id = entity.get("id")
+            if item_id is None:
+                return
+            self._dispatch_item_status(item_id, _ItemStatusIntent(status="ignored"))
             return
         self._pending_delete_entity = dict(entity)
         title = entity.get("name") or entity.get("source_title") or entity.get("title") or "this item"
@@ -8412,8 +8549,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.run_worker(self._delete_run(entity.get("id")), exclusive=True)
         elif entity_type == "rule":
             self.run_worker(self._delete_rule(entity.get("id")), exclusive=True)
-        elif entity_type == "item":
-            self.run_worker(self._delete_item(entity.get("id")), exclusive=True)
+        # No `item` branch: items never reach this dialog any more -- see the
+        # Minor 2 note in `handle_delete_requested`.
 
     async def _delete_source(self, source_id: Any) -> None:
         try:
@@ -8489,26 +8626,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 notify("Failed to delete alert rule.", severity="error")
         self.run_worker(self._load_rules(), exclusive=True)
         self._refresh_overview_data()
-
-    async def _delete_item(self, item_id: Any) -> None:
-        notify = getattr(self.app_instance, "notify", None)
-        try:
-            await self._controller.update_item_status(
-                runtime_backend=self.runtime_backend,
-                item_id=item_id,
-                status="ignored",
-            )
-            if callable(notify):
-                notify("Item ignored.", severity="information")
-        except Exception:
-            logger.opt(exception=True).warning("Failed to ignore item.")
-            if callable(notify):
-                notify("Failed to ignore item.", severity="error")
-        self.run_worker(self._load_items(), exclusive=True)
-        self._refresh_overview_data()
-        # TASK-2304 AC#1: same reasoning as `_update_item_status`'s refresh
-        # tail -- this moves an item out of the `new` bucket the rail counts.
-        self._load_tree_data()
 
     def action_switch_section(self, section_id: str) -> None:
         """Switch to the named section via keyboard shortcut."""

@@ -343,7 +343,7 @@ class WatchlistTree(Vertical):
 
     @staticmethod
     def _unread_phrase(unread: int) -> str:
-        """"3 unread items" / "1 unread item" / "no unread items".
+        """"3 unread items" / "1 unread item" / "No unread items".
 
         TASK-2304 AC#3, the hover half of the answer. Says the word the bare
         number cannot, on the node the pointer is actually over, including

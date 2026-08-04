@@ -1131,12 +1131,16 @@ async def test_opening_an_item_repaints_its_status_cell_in_the_table():
         table = pane.query_one("#items-table", DataTable)
         row_key = str(items[0]["id"])
 
-        assert table.get_row(row_key)[2] == "new"
+        # The column shows the FILTER's vocabulary, not the stored value
+        # (review wave, Minor 1): the filter above this table has always
+        # offered "Read" for the `reviewed` status, and TASK-2301 is what
+        # first put the two words in the same frame.
+        assert table.get_row(row_key)[2] == "New"
 
         pane.select_item_by_id(row_key)
         await pilot.pause(0.6)
 
-        assert table.get_row(row_key)[2] == "reviewed", (
+        assert table.get_row(row_key)[2] == "Read", (
             "the Status cell must show what the user has actually read"
         )
         # And it must have got there WITHOUT a recompose (Task 5's CRITICAL).
