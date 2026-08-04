@@ -61,7 +61,7 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
                 classes="console-rail-section-title",
             )
             yield Static(
-                str(len(self.state.rows)),
+                str(self.state.source_count),
                 id="console-staged-context-count",
                 classes="console-staged-context-count",
             )

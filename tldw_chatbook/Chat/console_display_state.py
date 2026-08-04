@@ -491,6 +491,21 @@ class ConsoleStagedContextState:
     rows: tuple[ConsoleDisplayRow, ...] = ()
     recovery: str = ""
     is_empty: bool = False
+    #: True staged-source count for the tray's "Sources N" heading (D1a).
+    #: NOT ``len(rows)`` -- one staged reference explodes into 3-4
+    #: provenance rows (Evidence source/authority/status, optional
+    #: Snippet), so a 5-reference bundle produced 17-22 rows and the tray
+    #: rendered "Sources 18". ``from_live_work`` always sets this
+    #: explicitly from :func:`console_staged_source_count`. Callers that
+    #: build this state directly without passing it (pre-fix tests, and
+    #: any other hand-built state) keep the historical ``len(rows)``
+    #: fallback via ``__post_init__`` below, so a single hand-built row
+    #: still reads "1" -- weak but not wrong for that one-row shape.
+    source_count: int = -1
+
+    def __post_init__(self) -> None:
+        if self.source_count < 0:
+            object.__setattr__(self, "source_count", len(self.rows))
 
     @classmethod
     def from_live_work(
@@ -525,6 +540,7 @@ class ConsoleStagedContextState:
             summary=f"{launch.title} ({launch.source}, {launch.status})",
             rows=tuple(rows),
             recovery=launch.recovery,
+            source_count=console_staged_source_count(launch),
         )
 
     @classmethod

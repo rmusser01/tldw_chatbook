@@ -12893,8 +12893,30 @@ class ChatScreen(BaseAppScreen):
     def _console_rag_source_status(
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
+        sent_source_count: Optional[int] = None,
     ) -> str:
+        """Return the Inspector's "Sources" row text (D1b).
+
+        Args:
+            pending_launch: Currently staged live-work launch, if any.
+            sent_source_count: The one-send "evidence sent" memory
+                (``ChatScreen._console_evidence_sent_notice``) -- the SAME
+                count the staged-evidence strip reads for its "Evidence
+                sent with this message" line. Only consulted when nothing
+                is staged: live staging always wins, exactly like the
+                strip (``build_console_staged_evidence_strip_state``).
+
+        Returns:
+            The existing staged/blocked/not-requested vocabulary when a
+            launch is pending; the last-send memory sentence when nothing
+            is staged but a send just consumed evidence; else the
+            genuinely-empty ``"not staged"``.
+        """
         if pending_launch is None:
+            if sent_source_count:
+                count = int(sent_source_count)
+                noun = "source" if count == 1 else "sources"
+                return f"sent with the last message · {count} {noun}"
             return "not staged"
         if _source_mentions_rag(pending_launch.source):
             launch_status = str(pending_launch.status or "").strip().lower()
@@ -12980,7 +13002,10 @@ class ChatScreen(BaseAppScreen):
             model_label=model,
             provider_ready=provider_ready,
             provider_recovery=provider_recovery,
-            rag_status=self._console_rag_source_status(pending_launch),
+            rag_status=self._console_rag_source_status(
+                pending_launch,
+                sent_source_count=self._console_evidence_sent_notice,
+            ),
             evidence_summary=evidence_state.summary if evidence_state else None,
             evidence_status=evidence_state.status if evidence_state else None,
             evidence_recovery=evidence_state.recovery if evidence_state else None,
