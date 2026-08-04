@@ -1,7 +1,7 @@
 ---
 id: TASK-2200
 title: Watchlists screen stops full-screen recomposing from background loaders
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-04'
 labels:
@@ -43,21 +43,322 @@ targeted in-place update discipline the screen already uses elsewhere
 
 ## Acceptance Criteria (the what)
 
-- [ ] Completing a background load (`_load_tree_data`) or applying a local
+- [x] Completing a background load (`_load_tree_data`) or applying a local
       watchlists snapshot (`_apply_local_wc_snapshot`) no longer rebuilds the
       whole screen: the affected panes/regions are updated in place, and
       unrelated in-flight pane recomposes (e.g. the Sources create-form
       open/close) are not torn down by it.
-- [ ] The rendered result after a background refresh is equivalent to what the
+- [x] The rendered result after a background refresh is equivalent to what the
       full recompose produced today, covering the overview/first-run/loading
       states (the TASK-1347-strengthened tests stay green).
-- [ ] The TASK-1960 e2e reproduction
+- [x] The TASK-1960 e2e reproduction
       (`test_a_source_can_be_created_end_to_end_through_the_form`) stays green
       10/10 in isolation and in the poisoned order after
       `Tests/UI/test_watchlists_content_pane.py` — now with the destroyer
       removed rather than merely guarded against.
-- [ ] The masked SourcesPane defect is addressed or made impossible: closing the
+- [x] The masked SourcesPane defect is addressed or made impossible: closing the
       create form yields a correctly-populated pane without depending on a
       screen-level rebuild to paper over an empty recompose.
-- [ ] `PruneSafeSelect` remains in place as defense-in-depth (this task removes
+- [x] `PruneSafeSelect` remains in place as defense-in-depth (this task removes
       the known destroyer; it does not un-fix TASK-1960).
+
+## Implementation Plan
+
+1. Map every recompose site on `watchlists_collections_screen.py` and classify
+   each as user-gesture-driven (keep) or background-loader-driven (convert).
+2. Give the screen one owner for in-place workbench surface rebuilds: a
+   record-intent / drain-serially helper (`_request_surface_refresh` +
+   `_drain_surface_refresh`) over `WatchlistsWorkbench.refresh_region_content`
+   / `refresh_header_content`, so two loaders landing together coalesce
+   instead of cancelling each other mid remove-then-mount.
+3. Convert `_apply_local_wc_snapshot`: request FEEDS + centre-header rebuilds
+   and patch the Inspector's snapshot-derived widgets (`State:` line, the
+   Console attach button's `disabled`/tooltip) in place.
+4. Convert `_load_tree_data`: request LEFT_RAIL + FEEDS + centre-header
+   rebuilds and push `breadcrumb_labels` / `watchlist_count` into the live
+   Inspector and Overview panes.
+5. Convert `overview_data` from a screen-level `recompose=True` reactive to a
+   plain reactive plus a watcher that pushes into the live `OverviewPane`,
+   the Inspector's `profile_state`, and the two summary `Static`s.
+6. Route `watch_tree_scope`'s existing FEEDS/header refreshes through the same
+   drain, so nothing else can swap those regions concurrently.
+7. Add regression tests for AC#1 (an in-flight create form survives a
+   background load) and AC#4 (form-close yields a correct pane with the same
+   pane instance, i.e. no screen rebuild papering over it); update the tests
+   whose assertions pinned the old full-recompose behaviour.
+8. Run the verification gates: overview/first-run/loading-state, region
+   gating, content pane, source create form (full), sources pane, inspector,
+   the AC#3 10x/5x e2e repeats, `--collect-only`, and mutation-revert every
+   behavioural change.
+
+## Implementation Notes
+
+The three background destroyers are gone. The screen keeps exactly one
+`refresh(recompose=True)`, in `watch_active_section` — a user gesture that
+genuinely changes which regions mount (`_hidden_centre_regions`) and whether
+the workbench gets a `header=` factory at all.
+
+### Every recompose site, classified
+
+| Site | Driver | Verdict |
+|---|---|---|
+| `overview_data` reactive (`:401`) | background (`_refresh_overview_data`, its only writer) | **converted** — plain reactive + `watch_overview_data` |
+| `_load_tree_data` (`:913`) | background worker | **converted** — `_apply_tree_data_to_live_surfaces` |
+| `_apply_local_wc_snapshot` (`:984`) | background worker + the snapshot timeout | **converted** — `_apply_snapshot_to_live_surfaces` |
+| `watch_active_section` (`:2963`) | user gesture (tab switch) | **kept** — changes which regions exist |
+| `region_layout` (`:410`) | user gesture (`z`/`Z`/`[`/`]`) | **kept, out of scope** — and it is *not* `recompose=True` on the screen; the reactive with that flag is `WatchlistsWorkbench.region_layout`, pushed by `_apply_layout` |
+
+### One owner for DOM swaps
+
+`refresh_region_content`/`refresh_header_content` are remove-then-mount pairs
+with an `await` between the halves (Textual's `NodeList._ensure_unique_id`
+refuses to mount the replacement while the old widget still holds the id).
+Three call sites now want those swaps, so `exclusive=True` per surface — the
+shape `watch_tree_scope` used — becomes unsound: whichever request lands
+second cancels the first *between* its `remove()` and its `mount()`, leaving a
+bordered empty box. `_request_surface_refresh`/`_drain_surface_refresh` record
+intent and drain serially instead, never cancelling (TASK-1541's lesson,
+applied to DOM swaps rather than durable writes). `watch_tree_scope`'s two
+refreshes were routed through the same queue for the same reason.
+
+### What each converted loader now updates
+
+* **Snapshot** — FEEDS + centre header (the loading/error/empty/summary marker
+  lives in exactly those two places), plus two in-place patches on the
+  Inspector: the `State:` line (`Static.update`) and the Console attach
+  button's `disabled`/tooltip.
+* **Tree data** — the rail, FEEDS + header (the scope heading resolves a
+  watchlist name out of `_tree_watchlists`, so a rename would otherwise sit
+  stale), the Inspector's `breadcrumb_labels`, and the Overview's
+  `watchlist_count` (TASK-998's first-run copy).
+* **`overview_data`** — `OverviewPane.data` and `InspectorPane.profile_state`
+  (both pane-scoped `recompose=True` reactives; the pane swaps between three
+  whole layouts, so there are no cells to patch), plus the Inspector's two
+  count `Static`s.
+
+`overview_data`'s fate was a real question, not a formality: TASK-1960 proved
+it does **not** fire on the post-submit path (an equal dict), but it fires
+whenever counts genuinely change, and `_update_item_status`'s `refresh=False`
+path and `_save_noise_selectors` both exist *only* to dodge the screen
+recompose it used to cause. So it was the third destroyer, and it is converted.
+
+### Two things the full recompose was carrying that nothing else was
+
+Found by running the suites, not by reading:
+
+1. **The backend switch.** `watch_runtime_backend` clears
+   `selected_source`/`selected_run`/`selected_notification` on the screen, and
+   the snapshot refresh's recompose is what pushed those clears into the
+   mounted pane. `_reseed_live_detail_pane` now does it directly (also called
+   from `_delete_source`/`_delete_run`, which clear the same state).
+2. **The Console-follow row.** It is polled from an app-level adapter *at
+   render time only*, so an adapter that failed once recovered on whichever
+   recompose came next. `_resolve_console_follow_drift` re-polls and compares
+   against the DOM; the right rail is rebuilt only when it genuinely differs.
+   Deliberately conditional: the rail hosts the noise-selector editor, and
+   rebuilding it on every background load would destroy a half-typed selector
+   set — the same harm this task removes from the Sources create form. The
+   RIGHT_RAIL factory had to stop closing over `compose_content`'s captured
+   values for that rebuild to mean anything.
+
+### AC#4
+
+Addressed by removal. With the screen recompose gone from both loaders,
+nothing prunes `SourcesPane` mid-form-close, so the pane's own recompose
+mounts its children normally — and the pane the user is looking at is the one
+the assertions now target (`test_closing_the_create_form_repopulates_the_same_pane`
+asserts pane identity *first*, then that the same instance has its table and
+no form, so a screen-level rebuild can no longer satisfy it).
+
+### Verification
+
+* AC#3: **10/10** e2e in isolation, **5/5** of
+  (`test_watchlists_content_pane.py` + the e2e) in one invocation, that order.
+* `Tests/Watchlists/` 384 → **480 passed** together with the watchlists UI
+  files; `test_watchlists_destination_shell.py` + `overview_loading_state` +
+  `inspector` **110 passed**; `test_destination_shells.py` +
+  `test_destination_visual_parity_correction.py` + `source_create_form`
+  **243 passed, 1 skipped**; `test_console_live_work_handoffs.py` +
+  `test_no_side_effecting_predicates.py` **49 passed**; shell/navigation/
+  maturity sweep **124 passed**; `--collect-only Tests/UI Tests/Watchlists
+  Tests/Widgets` **8750 collected**, no errors.
+* 15 mutations, each reverted individually → RED → restored byte-exact
+  (md5-verified, `git status --short` unchanged between).
+
+### Files
+
+* `tldw_chatbook/UI/Screens/watchlists_collections_screen.py` — the whole
+  change.
+* `tldw_chatbook/UI/Watchlists_Modules/items_pane.py` — one stale comment.
+* Tests: `Tests/UI/test_watchlists_destination_shell.py` (+6 tests, and the
+  rule-edit test's `is not rules_pane` assertion inverted to `is` — it used to
+  *require* the destroyer), `Tests/UI/test_watchlists_source_create_form.py`
+  (+2: AC#1 draft survival, AC#4 pane identity),
+  `Tests/Watchlists/test_watchlists_collections_screen.py` (the rename test now
+  also asserts the mounted Inspector's breadcrumb).
+
+### Review wave (whole-branch adversarial review: 0 Critical, 1 Important, 5 Minor + 1 nit)
+
+The intent queue was independently scaffold-attacked and judged sound (two
+drainers impossible, no gap at the loop-exit boundary, `CancelledError`
+propagates past `_rebuild_surface`'s `except Exception` to the `finally`,
+unmount/tab-switch/gated-region all degrade). All findings fixed:
+
+* **I1 — a real AC#2 regression, now fixed.** `ArtifactsPane.scope_label`
+  resolves a watchlist DISPLAY NAME out of `_tree_watchlists`
+  (`_briefing_scope_label` → `_watchlist_display_name`), so it is tree data
+  living on an ITEMS-region pane — and the first pass left ITEMS alone
+  wholesale. Renaming the scoped watchlist while the Artifacts tab was open
+  repainted the rail, the FEEDS heading and the breadcrumb but left
+  `#artifacts-scope-note` on the old name. Pushed alongside the other two
+  ITEMS-region pushes, with a discriminating test. The method's docstring
+  now states the actual rule ("no pane is REBUILT", not "no pane is touched")
+  and enumerates every consumer.
+* **M1 — the drain armed before it scheduled.** A raising `run_worker` would
+  wedge `_surface_refresh_draining` True for the life of the screen, silently
+  stopping every background refresh. Now follows this file's own
+  `_start_tree_write` discipline (arm, disarm on failure, `close()` the
+  un-awaited coroutine), pinned by the sibling of that method's own test.
+* **M2 — one unguarded step in the drain loop.** The Console-follow poll sat
+  outside `_rebuild_surface`'s `except Exception`, and `run_worker` defaults
+  to `exit_on_error=True`, so a raising adapter took the app down. Moved into
+  `_rebuild_inspector_if_console_follow_drifted`, inside the guard.
+* **M3 — decided (b), documented.** Verified the cache's exact semantics
+  rather than assuming: `WatchlistsConsoleHandoff._latest_console_follow_loaded`
+  is set on success and on "no adapter", **never on failure** — so failure is
+  retried and success is frozen for the life of the screen. The drift check is
+  therefore *only* a failure-recovery mechanism, which is exactly what the old
+  full recompose provided (it hit the identical cache). Making the re-poll live
+  would be new product behaviour plus a multi-query fan-out per background
+  load, so it was not built. The machinery is kept (it is the only thing making
+  `test_watchlists_destination_retries_console_follow_after_initial_adapter_failure`
+  pass), and the comment that promised a live re-poll is corrected.
+* **M4 — adapter call out of `compose()`.** `_console_follow_item` is now a
+  screen-held mirror: `compose_content` resolves once per compose pass (the
+  pre-TASK-2200 call site) and `_resolve_console_follow_drift` refreshes it
+  before asking for the rail rebuild; the RIGHT_RAIL factory reads the
+  attribute. Region toggles cost zero adapter calls again.
+* **M5** — `_request_surface_refresh`'s `Args:` now documents
+  `_SURFACE_INSPECTOR` and that it is the conditional one.
+* **M6 (nit)** — `_watchlists_are_empty()` was already orphaned on `dev`
+  (`git show b5a8fcec5:…` finds the definition and no callers), so it is left
+  alone: not orphaned by this branch, and deleting it is not this task's call.
+
+### Live-verification wave — `is_mounted` is False for the whole of `on_mount`
+
+The whole test suite was green and the feature was **broken on a cold app**:
+navigate to Watchlists and the centre header sat on "Loading local Watchlists
+snapshot...", the Overview on "Loading watchlist activity..." and the Inspector
+on "State: unavailable" **indefinitely** (measured 100+ seconds, zero
+interaction). Clicking any tab painted the loaded state instantly, so the data
+had arrived — only the DOM had not.
+
+**Confirmed by instrumentation on a real 235x52 terminal**, not by reasoning:
+
+```
+OVERVIEW watcher is_mounted=False keys=[]      pane=0 inspector=0
+ON_MOUNT         is_mounted=False wb=1 centre=1 status=1
+SNAPSHOT applied is_mounted=False loaded=True   wb=1 centre=1 status=1
+OVERVIEW watcher is_mounted=False keys=[...]    pane=1 inspector=1
+```
+
+`Widget.is_mounted` returns `_is_mounted`, which `MessagePump._pre_process`
+sets in its `finally` — **after** it has dispatched `Compose` *and* `Mount`. So
+for the whole of `on_mount`, and for anything `on_mount` starts that finishes
+before that `finally` runs, `is_mounted` is `False` while the entire subtree is
+already registered and queryable. On a cold local database this screen's
+loaders finish inside exactly that window (the snapshot landed 7 ms after
+`on_mount` began). Every `if not self.is_mounted: return` guard therefore
+dropped its update, and nothing re-requested it.
+
+Why this is a regression **introduced by this task** and not pre-existing: the
+`overview_data` reactive's `refresh(recompose=True)` was called by Textual's
+own reactive machinery, which has no `is_mounted` guard anywhere in its path —
+so on `dev` that recompose repainted the whole screen a few milliseconds later
+and covered the snapshot's own (identically guarded, identically skipped)
+repaint. Replacing it with guarded in-place updates removed the only unguarded
+path.
+
+**Fix:** a `_dom_is_live` property (`self.is_attached` — "is there a path from
+me up to the DOM root", true from `App._register` and false once unmounted or
+exiting) replaces `is_mounted` at the six guards this task introduced. Every
+caller still degrades per widget via `except NoMatches`, so this is an outer
+gate, not the only protection. The pre-existing `is_mounted` guards on
+user-gesture watchers (`watch_selected_scope`, `watch_tree_scope`, …) are left
+alone: they cannot fire inside the mount window.
+
+Regression test reconstructs the captured state (a live, fully-attached screen
+with `_is_mounted` forced back to `False`, assertions made **inside** that
+window) rather than racing for it — `run_test`'s pilot settles the DOM before
+loader results are applied, which is precisely why 8 484 tests missed this.
+
+**Live re-verified after the fix, zero interaction:** header "No sources yet."
++ Create source / Import OPML, Overview "Nothing is being watched yet." with
+its first-run guidance, Inspector "State: ready" — all within ~2 s of
+navigation and stable at T+10 s.
+
+#### The guard-shape trap, for the record
+
+This is not a Watchlists quirk. `if self.is_mounted:` around "push data into
+my own widgets" is a shape used widely in this codebase, and it is wrong in
+**both** directions. Measured, not argued:
+
+| | during `on_mount` (and anything it starts that finishes in that window) | after a real `switch_screen` teardown |
+|---|---|---|
+| `is_mounted` | **False** — while the whole subtree is registered and queryable | **True** — still |
+| `is_attached` | **True** — correct | **False** — correct |
+
+`Widget.is_mounted` returns `_is_mounted`, which `MessagePump._pre_process`
+sets in its `finally`, *after* dispatching `Compose` **and** `Mount`.
+`MessagePump.is_attached` walks `_parent` to the DOM root, so it answers the
+question the guard is actually asking: *can I query and mount inside my own
+subtree right now?*
+
+So an `is_mounted` guard is not a teardown gate at all (the re-review measured
+`is_mounted=True` on a screen already swapped out), and it *is* a false
+negative for the entire mount window. The only thing it reliably does is drop
+updates that arrive early. Where the surrounding code already degrades per
+widget (`except NoMatches` / `except Exception: pass` — which every site here
+does), `is_attached` is strictly better on both axes.
+
+**Two waves of this task were spent on it.** The first fixed the six guards
+this task introduced. The re-review then found the same shape at six
+PRE-EXISTING sites — the section loaders `_load_sources`, `_load_runs`,
+`_load_notifications`, `_load_items`, `_load_rules`, `_load_briefings` — which
+`on_mount` reaches through `_load_active_section_data()`, and which the
+Watchlists **deep link** (`apply_navigation_context` sets the section on an
+unmounted screen, before `switch_screen`) points at a section whose loader then
+lands in the mount window on a cold database. Those were masked by the
+full-screen recompose this task removed, so they had to ship with it or the
+deep link would regress: `LENS: in-window push rows=0; after a dev-style
+recompose rows=1`. All twelve now use `_dom_is_live`.
+
+Guards on user-gesture watchers (`watch_selected_scope`, `watch_tree_scope`,
+`_open_sources_create_form`, …) are deliberately left on `is_mounted`: none can
+fire inside the mount window, and rewriting them is not this task's business.
+
+#### Qodo round (PR #1331) — the surviving `is_mounted` guards, adjudicated
+
+Qodo claimed the mount-window class continues into the two selection watchers
+this task had left on `is_mounted` as "user-gesture, cannot fire in the
+window". **Half right, and the half that was right was a real defect.** Every
+remaining guard on this screen was then swept with the same question — *does
+anything in the mount window write the state this guard protects?* — so this is
+the last round of this class.
+
+| Guard | In-window writer? | Verdict |
+|---|---|---|
+| `watch_selected_entity` | **YES** — the run deep link arms `_pending_navigation_run_id` pre-mount, `on_mount` starts `_load_runs`, its `had_pending_target` branch calls `_select_entity(requested_run)` | **FIXED** → `_dom_is_live`. Proven RED first: screen holds the run, mounted Inspector holds `None`. Nothing recovered it — `_build_inspector_pane` re-seeds only on a rebuild, and the right rail's only remaining rebuild is gated on `_resolve_console_follow_drift()`, `False` on a cold start. |
+| `watch_selected_scope` | **NO** — measured, 0 firings in-window | **DECLINED, no production change.** `_select_entity` is the only in-window writer and can only ever write `TreeScope(kind="all")`, which is byte-equal to the reactive's class default and to the value nothing pre-mount changes — so the write is structurally a no-op, not a lucky one. Probe: `scope_before == scope_after == TreeScope(kind='all', …)`, `watch_selected_scope fired 0 time(s)`. Confirmed behaviour-neutral by the inverse mutation (swapping it to `_dom_is_live` anyway leaves 112 tests unchanged). Its other half, `breadcrumb_labels`, is already pushed directly by `_apply_tree_data_to_live_surfaces`. |
+| `watch_active_section` | writes are pre-attach only (`apply_navigation_context`) | **KEEP, load-bearing as `is_mounted`.** Flipping it would make an in-window section write recompose a screen whose `compose()` already reflects it *and* double-start the loader `on_mount` starts. |
+| `apply_navigation_context` | n/a — it is itself the pre-mount caller | **KEEP.** A "should I start work" gate, not a "can I paint" gate; `on_mount` owns the first load. |
+| `watch_tree_scope` | no — only `_apply_tree_scope` (tree click, breadcrumb promotion, tree write flows) | KEEP |
+| `watch_runtime_backend` | pre-attach only (`apply_navigation_context`) or the Backend `Select` | KEEP |
+| `_open_sources_create_form`, `_open_sources_import_opml` | reached via a 0.05 s `set_timer` or `action_new_source` | KEEP |
+| `_load_sources_preserving_selection` | callers are `_check_now_source` / `_resume_source` | KEEP |
+| `_open_citation`, `open_edit_form`, `action_new_source`, `_load_briefing_presets` | user gestures / modal returns | KEEP |
+
+The rule that falls out: **`is_attached` for "can I paint into my own subtree",
+`is_mounted` only where the guard genuinely means "has the first mount already
+happened"** — which on this screen is exactly the two places that decide
+whether `on_mount` or a watcher owns the first load.

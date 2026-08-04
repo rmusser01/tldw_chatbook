@@ -832,6 +832,15 @@ async def test_renaming_a_watchlist_updates_the_rail():
             == "Feeds in Morning AI Brief (0)"
         )
         assert screen._breadcrumb_labels == ["Morning AI Brief"]
+        # ...and the MOUNTED Inspector, not only the screen's mirror of it
+        # (TASK-2200). `watch_selected_scope` pushed the pre-rename label when
+        # the scope moved and never fires again; nothing else rebuilds the
+        # Inspector now that the tree reload patches in place instead of
+        # recomposing the screen, so the reload has to push it itself.
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        assert inspector.breadcrumb_labels == ["Morning AI Brief"], (
+            "the renamed watchlist must reach the Inspector's breadcrumb too"
+        )
 
 
 @pytest.mark.asyncio

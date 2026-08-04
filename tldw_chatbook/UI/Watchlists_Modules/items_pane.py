@@ -35,8 +35,9 @@ class ItemsFilterChanged(Message):
     Same reason `SourcesPane.CreateFormDraftChanged` exists (see
     `sources_pane.py`): this pane is rebuilt from scratch by
     `_build_detail_pane` on every workbench recompose -- a `z`/`[`/`]`
-    keypress, a chevron click, or the `overview_data` recompose an
-    item-status refresh can trigger -- so `status_filter`/`search_query`
+    keypress, a chevron click, a tab switch (and, until TASK-2200 took the
+    recompose off it, the `overview_data` write an item-status refresh
+    triggers) -- so `status_filter`/`search_query`
     reset to their class defaults and the user's filter and half-typed
     search silently vanish. The screen mirrors this into its own state and
     seeds it back into the fresh pane.
