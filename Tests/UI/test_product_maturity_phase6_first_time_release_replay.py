@@ -150,10 +150,10 @@ async def test_release_first_time_replay_exposes_home_console_library_and_setup(
             )
             nav = [(button.id, str(button.label).strip()) for button in nav_buttons]
             for expected_nav in (
-                ("nav-home", "1 Home"),
-                ("nav-console", "2 Console"),
-                ("nav-library", "3 Library"),
-                ("nav-settings", "Settings"),
+                ("nav-home", "^1 Home"),
+                ("nav-console", "^2 Console"),
+                ("nav-library", "^3 Library"),
+                ("nav-settings", "F9 Settings"),
             ):
                 assert expected_nav in nav
 

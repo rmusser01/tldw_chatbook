@@ -15,6 +15,8 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, DataTable, Static, TabbedContent, TabPane
 
 from ...Navigation.base_app_screen import BaseAppScreen
+from ...Workbench.workbench_state import WorkbenchHeaderState, WorkbenchStatus
+from ...Workbench.workbench_widgets import DestinationHeader
 from ....runtime_policy.bootstrap import set_authoritative_runtime_source
 from ....Scheduling.events import (
     DeleteTaskRequested,
@@ -50,19 +52,18 @@ class SchedulesWorkbench(BaseAppScreen):
     """Main workbench for managing scheduled runs, reminders, and jobs."""
 
     BINDINGS = [
-        Binding("ctrl+c", "create_reminder", "Create"),
-        Binding("ctrl+r", "run_now", "Run now"),
-        Binding("ctrl+p", "pause_resume", "Pause/Resume"),
-        Binding("ctrl+d", "delete", "Delete"),
-        Binding("ctrl+s", "sync_now", "Sync"),
+        Binding("c", "create_reminder", "Create"),
+        Binding("d", "delete", "Delete"),
+        Binding("s", "sync_now", "Sync"),
     ]
 
+    # Footer hints must stay 1:1 with BINDINGS and only advertise implemented
+    # actions (ADR-031). Single letters are safe: focused inputs consume
+    # printable keys before screen bindings fire.
     SCHEDULES_SHORTCUTS = (
-        ("ctrl+c", "create reminder"),
-        ("ctrl+r", "run now"),
-        ("ctrl+p", "pause/resume"),
-        ("ctrl+d", "delete"),
-        ("ctrl+s", "sync now"),
+        ("c", "create task"),
+        ("d", "delete"),
+        ("s", "sync now"),
     )
 
     def __init__(
@@ -92,18 +93,28 @@ class SchedulesWorkbench(BaseAppScreen):
             service is not None
             and service.server_client.notifications_service is not None
         )
+        yield DestinationHeader(
+            WorkbenchHeaderState(
+                title="Schedules",
+                subtitle="When jobs, watchlists, and workflows run.",
+                status="loading",
+                status_label="Checking sync status…",
+            ),
+            id="schedules-destination-header",
+        )
         yield SyncStatusWidget(
             id="scheduling-sync-status",
             current_owner=owner_id,
             active_server_id=active_server_id,
             server_available=server_available,
         )
-        with TabbedContent():
+        with TabbedContent(id="scheduling-tabs"):
             with TabPane("Queue", id="scheduling-queue-tab"):
                 with Horizontal(id="scheduling-workbench"):
                     with Vertical(id="scheduling-list-pane"):
                         yield Static("Schedule Queue", id="scheduling-list-title")
-                        yield DataTable(id="scheduling-task-table")
+                        yield DataTable(id="scheduling-task-table", cursor_type="row")
+                        yield Static("", id="scheduling-pane-notice")
                     with Vertical(id="scheduling-detail-pane"):
                         yield TaskDetail(id="scheduling-task-detail")
                     with Vertical(id="scheduling-inspector-pane"):
@@ -125,6 +136,7 @@ class SchedulesWorkbench(BaseAppScreen):
         super().on_mount()
         self._register_footer_shortcuts()
         self._refresh_owner_select()
+        self._refresh_conflicts_tab()
         table = self.query_one("#scheduling-task-table", DataTable)
         table.add_columns("Title", "Type", "Status", "Next Run")
         self.run_worker(self.load_tasks, exclusive=True)  # type: ignore[arg-type]
@@ -478,6 +490,7 @@ class SchedulesWorkbench(BaseAppScreen):
         if service is None:
             status.set_owner_state("local", None, False)
             status.update_status(None, None, [])
+            self._sync_header_status("blocked", "Scheduling unavailable")
             return
         active_server_id = self._active_server_id()
         server_available = service.server_client.notifications_service is not None
@@ -485,11 +498,67 @@ class SchedulesWorkbench(BaseAppScreen):
             service.owner_id, active_server_id, server_available
         )
         state = service.db.get_sync_state(service.owner_id) or {}
+        sync_errors = state.get("sync_errors") or []
         status.update_status(
             last_pull_at=state.get("last_pull_at"),
             last_push_at=state.get("last_push_at"),
-            sync_errors=state.get("sync_errors") or [],
+            sync_errors=sync_errors,
         )
+        if sync_errors:
+            count = len(sync_errors)
+            self._sync_header_status(
+                "error", f"{count} sync error{'s' if count != 1 else ''}"
+            )
+        elif not server_available:
+            self._sync_header_status("empty", "Local only — no server connection")
+        elif service.owner_id.startswith("server:"):
+            self._sync_header_status("ready", "Synced with server")
+        else:
+            self._sync_header_status("ready", "Local schedules")
+
+    def _sync_header_status(self, status: WorkbenchStatus, label: str) -> None:
+        """Reflect real sync health in the destination header chip."""
+        try:
+            header = self.query_one("#schedules-destination-header", DestinationHeader)
+        except Exception:  # noqa: BLE001 - header not mounted yet
+            return
+        header.sync_state(
+            WorkbenchHeaderState(
+                title="Schedules",
+                subtitle="When jobs, watchlists, and workflows run.",
+                status=status,
+                status_label=label,
+            )
+        )
+
+    def on_resize(self) -> None:
+        """Hide side panes (with a notice) instead of clipping them."""
+        try:
+            width = self.size.width
+            inspector = self.query_one("#scheduling-inspector-pane")
+            detail = self.query_one("#scheduling-detail-pane")
+            notice = self.query_one("#scheduling-pane-notice", Static)
+        except Exception:  # noqa: BLE001 - panes not mounted yet
+            return
+        hide_inspector = 0 < width < 118
+        hide_detail = 0 < width < 84
+        inspector.set_class(hide_inspector, "pane-hidden")
+        detail.set_class(hide_detail, "pane-hidden")
+        # At detail-hiding widths the pane chrome also gets too tall to fit:
+        # the Queue tab label already names this pane, so the in-pane title
+        # yields its row to the table + notice (see _scheduling.tcss).
+        self.query_one("#scheduling-workbench").set_class(hide_detail, "compact")
+        if hide_detail:
+            # The create CTA normally lives in the (now hidden) detail pane;
+            # keep it reachable at compact widths when the queue is empty.
+            base = "Detail and inspector hidden — widen the window to see them."
+            if not self._tasks:
+                base += " Press c to schedule your first task."
+            notice.update(base)
+        elif hide_inspector:
+            notice.update("Inspector hidden — widen the window to see it.")
+        else:
+            notice.update("")
 
     @on(Button.Pressed, "#scheduling-owner-local")
     def _on_owner_local(self) -> None:
@@ -553,17 +622,23 @@ class SchedulesWorkbench(BaseAppScreen):
         conflicts_tab = self.query_one("#scheduling-conflicts", ConflictsTab)
         conflicts = service.db.get_conflicts(service.owner_id, primitive="reminder_task")
         conflicts_tab.populate(conflicts)
-
-    def action_run_now(self) -> None:
-        """Run the selected schedule immediately (stub for later tasks)."""
-        self.app_instance.notify("Not yet available", severity="warning")
-
-    def action_pause_resume(self) -> None:
-        """Pause or resume the selected schedule (stub for later tasks)."""
-        self.app_instance.notify("Not yet available", severity="warning")
+        # Surface the conflict count on the tab label itself (UX-063).
+        try:
+            pane = self.query_one("#scheduling-conflicts-tab", TabPane)
+            pane.label = (
+                f"Conflicts ({len(conflicts)})" if conflicts else "Conflicts"
+            )
+        except Exception:  # noqa: BLE001 - pane not mounted
+            pass
 
     def action_delete(self) -> None:
         """Delete the selected schedule after confirmation."""
+        if not self._tasks:
+            self.app_instance.notify(
+                "Nothing to delete — the queue is empty.",
+                severity="warning",
+            )
+            return
         self.query_one("#scheduling-task-detail", TaskDetail).request_delete()
 
     def action_sync_now(self) -> None:
@@ -576,6 +651,13 @@ class SchedulesWorkbench(BaseAppScreen):
             self.app_instance.notify(
                 "Scheduling service is unavailable; cannot sync.",
                 severity="warning",
+            )
+            return
+        if service.server_client.notifications_service is None:
+            # Honest no-op: never claim "Sync completed" when nothing can sync.
+            self.app_instance.notify(
+                "Local only — nothing to sync (no server connection).",
+                severity="information",
             )
             return
         self._sync_running = True

@@ -138,10 +138,14 @@ class DestinationHeader(Vertical):
             classes="workbench-header-subtitle",
         )
         yield Static(
-            _status_label(self.state.status),
+            self._chip_text(),
             id="workbench-header-status",
             classes="workbench-header-status ds-status-badge",
         )
+
+    def _chip_text(self) -> str:
+        """Return the status chip text: verbatim label when provided."""
+        return self.state.status_label or _status_label(self.state.status)
 
     def on_mount(self) -> None:
         self.sync_state(self.state)
@@ -152,7 +156,7 @@ class DestinationHeader(Vertical):
         self.query_one("#workbench-header-title", Static).update(state.title)
         self.query_one("#workbench-header-subtitle", Static).update(state.subtitle)
         self.query_one("#workbench-header-status", Static).update(
-            _status_label(state.status)
+            state.status_label or _status_label(state.status)
         )
         self.set_class(not state.subtitle, "has-empty-subtitle")
         _sync_status_classes(self, state.status)

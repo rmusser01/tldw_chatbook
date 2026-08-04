@@ -84,8 +84,9 @@ def test_folded_screen_composes_destination_header_first(route, expected_title):
     assert len(header.state.subtitle) <= 60
     assert "—" not in header.state.subtitle
     assert "--" not in header.state.subtitle
-    # States are text-labeled, never color-only.
-    assert header.state.status == "ready"
+    # States are text-labeled, never color-only. Lab's chip is honest about
+    # having no model server running yet; the other folded screens are ready.
+    assert header.state.status == ("empty" if route == "llm" else "ready")
 
 
 class _StudyHarness(App):

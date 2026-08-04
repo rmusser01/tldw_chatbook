@@ -66,12 +66,17 @@ async def test_footer_renders_workbench_shortcuts():
 
         footer.set_workbench_shortcuts(
             source="console",
-            shortcuts=(("F6", "next pane"), ("F1", "help")),
+            shortcuts=(("F6", "next pane"), ("F1", "help"), ("Ctrl+K", "switch session")),
         )
         await pilot.pause()
 
         shortcut_display = footer.query_one("#footer-key-quit", Static)
         rendered = str(shortcut_display.renderable)
 
-        assert "F6 next pane" in rendered
+        # Reserved global keys (F1/F6/Ctrl+P/Ctrl+Q) are never duplicated by
+        # the screen context — the always-present global strip covers them.
+        assert "F6 next pane" not in rendered
+        assert rendered.count("F1") == 1
+        # Non-reserved context hints render ahead of the globals.
+        assert "Ctrl+K switch session" in rendered
         assert "F1 help" in rendered

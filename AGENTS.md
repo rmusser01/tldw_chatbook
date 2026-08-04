@@ -202,6 +202,7 @@ Key sections:
 8. **FTS5** - Triggers auto-update on text columns
 9. **Workers** - Mark exclusive=True to prevent duplicates
 10. **Reactive** - recompose=True rebuilds, default just refreshes
+11. **Keybindings** - Screens must not bind terminal-convention keys (ctrl+c/v/x/s/d/z/a/r/w) or shadow the globals ctrl+p/ctrl+q/f1/f6; screen actions use single-letter htop-style bindings; footer hints may only advertise implemented actions — see `backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md`
 
 ## File Reference
 

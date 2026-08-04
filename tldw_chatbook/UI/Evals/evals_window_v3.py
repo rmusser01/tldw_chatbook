@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Optional
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container
-from textual.screen import Screen
 
 from loguru import logger
 
@@ -31,7 +30,7 @@ class EvalsWindowV3(Container):
     DEFAULT_CSS = """
     EvalsWindowV3 {
         width: 100%;
-        height: 100%;
+        height: 1fr;
         layout: vertical;
     }
     """
@@ -40,8 +39,8 @@ class EvalsWindowV3(Container):
         """Initialize evaluation window."""
         super().__init__(**kwargs)
         self.app_instance = app_instance
-        self.current_screen: Optional[Screen] = None
-        self.screen_stack: list[Screen] = []
+        self.current_screen: Optional[Container] = None
+        self.screen_stack: list[Container] = []
 
         logger.info("Evaluation Window V3 initialized")
 
@@ -80,10 +79,12 @@ class EvalsWindowV3(Container):
             logger.warning(f"Unknown screen ID: {screen_id}")
             if self.app_instance:
                 self.app_instance.notify(
-                    f"Screen '{screen_id}' not yet implemented", severity="warning"
+                    f"'{screen_id.replace('_', ' ').title()}' is planned — "
+                    "not available yet.",
+                    severity="warning",
                 )
 
-    def _create_screen(self, screen_id: str) -> Optional[Screen]:
+    def _create_screen(self, screen_id: str) -> Optional[Container]:
         """Create a screen based on ID."""
         screen_map = {
             "eval_home": lambda: EvalNavigationScreen(self.app_instance),
@@ -122,7 +123,7 @@ class EvalsWindowV3(Container):
             logger.info("No screen to go back to")
 
     def _handle_screen_change(
-        self, old_screen: Optional[Screen], new_screen: Optional[Screen]
+        self, old_screen: Optional[Container], new_screen: Optional[Container]
     ) -> None:
         """Handle screen change events."""
         if old_screen:

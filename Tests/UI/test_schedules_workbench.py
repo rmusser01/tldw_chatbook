@@ -25,6 +25,7 @@ from tldw_chatbook.UI.Screens.scheduling.task_detail import (
     _STATUS_BADGE_CLASSES,
     _humanize_cron,
 )
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 
 
@@ -221,7 +222,7 @@ async def test_task_detail_renders_selected_task():
         assert enable_button.label.plain == "Enable"
         assert disable_button.label.plain == "Disable"
         assert delete_button.label.plain == "Delete"
-        assert follow_button.label.plain == "Follow in Console"
+        assert follow_button.label.plain == "Follow 'Test' in Console"
 
 
 @pytest.mark.asyncio
@@ -334,7 +335,7 @@ async def test_delete_button_opens_confirmation_dialog():
 
 @pytest.mark.asyncio
 async def test_ctrl_d_opens_confirmation_dialog():
-    """The Ctrl+D binding opens the delete confirmation dialog for the selected task."""
+    """The d binding opens the delete confirmation dialog for the selected task."""
     async with WorkbenchTestAppWithService().run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
@@ -342,7 +343,7 @@ async def test_ctrl_d_opens_confirmation_dialog():
         table.cursor_coordinate = (0, 0)
         await pilot.pause()
 
-        await pilot.press("ctrl+d")
+        await pilot.press("d")
         await pilot.pause()
 
         assert isinstance(pilot.app.screen, DeleteConfirmationDialog)
@@ -359,7 +360,7 @@ async def test_empty_queue_shows_friendly_empty_state():
             "#scheduling-task-detail-empty-state", Static
         )
         assert "No scheduled tasks yet" in empty_state.visual.plain
-        assert "Ctrl+C" in empty_state.visual.plain
+        assert "Press c" in empty_state.visual.plain
 
 
 @pytest.mark.asyncio
@@ -372,8 +373,8 @@ async def test_no_task_selected_shows_friendly_copy():
         empty_state = pilot.app.screen.query_one(
             "#scheduling-task-detail-empty-state", Static
         )
-        assert "Select a scheduled task" in empty_state.visual.plain
-        assert "Ctrl+C" in empty_state.visual.plain
+        assert "Select a task" in empty_state.visual.plain
+        assert "press c" in empty_state.visual.plain
 
 
 @pytest.mark.asyncio
@@ -741,26 +742,6 @@ async def test_workbench_notifies_on_delete_failure():
 
 
 @pytest.mark.asyncio
-async def test_unimplemented_action_bindings_notify_user():
-    """Stub action bindings notify the user instead of silently doing nothing."""
-    async with WorkbenchTestAppWithService().run_test() as pilot:
-        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
-        await pilot.pause()
-
-        for action in (
-            pilot.app.screen.action_run_now,
-            pilot.app.screen.action_pause_resume,
-        ):
-            action()
-            await pilot.pause()
-
-        assert len(pilot.app._notifications) == 2
-        for notification in pilot.app._notifications:
-            assert notification.message == "Not yet available"
-            assert notification.severity == "warning"
-
-
-@pytest.mark.asyncio
 async def test_enable_disable_buttons_update_reminder():
     """Enable/Disable buttons call the scheduling service and notify the user."""
     async with WorkbenchTestAppWithService().run_test() as pilot:
@@ -794,7 +775,7 @@ async def test_enable_disable_buttons_update_reminder():
 
 @pytest.mark.asyncio
 async def test_create_reminder_action_saves_new_reminder():
-    """Ctrl+C opens the reminder form; saving calls the scheduling service."""
+    """The c binding opens the reminder form; saving calls the scheduling service."""
     async with WorkbenchTestAppWithService().run_test() as pilot:
         pilot.app.scheduling_service = MockSchedulingService()
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
@@ -808,7 +789,7 @@ async def test_create_reminder_action_saves_new_reminder():
         title_input = pilot.app.screen.query_one("#reminder-title", Input)
         title_input.value = "New reminder"
         run_at_input = pilot.app.screen.query_one("#reminder-run-at", Input)
-        run_at_input.value = "2026-07-20T14:00:00+00:00"
+        run_at_input.value = "2030-07-20T14:00:00+00:00"
 
         await pilot.click("#reminder-save")
         await pilot.pause()
@@ -975,6 +956,11 @@ async def test_conflicts_tab_renders_rows_and_resolves():
         await pilot.click("#scheduling-use-server")
         await pilot.pause()
 
+        # Resolution is guarded by a confirmation dialog (UX-007).
+        assert isinstance(pilot.app.screen, ConfirmationDialog)
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+
         assert engine.calls == [("c1", "server")]
         assert len(tab.posted_messages) == 1
         msg = tab.posted_messages[0]
@@ -1024,6 +1010,11 @@ async def test_conflicts_tab_resolve_false_does_not_post_message():
         assert table.row_count == 1
         table.cursor_coordinate = (0, 0)
         await pilot.click("#scheduling-use-server")
+        await pilot.pause()
+
+        # Confirmation is required before the (failing) resolution runs.
+        assert isinstance(pilot.app.screen, ConfirmationDialog)
+        await pilot.click("#confirm-button")
         await pilot.pause()
 
         assert engine.calls == [("c1", "server")]

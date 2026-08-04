@@ -4397,6 +4397,39 @@ ListItem.personas-library-row.is-active.-highlight {
     outline: none;
 }
 
+/* --- Lab mode strip (Models | Speech | Evals) ---------------------------
+   Mirrors the MCP chip rules above: the generic `.is-active { border: round
+   $ds-action-focus }` rule (line ~3869) otherwise draws a border around the
+   1-row chip, clipping its label out of the 1-high strip entirely. */
+#lab-mode-strip Button.lab-mode-chip {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    padding: 0 1;
+    border: none;
+}
+
+#lab-mode-strip .lab-mode-chip.is-active {
+    border: none;
+    text-style: bold underline;
+}
+
+#lab-mode-strip .lab-mode-chip:focus,
+#lab-mode-strip .lab-mode-chip:hover:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+    outline: none;
+}
+
+#lab-mode-strip .lab-mode-chip.is-active:focus,
+#lab-mode-strip .lab-mode-chip.is-active:hover:focus {
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+    text-style: bold underline;
+    outline: none;
+}
+
 #mcp-hub-rail {
     width: 3fr;
     min-width: 24;

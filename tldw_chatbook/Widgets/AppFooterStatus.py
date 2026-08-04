@@ -17,7 +17,30 @@ from ..UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
 
 
 class AppFooterStatus(Widget):
-    DEFAULT_SHORTCUT_TEXT = "Ctrl+Q quit | Ctrl+P palette"
+    """Per-screen footer: screen hint context + protected global hints.
+
+    Layout contract (see the UX critique, UX-006/UX-041):
+    * The app-global hints (F1 help, F6 panes, Ctrl+P palette, Ctrl+Q quit)
+      are ALWAYS present — a screen's shortcut context may prepend its own
+      hints but never replaces the globals.
+    * When width runs out, the screen-context hints drop first (leaving an
+      ellipsis marker), then the right cluster (token/word/DB sizes) hides
+      progressively; nothing ever clips mid-word.
+    """
+
+    GLOBAL_HINTS = "F1 help · F6 panes · Ctrl+P palette · Ctrl+Q quit"
+    GLOBAL_HINTS_COMPACT = "F1 · Ctrl+P · Ctrl+Q"
+    GLOBAL_HINTS_MIN = "Ctrl+Q"
+    DEFAULT_SHORTCUT_TEXT = GLOBAL_HINTS
+
+    #: Keys owned by the app-global layer (ADR-031); context hints that
+    #: repeat them are filtered so the footer never says the same key twice.
+    _RESERVED_GLOBAL_KEYS = frozenset({"f1", "f6", "ctrl+p", "ctrl+q"})
+
+    # Right-cluster hiding thresholds (terminal columns).
+    _TOKEN_MIN_WIDTH = 110
+    _WORD_MIN_WIDTH = 100
+    _DB_MIN_WIDTH = 80
 
     # task-264: this widget used to be mounted exactly once, directly by
     # `TldwCli.compose()` -- which always loads the app's full CSS bundle
@@ -73,16 +96,21 @@ class AppFooterStatus(Widget):
     }
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, show_token_count: bool = True, **kwargs) -> None:
         super().__init__(**kwargs)
+        #: Token counts only mean something on chat/console screens; other
+        #: destinations hide the dead "Tokens: --" chrome (UX-076).
+        self._show_token_count = show_token_count
         self._shortcut_text = self.DEFAULT_SHORTCUT_TEXT
+        #: Rendered screen-context hints, or ``None`` for the default footer.
+        self._context_text: str | None = None
         #: Source of the active shortcut context (e.g. "personas"); ``None``
         #: when the default shortcuts are shown.
         self._shortcut_source: str | None = None
         self._shortcut_display = Static(self._shortcut_text, id="footer-key-quit")
         self._word_count_display: Static = Static("", id="footer-word-count")
         self._token_count_display: Static = Static(
-            "Tokens: -- | ", id="footer-token-count"
+            "Tokens: --", id="footer-token-count"
         )
         self._db_status_display: Static = Static("", id="internal-db-size-indicator")
 
@@ -97,14 +125,29 @@ class AppFooterStatus(Widget):
     def shortcut_text(self) -> str:
         return self._shortcut_text
 
+    def _full_text(self) -> str:
+        """Screen context followed by the always-present global hints."""
+        if self._context_text:
+            return f"{self._context_text} | {self.GLOBAL_HINTS}"
+        return self.GLOBAL_HINTS
+
     def _set_shortcut_text(self, text: str) -> None:
         self._shortcut_text = text
-        self._shortcut_display.update(text)
+        self._apply_responsive_footer()
 
     def set_shortcut_context(self, context: ShortcutContext) -> None:
-        text = context.render() or self.DEFAULT_SHORTCUT_TEXT
+        # Drop hints that duplicate the always-present global keys.
+        filtered_actions = tuple(
+            action
+            for action in context.actions
+            if action.key.lower() not in self._RESERVED_GLOBAL_KEYS
+        )
+        rendered = ShortcutContext(
+            source=context.source, actions=filtered_actions
+        ).render()
         self._shortcut_source = context.source
-        self._set_shortcut_text(text)
+        self._context_text = rendered or None
+        self._set_shortcut_text(self._full_text())
 
     def set_workbench_shortcuts(
         self,
@@ -131,11 +174,66 @@ class AppFooterStatus(Widget):
         if source is not None and source != self._shortcut_source:
             return
         self._shortcut_source = None
-        self._set_shortcut_text(self.DEFAULT_SHORTCUT_TEXT)
+        self._context_text = None
+        self._set_shortcut_text(self._full_text())
 
+    # ------------------------------------------------------------------
+    # Responsive behavior
+    # ------------------------------------------------------------------
+    def on_resize(self) -> None:
+        self._apply_responsive_footer()
+
+    def _right_cluster_text_len(self) -> int:
+        """Rendered width of the visible right-cluster displays."""
+        total = 0
+        for display in (
+            self._word_count_display,
+            self._token_count_display,
+            self._db_status_display,
+        ):
+            if display.display:
+                total += len(str(display.render()))
+        return total
+
+    def _apply_responsive_footer(self) -> None:
+        """Pick the honest hint variant that fits; never clip mid-word."""
+        width = self.size.width
+        if width <= 0:
+            # Pre-layout: show the full text; on_resize will refine.
+            self._shortcut_display.update(self._shortcut_text)
+            return
+
+        # Degrade the right cluster first so hints keep their room.
+        self._token_count_display.display = (
+            self._show_token_count and width >= self._TOKEN_MIN_WIDTH
+        )
+        self._word_count_display.display = width >= self._WORD_MIN_WIDTH
+        self._db_status_display.display = width >= self._DB_MIN_WIDTH
+
+        available = max(width - self._right_cluster_text_len() - 6, 8)
+        candidates: list[str] = []
+        if self._context_text:
+            candidates.append(f"{self._context_text} | {self.GLOBAL_HINTS}")
+            candidates.append(f"… {self.GLOBAL_HINTS}")
+            candidates.append(f"… {self.GLOBAL_HINTS_COMPACT}")
+        else:
+            candidates.append(self.GLOBAL_HINTS)
+            candidates.append(self.GLOBAL_HINTS_COMPACT)
+        candidates.append(self.GLOBAL_HINTS_MIN)
+
+        text = next(
+            (candidate for candidate in candidates if len(candidate) <= available),
+            self.GLOBAL_HINTS_MIN,
+        )
+        self._shortcut_display.update(text)
+
+    # ------------------------------------------------------------------
+    # Right-cluster updaters
+    # ------------------------------------------------------------------
     def update_db_sizes_display(self, status_string: str) -> None:
         try:
             self._db_status_display.update(status_string)
+            self._apply_responsive_footer()
         except Exception as e:
             # If the app is shutting down, the widget might be gone
             # In a real scenario, you'd use self.log from the widget

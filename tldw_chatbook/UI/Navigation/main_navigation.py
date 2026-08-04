@@ -21,23 +21,34 @@ if TYPE_CHECKING:
 
 #: Hotkey digits for the nav keyboard layer: ctrl+1..ctrl+9 select the first
 #: nine destinations in SHELL_DESTINATION_ORDER and ctrl+0 selects the tenth.
-#: The remaining destinations (Lab, Logs, Settings) carry no hotkey, so their
-#: labels stay unnumbered.
+#: The remaining destinations get F7/F8/F9 (see app.py SHELL_DESTINATION_FKEYS);
+#: their labels carry the key name so the bar stays truthful.
 NAV_HOTKEY_DIGITS: tuple[str, ...] = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
+NAV_FKEY_LABELS: tuple[str, ...] = ("F7", "F8", "F9")
 
 
 def nav_button_label(index: int, label: str) -> str:
-    """Prefix a destination label with its hotkey digit when it has one.
+    """Prefix a destination label with its hotkey when it has one.
+
+    The destination hotkey layer is ``ctrl+<digit>`` for the first ten
+    destinations and F7/F8/F9 for the rest (see ``app.py``), so the label
+    must say so: rendering a bare "1 Home" taught users a key that does
+    nothing. ``^`` is the conventional ASCII notation for Ctrl.
 
     Args:
         index: Position of the destination in SHELL_DESTINATION_ORDER.
         label: Compact destination label from the shell destination model.
 
     Returns:
-        ``"<digit> <label>"`` for the first ten destinations, else ``label``.
+        ``"^<digit> <label>"`` for the first ten destinations,
+        ``"F<n> <label>"`` for the next ones with an F-key route,
+        else the bare ``label``.
     """
     if 0 <= index < len(NAV_HOTKEY_DIGITS):
-        return f"{NAV_HOTKEY_DIGITS[index]} {label}"
+        return f"^{NAV_HOTKEY_DIGITS[index]} {label}"
+    fkey_index = index - len(NAV_HOTKEY_DIGITS)
+    if 0 <= fkey_index < len(NAV_FKEY_LABELS):
+        return f"{NAV_FKEY_LABELS[fkey_index]} {label}"
     return label
 
 
@@ -170,6 +181,12 @@ class MainNavigationBar(Container):
 
     def compose(self) -> ComposeResult:
         """Compose the navigation bar from master-shell destination metadata."""
+        # Left overflow indicator: visible only when the strip is scrolled
+        # right, so off-screen destinations on the left stay discoverable.
+        left_hint = Static("‹", id="nav-overflow-hint-left", classes="nav-overflow-hint")
+        left_hint.tooltip = "More destinations to the left — scroll back"
+        left_hint.display = False
+        yield left_hint
         with Horizontal(id="nav-destination-strip", classes="main-nav"):
             for index, destination in enumerate(SHELL_DESTINATION_ORDER):
                 button = NavigationButton(
@@ -188,11 +205,42 @@ class MainNavigationBar(Container):
             "More: Ctrl+P", id="nav-overflow-hint", classes="nav-overflow-hint"
         )
         overflow_hint.tooltip = "Open command palette"
+        overflow_hint.display = False
         yield overflow_hint
 
     def on_mount(self) -> None:
         """Scroll the initially active destination's button into view."""
+        # Order matters: settle the overflow indicators (which change the
+        # strip's width) before aligning the active button.
+        self.call_after_refresh(self._update_overflow_hints)
         self.call_after_refresh(self._scroll_active_destination_into_view)
+        self.set_interval(0.5, self._update_overflow_hints)
+
+    def _update_overflow_hints(self) -> None:
+        """Toggle the ‹ / More: Ctrl+P indicators from real scroll state."""
+        try:
+            strip = self.query_one("#nav-destination-strip", Horizontal)
+            left_hint = self.query_one("#nav-overflow-hint-left", Static)
+            right_hint = self.query_one("#nav-overflow-hint", Static)
+        except Exception:
+            return
+        try:
+            max_scroll_x = strip.max_scroll_x
+            scroll_x = strip.scroll_x
+        except Exception:
+            return
+        # Left hint tracks position (more destinations hidden on the left);
+        # the right hint marks that overflow exists at all — the palette
+        # offers every destination regardless of scroll position.
+        new_left = scroll_x > 0
+        new_right = max_scroll_x > 0
+        changed = left_hint.display != new_left or right_hint.display != new_right
+        left_hint.display = new_left
+        right_hint.display = new_right
+        if changed:
+            # The strip just gained or lost width; keep the active
+            # destination fully inside the visible window.
+            self.call_after_refresh(self._scroll_active_destination_into_view)
 
     def _scroll_active_destination_into_view(self) -> None:
         """Bring the active destination's button into the strip's visible scroll window."""

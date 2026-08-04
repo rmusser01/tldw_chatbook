@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 # 3rd-Party Imports
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, VerticalScroll, Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.reactive import reactive
@@ -82,6 +83,18 @@ class LLMManagementWindow(Container):
         text-style: bold;
         margin: 0 0 1 0;
         color: $text;
+    }
+
+    .sidebar-hint {
+        color: $text-muted;
+        margin: 0 0 1 0;
+        height: auto;
+    }
+
+    .prereq-hint {
+        color: $text-muted;
+        margin: 0 0 1 0;
+        height: auto;
     }
     
     .llm-view {
@@ -235,8 +248,17 @@ class LLMManagementWindow(Container):
     }
     """
 
-    # Reactive property to track active view
-    active_view = reactive("llama-cpp", recompose=False)
+    # Reactive property to track active view. Defaults to Ollama: the
+    # sidebar's own first-timer hint recommends it as the easiest path, so
+    # the landed surface should match the recommendation (UX-070).
+    active_view = reactive("ollama", recompose=False)
+
+    # htop-style view cycling (single printable keys; focused text inputs
+    # consume them first, so forms are unaffected). See ADR-031.
+    BINDINGS = [
+        Binding("[", "prev_llm_view", "Previous view", show=False),
+        Binding("]", "next_llm_view", "Next view", show=False),
+    ]
 
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(**kwargs)
@@ -266,44 +288,67 @@ class LLMManagementWindow(Container):
         """Initialize the active view after mounting."""
         # Force the watcher to run by setting the value
         # Even though it's the same as the default, this ensures proper initialization
-        self.active_view = "llama-cpp"
+        self.active_view = "ollama"
+
+    def _ollama_prereq_text(self) -> str:
+        """Prereq line for the Ollama view, with PATH detection (UX-070)."""
+        import shutil
+
+        found = shutil.which("ollama")
+        if found:
+            return f"Requires: Ollama installed (found: {found})"
+        return (
+            "Requires: Ollama installed — not found on PATH. "
+            "Install from ollama.com, then restart the app."
+        )
 
     def compose(self) -> ComposeResult:
         """Compose the LLM Management UI with sidebar navigation and content area."""
-        # Sidebar with navigation
+        # Sidebar with navigation, grouped by job: running servers vs.
+        # managing the local model library.
         with VerticalScroll(id="llm-sidebar"):
-            yield Static("LLM Options", classes="sidebar-title")
+            yield Static("Serve a model", classes="sidebar-title")
+            yield Static(
+                "New here? Ollama is the easiest way to run a local model.",
+                classes="sidebar-hint",
+            )
+            yield Button("Ollama", id="nav-ollama", classes="llm-nav-button")
             yield Button("Llama.cpp", id="nav-llama-cpp", classes="llm-nav-button")
             yield Button("Llamafile", id="nav-llamafile", classes="llm-nav-button")
-            yield Button("Ollama", id="nav-ollama", classes="llm-nav-button")
             yield Button("vLLM", id="nav-vllm", classes="llm-nav-button")
             yield Button("ONNX", id="nav-onnx", classes="llm-nav-button")
             yield Button(
                 "Transformers", id="nav-transformers", classes="llm-nav-button"
             )
             yield Button("MLX-LM", id="nav-mlx-lm", classes="llm-nav-button")
+            yield Static("Model library", classes="sidebar-title")
             yield Button(
                 "Local Models", id="nav-local-models", classes="llm-nav-button"
             )
             yield Button(
                 "Download Models", id="nav-download-models", classes="llm-nav-button"
             )
+            yield Static("[ / ] switch view", classes="sidebar-hint")
 
         # Main content area
         with Container(id="llm-main-content"):
             # Llama.cpp View
             with VerticalScroll(id="llm-view-llama-cpp", classes="llm-view"):
-                yield Label("🦙 Llama.cpp Configuration", classes="section-title")
+                yield Label("Llama.cpp Configuration", classes="section-title")
                 yield Label(
                     "Launch a llama.cpp server instance with a GGUF model",
                     classes="description",
+                )
+                yield Static(
+                    "Requires: a built llama.cpp server binary and a .gguf model file.",
+                    classes="prereq-hint",
                 )
 
                 yield Label("Llama.cpp Server Executable Path:", classes="label")
                 with Container(classes="input_container"):
                     yield Input(
                         id="llamacpp-exec-path",
-                        placeholder="/path/to/llama.cpp/build/bin/server",
+                        placeholder="e.g. /opt/llama.cpp/build/bin/server",
                     )
                     yield Button(
                         "Browse",
@@ -315,7 +360,8 @@ class LLMManagementWindow(Container):
                 yield Label("GGUF Model File Path:", classes="label")
                 with Container(classes="input_container"):
                     yield Input(
-                        id="llamacpp-model-path", placeholder="/path/to/model.gguf"
+                        id="llamacpp-model-path",
+                        placeholder="e.g. /models/model.gguf",
                     )
                     yield Button(
                         "Browse",
@@ -323,17 +369,25 @@ class LLMManagementWindow(Container):
                         classes="browse_button",
                         tooltip="Choose a GGUF model file for llama.cpp.",
                     )
+                yield Static(
+                    "The .gguf model file to serve.",
+                    classes="description",
+                )
 
                 yield Label("Host:", classes="label")
                 yield Input(id="llamacpp-host", value="127.0.0.1")
 
-                yield Label("Port (default 8001):", classes="label")
-                yield Input(id="llamacpp-port", value="8001")
+                yield Label("Port:", classes="label")
+                yield Input(id="llamacpp-port", placeholder="8001")
 
                 yield Label("Additional Arguments (single line):", classes="label")
                 yield Input(
                     id="llamacpp-additional-args",
-                    placeholder="e.g., --n-gpu-layers 1 --threads 4",
+                    placeholder="e.g. --n-gpu-layers 1 --threads 4",
+                )
+                yield Static(
+                    "Advanced — fine to leave empty.",
+                    classes="description",
                 )
 
                 with Collapsible(
@@ -369,7 +423,7 @@ class LLMManagementWindow(Container):
 
             # Llamafile View
             with VerticalScroll(id="llm-view-llamafile", classes="llm-view"):
-                yield Label("📁 Llamafile Configuration", classes="section-title")
+                yield Label("Llamafile Configuration", classes="section-title")
                 yield Label(
                     "Run a self-contained llamafile executable (model included)",
                     classes="description",
@@ -403,8 +457,8 @@ class LLMManagementWindow(Container):
                 yield Label("Host:", classes="label")
                 yield Input(id="llamafile-host", value="127.0.0.1")
 
-                yield Label("Port (default 8000):", classes="label")
-                yield Input(id="llamafile-port", value="8000")
+                yield Label("Port:", classes="label")
+                yield Input(id="llamafile-port", placeholder="8000")
 
                 yield Label("Additional Arguments (multi-line):", classes="label")
                 yield TextArea(
@@ -446,7 +500,7 @@ class LLMManagementWindow(Container):
 
             # vLLM View
             with VerticalScroll(id="llm-view-vllm", classes="llm-view"):
-                yield Label("⚡ vLLM Configuration", classes="section-title")
+                yield Label("vLLM Configuration", classes="section-title")
                 yield Label(
                     "High-performance LLM serving with vLLM", classes="description"
                 )
@@ -512,7 +566,7 @@ class LLMManagementWindow(Container):
 
             # ONNX View
             with VerticalScroll(id="llm-view-onnx", classes="llm-view"):
-                yield Label("🔧 ONNX Runtime Configuration", classes="section-title")
+                yield Label("ONNX Runtime Configuration", classes="section-title")
                 yield Label(
                     "Run ONNX models with optimized inference", classes="description"
                 )
@@ -592,7 +646,7 @@ class LLMManagementWindow(Container):
             # Transformers View
             with VerticalScroll(id="llm-view-transformers", classes="llm-view"):
                 yield Label(
-                    "🤗 Hugging Face Transformers Model Management",
+                    "Hugging Face Transformers Model Management",
                     classes="section-title",
                 )
 
@@ -708,7 +762,7 @@ class LLMManagementWindow(Container):
 
             # MLX-LM View
             with VerticalScroll(id="llm-view-mlx-lm", classes="llm-view"):
-                yield Label("🍎 MLX-LM Configuration", classes="section-title")
+                yield Label("MLX-LM Configuration", classes="section-title")
                 yield Label(
                     "Apple Silicon optimized LLM inference", classes="description"
                 )
@@ -771,7 +825,8 @@ class LLMManagementWindow(Container):
 
             # Ollama View
             with VerticalScroll(id="llm-view-ollama", classes="llm-view"):
-                yield Label("🦙 Ollama Service Management", classes="section-title")
+                yield Label("Ollama Service Management", classes="section-title")
+                yield Static(self._ollama_prereq_text(), classes="prereq-hint")
 
                 yield Label("Ollama Executable Path:", classes="label")
                 with Container(classes="input_container"):
@@ -978,6 +1033,23 @@ class LLMManagementWindow(Container):
 
         # Update active view (will trigger watcher)
         self.active_view = view_name
+
+    def action_prev_llm_view(self) -> None:
+        """Cycle to the previous sidebar view ([ key)."""
+        self._cycle_view(-1)
+
+    def action_next_llm_view(self) -> None:
+        """Cycle to the next sidebar view (] key)."""
+        self._cycle_view(1)
+
+    def _cycle_view(self, step: int) -> None:
+        """Move the active view through the sidebar order."""
+        views = list(self.view_mapping)
+        try:
+            index = views.index(self.active_view)
+        except ValueError:
+            index = 0
+        self.active_view = views[(index + step) % len(views)]
 
     def watch_active_view(self, old_view: str, new_view: str) -> None:
         """React to active view changes."""

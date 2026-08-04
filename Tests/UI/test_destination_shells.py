@@ -2912,6 +2912,7 @@ async def test_mcp_destination_registers_footer_workbench_shortcuts():
         assert (
             footer.shortcut_text
             == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
+            " | F1 help · F6 panes · Ctrl+P palette · Ctrl+Q quit"
         )
 
 
@@ -2935,6 +2936,7 @@ async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend
         assert (
             footer.shortcut_text
             == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
+            " | F1 help · F6 panes · Ctrl+P palette · Ctrl+Q quit"
         )
 
         overlay = TextualScreen()
@@ -2947,6 +2949,7 @@ async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend
         assert (
             footer.shortcut_text
             == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
+            " | F1 help · F6 panes · Ctrl+P palette · Ctrl+Q quit"
         )
 
 

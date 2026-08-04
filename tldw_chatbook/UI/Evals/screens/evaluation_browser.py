@@ -8,9 +8,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from loguru import logger
 from textual import on
 from textual.app import ComposeResult
-from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
-from textual.screen import Screen
 from textual.widgets import Button, DataTable, Input, Select, Static, TextArea
 
 from ....Evaluations_Interop import (
@@ -22,13 +20,13 @@ if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 
 
-class EvaluationBrowserScreen(Screen):
-    """Browse and launch evaluations through the compat scope service."""
+class EvaluationBrowserScreen(Container):
+    """Browse and launch evaluations through the compat scope service.
 
-    BINDINGS = [
-        Binding("ctrl+r", "refresh_browser", "Refresh", show=True),
-        Binding("escape", "app.pop_screen", "Back", show=True),
-    ]
+    Rendered inline inside EvalsWindowV3 (a Container), so it must be a
+    widget, not a Screen -- nested Screens receive no layout geometry.
+    Escape walks the EvalsWindowV3 back stack via the parent EvalsScreen.
+    """
 
     DEFAULT_CSS = """
     EvaluationBrowserScreen {

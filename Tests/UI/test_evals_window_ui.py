@@ -17,8 +17,9 @@ class EvalNavigationHost(App[None]):
         super().__init__()
         self._screen = EvalNavigationScreen(app_instance=app_instance)
 
-    async def on_mount(self) -> None:
-        await self.push_screen(self._screen)
+    def compose(self):
+        # Container, not a Screen: mount inline instead of push_screen.
+        yield self._screen
 
 
 def _text(widget: Static) -> str:
@@ -53,16 +54,17 @@ def test_eval_navigation_screen_posts_message_when_navigating() -> None:
     message = post_message.call_args[0][0]
     assert isinstance(message, NavigateToEvalScreen)
     assert message.screen_id == "quick_test"
-    app_instance.notify.assert_called_once()
+    # The visible transition is the feedback; no redundant toast on top.
+    app_instance.notify.assert_not_called()
 
 
-def test_eval_navigation_screen_warns_when_running_last_without_history() -> None:
+def test_eval_navigation_screen_marks_unimplemented_workflows_planned() -> None:
     app_instance = SimpleNamespace(notify=MagicMock())
     screen = EvalNavigationScreen(app_instance=app_instance)
 
-    screen.action_run_last()
+    planned = {card.id for card in screen.cards if card.planned}
+    assert planned == {"comparison", "batch_eval", "models"}
 
-    app_instance.notify.assert_called_once_with(
-        "No previous evaluation to run",
-        severity="warning",
-    )
+    for card in screen.cards:
+        button = screen._create_card(card)
+        assert button.disabled is card.planned

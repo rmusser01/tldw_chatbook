@@ -2678,10 +2678,12 @@ class TldwCli(
     # CSS file path
     CSS_PATH = str(Path(__file__).parent / "css/tldw_cli_modular.tcss")
     # Shell destination hotkey layer: Ctrl+1..Ctrl+9 then Ctrl+0, zipped against
-    # SHELL_DESTINATION_ORDER. Destinations beyond the key list stay unbound.
+    # SHELL_DESTINATION_ORDER, plus F7/F8/F9 for the remaining destinations
+    # (Lab, Logs, Settings) so every destination has a keyboard route.
     SHELL_DESTINATION_HOTKEYS: tuple[str, ...] = tuple(
         f"ctrl+{digit}" for digit in "1234567890"
     )
+    SHELL_DESTINATION_FKEYS: tuple[str, ...] = ("f7", "f8", "f9")
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit App", show=True),
         Binding("ctrl+p", "command_palette", "Palette Menu", show=True),
@@ -2696,6 +2698,22 @@ class TldwCli(
         )
         for index, (key, destination) in enumerate(
             zip(SHELL_DESTINATION_HOTKEYS, SHELL_DESTINATION_ORDER)
+        )
+    ] + [
+        # 10 = len of the ctrl+digit layer ("1234567890"); a class-body
+        # comprehension cannot reference class-level names, so this stays a
+        # literal.
+        Binding(
+            key,
+            f"shell_destination({10 + fkey_index})",
+            f"Go to {destination.accessible_label}",
+            show=True,
+        )
+        for fkey_index, (key, destination) in enumerate(
+            zip(
+                SHELL_DESTINATION_FKEYS,
+                SHELL_DESTINATION_ORDER[len("1234567890"):],
+            )
         )
     ]
     COMMANDS = App.COMMANDS | {
@@ -5230,6 +5248,11 @@ class TldwCli(
         if not hasattr(self, "_log_buffer"):
             self._log_buffer = deque()  # No maxlen - keep all logs
 
+        # Structured records (level, name, formatted message) for the Logs
+        # screen's filtering; bounded like the RichLog widget itself.
+        if not hasattr(self, "_log_records"):
+            self._log_records = deque(maxlen=10000)
+
         # Create a custom handler that stores logs in the buffer
         class PersistentLogHandler(logging.Handler):
             def __init__(self, buffer, app):
@@ -5241,8 +5264,19 @@ class TldwCli(
                 try:
                     msg = self.format(record)
                     self.buffer.append(msg)
+                    self.app._log_records.append((record.levelname, record.name, msg))
 
-                    # If we have a RichLog widget active, also write to it directly
+                    # Preferred live path: the Logs screen's LogsWindow applies
+                    # the user's active filters as records arrive.
+                    logs_window = getattr(self.app, "_current_logs_window", None)
+                    if logs_window is not None:
+                        try:
+                            logs_window.append_record(record.levelname, record.name, msg)
+                            return
+                        except Exception:
+                            pass  # Widget might not be mounted
+
+                    # Legacy fallback: write straight to the RichLog widget.
                     if (
                         hasattr(self.app, "_current_log_widget")
                         and self.app._current_log_widget
@@ -5263,6 +5297,35 @@ class TldwCli(
             self._persistent_log_handler.setFormatter(formatter)
             logging.getLogger().addHandler(self._persistent_log_handler)
             logger.info("Persistent logging handler set up for screen navigation")
+
+        # The app logs via loguru; the persistent handler is stdlib-only.
+        # Bridge loguru records into the stdlib root logger so the Logs
+        # screen's buffer sees the application's own logging (without this,
+        # only stdlib-logging modules ever appear there).
+        if not hasattr(self, "_loguru_bridge_installed"):
+            self._loguru_bridge_installed = True
+
+            def _loguru_to_stdlib(message) -> None:
+                record = message.record
+                logging.getLogger(record["name"]).handle(
+                    logging.LogRecord(
+                        name=record["name"],
+                        level=record["level"].no,
+                        pathname=getattr(record["file"], "path", ""),
+                        lineno=record["line"],
+                        msg=str(message).rstrip("\n"),
+                        args=(),
+                        exc_info=record["exception"],
+                        created=record["time"].timestamp(),
+                    )
+                )
+
+            try:
+                from loguru import logger as _loguru
+
+                _loguru.add(_loguru_to_stdlib, level=0, format="{message}")
+            except Exception:  # noqa: BLE001
+                logger.warning("Failed to install loguru->stdlib bridge for Logs screen")
 
         # Initialize current log widget reference
         self._current_log_widget = None

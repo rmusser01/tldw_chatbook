@@ -183,8 +183,10 @@ class EvaluationBrowserTestApp(App):
             app_instance=app_instance, view_mode=view_mode
         )
 
-    async def on_mount(self) -> None:
-        await self.push_screen(self._screen)
+    def compose(self):
+        # EvaluationBrowserScreen is a Container rendered inline (nested
+        # Screens get no layout geometry); mount it, don't push it.
+        yield self._screen
 
 
 def test_evals_window_v3_maps_tasks_to_evaluation_browser_screen():

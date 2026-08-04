@@ -63,8 +63,12 @@ class DBStatusManager:
                 "media": self._get_db_size(get_media_db_path, get_formatted_file_size),
             }
 
-            # Format status string
-            status_string = f"P: {db_sizes['prompts']} | C/N: {db_sizes['chachanotes']} | M: {db_sizes['media']}"
+            # Format status string with real database names (was cryptic
+            # "P: / C/N: / M:" abbreviations from the UX critique, UX-006).
+            status_string = (
+                f"Prompts {db_sizes['prompts']} · Notes {db_sizes['chachanotes']} "
+                f"· Media {db_sizes['media']}"
+            )
             logger.debug(
                 f"DB size status string to display in AppFooterStatus: '{status_string}'"
             )

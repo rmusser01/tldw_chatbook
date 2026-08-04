@@ -213,7 +213,7 @@ class TTSPlaygroundWidget(Widget):
     def compose(self) -> ComposeResult:
         """Compose the TTS Playground UI"""
         with ScrollableContainer(classes="tts-playground-container"):
-            yield Label("🎤 TTS Playground", classes="section-title")
+            yield Label("TTS Playground", classes="section-title")
 
             # Text input area
             with Vertical(classes="text-input-container"):
@@ -223,7 +223,7 @@ class TTSPlaygroundWidget(Widget):
                     classes="example-text",
                 )
                 yield TextArea(
-                    "Welcome to the Text-to-Speech playground! This is where you can experiment with different voices, providers, and settings to create natural-sounding speech.",
+                    "",
                     id="tts-text-input",
                     classes="tts-text-input",
                 )

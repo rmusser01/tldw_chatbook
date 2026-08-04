@@ -30,18 +30,18 @@ PHASE_6_FIRST_TIME_TASK = Path(
 )
 
 EXPECTED_NAV = [
-    ("nav-home", "1 Home"),
-    ("nav-console", "2 Console"),
-    ("nav-library", "3 Library"),
-    ("nav-artifacts", "4 Artifacts"),
-    ("nav-personas", "5 Personas"),
-    ("nav-watchlists_collections", "6 Watchlists"),
-    ("nav-schedules", "7 Schedules"),
-    ("nav-workflows", "8 Workflows"),
-    ("nav-mcp", "9 MCP"),
-    ("nav-acp", "0 ACP"),
-    ("nav-lab", "Lab"),
-    ("nav-settings", "Settings"),
+    ("nav-home", "^1 Home"),
+    ("nav-console", "^2 Console"),
+    ("nav-library", "^3 Library"),
+    ("nav-artifacts", "^4 Artifacts"),
+    ("nav-personas", "^5 Personas"),
+    ("nav-watchlists_collections", "^6 Watchlists"),
+    ("nav-schedules", "^7 Schedules"),
+    ("nav-workflows", "^8 Workflows"),
+    ("nav-mcp", "^9 MCP"),
+    ("nav-acp", "^0 ACP"),
+    ("nav-lab", "F7 Lab"),
+    ("nav-settings", "F9 Settings"),
 ]
 
 

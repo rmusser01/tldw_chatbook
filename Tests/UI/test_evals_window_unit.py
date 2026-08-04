@@ -18,8 +18,9 @@ class QuickTestHost(App[None]):
         super().__init__()
         self._screen = QuickTestScreen(app_instance=app_instance)
 
-    async def on_mount(self) -> None:
-        await self.push_screen(self._screen)
+    def compose(self):
+        # Container, not a Screen: mount inline instead of push_screen.
+        yield self._screen
 
 
 @pytest.fixture
@@ -71,7 +72,7 @@ async def test_quick_test_screen_selection_updates_state(orchestrator_patch) -> 
     async with app.run_test() as pilot:
         await pilot.pause()
 
-        screen = app.screen
+        screen = app._screen
         task_select = screen.query_one("#task-select", Select)
         model_select = screen.query_one("#model-select", Select)
 
@@ -93,7 +94,7 @@ async def test_quick_test_screen_validates_missing_configuration(
     async with app.run_test() as pilot:
         await pilot.pause()
 
-        screen = app.screen
+        screen = app._screen
         screen.action_run_evaluation()
         app_instance.notify.assert_called_with("Please select a task", severity="error")
 
@@ -112,7 +113,7 @@ async def test_quick_test_screen_queues_worker_when_valid(orchestrator_patch) ->
     async with app.run_test() as pilot:
         await pilot.pause()
 
-        screen = app.screen
+        screen = app._screen
         screen.selected_task_id = "task-1"
         screen.selected_model_id = "model-1"
         screen.query_one("#samples-input", Input).value = "12"

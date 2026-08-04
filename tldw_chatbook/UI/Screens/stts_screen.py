@@ -38,6 +38,7 @@ class STTSScreen(BaseAppScreen):
                 title="Speech",
                 subtitle="Speech-to-text and text-to-speech tools.",
                 status="ready",
+                status_label="Speech tools ready",
             ),
             id="stts-destination-header",
         )

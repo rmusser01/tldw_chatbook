@@ -65,6 +65,6 @@ async def test_evals_window_warns_for_unknown_screen() -> None:
         await pilot.pause()
 
         app_instance.notify.assert_called_with(
-            "Screen 'comparison' not yet implemented",
+            "'Comparison' is planned — not available yet.",
             severity="warning",
         )

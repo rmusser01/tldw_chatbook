@@ -1,0 +1,87 @@
+/* ========================================
+ * FEATURES: Logs
+ * ========================================
+ * Logs destination: filter bar, log view, status line, action bar.
+ * The user loop: reproduce a problem -> come here -> copy the relevant
+ * lines -> share them for investigation. Nothing may occlude log content.
+ * ======================================== */
+
+LogsWindow {
+    layout: vertical;
+}
+
+/* The legacy `.window` class forces `layout: horizontal` (see
+ * layout/_windows.tcss); outrank it by id so the Logs destination stays
+ * vertical. */
+#logs-window {
+    layout: vertical;
+}
+
+/* Filter bar: level chips + text filter + pause toggle, single row. */
+#logs-filter-bar {
+    height: 1;
+    padding: 0 1;
+}
+
+#logs-filter-bar Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    border: none;
+    padding: 0 1;
+    background: $surface;
+    color: $text-muted;
+}
+
+#logs-filter-bar Button.is-active {
+    color: $text;
+    text-style: bold underline;
+}
+
+#logs-filter-bar Button:hover {
+    background: $surface;
+    color: $text;
+}
+
+#logs-filter-text {
+    width: 1fr;
+    height: 1;
+    border: none;
+    padding: 0 1;
+    background: $surface-darken-1;
+}
+
+#logs-pause {
+    content-align: right middle;
+}
+
+/* The log itself takes all remaining space; one entry per row, long
+ * lines scroll horizontally instead of wrapping mid-word. */
+#app-log-display {
+    height: 1fr;
+    border: none;
+    padding: 0 1;
+}
+
+#logs-empty-state {
+    color: $text-muted;
+    padding: 2;
+    height: auto;
+}
+
+#logs-status-line {
+    height: 1;
+    color: $text-muted;
+    padding: 0 1;
+}
+
+/* Action bar pinned at the bottom: the share actions, always visible,
+ * never overlapping log content. */
+#logs-action-bar {
+    height: auto;
+    padding: 0 1;
+}
+
+#logs-action-bar Button {
+    margin-right: 1;
+}

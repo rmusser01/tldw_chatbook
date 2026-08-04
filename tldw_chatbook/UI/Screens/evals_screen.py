@@ -7,6 +7,7 @@ from textual.binding import Binding
 
 from ..Evals.evals_window_v3 import EvalsWindowV3
 from ..Evals.navigation import EvalNavigationScreen, NavigateToEvalScreen
+from ..Evals.navigation.eval_nav_screen import evals_workflows_chip_label
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from ..Workbench.workbench_widgets import DestinationHeader
@@ -30,11 +31,10 @@ class EvalsScreen(BaseAppScreen):
     BINDINGS = [
         Binding("escape", "evals_back", "Back", show=False),
         Binding("1", "evals_open('quick_test')", "Quick Test", show=False),
-        Binding("2", "evals_open('comparison')", "Comparison", show=False),
-        Binding("3", "evals_open('batch_eval')", "Batch Eval", show=False),
         Binding("4", "evals_open('results')", "Results", show=False),
         Binding("5", "evals_open('tasks')", "Tasks", show=False),
-        Binding("6", "evals_open('models')", "Models", show=False),
+        # 2/3/6 (comparison, batch_eval, models) are planned workflows: bound
+        # but dead keys violate ADR-031 rule 4, so they are not bound at all.
     ]
 
     def __init__(self, app_instance: "TldwCli", **kwargs):
@@ -47,11 +47,24 @@ class EvalsScreen(BaseAppScreen):
                 title="Evals",
                 subtitle="Run and review evaluation jobs.",
                 status="ready",
+                status_label=evals_workflows_chip_label(),
             ),
             id="evals-destination-header",
         )
         yield LabModeStrip(active_route="evals", id="lab-mode-strip")
         yield EvalsWindowV3(self.app_instance, id="evals-window")
+
+    #: Footer hint context (registered on mount; matches BINDINGS, ADR-031).
+    EVALS_SHORTCUTS: tuple[tuple[str, str], ...] = (
+        ("1/4/5", "open workflow"),
+        ("esc", "back"),
+    )
+
+    def on_mount(self) -> None:
+        super().on_mount()
+        self.register_footer_shortcuts(
+            source="evals", shortcuts=self.EVALS_SHORTCUTS
+        )
 
     def action_evals_back(self) -> None:
         """Walk the evaluation workbench back stack, if it has one."""

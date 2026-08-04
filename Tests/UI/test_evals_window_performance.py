@@ -84,8 +84,9 @@ class EvaluationBrowserHost(App[None]):
             app_instance=app_instance, view_mode="results"
         )
 
-    async def on_mount(self) -> None:
-        await self.push_screen(self._screen)
+    def compose(self):
+        # Container, not a Screen: mount inline instead of push_screen.
+        yield self._screen
 
 
 @pytest.mark.asyncio

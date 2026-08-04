@@ -134,8 +134,9 @@ class EvaluationBrowserHost(App[None]):
             app_instance=app_instance, view_mode=view_mode
         )
 
-    async def on_mount(self) -> None:
-        await self.push_screen(self._screen)
+    def compose(self):
+        # Container, not a Screen: mount inline instead of push_screen.
+        yield self._screen
 
 
 @pytest.mark.asyncio
@@ -175,7 +176,7 @@ async def test_evaluation_browser_create_run_uses_selected_evaluation() -> None:
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
 
-        screen = app.screen
+        screen = app._screen
         screen.query_one("#run-name-input", Input).value = "Local Smoke Run"
         screen.query_one("#run-config-input", Input).value = '{"temperature": 0.1}'
 

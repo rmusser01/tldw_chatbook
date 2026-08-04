@@ -1288,8 +1288,8 @@ async def test_console_registers_footer_workbench_shortcuts():
         footer = console.query_one(AppFooterStatus)
 
         assert footer.shortcut_text == (
-            "F6 next pane | Shift+F6 previous pane | F1 help | Enter send | "
-            "Ctrl+K switch session | Ctrl+T new tab | Ctrl+P palette"
+            "Shift+F6 previous pane | Enter send | Ctrl+K switch session | "
+            "Ctrl+T new tab | F1 help · F6 panes · Ctrl+P palette · Ctrl+Q quit"
         )
 
         await console.remove()

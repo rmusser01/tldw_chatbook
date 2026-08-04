@@ -265,7 +265,7 @@ class TaskDetail(Vertical):
     def compose(self) -> ComposeResult:
         yield Static("Task Detail", id="scheduling-task-detail-header")
         yield Static(
-            "Select a scheduled task from the queue, or press Ctrl+C to create one.",
+            "Select a task from the queue, or press c to schedule one.",
             id="scheduling-task-detail-empty-state",
         )
         with Vertical(id="scheduling-task-detail-metadata"):
@@ -337,6 +337,9 @@ class TaskDetail(Vertical):
             id="schedules-follow-in-console",
             tooltip=SCHEDULES_EMPTY_CONSOLE_RECOVERY.disabled_tooltip,
         )
+        # Visible when the action is disabled: keyboard users can't see
+        # hover tooltips, so the reason must live in text (UX-073).
+        yield Static("", id="schedules-follow-why", classes="follow-why")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle lifecycle actions (console follow is handled by the workbench)."""
@@ -402,19 +405,33 @@ class TaskDetail(Vertical):
 
         if task is None:
             empty_copy = (
-                "No scheduled tasks yet. Press Ctrl+C to create your first reminder."
+                "No scheduled tasks yet.\nPress c to schedule your first task."
                 if queue_empty
-                else "Select a scheduled task from the queue, or press Ctrl+C to create one."
+                else "Select a task from the queue, or press c to schedule one."
             )
             empty_state.update(empty_copy)
             empty_state.display = True
             metadata.display = False
             lifecycle.display = False
+            self.query_one("#schedules-follow-in-console", Button).label = (
+                "Follow in Console"
+            )
             return
 
         empty_state.display = False
         metadata.display = True
         lifecycle.display = isinstance(task, ReminderTask)
+
+        follow_button = self.query_one("#schedules-follow-in-console", Button)
+        short_title = task.title if len(task.title) <= 24 else f"{task.title[:23]}…"
+        follow_button.label = f"Follow '{short_title}' in Console"
+
+        # Only the action that would change the current state stays enabled;
+        # the other is visibly disabled instead of silently no-oping (UX-059).
+        if isinstance(task, ReminderTask):
+            enabled = bool(getattr(task, "enabled", True))
+            self.query_one("#scheduling-enable-task", Button).disabled = enabled
+            self.query_one("#scheduling-disable-task", Button).disabled = not enabled
 
         self._update_static("scheduling-task-detail-title", task.title)
         self._update_static("scheduling-task-detail-type", _task_type_label(task))
@@ -438,6 +455,16 @@ class TaskDetail(Vertical):
             if available
             else SCHEDULES_EMPTY_CONSOLE_RECOVERY.disabled_tooltip
         )
+        # Keyboard users can't see the tooltip; the reason goes in text.
+        try:
+            why = self.query_one("#schedules-follow-why", Static)
+            why.update(
+                ""
+                if available
+                else SCHEDULES_EMPTY_CONSOLE_RECOVERY.disabled_tooltip
+            )
+        except Exception:  # noqa: BLE001 - widget not mounted yet
+            pass
 
     def _update_static(self, widget_id: str, content: str) -> None:
         """Update a child Static widget by id."""

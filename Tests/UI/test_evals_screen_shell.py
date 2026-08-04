@@ -83,7 +83,7 @@ async def test_digit_shortcut_warns_for_unimplemented_workflow() -> None:
         window = screen.query_one(EvalsWindowV3)
         assert isinstance(window.current_screen, EvalNavigationScreen)
         assert any(
-            "not yet implemented" in str(call.args[0])
+            "planned" in str(call.args[0])
             for call in app_instance.notify.call_args_list
             if call.args
         )

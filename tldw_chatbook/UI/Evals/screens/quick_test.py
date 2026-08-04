@@ -5,7 +5,6 @@ from datetime import datetime
 
 from textual import on, work
 from textual.app import ComposeResult
-from textual.screen import Screen
 from textual.containers import Container, ScrollableContainer
 from textual.widgets import Button, Static, Select, Input, Label, ProgressBar, TextArea
 from textual.binding import Binding
@@ -21,7 +20,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 
 
-class QuickTestScreen(Screen):
+class QuickTestScreen(Container):
     """
     Streamlined screen for running single evaluations.
 
@@ -30,13 +29,14 @@ class QuickTestScreen(Screen):
     - Real-time progress tracking
     - Immediate results display
     - Quick configuration options
+
+    Rendered inline inside EvalsWindowV3 (a Container), so it must be a
+    widget, not a Screen -- nested Screens receive no layout geometry.
+    Escape walks the EvalsWindowV3 back stack via the parent EvalsScreen.
     """
 
     BINDINGS = [
-        Binding("ctrl+r", "run_evaluation", "Run", show=True, priority=True),
-        Binding("ctrl+s", "stop_evaluation", "Stop", show=False),
         Binding("ctrl+e", "export_results", "Export", show=False),
-        Binding("escape", "app.pop_screen", "Back", show=True),
         Binding("tab", "focus_next", "Next Field", show=False),
         Binding("shift+tab", "focus_previous", "Prev Field", show=False),
     ]
@@ -55,6 +55,7 @@ class QuickTestScreen(Screen):
     .form-section {
         width: 100%;
         max-width: 80;
+        height: 24;
         align-horizontal: center;
         padding: 2;
         border: round $primary;
@@ -80,6 +81,13 @@ class QuickTestScreen(Screen):
         content-align: right middle;
         padding-right: 2;
         color: $text;
+    }
+
+    #quick-test-demo-note {
+        width: 100%;
+        height: 2;
+        color: $text-muted;
+        margin-bottom: 1;
     }
     
     .form-input {
@@ -142,6 +150,8 @@ class QuickTestScreen(Screen):
     .results-section {
         width: 100%;
         max-width: 80;
+        height: 1fr;
+        min-height: 12;
         align-horizontal: center;
         padding: 2;
         border: round $primary;
@@ -214,7 +224,11 @@ class QuickTestScreen(Screen):
         with ScrollableContainer(classes="main-container"):
             # Configuration section
             with Container(classes="form-section"):
-                yield Static("⚡ Quick Test Configuration", classes="section-title")
+                yield Static("Quick Test Configuration", classes="section-title")
+                yield Static(
+                    "Demo mode: runs a simulated evaluation — no model is queried.",
+                    id="quick-test-demo-note",
+                )
 
                 # Task selection
                 with Container(classes="form-row"):
@@ -303,7 +317,7 @@ class QuickTestScreen(Screen):
         self._initialize_orchestrator()
         self._load_tasks()
         self._load_models()
-        self.set_focus(self.query_one("#task-select"))
+        self.query_one("#task-select").focus()
 
     def _initialize_orchestrator(self) -> None:
         """Initialize the evaluation orchestrator."""
@@ -511,13 +525,17 @@ class QuickTestScreen(Screen):
         """Handle evaluation results."""
         self.last_results = results
 
-        # Update summary
+        # This worker is a simulation (see _run_evaluation_worker): say so
+        # everywhere the numbers appear — invented accuracy must never read
+        # as a real measurement (UX-052).
         summary_text = f"""
+SIMULATED RUN — no model was queried. Numbers below are placeholders.
+
 Task: {results["task"]}
 Model: {results["model"]}
 Samples: {results["samples"]}
-Accuracy: {results["accuracy"]:.2%}
-Duration: {results["duration"]}
+Accuracy: {results["accuracy"]:.2%} (simulated)
+Duration: {results["duration"]} (simulated)
 Completed: {results["timestamp"]}
         """.strip()
 
@@ -526,12 +544,17 @@ Completed: {results["timestamp"]}
 
         # Update detailed results
         detail_widget = self.query_one("#results-detail", TextArea)
-        detail_widget.text = f"Detailed results:\n\n{summary_text}\n\n[Additional metrics would appear here]"
+        detail_widget.text = (
+            f"Detailed results (simulated):\n\n{summary_text}\n\n"
+            "[Simulated metrics — no model was queried]"
+        )
 
         if self.nav_bar:
             self.nav_bar.set_status(EvalStatus.SUCCESS)
 
-        self._show_status("Evaluation completed successfully!", "success")
+        self._show_status(
+            "Simulated run complete — no model was queried.", "warning"
+        )
 
     def _handle_error(self, error: str) -> None:
         """Handle evaluation error."""

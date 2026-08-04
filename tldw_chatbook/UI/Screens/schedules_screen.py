@@ -1,4 +1,10 @@
-"""Schedules destination shell for run timing and recovery."""
+"""Schedules destination shell for run timing and recovery.
+
+DEPRECATED: superseded by ``scheduling/schedules_workbench.py``
+(SchedulesWorkbench), which is the routed implementation of the Schedules
+destination. This screen is unrouted and retained only because existing
+tests still exercise it directly; do not add new features here.
+"""
 
 from collections.abc import Mapping
 from typing import Any

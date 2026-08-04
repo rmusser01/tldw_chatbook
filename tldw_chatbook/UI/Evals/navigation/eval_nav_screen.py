@@ -5,10 +5,8 @@ from dataclasses import dataclass
 
 from textual import on
 from textual.app import ComposeResult
-from textual.screen import Screen
 from textual.containers import Container, Grid
 from textual.widgets import Button, Static
-from textual.binding import Binding
 from textual.message import Message
 
 from loguru import logger
@@ -27,6 +25,74 @@ class NavigationCard:
     description: str
     shortcut: str
     color: str = "primary"
+    planned: bool = False
+    demo: bool = False
+
+
+#: Hub card definitions, shared with the EvalsScreen status chip so the
+#: "available" count can never rot out of sync with the cards (UX-058).
+EVAL_NAV_CARDS: tuple[NavigationCard, ...] = (
+    NavigationCard(
+        id="quick_test",
+        title="Quick Test",
+        icon="⚡",
+        description="Run a simulated demo evaluation\n(no model is queried)",
+        shortcut="Press [1]",
+        color="success",
+        demo=True,
+    ),
+    NavigationCard(
+        id="comparison",
+        title="Comparison Mode",
+        icon="⇄",
+        description="Compare multiple models\non the same task",
+        shortcut="Planned",
+        color="warning",
+        planned=True,
+    ),
+    NavigationCard(
+        id="batch_eval",
+        title="Batch Evaluation",
+        icon="📦",
+        description="Queue and run multiple\nevaluations in sequence",
+        shortcut="Planned",
+        color="error",
+        planned=True,
+    ),
+    NavigationCard(
+        id="results",
+        title="Results Browser",
+        icon="📊",
+        description="Browse, search and export\nevaluation results",
+        shortcut="Press [4]",
+        color="primary",
+    ),
+    NavigationCard(
+        id="tasks",
+        title="Evaluations",
+        icon="📋",
+        description="Browse evaluation definitions,\ndatasets and recent runs",
+        shortcut="Press [5]",
+        color="secondary",
+    ),
+    NavigationCard(
+        id="models",
+        title="Model Manager",
+        icon="🤖",
+        description="Configure and test\nmodel connections",
+        shortcut="Planned",
+        color="accent",
+        planned=True,
+    ),
+)
+
+
+def evals_workflows_chip_label() -> str:
+    """Truthful chip text derived from the hub cards (live/demo/planned)."""
+    live = sum(1 for c in EVAL_NAV_CARDS if not c.planned and not c.demo)
+    demo = sum(1 for c in EVAL_NAV_CARDS if c.demo and not c.planned)
+    planned = sum(1 for c in EVAL_NAV_CARDS if c.planned)
+    return f"{live} live · {demo} demo · {planned} planned"
 
 
 class NavigateToEvalScreen(Message):
@@ -37,25 +103,18 @@ class NavigateToEvalScreen(Message):
         self.screen_id = screen_id
 
 
-class EvalNavigationScreen(Screen):
+class EvalNavigationScreen(Container):
     """
     Main navigation hub for evaluation workflows.
 
     Provides card-based navigation to different evaluation modes
     with keyboard shortcuts and clear visual hierarchy.
-    """
 
-    BINDINGS = [
-        Binding("1", "quick_test", "Quick Test", show=True),
-        Binding("2", "comparison", "Comparison", show=True),
-        Binding("3", "batch_eval", "Batch Eval", show=True),
-        Binding("4", "results", "Results", show=True),
-        Binding("5", "tasks", "Tasks", show=True),
-        Binding("6", "models", "Models", show=True),
-        Binding("escape", "app.pop_screen", "Back", show=True),
-        Binding("ctrl+/", "show_shortcuts", "Shortcuts", show=True),
-        Binding("ctrl+r", "run_last", "Run Last", show=False),
-    ]
+    Rendered inline inside EvalsWindowV3 (a Container), so it must be a
+    widget, not a Screen -- nested Screens receive no layout geometry.
+    Number-key and Escape navigation are handled by the parent EvalsScreen
+    (see its BINDINGS); per ADR-031 this hub binds no ctrl-chords.
+    """
 
     DEFAULT_CSS = """
     /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
@@ -93,6 +152,7 @@ class EvalNavigationScreen(Screen):
 
     .cards-grid {
         grid-size: 3 2;
+        grid-columns: 30 30 30;
         grid-gutter: 2;
         width: auto;
         height: auto;
@@ -138,11 +198,16 @@ class EvalNavigationScreen(Screen):
         border: round $accent;
     }
 
+    .nav-card.planned {
+        border: round $surface-darken-2;
+        color: $text-muted;
+    }
+
     .nav-card:focus {
         background: $ds-focus-bg;
         border: round $ds-focus-accent;
         color: $ds-focus-fg;
-        text-style: bold underline;
+        text-style: bold;
     }
 
     .card-icon {
@@ -199,57 +264,9 @@ class EvalNavigationScreen(Screen):
         self.app_instance = app_instance
         self.last_evaluation = None
 
-        # Define navigation cards
-        self.cards = [
-            NavigationCard(
-                id="quick_test",
-                title="Quick Test",
-                icon="⚡",
-                description="Run a single local evaluation\nwith one model and task",
-                shortcut="Press [1]",
-                color="success",
-            ),
-            NavigationCard(
-                id="comparison",
-                title="Comparison Mode",
-                icon="⚖️",
-                description="Compare multiple models\non the same task",
-                shortcut="Press [2]",
-                color="warning",
-            ),
-            NavigationCard(
-                id="batch_eval",
-                title="Batch Evaluation",
-                icon="📦",
-                description="Queue and run multiple\nevaluations in sequence",
-                shortcut="Press [3]",
-                color="error",
-            ),
-            NavigationCard(
-                id="results",
-                title="Results Browser",
-                icon="📊",
-                description="Browse, search and export\nevaluation results",
-                shortcut="Press [4]",
-                color="primary",
-            ),
-            NavigationCard(
-                id="tasks",
-                title="Evaluations",
-                icon="📋",
-                description="Browse evaluation definitions,\ndatasets and recent runs",
-                shortcut="Press [5]",
-                color="secondary",
-            ),
-            NavigationCard(
-                id="models",
-                title="Model Manager",
-                icon="🤖",
-                description="Configure and test\nmodel connections",
-                shortcut="Press [6]",
-                color="accent",
-            ),
-        ]
+        # Hub cards come from the module constant so the EvalsScreen chip
+        # count stays in sync with what the hub actually offers.
+        self.cards = list(EVAL_NAV_CARDS)
 
     def compose(self) -> ComposeResult:
         """Compose the navigation screen.
@@ -266,16 +283,20 @@ class EvalNavigationScreen(Screen):
 
         # Status bar with quick actions
         with Container(classes="status-bar"):
-            yield Static("Ready", id="status-text", classes="status-text")
+            yield Static(
+                "Ready — choose a workflow or press 1, 4, or 5",
+                id="status-text",
+                classes="status-text",
+            )
             with Container(classes="quick-actions"):
                 yield Button(
-                    "⚙️ Settings",
+                    "Settings",
                     id="settings-btn",
                     classes="quick-action",
                     variant="default",
                 )
                 yield Button(
-                    "❓ Help", id="help-btn", classes="quick-action", variant="default"
+                    "Help", id="help-btn", classes="quick-action", variant="default"
                 )
 
     def _create_card(self, card: NavigationCard) -> Button:
@@ -284,11 +305,17 @@ class EvalNavigationScreen(Screen):
         card_content = (
             f"{card.icon}\n\n{card.title}\n\n{card.description}\n\n{card.shortcut}"
         )
+        classes = f"nav-card nav-card-button {card.id}"
+        if card.planned:
+            classes = f"{classes} planned"
         button = Button(
             card_content,
             id=f"card-{card.id}",
-            classes=f"nav-card nav-card-button {card.id}",
+            classes=classes,
+            disabled=card.planned,
         )
+        if card.planned:
+            button.tooltip = f"{card.title} is planned — not available yet."
         return button
 
     def on_mount(self) -> None:
@@ -339,12 +366,10 @@ class EvalNavigationScreen(Screen):
         shortcuts = [
             "Keyboard Shortcuts:",
             "",
-            "1-6: Quick navigation to sections",
+            "1, 4, 5: Quick navigation (Quick Test, Results, Evaluations)",
             "Tab/Shift+Tab: Focus navigation",
             "Enter: Activate focused card",
             "Escape: Go back",
-            "Ctrl+R: Run last evaluation",
-            "Ctrl+/: Show this help",
         ]
 
         if self.app_instance:
@@ -354,36 +379,14 @@ class EvalNavigationScreen(Screen):
 
         self._update_status("Shortcuts displayed")
 
-    def action_run_last(self) -> None:
-        """Re-run the last evaluation."""
-        if self.last_evaluation:
-            self._update_status("Re-running last evaluation...")
-            # TODO: Implement re-run logic
-            if self.app_instance:
-                self.app_instance.notify(
-                    "Re-running last evaluation", severity="information"
-                )
-        else:
-            self._update_status("No previous evaluation to run")
-            if self.app_instance:
-                self.app_instance.notify(
-                    "No previous evaluation to run", severity="warning"
-                )
-
     def _navigate_to(self, screen_id: str) -> None:
         """Navigate to a specific evaluation screen."""
         logger.info(f"Navigating to: {screen_id}")
         self._update_status(f"Opening {screen_id.replace('_', ' ').title()}...")
 
-        # Post navigation message
+        # Post navigation message; the visible transition is the feedback,
+        # so no redundant toast on top of it.
         self.post_message(NavigateToEvalScreen(screen_id))
-
-        # For now, show notification
-        if self.app_instance:
-            self.app_instance.notify(
-                f"Opening {screen_id.replace('_', ' ').title()} screen",
-                severity="information",
-            )
 
     def _update_status(self, message: str) -> None:
         """Update the status text."""
@@ -395,10 +398,10 @@ class EvalNavigationScreen(Screen):
 
     @on(Button.Pressed, "#settings-btn")
     def handle_settings(self) -> None:
-        """Handle settings button."""
-        self._update_status("Opening settings...")
-        if self.app_instance:
-            self.app_instance.notify("Settings coming soon", severity="information")
+        """Open the app's Settings destination."""
+        from ...Navigation.main_navigation import NavigateToScreen
+
+        self.post_message(NavigateToScreen("settings"))
 
     @on(Button.Pressed, "#help-btn")
     def handle_help(self) -> None:

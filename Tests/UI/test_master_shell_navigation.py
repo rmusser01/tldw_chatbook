@@ -47,19 +47,19 @@ async def test_master_shell_navigation_order_and_labels():
         ]
 
     assert actual == [
-        ("nav-home", "1 Home"),
-        ("nav-console", "2 Console"),
-        ("nav-library", "3 Library"),
-        ("nav-artifacts", "4 Artifacts"),
-        ("nav-personas", "5 Personas"),
-        ("nav-watchlists_collections", "6 Watchlists"),
-        ("nav-schedules", "7 Schedules"),
-        ("nav-workflows", "8 Workflows"),
-        ("nav-mcp", "9 MCP"),
-        ("nav-acp", "0 ACP"),
-        ("nav-lab", "Lab"),
-        ("nav-logs", "Logs"),
-        ("nav-settings", "Settings"),
+        ("nav-home", "^1 Home"),
+        ("nav-console", "^2 Console"),
+        ("nav-library", "^3 Library"),
+        ("nav-artifacts", "^4 Artifacts"),
+        ("nav-personas", "^5 Personas"),
+        ("nav-watchlists_collections", "^6 Watchlists"),
+        ("nav-schedules", "^7 Schedules"),
+        ("nav-workflows", "^8 Workflows"),
+        ("nav-mcp", "^9 MCP"),
+        ("nav-acp", "^0 ACP"),
+        ("nav-lab", "F7 Lab"),
+        ("nav-logs", "F8 Logs"),
+        ("nav-settings", "F9 Settings"),
     ]
 
 
@@ -70,10 +70,10 @@ def test_nav_button_label_numbering_scheme():
     # the remaining destinations (Lab, Logs, Settings) stay unnumbered.
     digits = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
     for index, digit in enumerate(digits):
-        assert nav_button_label(index, "Label") == f"{digit} Label"
-    assert nav_button_label(10, "Lab") == "Lab"
-    assert nav_button_label(11, "Logs") == "Logs"
-    assert nav_button_label(12, "Settings") == "Settings"
+        assert nav_button_label(index, "Label") == f"^{digit} Label"
+    assert nav_button_label(10, "Lab") == "F7 Lab"
+    assert nav_button_label(11, "Logs") == "F8 Logs"
+    assert nav_button_label(12, "Settings") == "F9 Settings"
 
 
 @pytest.mark.asyncio
@@ -185,8 +185,8 @@ async def test_home_and_console_remain_first_primary_destinations():
         buttons = list(app.query(".nav-button"))
 
     assert [(button.id, str(button.label).strip()) for button in buttons[:2]] == [
-        ("nav-home", "1 Home"),
-        ("nav-console", "2 Console"),
+        ("nav-home", "^1 Home"),
+        ("nav-console", "^2 Console"),
     ]
 
 
@@ -326,7 +326,9 @@ def test_shell_destination_hotkeys_follow_destination_order():
         if binding.action.startswith("shell_destination(")
     ]
 
-    expected_keys = list(TldwCli.SHELL_DESTINATION_HOTKEYS)
+    expected_keys = list(TldwCli.SHELL_DESTINATION_HOTKEYS) + list(
+        TldwCli.SHELL_DESTINATION_FKEYS
+    )
     assert expected_keys == [
         "ctrl+1",
         "ctrl+2",
@@ -338,10 +340,15 @@ def test_shell_destination_hotkeys_follow_destination_order():
         "ctrl+8",
         "ctrl+9",
         "ctrl+0",
+        "f7",
+        "f8",
+        "f9",
     ]
-    # One binding per hotkey, zipped against the destination order; the layer
-    # never invents keys beyond ctrl+0 and never skips a destination.
+    # One binding per hotkey, zipped against the destination order: ctrl+digits
+    # cover the first ten, F7/F8/F9 the remaining three — every destination
+    # has a keyboard route and none is skipped.
     assert len(hotkey_bindings) == min(len(expected_keys), len(SHELL_DESTINATION_ORDER))
+    assert len(hotkey_bindings) == len(SHELL_DESTINATION_ORDER)
     for index, binding in enumerate(hotkey_bindings):
         destination = SHELL_DESTINATION_ORDER[index]
         assert binding.key == expected_keys[index]
