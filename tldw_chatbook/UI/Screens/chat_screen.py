@@ -2928,9 +2928,6 @@ class ChatScreen(BaseAppScreen):
         self._dictation = ConsoleDictationController(
             self,
             app_instance=self.app_instance,
-            composer_accessor=self._console_composer_or_none,
-            chat_store_accessor=self._ensure_console_chat_store,
-            speak_status=self._speak_status,
         )
         #: The hands-free conversation loop's live session, or None when the
         #: loop is not running. See `ConsoleHandsFreeSession` and
