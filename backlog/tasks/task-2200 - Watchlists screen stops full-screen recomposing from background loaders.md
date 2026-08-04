@@ -296,3 +296,43 @@ loader results are applied, which is precisely why 8 484 tests missed this.
 + Create source / Import OPML, Overview "Nothing is being watched yet." with
 its first-run guidance, Inspector "State: ready" — all within ~2 s of
 navigation and stable at T+10 s.
+
+#### The guard-shape trap, for the record
+
+This is not a Watchlists quirk. `if self.is_mounted:` around "push data into
+my own widgets" is a shape used widely in this codebase, and it is wrong in
+**both** directions. Measured, not argued:
+
+| | during `on_mount` (and anything it starts that finishes in that window) | after a real `switch_screen` teardown |
+|---|---|---|
+| `is_mounted` | **False** — while the whole subtree is registered and queryable | **True** — still |
+| `is_attached` | **True** — correct | **False** — correct |
+
+`Widget.is_mounted` returns `_is_mounted`, which `MessagePump._pre_process`
+sets in its `finally`, *after* dispatching `Compose` **and** `Mount`.
+`MessagePump.is_attached` walks `_parent` to the DOM root, so it answers the
+question the guard is actually asking: *can I query and mount inside my own
+subtree right now?*
+
+So an `is_mounted` guard is not a teardown gate at all (the re-review measured
+`is_mounted=True` on a screen already swapped out), and it *is* a false
+negative for the entire mount window. The only thing it reliably does is drop
+updates that arrive early. Where the surrounding code already degrades per
+widget (`except NoMatches` / `except Exception: pass` — which every site here
+does), `is_attached` is strictly better on both axes.
+
+**Two waves of this task were spent on it.** The first fixed the six guards
+this task introduced. The re-review then found the same shape at six
+PRE-EXISTING sites — the section loaders `_load_sources`, `_load_runs`,
+`_load_notifications`, `_load_items`, `_load_rules`, `_load_briefings` — which
+`on_mount` reaches through `_load_active_section_data()`, and which the
+Watchlists **deep link** (`apply_navigation_context` sets the section on an
+unmounted screen, before `switch_screen`) points at a section whose loader then
+lands in the mount window on a cold database. Those were masked by the
+full-screen recompose this task removed, so they had to ship with it or the
+deep link would regress: `LENS: in-window push rows=0; after a dev-style
+recompose rows=1`. All twelve now use `_dom_is_live`.
+
+Guards on user-gesture watchers (`watch_selected_scope`, `watch_tree_scope`,
+`_open_sources_create_form`, …) are deliberately left on `is_mounted`: none can
+fire inside the mount window, and rewriting them is not this task's business.

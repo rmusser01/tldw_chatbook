@@ -2961,3 +2961,144 @@ async def test_loader_results_landing_before_textual_flips_is_mounted_still_pain
             )
         finally:
             screen._is_mounted = True
+
+
+@pytest.mark.asyncio
+async def test_section_loader_results_landing_in_the_mount_window_still_paint():
+    """Re-review L1: the six section loaders share the `is_mounted` trap.
+
+    `on_mount` starts exactly one of them (`_load_active_section_data`), and
+    the section it starts is attacker-chosen in the sense that matters here:
+    `apply_navigation_context` sets `active_section` on an UNMOUNTED screen
+    (`app.py` calls it before `switch_screen`), which is how the "open this run
+    in Watchlists" deep link works. On a cold database that loader lands inside
+    the mount window -- `is_mounted` False, every widget present -- so its
+    `if self.is_mounted:` push was dropped and the section's table rendered
+    blank until the user clicked something. The full-screen recompose this task
+    removed used to cover it.
+
+    Set up through the real deep-link entry point (`apply_navigation_context`
+    on the unmounted screen), then reconstructs the mount window for each of
+    the six sections in turn -- the guard is identical at all six sites, and a
+    test that only covered the deep-link's own section would let the other five
+    rot.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import ArtifactsPane
+    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+    from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane  # noqa: F401
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+        TreeScope,
+        TreeScopeChanged,
+    )
+
+    app = _build_test_app()
+    watchlist = app.watchlist_bundle_service.create("Morning AI Brief")
+    host = DestinationHarness(app, "watchlists_collections")
+
+    # THE DEEP LINK: applied while the screen is unmounted, exactly as
+    # `app.py` does before `switch_screen`.
+    host.context_screen.apply_navigation_context({"section": "runs"})
+    assert host.context_screen.active_section == "runs", (
+        "precondition: the deep link really did set the section pre-mount"
+    )
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        screen._controller.list_sources = AsyncMock(
+            return_value=[{"id": "s1", "name": "Feed One", "source_type": "rss"}]
+        )
+        screen._controller.list_runs = AsyncMock(
+            return_value=[{"id": "r1", "source_title": "Feed One", "status": "ok"}]
+        )
+        screen._controller.list_items = AsyncMock(
+            return_value=[{"id": "i1", "title": "Item One", "source_name": "Feed One"}]
+        )
+        screen._controller.list_alert_rules = AsyncMock(
+            return_value=[{"id": "a1", "name": "Rule One", "condition_type": "no_items"}]
+        )
+        screen._notifications_controller.load_rows = AsyncMock(
+            return_value=[
+                {
+                    "id": 7,
+                    "title": "Research complete",
+                    "message": "The synthesis is ready.",
+                    "category": "research",
+                    "severity": "info",
+                    "is_read": False,
+                }
+            ]
+        )
+
+        cases = [
+            ("runs", "#watchlists-runs-pane", "runs", lambda: screen._load_runs()),
+            ("sources", "#watchlists-sources-pane", "sources", lambda: screen._load_sources()),
+            ("items", "#watchlists-items-pane", "items", lambda: screen._load_items()),
+            ("rules", "#watchlists-rules-pane", "rules", lambda: screen._load_rules()),
+            (
+                "notifications",
+                "#watchlists-notifications-pane",
+                "notifications",
+                lambda: screen._load_notifications(),
+            ),
+        ]
+
+        for section, selector, attribute, loader in cases:
+            screen.active_section = section
+            pane = None
+            for _ in range(300):
+                await pilot.pause(0.01)
+                found = screen.query(selector)
+                if found:
+                    pane = found.first()
+                    break
+            assert pane is not None, f"precondition: the {section} pane mounted"
+
+            # Rewind the pane to "nothing loaded", so only an in-window push
+            # can satisfy the assertion below.
+            setattr(pane, attribute, [])
+            await pilot.pause()
+            assert not getattr(pane, attribute), f"precondition: {section} rewound"
+
+            screen._is_mounted = False
+            try:
+                await loader()
+                assert getattr(pane, attribute), (
+                    f"the {section} loader's rows never reached the mounted pane: "
+                    f"they landed while Textual still reported is_mounted=False, "
+                    f"and nothing re-pushes them"
+                )
+            finally:
+                screen._is_mounted = True
+
+        # Artifacts: the same guard, but the push is a bundle of pane state
+        # rather than a row list, so it is asserted on its own terms.
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
+        )
+        await pilot.pause()
+        screen.active_section = "artifacts"
+        artifacts = None
+        for _ in range(300):
+            await pilot.pause(0.01)
+            found = screen.query("#watchlists-artifacts-pane")
+            if found:
+                artifacts = found.first(ArtifactsPane)
+                break
+        assert artifacts is not None, "precondition: the artifacts pane mounted"
+
+        artifacts.scope_label = ""
+        artifacts.can_generate = False
+        await pilot.pause()
+
+        screen._is_mounted = False
+        try:
+            await screen._load_briefings()
+            assert artifacts.scope_label, (
+                "the briefings loader never repainted the mounted Artifacts pane "
+                "from inside the mount window"
+            )
+            assert artifacts.can_generate is True
+        finally:
+            screen._is_mounted = True

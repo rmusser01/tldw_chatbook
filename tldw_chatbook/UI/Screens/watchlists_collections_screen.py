@@ -4076,7 +4076,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # SourcesPane instead of leaving its table empty; see
             # `_build_detail_pane` and `_loaded_sources` in __init__.
             self._loaded_sources = [dict(source) for source in sources]
-            if self.is_mounted:
+            if self._dom_is_live:
                 try:
                     sources_pane = self.query_one("#watchlists-sources-pane", SourcesPane)
                     sources_pane.sources = self._loaded_sources
@@ -4110,7 +4110,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 # through the same reconciliation rather than setting
                 # `selected_entity` directly.
                 self._select_entity(requested_run)
-            if self.is_mounted:
+            if self._dom_is_live:
                 try:
                     runs_pane = self.query_one("#watchlists-runs-pane", RunsPane)
                     runs_pane.runs = self._loaded_runs
@@ -4209,7 +4209,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if self.selected_notification
             else None
         )
-        if not self.is_mounted:
+        if not self._dom_is_live:
             return
         try:
             pane = self.query_one("#watchlists-notifications-pane", NotificationsPane)
@@ -4750,7 +4750,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             self._loaded_briefing_presets = preset_rows
             self._watchlist_has_audio_episodes = has_audio_episodes
-        if not self.is_mounted:
+        if not self._dom_is_live:
             return
         try:
             pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
@@ -7239,7 +7239,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # on `_loaded_sources` in `_load_sources` above; same rebuild,
             # same gap, same fix.
             self._loaded_items = [dict(item) for item in items]
-            if self.is_mounted:
+            if self._dom_is_live:
                 try:
                     items_pane = self.query_one("#watchlists-items-pane", ItemsPane)
                     items_pane.items = self._loaded_items
@@ -7699,7 +7699,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # on `_loaded_sources` in `_load_sources` above; same rebuild,
             # same gap, same fix.
             self._loaded_rules = [dict(rule) for rule in rules]
-            if self.is_mounted:
+            if self._dom_is_live:
                 try:
                     rules_pane = self.query_one("#watchlists-rules-pane", RulesPane)
                     rules_pane.rules = self._loaded_rules
