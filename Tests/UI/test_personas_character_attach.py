@@ -162,6 +162,19 @@ async def _enter_characters(pilot):
     return screen
 
 
+async def _expand_character_dicts_section(pilot, screen):
+    """task-2231: the dictionaries section starts collapsed, below the fold;
+    scroll the center column down to it and expand it before clicking
+    Attach/Detach (the flow a user now follows)."""
+    stack = screen.query_one("#personas-detail-stack")
+    stack.scroll_end(animate=False)
+    await pilot.pause()
+    await pilot.click("#personas-char-dicts-toggle")
+    await pilot.pause()
+    stack.scroll_end(animate=False)
+    await pilot.pause()
+
+
 class TestCharacterDictionaryAttach:
     async def test_character_attach_via_picker_then_detach(
         self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
@@ -191,6 +204,7 @@ class TestCharacterDictionaryAttach:
                 "_list_attachable_dictionaries",
                 lambda cid: [{"dictionary_id": 1, "name": "Slang"}],
             )
+            await _expand_character_dicts_section(pilot, screen)
             await pilot.click("#personas-char-dicts-add")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
@@ -205,6 +219,9 @@ class TestCharacterDictionaryAttach:
             assert table.row_count == 1
 
             table.move_cursor(row=0)
+            stack = screen.query_one("#personas-detail-stack")
+            stack.scroll_end(animate=False)
+            await pilot.pause()
             await pilot.click("#personas-char-dicts-detach")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
@@ -294,6 +311,7 @@ class TestCharacterDictionaryAttach:
                 "_list_attachable_dictionaries",
                 lambda cid: [{"dictionary_id": 1, "name": "Slang"}],
             )
+            await _expand_character_dicts_section(pilot, screen)
             await pilot.click("#personas-char-dicts-add")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
