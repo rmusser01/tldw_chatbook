@@ -236,10 +236,10 @@ def library_rag_answer_children(state: LibraryRagPanelState) -> list[Widget]:
     render in the same `.library-rag-quiet-line` register this panel
     already uses elsewhere (RAG-29/33) for "nothing went wrong, there's
     just nothing to show". `failed` additionally gets a one-line retry
-    HINT, not a bespoke retry Button: the existing Run button already
-    re-triggers retrieval + answer generation on the next press, so a
-    second button not yet wired to anything (Task 4 owns that wiring) would
-    be a dead click in the meantime -- worse than no button at all.
+    HINT, not a bespoke retry Button: the Run button already re-triggers
+    retrieval + answer generation on the next press (wired in PR-3 Task 4),
+    so a second button doing the same thing would be redundant, not
+    additive -- worse than no button at all.
 
     Carried ruling (Task 1 review): `status == "ready"` never renders as a
     clean answer without branching on `citation_status` first.
