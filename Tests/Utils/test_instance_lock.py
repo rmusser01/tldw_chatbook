@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import portalocker
+
 from tldw_chatbook.Utils import instance_lock as instance_lock_module
 from tldw_chatbook.Utils.instance_lock import acquire_profile_instance_lock
 
@@ -73,6 +75,32 @@ def test_unexpected_portalocker_error_never_raises(tmp_path, monkeypatch):
     status = acquire_profile_instance_lock(tmp_path)
     assert status.acquired is True
     assert status.handle is None  # handle was closed before returning
+
+
+def test_lock_exception_falls_through_to_acquired_true(tmp_path, monkeypatch):
+    """``portalocker.exceptions.LockException`` (broken/unsupported locking
+    mechanism -- e.g. ENOLCK, EOPNOTSUPP, EBADF, NFS EOFError -- per
+    portalocker's POSIX locker) is NOT genuine contention and must NOT be
+    mistaken for "someone else holds it".
+
+    This is the exact distinction ``Model_Artifacts/leases.py:250-262``
+    draws: only ``AlreadyLocked`` (a ``LockException`` subclass) means
+    contention; the broader ``LockException`` means the lock mechanism
+    itself failed. Catching the broader ``BaseLockException`` at the
+    contention branch would fold this failure into "not acquired" and
+    produce a permanent false "Profile already open" warning on every boot
+    for anyone on a filesystem where flock is unsupported -- exactly the
+    false warning this module exists to avoid.
+    """
+
+    def _boom(handle, flags):
+        raise portalocker.exceptions.LockException("simulated ENOLCK")
+
+    monkeypatch.setattr(instance_lock_module.portalocker, "lock", _boom)
+    status = acquire_profile_instance_lock(tmp_path)
+    assert status.acquired is True
+    assert status.handle is None  # handle was closed before returning
+    assert status.holder_pid is None
 
 
 def test_body_write_failure_still_acquires(tmp_path, monkeypatch):

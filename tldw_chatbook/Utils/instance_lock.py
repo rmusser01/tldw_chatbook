@@ -60,15 +60,29 @@ def acquire_profile_instance_lock(user_data_dir: Path) -> InstanceLockStatus:
 
     try:
         portalocker.lock(handle, LockFlags.EXCLUSIVE | LockFlags.NON_BLOCKING)
-    except portalocker.exceptions.BaseLockException:
+    except portalocker.exceptions.AlreadyLocked:
+        # Genuine contention only (POSIX locker: EACCES/EAGAIN). Mirrors
+        # Model_Artifacts/leases.py:250-262, which draws the exact same
+        # line for the exact same reason: portalocker.exceptions.LockException
+        # (the broader class -- ENOLCK, EOPNOTSUPP, EBADF, NFS EOFError, ...)
+        # means the locking MECHANISM failed, not that someone else holds the
+        # lock, so it must fall through to the generic `except Exception`
+        # below and report `acquired=True`. Catching the broader
+        # BaseLockException here instead would fold "flock unsupported on
+        # this filesystem" into "someone else has it" -- a permanent false
+        # "Profile already open" warning on every boot for anyone on such a
+        # filesystem, which is exactly the false warning this module exists
+        # to avoid.
         holder_pid, holder_since = _read_holder(lock_path)
         handle.close()
         return InstanceLockStatus(
             acquired=False, holder_pid=holder_pid, holder_since=holder_since
         )
     except Exception as exc:
-        # Any other unexpected failure (permissions weirdness, platform
-        # quirks, ...) must never block boot or produce a false warning.
+        # Any other unexpected failure -- portalocker.exceptions.LockException
+        # (locking mechanism broken/unsupported), permissions weirdness,
+        # platform quirks, ... -- must never block boot or produce a false
+        # warning.
         logger.debug("instance lock error ({}): {}", type(exc).__name__, exc)
         handle.close()
         return InstanceLockStatus(acquired=True)
