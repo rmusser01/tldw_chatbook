@@ -58,14 +58,25 @@ def suggestions_for_draft(
     draft_text: str,
     registry: ConsoleCommandRegistry,
     skill_candidates: tuple[SkillCommandCandidate, ...],
+    max_results: int = 200,
 ) -> list[CommandSuggestion] | None:
     """Compute popup suggestions for one composer draft.
 
-    Returns ``None`` when the draft is in no completion context (caller hides
-    the popup); otherwise a possibly-empty list (empty also hides the popup).
     Two contexts: command mode (``^/\\S*\\Z`` — commands then skills, prefix-
     filtered) and skills-arg mode (``^/skills[ \\t]+\\S*\\Z`` — skill names
     for the first argument).
+
+    Args:
+        draft_text: Plain composer draft text.
+        registry: The command registry; registered names lead the list.
+        skill_candidates: Trusted, user-invocable skills eligible for
+            suggestion, in display order.
+        max_results: Hard cap on returned suggestions (per mode), bounding
+            per-keystroke popup rebuild cost for large skill inventories.
+
+    Returns:
+        ``None`` when the draft is in no completion context (caller hides the
+        popup); otherwise a possibly-empty list (empty also hides the popup).
     """
     skills_arg_match = _SKILLS_ARG_MODE_PATTERN.match(draft_text)
     if skills_arg_match is not None:
@@ -78,7 +89,7 @@ def suggestions_for_draft(
             )
             for candidate in skill_candidates
             if candidate.name.lower().startswith(prefix)
-        ]
+        ][:max_results]
 
     command_match = _COMMAND_MODE_PATTERN.match(draft_text)
     if command_match is None:
@@ -110,4 +121,4 @@ def suggestions_for_draft(
         if candidate.name.lower().startswith(prefix)
         and candidate.name.lower() not in command_names_lower
     )
-    return suggestions
+    return suggestions[:max_results]

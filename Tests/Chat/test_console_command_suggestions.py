@@ -67,3 +67,14 @@ def test_trailing_newline_leaves_completion_contexts():
     registry = default_console_registry()
     assert suggestions_for_draft("/sy\n", registry, SKILLS) is None
     assert suggestions_for_draft("/skills \n", registry, SKILLS) is None
+
+
+def test_max_results_caps_both_modes():
+    skills = tuple(SkillCommandCandidate(name=f"skill-{i:03d}") for i in range(300))
+    registry = default_console_registry()
+    command_result = suggestions_for_draft("/s", registry, skills)
+    assert len(command_result) == 200  # 2 matching commands + skills, capped
+    arg_result = suggestions_for_draft("/skills skill", registry, skills)
+    assert len(arg_result) == 200
+    capped = suggestions_for_draft("/skills skill", registry, skills, max_results=5)
+    assert len(capped) == 5

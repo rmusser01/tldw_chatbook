@@ -9,8 +9,12 @@ edge sits just above the composer — the same anchored-overlay technique as
 
 from __future__ import annotations
 
+from typing import Any
+
+from loguru import logger
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import OptionList
 from textual.widgets.option_list import Option
@@ -38,7 +42,7 @@ class ConsoleCommandPopup(Widget):
 
     can_focus = False
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         kwargs.setdefault("id", "console-command-popup")
         super().__init__(**kwargs)
         self._suggestions: list[CommandSuggestion] = []
@@ -116,7 +120,15 @@ class ConsoleCommandPopup(Widget):
             return
         try:
             composer = self.screen.query_one("#console-native-composer")
-        except Exception:
+        except NoMatches:
+            # Composer not mounted (lifecycle transition) — nothing to anchor to.
+            return
+        except Exception as exception:
+            # Unexpected failure: keep the popup from crashing the screen,
+            # but leave a diagnostic trail instead of swallowing it silently.
+            logger.warning(
+                f"ConsoleCommandPopup.reposition failed: {exception!r}"
+            )
             return
         anchor = composer.region
         origin = self.parent.content_region
