@@ -7861,6 +7861,7 @@ class ChatScreen(BaseAppScreen):
             on_output_transcript_delta=_route(
                 self._on_console_realtime_output_transcript_delta
             ),
+            on_audio_delta=_route(self._on_console_realtime_audio_delta),
             on_first_audio=_route(self._on_console_realtime_first_audio),
             on_reply_done=_route(self._on_console_realtime_reply_done),
             on_usage=_route(self._on_console_realtime_usage),
@@ -8267,6 +8268,138 @@ class ChatScreen(BaseAppScreen):
             return
         session.controller.on_turn_committed(time.monotonic())
 
+    def _on_console_realtime_audio_delta(
+        self, session: ConsoleRealtimeSession, pcm: bytes
+    ) -> None:
+        """`on_audio_delta`: hand one chunk of reply audio to the sink.
+
+        The sink and its pump task are created lazily, on the FIRST chunk
+        of a reply rather than at reply start: a reply that never produces
+        audio (a cancelled or failed one) must not open an output device
+        for nothing.
+
+        `fed_bytes` is counted HERE, at the queue, which is what makes
+        `played_ms` over-count rather than under-count -- see
+        `_console_realtime_played_ms` for why that direction is the safe
+        one.
+        """
+        if not pcm:
+            return
+        if session.audio_queue is None:
+            self._begin_console_realtime_reply_audio(session)
+        queue = session.audio_queue
+        if queue is None:
+            return
+        session.fed_bytes += len(pcm)
+        try:
+            queue.put_nowait(pcm)
+        except Exception:  # noqa: BLE001 - a full/closed queue is not fatal
+            logger.opt(exception=True).debug(
+                "Console realtime: dropped an audio chunk"
+            )
+
+    def _begin_console_realtime_reply_audio(
+        self, session: ConsoleRealtimeSession
+    ) -> None:
+        """Open this reply's audio sink and start its pump task.
+
+        One sink and one pump per reply: `StreamingPcmSink` instances are
+        single-use by contract (open -> feed -> close/stop, then discard),
+        and a per-reply pump is what lets a barge-in abort exactly this
+        reply's audio without disturbing anything else.
+        """
+        sink = self._build_console_realtime_sink()
+        if sink is None:
+            return
+        try:
+            sink.open(CONSOLE_REALTIME_SAMPLE_RATE, 1)
+        except Exception:  # noqa: BLE001 - the conversation survives mute audio
+            logger.opt(exception=True).warning(
+                "Console realtime: could not open the audio sink"
+            )
+            return
+        queue: asyncio.Queue = asyncio.Queue()
+        session.sink = sink
+        session.audio_queue = queue
+        session.fed_bytes = 0
+        session.pump_worker = self.run_worker(
+            self._pump_console_realtime_audio(sink, queue),
+            exclusive=False,
+            group="console-realtime-audio",
+            exit_on_error=False,
+        )
+
+    def _build_console_realtime_sink(self) -> Any:
+        """Construct the reply-audio sink, honoring the test seam.
+
+        Imported inside the method for the same reason the mic tap is: the
+        sink module reaches an audio backend, and a Console mount that
+        never speaks must not pay for it.
+        """
+        factory = getattr(self.app_instance, "console_realtime_sink_factory", None)
+        if callable(factory):
+            return factory()
+        from ...Audio.streaming_sink import StreamingPcmSink
+
+        return StreamingPcmSink(on_event=self._on_console_realtime_sink_event)
+
+    def _on_console_realtime_sink_event(self, event: object) -> None:
+        """Sink lifecycle events. Logged only -- fired on the sink's own
+        notify thread, so nothing here may touch widgets."""
+        logger.debug(f"Console realtime: sink event: op=sink_event event={event!r}")
+
+    async def _pump_console_realtime_audio(self, sink: Any, queue: Any) -> None:
+        """Feed one reply's queued audio into `sink` until it ends.
+
+        The queue's `None` item is the end-of-reply sentinel: it ends the
+        async iterator, which is what tells `pump` to close the sink and
+        let the buffered tail actually finish playing (rather than cutting
+        it off the way an abort does).
+        """
+        from ...Audio.streaming_sink import pump
+
+        async def _chunks():
+            while True:
+                chunk = await queue.get()
+                if chunk is None:
+                    return
+                yield chunk
+
+        await pump(sink, _chunks())
+
+    def _end_console_realtime_reply_audio(
+        self, session: ConsoleRealtimeSession, *, abort: bool
+    ) -> None:
+        """End this reply's audio: drain it, or cut it off.
+
+        `abort=False` (the reply finished) closes the source and lets the
+        already-buffered tail play out. `abort=True` (a barge-in) stops the
+        sink outright -- the whole point of barging in is that the
+        assistant stops talking NOW, not at the end of the buffer.
+
+        `session.sink` is deliberately NOT cleared on the drain path: the
+        sink is still playing, and exit teardown must still be able to
+        silence it. The next reply replaces it.
+        """
+        queue, session.audio_queue = session.audio_queue, None
+        if queue is not None:
+            try:
+                queue.put_nowait(None)
+            except Exception:  # noqa: BLE001
+                logger.opt(exception=True).debug(
+                    "Console realtime: could not close the audio source"
+                )
+        if not abort:
+            return
+        sink = session.sink
+        if sink is not None:
+            try:
+                sink.stop()
+            except Exception:  # noqa: BLE001
+                logger.opt(exception=True).warning(
+                    "Console realtime: could not stop the audio sink"
+                )
+
     def _on_console_realtime_first_audio(
         self, session: ConsoleRealtimeSession
     ) -> None:
@@ -8279,6 +8412,7 @@ class ChatScreen(BaseAppScreen):
         Never fires for a response this client cancelled (Task 2's
         semantics), so there is no barge-in case to disambiguate here.
         """
+        self._end_console_realtime_reply_audio(session, abort=False)
         self._finish_console_realtime_reply_row(session, interrupted=False)
         session.controller.on_reply_done(time.monotonic())
 
@@ -8402,7 +8536,12 @@ class ChatScreen(BaseAppScreen):
         session = self._console_realtime
         if session is None:
             return
+        # Read the count BEFORE tearing the audio down, then silence, then
+        # tell the provider -- in that order: the user must stop hearing the
+        # reply first, and `played_ms` must describe what they heard up to
+        # that moment.
         played_ms = self._console_realtime_played_ms(session)
+        self._end_console_realtime_reply_audio(session, abort=True)
         self._finish_console_realtime_reply_row(session, interrupted=True)
         provider_session = session.session
         if provider_session is not None:
@@ -8569,7 +8708,7 @@ class ChatScreen(BaseAppScreen):
         if composer is not None:
             composer.sync_dictation_state(self._console_dictation_state)
 
-    def _release_console_realtime_state(self) -> tuple[Any, Any] | None:
+    def _release_console_realtime_state(self) -> tuple[Any, Any, Any] | None:
         """Drop the loop and release everything that can be released now.
 
         Teardown order is fixed (rule 11) and starts here: the TAP is
@@ -8581,8 +8720,12 @@ class ChatScreen(BaseAppScreen):
         which is what keeps their order pinned too.
 
         Returns:
-            The `(provider_session, sink)` pair still needing an async
-            release, or None when no loop was running.
+            The `(provider_session, sink, audio_queue)` triple still
+            needing an async release, or None when no loop was running.
+            The queue rides along so the reply's pump task -- parked on
+            `queue.get()` and therefore blind to a sink that went terminal
+            underneath it -- can be released once, at the END of teardown,
+            without racing the sink ordering above.
         """
         session = self._console_realtime
         if session is None:
@@ -8605,16 +8748,18 @@ class ChatScreen(BaseAppScreen):
                 )
         provider_session, session.session = session.session, None
         sink, session.sink = session.sink, None
-        return provider_session, sink
+        queue, session.audio_queue = session.audio_queue, None
+        session.pump_worker = None
+        return provider_session, sink, queue
 
     def _teardown_console_realtime_loop(self) -> None:
         """Exit teardown: release state, then the async resources, then repaint."""
         released = self._release_console_realtime_state()
         if released is None:
             return
-        provider_session, sink = released
+        provider_session, sink, queue = released
         self.run_worker(
-            self._close_console_realtime_resources(provider_session, sink),
+            self._close_console_realtime_resources(provider_session, sink, queue),
             exclusive=False,
             group="console-realtime-close",
             exit_on_error=False,
@@ -8622,12 +8767,15 @@ class ChatScreen(BaseAppScreen):
         self._restore_console_voice_chip()
 
     async def _close_console_realtime_resources(
-        self, provider_session: Any, sink: Any
+        self, provider_session: Any, sink: Any, queue: Any = None
     ) -> None:
         """Close the provider session, then the audio sink -- in that order.
 
         Session first: closing it stops new audio arriving, so the sink is
-        never asked to play a chunk that outlived the conversation.
+        never asked to play a chunk that outlived the conversation. The
+        pump's source is closed LAST, once the sink is already terminal, so
+        the pump returns immediately instead of draining a reply the user
+        has already left.
         """
         if provider_session is not None:
             await self._close_console_realtime_session(provider_session)
@@ -8637,6 +8785,13 @@ class ChatScreen(BaseAppScreen):
             except Exception:  # noqa: BLE001
                 logger.opt(exception=True).debug(
                     "Console realtime: stopping the audio sink failed"
+                )
+        if queue is not None:
+            try:
+                queue.put_nowait(None)
+            except Exception:  # noqa: BLE001
+                logger.opt(exception=True).debug(
+                    "Console realtime: could not release the audio pump"
                 )
 
     async def _close_console_realtime_session(self, provider_session: Any) -> None:
@@ -15614,8 +15769,10 @@ class ChatScreen(BaseAppScreen):
         # worker dispatched from a screen already unmounting may never run.
         released = self._release_console_realtime_state()
         if released is not None:
-            provider_session, sink = released
-            await self._close_console_realtime_resources(provider_session, sink)
+            provider_session, sink, queue = released
+            await self._close_console_realtime_resources(
+                provider_session, sink, queue
+            )
         # Dictation's own seven-statement teardown now lives in the
         # decomposed controller (dev's wave-1 extraction); calling it here
         # keeps this method one line per subsystem.
