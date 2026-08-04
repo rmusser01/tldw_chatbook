@@ -17,6 +17,12 @@ from tldw_chatbook.Library.ingest_capabilities import (
     get_capabilities,
 )
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
+from datetime import datetime, timezone
+from pathlib import PurePath
+
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    format_console_relative_age,
+)
 from tldw_chatbook.Library.library_ingest_state import (
     validate_ingest_option_value,
     LibraryIngestCanvasState,
@@ -328,10 +334,28 @@ class LibraryIngestQueuePanel(Vertical):
                         if getattr(job, "dismissed", False)
                         else ""
                     )
+                    # (task-2223) Basename + relative time first -- a list
+                    # of ~130-char absolute paths was unscannable. The full
+                    # path keeps a muted second line.
+                    name = PurePath(str(job.source_path)).name
+                    age = (
+                        format_console_relative_age(
+                            job.finished_at_wall,
+                            now=datetime.now(timezone.utc),
+                        )
+                        if getattr(job, "finished_at_wall", "")
+                        else ""
+                    )
+                    age_suffix = f" · {age}" if age else ""
                     yield Static(
-                        f"{escape_markup(job.source_path)} — "
-                        f"{job.state.value}{dismissed_suffix}",
+                        f"{escape_markup(name)} — "
+                        f"{job.state.value}{dismissed_suffix}{age_suffix}",
                         classes="library-ingest-recent-item",
+                        markup=False,
+                    )
+                    yield Static(
+                        escape_markup(str(job.source_path)),
+                        classes="library-ingest-recent-path",
                         markup=False,
                     )
 
@@ -533,10 +557,16 @@ class LibraryIngestCanvas(VerticalScroll):
                 self._reported_option_values[(group, field.name)] = str(value)
                 # A populated Input never shows its placeholder, so
                 # placeholder-as-label left values like "1000" with no
-                # visible meaning (task-2012). The label gets its own line.
+                # visible meaning (task-2012). The label gets its own line,
+                # carrying the unit/range hint up front (task-2223).
+                label_text = (
+                    f"{field.label} ({field.hint})"
+                    if getattr(field, "hint", "")
+                    else field.label
+                )
                 children.append(
                     Static(
-                        field.label,
+                        label_text,
                         classes="type-group-field-label",
                         markup=False,
                     )

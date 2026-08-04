@@ -578,3 +578,21 @@ def test_find_content_matches_multiple_matches_on_different_lines():
     )
 
     assert find_content_matches(content, "target") == (1, 3, 4)
+
+
+def test_arrival_note_renders_first_in_metadata_lines():
+    """(task-2223 ruling) Reaching an item via a dedup-matched ingest row
+    surfaces a one-shot context line before the metadata."""
+    state = build_library_media_viewer_state(
+        {"id": "m1", "title": "Report", "type": "document"},
+        arrival_note="Matched an existing item — nothing new was imported.",
+    )
+    assert state.metadata_lines[0] == (
+        "Matched an existing item — nothing new was imported."
+    )
+    assert state.metadata_lines[1].startswith("Type:")
+
+    plain = build_library_media_viewer_state(
+        {"id": "m1", "title": "Report", "type": "document"}
+    )
+    assert plain.metadata_lines[0].startswith("Type:")

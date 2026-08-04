@@ -1907,3 +1907,28 @@ def test_armed_clear_label_names_failed_rows():
     assert done_only.queue_clear_finished_label == (
         "Press again to clear 1 finished"
     )
+
+
+def test_all_match_selection_gets_consent_line_and_stays_enabled():
+    """(task-2223 ruling) Zero imports + >=1 predicted match keeps Start
+    ENABLED (the dedup probe is capped best-effort) with an
+    informed-consent quiet line saying what starting will actually do."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/report.txt"),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/report.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=1,
+            already_in_library=1,
+        ),
+    )
+    assert state.start_enabled
+    assert state.start_quiet_line == (
+        "Everything here appears to already be in your Library — "
+        "starting will re-check and match, not re-import."
+    )
+    assert state.commit_summary_line == "0 will import · 1 will match"

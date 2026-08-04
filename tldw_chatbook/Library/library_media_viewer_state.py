@@ -165,6 +165,7 @@ def build_library_media_viewer_state(
     detail: Mapping[str, Any] | None,
     *,
     now: datetime | None = None,
+    arrival_note: str = "",
 ) -> LibraryMediaViewerState:
     """Build the Library media viewer canvas display state.
 
@@ -197,7 +198,13 @@ def build_library_media_viewer_state(
         else ""
     )
 
-    lines: list[str] = [f"Type: {media_type}"]
+    lines: list[str] = []
+    # (task-2223) One-shot arrival context, e.g. reaching this item via a
+    # dedup-matched ingest row -- rendered first so the "why am I here"
+    # is answered before the metadata.
+    if arrival_note:
+        lines.append(arrival_note)
+    lines.append(f"Type: {media_type}")
     if author:
         lines.append(f"Author: {author}")
     if url and not url.startswith("local://"):

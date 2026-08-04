@@ -12032,7 +12032,11 @@ async def test_library_ingest_option_value_inputs_carry_visible_labels():
         ]
         assert expected, "generic group unexpectedly has no value fields"
         for label in expected:
-            assert label in labels, f"value field {label!r} has no visible label"
+            # (task-2223) Labels may carry a unit/range hint suffix -- the
+            # contract is that the label text is VISIBLE, not bare.
+            assert any(label in rendered for rendered in labels), (
+                f"value field {label!r} has no visible label"
+            )
 
 
 @pytest.mark.asyncio

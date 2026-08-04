@@ -347,7 +347,7 @@ async def test_type_group_panels_render_for_detected_groups():
         generic_panel = pilot.app.query_one("#type-group-generic", Collapsible)
         assert "PDF documents" in str(pdf_panel.title)
         assert "PDF engine: pymupdf4llm" in str(pdf_panel.title)
-        assert "Plain text / documents / HTML" in str(generic_panel.title)
+        assert "Plain text & HTML" in str(generic_panel.title)
         assert "Chunk size: 1000" in str(generic_panel.title)
 
         scope = pilot.app.query_one("#type-group-pdf .type-group-scope", Static)
@@ -1350,7 +1350,7 @@ async def test_expand_collapse_all_hidden_for_single_panel():
 @pytest.mark.asyncio
 async def test_generic_scope_line_reworded_when_no_generic_files_staged():
     """(task-2016) The always-present generic panel claimed "Applies to all
-    Plain text / documents / HTML in this import." even when the import
+    Plain text & HTML in this import." even when the import
     contained zero such files."""
     state = build_library_ingest_state(
         (),
