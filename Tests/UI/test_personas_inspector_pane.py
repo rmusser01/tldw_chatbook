@@ -2,7 +2,7 @@
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, ListItem, ListView, Static
+from textual.widgets import Button, Checkbox, ListItem, ListView, Static
 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import (
     PersonasInspectorPane,
@@ -265,6 +265,41 @@ async def test_conversations_list_is_height_capped():
         styles = pilot.app.query_one("#personas-conversations-list").styles
         assert styles.max_height is not None
         assert styles.max_height.value <= 10
+
+
+async def test_disabled_tts_checkbox_stays_legible():
+    """F-041: the disabled voice-profile checkbox reads as a disabled
+    control - dimmed label, full opacity, visible glyph box - not a dark
+    gap (Textual's base *:disabled:can-focus dims to 0.7 and the stock
+    toggle box is panel-on-panel)."""
+    from pathlib import Path
+
+    from textual.color import Color
+
+    class StyledInspectorApp(App):
+        CSS_PATH = str(
+            Path(__file__).resolve().parents[2]
+            / "tldw_chatbook"
+            / "css"
+            / "tldw_cli_modular.tcss"
+        )
+
+        def compose(self):
+            yield PersonasInspectorPane(id="personas-inspector-pane")
+
+    app = StyledInspectorApp()
+    async with app.run_test() as pilot:
+        checkbox = pilot.app.query_one("#personas-export-include-tts", Checkbox)
+        assert checkbox.disabled is True
+        variables = app.get_css_variables()
+        # Full opacity (Textual's base disabled rule dims to 0.7)...
+        assert checkbox.styles.opacity == 1.0
+        # ...with the label dimmed per the disabled idiom (the theme's
+        # text-disabled is "auto 38%": foreground at 38% alpha).
+        assert checkbox.styles.color.a == 0.38
+        # ...and the glyph box paints a real surface, not a dark gap.
+        glyph_styles = checkbox.get_component_styles("toggle--button")
+        assert glyph_styles.background == Color.parse(variables["surface"])
 
 
 async def test_conversation_rows_carry_subdued_class():
