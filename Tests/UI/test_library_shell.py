@@ -10422,7 +10422,7 @@ async def test_library_ingest_canvas_counts_line_shown_when_jobs_present():
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         await pilot.pause()
         counts_line = host.query_one("#library-ingest-queue-counts", Static)
-        assert str(counts_line.renderable) == "1 queued — all ingests"
+        assert str(counts_line.renderable) == "1 queued — in queue"
         assert not list(host.query("#library-ingest-queue-empty"))
 
 
@@ -14169,3 +14169,53 @@ async def test_folder_shortcut_hidden_when_affordance_is_off(
         assert plain.check_action("select_current_folder", ()) is None
         plain.dismiss(None)
         await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_invalid_marker_toggles_with_the_in_place_validation(
+    tmp_path: Path,
+) -> None:
+    """The invalid-field marker follows edits, not just compose.
+
+    (task-2230 Qodo round) The marker was applied at compose time only,
+    while text/number edits deliberately skip the recompose — so a field
+    stayed marked after becoming valid and never got marked after
+    becoming invalid, exactly the unreliable "highlighted" the marker
+    exists to fix.
+
+    Args:
+        tmp_path: pytest temporary directory fixture.
+    """
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="r7-mark")
+    harness = _LibraryIngestCanvasHarness(db)
+    staged = tmp_path / "report.txt"
+    staged.write_text("hello")
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        screen.query_one("#library-ingest-path", Input).value = str(staged)
+        await pilot.pause()
+
+        from textual.widgets import Collapsible
+
+        screen.query_one("#type-group-generic", Collapsible).collapsed = False
+        await pilot.pause()
+        chunk = screen.query_one("#opt-generic-chunk_size", Input)
+        assert not chunk.has_class("-ingest-option-invalid")
+
+        chunk.value = "abc"
+        await pilot.pause()
+        await pilot.pause()
+        assert chunk.has_class("-ingest-option-invalid"), (
+            "becoming invalid must mark the field in place"
+        )
+
+        chunk.value = "1500"
+        await pilot.pause()
+        await pilot.pause()
+        assert not chunk.has_class("-ingest-option-invalid"), (
+            "becoming valid must clear the marker in place"
+        )
