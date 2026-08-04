@@ -188,4 +188,4 @@ MCP (31/40):
 - [P2] Kill-switch copy under-sells a global toggle — label its blast radius persistently.
 - [P3] Rail glyph legibility; legend is load-bearing but dim/bottom/wrapping — consider word-badges at width or legend under the Servers heading.
 
-These are filed for triage as a possible round 2; not yet backlog tasks.
+Round 2 filed as backlog TASK-2231..2243. Roleplay items (2231 center redesign, 2232 CTA pair, 2233 voice checkbox, 2234 preview payoff) are FIXED and merged in PR #1336 (2026-08-04). Library (2235-2238) and MCP (2239-2243) items remain To Do.
