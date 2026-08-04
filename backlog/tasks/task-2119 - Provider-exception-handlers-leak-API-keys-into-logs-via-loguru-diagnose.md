@@ -127,4 +127,18 @@ diff line by line for anything suspicious (a new `diagnose=True`, a new bare
 
 **AC#6 remains open and is an owner action:** the disclosed Moonshot key still needs
 rotating. Code changes cannot close that.
+
+**PR #1305 Qodo round (all four findings accepted, mutation-verified):**
+(1) package init narrowed from `logger.remove()` (wipes host-app sinks) to a
+guarded `remove(0)` that replaces only loguru's auto-init default sink — a host
+that configured loguru before importing the package keeps its sinks, pinned by a
+new subprocess test that goes red if `remove(0)` reverts to `remove()`;
+(2) tests made hermetic — the subprocess child now runs with `LOGURU_*` scrubbed
+from its env, and the in-process ambient-env assertion (unfixable in-process:
+the package is imported before any test body runs) was dropped in its favor;
+(3) the subprocess check no longer reads `logger._core` private internals — it
+behaviorally asserts a credential-shaped frame local stays out of the child's
+stderr, with a bare-loguru positive-control variant proving the same script
+shape DOES leak pre-fix (mutation: deleting the init block fails the test);
+(4) `Args:` sections added to the new parameterized tests per file convention.
 <!-- SECTION:NOTES:END -->

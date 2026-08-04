@@ -46,16 +46,26 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # on `Logger.add`'s signature at that point, not a value read fresh on every
 # call -- and `Tests/conftest.py` imports loguru ahead of this package for
 # fixture-ordering reasons, which would otherwise defeat the env var alone
-# for the whole test session. The explicit `remove()` + `add(diagnose=False)`
+# for the whole test session. The explicit `remove(0)` + `add(diagnose=False)`
 # below is not subject to that ordering: it runs the moment this package is
 # imported, which is unconditionally required before any of its own
 # exception handlers can execute.
+#
+# Only loguru's auto-init sink (always handler id 0) is replaced. A host
+# application that configured loguru before importing this package keeps its
+# own sinks untouched -- if it removed the default sink, `remove(0)` raises
+# ValueError and this block installs nothing, because that host owns the
+# logging configuration (and any diagnose=True sink it installed on purpose).
 os.environ.setdefault("LOGURU_DIAGNOSE", "0")
 try:
     from loguru import logger as _pkg_init_loguru_logger
 
-    _pkg_init_loguru_logger.remove()
-    _pkg_init_loguru_logger.add(sys.stderr, diagnose=False)
+    try:
+        _pkg_init_loguru_logger.remove(0)
+    except ValueError:
+        pass
+    else:
+        _pkg_init_loguru_logger.add(sys.stderr, diagnose=False, backtrace=True)
 except Exception:
     # Logging safety must never be the reason package import fails.
     pass

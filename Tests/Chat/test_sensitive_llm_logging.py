@@ -1206,6 +1206,12 @@ def test_sentinel_api_key_never_reaches_diagnose_false_sink_on_request_exception
     non-sensitive request paths, and asserts the sentinel never reaches a
     sink configured the way this app's real sinks now are
     (``diagnose=False``).
+
+    Args:
+        monkeypatch: Pytest fixture used to plant the sentinel-bearing
+            OpenAI config pointing at an unreachable local endpoint.
+        sensitive: Whether to wrap the request in the
+            ``sensitive_llm_request`` context (both paths must be safe).
     """
     _plant_sentinel_openai_config(monkeypatch)
 
@@ -1235,6 +1241,10 @@ def test_sentinel_api_key_leaks_via_diagnose_true_sink_confirming_mechanism_is_r
     leaking, the regression test above has stopped proving anything (it
     would be passing vacuously, e.g. because the sentinel was never actually
     exercised).
+
+    Args:
+        monkeypatch: Pytest fixture used to plant the sentinel-bearing
+            OpenAI config pointing at an unreachable local endpoint.
     """
     _plant_sentinel_openai_config(monkeypatch)
 
@@ -1305,55 +1315,179 @@ def test_persistent_and_legacy_sink_configuration_pin_diagnose_false() -> None:
             )
 
 
-def test_package_import_sets_loguru_diagnose_env_default() -> None:
-    """task-2119: importing ``tldw_chatbook`` sets the safe library default.
+# The child script deliberately mirrors the provider-handler shape from the
+# 2026-08-03 live incident: an ``Authorization`` header dict built from the
+# key sits in a frame whose FAILING LINE references it (``_post(headers)``),
+# which is exactly what loguru's ``diagnose`` annotates with the variable's
+# live value. The sentinel arrives via the environment, never as a literal
+# in the script, so a plain source-line backtrace (``diagnose=False``,
+# ``backtrace=True``) cannot reveal it -- only frame-local dumping can.
+_INCIDENT_SHAPE_CHILD_SCRIPT = """\
+import os
 
-    Cheap in-process check that the env-var lever from
-    ``tldw_chatbook/__init__.py`` is actually wired (the full "does this
-    make loguru's own default sink safe" property needs a fresh process --
-    see the subprocess test below -- since this test SESSION already
-    imported loguru, via ``Tests/conftest.py``, before ``tldw_chatbook``
-    ever got a chance to set this).
-    """
-    assert os.environ.get("LOGURU_DIAGNOSE") == "0"
+{package_import}
+from loguru import logger
+
+secret = os.environ["LEAK_SENTINEL"]
 
 
-def test_fresh_process_importing_package_alone_leaves_loguru_diagnose_false() -> (
-    None
-):
+def _post(headers):
+    raise ConnectionError("simulated transient provider error")
+
+
+def _request(final_api_key):
+    headers = {{"Authorization": "Bearer " + final_api_key}}
+    return _post(headers)
+
+
+try:
+    _request(secret)
+except ConnectionError:
+    logger.opt(exception=True).error("Request failed")
+
+print("LOGURU_DIAGNOSE=" + repr(os.environ.get("LOGURU_DIAGNOSE")))
+print("CHILD-DONE")
+"""
+
+
+@pytest.mark.parametrize(
+    ("import_package", "expect_leak"),
+    [
+        pytest.param(True, False, id="package-import-neutralizes-default-sink"),
+        pytest.param(False, True, id="bare-loguru-default-leaks-positive-control"),
+    ],
+)
+def test_fresh_process_incident_shape_leaks_only_without_package_import(
+    tmp_path: Path,
+    import_package: bool,
+    expect_leak: bool,
+) -> None:
     """task-2119: reproduce the exact shape of the 2026-08-03 live incident.
 
-    A subprocess that imports only ``tldw_chatbook`` (nothing else touches
-    loguru first, unlike this test session's own ``conftest.py``) must end
-    up with every loguru sink ``diagnose=False`` and ``LOGURU_DIAGNOSE=0``
-    in its environment. This is run out-of-process on purpose: the live
-    incident happened in a script that imported the provider adapters
-    directly and never called
-    ``Logging_Config.configure_application_logging`` -- exactly this
-    shape -- and ``Tests/conftest.py`` importing loguru ahead of this
-    package (for its own, unrelated fixture-ordering reasons) means the
-    property under test is already gone by the time any in-process test
-    body runs in this suite.
+    A fresh process logs a caught exception whose frames hold a
+    credential-shaped local, through whatever loguru sink is active after
+    (a) importing only ``tldw_chatbook`` first, or (b) importing nothing --
+    loguru's own auto-init default sink, the pre-fix world. The sentinel
+    must stay out of the output in (a) and MUST appear in (b): the positive
+    control proves this script shape genuinely leaks under loguru's
+    defaults, so (a) cannot pass vacuously. Behavioral on purpose -- an
+    earlier version introspected ``logger._core.handlers`` private
+    internals, which loguru upgrades could rename without any real
+    regression. Out-of-process on purpose: the live incident happened in a
+    script that imported the provider adapters directly and never called
+    ``Logging_Config.configure_application_logging``, and this test
+    session's own ``Tests/conftest.py`` imports loguru before
+    ``tldw_chatbook`` ever could. The child env is scrubbed of ``LOGURU_*``
+    so an ambient ``LOGURU_DIAGNOSE`` export can neither mask the leak in
+    (b) nor fail (a) for reasons unrelated to the code. The script runs
+    from a real file, not ``-c``, because diagnose resolves the variables
+    it dumps from traceback source lines, which ``<string>`` frames do not
+    have.
+
+    Args:
+        tmp_path: Pytest fixture; the child script is written here so its
+            traceback frames carry real source lines.
+        import_package: Whether the child imports ``tldw_chatbook`` before
+            logging (the fix under test) or exercises bare loguru.
+        expect_leak: Whether the sentinel must appear in the child's
+            stderr (the positive control) or must be absent (the fix).
     """
-    script = (
-        "import os, sys\n"
-        "import tldw_chatbook\n"
-        "from loguru import logger\n"
-        "assert os.environ.get('LOGURU_DIAGNOSE') == '0', os.environ.get('LOGURU_DIAGNOSE')\n"
-        "handlers = list(logger._core.handlers.values())\n"
-        "assert handlers, 'expected at least one loguru sink after package import'\n"
-        "for handler in handlers:\n"
-        "    ef = getattr(handler, '_exception_formatter', None)\n"
-        "    assert getattr(ef, '_diagnose', None) is False, 'diagnose not disabled'\n"
-        "print('OK')\n"
+    script_path = tmp_path / "incident_shape_child.py"
+    script_path.write_text(
+        _INCIDENT_SHAPE_CHILD_SCRIPT.format(
+            package_import="import tldw_chatbook" if import_package else "",
+        ),
+        encoding="utf-8",
     )
+
     project_root = Path(__file__).resolve().parents[2]
+    child_env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("LOGURU_")
+    }
+    child_env["LEAK_SENTINEL"] = SENTINEL_API_KEY
+    child_env["PYTHONPATH"] = str(project_root) + (
+        os.pathsep + child_env["PYTHONPATH"] if child_env.get("PYTHONPATH") else ""
+    )
+
     result = subprocess.run(
-        [sys.executable, "-c", script],
+        [sys.executable, str(script_path)],
         cwd=str(project_root),
+        env=child_env,
         capture_output=True,
         text=True,
         timeout=30,
     )
+
     assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
-    assert "OK" in result.stdout
+    assert "CHILD-DONE" in result.stdout
+    # The exception must actually have been rendered (backtrace stays on);
+    # an empty stderr would make the no-leak assertion below vacuous.
+    assert "ConnectionError" in result.stderr
+    if expect_leak:
+        assert SENTINEL_API_KEY in result.stderr
+    else:
+        assert SENTINEL_API_KEY not in result.stderr
+        assert "LOGURU_DIAGNOSE='0'" in result.stdout
+
+
+def test_package_import_preserves_host_configured_loguru_sinks(
+    tmp_path: Path,
+) -> None:
+    """Package import must only replace loguru's auto-init default sink.
+
+    A host application that configured loguru BEFORE importing
+    ``tldw_chatbook`` (removed the default sink, installed its own) must
+    keep its sinks working and must not gain a duplicate stderr sink from
+    the package init. Pins the ``remove(0)``-not-``remove()`` narrowing:
+    reverting to a bare ``remove()`` wipes the host's sink and fails here.
+
+    Args:
+        tmp_path: Pytest fixture; the child script is written here.
+    """
+    script_path = tmp_path / "host_configured_child.py"
+    script_path.write_text(
+        textwrap.dedent(
+            """\
+            from loguru import logger
+
+            captured = []
+            logger.remove()
+            logger.add(captured.append, format="{message}")
+
+            import tldw_chatbook
+
+            logger.info("host-sink-message")
+            assert any(
+                "host-sink-message" in str(message) for message in captured
+            ), "host-configured sink was clobbered by package import"
+            print("CHILD-DONE")
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    project_root = Path(__file__).resolve().parents[2]
+    child_env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("LOGURU_")
+    }
+    child_env["PYTHONPATH"] = str(project_root) + (
+        os.pathsep + child_env["PYTHONPATH"] if child_env.get("PYTHONPATH") else ""
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(script_path)],
+        cwd=str(project_root),
+        env=child_env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert "CHILD-DONE" in result.stdout
+    # No duplicate package stderr sink: the message reached ONLY the host sink.
+    assert "host-sink-message" not in result.stderr
