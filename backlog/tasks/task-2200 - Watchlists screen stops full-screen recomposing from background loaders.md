@@ -243,3 +243,56 @@ unmount/tab-switch/gated-region all degrade). All findings fixed:
 * **M6 (nit)** — `_watchlists_are_empty()` was already orphaned on `dev`
   (`git show b5a8fcec5:…` finds the definition and no callers), so it is left
   alone: not orphaned by this branch, and deleting it is not this task's call.
+
+### Live-verification wave — `is_mounted` is False for the whole of `on_mount`
+
+The whole test suite was green and the feature was **broken on a cold app**:
+navigate to Watchlists and the centre header sat on "Loading local Watchlists
+snapshot...", the Overview on "Loading watchlist activity..." and the Inspector
+on "State: unavailable" **indefinitely** (measured 100+ seconds, zero
+interaction). Clicking any tab painted the loaded state instantly, so the data
+had arrived — only the DOM had not.
+
+**Confirmed by instrumentation on a real 235x52 terminal**, not by reasoning:
+
+```
+OVERVIEW watcher is_mounted=False keys=[]      pane=0 inspector=0
+ON_MOUNT         is_mounted=False wb=1 centre=1 status=1
+SNAPSHOT applied is_mounted=False loaded=True   wb=1 centre=1 status=1
+OVERVIEW watcher is_mounted=False keys=[...]    pane=1 inspector=1
+```
+
+`Widget.is_mounted` returns `_is_mounted`, which `MessagePump._pre_process`
+sets in its `finally` — **after** it has dispatched `Compose` *and* `Mount`. So
+for the whole of `on_mount`, and for anything `on_mount` starts that finishes
+before that `finally` runs, `is_mounted` is `False` while the entire subtree is
+already registered and queryable. On a cold local database this screen's
+loaders finish inside exactly that window (the snapshot landed 7 ms after
+`on_mount` began). Every `if not self.is_mounted: return` guard therefore
+dropped its update, and nothing re-requested it.
+
+Why this is a regression **introduced by this task** and not pre-existing: the
+`overview_data` reactive's `refresh(recompose=True)` was called by Textual's
+own reactive machinery, which has no `is_mounted` guard anywhere in its path —
+so on `dev` that recompose repainted the whole screen a few milliseconds later
+and covered the snapshot's own (identically guarded, identically skipped)
+repaint. Replacing it with guarded in-place updates removed the only unguarded
+path.
+
+**Fix:** a `_dom_is_live` property (`self.is_attached` — "is there a path from
+me up to the DOM root", true from `App._register` and false once unmounted or
+exiting) replaces `is_mounted` at the six guards this task introduced. Every
+caller still degrades per widget via `except NoMatches`, so this is an outer
+gate, not the only protection. The pre-existing `is_mounted` guards on
+user-gesture watchers (`watch_selected_scope`, `watch_tree_scope`, …) are left
+alone: they cannot fire inside the mount window.
+
+Regression test reconstructs the captured state (a live, fully-attached screen
+with `_is_mounted` forced back to `False`, assertions made **inside** that
+window) rather than racing for it — `run_test`'s pilot settles the DOM before
+loader results are applied, which is precisely why 8 484 tests missed this.
+
+**Live re-verified after the fix, zero interaction:** header "No sources yet."
++ Create source / Import OPML, Overview "Nothing is being watched yet." with
+its first-run guidance, Inspector "State: ready" — all within ~2 s of
+navigation and stable at T+10 s.

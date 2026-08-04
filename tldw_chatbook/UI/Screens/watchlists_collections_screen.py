@@ -785,6 +785,51 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             store=getattr(app_instance, "client_notifications_db", None),
         )
 
+    @property
+    def _dom_is_live(self) -> bool:
+        """Whether this screen's widgets are in the DOM and can be patched.
+
+        **Not `self.is_mounted`** (TASK-2200 live-verification wave), and the
+        difference is a real, shipped defect rather than a nicety.
+        `Widget.is_mounted` returns `_is_mounted`, which
+        `MessagePump._pre_process` sets in its `finally` -- *after* it has
+        dispatched `Compose` **and** `Mount`. So for the whole of `on_mount`,
+        and for anything `on_mount` starts that completes before that
+        `finally` runs, `is_mounted` is `False` while the entire subtree is
+        already registered and queryable.
+
+        This screen's loaders complete inside exactly that window on a cold
+        local database. Instrumented on a real terminal:
+
+        ```
+        OVERVIEW watcher is_mounted=False keys=[]  pane=0 inspector=0
+        ON_MOUNT         is_mounted=False wb=1 centre=1 status=1
+        SNAPSHOT applied is_mounted=False loaded=True wb=1 centre=1 status=1
+        OVERVIEW watcher is_mounted=False keys=[...] pane=1 inspector=1
+        ```
+
+        -- the workbench, `#wl-centre`, the status header, the Overview pane
+        and the Inspector are all present, and `is_mounted` is `False` for
+        every one of those lines. An `is_mounted` guard therefore dropped
+        every in-place update on the floor, and nothing re-requested them:
+        the screen sat on "Loading local Watchlists snapshot..." /
+        "Loading watchlist activity..." / "State: unavailable" indefinitely
+        until an unrelated tab switch recomposed it.
+
+        The full-screen `refresh(recompose=True)` this task replaced did not
+        have that problem, because the `overview_data` reactive calls
+        `Widget.refresh` itself, with no `is_mounted` guard anywhere in the
+        path. Reproducing that reach is what this property is for.
+
+        `is_attached` asks the question that actually matters -- "is there a
+        path from me up to the DOM root" (`MessagePump.is_attached`) -- which
+        is `True` from `App._register` onwards and `False` once unmounted or
+        once the app is exiting. Every caller still degrades per-widget via
+        `except NoMatches`, so this is a cheap outer gate, not the only
+        protection.
+        """
+        return self.is_attached
+
     def _watchlist_bundle_service(self) -> WatchlistBundleService | None:
         """The live watchlist bundle service, or ``None`` if unavailable.
 
@@ -918,7 +963,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         Every lookup degrades: the Overview pane exists only on its own tab,
         and the Inspector is unmounted whenever the right rail is collapsed.
         """
-        if not self.is_mounted:
+        if not self._dom_is_live:
             return
         try:
             overview = self.query_one("#watchlists-overview-pane", OverviewPane)
@@ -1037,7 +1082,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         CONTENT is untouched: `ContentPane` reads nothing this loader writes.
         """
-        if not self.is_mounted:
+        if not self._dom_is_live:
             return
         self._request_surface_refresh(
             self._SURFACE_RAIL,
@@ -1161,7 +1206,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         is one `disabled`/`tooltip` pair straight off `_wc_attach_state()` —
         the same tuple `compose_content` hands `_build_inspector_pane`.
         """
-        if not self.is_mounted:
+        if not self._dom_is_live:
             return
         self._request_surface_refresh(
             self._SURFACE_FEEDS, self._SURFACE_HEADER, self._SURFACE_INSPECTOR
@@ -3227,7 +3272,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 matches the adapter; see `_resolve_console_follow_drift`).
                 Unknown names are ignored by the drainer.
         """
-        if not self.is_mounted:
+        if not self._dom_is_live:
             return
         self._pending_surface_refresh.update(surfaces)
         if self._surface_refresh_draining:
@@ -3269,7 +3314,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         already decided to stop.
         """
         try:
-            while self.is_mounted and self._pending_surface_refresh:
+            while self._dom_is_live and self._pending_surface_refresh:
                 surfaces = self._pending_surface_refresh
                 self._pending_surface_refresh = set()
                 try:
@@ -3501,7 +3546,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         at most one branch does anything; each is a no-op when its pane is
         absent (the region collapsed, or a different tab).
         """
-        if not self.is_mounted:
+        if not self._dom_is_live:
             return
         for selector, pane_type, values in (
             (

@@ -2834,3 +2834,130 @@ async def test_a_raising_console_follow_poll_does_not_take_the_app_down():
         assert screen.query("#watchlists-follow-in-console"), (
             "the Inspector must be left standing, not half-swapped"
         )
+
+
+@pytest.mark.asyncio
+async def test_loader_results_landing_before_textual_flips_is_mounted_still_paint():
+    """Live-verification wave: the in-place updates must not use `is_mounted`.
+
+    `Widget.is_mounted` returns `_is_mounted`, which `MessagePump._pre_process`
+    sets in its `finally` -- AFTER dispatching both `Compose` and `Mount`. So
+    for the whole of `on_mount`, and for anything `on_mount` starts that
+    finishes before that `finally` runs, `is_mounted` is False while the entire
+    subtree is already registered and queryable. On a cold local database the
+    Watchlists loaders finish inside exactly that window; instrumented on a real
+    terminal at 235x52:
+
+        OVERVIEW watcher is_mounted=False keys=[]  pane=0 inspector=0
+        ON_MOUNT         is_mounted=False wb=1 centre=1 status=1
+        SNAPSHOT applied is_mounted=False loaded=True wb=1 centre=1 status=1
+        OVERVIEW watcher is_mounted=False keys=[...] pane=1 inspector=1
+
+    Every update was dropped by an `is_mounted` guard and nothing re-requested
+    them: the screen sat on "Loading local Watchlists snapshot..." /
+    "Loading watchlist activity..." / "State: unavailable" for 100+ seconds
+    until an unrelated tab switch recomposed it.
+
+    `run_test`'s pilot settles the DOM before loader results are applied, so
+    the ordering cannot be raced for here. This RECONSTRUCTS the captured state
+    instead -- a live, fully-attached screen with `_is_mounted` forced back to
+    False -- the same technique TASK-1960 used for its own captured DOM state.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        for _ in range(300):
+            await pilot.pause(0.01)
+            if screen._wc_loaded and screen.query("#wc-empty-state"):
+                break
+        assert screen.query("#wc-empty-state"), "precondition: the normal path paints"
+
+        # Rewind to what a cold screen looks like a millisecond into `on_mount`:
+        # nothing loaded, the loading markers on screen, the DOM fully attached.
+        screen._wc_loaded = False
+        screen._wc_lookup_error = None
+        screen._local_watchlist_records = ()
+        screen._local_watchlist_count = 0
+        screen.overview_data = {}
+        screen._request_surface_refresh(
+            screen._SURFACE_FEEDS, screen._SURFACE_HEADER
+        )
+        for _ in range(300):
+            await pilot.pause(0.01)
+            if screen.query("#wc-loading-state"):
+                break
+        assert screen.query("#wc-loading-state"), "precondition: rewound to loading"
+        overview = screen.query_one("#watchlists-overview-pane", OverviewPane)
+        assert overview.query("#overview-loading"), "precondition: overview loading"
+        assert screen.is_attached, "precondition: the DOM is live throughout"
+
+        # THE WINDOW. Everything below -- including the drain worker's own
+        # loop, which the live log shows running at `is_mounted=False` -- runs
+        # with `is_mounted` False and every widget present, byte-for-byte the
+        # state the log above captured. The assertions are made INSIDE the
+        # window too, so nothing can be satisfied by the restore below.
+        screen._is_mounted = False
+        try:
+            assert not screen.is_mounted
+            assert screen.query_one("#wl-centre-status"), (
+                "precondition: the header really is queryable in this window"
+            )
+            screen._apply_local_wc_snapshot((), 0, True, None, None)
+            screen.overview_data = {
+                "total_sources": 0,
+                "active_sources": 0,
+                "sources_in_error": 0,
+                "total_items": 0,
+                "new_items": 0,
+                "latest_run_status": "unavailable",
+                "failed_runs": [],
+                "active_alert_rules": 0,
+            }
+
+            for _ in range(300):
+                await pilot.pause(0.01)
+                if screen.query("#wc-empty-state") and not screen.query(
+                    "#overview-loading"
+                ):
+                    break
+
+            assert not screen.query("#wc-loading-state"), (
+                "the snapshot marker is still 'Loading local Watchlists "
+                "snapshot...' after the load landed -- the update was dropped "
+                "and nothing re-requests it"
+            )
+            assert screen.query("#wc-empty-state"), (
+                "the loaded snapshot state must paint"
+            )
+            overview = screen.query_one("#watchlists-overview-pane", OverviewPane)
+            assert not overview.query("#overview-loading"), (
+                "the Overview pane is still 'Loading watchlist activity...' "
+                "after `overview_data` landed"
+            )
+            assert overview.query("#overview-first-run"), (
+                "the loaded (empty-profile) Overview state must paint"
+            )
+            assert str(screen.query_one("#watchlists-state-summary").renderable) == (
+                "State: ready"
+            ), "the Inspector's State line must follow the snapshot here too"
+
+            # The tree loader lands in the same window (`on_mount` starts it
+            # too), so its own updater has to reach the rail from here as well.
+            created = app.watchlist_bundle_service.create("Morning AI Brief")
+            node_id = f"#wl-tree-node-watchlist-{created['id']}"
+            assert not screen.query(node_id), "precondition: the rail is stale"
+            screen._load_tree_data()
+            for _ in range(300):
+                await pilot.pause(0.01)
+                if screen.query(node_id):
+                    break
+            assert screen.query(node_id), (
+                "the rail never picked up the tree reload that landed before "
+                "Textual flipped `is_mounted`"
+            )
+        finally:
+            screen._is_mounted = True
