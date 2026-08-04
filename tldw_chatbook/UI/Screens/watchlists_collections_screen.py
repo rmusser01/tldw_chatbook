@@ -7508,11 +7508,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         -- including another intent for the SAME item, drained just before
         this one, that happened to be an Ingest/Ignore.
 
-        `_loaded_items` is NOT the system of record and cannot be used here:
-        `local_watchlists_service.list_items` collapses `status=None` to
-        `status="new"` (verified), so an ingested item is not merely stale in
-        that cache -- it is absent from it entirely, along with every other
-        non-`new` item.
+        `_loaded_items` is NOT the system of record and cannot be used here.
+        Until TASK-2301 it could not even have been read as a hint:
+        `local_watchlists_service.list_items` collapsed `status=None` to
+        `status="new"`, so an ingested item was not merely stale in that
+        cache -- it was absent from it entirely. That collapse is gone and the
+        cache now carries every status, which changes nothing here: it is
+        still a page snapshot taken at load time, of at most `limit` rows,
+        and this gate is deciding whether a write may destroy an ingest. Ask
+        the row.
 
         Fails CLOSED. If the backend cannot be asked, the write is refused:
         marking unread/read is a convenience the user can repeat, whereas
@@ -8146,9 +8150,27 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 # column read "new" for every item the user had opened until
                 # they left the tab. Repaint the one cell instead.
                 self._repaint_item_status_cell(patch_item.get("id"), status)
-            if notify_toast and callable(notify):
+            else:
+                # TASK-2301 AC#3. The deliberate actions (Ingest, Ignore, the
+                # unread toggle) carry no `patch_item`, so their only visible
+                # result used to arrive whenever the `_load_items` reload
+                # below happened to land -- and before this task that reload
+                # DELETED the row, because the list could only ever hold
+                # `new` items. "The row disappeared" is not feedback; it is
+                # the shape of data loss. Repaint the row's Status cell the
+                # moment the write succeeds, on the same single-cell path the
+                # mark-read-on-open flow already uses, so the user sees the
+                # state they just asked for on the row they acted on.
+                self._repaint_item_status_cell(item_id, status)
+            if notify_toast:
                 label = "unread" if status == "new" else status
-                notify(f"Item marked {label}.", severity="information")
+                # `markup=False`: the body is app-authored today, but toasts
+                # on this screen carry item- and feed-derived text elsewhere
+                # and the convention here is to escape at the terminal step
+                # rather than to audit which messages happen to be safe.
+                self._notify_watchlists(
+                    f"Item marked {label}.", severity="information", markup=False
+                )
         except Exception:
             logger.opt(exception=True).warning(f"Failed to mark item {status}.")
             if notify_toast and callable(notify):

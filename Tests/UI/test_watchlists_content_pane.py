@@ -1596,12 +1596,10 @@ async def test_mark_unread_refuses_an_ingest_that_sits_beyond_a_lookup_page():
         name="Busy Feed", type="rss", source="https://busy.test/feed.xml"
     )
 
-    filler_ids = []
     with db.transaction() as conn:
         # The target is seeded FIRST and dated oldest, so once it is ingested
         # it sorts last in the `created_at DESC` listing the old lookup paged
-        # through. It stays "new" for now -- that is the only status the Items
-        # pane lists, and the test has to reach it through the real UI.
+        # through.
         target_id = persist_subscription_item(
             conn,
             source_id,
@@ -1614,36 +1612,61 @@ async def test_mark_unread_refuses_an_ingest_that_sits_beyond_a_lookup_page():
             run_id=None,
             now="2020-01-01T00:00:00.0000+00:00",
         )
-        # Zero-padded counter in the timestamp: `created_at` is TEXT, so
-        # ORDER BY compares lexicographically and every filler must sort
-        # above the target deterministically, not by insertion luck.
-        for index in range(_LEGACY_STATUS_LOOKUP_LIMIT + 20):
-            filler_ids.append(
-                persist_subscription_item(
-                    conn,
-                    source_id,
-                    {
-                        "url": f"https://busy.test/filler-{index}/",
-                        "title": f"Filler {index}",
-                        "content_hash": f"hash-beyond-page-{index}",
-                    },
-                    run_id=None,
-                    now=f"2026-07-28T09:00:00.{index:04d}+00:00",
+
+    def _seed_the_page_deep_fillers() -> None:
+        """Bury the target under more ingested items than the old page held.
+
+        TASK-2301 moved this out of the initial fixture and behind the
+        target's own Ingest. It used to run up front, because the Items pane
+        could only ever list `new` items, so 520 `ingested` fillers were
+        invisible to it and the still-`new` target was conveniently the only
+        row on screen. The pane now lists EVERY status, newest first, and the
+        target is the oldest row in the database by five years -- so seeding
+        the fillers first would bury it 520 rows deep in the pane too, and
+        the test could no longer reach it through a real gesture at all.
+
+        Seeding them here is also the truer reproduction: the page fills up
+        BETWEEN the ingest and the `Mark unread` press, which is exactly the
+        situation the guard exists for -- a busy feed moving the item out of
+        any page a listing-based lookup could see, while the user is still
+        looking at it.
+        """
+        filler_ids = []
+        with db.transaction() as conn:
+            # Zero-padded counter in the timestamp: `created_at` is TEXT, so
+            # ORDER BY compares lexicographically and every filler must sort
+            # above the target deterministically, not by insertion luck.
+            for index in range(_LEGACY_STATUS_LOOKUP_LIMIT + 20):
+                filler_ids.append(
+                    persist_subscription_item(
+                        conn,
+                        source_id,
+                        {
+                            "url": f"https://busy.test/filler-{index}/",
+                            "title": f"Filler {index}",
+                            "content_hash": f"hash-beyond-page-{index}",
+                        },
+                        run_id=None,
+                        now=f"2026-07-28T09:00:00.{index:04d}+00:00",
+                    )
+                )
+        # `persist_subscription_item` always writes "new" on insert, so the
+        # fillers are moved to the blocking status separately.
+        db.bulk_update_items(filler_ids, "ingested")
+        assert (
+            len(
+                db.get_new_items(
+                    subscription_id=source_id, status="ingested", limit=10_000
                 )
             )
-    # `persist_subscription_item` always writes "new" on insert, so the
-    # fillers are moved to the blocking status separately.
-    db.bulk_update_items(filler_ids, "ingested")
-    assert (
-        len(db.get_new_items(subscription_id=source_id, status="ingested", limit=10_000))
-        > _LEGACY_STATUS_LOOKUP_LIMIT
-    ), "the fixture must be deeper than the page the old lookup could see"
+            > _LEGACY_STATUS_LOOKUP_LIMIT
+        ), "the fixture must be deeper than the page the old lookup could see"
 
     host = full_app_destination_context(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         screen, pane = await _mount_items_screen(pilot, host, expected_count=1)
         item = screen._loaded_items[0]
-        assert item["item_id"] == target_id, "only the target is still unread"
+        assert item["item_id"] == target_id, "the target is the only item so far"
 
         pane.select_item_by_id(str(item["id"]))
         await pilot.pause(0.5)
@@ -1657,6 +1680,9 @@ async def test_mark_unread_refuses_an_ingest_that_sits_beyond_a_lookup_page():
         assert db.get_item_status(target_id) == "ingested", (
             "the precondition: the real Ingest gesture wrote `ingested`"
         )
+
+        _seed_the_page_deep_fillers()
+
         # And it really is out of reach of a single 500-row page.
         page = db.get_new_items(
             subscription_id=source_id,

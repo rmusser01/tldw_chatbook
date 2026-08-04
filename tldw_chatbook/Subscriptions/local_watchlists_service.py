@@ -330,10 +330,31 @@ class LocalWatchlistsService:
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """List watchlist items from the local subscriptions database."""
+        """List watchlist items from the local subscriptions database.
+
+        TASK-2301. `status=None` used to be collapsed to `"new"` here, so
+        "list every item" was not expressible through this API at all: the
+        Items tab asks with `status=None` and got a new-only list back, which
+        its own "All statuses" filter then had nothing else to filter. An
+        ingested or ignored item was not stale in that result -- it was
+        absent, and therefore unreachable anywhere in the tab. `None` now
+        means what it says and reaches `get_new_items(status=None)`, which
+        drops the status predicate entirely.
+
+        Args:
+            source_id: Restrict to one source, or `None` for all.
+            status: A single item status, or `None` for every status.
+            limit: Page size.
+            offset: Page offset.
+
+        Returns:
+            Normalized item dicts for the requested window.
+        """
         db = self._db()
         subscription_id = int(source_id) if source_id is not None else None
-        status_filter = status if status else "new"
+        # An empty string is still treated as "no filter" (it is not a status
+        # any row holds), but `None` no longer silently becomes `"new"`.
+        status_filter = status if status else None
         fetch_limit = int(limit) + int(offset)
         rows = db.get_new_items(
             subscription_id=subscription_id,
