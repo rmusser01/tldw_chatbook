@@ -101,7 +101,11 @@ async def test_list_items_delegates_to_local_service():
 
     result = await scope_service.list_items(runtime_backend=WatchlistBackend.LOCAL, status="new")
 
-    local_service.list_items.assert_awaited_once_with(source_id=None, status="new", limit=100, offset=0)
+    # `run_id` joined the delegation in TASK-2306: the Runs tab's Items
+    # sub-region asks for one run's items through this same `items.list` route.
+    local_service.list_items.assert_awaited_once_with(
+        source_id=None, status="new", limit=100, offset=0, run_id=None
+    )
     assert len(result) == 1
 
 

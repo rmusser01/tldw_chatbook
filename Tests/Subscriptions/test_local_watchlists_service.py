@@ -1314,3 +1314,97 @@ async def test_get_item_status_reads_one_row_and_refuses_a_missing_one(tmp_path)
         await service.get_item_status("local:watchlist_item:1")
     with pytest.raises(KeyError):
         await service.get_item_status(item_id + 10_000)
+
+
+@pytest.mark.asyncio
+async def test_list_items_can_be_scoped_to_one_run_with_alert_counts(tmp_path):
+    """TASK-2306: the Runs tab's Items sub-region asks for ONE run's items.
+
+    `subscription_items.run_id` (and its index) have existed since the column
+    was added, and nothing had ever queried them -- so the only item read the
+    product offered was "every item of this source", which cannot answer "what
+    did this run find". The `alert_count` in the same result is the Alerts
+    column's only possible source; without it that column rendered `0` over
+    every item however many content-alert rules had fired.
+    """
+    executed: list[str] = []
+
+    async def fake_run_executor(subscription):
+        # One new item per run: run 2 must not be able to inherit run 1's.
+        index = len(executed)
+        executed.append(f"run-{index}")
+        return {
+            "items": [
+                {
+                    "url": f"https://example.com/ai-post-{index}",
+                    "title": f"AI news {index}",
+                    "content_hash": f"hash-{index}",
+                }
+            ],
+            "stats": {},
+        }
+
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(
+        db_factory=lambda: db, run_executor=fake_run_executor
+    )
+    source = await service.create_source(
+        {"name": "Feed", "url": "https://example.com/feed.xml", "source_type": "rss"}
+    )
+    db.add_filter(
+        name="AI alert",
+        conditions={"type": "keyword", "pattern": "AI"},
+        action="notify",
+        action_params={"severity": "warning"},
+        subscription_id=source["source_id"],
+    )
+
+    first = await service.launch_run(source_id=source["source_id"])
+    await service.execute_run(first["run_id"])
+    second = await service.launch_run(source_id=source["source_id"])
+    await service.execute_run(second["run_id"])
+
+    first_items = await service.list_items(run_id=first["run_id"], status=None)
+    second_items = await service.list_items(run_id=second["run_id"], status=None)
+    every_item = await service.list_items(status=None)
+
+    assert [item["title"] for item in first_items] == ["AI news 0"]
+    assert [item["title"] for item in second_items] == ["AI news 1"]
+    assert len(every_item) == 2, "an unfiltered read must still see both runs"
+    assert first_items[0]["run_id"] == first["run_id"]
+    assert first_items[0]["alert_count"] == 1, (
+        "the item matched one content-alert rule, so the Alerts column has a 1 "
+        "to show"
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_items_reports_zero_alerts_for_an_unmatched_item(tmp_path):
+    """The discriminating half of `alert_count`: no rules matched means 0."""
+
+    async def fake_run_executor(subscription):
+        return {
+            "items": [
+                {
+                    "url": "https://example.com/quiet",
+                    "title": "Quiet post",
+                    "content_hash": "hash-quiet",
+                }
+            ],
+            "stats": {},
+        }
+
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(
+        db_factory=lambda: db, run_executor=fake_run_executor
+    )
+    source = await service.create_source(
+        {"name": "Feed", "url": "https://example.com/feed.xml", "source_type": "rss"}
+    )
+    launched = await service.launch_run(source_id=source["source_id"])
+    await service.execute_run(launched["run_id"])
+
+    items = await service.list_items(run_id=launched["run_id"], status=None)
+
+    assert len(items) == 1
+    assert items[0]["alert_count"] == 0

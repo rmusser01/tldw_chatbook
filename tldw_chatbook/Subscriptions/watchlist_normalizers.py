@@ -49,6 +49,34 @@ def _json_mapping(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _alert_match_count(value: Any) -> int:
+    """How many content-alert rules an item matched.
+
+    `subscription_items.alert_matches` is a JSON list written by
+    `WatchlistContentAlertService.evaluate` (or `None` when nothing matched),
+    but the column comes back as raw text, so it is decoded here rather than
+    at each display site.
+
+    Args:
+        value: The stored `alert_matches` column, already-decoded list, or
+            `None`.
+
+    Returns:
+        The number of matches, or 0 for anything unparseable.
+    """
+    if value in (None, ""):
+        return 0
+    if isinstance(value, (list, tuple)):
+        return len(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return 0
+        return len(parsed) if isinstance(parsed, (list, tuple)) else 0
+    return 0
+
+
 def _local_source_settings(row: Mapping[str, Any]) -> dict[str, Any]:
     settings: dict[str, Any] = {}
     scalar_fields = (
@@ -311,6 +339,13 @@ def normalize_watchlist_item(source: str, row: Mapping[str, Any]) -> dict[str, A
         "title": row.get("title") or "Untitled item",
         "url": row.get("url") or row.get("canonical_url"),
         "status": row.get("status") or "new",
+        # TASK-2306: which run produced this item, and how many content-alert
+        # rules it matched. Both columns are already on the row (`SELECT i.*`)
+        # and both are what the Runs tab's Items sub-region displays -- its
+        # "Alerts" column had no source at all before this, so it rendered
+        # `0` over every item however many alerts had fired.
+        "run_id": row.get("run_id"),
+        "alert_count": _alert_match_count(row.get("alert_matches")),
         "author": row.get("author"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),

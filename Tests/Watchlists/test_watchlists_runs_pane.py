@@ -396,3 +396,84 @@ async def test_run_selection_highlight_moves_without_rebuilding_the_table(sample
         assert pane.query_one("#runs-table", DataTable) is table
         assert not _cell_style(table, "run-1", 0).reverse
         assert _cell_style(table, "run-2", 0).reverse
+
+
+# --- TASK-2306: the run-detail region follows the selection -----------------
+
+
+@pytest.mark.asyncio
+async def test_selecting_a_run_repaints_the_detail_stats_in_place(sample_runs):
+    """F34's render half, at the unit.
+
+    `selected_run` is not `recompose=True` (and must not become one -- a
+    recompose rebuilds `#runs-table` under the cursor the click just moved), so
+    the detail block is only ever written by `compose()` unless the watcher
+    pushes it. It did not, so `#runs-detail-stats` kept the "No run selected."
+    the FIRST compose wrote and the Runs tab had a permanently dead detail.
+    """
+    app = RunsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RunsPane)
+        pane.runs = sample_runs
+        await pilot.pause()
+        stats = pane.query_one("#runs-detail-stats", Static)
+        table = pane.query_one("#runs-table", DataTable)
+        assert "No run selected" in str(stats.renderable)
+
+        pane.select_run_by_id("run-2")
+        await pilot.pause()
+
+        assert "No run selected" not in str(stats.renderable)
+        assert "Status: running" in str(stats.renderable)
+        assert "Found: 5" in str(stats.renderable)
+        assert pane.query_one("#runs-detail-stats", Static) is stats
+        assert pane.query_one("#runs-table", DataTable) is table, (
+            "the repaint must not rebuild the table the user just clicked"
+        )
+
+
+@pytest.mark.asyncio
+async def test_run_items_and_logs_land_in_the_mounted_widgets(sample_runs):
+    """Both detail reactives are pushed in place, not composed."""
+    app = RunsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RunsPane)
+        pane.runs = sample_runs
+        pane.select_run_by_id("run-1")
+        await pilot.pause()
+        items_table = pane.query_one("#runs-detail-items", DataTable)
+        logs = pane.query_one("#runs-detail-logs", Static)
+
+        pane.run_items = [{"title": "Item A", "status": "new", "alert_count": 3}]
+        pane.run_logs = "Scrape started"
+        await pilot.pause()
+
+        assert pane.query_one("#runs-detail-items", DataTable) is items_table
+        assert items_table.row_count == 1
+        assert str(items_table.get_cell_at((0, 2))) == "3"
+        assert pane.query_one("#runs-detail-logs", Static) is logs
+        assert "Scrape started" in str(logs.renderable)
+
+
+@pytest.mark.asyncio
+async def test_changing_the_selection_drops_the_previous_runs_detail(sample_runs):
+    """A run's items and log must never outlive the run they describe."""
+    app = RunsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RunsPane)
+        pane.runs = sample_runs
+        pane.select_run_by_id("run-1")
+        pane.run_items = [{"title": "Item A", "status": "new", "alert_count": 0}]
+        pane.run_logs = "Run one log"
+        await pilot.pause()
+        assert pane.query_one("#runs-detail-items", DataTable).row_count == 1
+
+        pane.select_run_by_id("run-2")
+        await pilot.pause()
+
+        assert pane.run_items == []
+        assert pane.run_logs == ""
+        assert pane.query_one("#runs-detail-items", DataTable).row_count == 0
+        assert "Run one log" not in str(
+            pane.query_one("#runs-detail-logs", Static).renderable
+        )

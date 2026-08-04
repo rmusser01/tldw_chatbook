@@ -50,8 +50,15 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
 
     runs = reactive[list[dict[str, Any]]]([], recompose=True)
     selected_run = reactive[dict[str, Any] | None](None)
-    run_items = reactive[list[dict[str, Any]]]([], recompose=True)
-    run_logs = reactive("", recompose=True)
+    #: task-2306. Deliberately NOT `recompose=True`, unlike `runs`: both are
+    #: rewritten on every run selection, and a pane recompose rebuilds
+    #: `#runs-table` -- the very table the user just clicked -- discarding its
+    #: cursor and remounting it unfocused, which `highlight_is_user_driven`
+    #: would then read as a non-user highlight. They are pushed into the live
+    #: detail widgets instead, the same in-place discipline
+    #: `_update_selection_highlight` already uses for the table itself.
+    run_items = reactive[list[dict[str, Any]]]([])
+    run_logs = reactive("")
     runtime_backend = reactive("local")
 
     # Plain attribute, not a reactive: mirrors SourcesPane's
@@ -84,22 +91,36 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         selected_run = self.selected_run
         with Vertical(id="runs-detail-pane"):
             yield Static("Run detail", classes="pane-title")
+            # `Text`, not the bare string: the detail block names the run's
+            # source and watchlist (user-typed) and, on a failure, quotes the
+            # remote error verbatim -- a `Static` given a `str` renders it as
+            # console markup.
             yield Static(
-                self._stats_text(selected_run),
+                Text(self._stats_text(selected_run)),
                 id="runs-detail-stats",
             )
             yield Static("Items", classes="pane-title")
             items_table = DataTable(id="runs-detail-items")
             items_table.add_columns("Title", "Status", "Alerts")
             for item in self.run_items:
-                items_table.add_row(
-                    str(item.get("title") or "Untitled"),
-                    str(item.get("status") or "-"),
-                    str(item.get("alert_count") or "0"),
-                )
+                items_table.add_row(*self._run_item_row_cells(item))
             yield items_table
             yield Static("Logs", classes="pane-title")
-            yield Static(self.run_logs, id="runs-detail-logs")
+            yield Static(Text(self.run_logs), id="runs-detail-logs")
+
+    @staticmethod
+    def _run_item_row_cells(item: dict[str, Any]) -> tuple[Text, ...]:
+        """One run-detail item row, inert.
+
+        `DataTable`'s `default_cell_formatter` runs `Text.from_markup` over any
+        plain `str` cell, and an item title is remote content (a feed entry's
+        own `<title>`), so these must arrive as `Text` already.
+        """
+        return (
+            Text(str(item.get("title") or "Untitled")),
+            Text(str(item.get("status") or "-")),
+            Text(str(item.get("alert_count") or "0")),
+        )
 
     @staticmethod
     def _run_row_cells(run: dict[str, Any], highlighted: bool) -> tuple[Text, ...]:
@@ -228,8 +249,53 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
             self.post_message(RunSelected(run))
         self._update_action_buttons()
         self._update_selection_highlight(run)
+        # task-2306. THE defect this task exists for: `selected_run` is not
+        # `recompose=True` (and must not become one -- see `run_items`), so
+        # `#runs-detail-stats` was written exactly once, by the `compose()`
+        # that ran before anything was selected. Every later selection moved
+        # the row highlight and armed the buttons while the detail block sat
+        # on "No run selected." forever.
+        self._update_detail_stats(run)
+        # The previous run's items and log belong to the previous run. Cleared
+        # here rather than left standing until the screen's loader answers, so
+        # a slow (or failing) load can never attribute one run's items to
+        # another. The screen re-fills both -- see
+        # `WatchlistsCollectionsScreen._load_run_detail`.
+        self.run_items = []
+        self.run_logs = ""
         if run and str(run.get("status", "")).lower() == "running":
             self._start_run_poll(run)
+
+    def watch_run_items(self, items: list[dict[str, Any]]) -> None:
+        """Repopulate `#runs-detail-items` in place (task-2306)."""
+        try:
+            table = self.query_one("#runs-detail-items", DataTable)
+        except Exception:
+            # Not composed yet; `compose()` seeds the table from the same
+            # reactive, so nothing is lost.
+            return
+        try:
+            table.clear()
+            for item in items:
+                table.add_row(*self._run_item_row_cells(item))
+        except Exception:
+            pass
+
+    def watch_run_logs(self, logs: str) -> None:
+        """Repaint `#runs-detail-logs` in place (task-2306)."""
+        try:
+            self.query_one("#runs-detail-logs", Static).update(Text(str(logs)))
+        except Exception:
+            return
+
+    def _update_detail_stats(self, run: dict[str, Any] | None) -> None:
+        """Repaint the run-detail stats block for `run`."""
+        try:
+            self.query_one("#runs-detail-stats", Static).update(
+                Text(self._stats_text(run))
+            )
+        except Exception:
+            return
 
     def _update_selection_highlight(self, run: dict[str, Any] | None) -> None:
         """Move the table's selected-row highlight without rebuilding it.

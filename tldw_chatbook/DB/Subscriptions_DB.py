@@ -1765,6 +1765,7 @@ class SubscriptionsDB(BaseDB):
         subscription_id: Optional[int] = None,
         status: Optional[str] = "new",
         limit: int = 100,
+        run_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """Items for a subscription (or all of them), newest first.
 
@@ -1786,16 +1787,21 @@ class SubscriptionsDB(BaseDB):
             subscription_id: Restrict to one subscription, or `None` for all.
             status: The single status to return, or `None` for every status.
             limit: Maximum rows.
+            run_id: Restrict to the items one run produced, or `None` for all
+                runs. TASK-2306 -- the Runs tab's "Items" sub-region asks
+                exactly this question, and `subscription_items.run_id` has
+                carried the answer (with its own index) since the column was
+                added; nothing had ever queried it.
 
         Returns:
             One dict per item row, joined to its subscription's name and type,
             ordered by `created_at` descending.
         """
-        # Built as predicate fragments rather than four hand-written SELECTs:
-        # the two dimensions (subscription filter, status filter) are
-        # independent, and enumerating their product is how the "all statuses"
-        # case came to be missing in the first place. Values stay bound
-        # parameters -- only the fixed predicate TEXT is assembled here.
+        # Built as predicate fragments rather than eight hand-written SELECTs:
+        # the three dimensions (subscription filter, status filter, run filter)
+        # are independent, and enumerating their product is how the "all
+        # statuses" case came to be missing in the first place. Values stay
+        # bound parameters -- only the fixed predicate TEXT is assembled here.
         predicates: List[str] = []
         params: List[Any] = []
         if subscription_id:
@@ -1804,6 +1810,9 @@ class SubscriptionsDB(BaseDB):
         if status is not None:
             predicates.append("i.status = ?")
             params.append(status)
+        if run_id is not None:
+            predicates.append("i.run_id = ?")
+            params.append(run_id)
         where_clause = f"WHERE {' AND '.join(predicates)}" if predicates else ""
         params.append(limit)
 
