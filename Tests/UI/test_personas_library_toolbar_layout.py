@@ -139,10 +139,11 @@ async def test_preview_pane_anchors_top_of_center_canvas(
         )
         # ...and flush against the top of the detail stack (adjacent edges).
         assert preview.region.y + preview.region.height == stack.region.y
-        # The toggle reads as an expand/collapse section header.
+        # The toggle reads as an expand/collapse section header, and
+        # (task-2234) its label states the payoff, not the feature name.
         toggle = screen.query_one("#personas-preview-toggle", Button)
-        assert "▸" in str(toggle.label)
+        assert str(toggle.label) == "▸ Try a test chat (nothing saved)"
         await pilot.click("#personas-preview-toggle")
         await pilot.pause()
-        assert "▾" in str(toggle.label)
+        assert str(toggle.label) == "▾ Try a test chat (nothing saved)"
         assert screen.query_one("#personas-preview-body").display is True

@@ -19,10 +19,16 @@ class PersonasConversationTranscriptWidget(Container):
 
     # Structure only: colors come from the app stylesheet ($ds-* tokens do not
     # resolve in bare-App harnesses, so DEFAULT_CSS must not reference them).
+    # height: 1fr (not 100%): the detail stack is a VerticalScroll (task-2231)
+    # and this view is always shown WITH the 3-line conversation-actions row;
+    # 100% would overflow the viewport by exactly that row, making the stack
+    # scrollable in conversation view - focus auto-scroll then hid the action
+    # buttons. 1fr resolves against the viewport MINUS the actions row, so
+    # the pair exactly fills the viewport like the pre-scroll layout did.
     DEFAULT_CSS = """
     PersonasConversationTranscriptWidget {
         width: 100%;
-        height: 100%;
+        height: 1fr;
     }
 
     PersonasConversationTranscriptWidget #personas-transcript-scroll {

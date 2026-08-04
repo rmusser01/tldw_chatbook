@@ -46,6 +46,19 @@ def _validate_openai_base_url(value: Any) -> str:
     return normalized
 
 
+def _is_official_openai_endpoint(url: str) -> bool:
+    """Whether the URL is the official OpenAI speech endpoint, ignoring
+    cosmetic differences (scheme/host casing, trailing slash, default port)."""
+    parsed = urlsplit(url)
+    return (
+        parsed.scheme.lower() == "https"
+        and (parsed.hostname or "").lower() == "api.openai.com"
+        and parsed.port in (None, 443)
+        and parsed.path.rstrip("/") == "/v1/audio/speech"
+        and not parsed.query
+    )
+
+
 class OpenAITTSBackend(APITTSBackend):
     """OpenAI Text-to-Speech API backend"""
 
@@ -120,14 +133,18 @@ class OpenAITTSBackend(APITTSBackend):
 
         self.base_url = base_url
         self.organization_id = organization_id or None
+        # OpenAI-compatible servers (e.g. pocket-tts) define their own models and
+        # voices and are typically keyless, so OpenAI-specific constraints only
+        # apply when talking to the official endpoint.
+        self.is_custom_endpoint = not _is_official_openai_endpoint(base_url)
 
-        if not self.api_key:
+        if not self.api_key and not self.is_custom_endpoint:
             logger.warning("OpenAITTSBackend: No API key configured")
 
     async def initialize(self):
         """Initialize the backend"""
         logger.info("OpenAITTSBackend initialized")
-        if not self.api_key:
+        if not self.api_key and not self.is_custom_endpoint:
             logger.warning(
                 "OpenAITTSBackend: No API key available. Requests will fail."
             )
@@ -144,8 +161,9 @@ class OpenAITTSBackend(APITTSBackend):
         Yields:
             Audio bytes in the requested format
         """
-        # Use base class method to validate API key
-        self._validate_api_key()
+        # Only the official OpenAI endpoint requires an API key
+        if not self.is_custom_endpoint:
+            self._validate_api_key()
 
         # Validate input text
         if not request.input:
@@ -155,30 +173,31 @@ class OpenAITTSBackend(APITTSBackend):
         if len(request.input) > 4096:
             raise ValueError("Text input exceeds maximum length of 4096 characters.")
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        if self.organization_id:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        # The org ID is OpenAI account metadata — never forward it to
+        # third-party OpenAI-compatible servers.
+        if self.organization_id and not self.is_custom_endpoint:
             headers["OpenAI-Organization"] = self.organization_id
 
-        # Map internal model names to OpenAI model names if needed
+        # Map internal model names to OpenAI model names if needed; custom
+        # endpoints define their own model names, so pass them through as-is.
         model = request.model
-        if model in ["tts-1", "tts-1-hd"]:
-            # These are already OpenAI model names
+        if self.is_custom_endpoint or model in ["tts-1", "tts-1-hd"]:
             pass
         else:
             # Default to tts-1 for unknown models
             logger.warning(f"Unknown model '{model}', defaulting to 'tts-1'")
             model = "tts-1"
 
-        # Validate voice selection
+        # Validate voice selection; custom endpoints define their own voices.
         valid_voices = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
-        if request.voice not in valid_voices:
+        if self.is_custom_endpoint or request.voice in valid_voices:
+            voice = request.voice
+        else:
             logger.warning(f"Invalid voice '{request.voice}', defaulting to 'alloy'")
             voice = "alloy"
-        else:
-            voice = request.voice
 
         # Validate response format
         valid_formats = ["mp3", "opus", "aac", "flac", "wav", "pcm"]

@@ -63,9 +63,9 @@ Below the chips sit three panes:
   handle to bring it back.
 - The **centre pane** — the detail view or editor for whatever you
   selected. Empty until you pick something. In Characters and Personas
-  modes it ends with a **Preview conversation** pane for trying the
-  selection out without saving anything; in Dictionaries and Lore modes
-  the equivalent is a **Try it** preview.
+  modes it starts with a **Try a test chat (nothing saved)** toggle for
+  trying the selection out without saving anything; in Dictionaries and
+  Lore modes the equivalent is a **Try it** preview.
 - **Inspector** (right rail) — what's selected, whether it validates, its
   saved conversations, and the actions that send it to Console. Its
   header's **>** button collapses it to an **Inspector** handle.

@@ -204,7 +204,9 @@ async def test_blocked_console_tooltip_uses_intent_copy():
         await pilot.pause()
         attach = pilot.app.query_one("#personas-attach-to-console", Button)
         assert attach.disabled is True
-        assert attach.tooltip == "Chat blocked: prompts are not attachable"
+        assert attach.tooltip == (
+            "Chat now and Send to Console draft blocked: prompts are not attachable"
+        )
 
 
 async def test_readiness_copy_is_compact_for_narrow_inspector():
@@ -224,7 +226,9 @@ async def test_readiness_copy_is_compact_for_narrow_inspector():
         await pilot.pause()
 
         blocked_copy = str(readiness.renderable)
-        assert blocked_copy == "Chat blocked: prompts are not attachable"
+        assert blocked_copy == (
+            "Chat now and Send to Console draft blocked: prompts are not attachable"
+        )
         assert " - " not in blocked_copy
 
 
@@ -271,7 +275,12 @@ async def test_disabled_tts_checkbox_stays_legible():
     """F-041: the disabled voice-profile checkbox reads as a disabled
     control - dimmed label, full opacity, visible glyph box - not a dark
     gap (Textual's base *:disabled:can-focus dims to 0.7 and the stock
-    toggle box is panel-on-panel)."""
+    toggle box is panel-on-panel).
+
+    task-2233: the legibility fix covers the SHOWN case - the checkbox is
+    hidden outright until a profile is assigned, so this test assigns one
+    first (still disabled here: nothing is selected/exportable).
+    """
     from pathlib import Path
 
     from textual.color import Color
@@ -289,7 +298,12 @@ async def test_disabled_tts_checkbox_stays_legible():
 
     app = StyledInspectorApp()
     async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
         checkbox = pilot.app.query_one("#personas-export-include-tts", Checkbox)
+        assert checkbox.display is False  # task-2233: no profile assigned
+        pane.set_tts_export_available(True)
+        await pilot.pause()
+        assert checkbox.display is True
         assert checkbox.disabled is True
         variables = app.get_css_variables()
         # Full opacity (Textual's base disabled rule dims to 0.7)...
@@ -300,6 +314,35 @@ async def test_disabled_tts_checkbox_stays_legible():
         # ...and the glyph box paints a real surface, not a dark gap.
         glyph_styles = checkbox.get_component_styles("toggle--button")
         assert glyph_styles.background == Color.parse(variables["surface"])
+
+
+async def test_tts_checkbox_hidden_until_a_profile_is_assigned():
+    """task-2233: the checkbox renders only when the selected character has
+    a voice profile to include - no assignment, no disabled dark smear.
+    Clearing the assignment hides it again; the kind gate still applies."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        checkbox = pilot.app.query_one("#personas-export-include-tts", Checkbox)
+
+        pane.show_selection(name="Tutor", kind="character")
+        await pilot.pause()
+        assert checkbox.display is False
+
+        pane.set_tts_export_available(True)
+        await pilot.pause()
+        assert checkbox.display is True
+
+        pane.set_tts_export_available(False)
+        await pilot.pause()
+        assert checkbox.display is False
+
+        # Even with an assignment on record, non-character kinds never show
+        # it (the kind gate is independent of availability).
+        pane.show_selection(name="Archivist", kind="persona")
+        pane.set_tts_export_available(True)
+        await pilot.pause()
+        assert checkbox.display is False
 
 
 async def test_conversation_rows_carry_subdued_class():
@@ -328,7 +371,7 @@ async def test_show_selection_enables_export_actions():
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
         assert pilot.app.query_one("#personas-export-json", Button).disabled is False
         assert pilot.app.query_one("#personas-export-png", Button).disabled is False
-        assert "Chat blocked: select an item" in str(
+        assert "Chat now and Send to Console draft blocked: select an item" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
         )
 
@@ -475,7 +518,7 @@ async def test_console_action_enablement_is_explicitly_screen_owned():
             pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
         )
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
-        assert "Chat blocked: select an item" in str(
+        assert "Chat now and Send to Console draft blocked: select an item" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
         )
 
@@ -499,7 +542,7 @@ async def test_console_action_enablement_is_explicitly_screen_owned():
             pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
         )
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
-        assert "Chat blocked: prompts are not attachable" in str(
+        assert "Chat now and Send to Console draft blocked: prompts are not attachable" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
         )
 

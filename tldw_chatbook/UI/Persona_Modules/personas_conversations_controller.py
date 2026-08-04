@@ -2,7 +2,7 @@
 
 Owns the conversations feature block extracted from ``PersonasScreen``:
 listing a character's saved conversations, opening one in the read-only
-center view, and the Continue-in-Console / Open-in-Library actions. The
+center view, and the Send-to-Console-draft / Open-in-Library actions. The
 screen keeps the compose chrome, ``_show_center``, ``_stage_handoff``, and
 the thin ``@on`` handlers that delegate here, mirroring the
 ``CCPCharacterHandler`` pattern (a class holding a reference to its screen).
@@ -58,7 +58,7 @@ class PersonasConversationsController:
         self._open_conversation_transcript: str = ""
         self._open_conversation_truncated: bool = False
         # Id of the conversation whose transcript actually finished loading;
-        # set only by show_conversation_view so the Continue-in-Console
+        # set only by show_conversation_view so the Send-to-Console-draft
         # handler can tell an in-flight load from a completed one.
         self._loaded_conversation_id: str | None = None
 
@@ -257,7 +257,8 @@ class PersonasConversationsController:
         conversation_id = self._open_conversation_id
         if not conversation_id:
             screen._notify(
-                "Open a conversation before continuing in Console.", "warning"
+                "Open a conversation before sending it to the Console draft.",
+                "warning",
             )
             return
         if self._loaded_conversation_id != conversation_id:

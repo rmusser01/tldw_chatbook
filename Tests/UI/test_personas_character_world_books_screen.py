@@ -328,14 +328,17 @@ class TestEditorSyncWorldBooks:
 
 
 # ===================================================================
-# Geometry: two stacked bottom-docked panels (dictionaries + world books)
-# must not squeeze the character card to zero height.
+# Geometry (task-2231): the center column flows in document order - the
+# character card fills the viewport and the two collapsed attachment
+# sections (dictionaries + world books) sit directly beneath it, one
+# line each, instead of bottom-docking and squeezing the card to zero
+# height (the old dock's failure mode at 100x30).
 # ===================================================================
 
 
-class TestTwoDockedPanelsGeometry:
+class TestAttachmentSectionsFlowGeometry:
     @pytest.mark.parametrize("size", [(100, 30), (160, 50)])
-    async def test_two_docked_panels_do_not_clip_card(
+    async def test_flowing_sections_do_not_clip_card(
         self,
         mock_app_instance,
         worldbooks_db,
@@ -351,25 +354,39 @@ class TestTwoDockedPanelsGeometry:
         async with app.run_test(size=size) as pilot:
             screen = await _select_seeded_character(pilot, char_id)
 
+            stack = screen.query_one("#personas-detail-stack")
             card = screen.query_one(PersonasCharacterCardWidget)
+            wrapper = screen.query_one("#personas-character-attachments")
             wb = screen.query_one(PersonasCharacterWorldBooksWidget)
             dicts = screen.query_one(PersonasCharacterDictionariesWidget)
 
             assert card.size.height > 0, f"card clipped at size={size}"
-            assert wb.size.height > 0, f"world-books panel clipped at size={size}"
-            assert dicts.size.height > 0, f"dictionaries panel clipped at size={size}"
+            assert wb.size.height > 0, f"world-books section clipped at size={size}"
+            assert dicts.size.height > 0, (
+                f"dictionaries section clipped at size={size}"
+            )
+            # The card fills the viewport; the sections flow below it in
+            # document order (no dock, no dead void between them).
+            assert card.region.height == stack.region.height
+            assert (
+                wrapper.virtual_region.y
+                == card.virtual_region.y + card.virtual_region.height
+            )
+            assert dicts.virtual_region.y + dicts.virtual_region.height == (
+                wb.virtual_region.y
+            ), f"dead void between sections at size={size}"
 
 
 # ===================================================================
-# Regression (code review, Task 6 follow-up): the docked wrapper holding
-# BOTH character-attachment panels must be gated by _show_center's
+# Regression (code review, Task 6 follow-up): the wrapper holding
+# BOTH character-attachment sections must be gated by _show_center's
 # per-center-view condition, not just the coarse "mode == characters"
 # toggle _apply_mode used to set. Before the fix, moving the dict panel
 # into #personas-character-attachments meant the world-books panel was no
 # longer covered by _show_center's per-view gate at all, so it stayed
-# docked/visible (stale data) once the center view swapped away from the
+# visible (stale data) once the center view swapped away from the
 # character card/editor within Characters mode (e.g. the conversation
-# transcript), and showed as an empty docked panel at initial mount before
+# transcript), and showed as an empty panel at initial mount before
 # any character was selected.
 # ===================================================================
 
@@ -415,7 +432,7 @@ class TestCharacterAttachmentsWrapperGating:
         (e.g. opening the conversation transcript, which calls
         ``screen._show_center(_CONVERSATION_VIEW_ID)`` per
         ``personas_conversations_controller.open_conversation``) while still
-        in Characters mode must hide the docked attachments wrapper too, so
+        in Characters mode must hide the attachments wrapper too, so
         the world-books panel does not leak stale data over the transcript.
         """
         mock_app_instance.chachanotes_db = worldbooks_db
