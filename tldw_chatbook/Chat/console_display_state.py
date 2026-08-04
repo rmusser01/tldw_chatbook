@@ -495,16 +495,21 @@ class ConsoleStagedContextState:
     #: NOT ``len(rows)`` -- one staged reference explodes into 3-4
     #: provenance rows (Evidence source/authority/status, optional
     #: Snippet), so a 5-reference bundle produced 17-22 rows and the tray
-    #: rendered "Sources 18". ``from_live_work`` always sets this
-    #: explicitly from :func:`console_staged_source_count`. Callers that
-    #: build this state directly without passing it (pre-fix tests, and
-    #: any other hand-built state) keep the historical ``len(rows)``
-    #: fallback via ``__post_init__`` below, so a single hand-built row
-    #: still reads "1" -- weak but not wrong for that one-row shape.
-    source_count: int = -1
+    #: rendered "Sources 18". ``None`` (matching this file's existing
+    #: ``mcp_tool_count: int | None = None`` idiom) means "the caller did
+    #: not supply one" -- every real production constructor (both
+    #: ``from_live_work`` and ``empty()`` below) passes it explicitly, so
+    #: this only fires for a state built directly without it (pre-fix
+    #: tests, and any other hand-built state), where ``__post_init__``
+    #: falls back to ``len(rows)`` so a single hand-built row still reads
+    #: "1" -- weak but not wrong for that one-row shape. Deliberately NOT
+    #: a negative-int sentinel: that would silently swallow a future
+    #: production caller that forgets to pass ``source_count=``, regressing
+    #: straight back to the row-count lie this task fixed with no signal.
+    source_count: int | None = None
 
     def __post_init__(self) -> None:
-        if self.source_count < 0:
+        if self.source_count is None:
             object.__setattr__(self, "source_count", len(self.rows))
 
     @classmethod
@@ -560,6 +565,7 @@ class ConsoleStagedContextState:
             heading="Staged Context",
             summary="",
             is_empty=True,
+            source_count=0,
         )
 
 
