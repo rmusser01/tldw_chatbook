@@ -183,7 +183,11 @@ class _HandsFreeReplyGateway(_ReadyResolutionGateway):
         self.reply_text = reply_text
         self.sent_messages: list[list[dict]] = []
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
+        # `**kwargs`: dev's gateway interface grew keyword arguments (e.g.
+        # `signal`) after this suite was written -- absorb them the same way
+        # the donor module's gateways do, or every send dies with a TypeError
+        # that the loop's failure path then politely swallows.
         self.sent_messages.append(list(messages))
         yield self.reply_text
 
