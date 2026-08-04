@@ -503,6 +503,42 @@ class LocalWatchlistsService:
             "source_id": int(source_id),
         }
 
+    async def resume_source(self, source_id: Any) -> dict[str, Any]:
+        """Clear an auto-paused source's pause and failure counters (task-2050).
+
+        The UI's one-press recourse for a source auto-paused by repeated
+        check failures (task-1410's `_advance_failure_and_maybe_pause`).
+        Delegates to `SubscriptionsDB.reset_subscription_errors`, which
+        already performs exactly this reset (`error_count`,
+        `consecutive_failures`, `last_error`, `is_paused` all cleared) for
+        the success branch of `record_check_result` -- this method is that
+        reset's first caller reachable from outside the DB layer, giving it
+        an explicit trigger instead of only ever firing as a side effect of
+        a successful check.
+
+        Safe to call on a source that is not currently paused: the
+        underlying write zeroes counters that are already zero and clears an
+        already-clear pause flag, so it is a harmless no-op. The UI never
+        offers this action for a non-paused source (see
+        `InspectorPane._is_paused_subscription`), but this method does not
+        need that guard to stay correct on its own.
+
+        Args:
+            source_id: The subscription's raw database id.
+
+        Returns:
+            The resumed source, freshly normalized.
+
+        Raises:
+            KeyError: `source_id` does not name a subscription.
+        """
+        db = self._db()
+        db.reset_subscription_errors(int(source_id))
+        row = db.get_subscription(int(source_id))
+        if row is None:
+            raise KeyError(f"Subscription not found: {source_id}")
+        return normalize_local_subscription_row(row)
+
     async def launch_run(
         self, *, source_id: Any = None, job_id: Any = None
     ) -> dict[str, Any]:

@@ -52,6 +52,22 @@ class CheckNowRequested(Message):
         super().__init__()
 
 
+class ResumeSourceRequested(Message):
+    """Posted when the user resumes an auto-paused source (task-2050).
+
+    Only ever posted for a local `subscription` entity whose `paused` flag
+    (`normalize_local_subscription_row`) is True -- see
+    `InspectorPane._is_paused_subscription`, which gates the button that
+    posts this. `WatchlistsCollectionsScreen.handle_resume_source_requested`
+    consumes it and dispatches to `LocalWatchlistsService.resume_source`,
+    the same shape `CheckNowRequested` uses for its own service call.
+    """
+
+    def __init__(self, entity: dict[str, Any] | None) -> None:
+        self.entity = entity
+        super().__init__()
+
+
 class StageInConsoleRequested(Message):
     """Posted when the user requests staging the selected entity in Console."""
 
@@ -240,6 +256,34 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
         "what churned; add a rule here to silence it."
     )
     _IGNORE_SELECTORS_MAX_LENGTH = 4000
+
+    @classmethod
+    def _is_paused_subscription(cls, entity: dict[str, Any] | None) -> bool:
+        """Whether `entity` is an auto-paused LOCAL subscription (task-2050).
+
+        Only a local subscription currently carries a pause concept at all
+        -- `normalize_server_watchlist_source` always stamps `paused: False`
+        because the server watchlist source model has no equivalent yet --
+        so this is gated on `entity_kind == "subscription"` rather than on
+        `deepest.kind == "source"` (which is also true for a server
+        `watchlist_source`). Reading `entity_kind` directly, the same field
+        `InspectorPane._entity_type` itself keys off, rather than trusting
+        `paused` alone: a hand-built dict in a test could set `paused: True`
+        on something that is not a subscription at all, and the Resume
+        action would be meaningless for it.
+
+        Args:
+            entity: A normalized watch entity, or None.
+
+        Returns:
+            True only for a subscription entity with `paused` truthy.
+        """
+        if not entity:
+            return False
+        return (
+            str(entity.get("entity_kind") or "") == "subscription"
+            and bool(entity.get("paused"))
+        )
 
     @classmethod
     def _is_url_family_source(cls, entity: dict[str, Any] | None) -> bool:
@@ -439,6 +483,25 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
             if deepest.kind == "source":
                 yield Button("Preview", id="inspector-preview-button", variant="primary")
                 yield Button("Check now", id="inspector-check-now-button", variant="primary")
+                # task-2050 (AC#1/#2): rendered ONLY for a paused local
+                # subscription -- `deepest.entity` can be None here (a
+                # scope-only "browsing this source" level with nothing
+                # selected below it), so the guard reads `deepest.entity`
+                # directly rather than the `entity` local, which this
+                # branch never assigns.
+                if deepest.entity is not None and self._is_paused_subscription(
+                    deepest.entity
+                ):
+                    yield Button(
+                        "Resume",
+                        id="inspector-resume-button",
+                        variant="success",
+                        tooltip=(
+                            "Clear the auto-pause and reset its failure "
+                            "counters. The source resumes checking on its "
+                            "normal schedule."
+                        ),
+                    )
                 yield Button("Stage in Console", id="inspector-stage-console-button")
                 yield Button("Delete", id="inspector-delete-button", variant="error")
             elif deepest.kind == "run":
@@ -629,6 +692,8 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
             self.post_message(PreviewRequested(entity))
         elif button_id == "inspector-check-now-button":
             self.post_message(CheckNowRequested(entity))
+        elif button_id == "inspector-resume-button":
+            self.post_message(ResumeSourceRequested(entity))
         elif button_id == "inspector-stage-console-button":
             self.post_message(StageInConsoleRequested(entity))
         elif button_id == "inspector-delete-button":

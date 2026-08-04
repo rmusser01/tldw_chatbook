@@ -93,6 +93,7 @@ from ..Watchlists_Modules.inspector_pane import (
     IgnoreRequested,
     IngestRequested,
     InspectorPane,
+    ResumeSourceRequested,
     SaveNoiseSelectorsRequested,
     PreviewRequested,
     StageInConsoleRequested,
@@ -3386,6 +3387,99 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         if any(str(s.get("id")) == str(keep_id) for s in (pane.sources or [])):
             pane.select_source_by_id(str(keep_id))
+
+    @on(ResumeSourceRequested)
+    def handle_resume_source_requested(self, event: ResumeSourceRequested) -> None:
+        """Dispatch a Resume press to `_resume_source` on a worker (task-2050).
+
+        Refuses any entity that is not a LOCAL `subscription` (task-2050
+        Qodo): `resume_source` takes a raw local db id, so a message carrying
+        some other entity kind that happens to hold a numeric `source_id`
+        (e.g. a server `watchlist_source`) would reset the counters of
+        whatever unrelated LOCAL subscription shares that number. The
+        Inspector's render gate already makes that unreachable today; this
+        guard keeps it unreachable from any future caller too. Type-only log,
+        no toast -- a refused programmatic message is not a user action.
+        """
+        event.stop()
+        entity = event.entity
+        if entity is None:
+            return
+        if (
+            str(entity.get("backend") or "") != "local"
+            or str(entity.get("entity_kind") or "") != "subscription"
+        ):
+            logger.warning(
+                "ResumeSourceRequested for a non-local-subscription entity "
+                f"(backend={entity.get('backend')!r}, "
+                f"kind={entity.get('entity_kind')!r}); refusing."
+            )
+            return
+        self.run_worker(self._resume_source(entity), exclusive=True)
+
+    async def _resume_source(self, source: dict[str, Any]) -> None:
+        """Clear an auto-paused source's pause via the real service (AC#2/#3).
+
+        Local-only, the same reason `_open_snapshot_view`'s `url_snapshots`
+        lookup reaches `_local_watchlists_service()` directly rather than
+        through `self._controller` (`WatchlistsBackendController`): only a
+        local subscription currently carries a pause concept at all (see
+        `normalize_server_watchlist_source`, which always stamps `paused:
+        False`), so the controller -- which exists to route a call to
+        whichever of local/server is active -- has no reason to gain a
+        method for a concept the server backend does not have.
+
+        `source["source_id"]` (the subscription's raw db id) is read rather
+        than `source["id"]` (the namespaced `local:subscription:5` form
+        `self._controller` calls take): there is no routing layer here to
+        parse that namespacing back off, so the raw id
+        `normalize_local_subscription_row` already carries under
+        `source_id` is used directly, matching how `LocalWatchlistsService`
+        itself takes ids everywhere.
+        """
+        service = self._local_watchlists_service()
+        source_id = source.get("source_id")
+        name = (
+            source.get("name")
+            or source.get("source_title")
+            or source.get("title")
+            or "the source"
+        )
+        if service is None or source_id is None:
+            self._notify_watchlists(WC_SERVICE_UNAVAILABLE_COPY, severity="error")
+            return
+        try:
+            await service.resume_source(source_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to resume watchlist source {source_id!r}."
+            )
+            self._notify_watchlists(
+                "Could not resume that source. Check the logs and try again.",
+                severity="error",
+                markup=False,
+            )
+            return
+        # markup=False: the name is user-entered (Create Source's Name
+        # field), same reasoning as every other toast on this screen that
+        # embeds one -- a bracket in a source name must reach the user
+        # verbatim rather than being interpreted (or swallowed) as Rich
+        # markup.
+        self._notify_watchlists(
+            f"Resumed {name}. It will be checked on its normal schedule.",
+            severity="information",
+            markup=False,
+        )
+        self._refresh_local_wc_snapshot()
+        self._refresh_overview_data()
+        # Reload preserving selection, same as `_check_now_source`: the row
+        # stays selected, but the Sources table's Status column -- and the
+        # Inspector's own `paused` flag, which decides whether this very
+        # Resume button renders -- both pick up the cleared pause once the
+        # reload lands.
+        self.run_worker(
+            self._load_sources_preserving_selection(), exclusive=True, group="wc_sources"
+        )
 
     @on(ImportOpmlRequested)
     def handle_import_opml_requested(self, event: ImportOpmlRequested) -> None:
