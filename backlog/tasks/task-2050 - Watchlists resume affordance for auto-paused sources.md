@@ -96,3 +96,13 @@ and stay green — `reset_subscription_errors` itself was not modified.
 `tldw_chatbook/UI/Watchlists_Modules/inspector_pane.py`,
 `tldw_chatbook/UI/Screens/watchlists_collections_screen.py`,
 `Tests/Subscriptions/test_watchlist_normalizers.py`, `Tests/UI/test_watchlists_inspector.py`.
+
+## Review fix wave (2026-08-03)
+
+The branch review confirmed the predicted filter regression: with `paused` winning the
+status_summary precedence, an auto-paused source (which always carries the error that caused the
+pause) vanished from the Sources pane's "Error" filter bucket — the triage view for broken feeds
+silently missing the most-broken ones. Fixed: the Error bucket now includes `paused` (commented at
+the branch), and a dedicated "Paused" option was added to `_STATUS_OPTIONS` (the matcher's existing
+fallthrough handles it). Pinned by `test_paused_sources_stay_in_the_error_bucket_and_get_their_own`,
+mutation-verified (dropping the paused arm reds it).

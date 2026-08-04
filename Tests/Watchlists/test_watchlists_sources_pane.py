@@ -583,6 +583,46 @@ async def test_sources_pane_filters_by_status():
 
 
 @pytest.mark.asyncio
+async def test_paused_sources_stay_in_the_error_bucket_and_get_their_own():
+    """task-2050 review: an auto-paused source's `status_summary` now reads
+    "paused" (paused wins the precedence over error), so without an explicit
+    branch the Error filter -- the triage view for broken feeds -- would
+    silently skip exactly the most-broken sources. Paused sources must appear
+    under BOTH the Error bucket (broken-feed triage keeps working) and the
+    new dedicated Paused bucket. Reds if the error branch loses its paused
+    arm, or the Paused option vanishes.
+    """
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.sources = [
+            {"id": "s1", "name": "Healthy", "source_type": "rss", "status_summary": "active", "active": True},
+            {"id": "s2", "name": "Erroring", "source_type": "rss", "status_summary": "error (3)", "active": True},
+            {"id": "s3", "name": "AutoPaused", "source_type": "rss", "status_summary": "paused", "active": False},
+        ]
+
+        pane.status_filter = "error"
+        await pilot.pause()
+        table = pane.query_one("#sources-table", DataTable)
+        names = {str(table.get_row_at(i)[0]) for i in range(table.row_count)}
+        assert any("Erroring" in n for n in names)
+        assert any("AutoPaused" in n for n in names), (
+            "the Error triage bucket must include auto-paused sources -- they "
+            "failed PAST the threshold"
+        )
+        assert not any("Healthy" in n for n in names)
+
+        pane.status_filter = "paused"
+        await pilot.pause()
+        table = pane.query_one("#sources-table", DataTable)
+        names = {str(table.get_row_at(i)[0]) for i in range(table.row_count)}
+        assert names and all("AutoPaused" in n for n in names)
+
+        # The Paused option genuinely exists in the dropdown.
+        assert ("Paused", "paused") in SourcesPane._STATUS_OPTIONS
+
+
+@pytest.mark.asyncio
 async def test_sources_pane_filters_by_active_state():
     app = SourcesPaneHarness()
     async with app.run_test(size=(120, 40)) as pilot:

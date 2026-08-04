@@ -203,6 +203,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         ("All statuses", "all"),
         ("OK", "ok"),
         ("Error", "error"),
+        ("Paused", "paused"),
         ("Pending", "pending"),
     ]
 
@@ -482,7 +483,14 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         """
         status = SourcesPane.source_status_text(source).lower()
         if status_filter == "error":
-            return status.startswith("error")
+            # `paused` belongs in the Error bucket too (task-2050 review):
+            # an auto-paused source is one that failed PAST the threshold --
+            # the most broken feed there is -- and its `status_summary` now
+            # reads "paused" rather than "error (N)" (paused wins the
+            # precedence). A user filtering to Error to triage broken feeds
+            # must not silently miss exactly those. The dedicated Paused
+            # bucket below narrows further when wanted.
+            return status.startswith("error") or status == "paused"
         if status_filter == "ok":
             # `active` is what a healthy local source reports; `ok` is the
             # hand-built shape used by this pane's own tests.
