@@ -80,9 +80,9 @@ understands yet.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The mechanism behind the `SelectCurrent`/`#label` mount race on the form-close recompose is understood well enough to fix at the mechanism, not just measured to reduce its frequency
-- [ ] #2 `test_a_source_can_be_created_end_to_end_through_the_form` passes deterministically (10/10) both in isolation and immediately after `Tests/UI/test_watchlists_content_pane.py`, with no sleep or bounded-retry involved in the fix
-- [ ] #3 `Tests/Watchlists/test_watchlists_sources_pane.py::test_sources_pane_new_source_form_posts_request` (and the rest of that file) stays green — the fix must not depend on `WatchlistsCollectionsScreen` being present
+- [x] #1 The mechanism behind the `SelectCurrent`/`#label` mount race on the form-close recompose is understood well enough to fix at the mechanism, not just measured to reduce its frequency
+- [x] #2 `test_a_source_can_be_created_end_to_end_through_the_form` passes deterministically (10/10) both in isolation and immediately after `Tests/UI/test_watchlists_content_pane.py`, with no sleep or bounded-retry involved in the fix
+- [x] #3 `Tests/Watchlists/test_watchlists_sources_pane.py::test_sources_pane_new_source_form_posts_request` (and the rest of that file) stays green — the fix must not depend on `WatchlistsCollectionsScreen` being present
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -108,3 +108,127 @@ Not started. Candidate directions, cheapest/least risky first:
    they are actually subsumed/no longer necessary, and add a deterministic (non-flaky) regression
    test alongside the existing intermittent one if practical.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed at the mechanism. `PruneSafeSelect` (new,
+`tldw_chatbook/Widgets/prune_safe_select.py`) replaces stock `Select` at the 12 call sites the
+Watchlists screen's own recompose can mount.
+
+### AC#1 — the confirmed mechanism
+
+Confirmed empirically by instrumenting `App._prune`, `Widget.mount`, `SelectCurrent.update`,
+`WatchlistsCollectionsScreen.recompose/refresh` and `SourcesPane.recompose` in a throwaway scaffold
+and capturing a real failure. The crash is **not** an ordering bug in Textual's Compose-before-Mount
+guarantee; it is an escape hatch out of it, formed by two individually reasonable behaviours:
+
+1. `Widget.mount` (`textual/widget.py:1451`) opens with
+   `if self._closing or self._pruning: return AwaitMount(self, [])`. A widget caught by a prune
+   mounts **nothing**, silently, and returns an already-satisfied awaitable — no exception, no log.
+2. `MessagePump._pre_process` (`textual/message_pump.py:588`) dispatches `Compose` then `Mount`, and
+   its `finally` sets `_mounted_event` and `_is_mounted = True` **unconditionally** — including when
+   the `Compose` dispatch mounted nothing because of (1).
+
+`App._prune` (`textual/app.py:4394`) stamps `_pruning = True` over a `walk_children` snapshot. So a
+`SelectCurrent` that has been *registered* into the DOM but whose own `Compose` has not yet run gets
+stamped, its `mount([#label, ▼, ▲])` becomes a no-op, and it still reports `is_mounted=True` with
+zero children. Its parent `Select`'s `AwaitMount` unblocks, `Select._on_mount` runs, and
+`_init_selected_option → self.value = hint → _watch_value → SelectCurrent.update → query_one("#label")`
+raises. Upstream guards the outer `query_one(SelectCurrent)` but not the `#label` lookup one level
+below it.
+
+Captured state at the crash, all three toolbar filter Selects in one run:
+
+```
+FATAL SelectCurrent#label missing is_mounted=True pruning=True children=0
+      parent=Select(id=sources-type-select) parent_pruning=True
+      screen_recompose_depth=1 pane_recompose_depth=0
+```
+
+immediately preceded (0.3 ms) by three
+`MOUNT-SUPPRESSED SelectCurrent pruning=True is_mounted=False lost=[NonSelectableStatic(id=label), ...]`.
+
+**Two parts of this task's own prior hypothesis were REFUTED by the instrumentation:**
+
+- *`overview_data` is the concurrent destroyer* — **false** on this path. Logging every
+  `refresh(recompose=True)` with its caller showed the post-submit screen recompose is requested by
+  `_apply_local_wc_snapshot:983` and `_load_tree_data:912`, never by `overview_data`: with the
+  controller mocked, `_refresh_overview_data` assigns an **equal** dict, so the reactive never fires.
+  Removing `recompose=True` from `overview_data` would have changed nothing here. (The three
+  requests also coalesce into a single recompose, so removing any one of them cannot remove the
+  recompose at all.)
+- *The interruption happens on the pane's form-close recompose* — the crash is one step later. The
+  pane's close-recompose is itself killed first (`MOUNT-SUPPRESSED SourcesPane
+  lost=[Vertical#sources-toolbar, DataTable#sources-table]`, a separate silent defect: the pane's
+  recompose mounts nothing at all). The Selects that actually crash are the ones the **screen's**
+  recompose mounts into its freshly built `SourcesPane`, caught by a later prune — in the test, the
+  `run_test` teardown; live, the equivalent is navigating away mid-recompose.
+
+Because the destroying prune can be any of several actors, and because the screen recompose rebuilds
+the whole `SourcesPane` (3 more Selects) regardless, neither candidate structural fix is sufficient:
+de-recomposing `overview_data` (direction 1) does not touch the actual requesters, and hand-managing
+the create-form subtree (direction 2) removes the pane's cascade but not the screen's. Both would
+have been frequency reductions — exactly what this task refused. The guard is the only change that
+holds regardless of which task wins the race.
+
+### The fix
+
+`PruneSafeSelect` overrides the two mount-time methods that reach into children and makes them
+no-ops while `_pruning`/`_closing`:
+
+- `_watch_value` — the confirmed crash site.
+- `_setup_options_renderables` — the sibling shape (`query_one(SelectOverlay)`, wholly unguarded
+  upstream), reachable when the prune catches the `Select` one level higher.
+
+Both are plain-method/watcher overrides, so the subclass replaces the base cleanly: Textual resolves
+watchers by `getattr(obj, "_watch_value")` (`reactive.py:390`), not by MRO fan-out. Overriding
+`_on_mount` would **not** have worked — `_get_dispatch_methods` yields the handler from *every* class
+in the MRO, so the base would still run.
+
+This is deliberately not a catch-and-carry-on. `_pruning` means Textual has already committed to
+removing the widget, so it is never painted again and there is no stale-placeholder failure mode
+(the concern that made a naive `except NoMatches` unacceptable). Any other route to a half-composed
+`Select` still raises loudly.
+
+CSS is unaffected: Textual type selectors match every CSS-inheriting base class
+(`DOMNode._css_bases`), so `Select { ... }` still applies — pinned by a test, and confirmed by the
+20 geometry/tab-order tests in `test_watchlists_source_create_form.py` staying green.
+
+### Verification
+
+- AC#2: **10/10 in isolation** and **12/12 immediately after `Tests/UI/test_watchlists_content_pane.py`**
+  (one invocation, that order). Baseline on the same machine before the fix: 3 failures in the first
+  10 parametrized runs of the AC#2 order. No sleep and no bounded retry anywhere in the fix.
+- The race itself still occurs after the fix and is simply absorbed — instrumented runs still show
+  3 `MOUNT-SUPPRESSED SelectCurrent` per run with `fatal_count=0`. Both rejected experiments are
+  subsumed: neither `_finish_create_submit`'s scheduling nor its worker/`call_later` shape is touched.
+- AC#3: `Tests/Watchlists/test_watchlists_sources_pane.py` 27/27 (26 existing + 1 new). The pane
+  still closes its own form with no screen present; the fix is entirely inside the widget.
+- `Tests/Watchlists/` 384 passed; `Tests/UI/test_watchlists_*` 172 passed; `--collect-only Tests/UI
+  Tests/Watchlists Tests/Widgets` 8574 collected, no errors.
+- Mutation-verified (each reverted individually → RED → restored): the `_watch_value` guard, the
+  `_setup_options_renderables` guard, and one `PruneSafeSelect(` call site reverted to `Select(`.
+
+### Files
+
+- Added `tldw_chatbook/Widgets/prune_safe_select.py`, `Tests/Widgets/test_prune_safe_select.py`
+  (6 tests, including two controls that fail if upstream Textual ever fixes the escape hatch — the
+  signal that this class can be retired).
+- `PruneSafeSelect` adopted in `sources_pane.py` (5), `artifacts_pane.py` (3), `rules_pane.py` (2),
+  `items_pane.py` (1), `watchlists_collections_screen.py` (1).
+- `Tests/Watchlists/test_watchlists_sources_pane.py`: structural pin, since a reverted call site
+  would otherwise only be caught by the intermittent failure this task was filed against.
+- Deleted `Tests/UI/test_zz_scaffold_1960.py` — this task's own earlier instrumentation scaffold,
+  accidentally committed to `dev` in `749fa2e88` (a task-2060 commit) and never used by any test run.
+
+### Known-but-not-fixed, found on the way
+
+`SourcesPane`'s form-close recompose can silently mount nothing when the screen's recompose prunes it
+mid-flight (`MOUNT-SUPPRESSED SourcesPane lost=[sources-toolbar, sources-table]`). It is invisible
+today only because the screen recompose immediately rebuilds the pane wholesale. The underlying
+cause is the same Textual escape hatch, and the real remedy is the standing recommendation from
+TASK-1541 — stop full-screen-recomposing this screen from background loaders
+(`_apply_local_wc_snapshot:983`, `_load_tree_data:912`) and patch in place instead. That is a much
+larger change than this task, and it is now the *only* thing left that this task's crash depended on.
+<!-- SECTION:NOTES:END -->

@@ -9,6 +9,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Input, Select, Static, Switch
 
+from ...Widgets.prune_safe_select import PruneSafeSelect
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .table_selection import highlight_is_user_driven
 
@@ -102,7 +103,7 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
                     id="rules-create-name",
                     value=str(rule.get("name") or "") if rule else "",
                 )
-                yield Select(
+                yield PruneSafeSelect(
                     self._CONDITION_OPTIONS,
                     value=str(rule.get("condition_type") or "no_items") if rule else "no_items",
                     id="rules-create-condition",
@@ -118,7 +119,7 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
                     id="rules-create-threshold",
                     value=threshold_value,
                 )
-                yield Select(
+                yield PruneSafeSelect(
                     self._SEVERITY_OPTIONS,
                     value=str(rule.get("severity") or "warning") if rule else "warning",
                     id="rules-create-severity",

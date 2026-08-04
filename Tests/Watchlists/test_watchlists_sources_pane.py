@@ -8,6 +8,7 @@ from textual.widgets import Button, DataTable, Input, Select, Switch, TextArea
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Subscriptions import LocalWatchlistsService
 from tldw_chatbook.Subscriptions.noise_defaults import default_ignore_selectors_text
+from tldw_chatbook.Widgets.prune_safe_select import PruneSafeSelect
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     CheckNowRequested,
     PreviewRequested,
@@ -735,3 +736,35 @@ async def test_clearing_the_selection_removes_the_highlight(sample_sources):
 
         table = pane.query_one("#sources-table", DataTable)
         assert not _cell_style(table, "source-1", 0).reverse
+
+
+@pytest.mark.asyncio
+async def test_every_select_in_the_pane_is_prune_safe():
+    """TASK-1960: the toolbar filters must survive a prune mid-mount.
+
+    This pane is torn down and rebuilt by two independent recomposes that
+    can overlap -- its own `show_create_form` toggle, and the owning
+    screen's `refresh(recompose=True)` from `_apply_local_wc_snapshot` /
+    `_load_tree_data`. When the screen's prune lands between one of these
+    `Select`s registering its `SelectCurrent` and that `SelectCurrent`
+    composing, stock `Select._on_mount` raises `NoMatches` on `#label` and
+    Textual turns it into an app-level crash.
+
+    Pinned structurally rather than by reproducing the race: the race itself
+    is timing-dependent (that is the whole of TASK-1960), so a call site
+    quietly reverted to a stock `Select` would otherwise only ever be caught
+    by an intermittent failure in a different test file.
+    """
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.show_create_form = True
+        await pilot.pause()
+
+        selects = list(pane.query(Select))
+        assert selects, "the pane should compose Selects to check"
+        offenders = [
+            select.id for select in selects
+            if not isinstance(select, PruneSafeSelect)
+        ]
+        assert not offenders, f"stock Select still used for: {offenders}"
