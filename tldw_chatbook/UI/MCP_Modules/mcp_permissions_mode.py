@@ -303,8 +303,14 @@ def _kill_switch_label(value: bool) -> str:
     reading is now misleading (the switch already blocks both), so it
     reads as "tool calls" here to cover both -- the tooltip already used
     this same "chat tool calls" phrasing (see `compose()` below).
+
+    task-2242: title-cased plain label ("Block all tool calls in chat:
+    On/Off") -- the old lowercase "block tool calls in chat: no" read as
+    telegraphic chrome for a global toggle. The built-in-tools blast
+    radius sits on the persistent `#mcp-perm-kill-switch-hint` line under
+    the button (a tooltip only shows on hover).
     """
-    return f"block tool calls in chat: {'yes' if value else 'no'} ▸"
+    return f"Block all tool calls in chat: {'On' if value else 'Off'} ▸"
 
 
 def _tool_column_text(row: PermRow) -> str:
@@ -371,6 +377,14 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         height: auto;
         min-height: 0;
         color: $text-muted;
+    }
+    /* task-2242: the kill-switch scope hint is the same quiet, dimmed
+    one-liner tier as the legend below the matrix. */
+    #mcp-perm-kill-switch-hint {
+        height: auto;
+        min-height: 0;
+        color: $text-muted;
+        padding: 0 1;
     }
     /* T8: the server-source governance section is a plain read-only
     listing (a handful of Static rows at most) -- hugs its own content,
@@ -490,6 +504,15 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
                 "Master kill switch for chat tool calls — takes effect with "
                 "the chat bridge. Does not affect Hub tool tests."
             ),
+        )
+        # task-2242: the kill switch's blast radius is stated persistently,
+        # not just in the tooltip -- it gates BUILT-IN tools too (see
+        # `_kill_switch_label()`), which "tool calls in chat" alone does
+        # not tell the user.
+        yield Static(
+            "Also disables built-in tools (calculator, date/time).",
+            id="mcp-perm-kill-switch-hint",
+            markup=False,
         )
         # Task 4 (MCP Hub Phase 6): free-text matrix filter -- no
         # constructor `value=`, so mounting this Input never fires a

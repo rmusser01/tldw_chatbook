@@ -5066,14 +5066,14 @@ async def test_kill_switch_toggle_round_trip_persists_and_resyncs(tmp_path):
         await pilot.pause()
 
         button = app.query_one("#mcp-perm-kill-switch", Button)
-        assert str(button.label) == "block tool calls in chat: no ▸"
+        assert str(button.label) == "Block all tool calls in chat: Off ▸"
         await pilot.click("#mcp-perm-kill-switch")
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
 
         assert app.unified_mcp_service.get_kill_switch() is True
-        assert str(button.label) == "block tool calls in chat: yes ▸"
+        assert str(button.label) == "Block all tool calls in chat: On ▸"
 
 
 @pytest.mark.asyncio
@@ -5097,7 +5097,7 @@ async def test_kill_switch_starting_true_renders_without_extra_toggle(tmp_path):
         workbench.set_mode("permissions")
         await pilot.pause()
         button = app.query_one("#mcp-perm-kill-switch", Button)
-        assert str(button.label) == "block tool calls in chat: yes ▸"
+        assert str(button.label) == "Block all tool calls in chat: On ▸"
         assert app.unified_mcp_service.get_kill_switch() is True
 
 
@@ -5218,7 +5218,7 @@ async def test_permissions_mode_renders_fail_soft_without_t4_seams():
         assert table.row_count >= 1
         assert _perm_table_texts(app, 0) == ["Global default", "Ask"]
         button = app.query_one("#mcp-perm-kill-switch", Button)
-        assert str(button.label) == "block tool calls in chat: no ▸"
+        assert str(button.label) == "Block all tool calls in chat: Off ▸"
 
 
 @pytest.mark.asyncio
