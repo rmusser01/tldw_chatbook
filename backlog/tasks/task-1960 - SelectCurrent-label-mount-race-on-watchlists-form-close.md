@@ -1,7 +1,7 @@
 ---
 id: TASK-1960
 title: SelectCurrent #label mount race on the Watchlists Sources form-close recompose
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-02 17:20'
 labels:
