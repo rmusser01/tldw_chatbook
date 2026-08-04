@@ -1116,6 +1116,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # left `#artifacts-scope-note` on the old one. Same seed
             # `_build_detail_pane` applies on a rebuild.
             artifacts.scope_label = self._briefing_scope_label()
+        # TASK-2304 AC#2, found in live verification, not by the suite. Which
+        # sources the current scope covers is WATCHLIST MEMBERSHIP, and this
+        # loader runs after every write that changes it (`Add source`,
+        # `Remove`, watchlist delete). The scope itself does not move on those
+        # writes, so `watch_tree_scope` never fires, and nothing re-queries
+        # the source list either -- so scoping the table (this task's own
+        # change) left `Add source` assigning a source into a watchlist whose
+        # table stayed empty while the header one line above it had already
+        # updated to "(1 source)". The same disagreement this task exists to
+        # remove, in the opposite direction.
+        #
+        # A third ITEMS-region push, and the same kind as the other two: a
+        # single reactive assignment onto whichever pane happens to be
+        # mounted, never a rebuild -- an open create form is not even queried.
+        self._push_scoped_sources_to_pane()
 
     def _resolve_breadcrumb_labels(self, scope: TreeScope) -> list[str]:
         """Display names for `scope`'s ancestor chain, for the Inspector.

@@ -310,6 +310,51 @@ async def test_a_source_reload_under_a_scope_stays_scoped():
 
 
 @pytest.mark.asyncio
+async def test_assigning_a_source_fills_the_scoped_table_it_now_belongs_to():
+    """AC#2, found in live verification and not by the rest of this suite.
+
+    Membership is what decides the scope's contents, and the scope itself does
+    NOT move when a source is added to the watchlist already in view -- so
+    neither `watch_tree_scope` nor a source reload fires. Scoping the table
+    without this left `Add source` writing a membership row while the table
+    stayed empty under a header that had already updated to "(1 source)".
+    """
+    app = _build_test_app()
+    watchlist_id, _assigned_id, unassigned_id = _seed_two_sources_one_assigned(app)
+    bundle = app.watchlist_bundle_service
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _mounted(host, pilot)
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+        screen._apply_tree_scope(
+            TreeScope(kind="watchlist", watchlist_id=watchlist_id)
+        )
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        assert unassigned_id not in {row["source_id"] for row in pane.sources}
+
+        # The write the rail's `Add source` performs, followed by the reload
+        # its flow performs -- the scope is untouched throughout.
+        bundle.add_source(watchlist_id, unassigned_id)
+        screen._load_tree_data()
+        for _ in range(60):
+            await pilot.pause(0.05)
+            pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+            if unassigned_id in {row["source_id"] for row in pane.sources}:
+                break
+
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        assert unassigned_id in {row["source_id"] for row in pane.sources}, (
+            "the newly assigned source must appear in the scoped table"
+        )
+        assert len(screen.scoped_source_rows()) == len(pane.sources), (
+            "and the header count must still equal the visible rows"
+        )
+
+
+@pytest.mark.asyncio
 async def test_a_workbench_rebuild_under_a_scope_stays_scoped():
     """AC#2. And the third way: a region toggle rebuilding the pane."""
     app = _build_test_app()

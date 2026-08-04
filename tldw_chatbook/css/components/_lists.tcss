@@ -201,3 +201,52 @@ Tree > .tree--highlight-line {
 SelectOverlay:focus {
     outline: none;
 }
+
+/* TASK-2300, second instance -- found in live verification, after the
+ * overlay above was already fixed and the suite was green. The control
+ * itself, not its popup, and a different rule doing the damage.
+ *
+ * A COMPACT `Select` is ONE row tall: `Select.-textual-compact` strips
+ * `SelectCurrent`'s border, and this app's one-row filter strips pin
+ * `height: 1` on top of that. So its single rendered line IS its value, and
+ * it has no perimeter to spare -- for a border or for anything else.
+ *
+ * Three app-wide rules each give it one anyway:
+ *
+ *   Input:focus, TextArea:focus, Select:focus { border: solid ... }
+ *                                              components/_forms.tcss
+ *   Select:hover                { border: solid ... }  features/_embeddings.tcss
+ *   *:focus                     { outline: solid ... } core/_reset.tcss
+ *
+ * All three are written for the normal three-row `Select`, where the
+ * outermost lines are chrome and repainting them is exactly the intent. On a
+ * one-row one the border is drawn into a box model with no room for it, so
+ * the top edge lands on the only content row there is. Measured at 235x52
+ * against the production stylesheet, `#items-status-select`:
+ *
+ *     blurred   'All statuses  ▼    '
+ *     focused   '┌──────────────┐   '
+ *
+ * The control the user just clicked stops saying what it is set to -- and
+ * `hover` means it happens on the way TO clicking it, before anything has
+ * been chosen at all. That is very likely the larger half of what the UAT
+ * described as "a bare border": both the popup and the control it hangs off
+ * were painting boxes over their own contents.
+ *
+ * Scoped to `.-textual-compact` -- a normal `Select` keeps all three cues
+ * unchanged, because it has the rows to spend on them. The cue is not
+ * dropped here either: `_forms.tcss`'s own `background`/`color` half is a
+ * recolour, survives untouched, and is what marks focus now; hover takes the
+ * same `$surface-lighten-1` this file already gives `OptionList` rows.
+ * Recolouring cells a widget already draws can never overwrite one -- the
+ * substitution TASK-1160 made for the table cursor.
+ */
+Select.-textual-compact:focus,
+Select.-textual-compact:hover {
+    border: none;
+    outline: none;
+}
+
+Select.-textual-compact:hover {
+    background: $surface-lighten-1;
+}

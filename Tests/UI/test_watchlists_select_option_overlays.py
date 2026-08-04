@@ -114,6 +114,42 @@ async def test_items_status_filter_paints_every_status_option():
         )
 
 
+async def test_the_status_filter_still_shows_its_value_when_focused_or_hovered():
+    """The same defect one level up, on the control rather than its popup.
+
+    Found in live verification with this file already green, which is the
+    point of it being here: the overlay tests above pass while the `Select`
+    they hang off paints `┌──────────────┐` over its own only row. A compact
+    `Select` is ONE row tall and three app-wide rules give it a border or an
+    outline on focus and on hover (see the TASK-2300 blocks in
+    `css/components/_lists.tcss`). Hover matters as much as focus: it fires on
+    the way TO clicking, before anything has been chosen.
+    """
+    host = _watchlists_host()
+    async with host.run_test(size=UAT_SIZE) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "items"
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#items-status-select", timeout=5.0)
+        select = screen.query_one("#items-status-select", Select)
+
+        blurred = _painted_rows(screen, select.region)[0]
+        assert "All statuses" in blurred, "precondition: the value is readable at rest"
+
+        select.focus()
+        await pilot.pause()
+        await pilot.pause()
+        assert "All statuses" in _painted_rows(screen, select.region)[0], (
+            "a focused one-row Select must still say what it is set to"
+        )
+
+        await pilot.hover("#items-status-select")
+        await pilot.pause()
+        assert "All statuses" in _painted_rows(screen, select.region)[0], (
+            "and so must a hovered one"
+        )
+
+
 async def test_items_status_filter_covers_every_status_the_backend_produces():
     """AC#1's other half: the vocabulary is the backend's, not a subset.
 
