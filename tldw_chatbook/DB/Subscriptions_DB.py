@@ -1791,8 +1791,6 @@ class SubscriptionsDB(BaseDB):
             One dict per item row, joined to its subscription's name and type,
             ordered by `created_at` descending.
         """
-        cursor = self.conn.cursor()
-
         # Built as predicate fragments rather than four hand-written SELECTs:
         # the two dimensions (subscription filter, status filter) are
         # independent, and enumerating their product is how the "all statuses"
@@ -1809,19 +1807,19 @@ class SubscriptionsDB(BaseDB):
         where_clause = f"WHERE {' AND '.join(predicates)}" if predicates else ""
         params.append(limit)
 
-        cursor.execute(
-            f"""
-            SELECT i.*, s.name as subscription_name, s.type as subscription_type
-            FROM subscription_items i
-            JOIN subscriptions s ON i.subscription_id = s.id
-            {where_clause}
-            ORDER BY i.created_at DESC
-            LIMIT ?
-            """,
-            tuple(params),
-        )
-
-        return [dict(row) for row in cursor.fetchall()]
+        with self.transaction() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT i.*, s.name as subscription_name, s.type as subscription_type
+                FROM subscription_items i
+                JOIN subscriptions s ON i.subscription_id = s.id
+                {where_clause}
+                ORDER BY i.created_at DESC
+                LIMIT ?
+                """,
+                tuple(params),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def get_item_status(self, item_id: int) -> str:
         """Read one item's current status by its own row id.
