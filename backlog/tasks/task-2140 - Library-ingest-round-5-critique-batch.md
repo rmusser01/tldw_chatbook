@@ -2,7 +2,7 @@
 id: TASK-2140
 title: >-
   Library ingest round-5 critique batch (commit-summary regression, failure-aftermath P1s, confirm at scale)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04 03:00'
 labels:
@@ -104,3 +104,8 @@ confirm scroll; (5) type-then-click-Start regression pin.
 **Verification.** 243 core + 71 shell-subset targeted tests green;
 29,363 collect cleanly. Live on a fresh isolated profile: commit line
 for text + clears on Clear.
+
+**Qodo round (PR #1307):** one finding — Google-style docstrings on the
+new test functions — declined on file idiom (276 tests in the file use
+prose narrative docstrings; 39 share the "(task-NNN)" provenance
+convention these follow), consistent with every prior round of the arc.
