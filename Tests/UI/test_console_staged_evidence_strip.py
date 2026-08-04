@@ -261,6 +261,104 @@ def _strip_text(screen) -> str:
     return "\n".join(str(child.renderable) for child in strip.query(Static))
 
 
+class _StagedEvidenceStripPanelHost(App):
+    """`ConsoleStagedEvidenceStrip` plus the TWO production CSS rules this
+    pin cares about: the shared `.ds-panel { min-height: 3 }` every Console
+    panel inherits (`classes="ds-panel"` is how the real screen mounts this
+    widget -- see `chat_screen.py`'s `compose_content`), and this widget's
+    own `#console-staged-evidence-strip` override plus its children's row
+    heights.
+
+    `_StripApp` above (and `ConsoleHarness`, used by the rest of this file)
+    never loads the app's real stylesheet -- only a widget's OWN Python-level
+    `self.styles.*` assignments or `DEFAULT_CSS` take effect there, so
+    neither can reproduce a bug that lives in the external `.tcss` bundle.
+    Mirrors `test_console_session_tab_strip.py`'s `_PaddedTabStripHost`
+    (RAG-47): reproduce just the ONE production CSS this test needs, not the
+    whole multi-thousand-line bundle.
+    """
+
+    CSS = """
+    .ds-panel {
+        height: auto;
+        min-height: 3;
+    }
+
+    #console-staged-evidence-strip {
+        width: 100%;
+        min-width: 0;
+        height: auto;
+        min-height: 1;
+        max-height: 6;
+        border: none;
+        padding: 0 1;
+        margin: 0;
+    }
+
+    .console-staged-evidence-header {
+        width: 100%;
+        height: 1;
+        min-height: 1;
+        layout: horizontal;
+    }
+
+    .console-staged-evidence-heading {
+        width: 1fr;
+        min-width: 0;
+        height: 1;
+    }
+
+    .console-staged-evidence-unstage {
+        width: auto;
+        min-width: 9;
+        height: 1;
+        min-height: 1;
+    }
+
+    .console-staged-evidence-row {
+        width: 100%;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+    }
+    """
+
+    def __init__(self, state: ConsoleStagedEvidenceStripState) -> None:
+        super().__init__()
+        self._state = state
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleStagedEvidenceStrip(
+            self._state, id=STRIP_ID.lstrip("#"), classes="ds-panel"
+        )
+
+
+@pytest.mark.asyncio
+async def test_strip_has_no_blank_filler_rows_for_small_staged_counts() -> None:
+    """M3 (final review): the strip is mounted with `classes="ds-panel"`
+    (the shared Console panel rule, `.ds-panel { min-height: 3 }`), so with
+    only 1-2 rows of real content (one header row + N evidence rows)
+    Textual padded the box up to 3 rows with blank filler beneath the last
+    row. Sibling to the `#console-status-chips` `min-height: 1` precedent,
+    which already overrides `.ds-panel` for that other small fixed-content
+    Console panel. Pin the strip's rendered region height against its own
+    content height -- no filler.
+    """
+    app = _StagedEvidenceStripPanelHost(
+        build_console_staged_evidence_strip_state(_launch(1))
+    )
+    async with app.run_test(size=(120, 24)):
+        strip = app.query_one(STRIP_ID, ConsoleStagedEvidenceStrip)
+        assert strip.display is True
+        assert not list(strip.query("#console-staged-evidence-overflow"))
+        # Content: 1 header row + 1 evidence row, no overflow line.
+        content_rows = 1 + len(strip.query(".console-staged-evidence-row"))
+        assert strip.region.height == content_rows, (
+            "strip padded with blank filler rows beyond its own content -- "
+            f"region.height={strip.region.height}, content_rows={content_rows}"
+        )
+
+
 @pytest.mark.asyncio
 async def test_console_run_staging_fans_out_to_strip_and_truthful_chip() -> None:
     app = _build_test_app()
@@ -302,6 +400,39 @@ async def test_console_unstage_clears_context_strip_chip_and_tray() -> None:
             "#console-staged-context-tray", ConsoleStagedContextTray
         )
         assert tray.state.is_empty is True
+
+
+@pytest.mark.asyncio
+async def test_console_unstage_click_heals_a_stale_strip_when_context_already_none() -> None:
+    """M4 (final review): the handler's early return (`if
+    self._pending_console_launch_context is None: return`) fires with no
+    self-heal when the field was already cleared out from under a strip
+    that never got resynced -- clicking Un-stage was a silent no-op that
+    left the stale rows on screen. Reproduce that staleness directly (clear
+    the field WITHOUT going through the normal sync path, exactly what a
+    send's consume-on-send clear or another surface's write could leave
+    behind) and assert the click still heals the strip instead of dead-ending.
+    """
+    app = _build_test_app()
+    async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
+        screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, STRIP_ID)
+        screen._stage_console_library_rag_launch(_launch(3))
+        await pilot.pause()
+        strip = screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip)
+        assert strip.display is True
+
+        # Simulate staleness: the context field is cleared directly, never
+        # going through `_sync_console_pending_launch_surfaces`, so the
+        # mounted strip's own `.state` (and its Un-stage button) is still
+        # the old staged snapshot.
+        screen._pending_console_launch_context = None
+
+        screen.query_one(UNSTAGE_ID, Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip).display is False
 
 
 @pytest.mark.asyncio

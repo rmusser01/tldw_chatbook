@@ -2488,7 +2488,13 @@ async def test_conversation_row_shows_placeholder_when_no_active_conversation() 
 
 
 @pytest.mark.asyncio
-async def test_status_label_width_is_twelve() -> None:
+async def test_status_label_width_is_thirteen() -> None:
+    """I1 (final review): "Conversation" is exactly 12 characters -- the old
+    fixed label-column width -- so at `width: 12` the label filled its whole
+    cell with zero gutter before the value column starts. Widened to 13 so
+    every label (the 12-char "Conversation" included) leaves at least one
+    blank cell of separation; see the composited-output pin below for what
+    that actually buys on screen."""
     from textual.app import App
 
     class TestApp(App):
@@ -2500,7 +2506,76 @@ async def test_status_label_width_is_twelve() -> None:
     app = TestApp()
     async with app.run_test():
         label = app.query_one(".console-workspace-status-label")
-        assert label.styles.width.value == 12
+        assert label.styles.width.value == 13
+
+
+def _composited_rows(container) -> list[str]:
+    """`container`'s own row-span exactly as the compositor painted it.
+
+    Source-widget text (label/value `Static.renderable`) is NOT ground
+    truth for what a terminal shows -- Textual packs the two `Static`s of a
+    `ConsoleWorkspaceStatusPair` into one `Horizontal` with no gutter, so a
+    label whose fixed column width exactly matches its text length reads as
+    fused with the adjacent value on the actual painted row even though the
+    two widgets' own `renderable`s are cleanly separate strings (RAG-47
+    lesson: measure the compositor's output, not source labels).
+    """
+    strips = container.screen._compositor.render_strips()
+    region = container.region
+    rows = []
+    for y in range(region.y, region.y + region.height):
+        if 0 <= y < len(strips):
+            row_text = "".join(segment.text for segment in strips[y])
+            rows.append(row_text[region.x : region.x + region.width])
+    return rows
+
+
+@pytest.mark.asyncio
+async def test_conversation_status_row_label_and_value_are_separate_visual_runs() -> None:
+    """I1 (final review): live captures showed `Conversation—` (placeholder
+    value) and `ConversationThis conversation` (real title) rendering as one
+    run-on token on the main rail -- the 12-char "Conversation" label filled
+    its whole fixed-width cell with no separator before the value column.
+    Assert the COMPOSITED row (the RAG-47 lesson) shows the label followed
+    by a literal space before the value starts, for both the placeholder and
+    a real conversation title.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+
+        # Placeholder value ("Conversation—" in the pre-fix report).
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+        scope_pair = console.query_one("#console-active-scope")
+        row_text = _composited_rows(scope_pair)[0]
+        assert "Conversation " in row_text, (
+            "label fused with the placeholder value on the composited row: "
+            f"{row_text!r}"
+        )
+
+        # Real conversation title ("ConversationThis conversation" in the
+        # pre-fix report).
+        state = replace(
+            _base_grouped_workspace_state(),
+            scope_label="This conversation",
+            scope_detail="conv-1",
+        )
+        tray.sync_state(state)
+        await pilot.pause()
+        scope_pair = console.query_one("#console-active-scope")
+        row_text = _composited_rows(scope_pair)[0]
+        assert "Conversation " in row_text, (
+            "label fused with the conversation title on the composited row: "
+            f"{row_text!r}"
+        )
+        assert "ConversationThis" not in row_text
 
 
 @pytest.mark.asyncio

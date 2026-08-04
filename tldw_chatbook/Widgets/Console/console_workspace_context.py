@@ -434,8 +434,15 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             classes="console-workspace-status-label",
             markup=False,
         )
-        label_widget.styles.width = 12
-        label_widget.styles.min_width = 12
+        # I1 (final review): "Conversation" (RAG-45) is exactly 12 characters
+        # -- the label column's old fixed width -- so it filled the whole
+        # cell with zero gutter before the value column, and live captures
+        # showed the two fuse into one run-on token ("Conversation—",
+        # "ConversationThis conversation"). Widened to 13 so every label
+        # (this 12-char one included) always leaves at least one blank cell
+        # of separation.
+        label_widget.styles.width = 13
+        label_widget.styles.min_width = 13
         yield label_widget
 
         value_widget = Static(

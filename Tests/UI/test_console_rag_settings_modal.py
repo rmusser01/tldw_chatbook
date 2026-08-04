@@ -653,7 +653,6 @@ def test_modal_open_prefills_a_normal_question_draft():
     screen = Mock()
     screen._console_library_rag_query = ""
     screen._pending_console_launch_context = None
-    screen._console_library_rag_scope_label.return_value = "Scope: notes"
     composer = Mock()
     composer.draft_text.return_value = "  what   changed in auth  "
     screen._console_composer_or_none.return_value = composer
@@ -696,7 +695,6 @@ def test_prefill_guards_reject_paths_urls_and_oversized_drafts_at_both_sites(
     modal_screen = Mock()
     modal_screen._console_library_rag_query = ""
     modal_screen._pending_console_launch_context = None
-    modal_screen._console_library_rag_scope_label.return_value = "Scope: notes"
     modal_composer = Mock()
     modal_composer.draft_text.return_value = unsafe_draft
     modal_screen._console_composer_or_none.return_value = modal_composer
@@ -737,7 +735,6 @@ def test_prefill_allows_a_question_that_merely_mentions_a_url():
     modal_screen = Mock()
     modal_screen._console_library_rag_query = ""
     modal_screen._pending_console_launch_context = None
-    modal_screen._console_library_rag_scope_label.return_value = "Scope: notes"
     modal_composer = Mock()
     modal_composer.draft_text.return_value = draft
     modal_screen._console_composer_or_none.return_value = modal_composer

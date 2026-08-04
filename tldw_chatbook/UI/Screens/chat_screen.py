@@ -14509,6 +14509,12 @@ class ChatScreen(BaseAppScreen):
         would advertise a granularity the send path does not have.
         """
         event.stop()
+        # M4 (final review): resync BEFORE the early return so a strip that
+        # is still showing stale staged rows -- because the context field
+        # was already cleared from under it elsewhere (e.g. a send's
+        # consume-on-send clear) without a matching surface sync -- heals
+        # on click instead of dead-ending as a silent no-op.
+        self._sync_console_staged_evidence_strip()
         if self._pending_console_launch_context is None:
             return
         self._pending_console_launch_context = None
