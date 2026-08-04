@@ -195,13 +195,13 @@ def _auth_missing_local_snap() -> ReadinessSnapshot:
 
 
 def _not_configured_builtin_snap() -> ReadinessSnapshot:
-    """The built-in server disabled in config -- NOT_CONFIGURED's only
+    """The built-in server turned off -- NOT_CONFIGURED's only
     allowed action is ADD_SERVER, which is never wired for any source."""
     return ReadinessSnapshot(
         server_key="builtin:tldw_chatbook", label="tldw_chatbook (built-in)",
         source="builtin", state=ReadinessState.NEEDS_SETUP,
         reasons=(ReasonCode.NOT_CONFIGURED,),
-        message="Disabled in config ([mcp].enabled = false).",
+        message="Turned off — open to enable.",
     )
 
 
@@ -336,7 +336,11 @@ async def test_advanced_reveal_button_renders_with_bundled_css(monkeypatch):
         await app.workers.wait_for_complete()
         await pilot.pause()
         collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
-        assert not app.query("#mcp-inspector-advanced-reveal")
+        # F-053: the toggle is no longer removed on reveal -- it flips to
+        # its "Hide advanced" state so the choice stays reversible.
+        toggle = app.query_one("#mcp-inspector-advanced-reveal", Button)
+        assert str(toggle.label) == "Hide advanced"
+        assert not toggle.disabled
 
         # Task 6 dual-layer CSS audit: the reveal-time forced-open panel
         # (the "resources/prompts" reachable content -- governance_rule.*/
@@ -759,7 +763,8 @@ async def test_protected_actions_reachable_after_reveal(monkeypatch):
         # producing a harmless but noisy "never awaited" warning).
         await app.workers.wait_for_complete()
         await pilot.pause()
-        assert not app.query("#mcp-inspector-advanced-reveal")
+        toggle = app.query_one("#mcp-inspector-advanced-reveal", Button)
+        assert str(toggle.label) == "Hide advanced"
 
         section_select = app.query_one("#mcp-adv-section-select", Select)
         section_select.value = "governance"
@@ -1041,9 +1046,74 @@ async def test_advanced_hidden_by_default_composes_reveal_button_not_collapsible
 
 
 @pytest.mark.asyncio
-async def test_advanced_visible_true_at_mount_skips_reveal_button(monkeypatch):
+async def test_advanced_toggle_hides_and_reshows_round_trip(monkeypatch):
+    """F-053: the Advanced opt-in is reversible -- the same control that
+    shows the runner hides it again, and each direction persists the user's
+    explicit choice (True on show, False on hide) so no future visit is
+    trapped in a state the user didn't pick."""
+    monkeypatch.setattr(
+        mcp_inspector_module, "get_cli_setting",
+        _fake_get_cli_setting(advanced_visible=False),
+    )
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_save(section, key, value):
+        save_calls.append((section, key, value))
+        return True
+
+    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", fake_save)
+    app = InspectorApp()
+
+    async def click_toggle(pilot) -> None:
+        """Click the toggle, waiting out Textual's 0.3s `-active` press
+        effect first -- `Button._on_click` deliberately swallows a click
+        that lands while the previous press's `-active` class is still on
+        the button (textual/widgets/_button.py, 8.2.7), so back-to-back
+        round-trip clicks need real time between them."""
+        await asyncio.sleep(0.4)
+        await pilot.click("#mcp-inspector-advanced-reveal")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        toggle = app.query_one("#mcp-inspector-advanced-reveal", Button)
+        assert str(toggle.label) == "Advanced…"
+
+        # Show.
+        await click_toggle(pilot)
+        assert app.query_one("#mcp-adv-collapsible", Collapsible)
+        toggle = app.query_one("#mcp-inspector-advanced-reveal", Button)
+        assert str(toggle.label) == "Hide advanced"
+        assert not toggle.disabled
+        assert toggle.tooltip == "Hide the legacy control-plane action runner."
+
+        # Hide again -- the one-way door is gone.
+        await click_toggle(pilot)
+        assert not app.query("#mcp-adv-collapsible")
+        toggle = app.query_one("#mcp-inspector-advanced-reveal", Button)
+        assert str(toggle.label) == "Advanced…"
+        assert not toggle.disabled
+        assert toggle.tooltip == "Show the legacy control-plane action runner."
+
+        visible_writes = [
+            value for section, key, value in save_calls if key == "advanced_visible"
+        ]
+        assert visible_writes == [True, False]
+
+        # And back on again -- still no dead end.
+        await click_toggle(pilot)
+        assert app.query_one("#mcp-adv-collapsible", Collapsible)
+
+
+@pytest.mark.asyncio
+async def test_advanced_visible_true_at_mount_renders_hide_toggle(monkeypatch):
     """A persisted `advanced_visible=True` (a returning opted-in user) ->
-    the Collapsible composes immediately; no reveal Button is rendered."""
+    the Collapsible composes immediately, with the toggle rendered in its
+    'Hide advanced' state so the choice stays reversible (F-053)."""
     monkeypatch.setattr(
         mcp_inspector_module, "get_cli_setting",
         _fake_get_cli_setting(advanced_visible=True, advanced_open=True),
@@ -1052,15 +1122,16 @@ async def test_advanced_visible_true_at_mount_skips_reveal_button(monkeypatch):
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app.query_one("#mcp-adv-collapsible", Collapsible)
-        assert not app.query("#mcp-inspector-advanced-reveal")
+        toggle = app.query_one("#mcp-inspector-advanced-reveal", Button)
+        assert str(toggle.label) == "Hide advanced"
 
 
 @pytest.mark.asyncio
 async def test_advanced_reveal_button_persists_setting_and_mounts_collapsible(monkeypatch):
     """Pressing the reveal Button must persist
     `save_setting_to_cli_config("mcp.hub_state", "advanced_visible", True)`
-    and mount the Collapsible in its place -- the button itself is removed
-    (not merely disabled), since it has nothing left to do this session."""
+    and mount the Collapsible alongside it -- the button itself flips to
+    its "Hide advanced" state (F-053: reversible), it is not removed."""
     monkeypatch.setattr(
         mcp_inspector_module, "get_cli_setting",
         _fake_get_cli_setting(advanced_visible=False),
@@ -1092,7 +1163,9 @@ async def test_advanced_reveal_button_persists_setting_and_mounts_collapsible(mo
 
         assert ("mcp.hub_state", "advanced_visible", True) in save_calls
         assert app.query_one("#mcp-adv-collapsible", Collapsible)
-        assert not app.query("#mcp-inspector-advanced-reveal")
+        toggle = app.query_one("#mcp-inspector-advanced-reveal", Button)
+        assert str(toggle.label) == "Hide advanced"
+        assert not toggle.disabled
 
 
 @pytest.mark.asyncio
@@ -1216,7 +1289,9 @@ async def test_advanced_reveal_second_press_while_saving_is_a_no_op(monkeypatch)
         assert len(collapsibles) == 1, (
             f"expected exactly one mounted collapsible, got {len(collapsibles)}"
         )
-        assert not app.query("#mcp-inspector-advanced-reveal")
+        toggle = app.query_one("#mcp-inspector-advanced-reveal", Button)
+        assert str(toggle.label) == "Hide advanced"
+        assert not toggle.disabled
         assert save_calls.count(("mcp.hub_state", "advanced_visible", True)) == 1
 
 
@@ -1635,6 +1710,31 @@ async def test_close_button_removes_test_panel_and_reenables_test_tool_button():
         await pilot.pause()
         assert not list(app.query("#mcp-inspector-test-run"))
         assert not list(app.query("#mcp-inspector-test-result"))
+        assert app.query_one("#mcp-inspector-test-tool", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_test_panel_open_moves_focus_inside_and_escape_closes():
+    """F-056: opening the Test Tool panel moves keyboard focus into it
+    (the schema form's first control), and Escape closes the panel exactly
+    like its Close button."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        assert list(app.query("#mcp-inspector-test-panel"))
+        focused = app.focused
+        assert focused is not None
+        assert any(
+            ancestor.id == "mcp-inspector-test-panel"
+            for ancestor in focused.ancestors
+        ), f"focus did not land inside the test panel: {focused!r}"
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not list(app.query("#mcp-inspector-test-panel"))
         assert app.query_one("#mcp-inspector-test-tool", Button).disabled is False
 
 
@@ -2475,23 +2575,47 @@ async def test_second_show_permission_back_to_back_does_not_duplicate_ids():
 
 
 @pytest.mark.asyncio
-async def test_no_selection_header_reads_select_an_item_to_inspect():
-    """Item 7: the header used to say "Select a server to see its
-    readiness." even for a Tools/Permissions-mode selection -- neutral
-    copy that matches the "No {noun} selected."/"Select {noun} to {verb}."
-    convention used elsewhere on this screen."""
+async def test_no_selection_header_teaches_what_inspection_offers():
+    """F-054: the empty state is contextual -- it says what picking a row
+    gets you (what's wrong, what you can do) rather than the bare 'Select
+    an item to inspect.', and stays that way after a selection is cleared
+    back to None."""
     app = InspectorApp()
     async with app.run_test() as pilot:
         inspector = app.query_one(MCPInspector)
         badge = str(app.query_one("#mcp-inspector-state", Static).renderable)
-        assert badge == "Select an item to inspect."
+        assert badge == (
+            "Pick a server, tool, or entry to see what's wrong and what you can do."
+        )
 
         await inspector.update_readiness(_stale_snap())
         await pilot.pause()
         await inspector.update_readiness(None)
         await pilot.pause()
         badge = str(app.query_one("#mcp-inspector-state", Static).renderable)
-        assert badge == "Select an item to inspect."
+        assert badge == (
+            "Pick a server, tool, or entry to see what's wrong and what you can do."
+        )
+
+
+@pytest.mark.asyncio
+async def test_empty_state_copy_wraps_instead_of_clipping_at_narrow_width():
+    """F-054: at the inspector's narrowest real widths (its min-width is 28)
+    the empty-state line must WRAP to multiple rows -- `.ds-status-badge`'s
+    shared `height: 1` used to clip it mid-word. The local
+    `#mcp-inspector-state` override (height: auto) wins on ID specificity;
+    other `.ds-status-badge` consumers are untouched. (The bare harness's
+    `width: 3fr` triples a single-child screen's width instead of filling
+    it, so the narrow width is pinned with explicit test-app CSS.)"""
+
+    class NarrowInspectorApp(InspectorApp):
+        CSS = "MCPInspector { width: 30; }"
+
+    app = NarrowInspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        state = app.query_one("#mcp-inspector-state", Static)
+        assert state.region.height > 1
 
 
 # -- Phase 4 UX batch item 8: tool identity above the permission block -------

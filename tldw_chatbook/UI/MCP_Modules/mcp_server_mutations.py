@@ -18,6 +18,7 @@ from typing import Any
 
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Checkbox, Input, Select, Static
@@ -81,6 +82,22 @@ class MCPServerMutationsPanel(Vertical):
     def is_edit(self) -> bool:
         return self._record is not None
 
+    # F-056: Escape mirrors the Cancel button (same `Cancelled` message the
+    # `mcp-srv-cancel` press posts -- one path, no drift).
+    BINDINGS = [Binding("escape", "cancel_panel", "Cancel", show=False)]
+
+    def on_mount(self) -> None:
+        # F-056: opening the panel moves keyboard focus into its first
+        # reachable input (the server-id Input is disabled in edit mode, so
+        # the Name input takes it there) -- `call_after_refresh` so this
+        # lands after Textual's own mount-time focus settling.
+        first_input = "#mcp-srv-name" if self.is_edit else "#mcp-srv-id"
+        self.call_after_refresh(self.query_one(first_input, Input).focus)
+
+    def action_cancel_panel(self) -> None:
+        """F-056: Escape -- same path as the Cancel button."""
+        self.post_message(self.Cancelled())
+
     # -- compose ---------------------------------------------------------
 
     def compose(self) -> ComposeResult:
@@ -107,7 +124,7 @@ class MCPServerMutationsPanel(Vertical):
         )
 
         if not self.is_edit:
-            yield Static("Transport", classes="form-label")
+            yield Static("Connection", classes="form-label")
             yield Select(
                 _TRANSPORT_OPTIONS,
                 id="mcp-srv-transport",
@@ -267,7 +284,7 @@ class MCPServerMutationsPanel(Vertical):
             "" if _blank(transport_select.value) else str(transport_select.value)
         )
         if not transport:
-            raise ValueError("Transport is required.")
+            raise ValueError("Connection is required.")
         url = self.query_one("#mcp-srv-url", Input).value.strip()
         # F2 fix: an unvalidated URL flows straight into the create payload
         # and on to `run_action()` -- reject an invalid/unsupported-scheme

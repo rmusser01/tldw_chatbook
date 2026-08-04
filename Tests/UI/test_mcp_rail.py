@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Select
+from textual.widgets import Button, Select, Static
 
 import tldw_chatbook
 from tldw_chatbook.MCP.readiness import (
@@ -167,6 +167,47 @@ async def test_rail_clamps_scope_ref_value_not_in_options_to_no_selection():
         assert select.value == "team"  # present among options — no clamp needed here
         ref_select = app.query_one("#mcp-rail-scope-ref", Select)
         assert ref_select.value is Select.NULL
+
+
+class EmptyRailApp(App):
+    """Zero configured servers (F-060: the rail needs an empty state)."""
+
+    def compose(self) -> ComposeResult:
+        yield MCPRail(
+            source="local",
+            snapshots=[],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+            id="mcp-rail",
+        )
+
+
+@pytest.mark.asyncio
+async def test_rail_shows_empty_state_at_zero_servers():
+    """F-060: at zero servers the rail says so in plain language and points
+    at the Add-server action instead of rendering a bare 'All servers' row."""
+    app = EmptyRailApp()
+    async with app.run_test():
+        rows = list(app.query("Button.mcp-rail-row"))
+        assert len(rows) == 1  # just "All servers"
+        empty = app.query_one("#mcp-rail-empty", Static)
+        assert "No servers yet" in str(empty.renderable)
+        assert "Add server" in str(empty.renderable)
+
+
+@pytest.mark.asyncio
+async def test_disabled_scope_ref_select_explains_why():
+    """F-060: the disabled 'No scope entities' Select carries a tooltip
+    explaining why there is nothing to pick."""
+    app = RailScopeMismatchApp()
+    async with app.run_test():
+        ref_select = app.query_one("#mcp-rail-scope-ref", Select)
+        assert ref_select.disabled
+        assert ref_select.tooltip
+        assert "no scope entities" in ref_select.tooltip.lower()
 
 
 class RailAppWithBundledCSS(App):

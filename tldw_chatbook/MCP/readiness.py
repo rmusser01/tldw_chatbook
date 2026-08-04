@@ -13,7 +13,6 @@ from __future__ import annotations
 import dataclasses
 import os
 import re
-from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
@@ -205,6 +204,34 @@ class ReadinessSnapshot:
         return f"{STATE_GLYPHS[self.state]} {STATE_LABELS[self.state]}"
 
 
+def is_off_opt_in(snapshot: ReadinessSnapshot) -> bool:
+    """Whether a snapshot is the built-in server in its OFF/opt-in state.
+
+    The built-in ships disabled: turning it on is a choice the user makes,
+    not a defect to fix (F-051). Surfaces that aggregate "what needs
+    attention" (`aggregate_summary()`, `worst_state()`, the Servers-mode
+    recovery callouts) exclude off/opt-in snapshots so a pristine install
+    does not open with a false alarm; the Servers mode presents a separate
+    Enable affordance for it instead.
+
+    Args:
+        snapshot: The readiness snapshot to classify.
+
+    Returns:
+        True when the snapshot belongs to the built-in server and that
+        server is disabled (opt-in OFF), False otherwise.
+    """
+    if snapshot.source != "builtin":
+        return False
+    enabled = (snapshot.detail or {}).get("enabled")
+    if enabled is not None:
+        return not enabled
+    # Snapshots built without going through builtin_readiness() carry no
+    # detail["enabled"] -- fall back to the only reason the disabled
+    # built-in ever reports.
+    return snapshot.primary_reason is ReasonCode.NOT_CONFIGURED
+
+
 def aggregate_summary(snapshots: list[ReadinessSnapshot]) -> str:
     """Build a one-line hub summary across all server readiness snapshots.
 
@@ -213,21 +240,24 @@ def aggregate_summary(snapshots: list[ReadinessSnapshot]) -> str:
             the hub (any source: local, server, or builtin).
 
     Returns:
-        A human-readable summary, e.g. "2 of 4 servers ready — 1 needs
-        setup, 1 stale.", or "No MCP servers configured yet." when empty.
+        A human-readable aggregate, e.g. "2 of 4 servers ready.", or "No
+        MCP servers configured yet." when empty. An off/opt-in built-in
+        (F-051) is excluded from the ready math and noted separately.
+        F-059: no per-state breakdown ("— 1 needs setup, 1 stale") -- each
+        problem's state is already stated once, per server, in the
+        table/rail/callouts (the complete itemized list); the summary
+        keeps only the aggregate count, which those don't say.
     """
     if not snapshots:
         return "No MCP servers configured yet."
-    total = len(snapshots)
-    counts = Counter(snap.state for snap in snapshots)
-    ready = counts.get(ReadinessState.READY, 0)
-    problems = [
-        f"{count} {STATE_LABELS[state].lower()}"
-        for state, count in counts.items()
-        if state is not ReadinessState.READY and count
-    ]
-    suffix = f" — {', '.join(problems)}" if problems else ""
-    return f"{ready} of {total} servers ready{suffix}."
+    counted = [snap for snap in snapshots if not is_off_opt_in(snap)]
+    off_opt_in = len(snapshots) - len(counted)
+    if not counted:
+        return "Built-in server is off — enable it to let MCP clients use chatbook's tools."
+    total = len(counted)
+    ready = sum(1 for snap in counted if snap.state is ReadinessState.READY)
+    opt_in_note = " Built-in server is off (opt-in)." if off_opt_in else ""
+    return f"{ready} of {total} servers ready.{opt_in_note}"
 
 
 # Task 11: severity order for the overview's aggregate status badge --
@@ -251,9 +281,11 @@ def worst_state(snapshots: list[ReadinessSnapshot]) -> ReadinessState:
 
     Used to color the overview's aggregate summary badge. An empty list (no
     servers configured yet) and an all-READY list both resolve to READY --
-    there is nothing to warn about in either case.
+    there is nothing to warn about in either case. Off/opt-in snapshots
+    (the disabled built-in, F-051) are skipped for the same reason: an
+    off-by-choice server is not something to warn about.
     """
-    present = {snap.state for snap in snapshots}
+    present = {snap.state for snap in snapshots if not is_off_opt_in(snap)}
     for state in STATE_SEVERITY:
         if state in present:
             return state
@@ -302,9 +334,12 @@ def _snapshot_counts(
 # would say out loud; every surface (overview table, rail tooltip, detail
 # body) reads `snapshot.auth_display` so the plural form is derived once
 # here rather than re-humanized ad hoc at each call site.
+# F-059: the empty case is "—", the same calm placeholder the Tools/Scope
+# columns and `_count_display` use -- one spelling for "nothing" across the
+# whole overview, not "none" here and "—" there.
 def _env_auth_display(placeholder_count: int) -> str:
     if placeholder_count == 0:
-        return "none"
+        return "—"
     if placeholder_count == 1:
         return "1 env var"
     return f"{placeholder_count} env vars"
@@ -548,7 +583,13 @@ def builtin_readiness(
         message = "Served over stdio when an MCP client launches chatbook."
     else:
         reasons = (ReasonCode.NOT_CONFIGURED,)
-        message = "Disabled in config ([mcp].enabled = false)."
+        # F-050: the one-line message is short, plain copy -- the
+        # Servers-mode callout renders "{glyph} {label}: {message}" on a
+        # single compact-Button row, so config-file syntax here both
+        # clipped mid-sentence and read as jargon. The technical detail
+        # stays available under detail["technical_detail"] for the
+        # callout's tooltip.
+        message = "Turned off — open to enable."
     return ReadinessSnapshot(
         server_key=BUILTIN_SERVER_KEY,
         label="tldw_chatbook (built-in)",
@@ -557,7 +598,7 @@ def builtin_readiness(
         reasons=reasons,
         message=message,
         transport="stdio",
-        auth_display="none",
+        auth_display="—",
         scope_display="—",
         detail={
             # Task 10: stored directly rather than left for callers to
@@ -573,6 +614,11 @@ def builtin_readiness(
             "expose_resources": expose_resources,
             "expose_prompts": expose_prompts,
             "client_snippet": BUILTIN_CLIENT_SNIPPET,
+            # F-050: config-syntax detail behind the plain-language
+            # `message` above -- the callout tooltip surfaces it.
+            "technical_detail": None
+            if enabled
+            else "Disabled in config ([mcp].enabled = false).",
         },
     )
 
