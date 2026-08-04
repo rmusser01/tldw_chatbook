@@ -223,8 +223,12 @@ class MainNavigationBar(Container):
         self.call_after_refresh(self._sync_overflow_hint)
 
     def on_resize(self) -> None:
-        # The strip's overflow depends on the bar's width; the affordance
-        # follows it (F-001).
+        """Re-sync the overflow affordance when the bar's width changes.
+
+        The strip's overflow (``max_scroll_x``) is a function of the bar's
+        rendered width, so every resize re-evaluates whether the
+        "More ›" control shows (F-001).
+        """
         self._sync_overflow_hint()
 
     def _sync_overflow_hint(self) -> None:
@@ -251,9 +255,14 @@ class MainNavigationBar(Container):
             # Already at the far end: wrap so the control keeps working.
             strip.scroll_to(x=0, animate=False)
             return
-        page = max(strip.scrollable_content_region.width, 1)
+        visible_width = max(strip.scrollable_content_region.width, 1)
+        # NOTE: `scrollable_content_region` reads like "the full scrollable
+        # content" but is the VISIBLE viewport (region minus gutter and
+        # scrollbar) -- the correct page increment. The virtual content is
+        # wider by exactly max_scroll (PR #1322 review).
         strip.scroll_to(
-            x=min(strip.scroll_offset.x + page, max_scroll), animate=False
+            x=min(strip.scroll_offset.x + visible_width, max_scroll),
+            animate=False,
         )
 
     def _scroll_active_destination_into_view(self) -> None:

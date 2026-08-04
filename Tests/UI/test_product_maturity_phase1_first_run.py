@@ -136,11 +136,12 @@ async def test_clean_first_run_launches_home_and_exposes_setup_orientation(
 
             home_title = app.screen.query_one("#home-canvas-title", Static)
             primary_action = app.screen.query_one("#home-primary-action", Button)
-            nav_overflow_hint = app.screen.query_one("#nav-overflow-hint", Static)
+            nav_overflow_hint = app.screen.query_one("#nav-overflow-hint", Button)
             assert str(home_title.renderable).strip() == "Set up Console model"
             assert str(primary_action.label).strip() == "Set up Console model"
             assert str(primary_action.label).strip() != "Start in Console"
-            assert "Ctrl+P" in str(nav_overflow_hint.renderable)
+            assert "More" in str(nav_overflow_hint.label)
+            assert "Ctrl+P" in str(nav_overflow_hint.tooltip)
 
             for button_id, current_tab, screen_name, required_copy in (
                 (
@@ -208,11 +209,12 @@ async def test_clean_first_run_home_survives_supported_terminal_sizes(
             )
 
             primary_action = app.screen.query_one("#home-primary-action", Button)
-            nav_overflow_hint = app.screen.query_one("#nav-overflow-hint", Static)
+            nav_overflow_hint = app.screen.query_one("#nav-overflow-hint", Button)
             assert app.current_tab == "home"
             assert app.screen.__class__.__name__ == "HomeScreen"
             assert str(primary_action.label).strip() == "Set up Console model"
-            assert "Ctrl+P" in str(nav_overflow_hint.renderable)
+            assert "More" in str(nav_overflow_hint.label)
+            assert "Ctrl+P" in str(nav_overflow_hint.tooltip)
 
 
 @pytest.mark.asyncio

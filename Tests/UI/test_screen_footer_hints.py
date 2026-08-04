@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from textual.widgets import Static
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
@@ -25,8 +26,6 @@ from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-from textual.widgets import Static
-
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 
 

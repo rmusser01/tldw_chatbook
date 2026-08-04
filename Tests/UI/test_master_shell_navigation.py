@@ -436,3 +436,43 @@ async def test_nav_overflow_hint_pages_to_hidden_destinations_at_100_cols():
         else:
             raise AssertionError("More › never wrapped back to the start")
         assert visible(app.query_one("#nav-home", Button))
+
+
+@pytest.mark.asyncio
+async def test_more_hint_pages_by_visible_width_and_never_overscrolls():
+    """PR #1322 review: the pager's increment must be the strip's VISIBLE
+    viewport width, not the full scrollable content width, and a press
+    must never land past the end (clamped to max_scroll_x)."""
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="home")
+
+    app = TestApp()
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.1)
+
+        strip = app.query_one("#nav-destination-strip")
+        hint = app.query_one("#nav-overflow-hint", Button)
+
+        # The property the pager reads is the VIEWPORT (region minus
+        # gutter/scrollbar), not the virtual content: the content
+        # overflows it by max_scroll_x.
+        visible_width = strip.scrollable_content_region.width
+        assert visible_width == strip.region.width
+        assert strip.virtual_size.width == visible_width + strip.max_scroll_x
+        assert strip.max_scroll_x > 0
+
+        # One press advances by exactly min(visible width, remaining) --
+        # never past the end.
+        hint.press()
+        await pilot.pause(0.1)
+        expected = min(visible_width, strip.max_scroll_x)
+        assert strip.scroll_offset.x == expected
+        assert strip.scroll_offset.x <= strip.max_scroll_x
+
+        # From the end, the wrap (not another page) fires.
+        hint.press()
+        await pilot.pause(0.1)
+        assert strip.scroll_offset.x == 0
