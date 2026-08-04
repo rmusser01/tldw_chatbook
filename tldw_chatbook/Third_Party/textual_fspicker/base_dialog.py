@@ -345,6 +345,30 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
         """Show any permission error bubbled up from the directory navigator."""
         self._set_error(self.ERROR_PERMISSION_ERROR)
 
+    def check_action(
+        self, action: str, parameters: tuple[object, ...]
+    ) -> bool | None:
+        """Hide the folder shortcut on dialogs that do not offer it.
+
+        (task-2222 Qodo round) The binding is declared on the shared base,
+        so without this every picker advertised a ctrl+s that did nothing
+        -- including in the F1 help. Returning None removes it from both
+        the key map and the listing.
+
+        Args:
+            action: The action name being checked.
+            parameters: The action's parameters.
+
+        Returns:
+            ``None`` to hide the folder action when this dialog does not
+            offer it; otherwise the base class's decision.
+        """
+        if action == "select_current_folder" and not getattr(
+            self, "_offer_select_folder", False
+        ):
+            return None
+        return super().check_action(action, parameters)
+
     def action_select_current_folder(self) -> None:
         """Keyboard route to the folder affordance (task-2222)."""
         if getattr(self, "_offer_select_folder", False):

@@ -14079,10 +14079,17 @@ async def test_arming_clear_finished_disturbs_nothing_and_dead_zone_holds(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_ingest_browse_offers_select_folder_action(tmp_path):
-    """(task-2222 owner ruling) The ingest Browse dialog offers a 'Select
-    folder' action returning the directory being viewed; Open keeps
-    descending. Off by default for every other FileOpen caller."""
+async def test_ingest_browse_offers_select_folder_action(
+    tmp_path: Path,
+) -> None:
+    """Ingest Browse offers a folder action; other pickers do not.
+
+    (task-2222 owner ruling) The action returns the directory being
+    viewed, while "Open" keeps descending into directories.
+
+    Args:
+        tmp_path: pytest temporary directory fixture.
+    """
     from tldw_chatbook.Third_Party.textual_fspicker import FileOpen
 
     folder = tmp_path / "pickme"
@@ -14123,5 +14130,42 @@ async def test_ingest_browse_offers_select_folder_action(tmp_path):
         assert not list(plain.query("#select-current-folder")), (
             "the folder affordance must stay opt-in"
         )
+        plain.dismiss(None)
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_folder_shortcut_hidden_when_affordance_is_off(
+    tmp_path: Path,
+) -> None:
+    """The ctrl+s folder shortcut is hidden on pickers without the action.
+
+    (task-2222 Qodo round) The binding lives on the shared base, so an
+    unconditional declaration advertised a dead shortcut — including in
+    the F1 help — on every other dialog.
+
+    Args:
+        tmp_path: pytest temporary directory fixture.
+    """
+    from tldw_chatbook.Third_Party.textual_fspicker import FileOpen
+
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c8-bind")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        offering = FileOpen(location=str(tmp_path), offer_select_folder=True)
+        harness.push_screen(offering, lambda _r: None)
+        await pilot.pause()
+        assert offering.check_action("select_current_folder", ()) is not None
+        offering.dismiss(None)
+        await pilot.pause()
+
+        plain = FileOpen(location=str(tmp_path))
+        harness.push_screen(plain, lambda _r: None)
+        await pilot.pause()
+        assert plain.check_action("select_current_folder", ()) is None
         plain.dismiss(None)
         await pilot.pause()
