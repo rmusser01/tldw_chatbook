@@ -382,3 +382,48 @@ class TestPathErrorsAreMarked:
             result = analyze_path("https://example.com/document.pdf")
         assert result.errors
         assert result.path_invalid is False
+
+
+def test_zero_byte_files_classified_as_empty_not_importable(tmp_path):
+    """(task-2160) A 0-byte file leaves its type group at analysis time
+    and lands in ``empty_files`` -- the forecast used to promise it would
+    import and the pipeline then failed it post-commit."""
+    empty = tmp_path / "empty.txt"
+    empty.write_text("")
+    real = tmp_path / "real.txt"
+    real.write_text("content")
+
+    solo = analyze_path(str(empty))
+    assert solo.empty_files == (str(empty),)
+    assert not solo.type_groups
+    assert solo.total_files == 1
+
+    folder = analyze_path(str(tmp_path))
+    assert folder.empty_files == (str(empty),)
+    assert sorted(
+        path for files in folder.type_groups.values() for path in files
+    ) == [str(real)]
+    assert folder.total_files == 2
+
+
+def test_unstatable_files_are_not_mislabeled_empty(tmp_path, monkeypatch):
+    """(task-2160 Qodo round) A file whose stat raises must stay in its
+    type group -- the error fallback of 0 bytes used to classify it as
+    "empty" and forecast "is 0 B" for a file nobody measured."""
+    import tldw_chatbook.Library.ingest_preflight as preflight_mod
+
+    victim = tmp_path / "unreadable.txt"
+    victim.write_text("content")
+    real_probe = preflight_mod._statted_size
+
+    def failing_probe(path):
+        if path.name == "unreadable.txt":
+            return None  # what a raising stat resolves to
+        return real_probe(path)
+
+    monkeypatch.setattr(preflight_mod, "_statted_size", failing_probe)
+    result = analyze_path(str(victim))
+    assert result.empty_files == ()
+    assert [
+        path for files in result.type_groups.values() for path in files
+    ] == [str(victim)]

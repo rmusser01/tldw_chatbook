@@ -43,6 +43,7 @@ from tldw_chatbook.MCP.readiness import (
     ReadinessState,
     as_checking,
     builtin_readiness,
+    is_off_opt_in,
     local_profile_readiness,
     server_external_record_readiness,
     server_target_readiness,
@@ -208,6 +209,11 @@ _LEGACY_SECTIONS = [
     ("Governance", "governance"),
     ("Advanced", "advanced"),
 ]
+
+# F-057: terminal-width threshold (cols) below which `#mcp-hub-grid` gets
+# the `.mcp-compact` class and the triad rebalances toward the canvas (see
+# DEFAULT_CSS and its _agentic_terminal.tcss mirror).
+_COMPACT_WIDTH = 120
 
 # T5: local-profile lifecycle actions this workbench can dispatch, keyed by
 # the short verb used throughout `_in_flight_action`/notifications. Maps to
@@ -425,6 +431,27 @@ class MCPWorkbench(Container):
         height: 100%;
         min-height: 0;
     }
+    /* F-057: below ~120 cols (`.mcp-compact` on #mcp-hub-grid, toggled by
+    `on_resize`) the triad rebalances toward the canvas so the servers
+    table keeps its primary columns in-viewport; the rail/inspector take
+    narrower shares + min-widths (their content wraps/truncates honestly --
+    see #mcp-inspector-state's wrap override and MCPRail's width-aware row
+    truncation budget). Bare-harness copy; the REAL app gets the identical
+    rules from _agentic_terminal.tcss (app-tier CSS beats widget
+    DEFAULT_CSS on ties in this Textual version -- the established lockstep
+    pattern documented there). */
+    #mcp-hub-grid.mcp-compact #mcp-hub-rail {
+        width: 2fr;
+        min-width: 16;
+    }
+    #mcp-hub-grid.mcp-compact #mcp-hub-canvas {
+        width: 7fr;
+        min-width: 30;
+    }
+    #mcp-hub-grid.mcp-compact #mcp-hub-inspector {
+        width: 2fr;
+        min-width: 20;
+    }
     """
 
     def __init__(self, app_instance: Any = None, **kwargs: Any) -> None:
@@ -433,6 +460,10 @@ class MCPWorkbench(Container):
         self._active_mode = "servers"
         self._source = "local"
         self._selected_server_key: str | None = None
+        # F-054: one-shot gate for `_preselect_single_problem_on_load()` --
+        # True once the first load has had its chance to pre-select, so a
+        # later resync can never re-hijack a selection the user cleared.
+        self._did_initial_preselect: bool = False
         self._scope: str = "personal"
         self._scope_ref: str | None = None
         self._snapshots: list[ReadinessSnapshot] = []
@@ -671,7 +702,6 @@ class MCPWorkbench(Container):
 
     def on_mount(self) -> None:
         """Mount now, load after (TASK-1320).
-
         This is deliberately SYNCHRONOUS. Textual awaits a widget's `on_mount`
         as part of mounting, and the app awaits the whole mount inside its own
         `NavigateToScreen` handler -- so awaiting the service here awaited it on
@@ -705,6 +735,31 @@ class MCPWorkbench(Container):
         # Vertical(id='mcp-perm-server-profiles') is mounted"). Deferring one
         # refresh puts the load after the subtree has settled.
         self.call_after_refresh(self._start_initial_load)
+        # F-057: set the initial compact-mode class once the first layout
+        # gives the grid a real width (`on_resize` keeps it current after).
+        self.call_after_refresh(self._sync_compact_class)
+
+    def on_resize(self) -> None:
+        """F-057: keep the compact-mode class in step with the grid's width."""
+        self._sync_compact_class()
+
+    def _sync_compact_class(self) -> None:
+        """Toggle `.mcp-compact` on `#mcp-hub-grid` below ~120 cols (F-057).
+
+        The class drives the triad-rebalancing rules in DEFAULT_CSS (and
+        their _agentic_terminal.tcss mirror): narrower rail/inspector
+        shares so the canvas keeps its primary columns in-viewport. Width
+        0 (pre-layout) means "not compact" -- the full triad renders first
+        and the first real resize corrects it.
+        """
+        try:
+            grid = self.query_one("#mcp-hub-grid")
+        except Exception:
+            # Pre-compose (or a torn-down subtree during unmount) -- nothing
+            # to toggle yet; the post-mount call_after_refresh covers it.
+            return
+        width = self.size.width
+        grid.set_class(0 < width < _COMPACT_WIDTH, "mcp-compact")
 
     def _start_initial_load(self) -> None:
         """Kick off the mount-time reload once the subtree is mounted."""
@@ -793,6 +848,7 @@ class MCPWorkbench(Container):
                 except Exception as exc:
                     logger.warning(f"MCP workbench context load failed: {exc}")
             self._snapshots = await self._collect_snapshots()
+            self._preselect_single_problem_on_load()
             await self._sync_children()
             self._rebind_inspector_advanced_context(service)
         finally:
@@ -802,6 +858,35 @@ class MCPWorkbench(Container):
         # flight (see `set_initial_view_state()`), so it is applied exactly
         # once and always after this reload's own `_sync_children()`.
         await self._consume_pending_view_state()
+
+    def _preselect_single_problem_on_load(self) -> None:
+        """Pre-select the one problem server on the workbench's first load (F-054).
+
+        When nothing is selected and exactly one server needs attention,
+        the inspector should open on what's wrong and what you can do
+        instead of dead space. Guarded to run at most once per mount
+        (`_did_initial_preselect`) so a later resync (lifecycle
+        completions, background refreshes) can never re-hijack a selection
+        the user deliberately cleared -- and a restored view state
+        (`_consume_pending_view_state()`, applied after this reload's sync)
+        still wins over the heuristic, since that is explicit user state.
+
+        "Problem" mirrors the Servers-mode recovery-callout definition:
+        any state other than READY/CHECKING, excluding the off/opt-in
+        built-in (`is_off_opt_in`, F-051) -- an off-by-choice server is not
+        a problem to land on.
+        """
+        if self._did_initial_preselect or self._selected_server_key is not None:
+            return
+        self._did_initial_preselect = True
+        problems = [
+            snap
+            for snap in self._snapshots
+            if snap.state not in (ReadinessState.READY, ReadinessState.CHECKING)
+            and not is_off_opt_in(snap)
+        ]
+        if len(problems) == 1:
+            self._selected_server_key = problems[0].server_key
 
     def _selected_target_id(self) -> str | None:
         """The server-target id implied by `_selected_server_key`.
@@ -2189,9 +2274,17 @@ class MCPWorkbench(Container):
         # chip highlight -- set_mode() itself posts ModeChanged on any
         # actual change (single emission point), so no extra post here.
         self.set_mode(str(state.get("mode") or "servers"))
-        server_key = state.get("selected_server_key")
-        if isinstance(server_key, str) and self._snapshot_for(server_key) is not None:
-            self._selected_server_key = server_key
+        # Distinguish "key absent" (leave the current selection alone --
+        # e.g. the F-054 lone-problem preselect) from "key present with
+        # value None" (an explicit "All servers" clear from the previous
+        # session, which must win over the preselect). Mirrors the
+        # `scope_ref` handling below.
+        if "selected_server_key" in state:
+            server_key = state["selected_server_key"]
+            if server_key is None:
+                self._selected_server_key = None
+            elif isinstance(server_key, str) and self._snapshot_for(server_key) is not None:
+                self._selected_server_key = server_key
         scope = state.get("scope") or state.get("selected_scope")
         if isinstance(scope, str) and scope:
             self._scope = scope
@@ -2937,8 +3030,8 @@ class MCPWorkbench(Container):
 
     async def open_test_for_selected_tool(self) -> None:
         """T8: entry point for the `t` keybinding (mcp_screen.py's
-        `action_mcp_test_tool`) -- switch to Tools mode and open the Test
-        Tool panel for whatever tool the inspector currently has selected.
+        `action_mcp_test_tool`) -- open the Test Tool panel for whatever
+        tool the inspector currently has selected.
 
         Mirrors `open_add_server_form()`'s T13 rationale for a keybinding
         that can reach a state a disabled/absent button would otherwise
@@ -2946,27 +3039,36 @@ class MCPWorkbench(Container):
         (server-source) tool -- neither has a `Test Tool` button to press --
         this notifies instead of silently no-opping. The two cases get
         distinct copy (`MCPInspector.open_test_panel()`'s three-way status
-        tells them apart): "Select a tool first." for no selection, and the
-        same "Server-source tools are display-only." copy the inline detail
-        view already shows (`mcp_inspector.py`'s `#mcp-inspector-tool-phase-
-        note` `Static`) when a tool IS selected but isn't executable --
-        "select a tool" would be actively wrong there.
+        tells them apart): "Select a tool in Tools mode first." for no
+        selection, and the same "Server-source tools are display-only."
+        copy the inline detail view already shows
+        (`mcp_inspector.py`'s `#mcp-inspector-tool-phase-note` `Static`)
+        when a tool IS selected but isn't executable -- "select a tool"
+        would be actively wrong there.
 
-        `set_mode("tools")` is a no-op once already there (no mode change
-        means `_clear_tool_view()` never fires -- see its own docstring),
-        so pressing `t` again on an already-selected tool re-opens/no-ops
-        cleanly rather than clearing the very selection it's about to test.
+        F-055: the panel is opened FIRST and the mode switch only happens
+        on success -- the old switch-first order force-landed the user in
+        Tools mode with a "Select a tool first." toast on top when nothing
+        was selected (a mode hijack for a key the footer advertised in
+        every mode). With no tool selected the active mode now stays put
+        and the hint says where the working key lives. (`set_mode("tools")`
+        is a no-op once already there -- no mode change means
+        `_clear_tool_view()` never fires, see its own docstring -- and a
+        non-None `_current_tool` only exists in Tools mode anyway, since
+        every mode change clears the tool view.)
         """
-        self.set_mode("tools")
         inspector = self.query_one(MCPInspector)
         status = await inspector.open_test_panel()
         if status == "no_tool":
-            self.app.notify("Select a tool first.", severity="warning")
-        elif status == "not_executable":
+            self.app.notify("Select a tool in Tools mode first.", severity="warning")
+            return
+        if status == "not_executable":
             self.app.notify(
                 "Server-source tools are display-only.",
                 severity="information",
             )
+            return
+        self.set_mode("tools")
 
     def _resolve_test_gate(
         self, tool: HubTool | None, server_key: str, tool_name: str

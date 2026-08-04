@@ -8,6 +8,7 @@ from typing import Any
 from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.widget import Widget
@@ -16,11 +17,13 @@ from textual.widgets import Button, Checkbox, DataTable, Static
 from tldw_chatbook.MCP.readiness import (
     STATE_CSS_CLASSES,
     STATE_GLYPHS,
+    STATE_LABELS,
     HubAction,
     ReadinessSnapshot,
     ReadinessState,
     aggregate_summary,
     env_placeholder_names,
+    is_off_opt_in,
     worst_state,
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_url
@@ -39,7 +42,7 @@ _MUTATIONS_GATED_TOOLTIP = "Requires team, org, or system-admin scope."
 _IMPORT_GATED_TOOLTIP = "Import creates LOCAL server profiles — switch Source to Local."
 _IMPORT_LOCAL_TOOLTIP = "Import servers from a Claude-Desktop-style mcpServers JSON file or paste."
 
-_TABLE_COLUMNS = ("Name", "Transport", "Status", "Tools", "Auth", "Scope")
+_TABLE_COLUMNS = ("Name", "Connection", "Status", "Tools", "Auth", "Scope")
 # Task 11: the Local source never has a meaningful Scope (built-in is
 # stdio-only; local profiles are always "Personal") -- the overview table
 # omits the column entirely there instead of rendering a column of dashes.
@@ -49,6 +52,64 @@ _TABLE_COLUMNS_NO_SCOPE = _TABLE_COLUMNS[:-1]
 # table -- beyond that, a single "+N more" Static points back at the table
 # rather than growing the callout list without bound.
 _CALLOUT_CAP = 4
+
+# F-057: column drop order when the overview table is too narrow for its
+# full column set -- lowest priority first. Name/Status are never dropped
+# (identity + readiness are the table's primary content); the dropped
+# columns' facts remain one click away in the detail pane.
+_COLUMN_DROP_PRIORITY = ("Auth", "Connection")
+
+# F-058: readiness-glyph legend for the Servers overview -- one quiet dim
+# line, derived from STATE_GLYPHS/STATE_LABELS so the legend can never
+# drift from the statuses the table/rail/inspector actually render, plus
+# the ⌂ built-in marker (mcp_rail.py's row prefix), which had no
+# explanation anywhere. Mirrors Permissions mode's `#mcp-perm-legend`
+# (mcp_permissions_mode.py) in placement (after the content) and styling.
+_SERVERS_LEGEND_TEXT = " · ".join(
+    f"{glyph} {STATE_LABELS[state].lower()}" for state, glyph in STATE_GLYPHS.items()
+) + " · ⌂ built-in"
+
+
+def _fit_columns(
+    snapshots: list[ReadinessSnapshot], *, show_scope: bool, available: int
+) -> list[str]:
+    """Choose the overview table's column set for its rendered width (F-057).
+
+    Estimates each column's rendered width as its longest content string
+    (header or cell, the same plain strings the cells are built from) plus
+    DataTable's per-cell padding, and drops columns in
+    `_COLUMN_DROP_PRIORITY` order until the set fits `available`. Name and
+    Status are always kept. An unknown width (`available <= 0`, e.g. before
+    the first layout) keeps the full per-source set.
+    """
+    columns = list(_TABLE_COLUMNS if show_scope else _TABLE_COLUMNS_NO_SCOPE)
+    if available <= 0:
+        return columns
+
+    cell_text: dict[str, Any] = {
+        "Name": lambda s: s.label,
+        "Connection": lambda s: s.transport,
+        "Status": lambda s: s.badge_text(),
+        "Tools": lambda s: "—" if s.tool_count is None else str(s.tool_count),
+        "Auth": lambda s: s.auth_display,
+        "Scope": lambda s: s.scope_display,
+    }
+
+    def fits(candidate: list[str]) -> bool:
+        total = 0
+        for column in candidate:
+            longest = max(
+                [len(column)] + [len(cell_text[column](snap)) for snap in snapshots]
+            )
+            total += longest + 2  # DataTable per-cell padding
+        return total <= available
+
+    while not fits(columns) and len(columns) > 2:
+        droppable = next((c for c in _COLUMN_DROP_PRIORITY if c in columns), None)
+        if droppable is None:
+            break
+        columns.remove(droppable)
+    return columns
 
 # `_named_items_text()`'s "show at most this many names, then '+N more'"
 # cap -- pulled out to a named constant (was three inline `8` literals) so
@@ -65,6 +126,15 @@ _NAMED_ITEMS_CAP = 8
 # source of truth instead of duplicating it.
 def _readiness_kind(state: ReadinessState) -> str:
     return STATE_CSS_CLASSES[state].removeprefix("mcp-status-")
+
+
+def _callout_tooltip(snap: ReadinessSnapshot) -> str:
+    """"Open {label}." for a callout, prefixed by any technical detail the
+    snapshot carries (F-050 -- e.g. the disabled built-in's config syntax,
+    which no longer appears in the one-line callout label itself)."""
+    technical = str((snap.detail or {}).get("technical_detail") or "").strip()
+    open_line = f"Open {snap.label}."
+    return escape_markup(f"{technical} {open_line}" if technical else open_line)
 
 
 def _count_display(value: int | None) -> str:
@@ -120,6 +190,11 @@ _BUILTIN_CHECKBOX_KEYS: dict[str, str] = {
 class MCPServersMode(DataTableClickSelectMixin, Vertical):
     """Canvas for the Servers mode."""
 
+    # F-056: Escape disarms a pending delete confirmation (same path as the
+    # arm-then-confirm pair's "Keep" button) -- a destructive confirm must
+    # never require the mouse to back out of. No-op when unarmed.
+    BINDINGS = [Binding("escape", "disarm_delete", "Cancel delete", show=False)]
+
     DEFAULT_CSS = """
     MCPServersMode {
         width: 1fr;
@@ -161,8 +236,26 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
     #mcp-overview-summary-glyph {
         width: 2;
     }
+    /* F-057: let the aggregate sentence WRAP at narrow widths instead of
+    clipping mid-sentence -- the shared `.ds-status-badge` rule pins
+    `height: 1`. This override covers the bare test harnesses that never
+    load the app bundle; the REAL app gets the identical rule from
+    _agentic_terminal.tcss (app-tier CSS beats widget DEFAULT_CSS on ties
+    in this Textual version, so the bundle carries its own copy -- the
+    established lockstep pattern documented there). */
     #mcp-overview-summary {
         width: 1fr;
+        height: auto;
+        min-height: 1;
+    }
+    /* F-058: the legend is a single dimmed hint line under the overview
+    content -- mirrors `#mcp-perm-legend` (mcp_permissions_mode.py), same
+    raw `$text-muted` token rationale: this widget's unit tests mount it
+    without the app bundle where the `$ds-*` aliases are defined. */
+    #mcp-servers-legend {
+        height: auto;
+        min-height: 0;
+        color: $text-muted;
     }
     """
 
@@ -254,6 +347,29 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         # `on_button_pressed` translate a callout click back to the
         # server_key to select.
         self._callout_keys: list[str] = []
+        # F-057: the table width the current column set was fitted to
+        # (0 = never fitted) -- `on_resize` refits only on real changes.
+        self._table_width: int = 0
+
+    def on_resize(self) -> None:
+        """F-057: refit the overview's column set when the table's rendered
+        width changes (terminal resize, compact-mode rebalance). The first
+        fit at mount ran pre-layout (width 0 = full set); this is what
+        corrects it once the real width is known."""
+        table = self.query_one("#mcp-servers-table", DataTable)
+        width = table.region.width
+        if width > 0 and width != self._table_width:
+            self._table_width = width
+            self.run_worker(
+                self.update_overview(
+                    self._snapshots,
+                    source=self._source,
+                    mutations_available=self._mutations_available,
+                    mutation_target_label=self._mutation_target_label,
+                ),
+                group="mcp-overview-refit",
+                exclusive=True,
+            )
 
     def compose(self) -> ComposeResult:
         with Vertical(id="mcp-servers-overview"):
@@ -287,6 +403,9 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             table.cursor_type = "row"
             yield table
             yield Vertical(id="mcp-overview-callouts")
+            # F-058: quiet glyph legend under the overview content (mirrors
+            # Permissions mode's legend placement).
+            yield Static(_SERVERS_LEGEND_TEXT, id="mcp-servers-legend", markup=False)
         with Vertical(id="mcp-servers-detail"):
             with Horizontal(id="mcp-detail-header", classes="ds-toolbar"):
                 yield Button(
@@ -508,6 +627,16 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         glyph.add_class(STATE_CSS_CLASSES[worst])
         glyph.update(STATE_GLYPHS[worst])
         table = self.query_one("#mcp-servers-table", DataTable)
+        # F-057: remember the width this call fitted its columns to, so
+        # `on_resize` only refits when the rendered width actually changed.
+        self._table_width = table.region.width
+        # Task 11: per-source columns -- Local (built-in + local profiles)
+        # has no meaningful Scope (stdio-only / always "Personal"), so the
+        # column is omitted there rather than rendering a column of dashes.
+        # Columns are rebuilt from scratch every call (not just when the
+        # set actually changes) -- simpler than tracking the previously
+        # rendered column set, and this only runs on an actual overview
+        # resync, not per keystroke.
         # Task 11: per-source columns -- Local (built-in + local profiles)
         # has no meaningful Scope (stdio-only / always "Personal"), so the
         # column is omitted there rather than rendering a column of dashes.
@@ -516,12 +645,23 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         # rendered column set, and this only runs on an actual overview
         # resync, not per keystroke.
         show_scope = source != "local"
+        # F-057: at narrow widths the full column set overflows the
+        # viewport and the right-most columns silently vanish behind the
+        # DataTable's horizontal scroll. Drop the lowest-priority columns
+        # (Auth, then Connection) until the estimated content fits the
+        # table's current rendered width -- Name/Status always stay, and
+        # the dropped facts remain one click away in the detail pane
+        # (env/credential lines, `Connection · ...`). Unknown width (0,
+        # pre-layout) keeps the full set, matching pre-F-057 behavior.
         # Rebuilding moves the cursor to row 0 before the key-based restore
         # below puts it back; declaring the rebuild keeps that transient from
         # being read as a selection (DataTableClickSelectMixin).
         self.repopulating_table()
         table.clear(columns=True)
-        table.add_columns(*(_TABLE_COLUMNS if show_scope else _TABLE_COLUMNS_NO_SCOPE))
+        columns = _fit_columns(
+            self._snapshots, show_scope=show_scope, available=table.region.width
+        )
+        table.add_columns(*columns)
         seen_keys: set[str] = set()
         self._row_key_to_server_key = {}
         for snap in self._snapshots:
@@ -555,18 +695,43 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             # cell (glyph + word together, one string), mirroring
             # `mcp_rail.py`'s row Buttons, which already color both the
             # same way via `STATE_CSS_CLASSES`.
-            row_cells: list[Any] = [
-                Text(snap.label),
-                snap.transport,
-                state_text(snap.badge_text(), _readiness_kind(snap.state)),
-                "—" if snap.tool_count is None else str(snap.tool_count),
-                Text(snap.auth_display),
-            ]
-            if show_scope:
-                row_cells.append(Text(snap.scope_display))
-            table.add_row(*row_cells, key=row_key)
+            row_cells_by_name: dict[str, Any] = {
+                "Name": Text(snap.label),
+                "Connection": snap.transport,
+                "Status": state_text(snap.badge_text(), _readiness_kind(snap.state)),
+                "Tools": "—" if snap.tool_count is None else str(snap.tool_count),
+                "Auth": Text(snap.auth_display),
+                "Scope": Text(snap.scope_display),
+            }
+            table.add_row(
+                *(row_cells_by_name[column] for column in columns), key=row_key
+            )
         callouts = self.query_one("#mcp-overview-callouts", Vertical)
         await callouts.remove_children()
+        callout_widgets: list[Widget] = []
+        # F-051: the disabled built-in is an OFF/opt-in state, not a
+        # problem -- it never files a recovery callout. Instead it gets a
+        # calm Enable affordance whose click performs the fix directly
+        # (BuiltinFlagChanged("enabled", True), the same message the detail
+        # view's Enabled checkbox posts), rendered in the same one-line
+        # callout row style.
+        for snap in self._snapshots:
+            if not is_off_opt_in(snap):
+                continue
+            technical = str((snap.detail or {}).get("technical_detail") or "").strip()
+            enable_tooltip = (
+                f"{technical} Enable the built-in MCP server so an MCP client "
+                "can launch it."
+            ).strip()
+            callout_widgets.append(
+                Button(
+                    escape_markup(f"{snap.label} is turned off — Enable"),
+                    id="mcp-builtin-enable",
+                    classes="mcp-callout mcp-optin console-action-subdued",
+                    compact=True,
+                    tooltip=escape_markup(enable_tooltip),
+                )
+            )
         # Task 11: callouts are now actionable one-line Buttons (posting
         # ServerRowSelected straight to the problem row) instead of inert
         # Statics -- capped at _CALLOUT_CAP with a final "+N more" Static
@@ -576,20 +741,21 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             snap
             for snap in self._snapshots
             if snap.state not in (ReadinessState.READY, ReadinessState.CHECKING)
+            and not is_off_opt_in(snap)
         ]
         visible = problem_snapshots[:_CALLOUT_CAP]
         overflow = len(problem_snapshots) - len(visible)
         self._callout_keys = [snap.server_key for snap in visible]
-        callout_widgets: list[Widget] = [
+        callout_widgets.extend(
             Button(
                 escape_markup(f"{STATE_GLYPHS[snap.state]} {snap.label}: {snap.message}"),
                 id=f"mcp-callout-{index}",
                 classes="mcp-callout console-action-subdued",
                 compact=True,
-                tooltip=f"Open {escape_markup(snap.label)}.",
+                tooltip=_callout_tooltip(snap),
             )
             for index, snap in enumerate(visible)
-        ]
+        )
         if overflow > 0:
             callout_widgets.append(
                 Static(
@@ -751,6 +917,11 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         self._delete_armed = False
         await self._rebuild_detail_toolbar()
 
+    async def action_disarm_delete(self) -> None:
+        """F-056: Escape -- disarm exactly like the "Keep" button (no-op
+        when nothing is armed)."""
+        await self.disarm_delete()
+
     async def _rebuild_detail_toolbar(self) -> None:
         """Rebuild `#mcp-detail-toolbar` from `_detail_toolbar_widgets()`.
 
@@ -769,6 +940,16 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         toolbar.display = bool(widgets)
         if widgets:
             await toolbar.mount_all(widgets)
+            if self._delete_armed:
+                # F-056: arming the delete confirmation moves keyboard focus
+                # onto the SAFE option ("Keep") -- a keyboard user can back
+                # out with Enter or Escape immediately, and an accidental
+                # Enter never confirms the delete. Only the arm pair gets
+                # this (the plain Edit/Disconnect/Delete toolbar never
+                # steals focus).
+                self.call_after_refresh(
+                    self.query_one("#mcp-detail-delete-cancel", Button).focus
+                )
 
     def _builtin_toggle_widgets(self) -> list[Widget]:
         """Build the built-in detail's enable/expose Checkbox rows + note.
@@ -851,7 +1032,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             # `show_server_mutations()` instead (see
             # `MCPWorkbench._show_selected_detail()`).
             raw = detail["raw"]
-            lines.append(f"Transport · {snapshot.transport}")
+            lines.append(f"Connection · {snapshot.transport}")
             lines.append(f"Enabled · {'yes' if raw.get('enabled', True) else 'no'}")
             lines.append(f"Credentials · {snapshot.auth_display}")
             # Task 5 (MCP Hub Phase 6, §14 Advanced-opt-in compensation):
@@ -965,6 +1146,13 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             # drives via MCPRail.ServerSelected(None).
             event.stop()
             self.post_message(self.ServerRowSelected(None))
+            return
+        if button_id == "mcp-builtin-enable":
+            # F-051: the off/opt-in affordance performs the fix itself --
+            # same message the detail view's Enabled checkbox posts; the
+            # workbench persists [mcp].enabled and resyncs.
+            event.stop()
+            self.post_message(self.BuiltinFlagChanged("enabled", True))
             return
         if button_id.startswith("mcp-callout-"):
             # Task 11: actionable callout -- jump straight to the problem

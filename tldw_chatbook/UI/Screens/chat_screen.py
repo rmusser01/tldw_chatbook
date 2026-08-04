@@ -286,6 +286,7 @@ from ...Chat.console_expression_state import (
     EXPRESSION_IMAGE_STATES,
     resolve_console_expression_state,
 )
+from ...Chat.console_command_suggestions import suggestions_for_draft
 from ...Chat.console_image_view import (
     IMAGE_CACHE_MAX_ENTRIES,
     ConsoleImageRenderCache,
@@ -394,6 +395,7 @@ from ...Widgets.Console.console_image_viewer_modal import (
     ClickableAvatarBox,
     ConsoleImageViewerModal,
 )
+from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
 from ...Widgets.Console.console_context_modal import ConsoleContextModal
 from ...Widgets.Console.console_cost_modal import ConsoleCostModal
 from ...Widgets.Console.console_citation_sources_modal import (
@@ -1910,18 +1912,28 @@ class ChatScreen(BaseAppScreen):
             hands_free.controller.on_exit_request()
 
     def action_expand_collapsed_console_composer(self) -> None:
-        """Expand the hidden Console composer and return keyboard focus to it."""
+        """Expand the hidden Console composer and return keyboard focus to it.
+
+        An open slash-command popup swallows Escape first and is dismissed
+        instead, leaving the collapsed composer untouched.
+        """
         if self._console_setup_modal_blocking():
+            return
+        if self._dismiss_console_command_popup():
             return
         self._set_console_composer_collapsed(False)
 
     def action_focus_next(self) -> None:
         """Move focus to the next widget, trapping Tab inside a blocking modal.
 
+        An open slash-command popup claims Tab first: the highlighted
+        suggestion is accepted into the draft instead of moving focus.
         While the Console setup modal is blocking the workbench, this keeps
         focus cycling within the modal's own focusables instead of letting
         Tab tunnel into rail/transcript/composer controls hidden beneath it.
         """
+        if self._accept_console_command_popup():
+            return
         if self._focus_console_setup_modal_if_blocking():
             return
         self.focus_next()
@@ -2433,12 +2445,16 @@ class ChatScreen(BaseAppScreen):
     def action_focus_console_composer_home(self) -> None:
         """Return keyboard focus to the Console composer (Escape, non-priority).
 
-        Deliberately not ``priority=True`` so widget-level escapes — transcript
+        An open slash-command popup claims Escape first and is dismissed
+        without moving focus. Deliberately not ``priority=True`` so
+        widget-level escapes — transcript
         selection-clear, and any pushed modal's own dismiss binding — are
         resolved first as the key event bubbles up; this screen-level action
         only fires once nothing closer to focus has claimed Escape.
         """
         if self._console_setup_modal_blocking():
+            return
+        if self._dismiss_console_command_popup():
             return
         self._focus_console_composer_if_needed(force=True)
 
@@ -3379,6 +3395,12 @@ class ChatScreen(BaseAppScreen):
         self._console_command_registry: ConsoleCommandRegistry = (
             default_console_registry()
         )
+        # Snapshot of trusted, user-invocable skills for the slash-command
+        # popup's skill entries; refreshed on mount/resume by
+        # `_refresh_console_skill_candidates`. Bare-`/skill-name` resolution
+        # was hard-removed (the `$`-mention migration), so this snapshot only
+        # feeds suggestions, which complete to `/skills <name> `.
+        self._console_skill_candidates: tuple[SkillCommandCandidate, ...] = ()
         self._console_unknown_send_armed: str | None = None
         self._console_image_view_state: ConsoleImageViewState | None = None
         self._console_image_cache: ConsoleImageRenderCache | None = None
@@ -8284,6 +8306,11 @@ class ChatScreen(BaseAppScreen):
         if collapsed:
             self._console_unknown_send_armed = None
             composer.reset_pending_unfurl()
+            # Unconditional hide (not _sync_console_command_popup): the draft
+            # may still match a completion context and would re-show it.
+            popup = self._console_command_popup_or_none()
+            if popup is not None:
+                popup.hide()
         composer.set_collapsed(collapsed)
         composer.styles.border = (
             CONSOLE_QUIET_FRAME_BORDER if collapsed else CONSOLE_FRAME_BORDER
@@ -8383,6 +8410,7 @@ class ChatScreen(BaseAppScreen):
         )
         if typed_suffix:
             composer.insert_text(typed_suffix)
+        self._sync_console_command_popup()
         self._console_visible_draft_session_id = active_session_id
 
     def _build_console_control_state(
@@ -15390,6 +15418,7 @@ class ChatScreen(BaseAppScreen):
                 except KeyError:
                     pass
             yield self._frame_console_region(composer)
+            yield ConsoleCommandPopup()
             # Console-scoped first-run blocker. Sits on a dedicated overlay
             # layer over the whole Console shell so the workbench (rail,
             # transcript, tabs, composer) is covered/inert while setup is
@@ -15452,6 +15481,7 @@ class ChatScreen(BaseAppScreen):
         self.call_after_refresh(self._sync_native_console_chat_ui)
         self.call_after_refresh(self._restore_console_workbench_focus)
         self.set_timer(0.2, self._restore_console_workbench_focus)
+        self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
 
     def _notify_console_fleet_teardown_if_any(self) -> None:
         """One-shot toast reporting a fleet the LAST Console instance lost.
@@ -16621,6 +16651,7 @@ class ChatScreen(BaseAppScreen):
                 else:
                     if not composer.draft_text().strip():
                         composer.load_draft(suggested_prompt)
+                        self._sync_console_command_popup()
 
         self.run_worker(
             self._sync_native_console_chat_ui,
@@ -17503,6 +17534,7 @@ class ChatScreen(BaseAppScreen):
             # sends that reach here without an inflight keypress stash
             # (e.g. the mouse-click Send path).
             composer.clear_history()
+            self._sync_console_command_popup()
         if result.accepted:
             # TASK-1281 review NEW-5: only an ACCEPTED send makes this
             # session's pre-send history genuinely stale -- a refusal
@@ -17561,6 +17593,7 @@ class ChatScreen(BaseAppScreen):
             self._console_inflight_send_stashes.pop(session_id, None)
         elif composer is not None and active_session_id == session_id:
             composer.clear_draft()
+            self._sync_console_command_popup()
         # TASK-1281 review F2: this hook fires ONLY once submit_draft has
         # confirmed the turn actually proceeds (never for a blocked/refused
         # send -- see the docstring above), so every call here represents a
@@ -18189,6 +18222,7 @@ class ChatScreen(BaseAppScreen):
             composer.insert_text_as_paste(f"\n{text}")
         else:
             composer.insert_text_as_paste(text)
+        self._sync_console_command_popup()
         return True
 
     async def _consume_pending_console_prompt_insert(self) -> None:
@@ -18941,6 +18975,7 @@ class ChatScreen(BaseAppScreen):
         composer = self._console_composer_or_none()
         if composer is not None:
             composer.clear_draft()
+            self._sync_console_command_popup()
 
     async def _open_console_prompt_picker_for_apply_system(
         self, initial_query: str
@@ -19174,6 +19209,21 @@ class ChatScreen(BaseAppScreen):
             for item in (blocked or [])
             if isinstance(item, Mapping) and item.get("name")
         )
+
+    async def _refresh_console_skill_candidates(self) -> None:
+        """Refresh the cached trusted-candidate snapshot for the fallback resolver.
+
+        Called on Console mount/resume; the fallback resolver itself always
+        reads through ``self._console_skill_candidates`` via a closure, so
+        updating this attribute is all a refresh needs to do.
+        """
+        context = await self._fetch_console_skill_context()
+        self._console_skill_candidates = (
+            self._console_skill_trusted_candidates_from_context(context)
+        )
+        # Pick up newly-arrived skill entries in an open popup without
+        # waiting for the next keystroke.
+        self._sync_console_command_popup()
 
     async def _console_skill_search(self, query: str) -> list[Mapping[str, object]]:
         """Bounded, fresh-fetched trusted-skill search for the skill picker."""
@@ -21113,6 +21163,63 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_workbench_state(
             self._build_console_control_state(self._pending_console_launch_context)
         )
+        self._sync_console_command_popup()
+
+    def _console_command_popup_or_none(self) -> ConsoleCommandPopup | None:
+        try:
+            return self.query_one("#console-command-popup", ConsoleCommandPopup)
+        except QueryError:
+            return None
+
+    def _sync_console_command_popup(self) -> None:
+        """Show/hide the slash-command popup from the current composer draft."""
+        popup = self._console_command_popup_or_none()
+        if popup is None:
+            return
+        composer = self._console_composer_or_none()
+        if composer is None:
+            return
+        if composer.has_paste_segments():
+            popup.hide()
+            return
+        suggestions = suggestions_for_draft(
+            composer.draft_text(),
+            self._console_command_registry,
+            self._console_skill_candidates,
+        )
+        if not suggestions:
+            popup.hide()
+            return
+        popup.show_suggestions(suggestions)
+
+    def _dismiss_console_command_popup(self) -> bool:
+        """Hide the popup if open. Returns True when it was open."""
+        popup = self._console_command_popup_or_none()
+        if popup is None or not popup.is_open:
+            return False
+        popup.hide()
+        return True
+
+    def _accept_console_command_popup(self) -> bool:
+        """Insert the highlighted suggestion into the draft. True when accepted."""
+        popup = self._console_command_popup_or_none()
+        if popup is None or not popup.is_open:
+            return False
+        suggestion = popup.accept_selected()
+        if suggestion is None:
+            return False
+        composer = self._console_composer_or_none()
+        if composer is None:
+            return False
+        composer.load_draft(suggestion.insert_text)
+        self._sync_console_workbench_actions_from_draft()
+        return True
+
+    def on_resize(self) -> None:
+        """Keep an open command popup anchored above the composer."""
+        popup = self._console_command_popup_or_none()
+        if popup is not None and popup.is_open:
+            popup.reposition()
 
     def _console_composer_history_session_synced(self) -> bool:
         """Return whether the composer's visible session matches the active one.
@@ -21441,6 +21548,23 @@ class ChatScreen(BaseAppScreen):
             hands_free.controller.on_composer_key()
         if not self._should_capture_console_input(composer):
             return
+        popup = self._console_command_popup_or_none()
+        if popup is not None and popup.is_open:
+            if event.key == "up":
+                popup.move_highlight(-1)
+                event.stop()
+                event.prevent_default()
+                return
+            if event.key == "down":
+                popup.move_highlight(1)
+                event.stop()
+                event.prevent_default()
+                return
+            if event.key == "enter":
+                self._accept_console_command_popup()
+                event.stop()
+                event.prevent_default()
+                return
         if event.key in {"ctrl+a", "super+a", "cmd+a", "meta+a"}:
             composer.select_all_draft()
             event.stop()
@@ -21830,6 +21954,7 @@ class ChatScreen(BaseAppScreen):
         self.set_timer(0.15, self._consume_pending_console_prompt_insert)
         self.set_timer(0.15, self.consume_pending_console_provider_intent)
         self.call_after_refresh(self._restore_console_workbench_focus)
+        self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
         # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
 
     def set_task_resume_state(self, task_state: TaskResumeState) -> None:

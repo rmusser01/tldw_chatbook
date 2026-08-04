@@ -39,7 +39,7 @@ dependencies = [
     "chardet",
     "httpx",
     "loguru",
-    "textual>=8.0.0,<9",
+    "textual>=8.2.8,<9",
     "requests",
     "rich",
     "rich-pixels>=3.0.0",

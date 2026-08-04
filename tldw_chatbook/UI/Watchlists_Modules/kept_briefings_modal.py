@@ -86,6 +86,7 @@ from textual.widgets import Button, Select, Static
 from ...Subscriptions.briefing_cast import ScriptCastError, generate_script_from_text
 from ...Subscriptions.briefing_service import GenerationInFlightError
 from ...Widgets.confirmation_dialog import ConfirmationDialog
+from ...Widgets.prune_safe_select import PruneSafeSelect
 
 # A kept briefing's body is the identical model output `ArtifactsPane`
 # already refuses to hyperlink -- see that module's own `_MARKDOWN_
@@ -389,7 +390,7 @@ class KeptBriefingsModal(ModalScreen[None]):
                             id="kbm-cast-toolbar",
                             classes="destination-filter-strip",
                         ):
-                            yield Select(
+                            yield PruneSafeSelect(
                                 self._preset_select_options(),
                                 value=self._cast_preset_id,
                                 id="kbm-preset-select",

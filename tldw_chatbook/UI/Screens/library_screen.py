@@ -1454,6 +1454,7 @@ class LibraryScreen(BaseAppScreen):
         # (task-2015) Two-press "Clear finished": first press arms, second
         # clears; any registry mutation disarms.
         self._library_ingest_clear_finished_armed: bool = False
+        self._library_ingest_clear_finished_armed_at: float = 0.0
         # (task-2130) Durable session ledger: terminal jobs snapshotted at
         # Clear-finished time so Recent ingests (incl. failure records)
         # survives the registry removal.
@@ -14298,6 +14299,10 @@ class LibraryScreen(BaseAppScreen):
         self._update_library_ingest_dynamic_regions()
 
     @on(Button.Pressed, "#library-ingest-clear-finished")
+    #: Presses landing this soon after the arming press are the same
+    #: physical gesture (a double-click), not a decision (task-2160).
+    _CLEAR_FINISHED_DEAD_ZONE_SECONDS = 0.3
+
     def handle_library_ingest_clear_finished(self, event: Button.Pressed) -> None:
         """Clear every done+failed ingest job in one shot (L3b AB wave, B2).
 
@@ -14316,27 +14321,37 @@ class LibraryScreen(BaseAppScreen):
         # ``_handle_library_ingest_registry_changed``).
         if not self._library_ingest_clear_finished_armed:
             self._library_ingest_clear_finished_armed = True
-            self._update_library_ingest_dynamic_regions()
-            # (task-2130) The armed confirm must be seen to be answerable:
-            # with the button at the viewport's bottom edge the relabel
-            # landed off-screen and the press read as a no-op.
-            # (task-2140) With a TALL queue the panel recompose above has
-            # not laid out yet when this runs -- an immediate
-            # scroll_visible aimed at pre-refresh geometry and the pane
-            # then jumped to the queue top with the confirm below the
-            # fold. Defer the scroll until after the refresh settles, and
-            # query the button inside the callback (the recompose replaces
-            # it).
-            def _scroll_armed_confirm_into_view() -> None:
-                try:
-                    armed_button = self.query_one(
-                        "#library-ingest-clear-finished", Button
-                    )
-                except (NoMatches, QueryError):
-                    return
-                armed_button.scroll_visible()
-
-            self.call_after_refresh(_scroll_armed_confirm_into_view)
+            self._library_ingest_clear_finished_armed_at = time.monotonic()
+            # (task-2160) Arming changes ONLY the button's label, in place.
+            # Two rounds of scroll repair (2130's immediate scroll_visible,
+            # 2140's call_after_refresh) both lost to the queue-panel
+            # recompose yanking a tall queue's viewport to its top -- the
+            # cure is to not disturb layout at all: no recompose, no
+            # scroll, the confirm appears under the finger that armed it.
+            try:
+                armed_button = self.query_one(
+                    "#library-ingest-clear-finished", Button
+                )
+            except (NoMatches, QueryError):
+                self._update_library_ingest_dynamic_regions()
+            else:
+                armed_button.label = self._build_library_ingest_state(
+                ).queue_clear_finished_label
+                # The label got longer; without a layout pass the
+                # auto-width compact button keeps its old width and clips
+                # the confirm copy (live-caught: "Press again to").
+                armed_button.refresh(layout=True)
+            return
+        # (task-2160) Double-click protection: a press landing within the
+        # dead zone of the arming press is the same gesture, not a
+        # decision -- ignore it (stays armed).
+        armed_at = getattr(
+            self, "_library_ingest_clear_finished_armed_at", 0.0
+        )
+        if (
+            time.monotonic() - armed_at
+            < self._CLEAR_FINISHED_DEAD_ZONE_SECONDS
+        ):
             return
         self._library_ingest_clear_finished_armed = False
         self._library_ingest_expanded_details.clear()

@@ -12,6 +12,7 @@ from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Input, Select, Static
 from textual.widgets.data_table import CellDoesNotExist, ColumnKey
 
+from ...Widgets.prune_safe_select import PruneSafeSelect
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .table_selection import highlight_is_user_driven
 
@@ -109,7 +110,7 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
                 value=self.search_query,
                 compact=True,
             )
-            yield Select(
+            yield PruneSafeSelect(
                 self._STATUS_OPTIONS,
                 value=self.status_filter,
                 id="items-status-select",

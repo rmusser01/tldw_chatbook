@@ -1765,6 +1765,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_appearance_defaults = False
         self._syncing_storage_defaults = False
         self._active_settings_field_id: str | None = None
+        self._domain_group_expanded = False
         #: Task 3 (541 v2 UX AC3): the last-expanded Library/RAG Collapsible
         #: group (a key into `_RAG_GROUP_GUIDANCE`, e.g. "chunking"), used by
         #: `_rag_field_guidance_rows()` as the fallback scope when no RAG
@@ -4242,11 +4243,16 @@ class SettingsScreen(BaseAppScreen):
         query = self._category_search_text()
         for group_title, category_ids in self._category_groups():
             group_visible = False
+            is_domain_group = group_title == self.DOMAIN_DEFAULTS_GROUP_TITLE
+            group_expanded = (
+                not is_domain_group or bool(query) or self._domain_group_is_expanded()
+            )
             for category_id in category_ids:
                 summary = summaries_by_id[category_id]
                 rank = self._category_search_rank(summary)
-                is_visible = rank is not None
-                group_visible = group_visible or is_visible
+                matches = rank is not None
+                group_visible = group_visible or matches
+                is_visible = matches and group_expanded
                 visible_count += int(is_visible)
                 try:
                     button = self.query_one(
@@ -4264,9 +4270,12 @@ class SettingsScreen(BaseAppScreen):
                 except QueryError:
                     pass
             try:
-                self.query_one(
-                    f"#{self._category_group_dom_id(group_title)}", Static
-                ).display = group_visible
+                group_heading = self.query_one(
+                    f"#{self._category_group_dom_id(group_title)}"
+                )
+                group_heading.display = group_visible
+                if is_domain_group and isinstance(group_heading, Button):
+                    group_heading.label = self._domain_group_toggle_label()
             except QueryError:
                 pass
 
@@ -8803,27 +8812,76 @@ class SettingsScreen(BaseAppScreen):
             )
         return _INSPECTOR_GUIDANCE_FALLBACK
 
+    DOMAIN_DEFAULTS_GROUP_TITLE = "Domain Defaults"
+
+    def _domain_group_is_expanded(self) -> bool:
+        """Domain Defaults rail group visibility.
+
+        Expanded when the user toggled it open or when the active category is
+        itself a domain category (navigation, restored state, deep links).
+        """
+        if self._domain_group_expanded:
+            return True
+        try:
+            active = SettingsCategoryId(self.active_category)
+        except ValueError:
+            return False
+        return active in DOMAIN_SETTINGS_CATEGORY_IDS
+
+    def _domain_group_toggle_label(self) -> str:
+        summaries = self._category_summaries()
+        count = sum(
+            1
+            for summary in summaries
+            if summary.category in DOMAIN_SETTINGS_CATEGORY_IDS
+        )
+        # Search force-shows matching domain categories, so the indicator
+        # must reflect the EFFECTIVE visibility, not just the toggle flag.
+        expanded = self._domain_group_is_expanded() or bool(
+            self._category_search_text()
+        )
+        indicator = "▾" if expanded else "▸"
+        return f"{self.DOMAIN_DEFAULTS_GROUP_TITLE} {indicator} ({count})"
+
     def _render_category_buttons(self) -> ComposeResult:
         summaries_by_id = {
             summary.category: summary for summary in self._category_summaries()
         }
         visible_count = 0
+        search_active = bool(self._category_search_text())
         for group_title, category_ids in self._category_groups():
             visible_categories = tuple(
                 category_id
                 for category_id in category_ids
                 if self._category_matches_search(summaries_by_id[category_id])
             )
-            group_heading = Static(
-                group_title,
-                id=self._category_group_dom_id(group_title),
-                classes="settings-category-group-title",
-            )
+            is_domain_group = group_title == self.DOMAIN_DEFAULTS_GROUP_TITLE
+            if is_domain_group:
+                group_heading = Button(
+                    self._domain_group_toggle_label(),
+                    id=self._category_group_dom_id(group_title),
+                    classes="settings-category-group-title settings-category-group-toggle",
+                    tooltip=(
+                        "Show or hide the Domain Defaults categories "
+                        "(read-only ownership contracts)."
+                    ),
+                )
+            else:
+                group_heading = Static(
+                    group_title,
+                    id=self._category_group_dom_id(group_title),
+                    classes="settings-category-group-title",
+                )
             group_heading.display = bool(visible_categories)
             yield group_heading
+            group_expanded = (
+                not is_domain_group
+                or search_active
+                or self._domain_group_is_expanded()
+            )
             for category_id in category_ids:
                 summary = summaries_by_id[category_id]
-                is_visible = category_id in visible_categories
+                is_visible = category_id in visible_categories and group_expanded
                 visible_count += int(is_visible)
                 is_active = summary.category.value == self.active_category
                 button = Button(
@@ -12198,10 +12256,6 @@ class SettingsScreen(BaseAppScreen):
                 with Vertical(
                     id="settings-category-pane", classes="destination-workbench-pane"
                 ):
-                    yield Static(
-                        "Settings Sections",
-                        classes="destination-section settings-column-title",
-                    )
                     yield SettingsCategorySearchInput(
                         value=self.category_search_query,
                         placeholder="Filter categories (/)",
@@ -12232,10 +12286,6 @@ class SettingsScreen(BaseAppScreen):
                 # pane below.
                 detail_pane.styles.height = "100%"
                 with detail_pane:
-                    yield Static(
-                        "Preference Detail",
-                        classes="destination-section settings-column-title",
-                    )
                     # task-1716 (critique r4): ONE pinned State banner --
                     # previously each category composed its own inside the
                     # scrollable content, so the persistence badge (the
@@ -13244,6 +13294,18 @@ class SettingsScreen(BaseAppScreen):
         category_value = self._category_value_from_button(event.button)
         if category_value is not None:
             self._select_category(category_value, restore_focus=event.button.has_focus)
+
+    @on(Button.Pressed, "#settings-category-group-domain-defaults")
+    def handle_domain_group_toggle_pressed(self, event: Button.Pressed) -> None:
+        """Expand or collapse the Domain Defaults rail group.
+
+        Args:
+            event: The toggle button press; stopped so the press never
+                reaches category-selection handling.
+        """
+        event.stop()
+        self._domain_group_expanded = not self._domain_group_expanded
+        self._apply_category_search_filter()
 
     @on(Button.Pressed, ".settings-workspace-row")
     def handle_workspace_row_pressed(self, event: Button.Pressed) -> None:

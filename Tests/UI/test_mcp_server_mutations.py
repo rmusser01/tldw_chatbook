@@ -21,6 +21,33 @@ class MutationsApp(App):
     def on_mcp_server_mutations_submit_requested(self, event) -> None:
         self.posted.append((event.action, event.payload))
 
+    def on_mcp_server_mutations_cancelled(self, event) -> None:
+        self.posted.append(("cancelled", None))
+
+
+@pytest.mark.asyncio
+async def test_escape_posts_cancelled_and_initial_focus_is_first_input():
+    """F-056: Escape mirrors the mutations panel's Cancel button, and
+    opening the (add-mode) panel lands focus in its first input."""
+    app = MutationsApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.focused is app.query_one("#mcp-srv-id", Input)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.posted[-1] == ("cancelled", None)
+
+
+@pytest.mark.asyncio
+async def test_edit_mode_initial_focus_is_name_since_id_is_locked():
+    """F-056: in edit mode the server-id Input is disabled, so the Name
+    input takes the opening focus instead."""
+    record = {"server_id": "web-search", "name": "Web Search", "enabled": True}
+    app = MutationsApp(record=record)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.focused is app.query_one("#mcp-srv-name", Input)
+
 
 @pytest.mark.asyncio
 async def test_add_mode_posts_create_with_exact_payload():

@@ -12,6 +12,7 @@ import tldw_chatbook
 from tldw_chatbook.MCP.readiness import (
     STATE_CSS_CLASSES,
     STATE_GLYPHS,
+    STATE_LABELS,
     HubAction,
     ReadinessSnapshot,
     ReadinessState,
@@ -115,6 +116,26 @@ async def test_overview_renders_aggregate_table_and_callouts():
         assert len(callouts) == 1  # one problem row -> one callout
         assert "web" in str(callouts[0].label)
         assert "Missing environment variables" in str(callouts[0].label)
+
+
+@pytest.mark.asyncio
+async def test_overview_shows_readiness_glyph_legend():
+    """F-058: the Servers overview carries a one-line legend for its six
+    readiness glyphs AND the ⌂ built-in marker -- status reads as
+    recognition, not recall (mirrors Permissions mode's `#mcp-perm-legend`
+    precedent). The line is derived from STATE_GLYPHS/STATE_LABELS so a
+    future glyph/label change can't drift from it."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview([_snap("local:docs", "docs")])
+        await pilot.pause()
+        legend = str(app.query_one("#mcp-servers-legend", Static).renderable)
+        for state, glyph in STATE_GLYPHS.items():
+            assert glyph in legend
+            assert STATE_LABELS[state].lower() in legend.lower()
+        assert "⌂" in legend
+        assert "built-in" in legend
 
 
 @pytest.mark.asyncio
@@ -805,6 +826,38 @@ async def test_delete_requires_arm_then_confirm():
 
 
 @pytest.mark.asyncio
+async def test_delete_confirm_focuses_keep_and_escape_disarms():
+    """F-056: arming the delete confirmation moves keyboard focus onto the
+    safe option ("Keep"), and Escape disarms exactly like pressing it --
+    no mouse needed to back out of a destructive confirm."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        snap = _snap(
+            "local:docs",
+            "docs",
+            detail={
+                "command": "npx",
+                "args": [],
+                "env_placeholders": {},
+                "missing_env": [],
+                "discovery_snapshot": None,
+            },
+        )
+        await canvas.show_detail(snap)
+        await pilot.pause()
+        await pilot.click("#mcp-detail-delete")
+        await pilot.pause()
+        assert list(app.query("#mcp-detail-delete-confirm"))
+        assert app.focused is app.query_one("#mcp-detail-delete-cancel", Button)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not list(app.query("#mcp-detail-delete-confirm"))
+        assert list(app.query("#mcp-detail-delete"))  # disarmed
+        assert not app.events  # nothing destructive posted
+
+
+@pytest.mark.asyncio
 async def test_builtin_detail_has_no_delete_toolbar():
     app = CanvasApp()
     async with app.run_test() as pilot:
@@ -1066,6 +1119,83 @@ async def test_callout_click_posts_server_row_selected_with_its_key():
 
 
 @pytest.mark.asyncio
+async def test_off_builtin_gets_enable_affordance_not_problem_callout():
+    """F-051: the built-in server ships disabled BY CHOICE, so it is an
+    OFF/opt-in state, not a problem -- no recovery callout is filed for it.
+    Instead it gets a calm Enable affordance whose click performs the fix
+    directly (posts BuiltinFlagChanged("enabled", True), the same message
+    the detail view's Enabled checkbox sends)."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview([builtin_readiness(enabled=False)])
+        await pilot.pause()
+        assert not list(app.query("#mcp-callout-0"))
+        enable = app.query_one("#mcp-builtin-enable", Button)
+        label = str(enable.label)
+        assert "turned off" in label.lower()
+        assert "Enable" in label
+        assert "[mcp]" not in label
+        assert len(label) <= 98
+        enable.press()
+        await pilot.pause()
+        assert app.events
+        event = app.events[-1]
+        assert (event.key, event.value) == ("enabled", True)
+
+
+@pytest.mark.asyncio
+async def test_pristine_off_builtin_summary_is_calm_not_a_false_alarm():
+    """F-051: on a pristine install (only the disabled built-in), the
+    aggregate line no longer reads '0 of 1 servers ready — 1 needs setup'
+    and the summary glyph stays out of the warning state."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview([builtin_readiness(enabled=False)])
+        await pilot.pause()
+        text = str(app.query_one("#mcp-overview-summary", Static).renderable)
+        assert "needs setup" not in text
+        assert "0 of 1" not in text
+        assert "off" in text.lower()
+        glyph = app.query_one("#mcp-overview-summary-glyph", Static)
+        assert STATE_CSS_CLASSES[ReadinessState.NEEDS_SETUP] not in glyph.classes
+        assert STATE_CSS_CLASSES[ReadinessState.READY] in glyph.classes
+
+
+@pytest.mark.asyncio
+async def test_genuine_problem_still_files_callout_alongside_off_builtin():
+    """F-051: only the OFF/opt-in built-in leaves the problem path -- a real
+    problem (missing credentials) still gets its recovery callout and still
+    counts in the summary."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview(
+            [
+                builtin_readiness(enabled=False),
+                _snap(
+                    "local:web",
+                    "web",
+                    state=ReadinessState.NEEDS_SETUP,
+                    reasons=(ReasonCode.AUTH_MISSING,),
+                    message="Missing environment variables: KEY.",
+                ),
+            ]
+        )
+        await pilot.pause()
+        callout = app.query_one("#mcp-callout-0", Button)
+        assert "web" in str(callout.label)
+        assert app.query_one("#mcp-builtin-enable", Button)
+        text = str(app.query_one("#mcp-overview-summary", Static).renderable)
+        assert "0 of 1" in text
+        # F-059: the state itself is stated once -- by the callout above --
+        # not repeated as a summary breakdown.
+        assert "needs setup" not in text
+        assert "off" in text.lower()
+
+
+@pytest.mark.asyncio
 async def test_callouts_cap_at_four_with_overflow_static():
     app = CanvasApp()
     async with app.run_test() as pilot:
@@ -1112,7 +1242,7 @@ async def test_local_source_overview_omits_scope_column_and_shows_env_var_copy()
         await pilot.pause()
         table = app.query_one("#mcp-servers-table", DataTable)
         columns = [str(col.label) for col in table.ordered_columns]
-        assert columns == ["Name", "Transport", "Status", "Tools", "Auth"]
+        assert columns == ["Name", "Connection", "Status", "Tools", "Auth"]
         row0 = table.get_row_at(0)
         assert len(row0) == 5
         assert str(row0[4]) == "1 env var"
@@ -1130,7 +1260,7 @@ async def test_server_source_overview_keeps_scope_column():
         await pilot.pause()
         table = app.query_one("#mcp-servers-table", DataTable)
         columns = [str(col.label) for col in table.ordered_columns]
-        assert columns == ["Name", "Transport", "Status", "Tools", "Auth", "Scope"]
+        assert columns == ["Name", "Connection", "Status", "Tools", "Auth", "Scope"]
         row0 = table.get_row_at(0)
         assert len(row0) == 6
         assert str(row0[5]) == "Team"

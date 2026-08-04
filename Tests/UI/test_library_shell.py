@@ -9611,6 +9611,9 @@ async def test_library_shell_ingest_canvas_clear_finished_empties_done_and_faile
             await pilot.pause(_INGEST_POLL_INTERVAL)
         else:
             raise AssertionError("first press never armed the button")
+        # (task-2160) Step past the double-click dead zone -- this
+        # is a deliberate second press, not the same gesture.
+        screen._library_ingest_clear_finished_armed_at -= 1.0
         screen.query_one("#library-ingest-clear-finished", Button).press()
         for _ in range(_INGEST_POLL_ATTEMPTS):
             counts = harness.library_ingest_jobs.counts()
@@ -12155,6 +12158,9 @@ async def test_library_ingest_clear_finished_requires_second_press(tmp_path):
             "first press must arm, not clear"
         )
 
+        # (task-2160) Step past the double-click dead zone -- this
+        # is a deliberate second press, not the same gesture.
+        screen._library_ingest_clear_finished_armed_at -= 1.0
         screen.query_one("#library-ingest-clear-finished", Button).press()
         for _ in range(_INGEST_POLL_ATTEMPTS):
             if harness.library_ingest_jobs.counts()["done"] == 0:
@@ -13357,6 +13363,9 @@ async def test_clear_finished_keeps_recent_ledger_and_scrolls_confirm(tmp_path):
         armed = screen.query_one("#library-ingest-clear-finished", Button)
         assert "Press again" in str(armed.label)
 
+        # (task-2160) Step past the double-click dead zone -- deliberate
+        # second press, not the same gesture.
+        screen._library_ingest_clear_finished_armed_at -= 1.0
         armed.press()
         await pilot.pause()
         await pilot.pause()
@@ -13491,4 +13500,69 @@ async def test_start_click_immediately_after_typing_submits(tmp_path):
             await pilot.pause(_INGEST_POLL_INTERVAL)
         assert harness.library_ingest_jobs.jobs(), (
             "first Start click after typing did not submit"
+        )
+
+
+@pytest.mark.asyncio
+async def test_arming_clear_finished_disturbs_nothing_and_dead_zone_holds(tmp_path):
+    """(task-2160) Arming changes ONLY the button label in place: no queue
+    recompose (widget identity holds), no scroll disturbance -- two rounds
+    of scroll repair lost to the recompose yank; the cure is not moving
+    anything. A press inside the ~300ms dead zone must not confirm."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c6-arm")
+    harness = _LibraryIngestCanvasHarness(db)
+    staged = tmp_path / "one.txt"
+    staged.write_text("hello")
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        job = harness.submit_library_ingest_job(source_path=str(staged))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            states = {j.job_id: j.state for j in harness.library_ingest_jobs.jobs()}
+            if states.get(job.job_id) == IngestJobState.DONE:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("job never completed")
+
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-clear-finished")
+
+        from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+            LibraryIngestCanvas,
+        )
+
+        canvas = screen.query_one(LibraryIngestCanvas)
+        canvas.scroll_end(animate=False)
+        await pilot.pause()
+        scroll_before = canvas.scroll_offset
+        button = screen.query_one("#library-ingest-clear-finished", Button)
+
+        button.press()
+        await pilot.pause()
+        after = screen.query_one("#library-ingest-clear-finished", Button)
+        assert after is button, "arming recomposed the queue panel"
+        assert "Press again" in str(after.label)
+        assert canvas.scroll_offset == scroll_before, (
+            "arming disturbed the canvas scroll"
+        )
+
+        # Dead zone: an immediate second press (same double-click gesture)
+        # must NOT confirm -- the queue survives, still armed.
+        after.press()
+        await pilot.pause()
+        assert harness.library_ingest_jobs.jobs(), (
+            "a press inside the dead zone confirmed the destructive clear"
+        )
+
+        # Past the dead zone the second press clears.
+        screen._library_ingest_clear_finished_armed_at -= 1.0
+        after.press()
+        await pilot.pause()
+        await pilot.pause()
+        assert not harness.library_ingest_jobs.jobs()
+        assert screen._build_library_ingest_state().recent_jobs, (
+            "ledger must survive the confirmed clear"
         )

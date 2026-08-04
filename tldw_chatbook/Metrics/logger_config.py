@@ -33,7 +33,18 @@ def setup_logger(
     """
 
     logger.remove()
-    logger.add(sys.stdout, level=log_level.upper(), format=console_format)
+    # task-2119 (security): explicit diagnose=False, backtrace=True -- see
+    # Logging_Config.py's matching sink for the full rationale. This sink is
+    # not known to be live in production, but "not known to be a production
+    # caller" was already wrong once for this module's file sinks (see the
+    # docstring above), so it does not get to default open.
+    logger.add(
+        sys.stdout,
+        level=log_level.upper(),
+        format=console_format,
+        diagnose=False,
+        backtrace=True,
+    )
     if app_log_path is not None or metrics_log_path is not None:
         warnings.warn(
             "Legacy Loguru file sinks are disabled; use application logging.",

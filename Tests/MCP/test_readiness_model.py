@@ -13,6 +13,7 @@ from tldw_chatbook.MCP.readiness import (
     ReasonCode,
     aggregate_summary,
     as_checking,
+    builtin_readiness,
     resolve_state,
 )
 
@@ -94,8 +95,39 @@ def test_aggregate_summary_counts_states():
     ]
     summary = aggregate_summary(snaps)
     assert "2 of 4" in summary
-    assert "needs setup" in summary
+    # F-059: the per-state breakdown is gone -- per-server states are
+    # already itemized in the table/rail/callouts; the summary keeps only
+    # the aggregate ready count (genuinely different information).
+    assert "needs setup" not in summary
+    assert "stale" not in summary
     assert aggregate_summary([]) == "No MCP servers configured yet."
+
+
+def test_aggregate_summary_excludes_off_builtin_from_setup_math():
+    """F-051: the built-in server ships disabled as an opt-in, so it is not
+    part of the ready/needs-setup math -- a pristine install must not read
+    '0 of 1 servers ready — 1 needs setup'. The built-in is reported
+    separately as off, and genuine problems still count normally."""
+    off = builtin_readiness(enabled=False)
+    pristine = aggregate_summary([off])
+    assert "needs setup" not in pristine
+    assert "0 of 1" not in pristine
+    assert "off" in pristine.lower()
+
+    mixed = aggregate_summary([_snap(ReadinessState.READY), off])
+    assert "1 of 1" in mixed
+    assert "needs setup" not in mixed
+    assert "off" in mixed.lower()
+
+    problem = aggregate_summary(
+        [_snap(ReadinessState.NEEDS_SETUP, (ReasonCode.AUTH_MISSING,)), off]
+    )
+    assert "0 of 1" in problem
+    # F-059: no per-state breakdown in the summary anymore -- the problem
+    # callout/table row carries the state; the aggregate count and the
+    # off/opt-in note stay.
+    assert "needs setup" not in problem
+    assert "off" in problem.lower()
 
 
 def test_state_css_classes_complete():

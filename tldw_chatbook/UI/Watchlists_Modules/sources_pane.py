@@ -18,6 +18,7 @@ from ...Subscriptions.noise_defaults import (
     invalid_selector_message,
 )
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
+from ...Widgets.prune_safe_select import PruneSafeSelect
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .inspector_pane import CheckNowRequested, PreviewRequested
 
@@ -231,21 +232,21 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     value=self.search_query,
                     compact=True,
                 )
-                yield Select(
+                yield PruneSafeSelect(
                     self._TYPE_OPTIONS,
                     value=self.source_type_filter,
                     id="sources-type-select",
                     allow_blank=False,
                     compact=True,
                 )
-                yield Select(
+                yield PruneSafeSelect(
                     self._STATUS_OPTIONS,
                     value=self.status_filter,
                     id="sources-status-filter",
                     allow_blank=False,
                     compact=True,
                 )
-                yield Select(
+                yield PruneSafeSelect(
                     self._ACTIVE_OPTIONS,
                     value=self.active_filter,
                     id="sources-active-filter",
@@ -316,7 +317,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 # bottom -- unreachable, which is the same class of defect
                 # this task is fixing.
                 yield Horizontal(
-                    Select(
+                    PruneSafeSelect(
                         [
                             (label, value)
                             for label, value in self._TYPE_OPTIONS
@@ -343,7 +344,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                         value=self.create_draft_tags,
                         compact=True,
                     ),
-                    Select(
+                    PruneSafeSelect(
                         self._FREQUENCY_OPTIONS,
                         value=self._DEFAULT_FREQUENCY_SECONDS,
                         id="sources-create-frequency",

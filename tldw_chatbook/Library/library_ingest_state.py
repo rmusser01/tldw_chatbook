@@ -620,6 +620,7 @@ class LibraryIngestCanvasState:
     #: the gate line carries the policy and this line only names the
     #: files.
     unsupported_line: str
+    empty_line: str
     warning_lines: list[str]
     preflight_checking: bool
     expanded_type_groups: set[str]
@@ -925,14 +926,10 @@ def _build_queue_row(
         # gesturing at "missing tooling".
         lines: list[str] = []
         category = str(job.error_detail.get("category") or "").strip()
-        exception_type = str(
-            job.error_detail.get("exception_type") or ""
-        ).strip()
         if category:
-            category_line = f"Category: {category.replace('_', ' ')}"
-            if exception_type:
-                category_line += f" ({exception_type})"
-            lines.append(category_line)
+            # (task-2160) No parenthesized exception class -- it serves no
+            # user and reads as a leak ("(FileIngestionError)").
+            lines.append(f"Category: {category.replace('_', ' ')}")
         message = unwrap_ingest_error(
             str(job.error_detail.get("message") or job.error or "")
         )
@@ -1091,8 +1088,16 @@ def build_library_ingest_state(
         for job in jobs
         if job.state in (IngestJobState.DONE, IngestJobState.FAILED)
     )
+    failed_count = sum(
+        1 for job in jobs if job.state == IngestJobState.FAILED
+    )
+    # (task-2160) "finished" includes failed rows -- say so at the moment
+    # of destruction, or the user clears their failure records unknowingly.
+    failed_suffix = (
+        f" (incl. {failed_count} failed)" if failed_count else ""
+    )
     queue_clear_finished_label = (
-        f"Press again to clear {finished_count} finished"
+        f"Press again to clear {finished_count} finished{failed_suffix}"
         if clear_finished_armed
         else "Clear finished"
     )
@@ -1164,6 +1169,9 @@ def build_library_ingest_state(
     # recorded as a failure -- letting Start stay enabled invites a
     # guaranteed-failure submit. ``type_groups`` here is the post-pop dict of
     # SUPPORTED groups only.
+    empty_files = tuple(
+        getattr(active_preflight, "empty_files", ()) or ()
+    )
     nothing_importable = (
         active_preflight is not None
         and not errors
@@ -1189,11 +1197,27 @@ def build_library_ingest_state(
     if unavailable_line:
         start_quiet_line = ""
     elif nothing_importable:
-        count = len(unsupported_files) or active_preflight.total_files
-        noun = "file" if count == 1 else "files"
+        # (task-2160) Name the blockers by KIND: a solo 0-byte file used to
+        # read "1 unsupported file" via the total-files fallback.
+        blocker_parts: list[str] = []
+        if unsupported_files:
+            u = len(unsupported_files)
+            blocker_parts.append(
+                f"{u} unsupported {'file' if u == 1 else 'files'}"
+            )
+        if empty_files:
+            e = len(empty_files)
+            blocker_parts.append(
+                f"{e} empty {'file' if e == 1 else 'files'}"
+            )
+        if not blocker_parts:
+            total = active_preflight.total_files
+            blocker_parts.append(
+                f"{total} unsupported {'file' if total == 1 else 'files'}"
+            )
         start_quiet_line = (
             f"Nothing in this selection can be imported — "
-            f"{count} unsupported {noun}."
+            f"{' and '.join(blocker_parts)}."
         )
     elif option_errors:
         start_quiet_line = (
@@ -1217,7 +1241,7 @@ def build_library_ingest_state(
         match_capped = bool(
             getattr(active_preflight, "already_in_library_capped", False)
         )
-        will_fail = len(unsupported_files)
+        will_fail = len(unsupported_files) + len(empty_files)
         will_import = max(supported_total - will_match, 0)
         parts: list[str] = [f"{will_import} will import"]
         if will_match:
@@ -1261,6 +1285,25 @@ def build_library_ingest_state(
             )
     else:
         unsupported_line = ""
+
+    # (task-2160) The forecast names the 0-byte files it is certain will
+    # fail, exactly like unsupported ones -- it used to promise
+    # "1 will import" for a file it had just measured at 0 B.
+    if empty_files and not errors:
+        empty_count = len(empty_files)
+        empty_names = ", ".join(
+            PurePath(str(f)).name for f in empty_files[:3]
+        )
+        if empty_count > 3:
+            empty_names += ", ..."
+        noun = "file" if empty_count == 1 else "files"
+        verb = "is" if empty_count == 1 else "are"
+        empty_line = (
+            f"{empty_count} empty {noun} will fail — {empty_names} "
+            f"{verb} 0 B."
+        )
+    else:
+        empty_line = ""
 
     # Orientation is for an untouched form only: once there is a path or a
     # summary to read, it would just be noise above the real content.
@@ -1314,6 +1357,7 @@ def build_library_ingest_state(
         estimate_line=estimate_line,
         duplicate_line=duplicate_line,
         unsupported_line=unsupported_line,
+        empty_line=empty_line,
         warning_lines=warning_lines,
         preflight_checking=active_preflight_checking,
         expanded_type_groups=set(form.expanded_type_groups),

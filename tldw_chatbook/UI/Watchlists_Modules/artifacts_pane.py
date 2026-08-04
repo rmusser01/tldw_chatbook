@@ -61,6 +61,7 @@ from ...Subscriptions.briefing_service import (
     STATUS_FAILED,
     STATUS_GENERATING,
 )
+from ...Widgets.prune_safe_select import PruneSafeSelect
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .table_selection import highlight_is_user_driven
 
@@ -1098,7 +1099,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             with Horizontal(
                 id="artifacts-picker-toolbar", classes="destination-filter-strip"
             ):
-                yield Select(
+                yield PruneSafeSelect(
                     _MODE_OPTIONS,
                     value=self.selection_mode,
                     id="artifacts-mode-select",
@@ -1106,7 +1107,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                     compact=True,
                     tooltip="Which items go into this watchlist's next briefing.",
                 )
-                yield Select(
+                yield PruneSafeSelect(
                     self._preset_select_options(),
                     value=self.default_preset_id,
                     id="artifacts-preset-select",
@@ -1133,7 +1134,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 # cadence is not merely inert here, it SURVIVES and will
                 # resume firing the moment the flag is turned back on.
                 schedules_disabled = not self.briefing_schedules_enabled
-                yield Select(
+                yield PruneSafeSelect(
                     self._cadence_select_options(),
                     value=self.briefing_cadence_seconds,
                     id="artifacts-cadence-select",
