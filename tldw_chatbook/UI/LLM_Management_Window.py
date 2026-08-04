@@ -269,6 +269,15 @@ class LLMManagementWindow(Container):
     BINDINGS = [
         Binding("[", "prev_llm_view", "Previous view", show=False),
         Binding("]", "next_llm_view", "Next view", show=False),
+        Binding("1", "jump_view(0)", "View 1", show=False),
+        Binding("2", "jump_view(1)", "View 2", show=False),
+        Binding("3", "jump_view(2)", "View 3", show=False),
+        Binding("4", "jump_view(3)", "View 4", show=False),
+        Binding("5", "jump_view(4)", "View 5", show=False),
+        Binding("6", "jump_view(5)", "View 6", show=False),
+        Binding("7", "jump_view(6)", "View 7", show=False),
+        Binding("8", "jump_view(7)", "View 8", show=False),
+        Binding("9", "jump_view(8)", "View 9", show=False),
     ]
 
     def __init__(self, app_instance: "TldwCli", **kwargs):
@@ -482,6 +491,7 @@ class LLMManagementWindow(Container):
 
                 yield Label("Port:", classes="label")
                 yield Input(id="llamacpp-port", placeholder="8001")
+                yield Static("Default 8001 — change it if another server already uses that port.", classes="prereq-hint")
 
                 yield Label("Additional Arguments (single line):", classes="label")
                 yield Input(
@@ -569,6 +579,7 @@ class LLMManagementWindow(Container):
 
                 yield Label("Port:", classes="label")
                 yield Input(id="llamafile-port", placeholder="8000")
+                yield Static("Default 8000 — change it if another server already uses that port.", classes="prereq-hint")
 
                 yield Label("Additional Arguments (multi-line):", classes="label")
                 yield TextArea(
@@ -647,7 +658,8 @@ class LLMManagementWindow(Container):
                 yield Input(id="vllm-host", value="127.0.0.1")
 
                 yield Label("Port:", classes="label")
-                yield Input(id="vllm-port", value="8000")
+                yield Input(id="vllm-port", placeholder="8000")
+                yield Static("Default 8000 — change it if another server already uses that port.", classes="prereq-hint")
 
                 yield Label("Additional Arguments:", classes="label")
                 yield TextArea(
@@ -727,7 +739,8 @@ class LLMManagementWindow(Container):
                 yield Input(id="onnx-host", value="127.0.0.1", classes="input_field")
 
                 yield Label("Port:", classes="label")
-                yield Input(id="onnx-port", value="8004", classes="input_field")
+                yield Input(id="onnx-port", placeholder="8004", classes="input_field")
+                yield Static("Default 8004 — change it if another server already uses that port.", classes="prereq-hint")
 
                 yield Label("Additional Script Arguments:", classes="label")
                 yield TextArea(
@@ -832,7 +845,8 @@ class LLMManagementWindow(Container):
                 yield Input(id="transformers-server-host", value="127.0.0.1")
 
                 yield Label("Port:", classes="label")
-                yield Input(id="transformers-server-port", value="8003")
+                yield Input(id="transformers-server-port", placeholder="8003")
+                yield Static("Default 8003 — change it if another server already uses that port.", classes="prereq-hint")
 
                 yield Label("Additional Script Arguments:", classes="label")
                 yield TextArea(
@@ -886,7 +900,8 @@ class LLMManagementWindow(Container):
                 yield Input(id="mlx-host", value="127.0.0.1", classes="input_field")
 
                 yield Label("Port:", classes="label")
-                yield Input(id="mlx-port", value="8080", classes="input_field")
+                yield Input(id="mlx-port", placeholder="8080", classes="input_field")
+                yield Static("Default 8080 — change it if another server already uses that port.", classes="prereq-hint")
 
                 with Collapsible(
                     title="Common MLX-LM Server Arguments",
@@ -1141,6 +1156,12 @@ class LLMManagementWindow(Container):
     def action_next_llm_view(self) -> None:
         """Cycle to the next sidebar view (] key)."""
         self._cycle_view(1)
+
+    def action_jump_view(self, index: int) -> None:
+        """Jump directly to sidebar view N (digit keys 1-9)."""
+        views = list(self.view_mapping)
+        if 0 <= index < len(views):
+            self.active_view = views[index]
 
     def _cycle_view(self, step: int) -> None:
         """Move the active view through the sidebar order."""

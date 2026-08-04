@@ -175,26 +175,6 @@ class QuickTestScreen(Container):
         padding: 1;
     }
     
-    .status-message {
-        text-align: center;
-        padding: 1;
-        margin: 1 0;
-    }
-    
-    .status-message.success {
-        color: $success;
-        border: round $success;
-    }
-    
-    .status-message.error {
-        color: $error;
-        border: round $error;
-    }
-    
-    .status-message.warning {
-        color: $warning;
-        border: round $warning;
-    }
     """
 
     # Reactive properties

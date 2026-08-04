@@ -27,6 +27,17 @@ _SERVER_PROCESS_ATTRS: tuple[tuple[str, str], ...] = (
 _STATUS_REFRESH_SECONDS = 3.0
 
 
+def _probe_local_server(host: str = "127.0.0.1", port: int = 11434) -> bool:
+    """Cheap TCP probe for an externally-started Ollama server."""
+    import socket
+
+    try:
+        with socket.create_connection((host, port), timeout=0.25):
+            return True
+    except OSError:
+        return False
+
+
 class LLMScreen(BaseAppScreen):
     """
     LLM Management screen wrapper.
@@ -56,6 +67,10 @@ class LLMScreen(BaseAppScreen):
 
     def on_mount(self) -> None:
         super().on_mount()
+        self.register_footer_shortcuts(
+            source="llm",
+            shortcuts=(("1-9", "jump to view"), ("[ / ]", "cycle views")),
+        )
         self._refresh_status_chip()
         self.set_interval(_STATUS_REFRESH_SECONDS, self._refresh_status_chip)
 
@@ -78,8 +93,13 @@ class LLMScreen(BaseAppScreen):
             else:
                 label = f"{len(running)} servers running"
         else:
+            # No app-launched process: probe the default Ollama port so an
+            # externally-started server doesn't read as "nothing running".
             status = "empty"
             label = "No server running"
+            if _probe_local_server():
+                status = "running"
+                label = "Ollama detected on :11434 (external)"
         try:
             header = self.query_one("#llm-destination-header", DestinationHeader)
         except Exception:  # noqa: BLE001 - header not mounted yet

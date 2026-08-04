@@ -9068,7 +9068,10 @@ class TldwCli(
         if not button_id:
             return
 
-        self.loguru_logger.info(f"Button pressed: ID='{button_id}'")
+        # DEBUG, not INFO: every button press is interaction noise that
+        # otherwise floods the Logs screen's default views (Info+ and up
+        # hide DEBUG; the record stays available under "All").
+        self.loguru_logger.debug(f"Button pressed: ID='{button_id}'")
 
         # Screen-based navigation: let the screen handle its own buttons
         # The screen should handle its own button events

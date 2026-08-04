@@ -139,7 +139,7 @@ class SchedulesWorkbench(BaseAppScreen):
                     with Vertical(id="scheduling-list-pane"):
                         yield Static("Schedule Queue", id="scheduling-list-title")
                         yield Input(
-                            placeholder="Filter tasks…",
+                            placeholder="Filter: title, type, or status…",
                             id="scheduling-queue-filter",
                         )
                         yield DataTable(id="scheduling-task-table", cursor_type="row")
@@ -206,7 +206,11 @@ class SchedulesWorkbench(BaseAppScreen):
         self._visible_tasks = [
             task
             for task in self._tasks
-            if not text or text in task.title.lower()
+            if not text
+            or text in task.title.lower()
+            or text in _task_type_label(task).lower()
+            or text in _task_status(task).value.lower().replace("_", " ")
+            or text in _task_status(task).value.lower()
         ]
         rows: list[tuple[str, str, Text, str]] = [
             (
