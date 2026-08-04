@@ -1,7 +1,7 @@
 ---
 id: TASK-1346
 title: Watchlists tab strip diverges from the approved spec
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-29 05:30'
 labels:
