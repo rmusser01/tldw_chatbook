@@ -152,3 +152,52 @@ Tree > .tree--highlight-line {
     background: $surface-lighten-1;
     color: $text;
 }
+
+/* TASK-2300. The same app-wide focus fallback TASK-1160 opted `DataTable`
+ * out of, biting a second widget -- this time destroying content outright.
+ *
+ *     *:focus { outline: solid $ds-focus-accent; }      core/_reset.tcss
+ *
+ * An expanded `Select` moves focus to its own `SelectOverlay`
+ * (`Select._watch_expanded` -> `overlay.focus(...)`), so the overlay is
+ * ALWAYS the focused widget for the whole time it is on screen. Textual
+ * paints an `outline` OVER a widget's outermost rendered lines rather than
+ * around them, and it costs no geometry -- so those lines have to be
+ * expendable for the rule to be harmless.
+ *
+ * On a COMPACT `Select` they are not. `Select.compose` data-binds `compact`
+ * onto the overlay, and `OptionList.-textual-compact` sets
+ * `border: none !important; padding: 0`, so the overlay's box model reserves
+ * no perimeter at all: every cell of it is an option cell. The outline
+ * therefore overwrites the FIRST and LAST option rows outright and the first
+ * and last character of every row in between. Measured at 235x52 against the
+ * production stylesheet, `#items-status-select` (6 statuses, region 16x6):
+ *
+ *     with the outline            without
+ *     ┌──────────────┐            All statuses
+ *     │ew            │            New
+ *     │ead           │            Read
+ *     │ngested       │            Ingested
+ *     │gnored        │            Ignored
+ *     └──────────────┘            Error
+ *
+ * Two of six options gone, four mangled -- and for any compact Select with
+ * two options or fewer, the overlay renders as a bare box with nothing in
+ * it, which is exactly what the 2026-08-04 Watchlists UAT reported (F30).
+ *
+ * Fixed here rather than per screen, for the same reason TASK-1160 was: a
+ * bare type selector so no `Select` call site has to opt in, and Textual
+ * type selectors match subclasses (`PruneSafeSelect`'s overlay is a plain
+ * `SelectOverlay`, but the rule would follow a subclass too).
+ *
+ * Focus stays visible without the reset's cue: the overlay is only ever on
+ * screen while it holds focus, so an "is this focused" ring conveys nothing
+ * there, while the highlighted-option recolour (Textual's own
+ * `.option-list--option-highlighted`, plus the sanctioned pair above)
+ * already says which option is current. Same trade TASK-1160 made for the
+ * table cursor -- recolour content the widget already draws, never overwrite
+ * cells it needs.
+ */
+SelectOverlay:focus {
+    outline: none;
+}

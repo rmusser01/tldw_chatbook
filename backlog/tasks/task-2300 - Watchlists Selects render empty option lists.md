@@ -1,7 +1,7 @@
 ---
 id: TASK-2300
 title: Watchlists Selects render empty option lists
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-04'
 labels:
@@ -33,3 +33,19 @@ UAT findings F30 (critical), F36.
       whether PruneSafeSelect was involved), with a regression test that
       fails when option population breaks again.
 - [ ] Verified live in a real terminal, not only under pytest.
+
+## Implementation Plan
+
+1. Diagnose empirically before touching anything: mount the production
+   Watchlists screen with the production stylesheet, expand
+   `#items-status-select`, and read the compositor's painted rows (not the
+   widget's `option_count`, which can be right while the screen is wrong).
+2. Establish whether `PruneSafeSelect` is involved by measuring `_pruning` /
+   `_closing` and the overlay's option count at the moment of expansion, and
+   record the answer in the notes either way.
+3. Fix the mechanism that actually destroys the options, at the layer it
+   lives in, following the TASK-1160 precedent for the same app-wide rule.
+4. Regression test that reads the RENDERED rows through the real compositor,
+   so it fails again the moment options stop reaching the screen -- an
+   `option_count` assertion would have stayed green through this defect.
+5. Verify live in a real terminal at 235x52.
