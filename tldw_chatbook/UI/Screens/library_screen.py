@@ -4161,7 +4161,10 @@ class LibraryScreen(BaseAppScreen):
                     else:
                         yield LibraryMediaViewer(
                             build_library_media_viewer_state(
-                                self._library_media_detail
+                                self._library_media_detail,
+                                arrival_note=(
+                                    self._pop_library_media_arrival_note()
+                                ),
                             ),
                             editing=self._library_media_editing,
                             confirming_delete=self._library_media_confirming_delete,
@@ -14054,6 +14057,17 @@ class LibraryScreen(BaseAppScreen):
         """
         self.run_worker(self._open_library_item_by_id("media", str(media_id)))
 
+    #: One-shot note the media viewer surfaces on its next build --
+    #: set when navigation arrives via a dedup-matched ingest row
+    #: (task-2223: "Open in Library" on a match landed on the twin's
+    #: identity with no explanation).
+    _library_media_arrival_note: str = ""
+
+    def _pop_library_media_arrival_note(self) -> str:
+        note = self._library_media_arrival_note
+        self._library_media_arrival_note = ""
+        return note
+
     def _open_job_in_library(self, job: LibraryIngestJob) -> None:
         """Resolve a done ingest job to a media item and open it.
 
@@ -14061,6 +14075,13 @@ class LibraryScreen(BaseAppScreen):
         deduplicated and therefore has no stamped ``media_id``. Defensively
         skips fallback when the media database is unavailable.
         """
+        # Delegate to the tally's own predicate: ``progress`` is a dict
+        # with the marker under ["message"] (Qodo caught a str() check that
+        # could never match).
+        if count_duplicate_done_jobs((job,)):
+            self._library_media_arrival_note = (
+                "Matched an existing item — nothing new was imported."
+            )
         media_id = job.media_id
         if media_id is None:
             media_db = getattr(self.app_instance, "media_db", None)

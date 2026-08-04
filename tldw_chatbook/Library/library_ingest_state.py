@@ -1252,6 +1252,14 @@ def build_library_ingest_state(
         if will_fail:
             parts.append(f"{will_fail} will fail")
         commit_summary_line = " · ".join(parts)
+        # (task-2223 ruling) Zero imports + ≥1 predicted match keeps Start
+        # ENABLED (the dedup probe is capped best-effort, never a blocker)
+        # but consent becomes informed: say what starting will actually do.
+        if will_import == 0 and will_match and not will_fail:
+            start_quiet_line = (
+                "Everything here appears to already be in your Library — "
+                "starting will re-check and match, not re-import."
+            )
 
     # (task-2100) Name the unsupported files -- a count alone forces a
     # submit-and-read-the-rows round trip to learn WHICH files. When the
