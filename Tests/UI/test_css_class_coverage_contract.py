@@ -166,10 +166,6 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "query-selector handle pinned by test_home_screen.py:135 "
         "(has_class('destination-status-row')), not a style hook."
     ),
-    "library-hub-card": (
-        "plain descriptive card Static in library_screen.py; no distinct "
-        "rule, not queried."
-    ),
     "mcp-audit-subview-btn": (
         "shared base marker on the Executions/Findings toggle buttons; "
         "the active-state visual comes from the separate, styled "
