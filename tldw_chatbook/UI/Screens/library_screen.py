@@ -6057,6 +6057,19 @@ class LibraryScreen(BaseAppScreen):
         # Display-managed canvas-level bits + the gate.
         for intro in canvas.query(".library-ingest-intro"):
             intro.display = bool(new_state.intro_lines)
+        # (task-2140) The commit-summary line is canvas-level and
+        # display-managed -- update content and visibility here so a
+        # non-structural pre-flight apply (or a Clear) can never leave it
+        # unmounted or stale.
+        try:
+            commit_summary = canvas.query_one(
+                "#library-ingest-commit-summary", Static
+            )
+        except (NoMatches, QueryError):
+            pass
+        else:
+            commit_summary.update(new_state.commit_summary_line)
+            commit_summary.display = bool(new_state.commit_summary_line)
         try:
             clear_button = canvas.query_one(
                 "#library-ingest-clear-path", Button
@@ -14131,7 +14144,21 @@ class LibraryScreen(BaseAppScreen):
         if callable(dismiss):
             # Same id-based no-op safety as retry above -- ``dismiss`` only
             # ever acts on a currently-FAILED, not-yet-hidden job_id.
-            dismiss(job_id)
+            dismissed_job = dismiss(job_id)
+            # (task-2140) Dismiss was the one destructive act that erased
+            # the failure from EVERY surface with zero friction -- the
+            # dismissed record now survives in the Recent-ingests ledger,
+            # marked as dismissed.
+            if dismissed_job is not None:
+                known = {
+                    job.job_id
+                    for job in self._library_ingest_recent_ledger
+                }
+                if dismissed_job.job_id not in known:
+                    self._library_ingest_recent_ledger = [
+                        dismissed_job,
+                        *self._library_ingest_recent_ledger,
+                    ][:10]
         self._library_ingest_expanded_details.discard(job_id)
         # (task-2100) In place: the registry listener already updated the
         # queue; a trailing full recompose here yanked the scroll off the
@@ -14184,17 +14211,24 @@ class LibraryScreen(BaseAppScreen):
             self._update_library_ingest_dynamic_regions()
             # (task-2130) The armed confirm must be seen to be answerable:
             # with the button at the viewport's bottom edge the relabel
-            # landed off-screen and the press read as a no-op. The update
-            # above recomposes the queue panel, so query the CURRENT
-            # button.
-            try:
-                armed_button = self.query_one(
-                    "#library-ingest-clear-finished", Button
-                )
-            except (NoMatches, QueryError):
-                pass
-            else:
+            # landed off-screen and the press read as a no-op.
+            # (task-2140) With a TALL queue the panel recompose above has
+            # not laid out yet when this runs -- an immediate
+            # scroll_visible aimed at pre-refresh geometry and the pane
+            # then jumped to the queue top with the confirm below the
+            # fold. Defer the scroll until after the refresh settles, and
+            # query the button inside the callback (the recompose replaces
+            # it).
+            def _scroll_armed_confirm_into_view() -> None:
+                try:
+                    armed_button = self.query_one(
+                        "#library-ingest-clear-finished", Button
+                    )
+                except (NoMatches, QueryError):
+                    return
                 armed_button.scroll_visible()
+
+            self.call_after_refresh(_scroll_armed_confirm_into_view)
             return
         self._library_ingest_clear_finished_armed = False
         self._library_ingest_expanded_details.clear()

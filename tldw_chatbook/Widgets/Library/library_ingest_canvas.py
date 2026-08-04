@@ -316,8 +316,14 @@ class LibraryIngestQueuePanel(Vertical):
                 id="library-ingest-recent",
             ):
                 for job in state.recent_jobs:
+                    dismissed_suffix = (
+                        " (dismissed)"
+                        if getattr(job, "dismissed", False)
+                        else ""
+                    )
                     yield Static(
-                        f"{escape_markup(job.source_path)} — {job.state.value}",
+                        f"{escape_markup(job.source_path)} — "
+                        f"{job.state.value}{dismissed_suffix}",
                         classes="library-ingest-recent-item",
                         markup=False,
                     )
@@ -743,13 +749,21 @@ class LibraryIngestCanvas(VerticalScroll):
         # line's row when the text is empty (an auto-height empty Static
         # would collapse to 0); the screen's path-changed handler updates
         # the text in place instead of mounting/removing the widget.
-        if state.commit_summary_line:
-            yield Static(
-                state.commit_summary_line,
-                id="library-ingest-commit-summary",
-                classes="library-ingest-quiet-line",
-                markup=False,
-            )
+        # (task-2140) Always mounted, display-managed: the conditional
+        # compose reintroduced the round-3 empty-Recent bug class -- a
+        # text-only pre-flight applies via the NON-structural in-place
+        # path, which never mounts a conditionally-composed canvas-level
+        # element (PDF selections rendered the line, plain text never),
+        # and after Clear the stale line survived. The in-place updater
+        # owns its content and visibility.
+        commit_summary = Static(
+            state.commit_summary_line,
+            id="library-ingest-commit-summary",
+            classes="library-ingest-quiet-line",
+            markup=False,
+        )
+        commit_summary.display = bool(state.commit_summary_line)
+        yield commit_summary
         start_quiet_line = Static(
             state.start_quiet_line,
             id="library-ingest-start-quiet-line",

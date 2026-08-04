@@ -1524,7 +1524,9 @@ def test_expanded_details_render_unwrapped_lines_and_retry_hint():
     assert not any(
         line.startswith("Details:") for line in row.detail_lines
     ), "a Details line that repeats the summary is the round-4 P1"
-    assert any("retry can succeed" in line for line in row.detail_lines)
+    # (task-2140) Parse errors get corrupt-file advice, never network talk.
+    assert any("repair or re-export" in line for line in row.detail_lines)
+    assert not any("network" in line for line in row.detail_lines)
     assert not any("missing tooling" in line for line in row.detail_lines)
 
 
@@ -1811,3 +1813,34 @@ def test_option_errors_skip_hidden_groups_and_gated_fields():
     form.type_options["generic"] = {"chunk": False, "chunk_size": "abc"}
     gated_off = build_library_ingest_state((), form=form)
     assert gated_off.option_errors == ()
+
+
+def test_underlying_lines_skip_prefixed_restatements_of_the_row_error():
+    """(task-2140) A chain entry that merely restates the row's error
+    behind a "ClassName: " prefix must not render -- round 5 saw
+    "Underlying: FileIngestionError: <row error>" as the only detail."""
+    job = _job(
+        state=IngestJobState.FAILED,
+        source_path="/tmp/broken.pdf",
+        error="Failed to process pdf file: PDF Extraction Error.",
+        error_detail={
+            "category": "parse_error",
+            "exception_type": "FileIngestionError",
+            "message": "Failed to process pdf file: PDF Extraction Error.",
+            "chain": [
+                "FileIngestionError: Failed to process pdf file: PDF Extraction Error.",
+                "ValueError: startxref not found",
+            ],
+        },
+    )
+    state = build_library_ingest_state(
+        (job,),
+        form=LibraryIngestFormState(),
+        expanded_details={"ingest-job-1"},
+    )
+    row = state.queue_rows[0]
+    assert not any(
+        "FileIngestionError: Failed to process" in line
+        for line in row.detail_lines
+    ), "prefixed restatement of the row error leaked into the details"
+    assert "Underlying: ValueError: startxref not found" in row.detail_lines
