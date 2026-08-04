@@ -1785,6 +1785,208 @@ async def test_show_tool_result_failed_renders_status_line():
         assert "boom" in result
 
 
+# -- Task 5 (RAG-51): name the permission decision -- `decision_note` shares
+# the `#mcp-inspector-test-result-note` Static with the RAG-49 structured
+# shape's own `interpretation` line; every pre-existing call site above
+# never passes `decision_note` (default `None`), so its behavior is
+# unchanged by these additions.
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_decision_note_renders_alone_with_markup_false():
+    """A structured OK run with nothing to interpret (a non-list result)
+    shows the decision note alone in the note widget -- rendered `markup=
+    False` (the Static was mounted that way; `.update()` respects it)."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            duration_ms=50, source="local", result={"ok": True},
+            decision_note="Ran because you approved this run (the tool is set to Ask).",
+        )
+        await pilot.pause()
+        note_widget = app.query_one("#mcp-inspector-test-result-note", Static)
+        assert (
+            str(note_widget.renderable)
+            == "Ran because you approved this run (the tool is set to Ask)."
+        )
+        assert note_widget.display is True
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_decision_note_does_not_interpret_markup():
+    """`#mcp-inspector-test-result-note` was mounted `markup=False` (Task 4,
+    `_build_test_result_note_static()`) -- a decision note containing a
+    literal `[...]` must render as plain text, not be interpreted/stripped
+    as Rich markup, keeping the discipline every other result surface in
+    this method already follows even though this copy is trusted/quiet-
+    register, not user input."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            duration_ms=50, source="local", result={"ok": True},
+            decision_note="Ran because this tool is set to Allow. [bold]not styled[/bold]",
+        )
+        await pilot.pause()
+        note = str(app.query_one("#mcp-inspector-test-result-note", Static).renderable)
+        assert "[bold]" in note
+        assert note == "Ran because this tool is set to Allow. [bold]not styled[/bold]"
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_decision_note_and_interpretation_stack():
+    """Both facts present (a structured OK run with an empty-result
+    interpretation AND a decision note) stack, decision_note first, one per
+    line -- distinct, non-overwriting content in the shared note widget."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            duration_ms=50, source="local", result=[],
+            decision_note="Ran because this tool is set to Allow. From this tool's override.",
+        )
+        await pilot.pause()
+        note = str(app.query_one("#mcp-inspector-test-result-note", Static).renderable)
+        assert note == (
+            "Ran because this tool is set to Allow. From this tool's override.\n"
+            "The tool ran and returned no results."
+        )
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_decision_note_on_blocked_path():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=False,
+            text="Blocked — this tool is set to Off in Permissions.", duration_ms=0,
+            blocked=True,
+            decision_note="This tool is set to Off. From this tool's override.",
+        )
+        await pilot.pause()
+        note = str(app.query_one("#mcp-inspector-test-result-note", Static).renderable)
+        assert note == "This tool is set to Off. From this tool's override."
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("Blocked · not run")
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_decision_note_on_failed_path():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=False,
+            text="boom", duration_ms=45,
+            decision_note="Ran because this tool is set to Allow. From this tool's override.",
+        )
+        await pilot.pause()
+        note = str(app.query_one("#mcp-inspector-test-result-note", Static).renderable)
+        assert note == "Ran because this tool is set to Allow. From this tool's override."
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("Failed · 45ms")
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_no_decision_note_leaves_note_widget_hidden():
+    """Every pre-existing call site (no `decision_note` given) must keep
+    seeing the exact pre-Task-5 contract: a non-empty `interpretation`
+    shows, its absence hides the widget -- unaffected by this task."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            duration_ms=50, source="local", result={"ok": True},
+        )
+        await pilot.pause()
+        note_widget = app.query_one("#mcp-inspector-test-result-note", Static)
+        assert str(note_widget.renderable) == ""
+        assert note_widget.display is False
+
+
+# -- RAG-51 carried finding (Task 4 review): `format_duration_ms(None)` is
+# reachable via the failed/legacy-text branches now that `duration_ms`
+# defaults to `None` on the signature (RAG-49) -- both branches used to call
+# `format_duration_ms(duration_ms)` unconditionally, which raises `TypeError`
+# on `duration_ms < 1000` for `None`. Fixed via `_duration_segment()`
+# (mirrors `_summarize_tool_result()`'s own `if duration_ms is not None`
+# guard); covered directly here.
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_failed_with_duration_ms_none_does_not_crash():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=False,
+            text="boom", duration_ms=None,
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result == "Failed\nboom"
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_legacy_text_ok_with_duration_ms_none_does_not_crash():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            text="{}", duration_ms=None,
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result == "OK\n{}"
+
+
 @pytest.mark.asyncio
 async def test_show_tool_result_for_a_different_tool_is_dropped():
     """I1: a result for tool A arriving after the inspector has moved on to

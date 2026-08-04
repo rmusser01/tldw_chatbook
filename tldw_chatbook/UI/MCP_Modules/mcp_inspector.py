@@ -290,6 +290,26 @@ def format_duration_ms(duration_ms: int) -> str:
     return f"{minutes}m {seconds}s"
 
 
+def _duration_segment(duration_ms: float | None) -> str:
+    """`" · <formatted>"` when `duration_ms` is known, `""` when it isn't.
+
+    RAG-51 (PR-5 task 5) fix: `show_tool_result()`'s failed and legacy-text
+    branches used to call `format_duration_ms(duration_ms)` unconditionally
+    -- reachable with `duration_ms=None` now that the keyword defaults to
+    `None` (RAG-49), which would `TypeError` inside `format_duration_ms()`'s
+    own `duration_ms < 1000` comparison. Mirrors `_summarize_tool_result()`'s
+    own `if duration_ms is not None` guard for the structured shape's
+    segments list, just packaged for the `"Failed{seg}"`/`"OK{seg}"` prefix
+    style those two branches use instead of a segments list.
+    `format_duration_ms()` itself stays int-only (its only other caller,
+    `mcp_audit_mode.py`'s Duration column, always has a real duration) --
+    smaller to guard the two call sites than to widen that contract.
+    """
+    if duration_ms is None:
+        return ""
+    return f" · {format_duration_ms(duration_ms)}"
+
+
 # RAG-49 (PR-5 task 4): the "Raw response" Collapsible's body is capped so a
 # large tool result never blows out the Test Tool panel's layout -- the old
 # 500-char cap (a flattened single-line excerpt) is retired on this path in
@@ -1931,6 +1951,7 @@ class MCPInspector(Vertical):
         source: str | None = None,
         raw: str | None = None,
         blocked: bool = False,
+        decision_note: str | None = None,
     ) -> None:
         """Render one Test Tool run's outcome, and re-enable Run.
 
@@ -1974,6 +1995,19 @@ class MCPInspector(Vertical):
         they always use `text` (or `""` when absent) exactly as before,
         with no structured summary, interpretation, or raw Collapsible
         content -- "Failure/blocked paths keep their existing rendering".
+
+        RAG-51 (PR-5 task 5): `decision_note` (built by `MCPWorkbench`'s
+        `_decision_note()`, e.g. "Ran because you approved this run (the
+        tool is set to Ask).") names the permission decision the run
+        dispatched under. It shares the `#mcp-inspector-test-result-note`
+        Static with the structured shape's own quiet `interpretation` line
+        above -- when both are present (a structured OK run with something
+        to interpret) they stack, `decision_note` first, one per line; when
+        only one is present (every failed/blocked/legacy-text run, or a
+        structured run with nothing to interpret) that one renders alone.
+        `None` (the default -- every pre-existing call site) reproduces the
+        exact pre-Task-5 behavior: the note shows only `interpretation`, or
+        nothing.
         """
         current = self._current_tool
         if current is None or current.server_key != server_key or current.name != tool_name:
@@ -1993,13 +2027,13 @@ class MCPInspector(Vertical):
         if blocked:
             result_widget.update(f"Blocked · not run\n{text or ''}")
         elif not ok:
-            status_line = f"Failed · {format_duration_ms(duration_ms)}"
+            status_line = f"Failed{_duration_segment(duration_ms)}"
             result_widget.update(f"{status_line}\n{text or ''}")
         elif text is not None:
             # Legacy call shape: a pre-formatted body string, rendered
             # inline exactly as `show_tool_result()` always has -- no
             # structured summary, no interpretation, no raw Collapsible.
-            status_line = f"OK · {format_duration_ms(duration_ms)}"
+            status_line = f"OK{_duration_segment(duration_ms)}"
             result_widget.update(f"{status_line}\n{text}")
         else:
             status_line, interpretation = _summarize_tool_result(
@@ -2012,8 +2046,17 @@ class MCPInspector(Vertical):
         except NoMatches:
             pass
         else:
-            note_widget.update(interpretation or "")
-            note_widget.display = interpretation is not None
+            # RAG-51 (task 5): `decision_note` and `interpretation` are
+            # independent facts (why the run dispatched vs. what the result
+            # means) that share this one Static -- stack them, decision_note
+            # first, when both are present; either alone renders bare; empty
+            # hides the widget exactly like the pre-Task-5 `interpretation`-
+            # only contract did.
+            note_text = "\n".join(
+                line for line in (decision_note, interpretation) if line
+            )
+            note_widget.update(note_text)
+            note_widget.display = bool(note_text)
 
         try:
             raw_collapsible = self.query_one("#mcp-inspector-test-result-raw", Collapsible)

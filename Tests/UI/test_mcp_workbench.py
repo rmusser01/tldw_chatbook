@@ -2903,6 +2903,12 @@ class ToolTestHubService(FakeHubService):
         # `UnifiedMCPControlPlaneService.gate_tool_test_by_key()`'s "reads
         # the same store `gate_tool_test()` does" contract.
         self.gate_by_key_calls: list[tuple[str, str]] = []
+        # Task 5 (RAG-51): the `decision` kwarg `test_hub_tool()` now
+        # accepts, recorded separately from `test_calls` -- `test_calls`'s
+        # 3-tuple shape is pinned by many pre-existing assertions
+        # (`test_calls == [("local:docs", "fetch", {})]`), so the decision
+        # string goes in its own list rather than growing that tuple.
+        self.decision_calls: list[str] = []
 
     def gate_tool_test(self, tool: Any) -> EffectiveToolState:
         self.gate_calls.append((tool.server_key, tool.name))
@@ -2974,8 +2980,9 @@ class ToolTestHubService(FakeHubService):
     async def local_external_catalog(self):
         return await self.load_section("external_servers")
 
-    async def test_hub_tool(self, server_key, tool_name, arguments=None):
+    async def test_hub_tool(self, server_key, tool_name, arguments=None, *, decision="allowed"):
         self.test_calls.append((server_key, tool_name, dict(arguments or {})))
+        self.decision_calls.append(decision)
         if self.test_gate is not None:
             await self.test_gate.wait()
         if self.raise_error is not None:
@@ -3597,9 +3604,11 @@ class NoGateToolTestHubService(FakeHubService):
     def __init__(self) -> None:
         super().__init__()
         self.test_calls: list[tuple[str, str, dict]] = []
+        self.decision_calls: list[str] = []
 
-    async def test_hub_tool(self, server_key, tool_name, arguments=None):
+    async def test_hub_tool(self, server_key, tool_name, arguments=None, *, decision="allowed"):
         self.test_calls.append((server_key, tool_name, dict(arguments or {})))
+        self.decision_calls.append(decision)
         return {"ok": True}
 
 
@@ -3948,6 +3957,183 @@ async def test_gate_resolved_against_tool_from_tool_for_lookup():
         assert app.unified_mcp_service.gate_calls == [
             ("local:docs", "search"), ("local:docs", "search"),
         ]
+
+
+# -- Task 5 (RAG-51): name the permission decision, in the result and in the
+# audit log -- `_decision_note()`/`_decision_for_gate()` are pure functions
+# of `(gate, ask_approved)`, unit-tested directly below with no UI harness;
+# the dispatch-integration tests that follow confirm the workbench actually
+# captures `gate`/the ask-armed fact and threads them through
+# `_run_tool_test()` to both the inspector's result note and the service's
+# `decision` kwarg.
+
+
+def test_decision_note_allow_gate_appends_origin_sentence():
+    gate = EffectiveToolState(state="allow", origin="tool_override")
+    assert (
+        mcp_workbench_module._decision_note(gate, ask_approved=False)
+        == "Ran because this tool is set to Allow. From this tool's override."
+    )
+
+
+def test_decision_note_ask_gate_approved_omits_origin_sentence():
+    gate = EffectiveToolState(state="ask", origin="server_default")
+    assert (
+        mcp_workbench_module._decision_note(gate, ask_approved=True)
+        == "Ran because you approved this run (the tool is set to Ask)."
+    )
+
+
+def test_decision_note_off_gate_appends_origin_sentence():
+    gate = EffectiveToolState(state="deny", origin="global_default")
+    assert (
+        mcp_workbench_module._decision_note(gate, ask_approved=False)
+        == "This tool is set to Off. Inherited from the global default."
+    )
+
+
+def test_decision_note_unknown_origin_degrades_to_bare_sentence():
+    """`_resolve_test_gate()`'s synthetic fail-closed origin ("gate_error")
+    isn't a key in `_ORIGIN_SENTENCES` -- the note must still read cleanly
+    (no trailing blank space, no raise), mirroring that dict's own
+    `.get(origin, "")` + `.strip()` tolerance elsewhere in this module."""
+    gate = EffectiveToolState(state="deny", origin="gate_error")
+    assert (
+        mcp_workbench_module._decision_note(gate, ask_approved=False)
+        == "This tool is set to Off."
+    )
+
+
+def test_decision_note_no_gate_returns_none():
+    """No gate resolved at all (a service with no gate seam -- the Phase-3
+    "run immediately" case) means no note to show, not an empty string."""
+    assert mcp_workbench_module._decision_note(None, ask_approved=False) is None
+
+
+def test_decision_for_gate_ask_approved_is_approved():
+    gate = EffectiveToolState(state="ask", origin="tool_override")
+    assert mcp_workbench_module._decision_for_gate(gate, ask_approved=True) == "approved"
+
+
+def test_decision_for_gate_allow_is_allowed():
+    gate = EffectiveToolState(state="allow", origin="tool_override")
+    assert mcp_workbench_module._decision_for_gate(gate, ask_approved=False) == "allowed"
+
+
+def test_decision_for_gate_no_gate_is_allowed():
+    assert mcp_workbench_module._decision_for_gate(None, ask_approved=False) == "allowed"
+
+
+def test_decision_for_gate_ask_not_approved_is_allowed():
+    """Defensive: the real dispatch path never calls `_run_tool_test()` with
+    an "ask" gate and `ask_approved=False` (the arm-check branch in
+    `on_mcp_inspector_tool_test_requested()` returns before reaching that
+    call), but the helper itself must not misreport an unapproved Ask as
+    "approved" if ever invoked directly this way."""
+    gate = EffectiveToolState(state="ask", origin="tool_override")
+    assert mcp_workbench_module._decision_for_gate(gate, ask_approved=False) == "allowed"
+
+
+@pytest.mark.asyncio
+async def test_ask_gate_approved_run_records_approved_decision_and_shows_note():
+    """The confirming press of an Ask-gated tool test both dispatches to the
+    service AND records/renders the fact that it ran because of an
+    approval -- `decision_calls` (the `decision=` kwarg `test_hub_tool()`
+    now receives) and the result note both name it, not the pre-Task-5
+    hardcoded "allowed"."""
+    app = ToolTestApp()
+    app.unified_mcp_service.gate_state = "ask"
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")  # arms
+        await pilot.pause(0.3)
+        await pilot.click("#mcp-inspector-test-run")  # confirms
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.unified_mcp_service.test_calls == [("local:docs", "fetch", {})]
+        assert app.unified_mcp_service.decision_calls == ["approved"]
+        note = str(app.query_one("#mcp-inspector-test-result-note", Static).renderable)
+        assert note == "Ran because you approved this run (the tool is set to Ask)."
+
+
+@pytest.mark.asyncio
+async def test_allow_gate_run_shows_decision_note_with_origin_sentence():
+    app = ToolTestApp()
+    app.unified_mcp_service.gate_state = "allow"
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.unified_mcp_service.test_calls == [("local:docs", "fetch", {})]
+        assert app.unified_mcp_service.decision_calls == ["allowed"]
+        note = str(app.query_one("#mcp-inspector-test-result-note", Static).renderable)
+        assert note == "Ran because this tool is set to Allow. From this tool's override."
+
+
+@pytest.mark.asyncio
+async def test_deny_gate_blocked_run_shows_off_decision_note():
+    app = ToolTestApp()
+    app.unified_mcp_service.gate_state = "deny"
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.unified_mcp_service.test_calls == []
+        note = str(app.query_one("#mcp-inspector-test-result-note", Static).renderable)
+        assert note == "This tool is set to Off. From this tool's override."
+
+
+@pytest.mark.asyncio
+async def test_no_gate_service_records_allowed_decision_with_no_note():
+    """A service with no gate seam at all (`_resolve_test_gate()` returns
+    `None`) keeps the pre-Task-5 "allowed" decision and shows no decision
+    note -- `None` (no gate resolved) is distinct from an empty string, and
+    the note widget stays hidden exactly like it did before this task."""
+    app = NoGateToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # local:docs::a
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.unified_mcp_service.test_calls == [("local:docs", "a", {})]
+        assert app.unified_mcp_service.decision_calls == ["allowed"]
+        note_widget = app.query_one("#mcp-inspector-test-result-note", Static)
+        assert note_widget.display is False
+        assert str(note_widget.renderable) == ""
 
 
 # -- I1 (final whole-branch review): Test Tool gate must not be bypassable

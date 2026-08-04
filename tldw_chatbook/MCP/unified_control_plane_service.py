@@ -2276,13 +2276,14 @@ class UnifiedMCPControlPlaneService:
         server_key: str,
         tool_name: str,
         arguments: dict[str, Any] | None = None,
+        *,
+        decision: str = "allowed",
     ) -> dict[str, Any]:
         """Execute one tool test against a local or built-in server.
 
         Thin delegate to :meth:`execute_hub_tool` fixed to the Hub Test
-        Tool runner's semantics: ``initiator="test"``,
-        ``decision="allowed"``, and the lifecycle timeout
-        (``[mcp] hub_lifecycle_timeout_seconds`` via
+        Tool runner's semantics: ``initiator="test"`` and the lifecycle
+        timeout (``[mcp] hub_lifecycle_timeout_seconds`` via
         :meth:`_lifecycle_timeout`) rather than the chat-bridge's
         per-call timeout knob -- preserved unchanged so existing callers
         and their pinned tests keep seeing identical behavior.
@@ -2293,6 +2294,11 @@ class UnifiedMCPControlPlaneService:
                 and rejected here.
             tool_name: Name of the tool to execute.
             arguments: Tool arguments; defaults to an empty dict.
+            decision: The permission decision under which this test run
+                dispatched, recorded on the execution log (RAG-51). The
+                Hub UI passes ``"approved"`` for an Ask-gated tool the
+                user just confirmed; every other caller keeps the default
+                ``"allowed"`` this method has always recorded.
 
         Returns:
             The raw result payload from the underlying service call.
@@ -2307,7 +2313,7 @@ class UnifiedMCPControlPlaneService:
             tool_name,
             arguments,
             initiator="test",
-            decision="allowed",
+            decision=decision,
             timeout_seconds=self._lifecycle_timeout(),
         )
 
