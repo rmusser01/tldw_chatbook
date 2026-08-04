@@ -335,7 +335,10 @@ async def test_console_session_closed_mid_dispatch_notifies_instead_of_silent_sw
     `accepted=True` (so the composer-restore branch never fires) and the
     owning session no longer exists to hold a SYSTEM row. Before this fix,
     nothing told the user their message never went anywhere; now a toast
-    must."""
+    must, and (fix-round-2 I2/M2) it must be the INFORMATIVE copy -- not the
+    generic "Session closed." every other call site of this method uses --
+    since this is the one case where the user's message specifically never
+    sent."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -357,7 +360,9 @@ async def test_console_session_closed_mid_dispatch_notifies_instead_of_silent_sw
 
         await console._submit_console_native_draft("hello", closed_id)
 
-        assert any("Session closed" in note for note, _sev in notices), notices
+        assert any(
+            "before your message could send" in note for note, _sev in notices
+        ), notices
 
 
 @pytest.mark.asyncio
@@ -405,4 +410,70 @@ async def test_console_enter_no_op_press_restores_draft_and_unblocks_next_send(
         send_button.styles.display = "block"
         _press_enter_synchronously(console)
         await _wait_for_text(console, pilot, "after reenable")
+        assert composer.draft_text() == ""
+
+
+@pytest.mark.asyncio
+async def test_console_send_watchdog_recovers_stash_the_pressed_handler_never_consumed():
+    """Fix-round-2 (I3): the no-op-press check only catches the case where
+    the button is ALREADY disabled/hidden at the instant `on_key` reads it.
+    `.press()` itself just POSTS `Button.Pressed` for the message pump to
+    deliver later -- if a prune begins in the gap between that post and
+    delivery, the message is dropped and nothing ever consumes
+    `_console_pending_send_stash`, latching the duplicate-send guard shut
+    forever. The watchdog scheduled right after `.press()` is the backstop:
+    if the stash is still exactly the object it was scheduled for once the
+    window passes, nothing consumed it, so it must be recovered."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+
+        composer.load_draft("watchdog test")
+        stash = composer.stash_draft_for_send()
+        console._console_pending_send_stash = stash
+        assert composer.draft_text() == ""
+
+        # Simulate the Pressed handler never running at all (the message
+        # was dropped by a prune racing delivery) by invoking the watchdog
+        # directly -- exactly how `on_key`'s Enter branch schedules it via
+        # `set_timer`, just without waiting out the real delay.
+        console._recover_stuck_console_send_stash(stash)
+
+        assert composer.draft_text() == "watchdog test"
+        assert console._console_pending_send_stash is None
+
+
+@pytest.mark.asyncio
+async def test_console_send_watchdog_is_a_noop_once_the_stash_is_consumed():
+    """The common, non-buggy case: the Pressed handler already consumed the
+    stash (cleared the slot back to `None`) before the watchdog fires -- it
+    must not resurrect a stale draft into a composer that has since moved
+    on."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+
+        composer.load_draft("already sent")
+        stash = composer.stash_draft_for_send()
+        console._console_pending_send_stash = stash
+        # The Pressed handler runs first and consumes the slot (the normal,
+        # non-buggy path) -- simulate that here, ahead of the watchdog.
+        console._console_pending_send_stash = None
+
+        console._recover_stuck_console_send_stash(stash)
+
+        # Nothing resurrected: the composer stays exactly as the normal
+        # accept/refuse path already left it.
         assert composer.draft_text() == ""

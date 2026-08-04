@@ -17619,10 +17619,14 @@ class ChatScreen(BaseAppScreen):
             # keypress-cleared draft TO. A toast is the one surface still
             # available: without it this outcome was completely silent
             # (composer already cleared, no row, no notification).
-            self.app_instance.notify(
-                result.visible_copy or "Console session closed before your message could send.",
-                severity="warning",
-            )
+            # Fix-round-2 (I2/M2): `session_closed` is now set ONLY at the
+            # dispatch-gap call site (the OTHER ~19 `_session_closed_result`
+            # sites -- mid-run closes the user already confirmed -- leave it
+            # `False`), and that ONE site's `visible_copy` is always the
+            # informative "...before your message could send." string, not
+            # the generic "Session closed." every other site uses -- so
+            # `result.visible_copy` is used directly, with no dead fallback.
+            self.app_instance.notify(result.visible_copy, severity="warning")
         if (
             result.should_clear_draft
             and composer_visible_for_session
@@ -21621,6 +21625,14 @@ class ChatScreen(BaseAppScreen):
             if current_kind != border[0] or current_color != Color.parse(border[1]):
                 rail.styles.border = border
 
+    #: Task 4 fix-round-2 (I3): how long `_recover_stuck_console_send_stash`
+    #: waits before treating `_console_pending_send_stash` as abandoned.
+    #: `Button.press()` only POSTS `Button.Pressed`; the message pump
+    #: normally delivers and consumes it within a pump cycle or two (well
+    #: under this), so this is a generous margin against a false-positive
+    #: recovery racing the normal path, not a tight deadline.
+    _CONSOLE_SEND_PENDING_STASH_WATCHDOG_SECONDS: float = 0.75
+
     def on_key(self, event: Key) -> None:
         """Treat the Console composer as the default printable text target."""
         try:
@@ -21806,10 +21818,38 @@ class ChatScreen(BaseAppScreen):
                 # composer AND the duplicate-guard just above permanently
                 # swallows every subsequent Enter, since the stash slot
                 # never goes back to `None` on its own.
+                # Fix-round-2 (M1): this branch was itself silent -- log the
+                # button state so a recurrence is diagnosable (the reviewer's
+                # own note: the pure no-op-press hypothesis alone can't
+                # explain "a second keyboard send worked", so a log here is
+                # what would confirm or rule this mechanism out if D2
+                # resurfaces).
+                logger.warning(
+                    "Console send Enter: no-op press guard tripped "
+                    "(disabled={}, display={}) -- restoring the draft "
+                    "instead of losing it.",
+                    send_button.disabled,
+                    send_button.display,
+                )
                 self._console_pending_send_stash = None
                 composer.restore_stashed_draft(stash)
                 return
             send_button.press()
+            # Fix-round-2 (I3): `.press()` only POSTS `Button.Pressed` for
+            # the message pump to deliver later -- the check just above
+            # closes the case where `press()` itself no-ops, but NOT the
+            # narrower race where display/disabled were still fine at check
+            # time and go bad in the gap before the pump actually delivers
+            # the message (a prune beginning mid-flight). That drops the
+            # posted message with nothing to consume `_console_pending_
+            # send_stash`, latching the duplicate guard above shut forever.
+            # This watchdog is the backstop: if the stash is STILL this
+            # exact object once the window passes, nothing consumed it, so
+            # recover it instead of leaving it stuck.
+            self.set_timer(
+                self._CONSOLE_SEND_PENDING_STASH_WATCHDOG_SECONDS,
+                partial(self._recover_stuck_console_send_stash, stash),
+            )
             return
         if event.key in {"pageup", "pagedown"}:
             # TASK-348: scrollback must be keyboard-reachable. The composer
@@ -21880,6 +21920,47 @@ class ChatScreen(BaseAppScreen):
             self._dismiss_console_guidance()
             event.stop()
             event.prevent_default()
+
+    def _recover_stuck_console_send_stash(
+        self, stash: "ConsoleDraftStash | None"
+    ) -> None:
+        """Recover a keypress-captured draft `Button.Pressed` never consumed.
+
+        Task 4 fix-round-2 (I3): the Enter handler's own no-op-press check
+        (``send_button.disabled or not send_button.display`` right before
+        ``.press()``) only catches the case where the button was ALREADY
+        disabled/hidden at that instant. ``.press()`` itself just POSTS
+        ``Button.Pressed`` for the message pump to deliver later -- if the
+        button (or its composer) is pruned in the gap between that post and
+        the pump actually delivering it, the message is dropped and
+        ``handle_console_send_message``/``_send_console_message_from_
+        visible_action`` -- the ONLY code that consumes ``_console_pending_
+        send_stash`` -- never runs. Without this recovery, that leaves the
+        stash slot permanently non-``None``, and the duplicate-send guard at
+        the top of the ``"enter"`` branch swallows every subsequent Enter
+        forever (D2's exact shape, via a narrower door than the no-op-press
+        check alone closes).
+
+        Scheduled once per send via ``set_timer`` right after ``.press()``;
+        a no-op in the overwhelmingly common case where the Pressed handler
+        already consumed the slot (or a later send's own stash superseded
+        this one -- blocked from happening while this slot is still set by
+        the duplicate guard itself, but checked by identity anyway as a
+        cheap belt-and-suspenders).
+
+        Args:
+            stash: The exact stash object this watchdog was scheduled for.
+        """
+        if self._console_pending_send_stash is not stash:
+            return
+        logger.warning(
+            "Console send Enter: pending stash was never consumed by the "
+            "Pressed handler after {:.2f}s -- recovering the draft instead "
+            "of leaving the duplicate-send guard latched shut.",
+            self._CONSOLE_SEND_PENDING_STASH_WATCHDOG_SECONDS,
+        )
+        self._console_pending_send_stash = None
+        self._restore_console_send_stash(stash)
 
     def on_paste(self, event: Paste) -> None:
         """Treat pasted text as Console composer draft input by default."""

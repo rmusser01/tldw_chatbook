@@ -2436,6 +2436,7 @@ def _assert_user_citation_repair_cancel(
     store: _RecordingCitationStore,
     persistence: _ReadyCitationPersistence | None,
     initial_body: str,
+    expected_leading_system_messages: tuple[str, ...] = (),
 ) -> None:
     assistant = _assistant(store)
     assert assistant.content == initial_body
@@ -2454,8 +2455,14 @@ def _assert_user_citation_repair_cancel(
         for message in store.messages_for_session(store.active_session_id)
         if message.role is ConsoleMessageRole.SYSTEM
     ]
+    # Task 4 fix-round-2 (I1): a caller that also drove a concurrent
+    # `submit_draft` rejection through `_active_run_rejection` (now
+    # visible, unlike the five screen-wrapped methods) passes that row's
+    # copy here -- it lands BEFORE the cancel row chronologically (the
+    # rejected submit happens first, the stop/cancel afterward).
     assert [message.content for message in system_messages] == [
-        "Citation repair canceled by user."
+        *expected_leading_system_messages,
+        "Citation repair canceled by user.",
     ]
     append_call = next(
         call
@@ -2710,6 +2717,12 @@ async def test_citation_repair_stop_while_checking_cancels_before_dispatch(agent
 
     blocked = await controller.submit_draft("must stay blocked")
     assert blocked.accepted is False
+    # Task 4 fix-round-2 (I1): `submit_draft`'s OWN double-send rejection
+    # (via `_active_run_rejection(..., append_row=True)`) now leaves a
+    # visible SYSTEM row -- this is the exact "no signal at all" gap the
+    # fix closes for the send path (unlike the five screen-wrapped methods,
+    # `submit_draft` has no wrapper of its own to toast this).
+    assert blocked.visible_copy == "A run is already running in this tab."
     assert controller.run_state.is_stop_allowed is True
     assert controller.stop_active_run() is True
     result = await task
@@ -2721,6 +2734,7 @@ async def test_citation_repair_stop_while_checking_cancels_before_dispatch(agent
         store=store,
         persistence=persistence,
         initial_body=initial_body,
+        expected_leading_system_messages=("A run is already running in this tab.",),
     )
 
 
