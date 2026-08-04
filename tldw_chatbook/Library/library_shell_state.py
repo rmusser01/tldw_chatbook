@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-LIBRARY_CANVAS_LANDING_COPY = "Search, pick a content type, or ingest something new."
+LIBRARY_CANVAS_LANDING_COPY = (
+    "Search everything, pick a section on the left, or add something new."
+)
 
 LIBRARY_ROW_BROWSE_CONVERSATIONS = "browse-conversations"
 LIBRARY_ROW_BROWSE_MEDIA = "browse-media"
@@ -50,6 +52,13 @@ LIBRARY_ROW_INGEST_EXPORT = "ingest-export"
 # scope-service gating pattern (F4 design spec, "Entry points").
 LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP = "Export packages local content only."
 
+# F-018: every disabled Library action says why. The three canvas
+# "Export selected" actions share this pair -- reason while disabled,
+# action description once a selection exists (the workspaces handoff
+# button's pattern, library_screen.py `_workspace_handoff_action_state`).
+LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP = "Select one or more items to export them."
+LIBRARY_EXPORT_SELECTED_TOOLTIP = "Export the selected items."
+
 
 @dataclass(frozen=True)
 class LibraryRailRow:
@@ -75,6 +84,15 @@ class LibraryRailRow:
     count_emphasis: str = ""
     disabled: bool = False
     disabled_tooltip: str = ""
+    # F-014: one-line plain-language gloss for jargon rows (e.g. "search
+    # everything" under "Search / RAG"), rendered by the rail as a dim
+    # em-dash suffix on the same line. Empty on already-plain rows so the
+    # rail doesn't stutter.
+    subtitle: str = ""
+    # F-014: True while this row's count is still being fetched -- the
+    # rail renders a dim "(…)" placeholder (one count policy: placeholder
+    # while loading, count when known, no suffix when the source is off).
+    count_loading: bool = False
 
 
 @dataclass(frozen=True)
@@ -108,6 +126,11 @@ class LibraryShellInput:
     study_decks_count: int | None = None
     flashcards_due_count: int | None = None
     quizzes_count: int | None = None
+    # F-014: True while the local source snapshot is still in flight --
+    # every row whose count rides that snapshot renders the dim "(…)"
+    # placeholder instead of a misleading "(0)" or a blank. Collections
+    # is excluded (its count is fetched lazily on the first canvas visit).
+    counts_loading: bool = False
 
 
 @dataclass(frozen=True)
@@ -147,6 +170,8 @@ def build_library_shell_state(
             target_id="media",
             count=state.media_count,
             count_known=state.media_known,
+            subtitle="imported files & transcripts",
+            count_loading=state.counts_loading,
         ),
         LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_CONVERSATIONS,
@@ -156,6 +181,7 @@ def build_library_shell_state(
             target_id="conversations",
             count=state.conversations_count,
             count_known=state.conversations_known,
+            count_loading=state.counts_loading,
         ),
         LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_NOTES,
@@ -165,6 +191,7 @@ def build_library_shell_state(
             target_id="notes",
             count=state.notes_count,
             count_known=state.notes_known,
+            count_loading=state.counts_loading,
         ),
         LibraryRailRow(
             # Row click resolves target_id "prompts" as its canvas_kind
@@ -179,6 +206,8 @@ def build_library_shell_state(
             target_id="prompts",
             count=state.prompts_count,
             count_known=state.prompts_known,
+            subtitle="saved instructions for the AI",
+            count_loading=state.counts_loading,
         ),
         LibraryRailRow(
             # Task 1: row exists and is selectable now; its canvas (Task 3)
@@ -192,6 +221,8 @@ def build_library_shell_state(
             target_id="skills",
             count=state.skills_count,
             count_known=state.skills_known,
+            subtitle="installable AI abilities",
+            count_loading=state.counts_loading,
         ),
         LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_COLLECTIONS,
@@ -201,6 +232,7 @@ def build_library_shell_state(
             target_id="collections",
             count=state.collections_count,
             count_known=state.collections_known,
+            subtitle="saved groups of content",
         ),
         LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_SEARCH,
@@ -210,6 +242,7 @@ def build_library_shell_state(
             target_id="search",
             count=None,
             count_known=True,
+            subtitle="search everything",
         ),
     )
 
@@ -241,18 +274,28 @@ def build_library_shell_state(
             count=None,
             count_known=True,
         ),
+    )
+
+    # F-017: the Study rows are handoffs, not creation verbs -- every one
+    # opens the Study destination ("Continue in Study" per
+    # LIBRARY_STUDY_HANDOFF_MODES), so they group under their own "Study"
+    # section between Create and Import / Export. Row ids stay
+    # "create-*": they are long-published DOM ids (tests and deep links
+    # press them); the section_id carries the regrouping.
+    study_rows = (
         LibraryRailRow(
             row_id="create-study",
-            section_id="create",
+            section_id="study",
             title="Study decks",
             target_kind="handoff",
             target_id="study",
             count=state.study_decks_count,
             count_known=True,
+            count_loading=state.counts_loading,
         ),
         LibraryRailRow(
             row_id="create-flashcards",
-            section_id="create",
+            section_id="study",
             title="Flashcards",
             target_kind="handoff",
             target_id="flashcards",
@@ -268,15 +311,17 @@ def build_library_shell_state(
                 if state.flashcards_due_count is not None
                 else ""
             ),
+            count_loading=state.counts_loading,
         ),
         LibraryRailRow(
             row_id="create-quizzes",
-            section_id="create",
+            section_id="study",
             title="Quizzes",
             target_kind="handoff",
             target_id="quizzes",
             count=state.quizzes_count,
             count_known=True,
+            count_loading=state.counts_loading,
         ),
     )
 
@@ -313,6 +358,7 @@ def build_library_shell_state(
     sections = (
         LibraryRailSectionState(section_id="browse", title="Browse", rows=browse_rows),
         LibraryRailSectionState(section_id="create", title="Create", rows=create_rows),
+        LibraryRailSectionState(section_id="study", title="Study", rows=study_rows),
         LibraryRailSectionState(
             section_id="ingest", title="Import / Export", rows=ingest_rows
         ),

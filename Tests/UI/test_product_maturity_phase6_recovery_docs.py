@@ -286,7 +286,7 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             # landing copy is the surviving empty/no-source cue (design: the
             # canvas empty state carries the landing-page guidance).
             assert (
-                "Search, pick a content type, or ingest something new." in library_text
+                "Search everything, pick a section on the left, or add something new." in library_text
             )
 
 

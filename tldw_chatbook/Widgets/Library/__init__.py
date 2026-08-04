@@ -29,6 +29,8 @@ from .library_search_rag_panel import (
     scope_toggle_label,
 )
 from .library_skills_canvas import (
+    SKILL_DISCARD_TOOLTIP_CLEAN,
+    SKILL_DISCARD_TOOLTIP_DIRTY,
     LibrarySkillsListCanvas,
     MODEL_HINT_COPY as SKILL_MODEL_HINT_COPY,
     next_skill_context,
@@ -43,11 +45,16 @@ from .library_skills_canvas import (
     skill_trust_review_preview,
     skill_trust_state_line,
     skill_trust_unlock_enabled,
+    skill_trust_approve_tooltip,
+    skill_trust_review_tooltip,
+    skill_trust_unlock_tooltip,
     skill_user_invocable_label,
 )
 
 __all__ = [
     "LIBRARY_RAIL_ROW_PREFIX",
+    "SKILL_DISCARD_TOOLTIP_CLEAN",
+    "SKILL_DISCARD_TOOLTIP_DIRTY",
     "LibraryCollectionsPanel",
     "LibraryConversationsCanvas",
     "LibraryExportCanvas",
@@ -74,6 +81,9 @@ __all__ = [
     "skill_trust_review_preview",
     "skill_trust_state_line",
     "skill_trust_unlock_enabled",
+    "skill_trust_approve_tooltip",
+    "skill_trust_review_tooltip",
+    "skill_trust_unlock_tooltip",
     "skill_user_invocable_label",
     "library_dim_label_text",
     "library_rag_answer_children",

@@ -347,6 +347,72 @@ def skill_trust_review_enabled(trust_status: str, trust_blocked: bool) -> bool:
     return bool(trust_blocked) and trust_status in _TRUST_REVIEWABLE_STATUSES
 
 
+# F-018: every disabled trust action says why (reason while disabled,
+# action description while enabled) -- the workspaces handoff button's
+# pattern, applied to the trust panel's live-patched buttons.
+def skill_trust_unlock_tooltip(trust_status: str) -> str:
+    """Return the trust panel Unlock action's tooltip for the given state.
+
+    Args:
+        trust_status: The open skill's current trust status (e.g.
+            ``"trust_locked"``, ``"trusted"``).
+
+    Returns:
+        The action description while Unlock is enabled, otherwise the
+        reason it is disabled (F-018: every disabled action says why).
+    """
+    if skill_trust_unlock_enabled(trust_status):
+        return "Unlock this skill so it can run."
+    return "Only a locked skill needs unlocking — this one isn't locked."
+
+
+def skill_trust_review_tooltip(trust_status: str, trust_blocked: bool) -> str:
+    """Return the trust panel Review changes action's tooltip.
+
+    Args:
+        trust_status: The open skill's current trust status.
+        trust_blocked: Whether the open skill is currently trust-blocked.
+
+    Returns:
+        The action description while Review changes is enabled, otherwise
+        the reason it is disabled for this state (nothing to review, or a
+        state that cannot be reviewed in place).
+    """
+    if skill_trust_review_enabled(trust_status, trust_blocked):
+        return "Review the pending changes to this skill."
+    if not trust_blocked:
+        return "Nothing to review — this skill isn't trust-blocked."
+    return "This trust state can't be reviewed in place — see the guidance above."
+
+
+def skill_trust_approve_tooltip(has_active_review: bool) -> str:
+    """Return the trust panel Approve action's tooltip.
+
+    Args:
+        has_active_review: Whether a review is currently open (the
+            Approve action's enablement condition).
+
+    Returns:
+        The action description while Approve is enabled, otherwise the
+        reason it is disabled.
+    """
+    if has_active_review:
+        return "Approve the reviewed changes."
+    return "Review the changes first, then approve."
+
+
+# F-018: the Discard action's tooltip pair (reason while clean/disabled,
+# action while dirty) -- shared by the canvas compose and the screen's
+# live ``_set_library_skill_discard_enabled`` patcher.
+SKILL_DISCARD_TOOLTIP_CLEAN = "No unsaved changes to discard."
+SKILL_DISCARD_TOOLTIP_DIRTY = "Leave the editor without saving the current changes."
+
+# F-019: the editor's accelerators, advertised inline (the file-notes git
+# panel's guide-line pattern) -- ctrl+s/escape are otherwise undiscoverable
+# (the footer carries only the Library-wide contexts).
+SKILL_EDITOR_SHORTCUT_HINTS = "ctrl+s Save · esc Back to list"
+
+
 def skill_delete_confirm_copy(name: str, supporting_count: int) -> str:
     """Build the inline delete-confirmation line (task-415).
 
@@ -852,6 +918,18 @@ class LibrarySkillsListCanvas(VerticalScroll):
             classes="library-canvas-action",
             compact=True,
         )
+        if not self.conflict and not self.confirming_delete:
+            # F-019: the editor's ctrl+s/escape accelerators (task-424),
+            # advertised inline -- the file-notes git panel's guide-line
+            # pattern. Hidden during the conflict banner and the delete
+            # confirmation, where ctrl+s is gated off and the hint would
+            # be a lie.
+            yield Static(
+                SKILL_EDITOR_SHORTCUT_HINTS,
+                id="library-skill-editor-hints",
+                classes="library-prompt-field-hint",
+                markup=False,
+            )
         yield Static("Name", classes="library-prompt-field-label", markup=False)
         yield Input(
             value=editor_state.name,
@@ -1018,7 +1096,13 @@ class LibrarySkillsListCanvas(VerticalScroll):
                     classes="library-canvas-action",
                     compact=True,
                     disabled=not self.dirty,
-                    tooltip="Leave the editor without saving the current changes.",
+                    # F-018: reason while disabled, action while enabled --
+                    # kept current in place by the screen's live patcher.
+                    tooltip=(
+                        SKILL_DISCARD_TOOLTIP_DIRTY
+                        if self.dirty
+                        else SKILL_DISCARD_TOOLTIP_CLEAN
+                    ),
                 )
                 # task-415: no Delete in create mode -- a never-saved
                 # skill has nothing on disk to delete, and the old
@@ -1157,6 +1241,9 @@ class LibrarySkillsListCanvas(VerticalScroll):
                     classes="library-canvas-action",
                     compact=True,
                     disabled=not skill_trust_unlock_enabled(editor_state.trust_status),
+                    # F-018: reason/action tooltip (kept current in place by
+                    # the screen's no-recompose trust patcher).
+                    tooltip=skill_trust_unlock_tooltip(editor_state.trust_status),
                 )
                 yield Button(
                     "Review changes",
@@ -1166,6 +1253,9 @@ class LibrarySkillsListCanvas(VerticalScroll):
                     disabled=not skill_trust_review_enabled(
                         editor_state.trust_status, editor_state.trust_blocked
                     ),
+                    tooltip=skill_trust_review_tooltip(
+                        editor_state.trust_status, editor_state.trust_blocked
+                    ),
                 )
                 yield Button(
                     "Approve",
@@ -1173,4 +1263,5 @@ class LibrarySkillsListCanvas(VerticalScroll):
                     classes="library-canvas-action",
                     compact=True,
                     disabled=self.active_review is None,
+                    tooltip=skill_trust_approve_tooltip(self.active_review is not None),
                 )

@@ -92,6 +92,10 @@ class AppFooterStatus(Widget):
             "Tokens: --", id="footer-token-count"
         )
         self._db_status_display: Static = Static("", id="internal-db-size-indicator")
+        # F-014: the DB-size readout left user chrome (telemetry lives in
+        # the Library Details disclosure and the logs now), so the indicator
+        # starts collapsed and only takes space while it has content.
+        self._db_status_display.display = False
         # task-1714: labels are spelled in the readout itself now; the
         # tooltip only adds the "local database file sizes" context.
         self._db_status_display.tooltip = "Local database file sizes"
@@ -125,18 +129,23 @@ class AppFooterStatus(Widget):
         room for the hints AND every right-side item, the memory stats hide
         (TASK-451). Recomputed from the raw renderables, so the decision is
         stable regardless of the stats' current visibility (no flicker).
+
+        F-014: an EMPTY indicator (the normal state now that DB sizes live
+        in the Library Details disclosure) stays collapsed regardless of
+        width -- the reflow must never resurrect blank chrome.
         """
         width = self._last_footer_width or self.size.width
         if width <= 0:
             return
+        stats_text = str(self._db_status_display.renderable)
         needed = (
             cell_len(self._shortcut_text)
             + cell_len(str(self._word_count_display.renderable))
             + cell_len(str(self._token_count_display.renderable))
-            + cell_len(str(self._db_status_display.renderable))
+            + cell_len(stats_text)
             + _FOOTER_STATS_HEADROOM
         )
-        self._db_status_display.display = width >= needed
+        self._db_status_display.display = bool(stats_text) and width >= needed
 
     @property
     def shortcut_text(self) -> str:
@@ -184,6 +193,10 @@ class AppFooterStatus(Widget):
     def update_db_sizes_display(self, status_string: str) -> None:
         try:
             self._db_status_display.update(status_string)
+            # F-014: the indicator takes footer space only while it has
+            # content -- an empty string collapses it (the reflow keeps it
+            # down; see `_reflow_footer_priority`).
+            self._db_status_display.display = bool(status_string)
             self._reflow_footer_priority()
         except Exception as e:
             # If the app is shutting down, the widget might be gone

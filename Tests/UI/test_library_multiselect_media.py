@@ -1,4 +1,6 @@
+import dataclasses
 from types import SimpleNamespace
+
 import pytest
 from textual.app import App
 from textual.widgets import Button
@@ -210,3 +212,27 @@ async def test_select_all_label_uses_rendered_count_not_total_count():
         label = str(select_all_btn.label)
         assert f"Select all {len(state.rows)} shown" == label
         assert str(state.count) not in label
+
+
+class _MediaCanvasSelectedApp(App):
+    def compose(self):
+        yield LibraryMediaCanvas(
+            canvas=dataclasses.replace(_select_mode_canvas_state(), selected_count=1),
+            id="library-media-canvas",
+        )
+
+
+@pytest.mark.asyncio
+async def test_export_selected_tooltip_follows_its_disabled_state():
+    """F-018: "Export selected" disabled with zero selection says WHY;
+    with a selection the tooltip describes the action."""
+    app = _MediaCanvasApp()
+    async with app.run_test() as pilot:
+        export_btn = pilot.app.query_one("#library-media-export-selected", Button)
+        assert export_btn.disabled is True
+        assert "select" in str(export_btn.tooltip).lower()
+
+    async with _MediaCanvasSelectedApp().run_test() as pilot:
+        export_btn = pilot.app.query_one("#library-media-export-selected", Button)
+        assert export_btn.disabled is False
+        assert "export" in str(export_btn.tooltip).lower()
