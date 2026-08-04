@@ -219,6 +219,15 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
                 classes="library-details-row",
                 markup=False,
             )
+            if len(details_lines) > 2 and details_lines[2]:
+                # F-014: the DB-size telemetry relocated out of the app
+                # footer lives here -- third Status row, only when the
+                # shell actually carries it (never an "N/A" triplet).
+                yield Static(
+                    library_dim_label_text("DB sizes", details_lines[2]),
+                    id="library-details-db-sizes",
+                    classes="library-details-row",
+                )
             if self.workspaces_body_factory is not None:
                 yield from self.workspaces_body_factory()
 
@@ -240,9 +249,15 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
             for row in section.rows:
                 selected = row.row_id == self.shell.selected_row_id
                 marker = "▸" if selected else " "
-                count_suffix = row.count_display or self._count_suffix(
-                    row.count, row.count_known
-                )
+                # F-014: one count policy -- a dim "(…)" placeholder while
+                # the count is in flight, the count (or "+" estimate) when
+                # known, and no suffix at all when the source is off.
+                if row.count_loading:
+                    count_suffix = " [dim](…)[/dim]"
+                else:
+                    count_suffix = row.count_display or self._count_suffix(
+                        row.count, row.count_known
+                    )
                 # F-011: one-line rows by default -- the old blanket second
                 # line ("in Library" on all ~11 rows) was pure stutter and
                 # the reason the Create section was unreachable at 100x30

@@ -4429,11 +4429,15 @@ class LibraryScreen(BaseAppScreen):
     def _build_library_shell_input(self) -> LibraryShellInput:
         """Build the pure shell input from live counts and runtime state.
 
-        While the local source snapshot is still loading (``_library_loaded``
-        is False) and no lookup error has been recorded yet, the media/notes/
-        conversations counts are reported as ``None`` rather than the
-        placeholder zeros seeded at construction time, so the rail does not
-        render a misleading ``(0)`` before the real snapshot arrives.
+        F-014's one count policy drives the count fields: while the local
+        source snapshot is still in flight (``_library_loaded`` is False
+        and no lookup error has been recorded yet) the rows render the dim
+        loading placeholder via ``counts_loading``; once the snapshot has
+        landed, known counts render as ``(N)``/``(N+)`` and unavailable
+        sources (missing prompts/skills services) render no suffix. On a
+        lookup ERROR every count is ``None`` -- a failed fetch must not
+        dress up as an empty Library with a wall of misleading ``(0)``s
+        (the Details error line carries the explanation).
 
         Returns:
             Adapter-provided Library shell input reflecting live counts and
@@ -4456,7 +4460,8 @@ class LibraryScreen(BaseAppScreen):
         )
         counts = self._local_source_counts
         known = self._local_source_total_known
-        counts_known_yet = self._library_loaded or bool(self._library_lookup_error)
+        counts_loading = not self._library_loaded and not self._library_lookup_error
+        counts_available = self._library_loaded and not self._library_lookup_error
         prompts_entry = self._local_source_records.get("prompts")
         prompts_count = (
             prompts_entry[0]
@@ -4470,33 +4475,44 @@ class LibraryScreen(BaseAppScreen):
             else None
         )
         return LibraryShellInput(
-            media_count=counts.get("media") if counts_known_yet else None,
+            media_count=counts.get("media") if counts_available else None,
             media_known=known.get("media", True),
             conversations_count=counts.get("conversations")
-            if counts_known_yet
+            if counts_available
             else None,
             conversations_known=known.get("conversations", True),
-            notes_count=counts.get("notes") if counts_known_yet else None,
+            notes_count=counts.get("notes") if counts_available else None,
             notes_known=known.get("notes", True),
             # Unlike notes/media/conversations, "prompts" has no sample-cap
             # fallback yet (no paginated fetch backs it in Task 1) -- the
             # count is either the exact seam result or ``None`` (uncounted
             # row), never a "+"-suffixed estimate, so ``prompts_known``
             # stays ``True``.
-            prompts_count=prompts_count if counts_known_yet else None,
+            prompts_count=prompts_count if counts_available else None,
             prompts_known=True,
             # Same posture as prompts: no sample-cap fallback backs this
             # count either (a single ``get_context`` call, not a paginated
             # fetch), so ``skills_known`` stays ``True``.
-            skills_count=skills_count if counts_known_yet else None,
+            skills_count=skills_count if counts_available else None,
             skills_known=True,
             collections_count=collections_count,
             runtime_source=active_source,
             server_label=str(server_label) if server_label else None,
             details_lines=self._library_details_lines(active_source, server_label),
-            study_decks_count=self._library_study_counts.get("study_decks"),
-            flashcards_due_count=self._library_study_counts.get("flashcards_due"),
-            quizzes_count=self._library_study_counts.get("quizzes"),
+            study_decks_count=(
+                self._library_study_counts.get("study_decks")
+                if counts_available
+                else None
+            ),
+            flashcards_due_count=(
+                self._library_study_counts.get("flashcards_due")
+                if counts_available
+                else None
+            ),
+            quizzes_count=(
+                self._library_study_counts.get("quizzes") if counts_available else None
+            ),
+            counts_loading=counts_loading,
         )
 
     def _library_details_lines(
@@ -4504,10 +4520,13 @@ class LibraryScreen(BaseAppScreen):
     ) -> tuple[str, ...]:
         """Build the Status group's Details disclosure lines for the rail.
 
-        Returns exactly two plain-text values: the source value (rendered
-        by the rail with a dimmed "Source" label) and the local source
-        counts, or a lookup-error/recovery block in place of the counts when
-        the local source snapshot failed to load.
+        Returns up to three plain-text values: the source value (rendered
+        by the rail with a dimmed "Source" label), the local source counts
+        (or a lookup-error/recovery block in place of the counts when the
+        local source snapshot failed to load), and -- only when the
+        DBStatusManager has cached them on the app -- the local DB file
+        sizes (F-014: telemetry relocated out of the app footer; omitted
+        entirely until first computed, never an "N/A" triplet).
         """
         runtime_value = (
             "Local"
@@ -4523,6 +4542,14 @@ class LibraryScreen(BaseAppScreen):
                 f"Media {counts.get('media', 0)} · "
                 f"Conversations {counts.get('conversations', 0)}"
             )
+        db_sizes = getattr(self.app_instance, "db_sizes_status", None)
+        if isinstance(db_sizes, dict) and db_sizes:
+            sizes_line = (
+                f"Prompts {db_sizes.get('prompts', '?')} · "
+                f"Chats/Notes {db_sizes.get('chachanotes', '?')} · "
+                f"Media {db_sizes.get('media', '?')}"
+            )
+            return (runtime_value, counts_or_error, sizes_line)
         return (runtime_value, counts_or_error)
 
     def _build_library_conversations_state(self):

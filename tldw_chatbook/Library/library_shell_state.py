@@ -77,11 +77,15 @@ class LibraryRailRow:
     count_emphasis: str = ""
     disabled: bool = False
     disabled_tooltip: str = ""
-    # F-013: one-line plain-language gloss for jargon rows (e.g. "search
+    # F-014: one-line plain-language gloss for jargon rows (e.g. "search
     # everything" under "Search / RAG"), rendered by the rail as a dim
     # em-dash suffix on the same line. Empty on already-plain rows so the
     # rail doesn't stutter.
     subtitle: str = ""
+    # F-014: True while this row's count is still being fetched -- the
+    # rail renders a dim "(…)" placeholder (one count policy: placeholder
+    # while loading, count when known, no suffix when the source is off).
+    count_loading: bool = False
 
 
 @dataclass(frozen=True)
@@ -115,6 +119,11 @@ class LibraryShellInput:
     study_decks_count: int | None = None
     flashcards_due_count: int | None = None
     quizzes_count: int | None = None
+    # F-014: True while the local source snapshot is still in flight --
+    # every row whose count rides that snapshot renders the dim "(…)"
+    # placeholder instead of a misleading "(0)" or a blank. Collections
+    # is excluded (its count is fetched lazily on the first canvas visit).
+    counts_loading: bool = False
 
 
 @dataclass(frozen=True)
@@ -155,6 +164,7 @@ def build_library_shell_state(
             count=state.media_count,
             count_known=state.media_known,
             subtitle="imported files & transcripts",
+            count_loading=state.counts_loading,
         ),
         LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_CONVERSATIONS,
@@ -164,6 +174,7 @@ def build_library_shell_state(
             target_id="conversations",
             count=state.conversations_count,
             count_known=state.conversations_known,
+            count_loading=state.counts_loading,
         ),
         LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_NOTES,
@@ -173,6 +184,7 @@ def build_library_shell_state(
             target_id="notes",
             count=state.notes_count,
             count_known=state.notes_known,
+            count_loading=state.counts_loading,
         ),
         LibraryRailRow(
             # Row click resolves target_id "prompts" as its canvas_kind
@@ -188,6 +200,7 @@ def build_library_shell_state(
             count=state.prompts_count,
             count_known=state.prompts_known,
             subtitle="saved instructions for the AI",
+            count_loading=state.counts_loading,
         ),
         LibraryRailRow(
             # Task 1: row exists and is selectable now; its canvas (Task 3)
@@ -202,6 +215,7 @@ def build_library_shell_state(
             count=state.skills_count,
             count_known=state.skills_known,
             subtitle="installable AI abilities",
+            count_loading=state.counts_loading,
         ),
         LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_COLLECTIONS,
@@ -261,6 +275,7 @@ def build_library_shell_state(
             target_id="study",
             count=state.study_decks_count,
             count_known=True,
+            count_loading=state.counts_loading,
         ),
         LibraryRailRow(
             row_id="create-flashcards",
@@ -280,6 +295,7 @@ def build_library_shell_state(
                 if state.flashcards_due_count is not None
                 else ""
             ),
+            count_loading=state.counts_loading,
         ),
         LibraryRailRow(
             row_id="create-quizzes",
@@ -289,6 +305,7 @@ def build_library_shell_state(
             target_id="quizzes",
             count=state.quizzes_count,
             count_known=True,
+            count_loading=state.counts_loading,
         ),
     )
 

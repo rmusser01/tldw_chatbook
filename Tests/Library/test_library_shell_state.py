@@ -144,6 +144,34 @@ def test_jargon_rows_carry_plain_language_subtitles():
     assert subtitles["ingest-export"] == ""
 
 
+def test_counts_loading_marks_snapshot_backed_rows_but_not_collections():
+    """F-014: while the source snapshot is in flight, every row whose count
+    rides that snapshot shows the loading placeholder. Collections is the
+    one exception: its count is fetched lazily (first canvas visit), so a
+    placeholder would sit there indefinitely on the landing screen."""
+    shell = build_library_shell_state(LibraryShellInput(counts_loading=True))
+    rows = {
+        row.row_id: row for section in shell.sections for row in section.rows
+    }
+    loading_ids = {
+        "browse-media",
+        "browse-conversations",
+        "browse-notes",
+        LIBRARY_ROW_BROWSE_PROMPTS,
+        LIBRARY_ROW_BROWSE_SKILLS,
+        "create-study",
+        "create-flashcards",
+        "create-quizzes",
+    }
+    for row_id, row in rows.items():
+        assert row.count_loading is (row_id in loading_ids), row_id
+    assert rows["browse-collections"].count_loading is False
+    # Search, Create-verb and Import/Export rows carry no count at all.
+    assert rows["browse-search"].count_loading is False
+    assert rows["create-note"].count_loading is False
+    assert rows["ingest-import-media"].count_loading is False
+
+
 def test_conversations_selection_yields_conversations_canvas():
     shell = build_library_shell_state(
         LibraryShellInput(conversations_count=3), selected_row_id="browse-conversations"

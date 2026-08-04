@@ -73,6 +73,7 @@ from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCan
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Library.library_rail import LIBRARY_RAIL_ROW_PREFIX
 from Tests.UI.test_destination_shells import (
+    PolicyDeniedLibraryNotesScopeService,
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
     StaticLibraryNotesListScopeService,
@@ -656,6 +657,57 @@ async def test_jargon_rail_rows_render_a_dim_subtitle_on_the_same_line():
         assert not [
             s for s in plain_row.label.spans if "dim" in str(s.style)
         ]
+
+
+@pytest.mark.asyncio
+async def test_details_shows_db_sizes_from_the_app_cache():
+    """F-014: the relocated DB-size telemetry surfaces in the rail's
+    Details disclosure (fed from the DBStatusManager's app-level cache),
+    not in the footer."""
+    app = _build_test_app()
+    app.db_sizes_status = {
+        "prompts": "1.0 KB",
+        "chachanotes": "2.0 KB",
+        "media": "3.0 KB",
+    }
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#console-rail-section-toggle-library-details", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        sizes = screen.query_one("#library-details-db-sizes", Static)
+        text = str(sizes.renderable)
+        assert "Prompts 1.0 KB" in text
+        assert "Chats/Notes 2.0 KB" in text
+        assert "Media 3.0 KB" in text
+
+
+@pytest.mark.asyncio
+async def test_lookup_error_hides_row_counts_instead_of_zeroing_them():
+    """F-014: a failed snapshot must not dress up as an empty Library --
+    on lookup error the rows show NO count suffix (the Details error line
+    carries the explanation), never a misleading "(0)"."""
+    app = _build_test_app()
+    app.notes_scope_service = PolicyDeniedLibraryNotesScopeService()
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        for row_id in ("browse-media", "browse-conversations", "browse-notes"):
+            row = screen.query_one(f"#library-row-{row_id}", Button)
+            assert "(" not in row.label.plain, (
+                f"{row_id} shows a count under lookup error: {row.label.plain!r}"
+            )
 
 
 @pytest.mark.asyncio
