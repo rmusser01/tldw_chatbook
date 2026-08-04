@@ -267,9 +267,18 @@ def build_library_shell_state(
             count=None,
             count_known=True,
         ),
+    )
+
+    # F-017: the Study rows are handoffs, not creation verbs -- every one
+    # opens the Study destination ("Continue in Study" per
+    # LIBRARY_STUDY_HANDOFF_MODES), so they group under their own "Study"
+    # section between Create and Import / Export. Row ids stay
+    # "create-*": they are long-published DOM ids (tests and deep links
+    # press them); the section_id carries the regrouping.
+    study_rows = (
         LibraryRailRow(
             row_id="create-study",
-            section_id="create",
+            section_id="study",
             title="Study decks",
             target_kind="handoff",
             target_id="study",
@@ -279,7 +288,7 @@ def build_library_shell_state(
         ),
         LibraryRailRow(
             row_id="create-flashcards",
-            section_id="create",
+            section_id="study",
             title="Flashcards",
             target_kind="handoff",
             target_id="flashcards",
@@ -299,7 +308,7 @@ def build_library_shell_state(
         ),
         LibraryRailRow(
             row_id="create-quizzes",
-            section_id="create",
+            section_id="study",
             title="Quizzes",
             target_kind="handoff",
             target_id="quizzes",
@@ -342,6 +351,7 @@ def build_library_shell_state(
     sections = (
         LibraryRailSectionState(section_id="browse", title="Browse", rows=browse_rows),
         LibraryRailSectionState(section_id="create", title="Create", rows=create_rows),
+        LibraryRailSectionState(section_id="study", title="Study", rows=study_rows),
         LibraryRailSectionState(
             section_id="ingest", title="Import / Export", rows=ingest_rows
         ),

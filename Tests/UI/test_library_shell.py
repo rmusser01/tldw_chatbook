@@ -447,6 +447,7 @@ async def test_library_shell_renders_rail_sections_and_landing_canvas():
         for selector in (
             "#library-rail-section-header-browse",
             "#library-rail-section-header-create",
+            "#library-rail-section-header-study",
             "#library-rail-section-header-ingest",
             "#library-rail-section-header-details",
         ):

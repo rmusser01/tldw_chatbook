@@ -45,14 +45,15 @@ pages:
     the canvas). Press **/** anywhere outside a text field to jump
     straight into this box; pressing **/** again inside it selects the
     whole query so the next keystroke replaces it;
-  - three sections — **Browse** (Media, Conversations, Notes, Prompts,
+  - four sections — **Browse** (Media, Conversations, Notes, Prompts,
     Skills, Collections, Search / RAG), **Create** (New note, New prompt,
-    New skill, Study decks, Flashcards, Quizzes), and **Import / Export**
-    (Import media, Export). Each row is one line: the title with its
-    count, plus a dim plain-language gloss on the jargon rows (e.g.
-    "Search / RAG — search everything"). On narrow terminals the gloss
-    shortens first and the title ellipsizes, so the count always stays
-    visible. The three Study hand-off rows
+    New skill), **Study** (Study decks, Flashcards, Quizzes), and
+    **Import / Export** (Import media, Export). Each row is one line: the
+    title with its count, plus a dim plain-language gloss on the jargon
+    rows (e.g. "Search / RAG — search everything"). On narrow terminals
+    the gloss shortens first and the title ellipsizes, so the count
+    always stays visible. The three Study rows are hand-offs (they open
+    the Study destination), so they group under their own section and
     add a second "opens Study" line. The selected row is marked **▸**,
     and the Flashcards row shows "due: N" instead of a plain count;
   - a **Details** section, collapsed by default (see below). Section
@@ -100,6 +101,11 @@ File Notes workspace — see [File Notes](library/file-notes.md).
 | **New note** | Opens the note-creation canvas: **Blank note** or a pick from "From a template" — see [Notes](library/notes.md). |
 | **New prompt** | Opens a fresh prompt editor — see [Prompts](library/prompts.md). |
 | **New skill** | Opens a fresh skill editor — see [Skills](library/skills.md). |
+
+### Study rows
+
+| Row | What it does |
+|---|---|
 | **Study decks** / **Flashcards** / **Quizzes** | Hand-off canvases that open the Study screen — see the next section. |
 
 ### Import / Export rows
