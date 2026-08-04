@@ -75,7 +75,15 @@ branch; origin/dev had meanwhile gained the persistence/backend plumbing for
 behaviors that still broke OpenAI-compatible servers. Discoverability docs split out to
 task-2261.
 
-Files: `tldw_chatbook/TTS/backends/openai.py`, `Tests/TTS/test_openai_compatible_endpoint.py`.
+Qodo round (all four findings addressed in-thread): official-endpoint detection made
+canonical (`_is_official_openai_endpoint` on urlsplit components — cosmetic URL variants no
+longer lose guardrails); `OpenAI-Organization` no longer forwarded to custom endpoints (the
+pre-existing custom-URL org-header test was updated to pin the new behavior); test docstrings
+added; the "no non-streaming TTS API" rule flag declined as a pre-existing cross-backend
+interface property out of this PR's scope.
+
+Files: `tldw_chatbook/TTS/backends/openai.py`, `Tests/TTS/test_openai_compatible_endpoint.py`,
+`Tests/TTS/test_legacy_backend_registry.py`.
 Verified: 2,195 tests in `Tests/TTS/` + speech settings model tests pass; ruff check/format
 clean; repo-wide `--collect-only` sweep clean (29,821 collected).
 <!-- SECTION:NOTES:END -->
