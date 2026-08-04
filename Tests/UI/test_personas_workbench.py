@@ -2661,9 +2661,13 @@ class TestImportExport:
             checkbox = inspector.query_one("#personas-export-include-tts", Checkbox)
             assert checkbox.value is False
             assert checkbox.disabled is True
+            # task-2233: hidden while the character has no assigned profile.
+            assert checkbox.display is False
 
             inspector.set_tts_export_available(True)
             assert checkbox.disabled is False
+            # task-2233: an assignment makes it reappear.
+            assert checkbox.display is True
             monkeypatch.setattr(
                 screen,
                 "_portable_tts_profile_for_export",

@@ -224,12 +224,16 @@ class PersonasInspectorPane(Vertical):
                 classes="console-action-secondary",
                 tooltip=_NO_SELECTION_GUIDANCE,
             )
-            yield Checkbox(
+            tts_checkbox = Checkbox(
                 "Include assigned voice profile",
                 id="personas-export-include-tts",
                 value=False,
                 disabled=True,
             )
+            # task-2233: starts hidden (no profile assigned yet);
+            # _apply_action_state reveals it once an assignment is known.
+            tts_checkbox.display = False
+            yield tts_checkbox
             yield Button(
                 "Export JSON",
                 id="personas-export-json",
@@ -488,7 +492,14 @@ class PersonasInspectorPane(Vertical):
         export_json_applies = kind is None or kind in _EXPORT_JSON_APPLICABLE_KINDS
         export_png_applies = kind is None or kind in _EXPORT_PNG_APPLICABLE_KINDS
         tts_checkbox = self.query_one("#personas-export-include-tts", Checkbox)
-        tts_checkbox.display = kind is None or kind == "character"
+        # task-2233: hidden outright unless the selection actually HAS a
+        # voice profile to include - a permanently-disabled "not applicable"
+        # checkbox read as an unreadable dark smear right under the primary
+        # CTA. When a profile IS assigned, the enabled/disabled-with-reason
+        # gating below (and the F-041 legibility CSS) covers the shown case.
+        tts_checkbox.display = (
+            (kind is None or kind == "character") and self._tts_export_available
+        )
         tts_checkbox.disabled = not (
             export_enabled
             and kind == "character"
