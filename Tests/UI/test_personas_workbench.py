@@ -593,10 +593,18 @@ class TestWorkbenchShell:
             # task-445: unavailable actions are dropped from the rendered
             # hint entirely rather than shown with a literal "unavailable"
             # suffix. F-031 auto-selects the first row on first paint, so
-            # attach IS available here; "save" (no editor open) is the
+            # draft IS available here; "save" (no editor open) is the
             # remaining dropped hint.
             assert "save" not in rendered.lower()
-            assert "attach" in rendered.lower()
+            # F-032: the footer names the renamed Console draft CTA.
+            assert "attach" not in rendered.lower()
+            assert "ctrl+enter draft" in rendered.lower()
+            # F-038: the always-on accelerators are advertised, not hidden.
+            assert "f6 pane" in rendered.lower()
+            assert "ctrl+1-4 mode" in rendered.lower()
+            assert "[ ]" in rendered
+            # space toggle is dictionaries-only, so it stays hidden here.
+            assert "space" not in rendered.lower()
             assert context.source == "personas"
             # task-264: the registration lands on the SCREEN's own footer,
             # not the harness's default-screen stand-in.
@@ -614,6 +622,42 @@ class TestWorkbenchShell:
             assert footer.parent is None
             default_footer = pilot.app.query_one(AppFooterStatus)
             assert default_footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+
+    async def test_footer_advertises_space_toggle_in_dictionaries_mode(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        """F-038: the dictionary row toggle key is disclosed only in its mode."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert "space" not in screen._shortcut_context().render().lower()
+            await screen._apply_mode("dictionaries")
+            await pilot.pause()
+            rendered = screen._shortcut_context().render().lower()
+            assert "space toggle" in rendered
+            await screen._apply_mode("characters")
+            await pilot.pause()
+            assert "space" not in screen._shortcut_context().render().lower()
+
+    async def test_mode_chips_advertise_their_ctrl_shortcut(
+        self, mock_app_instance, stub_characters
+    ):
+        """F-038: each mode chip tooltip carries its Ctrl+N jump key."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            expected = {
+                "characters": ("Characters — who the AI plays.", "(Ctrl+1)"),
+                "personas": ("Personas — who you play in the chat.", "(Ctrl+2)"),
+                "dictionaries": ("Dictionaries — text find/replace rules.", "(Ctrl+3)"),
+                "lore": ("Lore — world facts injected on keywords.", "(Ctrl+4)"),
+            }
+            for mode, (descriptor, hint) in expected.items():
+                tooltip = screen.query_one(f"#personas-mode-{mode}", Button).tooltip
+                assert descriptor in tooltip, mode
+                assert hint in tooltip, mode
 
     async def test_unmount_clear_does_not_stomp_other_screens_context(
         self, mock_app_instance, stub_characters
@@ -683,7 +727,8 @@ class TestWorkbenchShell:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             lore_chip = screen.query_one("#personas-mode-lore", Button)
-            assert lore_chip.tooltip == "Lore — world facts injected on keywords."
+            # F-038: chip tooltips carry their Ctrl+N jump key.
+            assert lore_chip.tooltip == "Lore — world facts injected on keywords. (Ctrl+4)"
             assert "soon" not in str(lore_chip.label).lower()
             char_chip = screen.query_one("#personas-mode-characters", Button)
             assert "soon" not in str(char_chip.label).lower()
@@ -9167,16 +9212,16 @@ class TestDirtyTracking:
             screen = await _mounted(pilot)
             await pilot.pause()
             assert screen._console_action_allowed() is False  # no prior selection
-            attach = next(
-                a for a in screen._shortcut_context().actions if a.label == "attach"
+            draft = next(
+                a for a in screen._shortcut_context().actions if a.label == "draft"
             )
-            assert attach.available is False  # no prior selection
+            assert draft.available is False  # no prior selection
             # task-264: the registration lands on the SCREEN's own footer,
             # not the harness's default-screen stand-in.
             footer = screen.query_one(AppFooterStatus)
             # task-445: unavailable hints are dropped entirely rather than
             # rendered with a literal "unavailable" suffix.
-            assert "ctrl+enter attach" not in footer.shortcut_text
+            assert "ctrl+enter draft" not in footer.shortcut_text
             await screen._import_character_from_path(str(source))
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()

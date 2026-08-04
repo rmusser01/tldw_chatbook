@@ -805,7 +805,7 @@ class PersonasScreen(BaseAppScreen):
                 yield Static(
                     "Modes:", id="personas-mode-label", classes="destination-section"
                 )
-                for mode in MODE_CHIP_ORDER:
+                for index, mode in enumerate(MODE_CHIP_ORDER):
                     classes = "personas-mode-chip"
                     if mode == self.state.active_mode:
                         classes = f"{classes} is-active"
@@ -816,7 +816,11 @@ class PersonasScreen(BaseAppScreen):
                         label,
                         id=f"personas-mode-{mode}",
                         classes=classes,
-                        tooltip=self._mode_descriptor_text(mode),
+                        # F-038: the chip tooltip discloses its Ctrl+N jump key
+                        # (the binding mirrors the strip order).
+                        tooltip=(
+                            f"{self._mode_descriptor_text(mode)} (Ctrl+{index + 1})"
+                        ),
                     )
             with Horizontal(
                 id="personas-workbench", classes="ds-panel destination-workbench"
@@ -9580,10 +9584,23 @@ class PersonasScreen(BaseAppScreen):
                 ShortcutAction("ctrl+f", "search"),
                 ShortcutAction("ctrl+s", "save", available=editing),
                 ShortcutAction("esc", "back", available=editing or transcript_open),
+                # F-032: the hint names the renamed "Send to Console draft" CTA.
                 ShortcutAction(
-                    "ctrl+enter", "attach", available=self._console_action_allowed()
+                    "ctrl+enter", "draft", available=self._console_action_allowed()
                 ),
+                # F-038: disclose the always-on accelerators that used to be
+                # invisible (show=False bindings with no footer/chip mention).
+                ShortcutAction("f6", "pane"),
+                ShortcutAction("ctrl+1-4", "mode"),
                 ShortcutAction("[ ]", "mode"),
+                # The library pane's space binding only acts on dictionary
+                # rows, so it is advertised only in that mode (never claim a
+                # key that does nothing in context).
+                ShortcutAction(
+                    "space",
+                    "toggle",
+                    available=self.state.active_mode == "dictionaries",
+                ),
             ),
         )
 
