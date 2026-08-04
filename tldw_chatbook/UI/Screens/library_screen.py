@@ -13331,6 +13331,10 @@ class LibraryScreen(BaseAppScreen):
                 location=self._library_ingest_browse_location(),
                 title="Import media",
                 filters=_ingestible_file_filters(),
+                # (task-2222 owner ruling) Folder import must be pickable,
+                # not type-only: "Open" keeps descending, this returns the
+                # folder on screen.
+                offer_select_folder=True,
             ),
             browse_callback,
         )
