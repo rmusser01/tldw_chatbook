@@ -10,8 +10,10 @@ from textual.widgets import Button, Select, Static
 import tldw_chatbook
 from tldw_chatbook.MCP.readiness import (
     STATE_CSS_CLASSES,
+    STATE_GLYPHS,
     ReadinessSnapshot,
     ReadinessState,
+    builtin_readiness,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import (
     _MAX_ROW_LABEL,
@@ -185,6 +187,23 @@ class EmptyRailApp(App):
         )
 
 
+class FreshInstallRailApp(App):
+    """task-2243: the fresh-install rail -- exactly one row, the off/opt-in
+    built-in (task-2239's OFF_OPT_IN display state)."""
+
+    def compose(self) -> ComposeResult:
+        yield MCPRail(
+            source="local",
+            snapshots=[builtin_readiness(enabled=False)],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+            id="mcp-rail",
+        )
+
+
 @pytest.mark.asyncio
 async def test_rail_shows_empty_state_at_zero_servers():
     """F-060: at zero servers the rail says so in plain language and points
@@ -196,6 +215,54 @@ async def test_rail_shows_empty_state_at_zero_servers():
         empty = app.query_one("#mcp-rail-empty", Static)
         assert "No servers yet" in str(empty.renderable)
         assert "Add server" in str(empty.renderable)
+
+
+@pytest.mark.asyncio
+async def test_rail_state_legend_decodes_present_states_under_heading():
+    """task-2243: rail rows show glyph+name only, and decoding them used to
+    require the dim bottom-of-canvas Servers-mode legend (which wraps at
+    ~100 cols). A compact legend now sits directly under the "Servers"
+    heading whenever rows exist, listing ONLY the states present among the
+    current rows (derived from STATE_GLYPHS/STATE_LABELS, so it can't
+    drift) plus the ⌂ built-in marker."""
+    app = RailApp()  # builtin (READY) + docs (NEEDS_SETUP)
+    async with app.run_test():
+        legend = app.query_one("#mcp-rail-state-legend", Static)
+        text = str(legend.renderable)
+        assert f"{STATE_GLYPHS[ReadinessState.READY]} ready" in text
+        assert f"{STATE_GLYPHS[ReadinessState.NEEDS_SETUP]} needs setup" in text
+        assert "⌂ built-in" in text
+        # Absent states are not listed -- the line stays short.
+        assert "needs attention" not in text
+        assert "stale" not in text
+        assert "no tools" not in text
+        # ...and it sits under the "Servers" heading, before the rows.
+        ids = [child.id for child in app.query_one(MCPRail).children]
+        assert ids.index("mcp-rail-state-legend") < ids.index(
+            f"{MCP_RAIL_ROW_PREFIX}0"
+        )
+
+
+@pytest.mark.asyncio
+async def test_rail_state_legend_fresh_install_decodes_off_opt_in():
+    """task-2243: the fresh-install rail (one off/opt-in built-in row)
+    decodes its muted ◦ glyph right under the heading -- no bottom-of-
+    canvas legend lookup needed."""
+    app = FreshInstallRailApp()
+    async with app.run_test():
+        legend = app.query_one("#mcp-rail-state-legend", Static)
+        assert str(legend.renderable) == (
+            f"{STATE_GLYPHS[ReadinessState.OFF_OPT_IN]} off (opt-in) · ⌂ built-in"
+        )
+
+
+@pytest.mark.asyncio
+async def test_rail_state_legend_hidden_at_zero_servers():
+    """task-2243: no rows, nothing to decode -- the F-060 empty state
+    stands alone (no legend line)."""
+    app = EmptyRailApp()
+    async with app.run_test():
+        assert not list(app.query("#mcp-rail-state-legend"))
 
 
 @pytest.mark.asyncio
