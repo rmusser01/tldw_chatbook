@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import inspect
 import logging
 import os
 import subprocess
 import sys
+import textwrap
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
@@ -1258,26 +1260,49 @@ def test_persistent_and_legacy_sink_configuration_pin_diagnose_false() -> None:
     ``backtrace=True`` is pinned alongside it: traceback/diagnostic value
     (exception type, message, stack of source lines) must stay intact --
     only frame-local dumping goes away.
+
+    Checked by parsing the call's actual keyword arguments, NOT by substring
+    search over the source text. The first version of this test did the
+    latter and was vacuous: the security rationale comment sitting directly
+    above the kwarg contains the literal string ``diagnose=False``, so
+    deleting the real argument still left the assertion satisfied by the
+    comment. Confirmed by mutation -- removing the kwarg now fails here.
     """
     from tldw_chatbook import Logging_Config
     from tldw_chatbook.Metrics import logger_config as metrics_logger_config
 
-    app_logging_source = inspect.getsource(
-        Logging_Config.configure_application_logging
-    )
-    add_call_start = app_logging_source.index("loguru_logger.add(")
-    add_call_end = app_logging_source.index(")\n", add_call_start)
-    add_call_block = app_logging_source[add_call_start:add_call_end]
-    assert "_forward_loguru_to_standard" in add_call_block
-    assert "diagnose=False" in add_call_block
-    assert "backtrace=True" in add_call_block
+    def _sink_kwargs(function: object, receiver: str) -> dict[str, ast.expr]:
+        """Return the keyword arguments of the ``<receiver>.add(...)`` call."""
+        tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == receiver
+            ):
+                return {
+                    keyword.arg: keyword.value
+                    for keyword in node.keywords
+                    if keyword.arg is not None
+                }
+        raise AssertionError(f"no {receiver}.add(...) call found")
 
-    metrics_source = inspect.getsource(metrics_logger_config.setup_logger)
-    add_call_start = metrics_source.index("logger.add(")
-    add_call_end = metrics_source.index(")\n", add_call_start)
-    add_call_block = metrics_source[add_call_start:add_call_end]
-    assert "diagnose=False" in add_call_block
-    assert "backtrace=True" in add_call_block
+    for function, receiver in (
+        (Logging_Config.configure_application_logging, "loguru_logger"),
+        (metrics_logger_config.setup_logger, "logger"),
+    ):
+        kwargs = _sink_kwargs(function, receiver)
+        for name, expected in (("diagnose", False), ("backtrace", True)):
+            node = kwargs.get(name)
+            assert node is not None, (
+                f"{function.__qualname__}: sink is missing an explicit "
+                f"{name}= argument; it must not inherit loguru's default"
+            )
+            assert isinstance(node, ast.Constant) and node.value is expected, (
+                f"{function.__qualname__}: sink must pass {name}={expected}"
+            )
 
 
 def test_package_import_sets_loguru_diagnose_env_default() -> None:
