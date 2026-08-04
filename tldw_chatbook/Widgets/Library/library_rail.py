@@ -9,6 +9,7 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
+from textual.events import Key
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
@@ -69,6 +70,27 @@ def _visible_row_title(title: str) -> str:
     if len(readable) > _MAX_LIBRARY_ROW_TITLE:
         readable = f"{readable[: _MAX_LIBRARY_ROW_TITLE - 3].rstrip()}..."
     return escape_markup(readable)
+
+
+class LibraryRailSearchInput(Input):
+    """Rail search box where a second "/" re-arms the query instead of typing.
+
+    "/" is the Library screen's focus-the-search key (F-012); once the box
+    itself has focus the screen's on_key never sees printable keys, so a
+    second "/" would insert a literal slash into the query -- the settings
+    screen's task-1584 live trap, solved the same way here: intercept it
+    and select-all so the next keystroke replaces the stale text.
+    """
+
+    async def _on_key(self, event: Key) -> None:
+        # Same slash representations the screen-level handler accepts --
+        # some platforms/layouts emit key="slash" without character="/".
+        if event.key in {"/", "slash"} or event.character == "/":
+            self.select_all()
+            event.stop()
+            event.prevent_default()
+            return
+        await super()._on_key(event)
 
 
 class LibraryRail(RecomposeCaptureGuard, Vertical):
@@ -153,7 +175,7 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
         """
         if self.top_action_factory is not None:
             yield from self.top_action_factory()
-        yield Input(
+        yield LibraryRailSearchInput(
             value=self.query,
             placeholder=self.search_placeholder,
             id="library-search-input",

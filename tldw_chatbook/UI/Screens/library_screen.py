@@ -22,6 +22,7 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.events import Key
 from textual.screen import ModalScreen
 from textual.css.query import NoMatches, QueryError
 from textual.timer import Timer
@@ -934,11 +935,10 @@ class LibraryScreen(BaseAppScreen):
     #: viewer is rebuilt on mount, and the detail fetch that reads it fails.
     _library_media_detail_is_remote: bool = False
 
-    #: Footer hint set — mirrors the show=True bindings the retired Textual
-    #: Footer used to render (task-264 review: per-screen AppFooterStatus
-    #: renders registered contexts, not bindings). `_register_footer_shortcuts`
-    #: only wires this set in while the Search/RAG canvas is active, so every
-    #: entry here is already scoped correctly -- no new gating needed.
+    #: Footer hint set while the Search/RAG canvas is active — mirrors the
+    #: show=True bindings the retired Textual Footer used to render
+    #: (task-264 review: per-screen AppFooterStatus renders registered
+    #: contexts, not bindings).
     #: Task 12/RAG-36 fix-review: the `enter`/`o` evidence-card `Binding`s
     #: are `show=False` (Textual's own key panel doesn't need them), which
     #: made this the ONLY on-screen advertisement of those keys -- and it
@@ -946,10 +946,21 @@ class LibraryScreen(BaseAppScreen):
     #: That reproduces the exact defect RAG-36 exists to close (a
     #: keyboard-only user cannot find a hidden key), so both are listed here
     #: too.
+    #: F-012: `/` (focus the rail search box) works on every canvas, so it
+    #: closes both sets.
     LIBRARY_SHORTCUTS = (
         ("u", "use Library context in Console"),
         ("enter", "select evidence"),
         ("o", "open evidence"),
+        ("/", "focus search"),
+    )
+
+    #: F-012: the landing state (and every non-Search canvas) still has one
+    #: working Library key -- `/` focuses the rail search box. Advertising
+    #: only what works beats the old bare-default footer, which read as
+    #: "no keyboard support here".
+    LIBRARY_LANDING_SHORTCUTS = (
+        ("/", "focus search"),
     )
 
     # Baseline workbench geometry so the screen renders correctly even without
@@ -1539,17 +1550,47 @@ class LibraryScreen(BaseAppScreen):
         ``screen.refresh(recompose=True)``, which replaces the footer widget;
         the registration must survive that.
         """
-        # task-420: the "u" action hard-gates on the Search/RAG row, so
-        # advertising it screen-wide made it a dead shortcut everywhere
-        # else -- register it only where it works, re-registered on every
-        # rail-row switch (the personas-style dynamic-context use of this
-        # API).
+        # task-420: the "u"/evidence actions hard-gate on the Search/RAG
+        # row, so advertising them screen-wide made them dead shortcuts
+        # everywhere else -- they register only where they work,
+        # re-registered on every rail-row switch AND on navigation-context
+        # deep links (F-012: `_apply_navigation_context_state` can land on
+        # the Search canvas without a rail-row press). F-012: everywhere
+        # else gets the one key that works there instead of the bare
+        # default -- `/` focuses the rail search box on every canvas.
         shortcuts = (
             self.LIBRARY_SHORTCUTS
             if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
-            else ()
+            else self.LIBRARY_LANDING_SHORTCUTS
         )
         self.register_footer_shortcuts(source="library", shortcuts=shortcuts)
+
+    def on_key(self, event: Key) -> None:
+        """``/``: focus the rail search box from anywhere but a text field.
+
+        F-012's focus-search key, implemented as a screen-level key handler
+        (the settings screen's task-1715 pattern) rather than a ``Binding``:
+        the key stays out of the key palette, and it can never fire while an
+        ``Input``/``TextArea`` owns focus -- text fields consume printable
+        keys before this handler runs, so the isinstance guard is belt and
+        braces for any field that lets an event through. Once the rail box
+        itself has focus, its own ``_on_key`` re-arms the query instead
+        (see ``LibraryRailSearchInput``).
+        """
+        is_slash = (
+            event.key in {"/", "slash"}
+            or getattr(event, "character", None) == "/"
+        )
+        if not is_slash:
+            return
+        if isinstance(self.focused, (Input, TextArea)):
+            return
+        try:
+            self.query_one("#library-search-input", Input).focus()
+        except (NoMatches, QueryError):
+            return
+        event.stop()
+        event.prevent_default()
 
     def on_mount(self) -> None:
         """Populate the Library on entry, rendering instantly from cache.
@@ -2188,6 +2229,10 @@ class LibraryScreen(BaseAppScreen):
                 exclusive=True,
                 group="library_nav_open_source",
             )
+        # F-012: a deep link can change the active canvas (e.g. mode="search")
+        # without a rail-row press -- the footer's `u` hint must follow the
+        # canvas, not just the rail switch, or the key works unadvertised.
+        self._register_footer_shortcuts()
         if self.is_mounted:
             if (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS

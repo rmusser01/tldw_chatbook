@@ -20,6 +20,7 @@ from Tests.Library.test_library_ingest_runner import _FakeIngestParsePool
 from tldw_chatbook import config as app_config
 from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_INGEST,
+    LIBRARY_NAV_CONTEXT_MODE,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
@@ -69,6 +70,7 @@ from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCanvas
+from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Library.library_rail import LIBRARY_RAIL_ROW_PREFIX
 from Tests.UI.test_destination_shells import (
     StaticLibraryConversationScopeService,
@@ -616,6 +618,115 @@ async def test_rail_create_section_and_details_reachable_at_100x30():
         assert status.region.y + status.region.height <= fold, (
             f"status group pushed below rail viewport: {status.region}"
         )
+
+
+@pytest.mark.asyncio
+async def test_landing_footer_advertises_the_focus_search_key():
+    """F-012: the landing state is not a keyboard dead zone -- the footer
+    advertises the one Library key that works there (`/` focuses the rail
+    search box) instead of the bare global default."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        footer = screen.query_one(AppFooterStatus)
+        assert footer.shortcut_text == "/ focus search"
+
+
+@pytest.mark.asyncio
+async def test_slash_focuses_the_rail_search_box_from_landing():
+    """F-012: `/` jumps straight into the rail search box from the landing
+    state -- the keyboard path into Search/RAG the review found missing."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        search = screen.query_one("#library-search-input", Input)
+        assert not search.has_focus
+        await pilot.press("/")
+        await pilot.pause()
+        assert search.has_focus
+
+
+@pytest.mark.asyncio
+async def test_slash_types_literally_when_another_input_has_focus():
+    """F-012: `/` must never steal focus out of a text field the user is
+    already typing in -- it only fires when no Input/TextArea owns focus."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-filter")
+        filter_input = screen.query_one("#library-conversations-filter", Input)
+        filter_input.focus()
+        await pilot.pause()
+
+        await pilot.press("/")
+        await pilot.pause()
+        assert filter_input.has_focus
+        assert filter_input.value == "/"
+
+
+@pytest.mark.asyncio
+async def test_slash_on_the_focused_rail_search_rearms_selection():
+    """F-012: a second `/` on the already-focused rail search re-arms the
+    query (select-all, so the next keystroke replaces it) instead of
+    inserting a literal slash -- the settings screen's task-1584 trap."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        search = screen.query_one("#library-search-input", Input)
+        search.focus()
+        await pilot.pause()
+        await pilot.press("a", "b", "c")
+        await pilot.pause()
+        assert search.value == "abc"
+
+        await pilot.press("/")
+        await pilot.pause()
+        assert search.value == "abc"
+        assert search.selection == (0, 3)
+
+
+@pytest.mark.asyncio
+async def test_search_deep_link_registers_the_use_in_console_footer_hint():
+    """F-012: the `u` hint must be visible whenever `u` works. Only the
+    rail-row switch re-registered the footer, so a navigation-context deep
+    link into the Search/RAG canvas left the key working but unadvertised."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_MODE: "search"})
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+        footer = screen.query_one(AppFooterStatus)
+        assert "u use Library context in Console" in footer.shortcut_text
+        assert "/ focus search" in footer.shortcut_text
 
 
 @pytest.mark.asyncio
