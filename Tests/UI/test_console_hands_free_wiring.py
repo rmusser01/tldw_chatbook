@@ -1664,7 +1664,7 @@ async def test_two_consecutive_empty_limits_really_reopen_then_really_exit(
 
         # First empty-limit ending: nothing was dictated (no `emit_final`
         # call). Must reopen for one more turn.
-        console._handle_console_dictation_limit()
+        console._dictation._handle_console_dictation_limit()
         await _wait_for(lambda: service.start_calls == 2, pilot)
         await _wait_for_mic_label(composer, pilot, "Rec ●")
         assert console._console_hands_free is not None
@@ -1672,7 +1672,7 @@ async def test_two_consecutive_empty_limits_really_reopen_then_really_exit(
 
         # Second CONSECUTIVE empty-limit ending: must exit the loop, not
         # reopen a third time.
-        console._handle_console_dictation_limit()
+        console._dictation._handle_console_dictation_limit()
         await _wait_for(lambda: console._console_hands_free is None, pilot)
         await pilot.pause(0.2)
         assert service.start_calls == 2  # no third reopen
@@ -1715,7 +1715,7 @@ async def test_empty_limit_with_segments_reopen_pending_reply_still_speaks(
         # with a segment already finalized (state may be `listening` if
         # the countdown drained, or `countdown` -- `_handle_console_
         # dictation_limit` only cares that dictation is still `recording`).
-        console._handle_console_dictation_limit()
+        console._dictation._handle_console_dictation_limit()
 
         await _wait_for(lambda: bool(gateway.sent_messages), pilot)
         sent_user_turns = [

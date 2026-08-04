@@ -52,10 +52,15 @@ from ..Console_Modules.frame import (
     frame_console_region,
 )
 from ..Console_Modules.dictation import (
+    CONSOLE_DICTATION_MAX_BYTES,
+    CONSOLE_DICTATION_MAX_SECONDS,
+    CONSOLE_DICTATION_SAMPLE_RATE,
+    CONSOLE_DICTATION_SAMPLE_WIDTH,
     ConsoleDictationController,
     ConsoleDictationEvent,
     ConsoleDictationLimitSignal,
     ConsoleStreamingDictationSession,
+    _join_segments,
     _VOICE_ACK_NOT_SENT,
     _VOICE_ACK_SESSION_CHANGED,
 )
@@ -6153,9 +6158,6 @@ class ChatScreen(BaseAppScreen):
         if not hasattr(self, "_console_impersonate_last"):
             self._console_impersonate_last = {}
         self._console_impersonate_last[session_id] = text
-
-    @staticmethod
-
 
     async def _run_pending_console_voice_action(
         self, origin_session_id: str | None

@@ -647,11 +647,14 @@ class ConsoleDictationController:
                 (`_console_hands_free`, `_console_hands_free_vad_
                 degraded`, `_enter_console_hands_free_loop`, `_console_
                 hands_free_force_immediate_send`, `_deliver_console_
-                hands_free_capture_ended`) and the not-yet-extracted
+                hands_free_capture_ended`), the not-yet-extracted
                 composer/workspace draft state (`_console_undo_
-                histories`, `_console_visible_draft_session_id`). None of
-                this is `query_one` traffic -- dictation owns no DOM of
-                its own, so there is no region boundary for it to cross.
+                histories`, `_console_visible_draft_session_id`), and one
+                general screen-orchestration method a capture-ending
+                voice command's queued action runs through
+                (`_run_pending_console_voice_action`). None of this is
+                `query_one` traffic -- dictation owns no DOM of its own,
+                so there is no region boundary for it to cross.
             app_instance: For `notify()`, posting TTS events, and the
                 once-per-app-run notification latches the moved event
                 handler stores on it (`_console_dictation_override_
@@ -743,6 +746,18 @@ class ConsoleDictationController:
     def _deliver_console_hands_free_capture_ended(self) -> Any:
         """Hands-free's own entry point (sibling cluster). See `__init__`."""
         return self._screen._deliver_console_hands_free_capture_ended
+
+    @property
+    def _run_pending_console_voice_action(self) -> Any:
+        """Fire a capture-ending `VoiceCommand`'s queued action.
+
+        `ChatScreen`'s own, not dictation's: its body reaches the chat
+        store, the send button, tab creation, and TTS read-back -- well
+        beyond a controller's "handful of well-known ids." Only
+        `_stop_console_dictation`'s tail calls it, unconditionally (a
+        no-op when nothing was queued).
+        """
+        return self._screen._run_pending_console_voice_action
 
     @property
     def _console_hands_free(self) -> Any:
@@ -1589,7 +1604,6 @@ class ConsoleDictationController:
                 "Capture ended." if transcript else _VOICE_ACK_NOTHING_TO_INSERT
             )
         await self._run_pending_console_voice_action(origin_session_id)
-
 
     def _request_console_dictation_stop(self) -> None:
         if self._console_dictation_state != "recording":
