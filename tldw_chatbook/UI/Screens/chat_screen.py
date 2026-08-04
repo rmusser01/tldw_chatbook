@@ -927,7 +927,12 @@ class ConsoleRealtimeSession:
             CURRENT reply. Drives `played_ms`; reset per reply.
         user_row_id: The transcript row created at turn-commit, waiting for
             its input transcript to land.
-        assistant_row_id: The current reply's transcript row.
+        assistant_row_id: The current reply's transcript row, or None
+            between replies (closed by `_finish_console_realtime_reply_row`).
+        last_reply_row_id: The most recent reply's row, NOT cleared when
+            that reply closes -- usage arrives from the same provider event
+            that ended the reply, so it always needs the row that just
+            stopped being current.
         pending_text_turn: An adopted pipeline capture's transcript waiting
             for `on_ready` (see `ready`).
         adopt_capture: True while a live pipeline capture is being stopped
@@ -955,6 +960,7 @@ class ConsoleRealtimeSession:
     fed_bytes: int = 0
     user_row_id: str | None = None
     assistant_row_id: str | None = None
+    last_reply_row_id: str | None = None
     pending_text_turn: str | None = None
     adopt_capture: bool = False
     failure_text: str = ""
@@ -7850,8 +7856,14 @@ class ChatScreen(BaseAppScreen):
         return RealtimeCallbacks(
             on_ready=_route(self._on_console_realtime_ready),
             on_turn_committed=_route(self._on_console_realtime_turn_committed),
+            on_input_transcript=_route(self._on_console_realtime_input_transcript),
+            on_reply_started=_route(self._on_console_realtime_reply_started),
+            on_output_transcript_delta=_route(
+                self._on_console_realtime_output_transcript_delta
+            ),
             on_first_audio=_route(self._on_console_realtime_first_audio),
             on_reply_done=_route(self._on_console_realtime_reply_done),
+            on_usage=_route(self._on_console_realtime_usage),
             on_speech_started=_route(self._on_console_realtime_speech_started),
             on_error=_route(self._on_console_realtime_error),
             on_closed=_route(self._on_console_realtime_closed),
@@ -8022,11 +8034,237 @@ class ChatScreen(BaseAppScreen):
                 )
         session.ready = True
         session.controller.on_session_ready()
+        pending, session.pending_text_turn = session.pending_text_turn, None
+        if pending:
+            # An adopted capture whose transcript landed while the
+            # handshake was still in flight (see
+            # `_console_realtime_adopt_transcript`).
+            self._send_console_realtime_text_turn(session, pending)
 
     def _on_console_realtime_turn_committed(
         self, session: ConsoleRealtimeSession
     ) -> None:
-        """`on_turn_committed`: the provider closed the user's input turn."""
+        """`on_turn_committed`: the provider closed the user's input turn.
+
+        The transcript row is created HERE, empty, rather than when the
+        transcript itself finally arrives: input transcription runs
+        asynchronously and routinely lands AFTER the assistant has already
+        started replying, so a row created on arrival would sit below the
+        answer it asked for. Creating it at commit fixes its place in the
+        transcript; `_on_console_realtime_input_transcript` fills it in.
+        """
+        session.user_row_id = self._append_console_realtime_row(
+            session, ConsoleMessageRole.USER, ""
+        )
+        session.controller.on_turn_committed(time.monotonic())
+
+    def _on_console_realtime_input_transcript(
+        self, session: ConsoleRealtimeSession, text: str
+    ) -> None:
+        """`on_input_transcript`: fill in what the user actually said.
+
+        `update_message_content`, NOT `append_stream_chunk`: the store
+        refuses stream chunks on anything but an assistant row
+        (`_validate_can_stream`), and this callback delivers the whole
+        transcript exactly once (the provider's `...transcription.
+        completed` event; the incremental `.delta` sibling is deliberately
+        not wired). So there is nothing to append -- there is one final
+        text to set.
+
+        A transcript with no row to land in (a commit this wiring never
+        saw, e.g. one that arrived during a reconnect) creates its own row
+        rather than being dropped: losing what the user said is worse than
+        a row slightly out of order.
+        """
+        spoken = str(text or "").strip()
+        if not spoken:
+            return
+        row_id = session.user_row_id
+        if row_id is None:
+            session.user_row_id = self._append_console_realtime_row(
+                session, ConsoleMessageRole.USER, spoken
+            )
+            return
+        store = self._ensure_console_chat_store()
+        try:
+            store.update_message_content(row_id, spoken)
+        except Exception:  # noqa: BLE001 - transcript upkeep is never fatal
+            logger.opt(exception=True).warning(
+                "Console realtime: could not write the input transcript"
+            )
+            return
+        session.transcript_dirty = True
+
+    def _on_console_realtime_reply_started(
+        self, session: ConsoleRealtimeSession, item_id: str
+    ) -> None:
+        """`on_reply_started`: open the assistant's transcript row.
+
+        Also the per-reply reset point for the audio accounting behind
+        `played_ms` -- a barge-in must be measured against THIS reply's
+        audio, not everything played since the loop started.
+        """
+        row_id = self._append_console_realtime_row(
+            session, ConsoleMessageRole.ASSISTANT, ""
+        )
+        session.assistant_row_id = row_id
+        session.last_reply_row_id = row_id or session.last_reply_row_id
+        session.fed_bytes = 0
+        session.controller.on_reply_started()
+
+    def _on_console_realtime_output_transcript_delta(
+        self, session: ConsoleRealtimeSession, text: str
+    ) -> None:
+        """`on_output_transcript_delta`: stream the reply's own words in."""
+        row_id = session.assistant_row_id
+        if row_id is None or not text:
+            return
+        store = self._ensure_console_chat_store()
+        try:
+            store.append_stream_chunk(row_id, text)
+        except Exception:  # noqa: BLE001
+            logger.opt(exception=True).warning(
+                "Console realtime: could not stream the reply transcript"
+            )
+            return
+        session.transcript_dirty = True
+
+    def _on_console_realtime_usage(
+        self, session: ConsoleRealtimeSession, payload: dict
+    ) -> None:
+        """`on_usage`: attach billing to the reply it belongs to.
+
+        Read from `last_reply_row_id`, not `assistant_row_id`: the provider
+        fires this from the SAME `response.done` event that already fired
+        `on_reply_done`, which closes the row -- so the usage for a reply
+        always arrives just after that reply stopped being "current".
+        """
+        row_id = session.last_reply_row_id
+        if row_id is None:
+            return
+        usage = ProviderUsage.from_provider_payload(
+            payload,
+            provider=CONSOLE_REALTIME_SUPPORTED_PROVIDER,
+            model=str(realtime_model()),
+        )
+        if usage is None:
+            return
+        store = self._ensure_console_chat_store()
+        try:
+            store.set_message_usage(row_id, usage)
+        except Exception:  # noqa: BLE001 - cost display is never worth a crash
+            logger.opt(exception=True).debug(
+                "Console realtime: could not attach usage to the reply"
+            )
+
+    def _append_console_realtime_row(
+        self, session: ConsoleRealtimeSession, role: ConsoleMessageRole, content: str
+    ) -> str | None:
+        """Append one continuity row to the loop's OWN Console session.
+
+        Persisted like any other Console turn: a spoken conversation is a
+        conversation, and a realtime exchange that vanished on restart
+        would be the only kind that does.
+
+        Returns:
+            The new row's id, or None when the write failed (already
+            logged) -- callers treat None as "no row to fill in later".
+        """
+        store = self._ensure_console_chat_store()
+        try:
+            message = store.append_message(
+                session.console_session_id,
+                role=role,
+                content=content,
+                persist=True,
+            )
+        except Exception:  # noqa: BLE001 - a store failure must not end the call
+            logger.opt(exception=True).warning(
+                "Console realtime: could not append a transcript row: "
+                f"op=realtime_row role={role.value}"
+            )
+            return None
+        session.transcript_dirty = True
+        return message.id
+
+    def _finish_console_realtime_reply_row(
+        self, session: ConsoleRealtimeSession, *, interrupted: bool
+    ) -> None:
+        """Close the current reply's transcript row, marking a barge-in.
+
+        The marker is appended BEFORE the terminal mark (the store refuses
+        chunks on a completed row) and is what keeps the stored transcript
+        honest: the user heard half a sentence, and everything downstream
+        -- the seed on the next reconnect, an export, a summary -- reads
+        this row as if it were the whole reply otherwise.
+        """
+        row_id, session.assistant_row_id = session.assistant_row_id, None
+        if row_id is None:
+            return
+        store = self._ensure_console_chat_store()
+        if interrupted:
+            try:
+                store.append_stream_chunk(row_id, CONSOLE_REALTIME_INTERRUPTED_MARKER)
+            except Exception:  # noqa: BLE001
+                logger.opt(exception=True).debug(
+                    "Console realtime: could not mark the reply interrupted"
+                )
+        try:
+            store.mark_message_complete(row_id)
+        except Exception:  # noqa: BLE001
+            logger.opt(exception=True).debug(
+                "Console realtime: could not complete the reply row"
+            )
+        session.transcript_dirty = True
+
+    def _console_realtime_adopt_transcript(self, transcript: str) -> bool:
+        """Claim a just-finished pipeline capture as this loop's first turn.
+
+        Returns True when the realtime loop CONSUMED the transcript, which
+        is the caller's signal not to insert it into the composer draft as
+        well -- the words were spoken as a turn, not typed as a draft, and
+        leaving a copy behind would re-send them the next time the user
+        pressed Enter.
+
+        A transcript that lands before the handshake completes is held
+        (`pending_text_turn`) rather than enqueued into a session that
+        cannot send it yet; `_on_console_realtime_ready` releases it.
+        """
+        session = self._console_realtime
+        if session is None or not session.adopt_capture:
+            return False
+        session.adopt_capture = False
+        spoken = str(transcript or "").strip()
+        if not spoken:
+            return True
+        if session.ready:
+            self._send_console_realtime_text_turn(session, spoken)
+        else:
+            session.pending_text_turn = spoken
+        return True
+
+    def _send_console_realtime_text_turn(
+        self, session: ConsoleRealtimeSession, text: str
+    ) -> None:
+        """Send one TEXT turn (an adopted capture) into the live session.
+
+        `on_turn_committed` is a server-side signal about the AUDIO input
+        buffer, so it never fires for a text item -- which would leave the
+        FSM sitting in `live` while a reply streamed, never gating the mic
+        and never painting `thinking`. Driving the same input directly
+        here is what makes an adopted turn behave like any other turn.
+        """
+        self._append_console_realtime_row(session, ConsoleMessageRole.USER, text)
+        provider_session = session.session
+        if provider_session is None:
+            return
+        try:
+            provider_session.send_text_item(text, request_response=True)
+        except Exception:  # noqa: BLE001
+            logger.opt(exception=True).warning(
+                "Console realtime: could not send the adopted transcript"
+            )
+            return
         session.controller.on_turn_committed(time.monotonic())
 
     def _on_console_realtime_first_audio(
@@ -8041,6 +8279,7 @@ class ChatScreen(BaseAppScreen):
         Never fires for a response this client cancelled (Task 2's
         semantics), so there is no barge-in case to disambiguate here.
         """
+        self._finish_console_realtime_reply_row(session, interrupted=False)
         session.controller.on_reply_done(time.monotonic())
 
     def _on_console_realtime_speech_started(
@@ -8164,6 +8403,7 @@ class ChatScreen(BaseAppScreen):
         if session is None:
             return
         played_ms = self._console_realtime_played_ms(session)
+        self._finish_console_realtime_reply_row(session, interrupted=True)
         provider_session = session.session
         if provider_session is not None:
             try:
@@ -8274,12 +8514,28 @@ class ChatScreen(BaseAppScreen):
     # -- chip, clock and teardown -------------------------------------------
 
     def _tick_console_realtime(self) -> None:
-        """`set_interval(0.1, ...)`: the FSM's only clock input."""
+        """`set_interval(0.1, ...)`: the FSM's only clock input.
+
+        Also the transcript's repaint cadence. The ordinary Console
+        transcript timer is gated on a chat-controller run being in flight
+        and self-stops when there is none -- a realtime conversation has no
+        such run, so it would never repaint. Coalescing here (rather than
+        resyncing per delta) keeps one full UI rebuild per 0.1 s instead of
+        one per audio-transcript chunk.
+        """
         session = self._console_realtime
         if session is None:
             return
         session.controller.tick(time.monotonic())
         self._repaint_console_realtime_chip()
+        if session.transcript_dirty:
+            session.transcript_dirty = False
+            # `call_later`, not `run_worker`: this repaint is ordinary screen
+            # work with no lifetime of its own, and a worker outliving the
+            # screen (a repaint still mounting rows while the transcript is
+            # being pruned) is a teardown hazard -- a queued callback is
+            # simply dropped when the screen goes away.
+            self.call_later(self._sync_native_console_chat_ui)
 
     def _repaint_console_realtime_chip(self) -> None:
         """Paint the realtime loop's mode into the composer's voice chip.

@@ -972,7 +972,7 @@ async def test_adopted_capture_sends_its_transcript_as_a_text_turn(monkeypatch):
             ("what is the capital of france", True)
         ]
         # The adopted transcript became the turn itself, not a stray draft.
-        assert composer.draft_text.strip() == ""
+        assert composer.draft_text().strip() == ""
         assert any(
             row.role is ConsoleMessageRole.USER
             and row.content == "what is the capital of france"
