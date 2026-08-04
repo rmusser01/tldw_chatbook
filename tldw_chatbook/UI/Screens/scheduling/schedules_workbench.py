@@ -15,8 +15,8 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, DataTable, Static, TabbedContent, TabPane
 
 from ...Navigation.base_app_screen import BaseAppScreen
-from ...Workbench.workbench_state import WorkbenchHeaderState, WorkbenchStatus
-from ...Workbench.workbench_widgets import DestinationHeader
+from ...Workbench.workbench_state import RecoveryState, WorkbenchHeaderState, WorkbenchStatus
+from ...Workbench.workbench_widgets import DestinationHeader, RecoveryCallout
 from ....runtime_policy.bootstrap import set_authoritative_runtime_source
 from ....Scheduling.events import (
     DeleteTaskRequested,
@@ -53,6 +53,8 @@ class SchedulesWorkbench(BaseAppScreen):
 
     BINDINGS = [
         Binding("c", "create_reminder", "Create"),
+        Binding("e", "edit_task", "Edit"),
+        Binding("space", "toggle_enabled", "Enable/Disable"),
         Binding("d", "delete", "Delete"),
         Binding("s", "sync_now", "Sync"),
     ]
@@ -62,6 +64,8 @@ class SchedulesWorkbench(BaseAppScreen):
     # printable keys before screen bindings fire.
     SCHEDULES_SHORTCUTS = (
         ("c", "create task"),
+        ("e", "edit"),
+        ("space", "enable/disable"),
         ("d", "delete"),
         ("s", "sync now"),
     )
@@ -102,6 +106,21 @@ class SchedulesWorkbench(BaseAppScreen):
             ),
             id="schedules-destination-header",
         )
+        if service is None:
+            # Visible recovery instead of a silently empty workbench (UX-043).
+            yield RecoveryCallout(
+                RecoveryState(
+                    title="Scheduling service unavailable",
+                    body=(
+                        "The scheduling service did not start, so the queue and "
+                        "sync are offline. Check the scheduling configuration, "
+                        "then restart the app."
+                    ),
+                    action=None,
+                    visible=True,
+                ),
+                id="scheduling-recovery",
+            )
         yield SyncStatusWidget(
             id="scheduling-sync-status",
             current_owner=owner_id,
@@ -640,6 +659,50 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return
         self.query_one("#scheduling-task-detail", TaskDetail).request_delete()
+
+    def _selected_task(self) -> ReminderTask | ScheduledTask | None:
+        """Return the task under the queue cursor, if any."""
+        if not self._tasks:
+            return None
+        table = self.query_one("#scheduling-task-table", DataTable)
+        row = table.cursor_row
+        if row is None or not (0 <= row < len(self._tasks)):
+            return None
+        return self._tasks[row]
+
+    def action_edit_task(self) -> None:
+        """Open the highlighted task in the edit form (e key)."""
+        task = self._selected_task()
+        if task is None:
+            self.app_instance.notify(
+                "Nothing to edit — select a task first.",
+                severity="warning",
+            )
+            return
+        if not isinstance(task, ReminderTask):
+            self.app_instance.notify(
+                "Only reminder tasks can be edited here.",
+                severity="warning",
+            )
+            return
+        self.post_message(EditTaskRequested(task))
+
+    def action_toggle_enabled(self) -> None:
+        """Enable/disable the highlighted task (space key)."""
+        task = self._selected_task()
+        if task is None:
+            self.app_instance.notify(
+                "Nothing to toggle — select a task first.",
+                severity="warning",
+            )
+            return
+        if not isinstance(task, ReminderTask):
+            self.app_instance.notify(
+                "Only reminder tasks can be enabled or disabled here.",
+                severity="warning",
+            )
+            return
+        self._set_reminder_enabled(task, not task.enabled)
 
     def action_sync_now(self) -> None:
         """Sync schedule state now."""

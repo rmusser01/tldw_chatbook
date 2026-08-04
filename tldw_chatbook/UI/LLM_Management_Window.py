@@ -344,6 +344,20 @@ class LLMManagementWindow(Container):
                     classes="prereq-hint",
                 )
 
+                # Primary actions above the fold (UX-054): validation returns
+                # focus to any missing field, so starting early is safe.
+                with Container(classes="button_container"):
+                    yield Button(
+                        "Start Server",
+                        id="llamacpp-start-server-button",
+                        classes="action_button",
+                    )
+                    yield Button(
+                        "Stop Server",
+                        id="llamacpp-stop-server-button",
+                        classes="action_button",
+                    )
+
                 yield Label("Llama.cpp Server Executable Path:", classes="label")
                 with Container(classes="input_container"):
                     yield Input(
@@ -402,18 +416,6 @@ class LLMManagementWindow(Container):
                         classes="help-text-display",
                     )
 
-                with Container(classes="button_container"):
-                    yield Button(
-                        "Start Server",
-                        id="llamacpp-start-server-button",
-                        classes="action_button",
-                    )
-                    yield Button(
-                        "Stop Server",
-                        id="llamacpp-stop-server-button",
-                        classes="action_button",
-                    )
-
                 yield RichLog(
                     id="llamacpp-log-output",
                     classes="log_output",
@@ -428,6 +430,19 @@ class LLMManagementWindow(Container):
                     "Run a self-contained llamafile executable (model included)",
                     classes="description",
                 )
+
+                with Container(classes="button_container"):
+                    yield Button(
+                        "Start Server",
+                        id="llamafile-start-server-button",
+                        classes="action_button",
+                    )
+                    yield Button(
+                        "Stop Server",
+                        id="llamafile-stop-server-button",
+                        classes="action_button",
+                    )
+
 
                 yield Label("Llamafile Executable (.llamafile):", classes="label")
                 with Container(classes="input_container"):
@@ -479,18 +494,6 @@ class LLMManagementWindow(Container):
                         classes="help-text-display",
                     )
 
-                with Container(classes="button_container"):
-                    yield Button(
-                        "Start Server",
-                        id="llamafile-start-server-button",
-                        classes="action_button",
-                    )
-                    yield Button(
-                        "Stop Server",
-                        id="llamafile-stop-server-button",
-                        classes="action_button",
-                    )
-
                 yield RichLog(
                     id="llamafile-log-output",
                     classes="log_output",
@@ -504,6 +507,19 @@ class LLMManagementWindow(Container):
                 yield Label(
                     "High-performance LLM serving with vLLM", classes="description"
                 )
+
+                with Container(classes="button_container"):
+                    yield Button(
+                        "Start Server",
+                        id="vllm-start-server-button",
+                        classes="action_button",
+                    )
+                    yield Button(
+                        "Stop Server",
+                        id="vllm-stop-server-button",
+                        classes="action_button",
+                    )
+
 
                 yield Label("Python Interpreter Path:", classes="label")
                 with Container(classes="input_container"):
@@ -545,18 +561,6 @@ class LLMManagementWindow(Container):
                     theme="vscode_dark",
                 )
 
-                with Container(classes="button_container"):
-                    yield Button(
-                        "Start Server",
-                        id="vllm-start-server-button",
-                        classes="action_button",
-                    )
-                    yield Button(
-                        "Stop Server",
-                        id="vllm-stop-server-button",
-                        classes="action_button",
-                    )
-
                 yield RichLog(
                     id="vllm-log-output",
                     classes="log_output",
@@ -570,6 +574,19 @@ class LLMManagementWindow(Container):
                 yield Label(
                     "Run ONNX models with optimized inference", classes="description"
                 )
+
+                with Container(classes="button_container"):
+                    yield Button(
+                        "Start ONNX Server",
+                        id="onnx-start-server-button",
+                        classes="action_button",
+                    )
+                    yield Button(
+                        "Stop ONNX Server",
+                        id="onnx-stop-server-button",
+                        classes="action_button",
+                    )
+
 
                 yield Label("Python Interpreter Path:", classes="label")
                 with Container(classes="input_container"):
@@ -623,18 +640,6 @@ class LLMManagementWindow(Container):
                     classes="additional_args_textarea",
                     theme="vscode_dark",
                 )
-
-                with Container(classes="button_container"):
-                    yield Button(
-                        "Start ONNX Server",
-                        id="onnx-start-server-button",
-                        classes="action_button",
-                    )
-                    yield Button(
-                        "Stop ONNX Server",
-                        id="onnx-stop-server-button",
-                        classes="action_button",
-                    )
 
                 yield RichLog(
                     id="onnx-log-output",
