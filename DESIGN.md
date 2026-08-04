@@ -320,3 +320,64 @@ Console transcript messages use compact role/body grammar and full-width termina
 - **Don't** use side-stripe accent borders on cards, list items, callouts, or alerts. If a colored state is needed, use a full border, background tint, status badge, or explicit icon/label.
 - **Don't** use gradient text, decorative glass blur, bouncy motion, or full-saturation accents on inactive states.
 - **Don't** hide why an action is disabled. Give the recovery path in the surface, tooltip, inspector, or command palette.
+
+## 7. Screen decomposition
+
+This system also governs how a large screen's *code* is shaped, not just how it
+renders — because the recurring geometry defects this file's other sections
+guard against (a control pushed out of reach, a bare `Container` starving its
+sibling, theming left on the wrong node) keep originating in screens that own
+too much undifferentiated DOM and behaviour inside one class. A screen with
+regions is a screen where those defects have somewhere narrower to hide.
+
+### Named Rules
+
+**The One Rule.** A region widget owns pixels. A controller does not. That
+is the whole test, decidable per cluster: if it composes its own subtree and
+handles its own `on_*` events, it is a region widget; if it owns state and
+behaviour with no DOM of its own, it is a controller.
+
+**The One Home Rule.** A screen's collaborators — region widgets and
+controllers alike — live in one package next to the screen:
+`UI/<Screen>_Modules/` (for example `UI/Console_Modules/`,
+`UI/Settings_Modules/`, `UI/Library_Modules/`). Existing reusable leaf
+widgets stay where they already are (`Widgets/Console/` and siblings); a
+region is a one-place composition of them, not a relocation of them.
+
+**The Six Migration Rules.** Every extraction — moving one region or one
+controller out of a screen — follows six non-negotiable rules, stated in
+full in `Docs/superpowers/specs/2026-08-02-screen-decomposition-design.md`
+under "Migration safety." They are not restated here; read them there
+before touching a screen's DOM.
+
+**Existence proofs.** Two, so far: the Evals screen (`evals_screen.py`,
+2,513 lines, the one healthy screen among the five largest — its regions
+live in `UI/Evals/`: `library_rail.py`, `inspector.py`, the editors, with
+read-side state in `evals_state.py`), and Console wave 1 (`UI/Console_Modules/`:
+the shared frame helper, `ConsoleLeftRail`, `ConsoleInspectorRail`, and
+`ConsoleDictationController`).
+
+**Naming a controller's dependencies.** A controller's constructor is its
+dependency list — see `ConsoleDictationController.__init__`
+(`tldw_chatbook/UI/Console_Modules/dictation.py`) as the canonical example.
+Its docstring settles three kinds of binding, one rule per kind:
+
+1. Framework services the controller genuinely needs (`query_one`,
+   `run_worker`, `post_message`, `set_timer`, `set_interval`, `is_mounted`)
+   live-read from the screen through a `@property` on every access, never
+   snapshotted — a value captured once at construction goes stale the
+   instant a caller or test replaces the attribute on the screen instance
+   afterward.
+2. Everything else the controller depends on that is not its own state is a
+   named, keyword-only constructor parameter, passed as a late-binding
+   callable — a lambda closing over the screen at *call* time, not a bound
+   method frozen at construction. This is what "a controller's dependencies
+   are its signature" means in practice: discoverable by reading the
+   constructor, not by reading every property on the class.
+3. `app_instance` may be stored as a plain attribute — the one snapshot
+   exception — only where its identity is stable for the controller's life
+   and that stability is justified in the docstring, the way a screen
+   method's identity is not. This is a per-dependency exception, never a
+   default; a controller that snapshots something whose identity *can*
+   change under it is repeating the staleness bug wave 1 found and fixed
+   twice before landing on this rule.

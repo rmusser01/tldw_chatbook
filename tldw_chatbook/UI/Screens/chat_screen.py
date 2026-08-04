@@ -13024,9 +13024,13 @@ class ChatScreen(BaseAppScreen):
 
         Delegates to `UI.Console_Modules.frame.frame_console_region` (wave-1
         console decomposition, task 2). Kept as a thin shim so the
-        not-yet-extracted call sites in `compose_content` are untouched;
-        removed in task 6 once every call site imports the module function
-        directly.
+        not-yet-extracted call sites in `compose_content` are untouched.
+        Task 6 (wave 1's close-out) checked this: 7 call sites remain
+        inside `compose_content` (the main-column block, wave 2's job), so
+        the shim stays rather than being force-removed. It is safe to
+        delete once every remaining call site imports
+        `frame_console_region` from `UI.Console_Modules.frame` directly —
+        expected during wave 2's main-column extraction, not before.
 
         Args:
             widget: The Console shell region widget to frame in place.
