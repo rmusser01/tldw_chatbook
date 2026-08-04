@@ -184,6 +184,22 @@
 
 ---
 
+### Task 9: Non-RAG handoffs deliver their staged content (Task-2 review bonus find; execute BEFORE Task 8)
+
+**Files:**
+- Modify: `tldw_chatbook/UI/Screens/chat_screen.py` (`_stage_handoff_as_console_live_work` :16557-16632 — the `"rag" in source` gate at :16584)
+- Test: `Tests/UI/test_console_live_work_handoffs.py` (additive)
+
+**Interfaces:**
+- Context (verified by the Task-2 review): media (`library_screen.py:3361`, source="library"), conversations (`:3318`, source="library"), and notes (`library_screen.py:7258`, source="notes") "Use in Console" handoffs never enter the bundle-building branch, and `capture_console_staged_evidence_for_chat` (`chat_rag_events.py:1601-1640`) returns `LocalRagContextResult(None, None)` whenever `payload.get("evidence_bundle")` isn't a mapping — so those three handoffs SILENTLY send with zero staged content reaching the model while the strip/tray show content staged. Live content-loss bug.
+- Produces: every handoff staged through `_stage_handoff_as_console_live_work` carries an `evidence_bundle` built from the handoff's content (reuse the same bundle-construction the `"rag"` branch uses, adapted to the handoff's source/authority fields — read that branch first; do NOT invent a new bundle shape). The consume-on-send predicate and release path stay untouched.
+
+- [ ] **Step 1: Write failing tests**: stage a media handoff (real path) → launch payload carries a non-empty `evidence_bundle`; `capture_console_staged_evidence_for_chat` returns real context (not (None, None)); repeat for a notes handoff. Pin that the existing `"rag"` branch behavior is byte-unchanged.
+- [ ] **Step 2: Verify failures.**
+- [ ] **Step 3: Implement** — build the bundle for all sources at the one seam (drop or widen the `"rag" in source` conditional; whichever you choose, say why in the report). Check the same send-gating blast radius Task 2 pinned (`_console_send_blocked_reason` evidence gate).
+- [ ] **Step 4: Targeted gate** (`Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_console_staged_evidence_strip.py -q` + collect sweep).
+- [ ] **Step 5: Commit** — `fix(console): non-RAG handoffs deliver their staged content to the model`
+
 ## Self-Review Notes
 
 - Coverage: D1a/b → T1, D1c → T2, D3 → T3, D2 → T4, D4 → T5, D5 → T6; backlog truth → T7; ship → T8. The critique's P1s outside this PR's scope (MCP tool honesty, paid-moment visibility, provider split-brain) belong to PR-T2/T3 per the program plan — not lost, deliberately out of scope here.
