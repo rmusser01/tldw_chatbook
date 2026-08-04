@@ -939,7 +939,19 @@ def _build_queue_row(
         if message and message != unwrap_ingest_error(str(job.error or "")):
             lines.append(f"Details: {message}")
         chain = job.error_detail.get("chain") or ()
+        # (task-2140) The worker dedups chain entries against the bare
+        # message, but entries carry a "ClassName: " prefix -- strip it
+        # before comparing, so an entry that merely restates the row's
+        # error (round 5: "Underlying: FileIngestionError: <row error>")
+        # never renders.
+        known_texts = {
+            message,
+            unwrap_ingest_error(str(job.error or "")),
+        }
         for underlying in tuple(chain)[:3]:
+            text_part = str(underlying).split(": ", 1)[-1]
+            if unwrap_ingest_error(text_part) in known_texts:
+                continue
             lines.append(f"Underlying: {underlying}")
         if row.can_retry:
             dependency = _missing_dependency_from(message, tuple(chain))
@@ -947,6 +959,14 @@ def _build_queue_row(
                 lines.append(
                     f"Missing dependency: {dependency}. Install it, then "
                     "Retry."
+                )
+            elif category == "parse_error":
+                # (task-2140) No network talk for a local parse failure --
+                # round 5 flagged "a network hiccup" advice on a corrupt
+                # local PDF as trust-eroding.
+                lines.append(
+                    "If the file is corrupt or truncated, repair or "
+                    "re-export it, then Retry."
                 )
             else:
                 lines.append(

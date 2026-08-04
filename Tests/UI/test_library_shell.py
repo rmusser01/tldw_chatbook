@@ -13316,3 +13316,126 @@ async def test_clear_finished_keeps_recent_ledger_and_scrolls_confirm(tmp_path):
         assert state.queue_empty_line == "Queue is empty."
         recent = list(screen.query("#library-ingest-recent"))
         assert recent, "Recent ingests vanished after the clear"
+
+
+@pytest.mark.asyncio
+async def test_commit_summary_renders_for_text_selection_and_clears(tmp_path):
+    """(task-2140) The commit-summary Static was conditionally composed, so
+    a text-only pre-flight (non-structural apply) never mounted it and a
+    Clear left it stale ('0 will import · 1 will match' over an empty
+    field). Always-mounted + updater-owned: renders for plain text,
+    clears with the selection."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c5-commit")
+    harness = _LibraryIngestCanvasHarness(db)
+    staged = tmp_path / "report.txt"
+    staged.write_text("hello world")
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        summary = screen.query_one("#library-ingest-commit-summary", Static)
+        assert summary.display is False, "no selection yet -- line must hide"
+
+        path_input = screen.query_one("#library-ingest-path", Input)
+        path_input.value = str(staged)
+        for _ in range(100):
+            await pilot.pause(0.05)
+            if screen._library_ingest_form.preflight is not None:
+                break
+        else:
+            raise AssertionError("preflight never completed")
+        await pilot.pause()
+
+        current = screen.query_one("#library-ingest-commit-summary", Static)
+        assert current is summary, "line must be always-mounted (identity)"
+        assert current.display is True, (
+            "plain-text selection never mounted the commit summary "
+            "(the non-structural apply path)"
+        )
+        assert "1 will import" in str(current.renderable)
+
+        screen.query_one("#library-ingest-clear-path", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        cleared = screen.query_one("#library-ingest-commit-summary", Static)
+        assert cleared.display is False, (
+            "commit summary stayed visible (stale) after Clear"
+        )
+
+
+@pytest.mark.asyncio
+async def test_dismiss_preserves_failure_in_recent_ledger(tmp_path):
+    """(task-2140) Dismiss was the one destructive act that erased the
+    failure from every surface with zero friction -- the record now
+    survives in Recent ingests, marked dismissed."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c5-dismiss")
+    harness = _LibraryIngestCanvasHarness(db)
+    broken = tmp_path / "broken.pdf"
+    broken.write_bytes(b"%PDF-1.4\nnot really a pdf\n")
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        failing = harness.submit_library_ingest_job(source_path=str(broken))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j.state for j in harness.library_ingest_jobs.jobs()}
+            if jobs.get(failing.job_id) == IngestJobState.FAILED:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("job never failed")
+
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(
+            screen, pilot, f"#library-ingest-dismiss-{failing.job_id}"
+        )
+        screen.query_one(
+            f"#library-ingest-dismiss-{failing.job_id}", Button
+        ).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        state = screen._build_library_ingest_state()
+        assert [job.job_id for job in state.recent_jobs] == [failing.job_id], (
+            "Dismiss erased the failure from the Recent ledger"
+        )
+        assert getattr(state.recent_jobs[0], "dismissed", False) is True
+        recent = list(screen.query("#library-ingest-recent"))
+        assert recent, "Recent ingests must render the dismissed record"
+
+
+@pytest.mark.asyncio
+async def test_start_click_immediately_after_typing_submits(tmp_path):
+    """(task-2140 pin) One live report of a dead Start click at the commit
+    moment (unreproduced) -- pin the type-then-immediately-click path so a
+    real first-click swallow can never hide as driving noise."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c5-deadclick")
+    harness = _LibraryIngestCanvasHarness(db)
+    staged = tmp_path / "report.txt"
+    staged.write_text("hello world")
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        path_input = screen.query_one("#library-ingest-path", Input)
+        path_input.focus()
+        await pilot.pause()
+        path_input.value = str(staged)
+        # Immediately click Start -- within the debounce window, before
+        # any pre-flight lands.
+        await pilot.pause()
+        await pilot.click("#library-ingest-start")
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            if harness.library_ingest_jobs.jobs():
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        assert harness.library_ingest_jobs.jobs(), (
+            "first Start click after typing did not submit"
+        )
