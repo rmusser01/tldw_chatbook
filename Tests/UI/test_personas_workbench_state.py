@@ -477,3 +477,71 @@ class TestNonCharacterModeRestore:
             assert screen2.state.selected_entity_kind == "persona"
             assert screen2._pending_restore is None
             assert screen2.query_one("#ccp-persona-card-view").display is True
+
+
+class TestInvalidRestoreStillAutoSelects:
+    """Qodo review: an unusable saved payload must not suppress F-031.
+
+    ``restore_state`` used to set ``_restored_from_saved_state`` for ANY
+    dict-shaped payload, so a stale/invalid saved state landed the user on
+    the dead no-selection first paint instead of auto-selecting a row.
+    """
+
+    async def test_invalid_mode_saved_state_still_auto_selects_first_row(
+        self, mock_app_instance, stub_characters
+    ):
+        """A saved mode that does not resolve to a chip mode is not a real
+        restore - first-paint auto-select still fires."""
+        saved = {
+            "personas_workbench": {
+                # Not a MODE_CHIP_ORDER mode: nothing here can be restored.
+                "active_mode": "prompts",
+                "selected_entity_kind": "prompt",
+                "selected_entity_id": "p-1",
+                "selected_entity_name": "Some Prompt",
+            },
+            "personas_preview": None,
+        }
+
+        app = _RestoringPersonasTestApp(mock_app_instance, saved)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.selected_entity_id == "char-1"
+            assert screen.query_one("#ccp-character-card-view").display is True
+
+    async def test_stale_saved_selection_falls_back_to_auto_select(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """A valid payload whose entity no longer resolves: the restore
+        clears the stale selection AND the round-trip flag, so auto-select
+        still rescues the paint."""
+        saved = {
+            "personas_workbench": {
+                "active_mode": "characters",
+                "selected_entity_kind": "character",
+                "selected_entity_id": "ghost-9",
+                "selected_entity_name": "Ghost",
+            },
+            "personas_preview": None,
+        }
+
+        real_select = PersonasScreen._select_character
+
+        async def _flaky_select(self, entity_id, entity_name, **kwargs):
+            if str(entity_id) == "ghost-9":
+                raise RuntimeError("stale entity")
+            await real_select(self, entity_id, entity_name, **kwargs)
+
+        monkeypatch.setattr(PersonasScreen, "_select_character", _flaky_select)
+
+        app = _RestoringPersonasTestApp(mock_app_instance, saved)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            # The stale restore failed, so the mount fell back to the
+            # first-paint behavior and selected the first real row.
+            assert screen.state.selected_entity_id == "char-1"
+            assert screen.query_one("#ccp-character-card-view").display is True

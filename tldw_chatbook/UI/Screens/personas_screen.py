@@ -970,6 +970,11 @@ class PersonasScreen(BaseAppScreen):
         ``self.state`` here and ``_apply_pending_restore`` runs the full
         ``_apply_mode`` for it before re-selecting, so the mode's library
         rows and mode-specific panes are live when the selection lands.
+
+        The round-trip flag is set only for payloads that can resolve (a
+        saved chip mode). An invalid payload, or one whose selection later
+        fails to apply, leaves the flag False so first-paint auto-select
+        (F-031) still rescues the mount instead of showing a dead paint.
         """
         super().restore_state(state)
         if not isinstance(state, dict):
@@ -977,11 +982,16 @@ class PersonasScreen(BaseAppScreen):
             self._restored_from_saved_state = False
             return
         wb = state.get("personas_workbench")
-        # Any saved workbench payload marks this as a navigation round-trip,
-        # not a first paint, so auto-select stays out of the restore
-        # semantics.
-        self._restored_from_saved_state = isinstance(wb, dict)
-        if isinstance(wb, dict) and wb.get("active_mode") in MODE_CHIP_ORDER:
+        # Only a payload that can actually resolve (a saved chip mode) counts
+        # as a navigation round-trip. An invalid/unsupported payload is not a
+        # restore at all, so first-paint auto-select (F-031) still fires -
+        # otherwise a stale saved state would land the user on the dead
+        # no-selection paint. A payload that then FAILS to apply its
+        # selection clears the flag again in _apply_pending_restore below.
+        self._restored_from_saved_state = isinstance(wb, dict) and wb.get(
+            "active_mode"
+        ) in MODE_CHIP_ORDER
+        if self._restored_from_saved_state:
             names = {f.name for f in dataclasses.fields(PersonasWorkbenchState)}
             self.state = PersonasWorkbenchState(
                 **{k: v for k, v in wb.items() if k in names}
@@ -1030,12 +1040,15 @@ class PersonasScreen(BaseAppScreen):
             # A stale/deleted entity must degrade to a fully cleared selection,
             # not just a blank center: leaving self.state's selection populated
             # would let _console_action_allowed() keep attach/Start-Chat wrongly
-            # enabled and the inspector showing a stale selection.
+            # enabled and the inspector showing a stale selection. The flag is
+            # cleared too: this restore produced nothing, so the mount falls
+            # back to first-paint auto-select (F-031) instead of a dead paint.
             logger.opt(exception=True).warning(
                 f"Could not restore Personas selection {kind}/{entity_id}; "
                 "clearing selection."
             )
             self.state.clear_selection()
+            self._restored_from_saved_state = False
             try:
                 await self.query_one(PersonasInspectorPane).clear_selection()
             except QueryError:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -23,6 +24,8 @@ from .personas_messages import (
 )
 
 _ID_SAFE = re.compile(r"[^a-zA-Z0-9_-]")
+
+logger = logger.bind(module="PersonasLibraryPane")
 
 #: Columns one toolbar button occupies beyond its label: `padding: 0 1`
 #: plus the `margin-right: 1` gap from the pane CSS below.
@@ -214,6 +217,16 @@ class PersonasLibraryPane(Vertical):
         try:
             required = self._required_toolbar_row_width()
         except Exception:
+            # Widths are label-derived, so a failure here is a teardown or
+            # pre-compose race - but never something to swallow silently:
+            # leaving the bars clipped with no trace was the bug under
+            # review. Debug level, matching the teardown-race idiom used
+            # across the personas widgets (the layout simply keeps its
+            # previous state and re-syncs on the next resize).
+            logger.opt(exception=True).debug(
+                "PersonasLibraryPane toolbar width measurement failed; "
+                "keeping the previous control layout."
+            )
             return
         self.set_class(width < required, "personas-library-stacked-controls")
 

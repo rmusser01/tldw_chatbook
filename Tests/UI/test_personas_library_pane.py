@@ -602,3 +602,32 @@ async def test_s_key_cycles_sort_only_when_sort_applies():
         assert "(s)" in str(
             pilot.app.query_one("#personas-library-sort", Button).tooltip
         )
+
+
+async def test_sync_control_layout_logs_and_keeps_state_on_failure(monkeypatch):
+    """Qodo review: a toolbar width-measurement failure must be logged (not
+    silently swallowed) and must leave the previous layout in place."""
+    from unittest.mock import Mock
+
+    from loguru import logger as loguru_logger
+
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        pane.set_class(True, "personas-library-stacked-controls")
+        records: list[str] = []
+        sink = loguru_logger.add(lambda m: records.append(str(m)), level="DEBUG")
+        try:
+            monkeypatch.setattr(
+                pane,
+                "_required_toolbar_row_width",
+                Mock(side_effect=RuntimeError("boom")),
+            )
+            pane._sync_control_layout()  # must not raise
+            # Fallback: the previous layout class is untouched.
+            assert pane.has_class("personas-library-stacked-controls")
+        finally:
+            loguru_logger.remove(sink)
+    assert any("toolbar" in record.lower() for record in records), (
+        f"expected a debug/warning log about the toolbar layout failure; got {records}"
+    )
