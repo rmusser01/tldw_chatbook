@@ -962,11 +962,12 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
 
         # task-13: workspace-level RAG retrieval scope entry point.
         # Named "RAG Scope" (not "Scope") to avoid colliding with the
-        # unrelated "Scope" status pair below, which shows the active
-        # conversation's identity, not a RAG retrieval scope. Enabled
-        # only for a real registry workspace (`rag_scope_enabled`) --
-        # never for the "Local Default"/error/no-registry sentinel
-        # states, which have no real workspace_id to scope against.
+        # Console Inspector's item-scope row ("Scope: everything" / "Scope:
+        # N items", `console_retrieval_scope_row.py`), which names a
+        # RAG retrieval scope, not this button. Enabled only for a real
+        # registry workspace (`rag_scope_enabled`) -- never for the
+        # "Local Default"/error/no-registry sentinel states, which have
+        # no real workspace_id to scope against.
         #
         # This lives on its OWN row (task-14) rather than sharing the
         # Switch/New row: the narrow Console left rail body is only wide
@@ -1000,9 +1001,16 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 classes="console-workspace-recovery",
             )
 
-        scope_value = self.state.scope_label or ""
+        # RAG-45: this pair renders the active CONVERSATION's identity, not a
+        # RAG retrieval scope -- labeled "Conversation" (not "Scope") so it
+        # reads distinctly from both the "RAG Scope" button above and the
+        # Inspector's item-scope row ("Scope: everything" / "Scope: N
+        # items"). A fresh session with no active conversation has nothing
+        # to show here, so the value falls back to an explicit placeholder
+        # rather than rendering a bare label with an empty body.
+        scope_value = self.state.scope_label or "—"
         scope_pair = ConsoleWorkspaceStatusPair(
-            "Scope",
+            "Conversation",
             scope_value,
             label_id="console-active-scope-label",
             value_id="console-active-scope-value",

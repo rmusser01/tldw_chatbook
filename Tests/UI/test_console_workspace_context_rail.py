@@ -2446,10 +2446,45 @@ async def test_session_tray_shows_workspace_scope_and_new_button() -> None:
             "#console-active-scope .console-workspace-status-label", Static
         )
         assert "Workspace" in str(workspace_label.renderable)
-        assert "Scope" in str(scope_label.renderable)
+        # RAG-45: this pair shows the active CONVERSATION's identity, not a
+        # RAG retrieval scope, so it is labeled "Conversation" -- distinct
+        # from the "RAG Scope" button and the Inspector's item-scope row
+        # ("Scope: everything" / "Scope: N items").
+        assert "Conversation" in str(scope_label.renderable)
 
         new_button = console.query_one("#console-new-workspace", Button)
         assert new_button.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_conversation_row_shows_placeholder_when_no_active_conversation() -> None:
+    """RAG-45: a fresh session with no active conversation must not render a
+    bare "Conversation" label with an empty value body -- the value falls
+    back to an explicit "—" placeholder."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        # `_base_grouped_workspace_state` leaves `scope_label`/`scope_detail`
+        # at their dataclass defaults (""), matching a fresh session with no
+        # active conversation.
+        state = _base_grouped_workspace_state()
+        assert state.scope_label == ""
+        tray.sync_state(state)
+        await pilot.pause()
+
+        _assert_status_row(
+            console,
+            label_selector="#console-active-scope-label",
+            value_selector="#console-active-scope-value",
+            label="Conversation",
+            value_contains="—",
+        )
 
 
 @pytest.mark.asyncio

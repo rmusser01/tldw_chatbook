@@ -40,8 +40,9 @@ default limit — the banner shows whatever your configured limit is.
 
 **Session block** (left rail, "Session" section). Shows "Workspace" plus the
 active workspace name, with "Switch", "New", and "RAG Scope" buttons, and a
-"Scope" line naming the active conversation. "RAG Scope" narrows retrieval to
-this workspace's items — see [Context & RAG](context-and-rag.md).
+"Conversation" line naming the active conversation ("—" when no conversation
+is active yet). "RAG Scope" narrows retrieval to this workspace's items — see
+[Context & RAG](context-and-rag.md).
 
 **Conversations browser** (below the Session block). A "Conversations" header,
 a "Search conversations" box with a "Clear" button, a "New conversation"
