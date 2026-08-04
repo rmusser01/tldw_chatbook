@@ -85,3 +85,12 @@ correctness defects:
 
 **Verification.** 297 core + 55 shell-subset green; collect clean.
 Live-verified all three fixes on a fresh isolated profile.
+
+**Qodo round (fixed in `2e27b4dd7`):** REAL bug — the persistent invalid
+marker was compose-time only, so it never toggled on the in-place
+text/number edit path (stayed marked when valid, never marked when
+invalid): exactly this arc's recurring "the in-place updater must own
+every conditional" family. Now toggled in
+`handle_library_ingest_option_value_changed`, regression-tested
+valid→invalid→valid. Plus: `$ds-status-error-readable` named token
+instead of a repeated literal; Google-style docstrings on the new tests.
