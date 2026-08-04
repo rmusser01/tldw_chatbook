@@ -18,7 +18,7 @@ from tldw_chatbook.Library.ingest_capabilities import (
 )
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
 from tldw_chatbook.Library.library_ingest_state import (
-    QUEUE_EMPTY_COPY,
+    validate_ingest_option_value,
     LibraryIngestCanvasState,
     build_intro_lines,
 )
@@ -131,9 +131,9 @@ class LibraryIngestQueuePanel(Vertical):
                 id="library-ingest-queue-counts",
                 markup=False,
             )
-        if not state.queue_rows:
+        if not state.queue_rows and state.queue_empty_line:
             yield Static(
-                QUEUE_EMPTY_COPY,
+                state.queue_empty_line,
                 id="library-ingest-queue-empty",
                 markup=False,
             )
@@ -536,6 +536,22 @@ class LibraryIngestCanvas(VerticalScroll):
                         disabled=disabled,
                     )
                 )
+                # (task-2130) Inline validation message -- a text line, not a
+                # color-only border. Display-managed so typing updates it in
+                # place without recomposing the panel.
+                # A disabled field no longer gates Start (Qodo round) --
+                # its error line hides with it, so message and gate agree.
+                error_message = (
+                    "" if disabled else validate_ingest_option_value(field, value)
+                )
+                error_line = Static(
+                    error_message,
+                    id=f"{widget_id}-error",
+                    classes="type-group-field-error",
+                    markup=False,
+                )
+                error_line.display = bool(error_message)
+                children.append(error_line)
 
         if group == "audio_video":
             provider = cap_fields_by_name["transcription_provider"]
@@ -727,6 +743,13 @@ class LibraryIngestCanvas(VerticalScroll):
         # line's row when the text is empty (an auto-height empty Static
         # would collapse to 0); the screen's path-changed handler updates
         # the text in place instead of mounting/removing the widget.
+        if state.commit_summary_line:
+            yield Static(
+                state.commit_summary_line,
+                id="library-ingest-commit-summary",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
         start_quiet_line = Static(
             state.start_quiet_line,
             id="library-ingest-start-quiet-line",

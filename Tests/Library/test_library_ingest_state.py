@@ -1496,15 +1496,17 @@ def test_unwrap_ingest_error_collapses_chain_keeping_tail():
 
 
 def test_expanded_details_render_unwrapped_lines_and_retry_hint():
-    """(task-2043) An expanded failed row carries category, the unwrapped
-    message, and -- when Retry is offered -- an honest hint about what a
-    retry could fix."""
+    """(task-2043, contract revised by task-2130) An expanded failed row
+    carries category and an honest retry hint -- and NEVER a Details line
+    that repeats the row summary verbatim (the round-4 critique's
+    "circular details" P1: the expansion click must add information)."""
     job = _job(
         state=IngestJobState.FAILED,
         source_path="/tmp/broken.pdf",
         error="Failed to ingest pdf file: Failed to process pdf file: PDF Extraction Error.",
         error_detail={
             "category": "parse_error",
+            "exception_type": "RuntimeError",
             "message": (
                 "Failed to ingest pdf file: Failed to process pdf file: "
                 "PDF Extraction Error."
@@ -1518,11 +1520,51 @@ def test_expanded_details_render_unwrapped_lines_and_retry_hint():
     )
     row = state.queue_rows[0]
     assert row.details_expanded is True
-    assert row.detail_lines[0] == "Category: parse error"
-    assert row.detail_lines[1] == (
-        "Details: Failed to process pdf file: PDF Extraction Error."
-    )
+    assert row.detail_lines[0] == "Category: parse error (RuntimeError)"
+    assert not any(
+        line.startswith("Details:") for line in row.detail_lines
+    ), "a Details line that repeats the summary is the round-4 P1"
     assert any("retry can succeed" in line for line in row.detail_lines)
+    assert not any("missing tooling" in line for line in row.detail_lines)
+
+
+def test_expanded_details_surface_chain_and_name_missing_dependency():
+    """(task-2130) The captured exception chain renders as Underlying
+    lines, a genuinely-different structured message keeps its Details
+    line, and a missing-module failure names the dependency in the
+    retry advisory instead of "missing tooling"."""
+    job = _job(
+        state=IngestJobState.FAILED,
+        source_path="/tmp/broken.pdf",
+        error="Failed to process pdf file: PDF Extraction Error.",
+        error_detail={
+            "category": "parse_error",
+            "exception_type": "ImportError",
+            "message": "Text extraction failed at page 3.",
+            "chain": [
+                "ImportError: No module named 'pymupdf'",
+                "OSError: cannot open shared object",
+            ],
+        },
+    )
+    state = build_library_ingest_state(
+        (job,),
+        form=LibraryIngestFormState(),
+        expanded_details={"ingest-job-1"},
+    )
+    row = state.queue_rows[0]
+    assert "Details: Text extraction failed at page 3." in row.detail_lines
+    assert (
+        "Underlying: ImportError: No module named 'pymupdf'"
+        in row.detail_lines
+    )
+    assert (
+        "Underlying: OSError: cannot open shared object" in row.detail_lines
+    )
+    assert (
+        "Missing dependency: pymupdf. Install it, then Retry."
+        in row.detail_lines
+    )
 
     collapsed = build_library_ingest_state((job,), form=LibraryIngestFormState())
     assert collapsed.queue_rows[0].details_expanded is False
@@ -1620,7 +1662,10 @@ def test_unsupported_line_names_files_and_matches_gate():
         ),
     )
     assert blocked.start_enabled is False
-    assert blocked.unsupported_line == "Unsupported: x.json, y.jpg."
+    assert blocked.unsupported_line == (
+        "Unsupported: x.json, y.jpg."
+        " Supported: PDF documents, audio/video files, e-books, plain text files."
+    )
 
     many = build_library_ingest_state(
         (),
@@ -1638,3 +1683,131 @@ def test_unsupported_line_names_files_and_matches_gate():
         ),
     )
     assert many.unsupported_line.endswith("u0.bin, u1.bin, u2.bin, ....")
+
+
+def test_invalid_option_values_gate_start_with_text_message():
+    """(task-2130) 'abc' as a chunk size used to sail into a running job;
+    invalid option values now gate Start like a bad path, with a text
+    message (not a color-only border)."""
+    form = LibraryIngestFormState(path="/tmp/report.txt")
+    form.type_options["generic"] = {"chunk_size": "abc"}
+    state = build_library_ingest_state((), form=form)
+    assert not state.start_enabled
+    assert ("generic", "chunk_size", "Chunk size must be a whole number.") in (
+        state.option_errors
+    )
+    assert state.start_quiet_line == (
+        "Fix the highlighted options to start: "
+        "Chunk size must be a whole number."
+    )
+
+    form.type_options["generic"] = {"chunk_size": "0"}
+    zero = build_library_ingest_state((), form=form)
+    assert (
+        "generic",
+        "chunk_size",
+        "Chunk size must be between 100 and 5000.",
+    ) in zero.option_errors
+
+    # (Qodo round) The UI validator mirrors the submit-time clamp bounds:
+    # a value the gate blesses is never silently rewritten at submit.
+    form.type_options["generic"] = {"chunk_size": "150000"}
+    huge = build_library_ingest_state((), form=form)
+    assert (
+        "generic",
+        "chunk_size",
+        "Chunk size must be between 100 and 5000.",
+    ) in huge.option_errors
+
+    form.type_options["generic"] = {"chunk_size": "1000", "chunk_overlap": "-5"}
+    negative = build_library_ingest_state((), form=form)
+    assert ("generic", "chunk_overlap", "Chunk overlap must be at least 0.") in (
+        negative.option_errors
+    )
+
+    form.type_options["generic"] = {"chunk_size": "1000", "chunk_overlap": "100"}
+    valid = build_library_ingest_state((), form=form)
+    assert valid.option_errors == ()
+    assert valid.start_enabled
+
+
+def test_recent_ledger_survives_registry_clear_and_empty_copy_is_honest():
+    """(task-2130) Recent ingests is the durable session ledger: jobs
+    snapshotted at Clear-finished time still render after the registry
+    removal, and the empty-queue copy stops claiming "No ingest jobs
+    yet." after a session with activity."""
+    cleared = _job(
+        state=IngestJobState.FAILED,
+        source_path="/tmp/broken.pdf",
+        error="Failed to process pdf file: PDF Extraction Error.",
+    )
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        recent_ledger=(cleared,),
+    )
+    assert [job.job_id for job in state.recent_jobs] == [cleared.job_id]
+    assert state.queue_empty_line == "Queue is empty."
+
+    untouched = build_library_ingest_state((), form=LibraryIngestFormState())
+    assert untouched.queue_empty_line == "No ingest jobs yet."
+
+
+def test_queue_counts_line_shows_in_flight_batch_work():
+    """(task-2130 pin) The tally names queued/parsing work during a batch
+    -- the round-4 live report of '3 done' with no in-flight signal was a
+    sampling artifact, and this pins the contract that keeps it one."""
+    jobs = (
+        _job(job_id="ingest-job-1", state=IngestJobState.DONE),
+        _job(job_id="ingest-job-2", state=IngestJobState.PARSING),
+        _job(job_id="ingest-job-3", state=IngestJobState.QUEUED),
+        _job(job_id="ingest-job-4", state=IngestJobState.QUEUED),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    assert state.queue_counts_line == (
+        "1 parsing · 2 queued · 1 done — all ingests"
+    )
+
+
+def test_capped_duplicate_forecast_says_at_least():
+    """(task-2130) When the duplicate check hits its 20-candidate cap the
+    count is a floor -- an 80-duplicate folder used to read '20 files
+    appear to already be…' presenting the cap as the total."""
+    capped = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/folder"),
+        preflight=PreflightResult(
+            type_groups={"generic": [f"/tmp/f{i}.txt" for i in range(20)]},
+            warnings=[],
+            errors=[],
+            total_size=1000,
+            truncated=False,
+            total_files=80,
+            already_in_library=20,
+            already_in_library_capped=True,
+        ),
+    )
+    assert capped.duplicate_line.startswith(
+        "at least 20 files appear to already be in your Library"
+    )
+    assert "at least 20 will match" in capped.commit_summary_line
+
+
+def test_option_errors_skip_hidden_groups_and_gated_fields():
+    """(task-2130 Qodo round) A stale invalid value in a panel that is not
+    rendered, or in a field whose enabled_when gate is off, must not block
+    Start with nothing visible to fix."""
+    form = LibraryIngestFormState(path="/tmp/report.txt")
+    # Invalid value in a group whose panel is NOT rendered (no preflight
+    # -> only the generic group is validated).
+    form.type_options["web"] = {"max_pages": "abc"}
+    form.type_options["generic"] = {"chunk_size": "1000"}
+    state = build_library_ingest_state((), form=form)
+    assert state.option_errors == ()
+    assert state.start_enabled
+
+    # Invalid chunk_size while its enabled_when gate (chunk) is OFF: the
+    # field renders disabled, so it must not gate Start either.
+    form.type_options["generic"] = {"chunk": False, "chunk_size": "abc"}
+    gated_off = build_library_ingest_state((), form=form)
+    assert gated_off.option_errors == ()

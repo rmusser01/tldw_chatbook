@@ -185,7 +185,10 @@ async def test_unsupported_files_summary_renders():
         # (task-2100) Unsupported-only selection is gate-blocked, so the
         # line names the file instead of promising a failure row that a
         # blocked submit never records.
-        assert "Unsupported: weird.xyz." == str(summary.renderable)
+        assert str(summary.renderable) == (
+            "Unsupported: weird.xyz."
+            " Supported: PDF documents, audio/video files, e-books, plain text files."
+        )
 
 
 @pytest.mark.asyncio
@@ -1293,7 +1296,10 @@ async def test_unsupported_files_summary_pluralizes_correctly():
     async with app.run_test() as pilot:
         summary = pilot.app.query_one("#ingest-unsupported-summary", Static)
         # (task-2100) Gate-blocked (nothing importable): names only.
-        assert "Unsupported: a.xyz, b.xyz." == str(summary.renderable)
+        assert str(summary.renderable) == (
+            "Unsupported: a.xyz, b.xyz."
+            " Supported: PDF documents, audio/video files, e-books, plain text files."
+        )
 
 
 # --- task-2016: P3 polish ----------------------------------------------------

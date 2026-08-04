@@ -13176,3 +13176,143 @@ async def test_expand_all_opens_mounted_panels_in_place(tmp_path):
         await pilot.pause()
         assert panel.collapsed is True
         assert screen.query_one("#library-ingest-start", Button) is start_before
+
+
+@pytest.mark.asyncio
+async def test_option_input_edit_updates_receipt_error_and_gate(tmp_path):
+    """(task-2130) Text-Input option edits skip the recompose (cursor
+    survival) -- the receipt, the inline message, and the Start gate must
+    all update in place so the panel never lies about the actual values."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c4-receipt")
+    harness = _LibraryIngestCanvasHarness(db)
+    staged = tmp_path / "report.txt"
+    staged.write_text("hello")
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        screen.query_one("#library-ingest-path", Input).value = str(staged)
+        await pilot.pause()
+
+        from textual.widgets import Collapsible
+
+        screen.query_one("#type-group-generic", Collapsible).collapsed = False
+        await pilot.pause()
+        chunk_input = screen.query_one("#opt-generic-chunk_size", Input)
+        chunk_input.value = "abc"
+        await pilot.pause()
+        await pilot.pause()
+
+        panel = screen.query_one("#type-group-generic", Collapsible)
+        assert "Chunk size: abc" in str(panel.title), (
+            "receipt still asserts the old value after an Input edit"
+        )
+        error_line = screen.query_one("#opt-generic-chunk_size-error", Static)
+        assert error_line.display is True
+        assert "whole number" in str(error_line.renderable)
+        assert screen.query_one("#library-ingest-start", Button).disabled is True
+        # Same object throughout -- the updates were in place.
+        assert screen.query_one("#opt-generic-chunk_size", Input) is chunk_input
+
+        chunk_input.value = "1500"
+        await pilot.pause()
+        await pilot.pause()
+        assert "Chunk size: 1500" in str(
+            screen.query_one("#type-group-generic", Collapsible).title
+        )
+        assert screen.query_one(
+            "#opt-generic-chunk_size-error", Static
+        ).display is False
+        assert screen.query_one("#library-ingest-start", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_reset_to_defaults_resets_text_inputs_and_persistence(tmp_path):
+    """(task-2130) Reset used to wipe type_options while the state builder
+    re-injected the generic mirror fields -- Chunk size survived two Reset
+    presses. Defaults must win everywhere: widget, form mirror, receipt."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c4-reset")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#type-group-generic")
+
+        from textual.widgets import Collapsible
+
+        screen.query_one("#type-group-generic", Collapsible).collapsed = False
+        await pilot.pause()
+        chunk_input = screen.query_one("#opt-generic-chunk_size", Input)
+        chunk_input.value = "10009999"
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_ingest_form.chunk_size == "10009999"
+
+        screen.query_one("#opt-generic-reset", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_ingest_form.chunk_size == "1000"
+        # The state builder re-injects the generic mirror on every build (by
+        # design) -- post-reset it must re-inject the DEFAULTS, not the old
+        # values.
+        generic = screen._library_ingest_form.type_options.get("generic", {})
+        assert generic.get("chunk_size") in (None, "1000", 1000)
+        fresh_input = screen.query_one("#opt-generic-chunk_size", Input)
+        assert fresh_input.value == "1000", (
+            "Reset left the stale value in the chunk-size Input"
+        )
+        assert "Chunk size: 1000" in str(
+            screen.query_one("#type-group-generic", Collapsible).title
+        )
+
+
+@pytest.mark.asyncio
+async def test_clear_finished_keeps_recent_ledger_and_scrolls_confirm(tmp_path):
+    """(task-2130) A confirmed Clear finished must not erase the session's
+    only record: Recent ingests still lists the cleared failure, the empty
+    copy is honest, and the armed confirm is scrolled into view."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c4-ledger")
+    harness = _LibraryIngestCanvasHarness(db)
+    broken = tmp_path / "broken.pdf"
+    broken.write_bytes(b"%PDF-1.4\nnot really a pdf\n")
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        failing = harness.submit_library_ingest_job(source_path=str(broken))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j.state for j in harness.library_ingest_jobs.jobs()}
+            if jobs.get(failing.job_id) == IngestJobState.FAILED:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("job never failed")
+
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-clear-finished")
+
+        clear = screen.query_one("#library-ingest-clear-finished", Button)
+        clear.press()
+        await pilot.pause()
+        await pilot.pause()
+        armed = screen.query_one("#library-ingest-clear-finished", Button)
+        assert "Press again" in str(armed.label)
+
+        armed.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert not harness.library_ingest_jobs.jobs(), "registry not cleared"
+        state = screen._build_library_ingest_state()
+        assert [job.job_id for job in state.recent_jobs] == [failing.job_id], (
+            "Clear finished erased the session ledger"
+        )
+        assert state.queue_empty_line == "Queue is empty."
+        recent = list(screen.query("#library-ingest-recent"))
+        assert recent, "Recent ingests vanished after the clear"

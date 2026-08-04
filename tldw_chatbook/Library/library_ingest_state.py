@@ -13,9 +13,14 @@ import re
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import PurePath
+from collections.abc import Mapping
 from typing import Any, Sequence
 
-from tldw_chatbook.Library.ingest_capabilities import get_capabilities
+from tldw_chatbook.Library.ingest_capabilities import (
+    _is_installed as _dependency_installed,
+    get_capabilities,
+    list_type_groups,
+)
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import (
     DEFAULT_CHUNK_SIZE,
@@ -55,7 +60,103 @@ MEDIA_DB_UNAVAILABLE_COPY = "Media database is unavailable."
 INGEST_UNAVAILABLE_COPY = "Ingest is unavailable in this runtime."
 QUEUE_HEADING_COPY = "Queue"
 QUEUE_EMPTY_COPY = "No ingest jobs yet."
+# (task-2130) After a session with activity the old line was a lie.
+QUEUE_EMPTY_AFTER_ACTIVITY_COPY = "Queue is empty."
 START_QUIET_LINE_COPY = "Enter a file path to start."
+SUPPORTED_FORMATS_COPY = (
+    "Supported: PDF documents, audio/video files, e-books, plain text "
+    "files."
+)
+
+
+def validate_ingest_option_value(field: Any, value: Any) -> str:
+    """Validation message for one option value, or ``""`` when valid.
+
+    (task-2130) Shared by the state gate and the canvas's inline per-field
+    messages so the two can never disagree. Only ``number`` fields have a
+    wrong shape today; other types are constrained by their widgets. The
+    chunk-size bounds mirror ``clamp_chunk_size``'s submit-time clamp
+    (Qodo round: a value the UI blessed must not be silently rewritten at
+    submit).
+
+    Args:
+        field: The ``OptionField`` schema entry for the value.
+        value: The raw form value (display text for Inputs).
+
+    Returns:
+        A human-readable problem statement, or ``""`` when the value is
+        acceptable to every downstream consumer.
+    """
+    if getattr(field, "type", "") != "number":
+        return ""
+    text = str(value).strip()
+    try:
+        number = int(text)
+    except (TypeError, ValueError):
+        return f"{field.label} must be a whole number."
+    name = getattr(field, "name", "")
+    if name == "chunk_size":
+        if not (MIN_CHUNK_SIZE <= number <= MAX_CHUNK_SIZE):
+            return (
+                f"{field.label} must be between {MIN_CHUNK_SIZE} and "
+                f"{MAX_CHUNK_SIZE}."
+            )
+        return ""
+    minimum = 0 if name == "chunk_overlap" else 1
+    if number < minimum:
+        return f"{field.label} must be at least {minimum}."
+    return ""
+
+
+def collect_ingest_option_errors(
+    type_options: Mapping[str, Mapping[str, Any]],
+    groups: Sequence[str] | None = None,
+) -> tuple[tuple[str, str, str], ...]:
+    """Collect validation problems for the option values a user can see.
+
+    (task-2130 Qodo round) Scoped to the RENDERED groups and to fields
+    whose ``enabled_when`` gate is currently satisfied: a stale persisted
+    value in a panel that is not on screen (or in a field the UI shows
+    disabled) must not silently block Start with nothing visible to fix.
+    ``depends_on`` (missing tooling) fields are likewise skipped -- the
+    widget is disabled, so its value cannot be corrected in place.
+
+    Args:
+        type_options: Per-group option values from the form echo.
+        groups: The groups whose panels are rendered; ``None`` validates
+            every known group (used by tests and non-UI callers).
+
+    Returns:
+        ``(group, field name, message)`` tuples, in schema order.
+    """
+    errors: list[tuple[str, str, str]] = []
+    group_names = list_type_groups() if groups is None else groups
+    for group in group_names:
+        cap = get_capabilities(group)
+        values = type_options.get(group, {}) or {}
+        fields_by_name = {f.name: f for f in cap.fields}
+        for field in cap.fields:
+            if field.depends_on is not None and not _dependency_installed(
+                field.depends_on
+            ):
+                continue
+            if field.enabled_when is not None:
+                gate = fields_by_name.get(field.enabled_when)
+                gate_value = values.get(
+                    field.enabled_when,
+                    gate.default if gate is not None else False,
+                )
+                if field.enabled_when_values:
+                    if gate_value not in field.enabled_when_values:
+                        continue
+                elif not bool(gate_value):
+                    continue
+            message = validate_ingest_option_value(
+                field, values.get(field.name, field.default)
+            )
+            if message:
+                errors.append((group, field.name, message))
+    return tuple(errors)
 
 # First-visit orientation. Shown only while the form is untouched, so it fills
 # the otherwise-blank pane a new user lands on without ever competing with a
@@ -489,6 +590,8 @@ class LibraryIngestCanvasState:
     form: LibraryIngestFormState
     start_enabled: bool
     start_quiet_line: str
+    commit_summary_line: str
+    option_errors: tuple[tuple[str, str, str], ...]
     queue_heading: str
     queue_counts_line: str
     queue_rows: tuple[IngestQueueRow, ...]
@@ -527,6 +630,7 @@ class LibraryIngestCanvasState:
     type_group_file_counts: dict[str, int]
     unsupported_files: list[str]
     recent_jobs: list[LibraryIngestJob]
+    queue_empty_line: str
     #: Which backend a new ingest will target, so the canvas can say so.
     ingest_backend: str = "local"
     #: Whether to offer switching backends -- only meaningful when a
@@ -814,20 +918,58 @@ def _build_queue_row(
         # an honest retry hint when Retry is on offer -- corrupt-file
         # extraction failures stay retryable, but the copy now says what a
         # retry could actually fix.
+        # (task-2130) The expansion must never be a verbatim repeat of the
+        # row summary: the message line is skipped when it matches the
+        # job's own error, the captured exception chain is surfaced, and
+        # the retry advisory names a missing dependency instead of
+        # gesturing at "missing tooling".
         lines: list[str] = []
         category = str(job.error_detail.get("category") or "").strip()
+        exception_type = str(
+            job.error_detail.get("exception_type") or ""
+        ).strip()
         if category:
-            lines.append(f"Category: {category.replace('_', ' ')}")
-        message = str(job.error_detail.get("message") or job.error or "")
-        if message:
-            lines.append(f"Details: {unwrap_ingest_error(message)}")
+            category_line = f"Category: {category.replace('_', ' ')}"
+            if exception_type:
+                category_line += f" ({exception_type})"
+            lines.append(category_line)
+        message = unwrap_ingest_error(
+            str(job.error_detail.get("message") or job.error or "")
+        )
+        if message and message != unwrap_ingest_error(str(job.error or "")):
+            lines.append(f"Details: {message}")
+        chain = job.error_detail.get("chain") or ()
+        for underlying in tuple(chain)[:3]:
+            lines.append(f"Underlying: {underlying}")
         if row.can_retry:
-            lines.append(
-                "A retry can succeed if the failure was transient or after "
-                "installing missing tooling."
-            )
+            dependency = _missing_dependency_from(message, tuple(chain))
+            if dependency:
+                lines.append(
+                    f"Missing dependency: {dependency}. Install it, then "
+                    "Retry."
+                )
+            else:
+                lines.append(
+                    "A retry can succeed if the failure was transient — a "
+                    "busy file or a network hiccup. If the file itself is "
+                    "corrupt, repair or re-export it first."
+                )
         row = replace(row, details_expanded=True, detail_lines=tuple(lines))
     return row
+
+
+_MISSING_DEPENDENCY_RE = re.compile(
+    r"No module named '([^']+)'|(\S+) is not installed|pip install (\S+)"
+)
+
+
+def _missing_dependency_from(message: str, chain: Sequence[str]) -> str:
+    """Name the missing dependency when the failure text identifies one."""
+    for text in (message, *chain):
+        match = _MISSING_DEPENDENCY_RE.search(str(text))
+        if match:
+            return next(g for g in match.groups() if g)
+    return ""
 
 def build_library_ingest_state(
     jobs: Sequence[LibraryIngestJob],
@@ -842,6 +984,7 @@ def build_library_ingest_state(
     ingest_backend: str = "local",
     server_ingest_available: bool = False,
     transcribe_cpp_configured: bool = False,
+    recent_ledger: Sequence[LibraryIngestJob] = (),
     clear_finished_armed: bool = False,
     expanded_details: frozenset[str] | set[str] = frozenset(),
 ) -> LibraryIngestCanvasState:
@@ -956,6 +1099,9 @@ def build_library_ingest_state(
             )
         warning_lines = build_warning_lines(active_preflight.warnings)
         already = getattr(active_preflight, "already_in_library", 0) or 0
+        already_capped = bool(
+            getattr(active_preflight, "already_in_library_capped", False)
+        )
         if already and not errors:
             noun = "file" if already == 1 else "files"
             verb = "appears" if already == 1 else "appear"
@@ -964,8 +1110,12 @@ def build_library_ingest_state(
                 if already == 1
                 else "they'll be matched, not re-imported."
             )
+            # (task-2130) When the duplicate check hit its candidate cap the
+            # count is a floor -- presenting the cap as the total told an
+            # 80-duplicate folder "20 files appear to already be…".
+            count_text = f"at least {already}" if already_capped else str(already)
             duplicate_line = (
-                f"{already} {noun} {verb} to already be in your Library — "
+                f"{count_text} {noun} {verb} to already be in your Library — "
                 f"{outcome}"
             )
         else:
@@ -1000,11 +1150,18 @@ def build_library_ingest_state(
         and active_preflight.total_files > 0
         and not type_groups
     )
+    # (task-2130) Invalid option values gate Start exactly like a bad path:
+    # "abc" as a chunk size used to sail into a running job with only a
+    # focus-only colored border as the signal.
+    option_errors = collect_ingest_option_errors(
+        form.type_options, groups=("generic", *type_groups)
+    )
     start_enabled = (
         registry_available
         and media_db_available
         and bool(form.path.strip())
         and not nothing_importable
+        and not option_errors
     )
     # (L3b AB wave, A4) At most one gate line ever renders at once: the
     # unavailable line wins, then the guaranteed-failure explanation, then
@@ -1018,10 +1175,39 @@ def build_library_ingest_state(
             f"Nothing in this selection can be imported — "
             f"{count} unsupported {noun}."
         )
+    elif option_errors:
+        start_quiet_line = (
+            f"Fix the highlighted options to start: {option_errors[0][2]}"
+        )
     elif not form.path.strip():
         start_quiet_line = START_QUIET_LINE_COPY
     else:
         start_quiet_line = ""
+
+    # (task-2130) A one-line commit summary beside Start for a valid
+    # selection: the forecast lives at the top of a long form, and the
+    # commit point at the bottom -- restate the outcome where the finger
+    # is. Only renders when the gate is open and there is a real forecast.
+    commit_summary_line = ""
+    if start_enabled and active_preflight is not None and not errors:
+        supported_total = sum(
+            len(files) for files in type_groups.values()
+        )
+        will_match = getattr(active_preflight, "already_in_library", 0) or 0
+        match_capped = bool(
+            getattr(active_preflight, "already_in_library_capped", False)
+        )
+        will_fail = len(unsupported_files)
+        will_import = max(supported_total - will_match, 0)
+        parts: list[str] = [f"{will_import} will import"]
+        if will_match:
+            match_text = (
+                f"at least {will_match}" if match_capped else str(will_match)
+            )
+            parts.append(f"{match_text} will match")
+        if will_fail:
+            parts.append(f"{will_fail} will fail")
+        commit_summary_line = " · ".join(parts)
 
     # (task-2100) Name the unsupported files -- a count alone forces a
     # submit-and-read-the-rows round trip to learn WHICH files. When the
@@ -1037,7 +1223,13 @@ def build_library_ingest_state(
         if unsupported_count > 3:
             unsupported_names += ", ..."
         if nothing_importable:
-            unsupported_line = f"Unsupported: {unsupported_names}."
+            # (task-2130) Say what WOULD work: the supported-formats
+            # sentence lives in the intro lines, which are hidden the
+            # moment a path is typed -- exactly when this line renders.
+            unsupported_line = (
+                f"Unsupported: {unsupported_names}. "
+                f"{SUPPORTED_FORMATS_COPY}"
+            )
         else:
             file_noun = "file" if unsupported_count == 1 else "files"
             recorded_as = (
@@ -1056,11 +1248,27 @@ def build_library_ingest_state(
     if not form.path.strip() and active_preflight is None:
         intro_lines = build_intro_lines()
 
+    # (task-2130) Recent ingests is the durable session ledger: jobs the
+    # user cleared from the queue live on here (the screen snapshots them
+    # into ``recent_ledger`` before the registry removal), so Clear
+    # finished no longer erases the only record of a session's failures.
     recent_jobs = [
         job
         for job in jobs
         if job.state in (IngestJobState.DONE, IngestJobState.FAILED)
-    ][:10]
+    ]
+    live_ids = {job.job_id for job in recent_jobs}
+    recent_jobs.extend(
+        job for job in recent_ledger if job.job_id not in live_ids
+    )
+    recent_jobs = recent_jobs[:10]
+    queue_empty_line = ""
+    if not queue_rows:
+        queue_empty_line = (
+            QUEUE_EMPTY_AFTER_ACTIVITY_COPY
+            if recent_jobs
+            else QUEUE_EMPTY_COPY
+        )
 
     return LibraryIngestCanvasState(
         header=INGEST_HEADER_COPY,
@@ -1071,6 +1279,8 @@ def build_library_ingest_state(
         form=form,
         start_enabled=start_enabled,
         start_quiet_line=start_quiet_line,
+        commit_summary_line=commit_summary_line,
+        option_errors=option_errors,
         queue_heading=QUEUE_HEADING_COPY,
         queue_counts_line=_queue_counts_line(jobs),
         queue_rows=queue_rows,
@@ -1093,6 +1303,7 @@ def build_library_ingest_state(
         },
         unsupported_files=unsupported_files,
         recent_jobs=recent_jobs,
+        queue_empty_line=queue_empty_line,
         transcribe_cpp_configured=transcribe_cpp_configured,
     )
 
