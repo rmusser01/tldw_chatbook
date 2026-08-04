@@ -159,7 +159,15 @@ would falsify.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Literal, Optional, Union
+from typing import TYPE_CHECKING, Callable, Literal, Optional, Union
+
+if TYPE_CHECKING:
+    # Only for the `ModeChanged.state` annotation below -- `from __future__
+    # import annotations` (above) means this is never evaluated at import
+    # time, so it carries no runtime dependency on the V4 module and no
+    # circular-import risk even though `console_realtime_loop.py` imports
+    # `ModeChanged`/`ExitLoop` from *this* module.
+    from tldw_chatbook.Chat.console_realtime_loop import RealtimeLoopState
 
 HandsFreeState = Literal["idle", "listening", "countdown", "awaiting_reply", "speaking"]
 
@@ -234,15 +242,29 @@ class ModeChanged:
     descriptive of the state label -- it makes no claim about which inputs
     can move the loop out of that state, so it stays accurate regardless of
     which cancellation paths happen to be live or inert in a given capture
-    mode (see the module/class docstrings)."""
+    mode (see the module/class docstrings).
 
-    state: HandsFreeState
+    `state` also accepts a V4 `RealtimeLoopState` label: this intent type is
+    shared verbatim between `HandsFreeController` (V3, this module) and
+    `RealtimeLoopController` (V4, `console_realtime_loop.py`) -- same
+    vocabulary, different internal machine. `reason` is a V4-only,
+    additive field (default `None`); `HandsFreeController` never sets it."""
+
+    state: "HandsFreeState | RealtimeLoopState"
+    reason: Optional[str] = None
 
 
 @dataclass(frozen=True)
 class ExitLoop:
     """Tear the hands-free loop down to today's idle Console behavior.
-    Reachable from every state."""
+    Reachable from every state.
+
+    `reason` is a V4-only, additive field (default `None`) explaining why
+    `RealtimeLoopController` (`console_realtime_loop.py`) exited (e.g.
+    `"idle-timeout"`, `"connect-failed"`, `"connection-lost"`);
+    `HandsFreeController` (V3, this module) never sets it."""
+
+    reason: Optional[str] = None
 
 
 HandsFreeIntent = Union[
