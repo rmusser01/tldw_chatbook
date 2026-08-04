@@ -50,8 +50,9 @@ pages:
     New skill), **Study** (Study decks, Flashcards, Quizzes), and
     **Import / Export** (Add content…, Export). Each row is one line: the
     title with its count, plus a dim plain-language gloss on the jargon
-    rows (e.g. "Search / RAG — search everything"). On narrow terminals
-    the gloss shortens first and the title ellipsizes, so the count
+    rows (e.g. "Search / RAG — find all"). On narrow terminals
+    the gloss drops rather than truncating into fragments, and the title
+    ellipsizes, so the count
     always stays visible. The three Study rows are hand-offs (they open
     the Study destination), so they group under their own section and
     add a second "opens Study" line. The selected row is marked **▸**,

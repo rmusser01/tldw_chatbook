@@ -170,7 +170,9 @@ def build_library_shell_state(
             target_id="media",
             count=state.media_count,
             count_known=state.media_known,
-            subtitle="imported files & transcripts",
+            # task-2236 (R2): glosses fit the rail's realistic
+            # width budget (<=25 content cells with title+count).
+            subtitle="your files",
             count_loading=state.counts_loading,
         ),
         LibraryRailRow(
@@ -206,7 +208,7 @@ def build_library_shell_state(
             target_id="prompts",
             count=state.prompts_count,
             count_known=state.prompts_known,
-            subtitle="saved instructions for the AI",
+            subtitle="AI asks",
             count_loading=state.counts_loading,
         ),
         LibraryRailRow(
@@ -221,7 +223,7 @@ def build_library_shell_state(
             target_id="skills",
             count=state.skills_count,
             count_known=state.skills_known,
-            subtitle="installable AI abilities",
+            subtitle="AI add-ons",
             count_loading=state.counts_loading,
         ),
         LibraryRailRow(
@@ -232,7 +234,7 @@ def build_library_shell_state(
             target_id="collections",
             count=state.collections_count,
             count_known=state.collections_known,
-            subtitle="saved groups of content",
+            subtitle="item sets",
         ),
         LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_SEARCH,
@@ -242,7 +244,7 @@ def build_library_shell_state(
             target_id="search",
             count=None,
             count_known=True,
-            subtitle="search everything",
+            subtitle="find all",
         ),
     )
 

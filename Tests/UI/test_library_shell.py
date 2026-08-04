@@ -712,10 +712,9 @@ async def test_rail_create_section_and_details_reachable_at_100x30():
 async def test_jargon_rail_rows_render_a_dim_subtitle_on_the_same_line():
     """F-013: jargon rows gloss themselves with a dim em-dash subtitle on
     the SAME one-line row (the F-011 height contract is untouched), and
-    plain rows carry no gloss. F-015 fitting: the gloss is word-cut with
-    an ellipsis when the rail is too narrow for all of it (the rail's
-    realistic widths rarely fit the full gloss), so the pin asserts the
-    rendered gloss is a dim, ellipsized PREFIX of the full subtitle."""
+    plain rows carry no gloss. task-2236 (R2): the glosses are rewritten
+    to fit the rail's realistic width budget, so at 170x48 the FULL gloss
+    renders -- no word-cut noise."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)
@@ -729,22 +728,49 @@ async def test_jargon_rail_rows_render_a_dim_subtitle_on_the_same_line():
         plain = label.plain
         assert "\n" not in plain
         assert search_row.styles.height.value == 1
+        assert "— find all" in plain
+        assert "…" not in plain and "..." not in plain
         # The gloss renders DIM (not just present): a "dim" style span
         # covers exactly the em-dash subtitle, leaving title/count at
         # normal emphasis.
         dim_spans = [s for s in label.spans if "dim" in str(s.style)]
         assert dim_spans, f"no dim span on the jargon gloss: {label.spans}"
         covered = plain[dim_spans[0].start : dim_spans[0].end]
-        assert covered.startswith("— "), f"gloss lost its dash: {covered!r}"
-        assert "search everything".startswith(covered[2:].rstrip("…")), (
-            f"rendered gloss is not a prefix of the full subtitle: {covered!r}"
-        )
+        assert covered == "— find all", f"gloss not fully rendered: {covered!r}"
 
         plain_row = screen.query_one("#library-row-browse-notes", Button)
         assert "—" not in plain_row.label.plain
         assert not [
             s for s in plain_row.label.spans if "dim" in str(s.style)
         ]
+
+
+@pytest.mark.asyncio
+async def test_rail_subtitles_drop_cleanly_instead_of_partial_noise_at_100x30():
+    """task-2236 (R2): when the full gloss does not fit, the row drops it
+    entirely -- never a mid-word 'saved…'/'imported…' fragment -- while
+    the F-015 count protection keeps working."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await pilot.pause()
+
+        for row in screen.query("Button.library-rail-row"):
+            first_line = row.label.plain.split("\n")[0]
+            # No partial gloss fragments: either the full " — <gloss>"
+            # renders, or the em-dash is gone entirely.
+            if "—" in first_line:
+                tail = first_line.split("—", 1)[1].strip()
+                assert "…" not in tail and "..." not in tail, (
+                    f"{row.id} renders a partial gloss: {first_line!r}"
+                )
+            # The count protection contract still holds.
+            if row.id == "library-row-browse-conversations":
+                assert first_line.endswith("(2)"), first_line
 
 
 @pytest.mark.asyncio
