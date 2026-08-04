@@ -60,6 +60,10 @@ INGEST_UNAVAILABLE_COPY = "Ingest is unavailable in this runtime."
 QUEUE_HEADING_COPY = "Queue"
 QUEUE_EMPTY_COPY = "No ingest jobs yet."
 START_QUIET_LINE_COPY = "Enter a file path to start."
+SUPPORTED_FORMATS_COPY = (
+    "Supported: PDF documents, audio/video files, e-books, plain text "
+    "files."
+)
 
 
 def validate_ingest_option_value(field: Any, value: Any) -> str:
@@ -856,20 +860,58 @@ def _build_queue_row(
         # an honest retry hint when Retry is on offer -- corrupt-file
         # extraction failures stay retryable, but the copy now says what a
         # retry could actually fix.
+        # (task-2130) The expansion must never be a verbatim repeat of the
+        # row summary: the message line is skipped when it matches the
+        # job's own error, the captured exception chain is surfaced, and
+        # the retry advisory names a missing dependency instead of
+        # gesturing at "missing tooling".
         lines: list[str] = []
         category = str(job.error_detail.get("category") or "").strip()
+        exception_type = str(
+            job.error_detail.get("exception_type") or ""
+        ).strip()
         if category:
-            lines.append(f"Category: {category.replace('_', ' ')}")
-        message = str(job.error_detail.get("message") or job.error or "")
-        if message:
-            lines.append(f"Details: {unwrap_ingest_error(message)}")
+            category_line = f"Category: {category.replace('_', ' ')}"
+            if exception_type:
+                category_line += f" ({exception_type})"
+            lines.append(category_line)
+        message = unwrap_ingest_error(
+            str(job.error_detail.get("message") or job.error or "")
+        )
+        if message and message != unwrap_ingest_error(str(job.error or "")):
+            lines.append(f"Details: {message}")
+        chain = job.error_detail.get("chain") or ()
+        for underlying in tuple(chain)[:3]:
+            lines.append(f"Underlying: {underlying}")
         if row.can_retry:
-            lines.append(
-                "A retry can succeed if the failure was transient or after "
-                "installing missing tooling."
-            )
+            dependency = _missing_dependency_from(message, tuple(chain))
+            if dependency:
+                lines.append(
+                    f"Missing dependency: {dependency}. Install it, then "
+                    "Retry."
+                )
+            else:
+                lines.append(
+                    "A retry can succeed if the failure was transient — a "
+                    "busy file or a network hiccup. If the file itself is "
+                    "corrupt, repair or re-export it first."
+                )
         row = replace(row, details_expanded=True, detail_lines=tuple(lines))
     return row
+
+
+_MISSING_DEPENDENCY_RE = re.compile(
+    r"No module named '([^']+)'|(\S+) is not installed|pip install (\S+)"
+)
+
+
+def _missing_dependency_from(message: str, chain: Sequence[str]) -> str:
+    """Name the missing dependency when the failure text identifies one."""
+    for text in (message, *chain):
+        match = _MISSING_DEPENDENCY_RE.search(str(text))
+        if match:
+            return next(g for g in match.groups() if g)
+    return ""
 
 def build_library_ingest_state(
     jobs: Sequence[LibraryIngestJob],
@@ -1088,7 +1130,13 @@ def build_library_ingest_state(
         if unsupported_count > 3:
             unsupported_names += ", ..."
         if nothing_importable:
-            unsupported_line = f"Unsupported: {unsupported_names}."
+            # (task-2130) Say what WOULD work: the supported-formats
+            # sentence lives in the intro lines, which are hidden the
+            # moment a path is typed -- exactly when this line renders.
+            unsupported_line = (
+                f"Unsupported: {unsupported_names}. "
+                f"{SUPPORTED_FORMATS_COPY}"
+            )
         else:
             file_noun = "file" if unsupported_count == 1 else "files"
             recorded_as = (

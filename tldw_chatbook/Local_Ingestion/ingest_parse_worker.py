@@ -191,6 +191,19 @@ def run_parse_job(file_path: str, options: Dict[str, Any]) -> Dict[str, Any]:
             if isinstance(exc, FileNotFoundError)
             else "parse_error"
         )
+        # (task-2130) The generic wrapper message ("PDF Extraction Error.")
+        # often hides the actual failure in the exception chain -- capture
+        # up to three distinct underlying messages so the UI's expanded
+        # details can say more than the one-line summary.
+        chain: list[str] = []
+        seen = {message}
+        cause = exc.__cause__ or exc.__context__
+        while cause is not None and len(chain) < 3:
+            text = str(cause).strip() or cause.__class__.__name__
+            if text not in seen:
+                chain.append(f"{cause.__class__.__name__}: {text}")
+                seen.add(text)
+            cause = cause.__cause__ or cause.__context__
         failure = {
             "ok": False,
             "error": message,
@@ -201,6 +214,7 @@ def run_parse_job(file_path: str, options: Dict[str, Any]) -> Dict[str, Any]:
                 "category": category,
                 "message": message,
                 "exception_type": exc.__class__.__name__,
+                "chain": chain,
             },
         }
         if isinstance(stt_failure_provenance, dict):

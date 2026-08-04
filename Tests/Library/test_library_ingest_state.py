@@ -1496,15 +1496,17 @@ def test_unwrap_ingest_error_collapses_chain_keeping_tail():
 
 
 def test_expanded_details_render_unwrapped_lines_and_retry_hint():
-    """(task-2043) An expanded failed row carries category, the unwrapped
-    message, and -- when Retry is offered -- an honest hint about what a
-    retry could fix."""
+    """(task-2043, contract revised by task-2130) An expanded failed row
+    carries category and an honest retry hint -- and NEVER a Details line
+    that repeats the row summary verbatim (the round-4 critique's
+    "circular details" P1: the expansion click must add information)."""
     job = _job(
         state=IngestJobState.FAILED,
         source_path="/tmp/broken.pdf",
         error="Failed to ingest pdf file: Failed to process pdf file: PDF Extraction Error.",
         error_detail={
             "category": "parse_error",
+            "exception_type": "RuntimeError",
             "message": (
                 "Failed to ingest pdf file: Failed to process pdf file: "
                 "PDF Extraction Error."
@@ -1518,11 +1520,51 @@ def test_expanded_details_render_unwrapped_lines_and_retry_hint():
     )
     row = state.queue_rows[0]
     assert row.details_expanded is True
-    assert row.detail_lines[0] == "Category: parse error"
-    assert row.detail_lines[1] == (
-        "Details: Failed to process pdf file: PDF Extraction Error."
-    )
+    assert row.detail_lines[0] == "Category: parse error (RuntimeError)"
+    assert not any(
+        line.startswith("Details:") for line in row.detail_lines
+    ), "a Details line that repeats the summary is the round-4 P1"
     assert any("retry can succeed" in line for line in row.detail_lines)
+    assert not any("missing tooling" in line for line in row.detail_lines)
+
+
+def test_expanded_details_surface_chain_and_name_missing_dependency():
+    """(task-2130) The captured exception chain renders as Underlying
+    lines, a genuinely-different structured message keeps its Details
+    line, and a missing-module failure names the dependency in the
+    retry advisory instead of "missing tooling"."""
+    job = _job(
+        state=IngestJobState.FAILED,
+        source_path="/tmp/broken.pdf",
+        error="Failed to process pdf file: PDF Extraction Error.",
+        error_detail={
+            "category": "parse_error",
+            "exception_type": "ImportError",
+            "message": "Text extraction failed at page 3.",
+            "chain": [
+                "ImportError: No module named 'pymupdf'",
+                "OSError: cannot open shared object",
+            ],
+        },
+    )
+    state = build_library_ingest_state(
+        (job,),
+        form=LibraryIngestFormState(),
+        expanded_details={"ingest-job-1"},
+    )
+    row = state.queue_rows[0]
+    assert "Details: Text extraction failed at page 3." in row.detail_lines
+    assert (
+        "Underlying: ImportError: No module named 'pymupdf'"
+        in row.detail_lines
+    )
+    assert (
+        "Underlying: OSError: cannot open shared object" in row.detail_lines
+    )
+    assert (
+        "Missing dependency: pymupdf. Install it, then Retry."
+        in row.detail_lines
+    )
 
     collapsed = build_library_ingest_state((job,), form=LibraryIngestFormState())
     assert collapsed.queue_rows[0].details_expanded is False
@@ -1620,7 +1662,10 @@ def test_unsupported_line_names_files_and_matches_gate():
         ),
     )
     assert blocked.start_enabled is False
-    assert blocked.unsupported_line == "Unsupported: x.json, y.jpg."
+    assert blocked.unsupported_line == (
+        "Unsupported: x.json, y.jpg."
+        " Supported: PDF documents, audio/video files, e-books, plain text files."
+    )
 
     many = build_library_ingest_state(
         (),
