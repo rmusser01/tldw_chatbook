@@ -13194,7 +13194,7 @@ async def test_completion_toast_reports_dedup_as_already_in_library(tmp_path):
             if call.args and str(call.args[0]).startswith("Ingest finished")
         ]
         assert summaries and summaries[-1] == (
-            "Ingest finished — 1 already in Library"
+            "Ingest finished — 1 matched"
         ), f"dedup batch misreported: {summaries}"
         assert summaries[0] == "Ingest finished — 1 imported"
 

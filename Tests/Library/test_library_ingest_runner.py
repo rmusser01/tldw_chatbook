@@ -2749,7 +2749,7 @@ async def test_empty_file_failure_is_permanent_and_refuses_retry(
 ) -> None:
     """(task-2015) A truly empty file fails identically on every attempt --
     offering Retry for it is dead bait (the UAT pressed it and got the same
-    failure with '· retry 1'). Same permanence family as missing-file and
+    failure with '· attempt 2'). Same permanence family as missing-file and
     unsupported-type."""
     db = _make_db(tmp_path)
     empty = tmp_path / "empty.txt"

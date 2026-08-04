@@ -2,7 +2,7 @@
 id: TASK-2231
 title: >-
   Library ingest round-7 P2s (forecast/receipt vocabulary reconciliation, Retry feedback)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04 17:00'
 labels:
@@ -33,13 +33,38 @@ promises the post-commit surface won't honour.
 
 ## Acceptance Criteria (the what)
 
-- [ ] The receipt uses the forecast's vocabulary: matched outcomes are
+- [x] The receipt uses the forecast's vocabulary: matched outcomes are
       reported as "matched", distinct from "imported", in the tally, the
       group header, and the completion toast.
-- [ ] A dedup-matched row is distinguishable from a fresh import at a
+- [x] A dedup-matched row is distinguishable from a fresh import at a
       glance (its own glyph), not only by its sub-line.
-- [ ] The all-match consent line only claims "everything" when every
+- [x] The all-match consent line only claims "everything" when every
       importable file in the selection is a predicted match.
-- [ ] Pressing Retry produces immediate visible feedback (the row shows
+- [x] Pressing Retry produces immediate visible feedback (the row shows
       it is re-attempting) and the resulting row carries an attempt
       count, so a repeat failure is visibly a NEW attempt.
+
+## Implementation Notes
+
+- **Vocabulary:** a dedup match is recognised by the writer's progress
+  marker (the same predicate the tally uses) and now renders
+  `≡ matched · <name>` — its own glyph AND word, so an import and a
+  match are distinguishable at a glance rather than only by the
+  sub-line. `_batch_outcome_parts` splits matched out of done, so group
+  headers and the latest-run line read "1 done · 1 matched"; the
+  completion toast says "N matched" instead of "N already in Library".
+  The forecast's three words (import/match/skip) are now the receipt's
+  three words.
+- **Consent scope:** the "Everything here…" line additionally requires
+  zero predicted skips, so it can no longer claim "everything" for a
+  selection that also contains unsupported files.
+- **Retry feedback:** requeue always created a new QUEUED job with an
+  incremented count, but the in-flight rows never showed it — so a
+  retry was visually identical to nothing happening. Queued/parsing/
+  writing rows now carry the attempt marker, and the suffix reads
+  "· attempt N" (N = retry_count + 1) on every row state, which reads
+  as progress and is unambiguous mid-flight.
+
+**Verification.** 300 core + 56 shell-subset green; 29,815 collect
+clean. Live: forecast "1 will match" + consent line → `≡ matched ·
+copy_of_report.txt` row → "Latest run: 1 matched".
