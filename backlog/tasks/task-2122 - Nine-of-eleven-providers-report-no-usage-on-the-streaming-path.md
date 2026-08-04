@@ -16,11 +16,11 @@ dependencies: []
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-The cost ticker's core promise is "real usage from the API, never an estimate." That
-holds for **OpenAI and Anthropic only**. An audit of every `stream_generator` in
-`LLM_Calls/LLM_API_Calls.py`, bounded by indentation so the non-streaming path in the
-same function is not miscounted, found that **nine of eleven providers emit no usage
-chunk at all when streaming** — and streaming is the Console default.
+The cost ticker's core promise is "real usage from the API, never an estimate." On the
+streaming path that holds for **OpenAI and Anthropic only**. An audit of every
+`stream_generator` in `LLM_Calls/LLM_API_Calls.py`, bounded by indentation so the
+non-streaming path in the same function is not miscounted, found that **nine of eleven
+providers emit no usage chunk at all when streaming**.
 
 | Provider | Streaming generator | Usage emitted |
 |---|---|---|
@@ -60,10 +60,28 @@ the usage and emit a chunk. Both drop data the provider is already sending:
 - Google's generator never reads `usageMetadata`, which Gemini sends on the final
   streaming chunk. Its non-streaming path maps it at line 3637.
 
-Consequence: for nine providers the Console persists no `usage_json`, so cost falls back
-to estimation and the cache chip has no ground truth to report warm/cold from — the two
-things the ticker exists to provide. This was missed because PR1's verification targeted
-Anthropic and PR3's live verification ran against Anthropic only.
+**How exposed is this today?** Measured, not assumed — a probe over the shipped config
+template resolving `build_default_console_session_settings` per provider:
+
+- `[chat_defaults]` ships **no** `streaming` key, so the `True` fallback in
+  `console_session_settings.py:436` does not apply; resolution falls through
+  `default_sources = (model_profile, saved_defaults, chat_defaults, provider_settings)`
+  to the per-provider template value, which is `streaming = false`.
+- So for anthropic/openai/google/cohere/groq/deepseek/openrouter/moonshot the Console is
+  **non-streaming out of the box** and usage capture works today.
+- **Mistral is the exception and is broken by default**: its `[api_settings.mistral]`
+  block is the only one with no `streaming` key, so it falls through to the `True`
+  default. Mistral streams out of the box and therefore records no usage at all. That
+  template inconsistency is worth fixing on its own.
+- For the other eight, enabling streaming is a **one-keystroke, first-class action** —
+  the Alt+M quick popover and the Settings screen's `chat_defaults.streaming` field, and
+  a `chat_defaults` value outranks the per-provider template. The moment a user turns
+  streaming on, usage capture silently stops: cost falls back to estimation and the cache
+  chip loses the ground truth it derives warm/cold from — the two things the ticker
+  exists to provide. Nothing warns them.
+
+Missed because PR1's verification targeted Anthropic and PR3's live verification ran
+against Anthropic only.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -75,4 +93,5 @@ Anthropic and PR3's live verification ran against Anthropic only.
 - [ ] #4 A test per provider drives a recorded SSE stream through the generator and asserts a usage chunk reaches the gateway with correct disjoint buckets
 - [ ] #5 A single guard test enumerates the streaming generators and fails if one emits no usage, so a newly added provider cannot silently regress
 - [ ] #6 Verified live against at least one OpenAI-compatible provider and one native translator that a streamed Console turn persists real `usage_json`
+- [ ] #7 `[api_settings.mistral]` gets an explicit `streaming` key so it stops differing from every other provider block by omission
 <!-- AC:END -->
