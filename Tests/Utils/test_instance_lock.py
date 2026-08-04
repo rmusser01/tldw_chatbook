@@ -16,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import portalocker
+import pytest
 
 from tldw_chatbook.Utils import instance_lock as instance_lock_module
 from tldw_chatbook.Utils.instance_lock import acquire_profile_instance_lock
@@ -135,6 +136,31 @@ def test_held_lock_never_raises(tmp_path):
     try:
         second = acquire_profile_instance_lock(tmp_path)
         assert second.acquired is False
+        assert second.handle is None
+    finally:
+        first.handle.close()
+
+
+def test_read_holder_rejects_digit_like_non_int_pid_line(tmp_path):
+    """`str.isdigit()` accepts non-ASCII digit-like characters (e.g. the
+    superscript "²") that `int()` rejects with ``ValueError`` --
+    ``_read_holder``'s ``except OSError`` didn't cover that, so it escaped
+    from inside the ``AlreadyLocked`` handler and leaked the second call's
+    fd (``handle.close()`` in ``acquire_profile_instance_lock`` runs only
+    *after* ``_read_holder`` returns). A corrupted/hand-edited lock-file
+    body must still degrade to an "unknown holder", never raise.
+    """
+    assert "²".isdigit()
+    with pytest.raises(ValueError):
+        int("²")
+
+    first = acquire_profile_instance_lock(tmp_path)
+    lock_path = tmp_path / ".instance.lock"
+    lock_path.write_text("²\n2026-08-04T00:00:00+00:00\n", encoding="utf-8")
+    try:
+        second = acquire_profile_instance_lock(tmp_path)
+        assert second.acquired is False
+        assert second.holder_pid is None
         assert second.handle is None
     finally:
         first.handle.close()

@@ -106,5 +106,11 @@ def _read_holder(lock_path: Path) -> tuple[int | None, str | None]:
         pid = int(lines[0]) if lines and lines[0].strip().isdigit() else None
         since = lines[1].strip() if len(lines) > 1 else None
         return pid, since
-    except OSError:
+    except (OSError, ValueError):
+        # `str.isdigit()` accepts non-ASCII digit-like characters (e.g. the
+        # superscript "²") that `int()` rejects with ValueError -- a
+        # corrupted/hand-edited lock-file body must degrade to "unknown
+        # holder", not escape this always-safe module's AlreadyLocked
+        # handler and leak the caller's fd (acquire_profile_instance_lock
+        # closes `handle` only *after* this call returns).
         return None, None

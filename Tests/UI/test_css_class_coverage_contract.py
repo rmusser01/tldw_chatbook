@@ -48,8 +48,20 @@ SCOPES = [
     PACKAGE / "UI" / "Screens" / "library_screen.py",
 ]
 CLASSES_ATTR = re.compile(r'classes="([^"{}]+)"')
+# Final-review fix: `[fF]?` accepts an f-string opener (e.g.
+# console_settings_modal.py:179's `DEFAULT_CSS = f"""`) so an f-string-only
+# DEFAULT_CSS block isn't invisible to `_styled_tokens()` below -- before
+# this, such a block contributed ZERO selectors, f-string braces or not.
+# A rule with no `{NAME}` interpolation inside its own body (e.g. that
+# file's `.console-settings-error`) is then parsed exactly like any other
+# rule; a rule WITH one (`.console-settings-modal-row`/`-label`) can still
+# lose its own selector text to the interpolation's braces (pinned/
+# explained in test_f_string_default_css_block_is_visible_to_styled_tokens
+# below) -- harmless only because KNOWN_UNSTYLED tokens are cross-checked
+# against the bundle too, never this regex alone.
 DEFAULT_CSS_BLOCK = re.compile(
-    r'(?:DEFAULT_CSS|CSS)\s*(?::\s*\w+\s*)?=\s*(?:"""|\'\'\')(.*?)(?:"""|\'\'\')', re.DOTALL)
+    r'(?:DEFAULT_CSS|CSS)\s*(?::\s*\w+\s*)?=\s*[fF]?(?:"""|\'\'\')(.*?)(?:"""|\'\'\')',
+    re.DOTALL)
 
 KNOWN_UNSTYLED: dict[str, str] = {
     # token: one-line reason it is allowed to have no rule.
@@ -228,3 +240,35 @@ def test_registry_entries_are_still_composed():
     composed = _composed_tokens()
     dead = [t for t in KNOWN_UNSTYLED if t not in composed]
     assert not dead, f"KNOWN_UNSTYLED entries no longer composed — delete them: {dead}"
+
+def test_f_string_default_css_block_is_visible_to_styled_tokens():
+    """Pins the `[fF]?` widening of DEFAULT_CSS_BLOCK: an f-string-opened
+    DEFAULT_CSS block (console_settings_modal.py:179) must still be scanned
+    for .class rules, not silently skipped the way a bare triple-quote-only
+    opener regex would skip it (before the fix, `blocks` below was empty --
+    the whole file contributed zero selectors). Harmless today (all four
+    .console-settings-* rules in this block are also covered by the bundle
+    -- test_every_composed_class_is_styled_or_registered passes either way),
+    but a future token styled ONLY in an f-string block must be detected
+    here, or it would wrongly need a KNOWN_UNSTYLED entry that
+    test_registry_entries_are_still_unstyled could never flag as stale.
+
+    Only .console-settings-error is pinned here, not all four siblings:
+    css_selectors() reads a rule's selector text from before the first
+    brace IT matches, which is reliable only when nothing brace-bearing
+    (like this file's `{MODAL_CONTROL_HEIGHT}` interpolations) precedes the
+    rule's own opening brace pair inside the SAME body -- true for
+    .console-settings-error (no interpolation in its body) but not for
+    .console-settings-modal-row/-label (interpolated declarations before/
+    inside them steal the match), which is exactly why f-string DEFAULT_CSS
+    blocks stay unreliable enough that KNOWN_UNSTYLED tokens must keep
+    verifying styling against the bundle too, not this regex alone."""
+    path = PACKAGE / "Widgets" / "Console" / "console_settings_modal.py"
+    text = path.read_text(encoding="utf-8")
+    blocks = list(DEFAULT_CSS_BLOCK.finditer(text))
+    assert blocks, "DEFAULT_CSS_BLOCK must match ConsoleSettingsModal's f-string DEFAULT_CSS"
+    selectors = []
+    for block in blocks:
+        selectors.extend(css_selectors(block.group(1)))
+    assert css_selectors_contain_class(selectors, ".console-settings-error"), (
+        "f-string DEFAULT_CSS selector .console-settings-error not visible to css_selectors()")

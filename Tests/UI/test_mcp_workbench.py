@@ -4035,6 +4035,45 @@ def test_decision_for_gate_ask_not_approved_is_allowed():
 
 
 @pytest.mark.asyncio
+async def test_run_tool_test_raising_gate_is_a_failed_result_not_a_panic():
+    """Final-review fix: `decision_note`/`decision` used to be computed
+    BEFORE `_run_tool_test()`'s panic-contained try, even though the
+    method's own docstring claims the WHOLE body is guarded. A gate object
+    whose attribute access raises (simulating a malformed/corrupted gate --
+    the real `EffectiveToolState.ui_label` is deliberately raise-proof, see
+    permission_store.py, but this pins the containment property directly
+    rather than relying on that) must degrade to a Failed test result, not
+    escape `run_worker()` uncaught (Textual 8.2.7 defaults to
+    `exit_on_error=True`, which would panic the whole app)."""
+
+    class _RaisingGate:
+        @property
+        def origin(self) -> str:
+            raise RuntimeError("simulated malformed gate")
+
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await workbench.open_test_for_selected_tool()
+        await pilot.pause()
+
+        await workbench._run_tool_test(
+            "local:docs", "fetch", {}, gate=_RaisingGate(), ask_approved=False,
+        )
+        await pilot.pause()
+
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        first_line = result.split("\n", 1)[0]
+        assert first_line.startswith("Failed · ")
+        assert app.unified_mcp_service.test_calls == []  # never reached the service
+        assert workbench._tool_test_in_flight == set()  # cleanup still ran
+
+
+@pytest.mark.asyncio
 async def test_ask_gate_approved_run_records_approved_decision_and_shows_note():
     """The confirming press of an Ask-gated tool test both dispatches to the
     service AND records/renders the fact that it ran because of an

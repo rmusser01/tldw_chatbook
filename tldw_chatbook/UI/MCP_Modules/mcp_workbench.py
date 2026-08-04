@@ -3294,8 +3294,11 @@ class MCPWorkbench(Container):
 
         Task 5 (RAG-51): `gate`/`ask_approved` (the dispatch-time facts
         `on_mcp_inspector_tool_test_requested()` captured before consuming
-        the arm) resolve ONCE, up front, into the two things the eventual
-        result needs to name the permission decision it ran under: a
+        the arm) resolve ONCE, as the first step inside the panic-contained
+        try below (not before it -- a malformed `gate` raising here must
+        render as a Failed result like any other test failure, not escape
+        uncaught), into the two things the eventual result needs to name
+        the permission decision it ran under: a
         `decision_note` for the inspector's result note (`_decision_note()`)
         and a `decision` string for the execution log
         (`_decision_for_gate()`) -- passed to `test_hub_tool()` so ask-
@@ -3343,11 +3346,18 @@ class MCPWorkbench(Container):
         `"error"` value is itself a secret-keyed mapping). Non-mapping
         envelopes keep the original flattened-string fallback unchanged.
         """
-        decision_note = _decision_note(gate, ask_approved)
-        decision = _decision_for_gate(gate, ask_approved)
         started = time.monotonic()
+        # Containment symmetry: `decision_note` defaults to the same "no
+        # note" value `_decision_note()` returns for a gate-less run, so
+        # that if the computation below raises (e.g. a malformed `gate`
+        # whose attribute access blows up), the `except Exception` right
+        # here can still safely reference it -- the failure renders as a
+        # Failed test result, not a panic escaping this panic-contained try.
+        decision_note: str | None = None
         try:
             try:
+                decision_note = _decision_note(gate, ask_approved)
+                decision = _decision_for_gate(gate, ask_approved)
                 service = self._service()
                 if service is None:
                     raise RuntimeError("MCP control-plane service is unavailable.")
