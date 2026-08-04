@@ -3,7 +3,7 @@ id: TASK-2271
 title: >-
   Fix search_rag always returning 0 results — search_service calls nonexistent
   media_db.search_media()
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-04 21:30'
@@ -28,7 +28,7 @@ Verify the call-site line against the current file before fixing (the live-check
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `search_rag` returns real results against a profile whose media DB contains matching content.
+- [x] #1 `search_rag` returns real results against a profile whose media DB contains matching content.
 - [x] #2 A failure inside the search service surfaces as an error (the tool's error shape and/or a logged error with context), never as a silent empty-success.
 - [x] #3 A regression test pins the media-DB method name actually called (a call-path test against the real DB API, not a mock that would accept any name).
 - [x] #4 Audit of the same service for other swallowed-exception fallbacks that convert crashes into empty results, with findings fixed or filed.
@@ -81,4 +81,6 @@ Gates: `pytest Tests/RAG/simplified/test_search_service.py Tests/MCP/test_rag_se
 Files: tldw_chatbook/RAG_Search/simplified/search_service.py (1-line fix + comment); Tests/RAG/simplified/test_search_service.py (+3 tests, stub helper, real-class imports).
 
 AC#1: both search_rag code paths (keyword and the default semantic-with-fallback) now return real results against a real in-memory media DB in tests; no live app run was done in this worktree (pytest-only per standing rules), left for the controller if still required.
+
+Round 2 (same branch): the honest-raise change surfaced a SECOND stacked bug on the DEFAULT path — `semantic_search` read `.content` off `SearchResultWithCitations` (real field: `document`; citations.py:129-136). Fixed one line + 3 tests constructed from the REAL class at the embeddings seam. Live-verified twice: default path `OK · local · 5.2s · 10 results` (genuinely semantic — chroma chunk ids, float scores, chroma.sqlite3 mtime moving), keyword path `OK · local · 10ms · 1 result`, nonsense query honest `0 results`. AC#1 checked on that evidence (live reports in the SDD scratch dir). Incidental: use_semantic checkbox also un-clickable → appended to TASK-2320's sibling TASK-2272.
 <!-- SECTION:NOTES:END -->
