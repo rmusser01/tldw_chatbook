@@ -6083,7 +6083,9 @@ class LibraryScreen(BaseAppScreen):
                 if imported > 0:
                     parts.append(f"{imported} imported")
                 if matched > 0:
-                    parts.append(f"{matched} already in Library")
+                    # (task-2231) The forecast says "will match"; the
+                    # toast answers in the same word.
+                    parts.append(f"{matched} matched")
                 if skipped > 0:
                     parts.append(f"{skipped} skipped")
                 if failed > 0:

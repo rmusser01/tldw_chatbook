@@ -30,6 +30,7 @@ from tldw_chatbook.Library.ingest_capabilities import (
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import (
     DEFAULT_CHUNK_SIZE,
+    INGEST_DUPLICATE_PROGRESS_PREFIX,
     IngestJobState,
     LibraryIngestJob,
 )
@@ -186,6 +187,9 @@ MAX_CHUNK_SIZE = 5000
 # Queue row state glyphs (binding).
 _GLYPH_ACTIVE = "●"  # "●" -- queued, parsing, or writing
 _GLYPH_DONE = "✓"  # "✓"
+#: (task-2231) A dedup match is a distinct OUTCOME, not a quieter
+#: import -- the two used to be byte-identical rows.
+_GLYPH_MATCHED = "≡"
 _GLYPH_FAILED = "✗"  # "✗"
 _GLYPH_SKIPPED = "○"  # neutral: never attempted (task-2220)
 _GLYPH_CANCELLED = "⊘"  # "⊘" -- stopped deliberately, not an error
@@ -262,7 +266,7 @@ def _retry_suffix(job: LibraryIngestJob) -> str:
     docstring) never has to reach into ``Home`` (the dependency runs the
     other way: ``Home`` already imports from ``Library``).
     """
-    return f" · retry {job.retry_count}" if job.retry_count else ""
+    return f" · attempt {job.retry_count + 1}" if job.retry_count else ""
 
 # Human-readable (singular, plural) labels for pre-flight type groups.
 # ``unsupported`` is popped into ``unsupported_files`` before this mapping is
@@ -720,6 +724,10 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
         line = f"{_GLYPH_ACTIVE} parsing · {basename}"
         if job.detected_type:
             line += f" · {job.detected_type}"
+        # (Qodo round) The attempt marker is the row's LAST element in every
+        # state -- appending it before detected_type made it read
+        # "… · attempt 2 · plaintext" only on rows that had a type.
+        line += _retry_suffix(job)
         return IngestQueueRow(
             job_id=job.job_id,
             glyph=_GLYPH_ACTIVE,
@@ -736,6 +744,7 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
         line = f"{_GLYPH_ACTIVE} writing · {basename}"
         if job.detected_type:
             line += f" · {job.detected_type}"
+        line += _retry_suffix(job)
         return IngestQueueRow(
             job_id=job.job_id,
             glyph=_GLYPH_ACTIVE,
@@ -752,7 +761,9 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
         return IngestQueueRow(
             job_id=job.job_id,
             glyph=_GLYPH_ACTIVE,
-            line=f"{_GLYPH_ACTIVE} queued · {basename}",
+            line=(
+                f"{_GLYPH_ACTIVE} queued · {basename}{_retry_suffix(job)}"
+            ),
             can_open=False,
             can_retry=False,
             media_id=job.media_id,
@@ -768,12 +779,23 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
         elapsed = _format_elapsed(
             job.submitted_at or job.started_at, job.finished_at, now=now
         )
-        line = f"{_GLYPH_DONE} done · {basename}"
+        # (task-2231) The forecast promised "will match"; the receipt says
+        # so too. Matched rows carry their own glyph and word, so an import
+        # and a dedup match are distinguishable at a glance rather than
+        # only by the sub-line.
+        is_matched = bool(
+            str((job.progress or {}).get("message", "")).startswith(
+                INGEST_DUPLICATE_PROGRESS_PREFIX
+            )
+        )
+        glyph = _GLYPH_MATCHED if is_matched else _GLYPH_DONE
+        word = "matched" if is_matched else "done"
+        line = f"{glyph} {word} · {basename}"
         if elapsed:
             line += f" · {elapsed}"
         return IngestQueueRow(
             job_id=job.job_id,
-            glyph=_GLYPH_DONE,
+            glyph=glyph,
             line=line,
             can_open=job.media_id is not None,
             can_retry=False,
@@ -883,14 +905,26 @@ def _queue_counts_line(jobs: Sequence[LibraryIngestJob]) -> str:
     in this module -- e.g. ``"2 parsing · 1 writing · 3 queued · 1 done · 1
     failed"``), joined by ``" · "``.
     """
+    # (Qodo round) The tally must bucket the way the group headers and the
+    # rows do: counting every DONE job as "done" made the queue line say
+    # "2 done" while a header right below it said "1 done · 1 matched".
     counts = {state.value: 0 for state in IngestJobState}
+    matched = 0
     for job in jobs:
-        counts[job.state.value] += 1
-    joined = " · ".join(
+        if job.state == IngestJobState.DONE and str(
+            (job.progress or {}).get("message", "")
+        ).startswith(INGEST_DUPLICATE_PROGRESS_PREFIX):
+            matched += 1
+        else:
+            counts[job.state.value] += 1
+    segments = [
         f"{counts[state.value]} {state.value}"
         for state in _COUNTS_LINE_ORDER
         if counts[state.value]
-    )
+    ]
+    if matched:
+        segments.append(f"{matched} matched")
+    joined = " · ".join(segments)
     # (task-2043) The registry restores prior sessions from the jobs DB, so
     # these totals span ALL ingests -- say so, or a fresh batch's outcome
     # blurs into history.
@@ -1043,6 +1077,7 @@ def _batch_outcome_parts(members: "Sequence[LibraryIngestJob]") -> list[str]:
     """
     tallies: dict[str, int] = {}
     active = 0
+    matched = 0
     for job in members:
         if job.state in (
             IngestJobState.QUEUED,
@@ -1050,6 +1085,11 @@ def _batch_outcome_parts(members: "Sequence[LibraryIngestJob]") -> list[str]:
             IngestJobState.WRITING,
         ):
             active += 1
+        elif job.state == IngestJobState.DONE and str(
+            (job.progress or {}).get("message", "")
+        ).startswith(INGEST_DUPLICATE_PROGRESS_PREFIX):
+            # (task-2231) "matched" is reported, not folded into "done".
+            matched += 1
         else:
             tallies[job.state.value] = tallies.get(job.state.value, 0) + 1
     parts = [
@@ -1057,6 +1097,8 @@ def _batch_outcome_parts(members: "Sequence[LibraryIngestJob]") -> list[str]:
         for state in _COUNTS_LINE_ORDER
         if tallies.get(state.value)
     ]
+    if matched:
+        parts.append(f"{matched} matched")
     if active:
         parts.append(f"{active} running")
     return parts
@@ -1470,7 +1512,14 @@ def build_library_ingest_state(
         # (task-2223 ruling) Zero imports + ≥1 predicted match keeps Start
         # ENABLED (the dedup probe is capped best-effort, never a blocker)
         # but consent becomes informed: say what starting will actually do.
-        if will_import == 0 and will_match and not will_fail:
+        # (task-2231) "Everything here" must be true: only when every
+        # importable file is a predicted match and nothing else is staged.
+        if (
+            will_import == 0
+            and will_match
+            and not will_fail
+            and not will_skip
+        ):
             start_quiet_line = (
                 "Everything here appears to already be in your Library — "
                 "starting will re-check and match, not re-import."
