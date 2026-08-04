@@ -788,7 +788,10 @@ async def handle_start_llamafile_server_button_pressed(
             thread=True,
             # NO 'args' or 'done' parameters
         )
-        app.notify("Llamafile server starting…")
+        app.notify(
+            f"Llamafile server starting… — endpoint will be "
+            f"http://{host}:{port} once the chip shows 'running'."
+        )
     except Exception as err:
         logger.opt(exception=True).error(
             f"Error preparing to start Llamafile server: {err}"
@@ -1005,7 +1008,10 @@ async def handle_start_llamacpp_server_button_pressed(
             thread=True,
         )
 
-        app.notify("Llama.cpp server starting…")
+        app.notify(
+            f"Llama.cpp server starting… — endpoint will be "
+            f"http://{host}:{port} once the chip shows 'running'."
+        )
     except Exception as err:
         logger.opt(exception=True).error(
             f"Error preparing to start Llama.cpp server: {err}"

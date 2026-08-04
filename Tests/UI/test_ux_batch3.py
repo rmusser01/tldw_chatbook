@@ -85,7 +85,7 @@ async def test_results_render_real_metrics() -> None:
 # UX-056 -----------------------------------------------------------------
 def test_logs_bindings_follow_adr_and_have_actions() -> None:
     keys = {binding.key for binding in LogsWindow.BINDINGS}
-    assert keys == {"/", "p", "1", "2", "3", "4", "y"}
+    assert keys == {"/", "p", "1", "2", "3", "4", "n", "N", "y"}
     for binding in LogsWindow.BINDINGS:
         assert hasattr(LogsWindow, f"action_{binding.action.split('(')[0]}") or hasattr(
             LogsWindow, "action_level"
@@ -94,7 +94,7 @@ def test_logs_bindings_follow_adr_and_have_actions() -> None:
 
 def test_logs_footer_hints_match_bindings() -> None:
     hint_keys = {key for key, _label in LogsWindow.LOGS_SHORTCUTS}
-    assert hint_keys == {"/", "1-4", "p", "y"}
+    assert hint_keys == {"/", "1-4", "p", "n", "y"}
 
 
 # UX-055 -----------------------------------------------------------------

@@ -118,6 +118,8 @@ class LogsWindow(Container):
         Binding("2", "level('info')", "Info+", show=False),
         Binding("3", "level('warning')", "Warnings+", show=False),
         Binding("4", "level('error')", "Errors", show=False),
+        Binding("n", "next_error", "Next error", show=False),
+        Binding("N", "prev_error", "Previous error", show=False),
         Binding("y", "copy_visible", "Copy visible", show=False),
     ]
 
@@ -126,6 +128,7 @@ class LogsWindow(Container):
         ("/", "filter"),
         ("1-4", "level"),
         ("p", "pause"),
+        ("n", "next error"),
         ("y", "copy"),
     )
 
@@ -451,6 +454,36 @@ class LogsWindow(Container):
     def action_copy_visible(self) -> None:
         """Copy the visible lines (y key)."""
         self._on_copy_visible()
+
+    def action_next_error(self) -> None:
+        """Jump to the next error line (n key)."""
+        self._jump_to_error(1)
+
+    def action_prev_error(self) -> None:
+        """Jump to the previous error line (N key)."""
+        self._jump_to_error(-1)
+
+    def _error_row_indices(self) -> list[int]:
+        """Indices of error/critical records within the current view."""
+        return [
+            index
+            for index, record in enumerate(self._visible_records())
+            if record.level in ("ERROR", "CRITICAL")
+        ]
+
+    def _jump_to_error(self, direction: int) -> None:
+        """Scroll to the next/previous error line (n / N keys)."""
+        indices = self._error_row_indices()
+        if not indices:
+            self.app.notify("No errors in the current view.", severity="warning")
+            return
+        log_widget = self.query_one("#app-log-display", RichLog)
+        current = int(log_widget.scroll_offset.y) if log_widget.scroll_offset else 0
+        if direction > 0:
+            target = next((i for i in indices if i > current), indices[0])
+        else:
+            target = next((i for i in reversed(indices) if i < current), indices[-1])
+        log_widget.scroll_to(y=target, animate=False)
 
 
 #

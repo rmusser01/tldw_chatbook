@@ -200,9 +200,12 @@ class MainNavigationBar(Container):
                     button.add_class("is-active")
                 yield button
         # Docked outside the scrollable strip so the hint stays visible at the
-        # right edge exactly when the destinations overflow.
+        # right edge exactly when the destinations overflow. Its text covers
+        # the F-key destinations — the ones that clip first at ≤140 cols.
         overflow_hint = Static(
-            "More: Ctrl+P", id="nav-overflow-hint", classes="nav-overflow-hint"
+            "F7 Lab · F8 Logs · F9 Settings · More: Ctrl+P",
+            id="nav-overflow-hint",
+            classes="nav-overflow-hint",
         )
         overflow_hint.tooltip = "Open command palette"
         overflow_hint.display = False
@@ -216,8 +219,13 @@ class MainNavigationBar(Container):
         self.call_after_refresh(self._scroll_active_destination_into_view)
         self.set_interval(0.5, self._update_overflow_hints)
 
+    #: Overflow hint text by available width: the full F-key legend when the
+    #: bar is wide enough to spare the cells, the compact pointer otherwise.
+    _HINT_WIDE = "F7 Lab · F8 Logs · F9 Settings · More: Ctrl+P"
+    _HINT_NARROW = "More: Ctrl+P"
+
     def _update_overflow_hints(self) -> None:
-        """Toggle the ‹ / More: Ctrl+P indicators from real scroll state."""
+        """Toggle the ‹ / More indicators and their text from real state."""
         try:
             strip = self.query_one("#nav-destination-strip", Horizontal)
             left_hint = self.query_one("#nav-overflow-hint-left", Static)
@@ -232,10 +240,14 @@ class MainNavigationBar(Container):
         # Left hint tracks position (more destinations hidden on the left);
         # the right hint marks that overflow exists at all — the palette
         # offers every destination regardless of scroll position.
-        new_left = scroll_x > 0
+        left_hint.display = scroll_x > 0
         new_right = max_scroll_x > 0
-        left_hint.display = new_left
         right_hint.display = new_right
+        if new_right:
+            wide_text = self.size.width >= 110
+            right_hint.update(
+                self._HINT_WIDE if wide_text else self._HINT_NARROW
+            )
         # Layout settles asynchronously (hint toggles change the strip's
         # width, fonts finish, etc.), so keep the active destination pinned
         # every tick instead of only when a hint changed state — the call is

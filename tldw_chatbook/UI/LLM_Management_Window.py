@@ -363,6 +363,17 @@ class LLMManagementWindow(Container):
         if not path_input.value.strip():
             path_input.value = found
 
+    def on_resize(self) -> None:
+        """Hide Detect buttons when the content area gets too narrow
+        (the side-by-side row would clip the Browse button, UX-100)."""
+        try:
+            content = self.query_one("#llm-main-content")
+        except Exception:  # noqa: BLE001 - not mounted yet
+            return
+        narrow = 0 < content.size.width < 70
+        for button in self.query(".detect-button"):
+            button.display = not narrow
+
     #: Detect button id -> (target input id, candidate binary names).
     _DETECT_TARGETS: dict[str, tuple[str, tuple[str, ...]]] = {
         "llamacpp-detect-exec-button": (

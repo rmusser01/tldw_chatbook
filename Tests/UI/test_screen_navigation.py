@@ -1285,7 +1285,7 @@ async def test_main_navigation_copy_and_order():
         assert nav_buttons[0].id == "nav-home"
         assert nav_buttons[1].id == "nav-console"
         assert nav_buttons[-1].id == "nav-settings"
-        assert str(app.query_one("#nav-overflow-hint").renderable) == "More: Ctrl+P"
+        assert "More: Ctrl+P" in str(app.query_one("#nav-overflow-hint").renderable)
 
 
 @pytest.mark.asyncio

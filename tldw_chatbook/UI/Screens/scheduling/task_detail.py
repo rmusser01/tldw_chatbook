@@ -405,7 +405,7 @@ class TaskDetail(Vertical):
 
         if task is None:
             empty_copy = (
-                "No scheduled tasks yet.\nPress c to schedule your first task."
+                "No scheduled tasks yet. Press c to schedule your first task."
                 if queue_empty
                 else "Select a task from the queue, or press c to schedule one."
             )
