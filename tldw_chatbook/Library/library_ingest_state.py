@@ -59,6 +59,8 @@ MEDIA_DB_UNAVAILABLE_COPY = "Media database is unavailable."
 INGEST_UNAVAILABLE_COPY = "Ingest is unavailable in this runtime."
 QUEUE_HEADING_COPY = "Queue"
 QUEUE_EMPTY_COPY = "No ingest jobs yet."
+# (task-2130) After a session with activity the old line was a lie.
+QUEUE_EMPTY_AFTER_ACTIVITY_COPY = "Queue is empty."
 START_QUIET_LINE_COPY = "Enter a file path to start."
 SUPPORTED_FORMATS_COPY = (
     "Supported: PDF documents, audio/video files, e-books, plain text "
@@ -573,6 +575,7 @@ class LibraryIngestCanvasState:
     type_group_file_counts: dict[str, int]
     unsupported_files: list[str]
     recent_jobs: list[LibraryIngestJob]
+    queue_empty_line: str
     #: Which backend a new ingest will target, so the canvas can say so.
     ingest_backend: str = "local"
     #: Whether to offer switching backends -- only meaningful when a
@@ -926,6 +929,7 @@ def build_library_ingest_state(
     ingest_backend: str = "local",
     server_ingest_available: bool = False,
     transcribe_cpp_configured: bool = False,
+    recent_ledger: Sequence[LibraryIngestJob] = (),
     clear_finished_armed: bool = False,
     expanded_details: frozenset[str] | set[str] = frozenset(),
 ) -> LibraryIngestCanvasState:
@@ -1155,11 +1159,27 @@ def build_library_ingest_state(
     if not form.path.strip() and active_preflight is None:
         intro_lines = build_intro_lines()
 
+    # (task-2130) Recent ingests is the durable session ledger: jobs the
+    # user cleared from the queue live on here (the screen snapshots them
+    # into ``recent_ledger`` before the registry removal), so Clear
+    # finished no longer erases the only record of a session's failures.
     recent_jobs = [
         job
         for job in jobs
         if job.state in (IngestJobState.DONE, IngestJobState.FAILED)
-    ][:10]
+    ]
+    live_ids = {job.job_id for job in recent_jobs}
+    recent_jobs.extend(
+        job for job in recent_ledger if job.job_id not in live_ids
+    )
+    recent_jobs = recent_jobs[:10]
+    queue_empty_line = ""
+    if not queue_rows:
+        queue_empty_line = (
+            QUEUE_EMPTY_AFTER_ACTIVITY_COPY
+            if recent_jobs
+            else QUEUE_EMPTY_COPY
+        )
 
     return LibraryIngestCanvasState(
         header=INGEST_HEADER_COPY,
@@ -1193,6 +1213,7 @@ def build_library_ingest_state(
         },
         unsupported_files=unsupported_files,
         recent_jobs=recent_jobs,
+        queue_empty_line=queue_empty_line,
         transcribe_cpp_configured=transcribe_cpp_configured,
     )
 

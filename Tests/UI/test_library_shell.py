@@ -13269,3 +13269,50 @@ async def test_reset_to_defaults_resets_text_inputs_and_persistence(tmp_path):
         assert "Chunk size: 1000" in str(
             screen.query_one("#type-group-generic", Collapsible).title
         )
+
+
+@pytest.mark.asyncio
+async def test_clear_finished_keeps_recent_ledger_and_scrolls_confirm(tmp_path):
+    """(task-2130) A confirmed Clear finished must not erase the session's
+    only record: Recent ingests still lists the cleared failure, the empty
+    copy is honest, and the armed confirm is scrolled into view."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c4-ledger")
+    harness = _LibraryIngestCanvasHarness(db)
+    broken = tmp_path / "broken.pdf"
+    broken.write_bytes(b"%PDF-1.4\nnot really a pdf\n")
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        failing = harness.submit_library_ingest_job(source_path=str(broken))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j.state for j in harness.library_ingest_jobs.jobs()}
+            if jobs.get(failing.job_id) == IngestJobState.FAILED:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("job never failed")
+
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-clear-finished")
+
+        clear = screen.query_one("#library-ingest-clear-finished", Button)
+        clear.press()
+        await pilot.pause()
+        await pilot.pause()
+        armed = screen.query_one("#library-ingest-clear-finished", Button)
+        assert "Press again" in str(armed.label)
+
+        armed.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert not harness.library_ingest_jobs.jobs(), "registry not cleared"
+        state = screen._build_library_ingest_state()
+        assert [job.job_id for job in state.recent_jobs] == [failing.job_id], (
+            "Clear finished erased the session ledger"
+        )
+        assert state.queue_empty_line == "Queue is empty."
+        recent = list(screen.query("#library-ingest-recent"))
+        assert recent, "Recent ingests vanished after the clear"

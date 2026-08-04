@@ -19,7 +19,6 @@ from tldw_chatbook.Library.ingest_capabilities import (
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
 from tldw_chatbook.Library.library_ingest_state import (
     validate_ingest_option_value,
-    QUEUE_EMPTY_COPY,
     LibraryIngestCanvasState,
     build_intro_lines,
 )
@@ -132,9 +131,9 @@ class LibraryIngestQueuePanel(Vertical):
                 id="library-ingest-queue-counts",
                 markup=False,
             )
-        if not state.queue_rows:
+        if not state.queue_rows and state.queue_empty_line:
             yield Static(
-                QUEUE_EMPTY_COPY,
+                state.queue_empty_line,
                 id="library-ingest-queue-empty",
                 markup=False,
             )

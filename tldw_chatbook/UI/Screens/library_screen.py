@@ -78,6 +78,7 @@ from ...Widgets.Library.library_ingest_canvas import (
     ingest_scope_label,
 )
 from ...Library.library_ingest_jobs import (
+    IngestJobState,
     LibraryIngestJob,
     count_duplicate_done_jobs,
 )
@@ -1397,6 +1398,10 @@ class LibraryScreen(BaseAppScreen):
         # (task-2015) Two-press "Clear finished": first press arms, second
         # clears; any registry mutation disarms.
         self._library_ingest_clear_finished_armed: bool = False
+        # (task-2130) Durable session ledger: terminal jobs snapshotted at
+        # Clear-finished time so Recent ingests (incl. failure records)
+        # survives the registry removal.
+        self._library_ingest_recent_ledger: list[LibraryIngestJob] = []
         # (task-2043) Failed rows whose inline error details are expanded.
         self._library_ingest_expanded_details: set[str] = set()
         # Explicit user-started curated model install. It is separate from
@@ -6165,6 +6170,7 @@ class LibraryScreen(BaseAppScreen):
             server_ingest_available=server_ingest_available,
             transcribe_cpp_configured=self._transcribe_cpp_configured,
             clear_finished_armed=self._library_ingest_clear_finished_armed,
+            recent_ledger=tuple(self._library_ingest_recent_ledger),
             expanded_details=self._library_ingest_expanded_details,
         )
 
@@ -14148,10 +14154,39 @@ class LibraryScreen(BaseAppScreen):
         if not self._library_ingest_clear_finished_armed:
             self._library_ingest_clear_finished_armed = True
             self._update_library_ingest_dynamic_regions()
+            # (task-2130) The armed confirm must be seen to be answerable:
+            # with the button at the viewport's bottom edge the relabel
+            # landed off-screen and the press read as a no-op. The update
+            # above recomposes the queue panel, so query the CURRENT
+            # button.
+            try:
+                armed_button = self.query_one(
+                    "#library-ingest-clear-finished", Button
+                )
+            except (NoMatches, QueryError):
+                pass
+            else:
+                armed_button.scroll_visible()
             return
         self._library_ingest_clear_finished_armed = False
         self._library_ingest_expanded_details.clear()
         registry = self._library_ingest_registry()
+        # (task-2130) Snapshot the terminal jobs into the session ledger
+        # BEFORE the removal -- Recent ingests is the durable record.
+        jobs_fn = getattr(registry, "jobs", None)
+        if callable(jobs_fn):
+            terminal = [
+                job
+                for job in jobs_fn()
+                if job.state in (IngestJobState.DONE, IngestJobState.FAILED)
+            ]
+            known = {job.job_id for job in terminal}
+            terminal.extend(
+                job
+                for job in self._library_ingest_recent_ledger
+                if job.job_id not in known
+            )
+            self._library_ingest_recent_ledger = terminal[:10]
         clear_finished = getattr(registry, "clear_finished", None)
         if callable(clear_finished):
             clear_finished()

@@ -1717,3 +1717,25 @@ def test_invalid_option_values_gate_start_with_text_message():
     valid = build_library_ingest_state((), form=form)
     assert valid.option_errors == ()
     assert valid.start_enabled
+
+
+def test_recent_ledger_survives_registry_clear_and_empty_copy_is_honest():
+    """(task-2130) Recent ingests is the durable session ledger: jobs
+    snapshotted at Clear-finished time still render after the registry
+    removal, and the empty-queue copy stops claiming "No ingest jobs
+    yet." after a session with activity."""
+    cleared = _job(
+        state=IngestJobState.FAILED,
+        source_path="/tmp/broken.pdf",
+        error="Failed to process pdf file: PDF Extraction Error.",
+    )
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        recent_ledger=(cleared,),
+    )
+    assert [job.job_id for job in state.recent_jobs] == [cleared.job_id]
+    assert state.queue_empty_line == "Queue is empty."
+
+    untouched = build_library_ingest_state((), form=LibraryIngestFormState())
+    assert untouched.queue_empty_line == "No ingest jobs yet."
