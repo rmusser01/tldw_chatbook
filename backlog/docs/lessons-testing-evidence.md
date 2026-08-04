@@ -614,3 +614,86 @@ slow. And when a threaded pipeline works in tests but not live, dump the worker'
 (`sys._current_frames()[thread.ident]`) once a second before theorizing — it answered in
 one run what three cheaper probes could only narrow. Bonus rig: macOS `say` through the
 speakers + the real microphone is a full live STT test harness needing no human.
+
+---
+
+## In a render-from-state UI, the in-place updater must own EVERY conditional (2026-08-04)
+
+**What happened.** Four separate times in the Library ingest arc (tasks 2100, 2130,
+2140, 2230), a canvas element was rendered by a `compose()`-time conditional while the
+hot paths deliberately skip recompose (job ticks and text-input edits must preserve
+focus, cursor position, and scroll). Each time the element was correct on first render
+and wrong forever after:
+
+- "Recent ingests" expanded into an empty unlabeled shell after a clear.
+- The commit-summary line rendered for PDF selections and **never** for plain text —
+  a PDF adds an options panel, which forces the structural recompose that happens to
+  mount the line; a text-only pre-flight applies through the non-structural path,
+  which mounts nothing. It also went stale after Clear ("0 will import · 1 will match"
+  above an empty field).
+- The invalid-option field marker was applied at compose time only, so it never
+  toggled on the edit path it existed to serve — the field stayed marked after
+  becoming valid and never got marked after becoming invalid, while the gate line
+  instructed the user to "fix the highlighted options".
+
+**Why tests kept missing it.** The harness passes when it *re-queries* after the
+update, because a fresh query returns whatever was composed most recently. The failure
+only appears when you assert that the widget you held is the widget still mounted.
+
+**What to do.** Two rules, both cheap:
+
+1. Anything the in-place updater does not explicitly own must be **always mounted and
+   `display`-managed**, never conditionally composed. If a canvas-level element can
+   appear and disappear, the updater sets its content *and* its visibility.
+2. Pin it with **object identity**, not a re-query:
+
+```python
+before = screen.query_one("#library-ingest-start", Button)
+...trigger the hot path...
+assert screen.query_one("#library-ingest-start", Button) is before   # no recompose
+```
+
+A re-query test agrees with the bug; `is` does not.
+
+---
+
+## A new distinction must be learned by every surface that aggregates the old one (2026-08-04)
+
+**What happened.** TASK-2231 introduced "matched" as an outcome distinct from "done"
+(a dedup match is not a fresh import). The row got its own glyph and word, and the
+change looked complete. Review found two surfaces still folding matched into done:
+the per-batch group header, and the top-level queue tally — which produced two
+contradictory summaries on the same screen ("2 done" directly above "1 done ·
+1 matched"). The completion toast was a third surface, caught only because it was
+grepped for by hand. TASK-2220 had the same shape one PR earlier: adding a `SKIPPED`
+job state updated the row and the tally but missed `queue_show_clear_finished`, which
+still tested `state in (DONE, FAILED)` — so a queue holding only skipped rows could
+not be cleared at all.
+
+**What to do.** When you add a state, an outcome, or any new bucket, grep for **every
+predicate that enumerates the old set** and every surface that counts it, then list
+them before writing code. In this feature that list was: the row builder, the group
+header, the queue tally, the completion toast, the "show clear" gate, the "finished"
+count, the ledger snapshot, and the durable-history filter — eight places, and the
+first attempt updated three.
+
+Related: a fixture that omits the interesting axis hides the bug. My own attempt-marker
+test used jobs with no `detected_type`, so it passed while every *typed* row rendered
+the marker in the wrong position.
+
+---
+
+## An error fallback that returns a valid-looking value becomes a confident lie (2026-08-04)
+
+**What happened.** `_safe_size(path)` returned `0` on `OSError` — a reasonable "I don't
+know" for summing sizes. TASK-2160 then added an empty-file classifier that read
+`size == 0` as "this file is empty and will fail", and surfaced it as user-facing
+copy: *"1 empty file will fail — notes.txt is 0 B."* For an unreadable or unstatable
+file, that sentence is a measurement nobody took, and the file was pulled out of its
+type group on the strength of it.
+
+**What to do.** A sentinel is safe for aggregation and unsafe for classification. When
+a new consumer needs to *distinguish* failure from a real value, give it a probe that
+says so — `_statted_size()` returning `None` on `OSError` — and leave the summing
+caller on the old fallback. Before reusing any helper whose docstring says "or `0` on
+error", ask what your caller will conclude from that zero.

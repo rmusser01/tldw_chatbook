@@ -162,6 +162,11 @@ A click computed at 185 "inside New Source" actually lands on Filters. The
 error grows left-to-right, so the further right a control sits, the more
 confidently you will click the wrong one.
 
+`awk index()` is not the only source: `grep -bo` and `wc -c` are byte counters too,
+and a 2026-08-03 Library ingest round re-derived this same bug through them —
+mis-clicking a Clear button by ~12 columns and filing it as "dead to mouse", then
+spending a diagnosis round proving the button was fine.
+
 **What to do.** Compute the column by **character** position, not bytes:
 
 ```python
@@ -340,3 +345,56 @@ pass, before the scratch profile is ever launched; treat the scratch `config.tom
 something the app WILL rewrite on boot and diff it AFTER first launch rather than
 trusting the hand-authored version; and set the provider via `[API] default_api`, not
 `[llm_api_settings] default_api_endpoint`.
+
+---
+
+## A control that moves when the form changes produces phantom "dead click" bugs (2026-08-04)
+
+**What happened.** Two consecutive Library ingest critiques reported an intermittent
+**dead Start button**: a click at the commit moment that produced no job, no toast, and
+no queue row, while the identical click worked moments later. It was filed as a
+suspected event-handling defect and cost a round of investigation plus a regression
+test that could never fail, because the harness reproduces nothing.
+
+The mechanism turned out to be geometric. Typing a valid path replaces the gate line
+("Enter a file path to start.") with a forecast line and a commit summary — **the Start
+button moves down three rows**. A driver that reads the button's coordinates, types a
+path, and then clicks is clicking where the button *was*. The evidence arm hit the same
+trap in its own probe run, re-located the button in a fresh capture, and the first
+click submitted in 0.18s.
+
+**What to do.** Re-locate every control **in the same capture you click from**, never
+from one taken before the last state-changing keystroke:
+
+```bash
+ROW=$(tmux -L "$SOCK" capture-pane -p | grep -n "Start ingest" | head -1 | cut -d: -f1)
+COL=$(tmux -L "$SOCK" capture-pane -p | sed -n "${ROW}p" \
+      | python3 -c "import sys; print(sys.stdin.readline().find('Start ingest')+5)")
+```
+
+And treat "the same click works sometimes" as a **layout-shift** signature, not a
+hit-region defect — the two look identical from outside and only one of them is real.
+
+---
+
+## Critique scores from different agent instances are not like-for-like (2026-08-04)
+
+**What happened.** Seven rounds of dual-agent design critique on one surface scored
+21 → 24 → 29 → 25 → 26 → 31 → 22 out of 40. Read as a time series, round 7 looks like a
+nine-point collapse immediately after four approved improvements shipped. It was the
+opposite: the round-7 reviewer drove paths no previous round had touched (typo paths,
+404 URLs, Retry behaviour, measured WCAG contrast, cross-run counter reconciliation)
+and graded harder — while the same round's **mechanical arm ran 14 probes against every
+shipped behaviour and all 14 passed**, the first fully clean run of the arc. The dips at
+rounds 4 and 7 were both new coverage; the two genuine regressions in the whole arc were
+each caught by mechanical probes, not by the score.
+
+**What to do.** Treat the score as a **prompt for reading the findings**, never as the
+finding. When it moves, say why in the same breath, and cite the comparable signal:
+
+- **Comparable:** deterministic probes over fixed behaviours, pass/fail, same script.
+- **Not comparable:** a judgement score across agent instances, prompts, or coverage depth.
+
+Keep a mechanical arm in every round precisely so there is something to compare when the
+judgement number swings, and never report a delta without stating whether coverage
+changed underneath it.
