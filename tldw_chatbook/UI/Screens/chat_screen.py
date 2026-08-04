@@ -5292,6 +5292,7 @@ class ChatScreen(BaseAppScreen):
                 chat_dictionary_applier=self._console_chat_dictionary_applier,
                 world_info_applier=self._console_world_info_applier,
                 rag_capture_provider=self._capture_console_staged_rag,
+                default_session_settings=self._default_console_session_settings,
             )
         self._console_chat_controller.on_submission_accepted = (
             self._on_console_submission_accepted
@@ -17610,6 +17611,18 @@ class ChatScreen(BaseAppScreen):
             # cleared at the keypress, so hand the draft back (ahead of any
             # keystrokes typed since).
             composer.restore_stashed_draft(stash)
+        if result.session_closed:
+            # Task 4 (D2 fix wave): `_session_closed_result` is `accepted`
+            # (see its own docstring) so the restore above never fires, and
+            # its owning session no longer exists to hold a SYSTEM row --
+            # there is nothing left to write into and nowhere to restore a
+            # keypress-cleared draft TO. A toast is the one surface still
+            # available: without it this outcome was completely silent
+            # (composer already cleared, no row, no notification).
+            self.app_instance.notify(
+                result.visible_copy or "Console session closed before your message could send.",
+                severity="warning",
+            )
         if (
             result.should_clear_draft
             and composer_visible_for_session
@@ -17928,12 +17941,29 @@ class ChatScreen(BaseAppScreen):
             self._focus_console_composer_if_needed(force=True)
             return False
         controller = self._ensure_console_chat_controller()
+        # Task 4 (D2 fix wave): resolve/create the session to submit into
+        # HERE, before `target_session_id` is read, rather than leaving that
+        # as an implicit side effect of the `_console_send_blocked_reason()`
+        # call above (which happens to already do this via
+        # `_active_console_settings_readiness` -> `_ensure_active_console_
+        # session_settings`, whenever it doesn't return early). Making the
+        # call explicit means a fresh profile's FIRST send never keys the
+        # stash map / worker group / double-send gate below on `""` even if
+        # that upstream call's own internals ever change -- the invariant
+        # is asserted right at the point that matters, not inherited
+        # incidentally from an unrelated gate a few lines up. This is a
+        # synchronous call (no `await` before `target_session_id` is read),
+        # so there is no scheduling gap for the store's active session to
+        # change out from under it.
+        self._ensure_active_console_session_settings()
         # Fix round 1 (minor): normalize the same way the controller side
         # already does (`store.active_session_id or ""`) -- `None` is a
         # valid (if unlikely, post-mount) dict key, but every other
         # per-session map in this train keys on the normalized string, so
         # a stray `None` here would silently start a SEPARATE bucket for
-        # "no session" instead of colliding predictably.
+        # "no session" instead of colliding predictably. After the call
+        # above, this is never actually `""` for a real send -- the `or ""`
+        # stays only as a defensive normalization, not a live code path.
         target_session_id = controller.store.active_session_id or ""
         refusal = controller.send_refusal_copy(target_session_id)
         if refusal:
@@ -21756,13 +21786,30 @@ class ChatScreen(BaseAppScreen):
             stash = composer.stash_draft_for_send()
             self._console_pending_send_stash = stash
             try:
-                self.query_one("#console-send-message", Button).press()
+                send_button = self.query_one("#console-send-message", Button)
             except QueryError:
                 self._console_pending_send_stash = None
                 composer.restore_stashed_draft(stash)
                 self.app_instance.notify(
                     "Console send is unavailable.", severity="error"
                 )
+                return
+            if send_button.disabled or not send_button.display:
+                # Task 4 (D2 fix wave): Textual 8.2.7's `Button.press()`
+                # returns immediately -- without posting `Button.Pressed` --
+                # when the button is `disabled` or not `display`ed (which is
+                # also `False` while the button is being pruned, e.g. any
+                # `refresh(recompose=True)` mid-keypress). Without this
+                # check, `_console_pending_send_stash` above is set and
+                # never consumed (the Pressed handler that would clear it
+                # never runs), so the draft is stuck stashed with an empty
+                # composer AND the duplicate-guard just above permanently
+                # swallows every subsequent Enter, since the stash slot
+                # never goes back to `None` on its own.
+                self._console_pending_send_stash = None
+                composer.restore_stashed_draft(stash)
+                return
+            send_button.press()
             return
         if event.key in {"pageup", "pagedown"}:
             # TASK-348: scrollback must be keyboard-reachable. The composer
