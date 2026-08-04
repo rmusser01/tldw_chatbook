@@ -746,7 +746,7 @@ class TestWorkbenchShell:
             await pilot.pause()
             # F-033: the purpose line also carries the live count.
             assert str(screen.query_one("#personas-purpose", Static).renderable) == (
-                "Personas — assistant profiles for roleplay and chat · 0"
+                "Personas — who you play in the chat · 0"
             )
 
 
@@ -1100,7 +1100,7 @@ class TestPersonasMode:
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Archivist"]
 
-    async def test_personas_mode_uses_assistant_profile_copy_without_human_actions(
+    async def test_personas_mode_copy_avoids_human_identity_actions(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
         app = PersonasTestApp(mock_app_instance)
@@ -1115,9 +1115,11 @@ class TestPersonasMode:
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
+            # F-034: the descriptor teaches the genre convention (who YOU
+            # play) - and F-033 merged the live count into the same line.
             assert (
                 str(screen.query_one("#personas-purpose", Static).renderable)
-                == "Personas — assistant profiles for roleplay and chat · 1"
+                == "Personas — who you play in the chat · 1"
             )
             visible_copy = "\n".join(
                 [
@@ -8087,7 +8089,8 @@ def legacy_human_config(tmp_path, monkeypatch):
 
 
 class TestPersonaHumanIdentityRemoval:
-    """Personas remain assistant profiles and never identify the human user."""
+    """Personas never identify the human user (F-034: "who you play" copy
+    teaches the play-identity convention without reviving that framing)."""
 
     async def _select_profile(self, pilot):
         screen = await _mounted(pilot)
@@ -9012,7 +9015,8 @@ class TestDirtyTracking:
             # now that the save cleared it).
             assert str(subtitle.renderable) == "Editing Detective Sam"
             title = screen.query_one("#personas-header #workbench-header-title", Static)
-            assert str(title.renderable) == "Roleplay & Chat Dictionaries"
+            # F-034: the screen's one public name matches the nav label.
+            assert str(title.renderable) == "Roleplay"
 
     async def test_active_row_gets_unsaved_badge(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch

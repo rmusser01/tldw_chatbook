@@ -244,7 +244,10 @@ MODE_CHIP_ORDER: tuple[str, ...] = ("characters", "personas", "dictionaries", "l
 #: One-line "what this mode is" copy, shown under the title and as chip tooltips.
 _MODE_DESCRIPTORS: dict[str, str] = {
     "characters": "Characters — who the AI plays.",
-    "personas": "Personas — assistant profiles for roleplay and chat",
+    # F-034: the descriptor teaches the genre convention (characters = who
+    # the AI plays, personas = who YOU play) instead of the vague "assistant
+    # profiles" - without reviving the retired human-identity framing.
+    "personas": "Personas — who you play in the chat.",
     "prompts": "Prompts — moving to the Library.",
     "dictionaries": "Dictionaries — text find/replace rules.",
     "lore": "Lore — world facts injected on keywords.",
@@ -773,7 +776,7 @@ class PersonasScreen(BaseAppScreen):
         with Vertical(id="personas-shell"):
             yield DestinationHeader(
                 WorkbenchHeaderState(
-                    title="Roleplay & Chat Dictionaries",
+                    title="Roleplay",
                     subtitle=self._header_subtitle_text(),
                     status="ready",
                 ),
@@ -3179,7 +3182,7 @@ class PersonasScreen(BaseAppScreen):
         status = "blocked" if self._provider_send_block_reason() else "ready"
         header.sync_state(
             WorkbenchHeaderState(
-                title="Roleplay & Chat Dictionaries",
+                title="Roleplay",
                 subtitle=self._header_subtitle_text(),
                 status=status,
             )

@@ -751,7 +751,7 @@ class TabNavigationProvider(Provider):
         TAB_CHAT: "Open Console for live agent work, approvals, tools, and RAG",
         TAB_LIBRARY: "Open Library for source material, imports, notes, media, conversations, and Search/RAG",
         TAB_ARTIFACTS: "Open Artifacts for generated outputs, reports, datasets, and Chatbooks",
-        TAB_PERSONAS: "Open Roleplay & Chat Dictionaries for characters, personas, dictionaries, and behavior profiles",
+        TAB_PERSONAS: "Open Roleplay for characters, personas, dictionaries, and behavior profiles",
         TAB_WATCHLISTS_COLLECTIONS: "Open Watchlists for monitored sources, runs, alerts, and recovery",
         TAB_SCHEDULES: "Open Schedules for run timing, triggers, pauses, retries, and recovery",
         TAB_WORKFLOWS: "Open Workflows for reusable procedures, dry-runs, and outputs",
@@ -759,7 +759,7 @@ class TabNavigationProvider(Provider):
         TAB_ACP: "Open ACP for agents, sessions, runtimes, diffs, and terminals",
         TAB_SKILLS: "Open Skills for Agent Skills discovery, validation, and attachments",
         TAB_SETTINGS: "Open global preferences, appearance, accounts, storage, and app behavior",
-        TAB_CCP: "Switch to Roleplay & Chat Dictionaries for characters, personas, dictionaries, and world books",
+        TAB_CCP: "Switch to Roleplay for characters, personas, dictionaries, and world books",
         TAB_MEDIA: "Switch to media library",
         TAB_SEARCH: "Switch to Library search and RAG",
         TAB_INGEST: "Switch to content ingestion",
@@ -1137,7 +1137,7 @@ class QuickActionsProvider(Provider):
                 _navigate_via_screen(
                     self.app,
                     TAB_PERSONAS,
-                    "Opened Roleplay & Chat Dictionaries for character setup",
+                    "Opened Roleplay for character setup",
                 )
             elif action_id == "new_note":
                 _navigate_via_screen(
@@ -1313,19 +1313,19 @@ class CharacterProvider(Provider):
                 _navigate_via_screen(
                     self.app,
                     TAB_PERSONAS,
-                    "Opened Roleplay & Chat Dictionaries",
+                    "Opened Roleplay",
                 )
             elif action_id == "new_character":
                 _navigate_via_screen(
                     self.app,
                     TAB_PERSONAS,
-                    "Opened Roleplay & Chat Dictionaries to create a character",
+                    "Opened Roleplay to create a character",
                 )
             elif action_id == "list_characters":
                 _navigate_via_screen(
                     self.app,
                     TAB_PERSONAS,
-                    "Opened Roleplay & Chat Dictionaries to list characters",
+                    "Opened Roleplay to list characters",
                 )
         except Exception as e:
             self.app.notify(
