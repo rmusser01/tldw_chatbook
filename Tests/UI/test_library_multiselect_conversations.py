@@ -1,5 +1,6 @@
 import dataclasses
 from types import SimpleNamespace
+
 import pytest
 from textual.app import App
 from textual.widgets import Button

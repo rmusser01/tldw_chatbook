@@ -3447,11 +3447,16 @@ class LibraryScreen(BaseAppScreen):
         placeholder zeros seeded at construction time -- same honest-
         loading policy `_build_library_shell_input()` applies to the rail's
         own count suffixes. `_hub_source_count_value()` appends "+" when
-        the source's total is an estimate, mirroring the rail.
+        the source's total is an estimate, mirroring the rail. On a lookup
+        ERROR the line carries the error itself rather than misleading
+        zeros (PR #1318 review; the F-014 count policy: a failed fetch
+        must not dress up as an empty Library).
         """
+        if self._library_lookup_error is not None:
+            return self._library_lookup_error
 
         def value(source_type: str) -> str:
-            if not self._library_loaded and self._library_lookup_error is None:
+            if not self._library_loaded:
                 return "…"
             return self._hub_source_count_value(source_type)
 

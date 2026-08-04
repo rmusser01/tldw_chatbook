@@ -70,8 +70,8 @@ from tldw_chatbook.Study_Interop.study_scope_service import StudyScopeService
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCanvas
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCanvas
 from tldw_chatbook.Widgets.Library.library_rail import LIBRARY_RAIL_ROW_PREFIX
 from Tests.UI.test_destination_shells import (
     PolicyDeniedLibraryNotesScopeService,
@@ -464,6 +464,30 @@ async def test_library_shell_renders_rail_sections_and_landing_canvas():
         assert not screen.query("#library-mode-bar")
         assert not screen.query("#library-contract-grid")
         assert not screen.query("#library-notes-summary")
+
+
+@pytest.mark.asyncio
+async def test_landing_hub_shows_the_error_instead_of_false_zero_counts():
+    """PR #1318 review: a failed snapshot must not render
+    'Notes 0 · Media 0 · Conversations 0' in the hub -- false zeros read
+    as an empty Library. The hub carries the error line instead, the same
+    honesty policy F-014 applied to the rail's count suffixes."""
+    app = _build_test_app()
+    app.notes_scope_service = PolicyDeniedLibraryNotesScopeService()
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        assert screen._library_lookup_error
+        hub_counts = str(screen.query_one("#library-hub-counts", Static).renderable)
+        assert "Notes 0" not in hub_counts
+        assert "Media 0" not in hub_counts
+        assert "Conversations 0" not in hub_counts
+        assert screen._library_lookup_error in hub_counts
 
 
 @pytest.mark.asyncio

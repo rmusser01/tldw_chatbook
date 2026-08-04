@@ -351,14 +351,33 @@ def skill_trust_review_enabled(trust_status: str, trust_blocked: bool) -> bool:
 # action description while enabled) -- the workspaces handoff button's
 # pattern, applied to the trust panel's live-patched buttons.
 def skill_trust_unlock_tooltip(trust_status: str) -> str:
-    """Tooltip for the trust panel's Unlock action in either state."""
+    """Return the trust panel Unlock action's tooltip for the given state.
+
+    Args:
+        trust_status: The open skill's current trust status (e.g.
+            ``"trust_locked"``, ``"trusted"``).
+
+    Returns:
+        The action description while Unlock is enabled, otherwise the
+        reason it is disabled (F-018: every disabled action says why).
+    """
     if skill_trust_unlock_enabled(trust_status):
         return "Unlock this skill so it can run."
     return "Only a locked skill needs unlocking — this one isn't locked."
 
 
 def skill_trust_review_tooltip(trust_status: str, trust_blocked: bool) -> str:
-    """Tooltip for the trust panel's Review changes action in either state."""
+    """Return the trust panel Review changes action's tooltip.
+
+    Args:
+        trust_status: The open skill's current trust status.
+        trust_blocked: Whether the open skill is currently trust-blocked.
+
+    Returns:
+        The action description while Review changes is enabled, otherwise
+        the reason it is disabled for this state (nothing to review, or a
+        state that cannot be reviewed in place).
+    """
     if skill_trust_review_enabled(trust_status, trust_blocked):
         return "Review the pending changes to this skill."
     if not trust_blocked:
@@ -367,7 +386,16 @@ def skill_trust_review_tooltip(trust_status: str, trust_blocked: bool) -> str:
 
 
 def skill_trust_approve_tooltip(has_active_review: bool) -> str:
-    """Tooltip for the trust panel's Approve action in either state."""
+    """Return the trust panel Approve action's tooltip.
+
+    Args:
+        has_active_review: Whether a review is currently open (the
+            Approve action's enablement condition).
+
+    Returns:
+        The action description while Approve is enabled, otherwise the
+        reason it is disabled.
+    """
     if has_active_review:
         return "Approve the reviewed changes."
     return "Review the changes first, then approve."

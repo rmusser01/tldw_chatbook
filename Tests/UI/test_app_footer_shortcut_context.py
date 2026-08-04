@@ -1,7 +1,8 @@
 """Tests for global footer shortcut context updates."""
 
-import pytest
 from types import SimpleNamespace
+
+import pytest
 from textual.app import App
 from textual.widgets import Static
 
