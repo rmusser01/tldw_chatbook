@@ -1,7 +1,7 @@
 # realtime_mic_tap.py
 """Raw 24 kHz microphone tap for the realtime voice engine (V4 task 3). See
 `.superpowers/sdd/2026-08-04-realtime-voice-engine/task-3-brief.md` and
-`task-3-report.md` (review-round fix-up: F1-F4).
+`task-3-report.md` (review-round fix-ups: F1-F4, then NEW-1).
 
 Wraps `Audio.recording_service.AudioRecordingService`, capturing raw PCM16
 mono audio frames from the recorder's own background callback thread and
@@ -21,28 +21,39 @@ subprocess import-lightness probe.
 Threading: `AudioRecordingService.start_recording(callback=...)` invokes
 `callback` on the recorder's OWN background thread, not on the thread that
 called `start()`. All internal mutable state (the pre-ready buffer, the
-`ready`/`flushing`/`gated`/`stopped` flags, the in-flight-callback counter)
-is guarded by `self._cond`, a `threading.Condition` -- a plain lock is not
-enough here, because `stop()` must be able to *wait* for an
+`ready`/`flushing`/`gated`/`stopped` flags, the per-thread in-flight-callback
+tracking) is guarded by `self._cond`, a `threading.Condition` -- a plain
+lock is not enough here, because `stop()` must be able to *wait* for an
 already-in-flight `on_frames` call to finish without holding the lock while
 it waits (see `stop()`'s docstring for the exact guarantee this buys, and
 why it matters).
 
-Two ordering/quiescence guarantees this module makes, both closed by
-review-round fixes (see `task-3-report.md`, findings F1/F2) after an
-earlier version of this file violated them under real thread interleaving:
+Guarantees this module makes, each closed by a review-round fix (see
+`task-3-report.md`) after an earlier version of this file violated it under
+real thread interleaving:
 
   - `mark_ready()` never lets a frame that arrives mid-flush overtake a
     frame still waiting in the buffer -- every frame reaches `on_frames`
-    in arrival order across the ready transition.
+    in arrival order across the ready transition. (F1)
   - `stop()` never returns while a frame that already passed its
-    not-stopped check is still executing `on_frames` -- once `stop()`
-    returns, no callback is running and none will ever fire again.
+    not-stopped check is still executing `on_frames` ON ANOTHER THREAD --
+    once `stop()` returns, no OTHER thread's callback is running and none
+    will ever fire again. (F2)
+  - `stop()` does NOT wait on the calling thread's own in-flight entry --
+    only other threads' -- because `on_frames` calling `stop()` reentrantly
+    (e.g. a future on-error path) would otherwise self-deadlock: the only
+    code that could ever clear that entry is the very call currently
+    blocked inside `stop()`. (NEW-1a)
+  - The wait for other threads is bounded (`_stop_wait_timeout_seconds`,
+    default 2.0s): a hung consumer must not hang `stop()` forever once
+    this tap is wired to a live session; expiry logs a warning and
+    `stop()` proceeds anyway. (NEW-1b)
 """
 
 from __future__ import annotations
 
 import threading
+import time
 from collections import deque
 from typing import Any, Callable, Deque
 
@@ -53,6 +64,10 @@ from .recording_service import AudioRecordingService
 #: 16-bit PCM mono: 2 bytes per sample, used to convert
 #: `max_buffer_seconds` into a byte budget for the pre-ready buffer.
 _BYTES_PER_SAMPLE = 2
+
+#: Default total budget `stop()` will wait for OTHER threads' in-flight
+#: `on_frames` calls to finish before giving up and proceeding anyway.
+_DEFAULT_STOP_WAIT_TIMEOUT_SECONDS = 2.0
 
 
 class RealtimeMicTap:
@@ -75,6 +90,7 @@ class RealtimeMicTap:
         sample_rate: int = 24000,
         recorder_factory: Callable[..., Any] | None = None,
         max_buffer_seconds: float = 10.0,
+        _stop_wait_timeout_seconds: float = _DEFAULT_STOP_WAIT_TIMEOUT_SECONDS,
     ) -> None:
         """Construct the tap. Does not open the microphone -- call
         `start()` for that.
@@ -99,6 +115,13 @@ class RealtimeMicTap:
                 buffered frames are dropped to make room for new ones
                 (but never the single newest frame -- see
                 `_evict_locked`).
+            _stop_wait_timeout_seconds: TEST-ONLY seam (leading
+                underscore: not part of the public interface). Total
+                budget `stop()` waits for other threads' in-flight
+                `on_frames` calls before giving up; defaults to a real
+                2.0s budget suitable for production. Tests shrink this to
+                avoid waiting out the real budget when exercising the
+                expiry path itself.
         """
         self._on_frames = on_frames
         self._sample_rate = sample_rate
@@ -106,6 +129,7 @@ class RealtimeMicTap:
         self._max_buffer_bytes = max(
             0, int(max_buffer_seconds * sample_rate * _BYTES_PER_SAMPLE)
         )
+        self._stop_wait_timeout_seconds = _stop_wait_timeout_seconds
 
         # A Condition, not a plain Lock: `stop()` needs to wait for
         # in-flight `on_frames` calls to finish (see `stop()`), which
@@ -118,11 +142,16 @@ class RealtimeMicTap:
         self._flushing = False
         self._gated = False
         self._stopped = False
-        #: Number of `on_frames` calls currently executing (dispatched by
-        #: either `_on_recorder_frames` or `mark_ready`'s flush loop),
-        #: incremented/decremented under `self._cond`. `stop()` blocks
-        #: until this reaches 0 before returning -- see `stop()`.
-        self._in_flight = 0
+        #: Maps `threading.get_ident()` -> count of `on_frames` calls
+        #: currently executing FOR THAT THREAD (dispatched by either
+        #: `_on_recorder_frames` or `mark_ready`'s flush loop),
+        #: incremented/decremented under `self._cond`. Tracked per-thread
+        #: (not a single counter) so `stop()` can wait only for OTHER
+        #: threads to quiesce, never the calling thread's own entry --
+        #: see `stop()`'s docstring for why that distinction is load-
+        #: bearing (a reentrant same-thread `stop()` call would otherwise
+        #: self-deadlock).
+        self._in_flight_by_thread: dict[int, int] = {}
 
         self._recorder: Any = None
 
@@ -224,14 +253,12 @@ class RealtimeMicTap:
                     return
                 frame = self._buffer.popleft()
                 self._buffered_bytes -= len(frame)
-                self._in_flight += 1
+                self._mark_in_flight_locked()
             try:
                 self._on_frames(frame)
             finally:
                 with self._cond:
-                    self._in_flight -= 1
-                    if self._in_flight == 0:
-                        self._cond.notify_all()
+                    self._clear_in_flight_locked()
 
     def set_gated(self, gated: bool) -> None:
         """Mute or unmute the tap without closing the microphone device.
@@ -256,28 +283,44 @@ class RealtimeMicTap:
         """Stop capturing and release the recorder. Idempotent.
 
         Guarantee: once this method returns, `on_frames` will never be
-        invoked again for this tap, AND no `on_frames` call is still
-        executing. This covers two cases:
+        invoked again for this tap, and every OTHER thread's already
+        in-flight `on_frames` call has finished -- up to a bounded wait
+        budget (see below). This covers:
 
           - Frames that had not yet been dispatched: the buffer is
             discarded, and any frame arriving afterward sees `_stopped`
             and is dropped before `on_frames` is ever considered.
           - A frame that had ALREADY passed the not-stopped check (in
             `_on_recorder_frames` or `mark_ready`'s flush loop) and was
-            actively executing `on_frames` when `stop()` was called:
-            `stop()` blocks, via `self._cond.wait()`, until every such
-            in-flight call finishes (tracked by `_in_flight`,
-            incremented/decremented around each `on_frames` invocation
-            under `self._cond`) before proceeding. This closes a review
-            finding where an earlier version returned immediately
-            regardless of in-flight callbacks, so a callback that had
-            already passed the check could still be running -- or start
-            running -- after `stop()` had already returned to its
-            caller.
+            actively executing `on_frames`, ON A DIFFERENT THREAD, when
+            `stop()` was called: `stop()` blocks, via
+            `self._cond.wait()`, until every such OTHER-thread in-flight
+            call finishes (tracked per-thread by `_in_flight_by_thread`,
+            see `__init__`) before proceeding.
+
+        Reentrant same-thread call is deliberately NOT covered the same
+        way: if `on_frames` itself calls `stop()` synchronously (e.g. a
+        future on-error path), the CALLING thread's own in-flight entry
+        is excluded from the wait -- waiting on it would be a permanent
+        self-deadlock, since the only code that could ever clear that
+        entry is the very `on_frames` call currently blocked inside this
+        `stop()` call. That frame is, by definition, already
+        mid-delivery (it's literally the stack frame calling `stop()`),
+        so excluding it from the wait costs nothing real: `stop()` only
+        ever needs to wait for threads OTHER than its own caller.
+
+        Bounded wait: the wait for other threads is capped at
+        `self._stop_wait_timeout_seconds` (constructor arg, default
+        2.0s) in total, not per-iteration. If a hung consumer's
+        `on_frames` call still hasn't returned when the budget expires,
+        a warning is logged (naming the operation and the remaining
+        in-flight count) and `stop()` proceeds anyway rather than
+        blocking forever -- once this tap is wired to a live session, an
+        unbounded wait here would be unacceptable.
 
         `Condition.wait()` releases the lock while waiting, so an
-        in-flight `on_frames` call is never blocked from decrementing
-        `_in_flight` by this wait -- no deadlock there. Separately,
+        in-flight `on_frames` call is never blocked from clearing its own
+        entry by this wait -- no deadlock there. Separately,
         `self._recorder.stop_recording()` is called only after this
         method has fully exited the `with self._cond:` block: that call
         can join the recorder's background thread, and that thread must
@@ -288,14 +331,25 @@ class RealtimeMicTap:
         Returns:
             None.
         """
+        caller_tid = threading.get_ident()
         with self._cond:
             if self._stopped:
                 return
             self._stopped = True
             self._buffer.clear()
             self._buffered_bytes = 0
-            while self._in_flight > 0:
-                self._cond.wait()
+            deadline = time.monotonic() + self._stop_wait_timeout_seconds
+            while self._other_threads_in_flight_locked(caller_tid):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    logger.warning(
+                        "RealtimeMicTap.stop: gave up waiting for other "
+                        "threads' in-flight on_frames calls after "
+                        f"{self._stop_wait_timeout_seconds}s: op=stop_wait "
+                        f"in_flight={sum(self._in_flight_by_thread.values())}"
+                    )
+                    break
+                self._cond.wait(timeout=remaining)
         if self._recorder is not None:
             self._recorder.stop_recording()
 
@@ -322,15 +376,65 @@ class RealtimeMicTap:
             # miss it) before forwarding outside the lock, so a
             # slow/reentrant `on_frames` never holds up `mark_ready()`
             # or `set_gated()` on another thread -- `stop()` waits for
-            # `_in_flight` instead of blocking on this call directly.
-            self._in_flight += 1
+            # `_in_flight_by_thread` instead of blocking on this call
+            # directly.
+            self._mark_in_flight_locked()
         try:
             self._on_frames(frame)
         finally:
             with self._cond:
-                self._in_flight -= 1
-                if self._in_flight == 0:
-                    self._cond.notify_all()
+                self._clear_in_flight_locked()
+
+    def _mark_in_flight_locked(self) -> None:
+        """Record that the CURRENT thread is about to invoke `on_frames`.
+
+        Must be called with `self._cond` already held, in the same
+        critical section as the not-stopped/gated decision that led to
+        this call, so `stop()` (which reads `_in_flight_by_thread` under
+        the same lock) can never miss an in-flight call that was decided
+        on before `stop()` set `_stopped`.
+
+        Returns:
+            None.
+        """
+        tid = threading.get_ident()
+        self._in_flight_by_thread[tid] = self._in_flight_by_thread.get(tid, 0) + 1
+
+    def _clear_in_flight_locked(self) -> None:
+        """Record that the CURRENT thread's `on_frames` invocation has
+        finished, and wake any thread parked in `stop()`'s quiescence
+        wait so it can re-check whether it may proceed.
+
+        Must be called with `self._cond` already held.
+
+        Returns:
+            None.
+        """
+        tid = threading.get_ident()
+        remaining = self._in_flight_by_thread.get(tid, 0) - 1
+        if remaining <= 0:
+            self._in_flight_by_thread.pop(tid, None)
+        else:
+            self._in_flight_by_thread[tid] = remaining
+        self._cond.notify_all()
+
+    def _other_threads_in_flight_locked(self, caller_tid: int) -> bool:
+        """True if some thread OTHER than `caller_tid` currently has an
+        in-flight `on_frames` call.
+
+        `caller_tid`'s own entry (if any) is deliberately excluded --
+        see `stop()`'s docstring for why waiting on the calling thread's
+        own in-flight entry would self-deadlock a reentrant same-thread
+        `stop()` call. Must be called with `self._cond` already held.
+
+        Args:
+            caller_tid: `threading.get_ident()` of the thread evaluating
+                this (the thread currently running `stop()`).
+
+        Returns:
+            True if some thread other than `caller_tid` is in flight.
+        """
+        return any(tid != caller_tid for tid in self._in_flight_by_thread)
 
     def _evict_locked(self) -> None:
         """Drop the oldest buffered frame(s) while over the byte budget.

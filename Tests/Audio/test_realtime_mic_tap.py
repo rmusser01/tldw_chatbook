@@ -401,6 +401,158 @@ def test_f4_eviction_keeps_the_newest_frame_even_if_it_alone_exceeds_the_cap():
     assert received == [b"OVERSIZE"]
 
 
+# ---------------------------------------------------------------------------
+# Re-review round 2: fixing F2 (stop() waits for in-flight callbacks)
+# introduced a new deadlock class -- reentrant same-thread stop(). Both
+# tests below are real-thread, Event-rendezvous, bounded (never an
+# unbounded hang), and confirmed to fail against the F1-F4 fix commit
+# before NEW-1's fix.
+# ---------------------------------------------------------------------------
+
+
+def test_new1a_reentrant_same_thread_stop_does_not_self_deadlock():
+    """NEW-1(a) regression: `on_frames` calling `tap.stop()` synchronously,
+    from the SAME thread that is currently executing `on_frames` (e.g. a
+    future on-error path that stops the tap from inside its own
+    callback), must not self-deadlock. That thread's own in-flight entry
+    can only ever be cleared by this same call finishing -- so `stop()`
+    must exclude the CALLING thread's own entry from its quiescence wait
+    and only wait for OTHER threads.
+
+    Bounded, not an unbounded hang: the reentrant call happens on a
+    background thread, joined with a timeout: pre-fix, that thread never
+    returns (permanent self-deadlock) and the join times out with the
+    thread still alive, which is what the assertion below checks for.
+    """
+    factory = make_factory()
+    result: dict[str, bool] = {}
+
+    def on_frames(frame: bytes) -> None:
+        if frame == b"trigger":
+            tap.stop()  # reentrant: same thread, still "in flight" itself
+            result["stop_returned"] = True
+
+    tap = RealtimeMicTap(on_frames, recorder_factory=factory)
+    tap.start()
+    tap.mark_ready()
+
+    caller = threading.Thread(
+        target=lambda: factory.instance.callback(b"trigger"), daemon=True
+    )
+    caller.start()
+    caller.join(timeout=5)
+
+    assert not caller.is_alive(), (
+        "reentrant stop() self-deadlocked: the calling thread's own "
+        "in-flight entry must be excluded from stop()'s quiescence wait"
+    )
+    assert result.get("stop_returned") is True
+    assert factory.instance.stop_calls == 1
+
+
+def test_new1b_stop_gives_up_after_its_wait_budget_and_proceeds():
+    """NEW-1(b) regression: a hung OTHER-thread consumer (an `on_frames`
+    call that never returns) must not hang `stop()` forever -- it gives
+    up after a bounded wait budget and proceeds anyway. Uses the
+    test-only `_stop_wait_timeout_seconds` constructor seam to shrink the
+    budget so the test doesn't need to wait out the real 2.0s default.
+
+    Bounded, not an unbounded hang: `stop()` itself runs on a background
+    thread, and the test asserts that thread finishes (`stop_returned`
+    set) within a fixed, generous window (1.0s) -- comfortably longer
+    than the shrunk 0.2s budget, but nowhere near open-ended. Pre-fix,
+    `stop()` has no timeout at all, so it would still be blocked when
+    that window expires.
+    """
+    factory = make_factory()
+    started = threading.Event()
+    release = threading.Event()
+
+    def on_frames(frame: bytes) -> None:
+        started.set()
+        release.wait(timeout=5)  # bounded so this thread can't leak forever
+
+    tap = RealtimeMicTap(
+        on_frames,
+        recorder_factory=factory,
+        _stop_wait_timeout_seconds=0.2,
+    )
+    tap.start()
+    tap.mark_ready()
+
+    producer = threading.Thread(
+        target=lambda: factory.instance.callback(b"stuck"), daemon=True
+    )
+    producer.start()
+    assert started.wait(timeout=5), "producer frame callback never started"
+
+    stop_returned = threading.Event()
+
+    def call_stop() -> None:
+        tap.stop()
+        stop_returned.set()
+
+    stopper = threading.Thread(target=call_stop, daemon=True)
+    stopper.start()
+
+    assert stop_returned.wait(timeout=1.0), (
+        "stop() did not give up after its wait budget expired -- a hung "
+        "OTHER-thread on_frames call must not hang stop() forever"
+    )
+    assert factory.instance.stop_calls == 1
+
+    release.set()
+    producer.join(timeout=5)
+    stopper.join(timeout=5)
+    assert not producer.is_alive() and not stopper.is_alive(), (
+        "a thread leaked past the test"
+    )
+
+
+def test_new1b_expiry_logs_a_warning_with_operation_and_in_flight_count(monkeypatch):
+    """NEW-1(b) also requires the timeout path to log a warning naming the
+    operation and the in-flight count, not fail silently -- a live
+    session debugging a hung consumer needs that signal.
+    """
+    import tldw_chatbook.Audio.realtime_mic_tap as mod
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        mod.logger, "warning", lambda *args, **kwargs: warnings.append(str(args))
+    )
+
+    factory = make_factory()
+    started = threading.Event()
+    release = threading.Event()
+
+    def on_frames(frame: bytes) -> None:
+        started.set()
+        release.wait(timeout=5)
+
+    tap = RealtimeMicTap(
+        on_frames,
+        recorder_factory=factory,
+        _stop_wait_timeout_seconds=0.1,
+    )
+    tap.start()
+    tap.mark_ready()
+
+    producer = threading.Thread(
+        target=lambda: factory.instance.callback(b"stuck"), daemon=True
+    )
+    producer.start()
+    assert started.wait(timeout=5)
+
+    tap.stop()
+
+    assert warnings, "a timed-out quiescence wait must log a warning"
+    assert any("stop" in w.lower() for w in warnings)
+    assert any("in_flight" in w or "in-flight" in w.lower() for w in warnings)
+
+    release.set()
+    producer.join(timeout=5)
+
+
 def test_import_pulls_no_heavy_transcription_dependencies():
     """Import-lightness pin: importing this module alone must never pull
     `faster_whisper`, `torch`, or `nemo` into `sys.modules` -- those are
