@@ -14311,7 +14311,7 @@ class ChatScreen(BaseAppScreen):
             Static(
                 self._console_library_rag_scope_label(),
                 id="console-library-rag-scope",
-                classes="destination-section console-library-rag-scope",
+                classes="destination-section",
             ),
             Input(
                 value=self._console_library_rag_query,
@@ -14322,7 +14322,7 @@ class ChatScreen(BaseAppScreen):
                 "Run Library RAG",
                 id="console-run-library-rag",
                 disabled=not query_ready,
-                classes="destination-action-button console-library-rag-run",
+                classes="destination-action-button",
             ),
         ]
         children.extend(
