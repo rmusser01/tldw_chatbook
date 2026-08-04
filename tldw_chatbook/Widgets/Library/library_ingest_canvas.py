@@ -539,7 +539,11 @@ class LibraryIngestCanvas(VerticalScroll):
                 # (task-2130) Inline validation message -- a text line, not a
                 # color-only border. Display-managed so typing updates it in
                 # place without recomposing the panel.
-                error_message = validate_ingest_option_value(field, value)
+                # A disabled field no longer gates Start (Qodo round) --
+                # its error line hides with it, so message and gate agree.
+                error_message = (
+                    "" if disabled else validate_ingest_option_value(field, value)
+                )
                 error_line = Static(
                     error_message,
                     id=f"{widget_id}-error",

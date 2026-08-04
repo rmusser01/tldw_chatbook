@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from typing import Any, Sequence
 
 from tldw_chatbook.Library.ingest_capabilities import (
+    _is_installed as _dependency_installed,
     get_capabilities,
     list_type_groups,
 )
@@ -69,20 +70,39 @@ SUPPORTED_FORMATS_COPY = (
 
 
 def validate_ingest_option_value(field: Any, value: Any) -> str:
-    """Validation message for one option value, or "" when valid.
+    """Validation message for one option value, or ``""`` when valid.
 
     (task-2130) Shared by the state gate and the canvas's inline per-field
     messages so the two can never disagree. Only ``number`` fields have a
-    wrong shape today; other types are constrained by their widgets.
+    wrong shape today; other types are constrained by their widgets. The
+    chunk-size bounds mirror ``clamp_chunk_size``'s submit-time clamp
+    (Qodo round: a value the UI blessed must not be silently rewritten at
+    submit).
+
+    Args:
+        field: The ``OptionField`` schema entry for the value.
+        value: The raw form value (display text for Inputs).
+
+    Returns:
+        A human-readable problem statement, or ``""`` when the value is
+        acceptable to every downstream consumer.
     """
     if getattr(field, "type", "") != "number":
         return ""
     text = str(value).strip()
-    minimum = 1 if getattr(field, "name", "") == "chunk_size" else 0
     try:
         number = int(text)
     except (TypeError, ValueError):
         return f"{field.label} must be a whole number."
+    name = getattr(field, "name", "")
+    if name == "chunk_size":
+        if not (MIN_CHUNK_SIZE <= number <= MAX_CHUNK_SIZE):
+            return (
+                f"{field.label} must be between {MIN_CHUNK_SIZE} and "
+                f"{MAX_CHUNK_SIZE}."
+            )
+        return ""
+    minimum = 0 if name == "chunk_overlap" else 1
     if number < minimum:
         return f"{field.label} must be at least {minimum}."
     return ""
@@ -90,13 +110,47 @@ def validate_ingest_option_value(field: Any, value: Any) -> str:
 
 def collect_ingest_option_errors(
     type_options: Mapping[str, Mapping[str, Any]],
+    groups: Sequence[str] | None = None,
 ) -> tuple[tuple[str, str, str], ...]:
-    """(group, field name, message) for every invalid option value."""
+    """Collect validation problems for the option values a user can see.
+
+    (task-2130 Qodo round) Scoped to the RENDERED groups and to fields
+    whose ``enabled_when`` gate is currently satisfied: a stale persisted
+    value in a panel that is not on screen (or in a field the UI shows
+    disabled) must not silently block Start with nothing visible to fix.
+    ``depends_on`` (missing tooling) fields are likewise skipped -- the
+    widget is disabled, so its value cannot be corrected in place.
+
+    Args:
+        type_options: Per-group option values from the form echo.
+        groups: The groups whose panels are rendered; ``None`` validates
+            every known group (used by tests and non-UI callers).
+
+    Returns:
+        ``(group, field name, message)`` tuples, in schema order.
+    """
     errors: list[tuple[str, str, str]] = []
-    for group in list_type_groups():
+    group_names = list_type_groups() if groups is None else groups
+    for group in group_names:
         cap = get_capabilities(group)
         values = type_options.get(group, {}) or {}
+        fields_by_name = {f.name: f for f in cap.fields}
         for field in cap.fields:
+            if field.depends_on is not None and not _dependency_installed(
+                field.depends_on
+            ):
+                continue
+            if field.enabled_when is not None:
+                gate = fields_by_name.get(field.enabled_when)
+                gate_value = values.get(
+                    field.enabled_when,
+                    gate.default if gate is not None else False,
+                )
+                if field.enabled_when_values:
+                    if gate_value not in field.enabled_when_values:
+                        continue
+                elif not bool(gate_value):
+                    continue
             message = validate_ingest_option_value(
                 field, values.get(field.name, field.default)
             )
@@ -1099,7 +1153,9 @@ def build_library_ingest_state(
     # (task-2130) Invalid option values gate Start exactly like a bad path:
     # "abc" as a chunk size used to sail into a running job with only a
     # focus-only colored border as the signal.
-    option_errors = collect_ingest_option_errors(form.type_options)
+    option_errors = collect_ingest_option_errors(
+        form.type_options, groups=("generic", *type_groups)
+    )
     start_enabled = (
         registry_available
         and media_db_available

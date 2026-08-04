@@ -13138,14 +13138,19 @@ class LibraryScreen(BaseAppScreen):
         # Browse feel disconnected from the form.
         typed = self._library_ingest_form.path.strip()
         if typed:
-            try:
-                candidate = Path(typed).expanduser()
-                if candidate.is_dir():
-                    return str(candidate)
-                if candidate.parent.is_dir() and str(candidate.parent) != ".":
-                    return str(candidate.parent)
-            except OSError:
-                pass
+            # Centralized validation before any filesystem probe (Qodo
+            # round; same validator the submit path uses).
+            for candidate_text in (typed, str(Path(typed).parent)):
+                if not candidate_text or candidate_text == ".":
+                    continue
+                try:
+                    candidate = validate_path_simple(
+                        candidate_text, require_exists=True
+                    )
+                    if candidate.is_dir():
+                        return str(candidate)
+                except Exception:
+                    continue
         remembered = get_cli_setting("library.ingest", "last_directory", None)
         if remembered:
             try:
@@ -13491,6 +13496,10 @@ class LibraryScreen(BaseAppScreen):
         if path and self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
             self._trigger_library_ingest_preflight(path)
 
+    #: Max staged files probed for the duplicate forecast (task-2130:
+    #: when hit, the forecast copy switches to "at least N").
+    _DUPLICATE_PROBE_CAP = 20
+
     def _annotate_preflight_duplicates(
         self, result: PreflightResult
     ) -> PreflightResult:
@@ -13516,7 +13525,7 @@ class LibraryScreen(BaseAppScreen):
         if media_db is None:
             return result
         all_candidates = list(result.type_groups.get("generic", ()))
-        candidates = all_candidates[:20]
+        candidates = all_candidates[: self._DUPLICATE_PROBE_CAP]
         capped = len(all_candidates) > len(candidates)
         if not candidates:
             return result

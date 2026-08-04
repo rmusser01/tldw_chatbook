@@ -1703,9 +1703,21 @@ def test_invalid_option_values_gate_start_with_text_message():
 
     form.type_options["generic"] = {"chunk_size": "0"}
     zero = build_library_ingest_state((), form=form)
-    assert ("generic", "chunk_size", "Chunk size must be at least 1.") in (
-        zero.option_errors
-    )
+    assert (
+        "generic",
+        "chunk_size",
+        "Chunk size must be between 100 and 5000.",
+    ) in zero.option_errors
+
+    # (Qodo round) The UI validator mirrors the submit-time clamp bounds:
+    # a value the gate blesses is never silently rewritten at submit.
+    form.type_options["generic"] = {"chunk_size": "150000"}
+    huge = build_library_ingest_state((), form=form)
+    assert (
+        "generic",
+        "chunk_size",
+        "Chunk size must be between 100 and 5000.",
+    ) in huge.option_errors
 
     form.type_options["generic"] = {"chunk_size": "1000", "chunk_overlap": "-5"}
     negative = build_library_ingest_state((), form=form)
@@ -1779,3 +1791,23 @@ def test_capped_duplicate_forecast_says_at_least():
         "at least 20 files appear to already be in your Library"
     )
     assert "at least 20 will match" in capped.commit_summary_line
+
+
+def test_option_errors_skip_hidden_groups_and_gated_fields():
+    """(task-2130 Qodo round) A stale invalid value in a panel that is not
+    rendered, or in a field whose enabled_when gate is off, must not block
+    Start with nothing visible to fix."""
+    form = LibraryIngestFormState(path="/tmp/report.txt")
+    # Invalid value in a group whose panel is NOT rendered (no preflight
+    # -> only the generic group is validated).
+    form.type_options["web"] = {"max_pages": "abc"}
+    form.type_options["generic"] = {"chunk_size": "1000"}
+    state = build_library_ingest_state((), form=form)
+    assert state.option_errors == ()
+    assert state.start_enabled
+
+    # Invalid chunk_size while its enabled_when gate (chunk) is OFF: the
+    # field renders disabled, so it must not gate Start either.
+    form.type_options["generic"] = {"chunk": False, "chunk_size": "abc"}
+    gated_off = build_library_ingest_state((), form=form)
+    assert gated_off.option_errors == ()
