@@ -60,6 +60,7 @@ async def _close_replaced_client(backend: OpenAITTSBackend) -> None:
 async def test_custom_endpoint_passes_model_and_voice_through(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Custom endpoints define their own model/voice names — no coercion."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     requests: list[httpx.Request] = []
     backend = _backend_with_transport(
@@ -79,6 +80,7 @@ async def test_custom_endpoint_passes_model_and_voice_through(
 async def test_custom_endpoint_without_api_key_sends_no_authorization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Keyless local servers work; no Authorization header is fabricated."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     requests: list[httpx.Request] = []
     backend = _backend_with_transport({"OPENAI_BASE_URL": CUSTOM_URL}, requests)
@@ -97,6 +99,7 @@ async def test_custom_endpoint_without_api_key_sends_no_authorization(
 async def test_custom_endpoint_with_key_still_sends_bearer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A configured key is still sent to custom endpoints that need one."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     requests: list[httpx.Request] = []
     backend = _backend_with_transport(
@@ -114,6 +117,7 @@ async def test_custom_endpoint_with_key_still_sends_bearer(
 async def test_default_endpoint_still_coerces_model_and_voice(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Characterization pin: official-endpoint coercion is unchanged."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     requests: list[httpx.Request] = []
     backend = _backend_with_transport({"OPENAI_API_KEY": "test-key"}, requests)
@@ -132,6 +136,7 @@ async def test_default_endpoint_still_coerces_model_and_voice(
 async def test_default_endpoint_still_requires_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Characterization pin: the official endpoint still refuses to run keyless."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     requests: list[httpx.Request] = []
     backend = _backend_with_transport({}, requests)
@@ -142,6 +147,78 @@ async def test_default_endpoint_still_requires_api_key(
         await _generate(backend)
 
     assert requests == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "official_variant",
+    (
+        "https://api.openai.com/v1/audio/speech/",
+        "HTTPS://API.OpenAI.com/v1/audio/speech",
+        "https://api.openai.com:443/v1/audio/speech",
+    ),
+)
+async def test_official_endpoint_variants_keep_guardrails(
+    monkeypatch: pytest.MonkeyPatch, official_variant: str
+) -> None:
+    """A cosmetic rewrite of the official URL (slash, case, default port) must not
+    be misclassified as a custom endpoint and lose model/voice coercion."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    requests: list[httpx.Request] = []
+    backend = _backend_with_transport(
+        {"OPENAI_API_KEY": "test-key", "OPENAI_BASE_URL": official_variant}, requests
+    )
+    await _close_replaced_client(backend)
+
+    assert backend.is_custom_endpoint is False
+    chunks = await _generate(backend, model="pocket-tts", voice="marius")
+
+    assert chunks == [b"audio"]
+    payload = json.loads(requests[0].content)
+    assert payload["model"] == "tts-1"
+    assert payload["voice"] == "alloy"
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_does_not_forward_organization_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A configured OpenAI org ID is OpenAI account metadata and must not leak to
+    third-party OpenAI-compatible servers."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    requests: list[httpx.Request] = []
+    backend = _backend_with_transport(
+        {
+            "OPENAI_API_KEY": "test-key",
+            "OPENAI_BASE_URL": CUSTOM_URL,
+            "OPENAI_ORG_ID": "org-test",
+        },
+        requests,
+    )
+    await _close_replaced_client(backend)
+
+    chunks = await _generate(backend)
+
+    assert chunks == [b"audio"]
+    assert "openai-organization" not in requests[0].headers
+
+
+@pytest.mark.asyncio
+async def test_official_endpoint_still_sends_organization_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The org header keeps working for the real OpenAI endpoint."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    requests: list[httpx.Request] = []
+    backend = _backend_with_transport(
+        {"OPENAI_API_KEY": "test-key", "OPENAI_ORG_ID": "org-test"}, requests
+    )
+    await _close_replaced_client(backend)
+
+    chunks = await _generate(backend)
+
+    assert chunks == [b"audio"]
+    assert requests[0].headers["OpenAI-Organization"] == "org-test"
 
 
 @pytest.mark.asyncio

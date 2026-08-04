@@ -46,6 +46,19 @@ def _validate_openai_base_url(value: Any) -> str:
     return normalized
 
 
+def _is_official_openai_endpoint(url: str) -> bool:
+    """Whether the URL is the official OpenAI speech endpoint, ignoring
+    cosmetic differences (scheme/host casing, trailing slash, default port)."""
+    parsed = urlsplit(url)
+    return (
+        parsed.scheme.lower() == "https"
+        and (parsed.hostname or "").lower() == "api.openai.com"
+        and parsed.port in (None, 443)
+        and parsed.path.rstrip("/") == "/v1/audio/speech"
+        and not parsed.query
+    )
+
+
 class OpenAITTSBackend(APITTSBackend):
     """OpenAI Text-to-Speech API backend"""
 
@@ -123,7 +136,7 @@ class OpenAITTSBackend(APITTSBackend):
         # OpenAI-compatible servers (e.g. pocket-tts) define their own models and
         # voices and are typically keyless, so OpenAI-specific constraints only
         # apply when talking to the official endpoint.
-        self.is_custom_endpoint = base_url != _DEFAULT_OPENAI_TTS_URL
+        self.is_custom_endpoint = not _is_official_openai_endpoint(base_url)
 
         if not self.api_key and not self.is_custom_endpoint:
             logger.warning("OpenAITTSBackend: No API key configured")
@@ -163,7 +176,9 @@ class OpenAITTSBackend(APITTSBackend):
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        if self.organization_id:
+        # The org ID is OpenAI account metadata — never forward it to
+        # third-party OpenAI-compatible servers.
+        if self.organization_id and not self.is_custom_endpoint:
             headers["OpenAI-Organization"] = self.organization_id
 
         # Map internal model names to OpenAI model names if needed; custom
