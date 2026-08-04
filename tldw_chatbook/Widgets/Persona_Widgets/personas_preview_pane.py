@@ -147,9 +147,10 @@ class PersonasPreviewPane(Vertical):
                     classes="console-action-subdued",
                 )
                 yield Button(
-                    "Open in Console",
+                    "Continue this chat in Console",
                     id="personas-preview-open-console",
                     classes="console-action-subdued",
+                    tooltip="Move this preview conversation into a Console session.",
                 )
                 yield Button(
                     "Configure",

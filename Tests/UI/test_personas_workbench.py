@@ -3763,7 +3763,7 @@ class TestConversationsPanel:
 
 
 class TestConsoleActions:
-    """Attach to Console and Start Chat from the inspector (Task 12)."""
+    """Send to Console draft and Chat now from the inspector (Task 12, F-032)."""
 
     @pytest.fixture
     def stub_conversations(self, monkeypatch):
@@ -3868,7 +3868,7 @@ class TestConsoleActions:
                 screen.query_one("#personas-attach-to-console", Button).disabled is True
             )
             assert screen.query_one("#personas-start-chat", Button).disabled is True
-            assert "Console blocked: prompts are not attachable" in str(
+            assert "Chat blocked: prompts are not attachable" in str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
 
@@ -3877,12 +3877,13 @@ class TestConsoleActions:
     ):
         """Task-440: honest readiness copy when the handoff provider is unready.
 
-        The configured chat_defaults provider (which a fresh Start-Chat
+        The configured chat_defaults provider (which a fresh Chat-now
         Console session resolves - the native Console never reads
         character_defaults) has no API key - the handoff send would fail, so
         neither readiness surface may claim things are ready. Per-intent gating
-        (task-523): Start Chat is DISABLED (it needs an immediate reply) while
-        Attach stays enabled (it stages context; the reply is deferred).
+        (task-523): Chat now is DISABLED (it needs an immediate reply) while
+        Send to Console draft stays enabled (it stages context; the reply is
+        deferred).
         """
         mock_app_instance.app_config = {
             "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
@@ -3895,17 +3896,17 @@ class TestConsoleActions:
             readiness_text = str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
-            assert readiness_text != "Console ready"
-            assert readiness_text.startswith("Start Chat blocked:")
+            assert readiness_text != "Ready to chat in Console."
+            assert readiness_text.startswith("Chat now blocked:")
             assert "anthropic" in readiness_text.lower()
             assert (
                 "api key" in readiness_text.lower()
                 or "api_settings" in readiness_text.lower()
             )
             # Per-intent gating (task-523): an unready handoff provider blocks
-            # Start Chat (it needs an immediate reply) but NOT Attach (it only
-            # stages context; the reply is deferred). The user can still stage
-            # the card and fix the provider before sending.
+            # Chat now (it needs an immediate reply) but NOT Send to Console
+            # draft (it only stages context; the reply is deferred). The user
+            # can still stage the card and fix the provider before sending.
             assert screen.query_one("#personas-start-chat", Button).disabled is True
             assert (
                 screen.query_one("#personas-attach-to-console", Button).disabled
@@ -3922,7 +3923,7 @@ class TestConsoleActions:
     async def test_readiness_surfaces_stay_ready_with_a_configured_provider(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
-        """Provider ready -> existing "Console ready"/"Ready" copy is unchanged."""
+        """Provider ready -> "Ready to chat in Console."/"Ready" copy shows."""
         mock_app_instance.app_config = {
             "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
             "chat_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
@@ -3932,7 +3933,7 @@ class TestConsoleActions:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
 
-            assert "Console ready" in str(
+            assert "Ready to chat in Console." in str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
             assert (
@@ -3954,9 +3955,10 @@ class TestConsoleActions:
     async def test_readiness_blocked_when_handoff_provider_unready_despite_ready_character_provider(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
-        """Task-440 review: readiness mirrors the Start-Chat HANDOFF resolution.
+        """Task-440 review: readiness mirrors the Chat-now HANDOFF resolution.
 
-        Attach/Start Chat create a fresh native-Console session resolved from
+        Send to Console draft/Chat now create a fresh native-Console session
+        resolved from
         chat_defaults (chat_screen._start_character_console_session ->
         _default_console_session_settings); the native Console never reads
         character_defaults. Shipped-defaults failure shape: only an Anthropic
@@ -3978,8 +3980,8 @@ class TestConsoleActions:
             readiness_text = str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
-            assert readiness_text != "Console ready"
-            assert readiness_text.startswith("Start Chat blocked:")
+            assert readiness_text != "Ready to chat in Console."
+            assert readiness_text.startswith("Chat now blocked:")
             assert "openai" in readiness_text.lower()
             assert (
                 str(
@@ -3989,7 +3991,8 @@ class TestConsoleActions:
                 )
                 != "Ready"
             )
-            # Per-intent gating (task-523): Start Chat disabled, Attach enabled.
+            # Per-intent gating (task-523): Chat now disabled, Send to Console
+            # draft enabled.
             assert (
                 screen.query_one("#personas-start-chat", Button).disabled is True
             )
@@ -4010,7 +4013,7 @@ class TestConsoleActions:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
 
-            assert "Console ready" in str(
+            assert "Ready to chat in Console." in str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
             assert (
@@ -4045,7 +4048,7 @@ class TestConsoleActions:
             readiness_text = str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
-            assert readiness_text == "Console blocked: unsaved edits"
+            assert readiness_text == "Save or discard your edits to chat in Console."
             assert "openai" not in readiness_text.lower()  # no provider copy
             header_status = str(
                 screen.query_one(
@@ -4172,14 +4175,14 @@ class TestConsoleActions:
     async def test_start_chat_uses_real_mechanism(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
-        """Start Chat stages a handoff with start_chat intent metadata.
+        """Chat now stages a handoff with start_chat intent metadata.
 
         The legacy CCP route launched a blank tab directly via the main chat
         tab container (`#chat-window` lookup), which is not mounted while a
         destination screen is active; the workbench therefore uses the
         app-level ``open_chat_with_handoff`` API with an intent marker.
         """
-        # Start Chat now needs a ready handoff provider (task-523 per-intent);
+        # Chat now needs a ready handoff provider (task-523 per-intent);
         # give a keyless local provider so the button is enabled and the guard
         # passes.
         mock_app_instance.app_config = {
@@ -4406,7 +4409,7 @@ class TestConsoleActions:
             await pilot.pause()
         app.open_chat_with_handoff.assert_not_called()
         assert any(
-            msg.startswith("Start Chat blocked:") and severity == "warning"
+            msg.startswith("Chat now blocked:") and severity == "warning"
             for msg, severity in captured
         )
 
@@ -8127,7 +8130,7 @@ class TestPersonaHumanIdentityRemoval:
             get_local_authority_id=Mock(return_value="local-authority"),
             get_character_card_by_id=Mock(
                 side_effect=AssertionError(
-                    "Start Chat must use the source-aware scope service"
+                    "Chat now must use the source-aware scope service"
                 )
             ),
         )
@@ -8897,7 +8900,8 @@ class TestDirtyTracking:
             readiness = str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
-            assert "unsaved" in readiness
+            # F-032 intent copy for the unsaved gate.
+            assert readiness == "Save or discard your edits to chat in Console."
             confirms = self._bypass_confirm(screen, True)
             await pilot.click("#personas-mode-characters")
             await pilot.pause()

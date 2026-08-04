@@ -1904,7 +1904,7 @@ async def test_personas_workbench_exposes_approved_three_column_ia():
         assert "Column 1:" not in visible_text
         assert "Column 2:" not in visible_text
         assert "Column 3:" not in visible_text
-        assert {"Characters", "Personas", "New", "Attach to Console"}.issubset(buttons)
+        assert {"Characters", "Personas", "New", "Chat now"}.issubset(buttons)
 
 
 @pytest.mark.asyncio

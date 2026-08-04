@@ -5068,12 +5068,11 @@ class PersonasScreen(BaseAppScreen):
         """
         # Precedence (Qodo #824-2): the provider question is only OPERATIVE
         # when the Console action gate itself passes — otherwise the header
-        # would claim provider-"Blocked" while the inspector says
-        # "Console blocked: unsaved edits/select an item" (two conflicting
-        # readiness stories for one staged intent). With the gate closed the
-        # inspector carries the action reason and the header keeps its
-        # pre-task-440 semantics; provider readiness surfaces the moment the
-        # action gate opens.
+        # would claim provider-"Blocked" while the inspector carries the
+        # no-selection/unsaved guidance (two conflicting readiness stories
+        # for one staged intent). With the gate closed the inspector carries
+        # the action reason and the header keeps its pre-task-440 semantics;
+        # provider readiness surfaces the moment the action gate opens.
         if not self._console_action_allowed():
             return None
         if self.state.selected_entity_kind not in ("character", "persona"):
@@ -5134,18 +5133,22 @@ class PersonasScreen(BaseAppScreen):
         return "\n".join(lines)
 
     async def _attach_selection_to_console(self, *, intent: str) -> None:
-        """Stage the selected card in Console (intent: "attach" or "start_chat")."""
+        """Stage the selected card in Console (intent: "attach" or "start_chat").
+
+        The inspector labels these by intent (F-032): "attach" is the
+        "Send to Console draft" button, "start_chat" is "Chat now".
+        """
         if not self._console_action_allowed():
             # The inspector disables these buttons without a saved selection;
             # this is a defensive re-check (and the ctrl+enter guard).
             self._notify("Select a saved item before using Console actions.", "warning")
             return
         if intent == "start_chat":
-            # Start Chat needs a ready handoff provider (task-523 per-intent);
+            # Chat now needs a ready handoff provider (task-523 per-intent);
             # defense-in-depth against a press racing a config change.
             block = self._provider_send_block_reason()
             if block:
-                self._notify(f"Start Chat blocked: {block}", "warning")
+                self._notify(f"Chat now blocked: {block}", "warning")
                 return
         kind = str(self.state.selected_entity_kind)
         name = self.state.selected_entity_name or "Unnamed"
@@ -5184,7 +5187,7 @@ class PersonasScreen(BaseAppScreen):
         # The legacy CCP route launched a blank main-chat tab directly via the
         # chat tab container, but that container is only queryable while the
         # chat screen is mounted - never true from a pushed destination
-        # screen. The workbench therefore routes Start Chat through the
+        # screen. The workbench therefore routes Chat now through the
         # app-level open_chat_with_handoff API with an explicit intent marker.
         event.stop()
         await self._attach_selection_to_console(intent="start_chat")
@@ -9340,7 +9343,7 @@ class PersonasScreen(BaseAppScreen):
             pass
 
     async def action_personas_attach(self) -> None:
-        """Ctrl+Enter: same path as the inspector Attach button.
+        """Ctrl+Enter: same path as the inspector Send-to-Console-draft button.
 
         No-ops silently when the attach buttons would be disabled (no saved
         selection, or unsaved edits) so the shortcut cannot bypass the guard.

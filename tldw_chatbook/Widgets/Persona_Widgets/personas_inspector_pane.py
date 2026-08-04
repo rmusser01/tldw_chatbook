@@ -170,15 +170,20 @@ class PersonasInspectorPane(Vertical):
         actions = Vertical(id="personas-inspector-actions")
         actions.display = False
         with actions:
+            # F-032: one primary Console CTA named by intent (Chat now =
+            # begin immediately) plus one secondary (Send to Console draft =
+            # stage the card for the next Console draft). Ids, handlers, and
+            # the per-intent gating (task-523: Chat now also needs a ready
+            # provider) are unchanged - only labels, order, and emphasis.
             yield Button(
-                "Attach to Console",
-                id="personas-attach-to-console",
+                "Chat now",
+                id="personas-start-chat",
                 disabled=True,
-                classes="console-action-secondary",
+                classes="console-action-primary",
             )
             yield Button(
-                "Start Chat",
-                id="personas-start-chat",
+                "Send to Console draft",
+                id="personas-attach-to-console",
                 disabled=True,
                 classes="console-action-secondary",
             )
@@ -268,7 +273,7 @@ class PersonasInspectorPane(Vertical):
         reason: str | None = None,
         provider_block_reason: str | None = None,
     ) -> None:
-        """Set Attach/Start availability from the screen-owned Console gate.
+        """Set Chat-now/Send-draft availability from the screen-owned Console gate.
 
         Selection, export, and delete state stay local to the inspector, but
         Console action availability must be pushed by ``PersonasScreen`` so
@@ -278,15 +283,16 @@ class PersonasInspectorPane(Vertical):
             enabled: Whether Console actions are currently available.
             reason: Optional user-facing reason shown when actions are blocked.
             provider_block_reason: Optional blocker naming why the provider a
-                Start Chat/Attach Console handoff session would resolve is not
-                ready (task-440). Per-intent gating (task-523): when set (and
-                ``enabled`` is True) it replaces the "Console ready" copy with
-                "Start Chat blocked: ..." and DISABLES Start Chat - which needs
-                an immediate provider reply - while Attach stays enabled: Attach
-                only stages context, so its send is deferred and the user can
-                fix the provider before sending. Ignored when ``enabled`` is
-                False - the selection/unsaved reason already owns the copy and
-                both buttons are disabled by the gate.
+                Chat now/Send to Console draft handoff session would resolve
+                is not ready (task-440). Per-intent gating (task-523): when
+                set (and ``enabled`` is True) it replaces the "Ready to chat
+                in Console." copy with "Chat now blocked: ..." and DISABLES
+                Chat now - which needs an immediate provider reply - while
+                Send to Console draft stays enabled: it only stages context,
+                so its send is deferred and the user can fix the provider
+                before sending. Ignored when ``enabled`` is False - the
+                selection/unsaved reason already owns the copy and both
+                buttons are disabled by the gate.
         """
         self._console_actions_enabled = bool(enabled)
         self._console_action_block_reason = "" if enabled else (reason or "unavailable")
@@ -381,20 +387,30 @@ class PersonasInspectorPane(Vertical):
         self.query_one("#personas-readiness-header", Static).display = selected
         self.query_one("#personas-inspector-actions", Vertical).display = selected
         readiness = self.query_one("#personas-readiness-console", Static)
+        # F-032: readiness speaks in intent (what to do next), not app
+        # topology ("Console blocked: ..."). The per-intent gating is
+        # unchanged - only the copy moved.
         if not selected:
             readiness.update(_NO_SELECTION_GUIDANCE)
         elif not self._console_actions_enabled:
-            reason = self._console_action_block_reason or "unavailable"
-            readiness.update(f"Console blocked: {reason}")
+            if unsaved:
+                readiness.update("Save or discard your edits to chat in Console.")
+            elif kind not in _CONSOLE_ACTION_APPLICABLE_KINDS:
+                readiness.update("Console chat is for characters and personas.")
+            else:
+                reason = self._console_action_block_reason or "unavailable"
+                readiness.update(f"Chat blocked: {reason}")
         elif self._provider_block_reason:
-            # Per-intent (task-523): Attach stays available; only Start Chat is
-            # blocked because it needs an immediate reply from the provider.
-            readiness.update(f"Start Chat blocked: {self._provider_block_reason}")
+            # Per-intent (task-523): Send to Console draft stays available;
+            # only Chat now is blocked because it needs an immediate reply
+            # from the provider.
+            readiness.update(f"Chat now blocked: {self._provider_block_reason}")
         else:
-            readiness.update("Console ready")
+            readiness.update("Ready to chat in Console.")
         export_enabled = selected and not unsaved
         export_tooltip = _UNSAVED_TOOLTIP if (selected and unsaved) else None
-        # Attach tooltip only surfaces when the selection gate itself is closed.
+        # Send-to-draft tooltip only surfaces when the selection gate itself
+        # is closed.
         attach_tooltip = None
         if not self._console_actions_enabled:
             attach_tooltip = (
@@ -424,14 +440,15 @@ class PersonasInspectorPane(Vertical):
                 else "Assign a voice profile before including it."
             )
         )
-        # Attach: the selection gate only (staging context defers the reply).
+        # Send to Console draft: the selection gate only (staging context
+        # defers the reply).
         attach_btn = self.query_one("#personas-attach-to-console", Button)
         attach_btn.display = console_applies
         attach_btn.disabled = not self._console_actions_enabled
         attach_btn.tooltip = attach_tooltip
-        # Start Chat: selection AND a ready handoff provider (task-523) -- it
+        # Chat now: selection AND a ready handoff provider (task-523) -- it
         # needs an immediate reply, so an unready provider disables it while
-        # Attach stays available.
+        # Send to Console draft stays available.
         start_btn = self.query_one("#personas-start-chat", Button)
         start_btn.display = console_applies
         start_btn.disabled = (not self._console_actions_enabled) or bool(
@@ -440,7 +457,7 @@ class PersonasInspectorPane(Vertical):
         if not self._console_actions_enabled:
             start_btn.tooltip = attach_tooltip
         elif self._provider_block_reason:
-            start_btn.tooltip = f"Start Chat blocked: {self._provider_block_reason}"
+            start_btn.tooltip = f"Chat now blocked: {self._provider_block_reason}"
         else:
             start_btn.tooltip = None
         json_button = self.query_one("#personas-export-json", Button)

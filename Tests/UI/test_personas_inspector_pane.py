@@ -136,17 +136,21 @@ async def test_readiness_copy_is_compact_for_narrow_inspector():
         await pilot.pause()
 
         blocked_copy = str(readiness.renderable)
-        assert blocked_copy == "Console blocked: prompts are not attachable"
+        assert blocked_copy == "Chat blocked: prompts are not attachable"
         assert " - " not in blocked_copy
 
 
 async def test_action_buttons_carry_shared_flat_button_classes():
     app = InspectorApp()
     async with app.run_test() as pilot:
-        for button_id in ("#personas-attach-to-console", "#personas-start-chat"):
-            assert pilot.app.query_one(button_id, Button).has_class(
-                "console-action-secondary"
-            )
+        # F-032: one primary Console CTA (Chat now), one secondary (Send to
+        # Console draft).
+        assert pilot.app.query_one("#personas-start-chat", Button).has_class(
+            "console-action-primary"
+        )
+        assert pilot.app.query_one("#personas-attach-to-console", Button).has_class(
+            "console-action-secondary"
+        )
         for button_id in ("#personas-export-json", "#personas-export-png"):
             assert pilot.app.query_one(button_id, Button).has_class(
                 "console-action-subdued"
@@ -154,6 +158,16 @@ async def test_action_buttons_carry_shared_flat_button_classes():
         delete = pilot.app.query_one("#personas-delete", Button)
         assert delete.has_class("console-action-subdued")
         assert delete.has_class("personas-destructive")
+
+
+async def test_console_ctas_speak_in_intent():
+    """F-032: the Console CTAs are one primary + one secondary, named by
+    intent, primary first."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        actions = pilot.app.query_one("#personas-inspector-actions")
+        labels = [str(button.label) for button in actions.query(Button)]
+        assert labels[:2] == ["Chat now", "Send to Console draft"]
 
 
 async def test_conversations_list_is_height_capped():
@@ -191,7 +205,7 @@ async def test_show_selection_enables_export_actions():
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
         assert pilot.app.query_one("#personas-export-json", Button).disabled is False
         assert pilot.app.query_one("#personas-export-png", Button).disabled is False
-        assert "Console blocked: select an item" in str(
+        assert "Chat blocked: select an item" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
         )
 
@@ -266,6 +280,10 @@ async def test_dictionary_selection_hides_console_and_export_actions():
                 pilot.app.query_one(button_id, Button).display is False
             ), button_id
         assert pilot.app.query_one("#personas-delete", Button).display is True
+        # F-032: the readiness line says what DOES apply, in intent language.
+        assert "Console chat is for characters and personas." in str(
+            pilot.app.query_one("#personas-readiness-console", Static).renderable
+        )
 
 
 async def test_lore_selection_hides_console_and_export_actions():
@@ -334,7 +352,7 @@ async def test_console_action_enablement_is_explicitly_screen_owned():
             pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
         )
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
-        assert "Console blocked: select an item" in str(
+        assert "Chat blocked: select an item" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
         )
 
@@ -345,7 +363,7 @@ async def test_console_action_enablement_is_explicitly_screen_owned():
             pilot.app.query_one("#personas-attach-to-console", Button).disabled is False
         )
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is False
-        assert "Console ready" in str(
+        assert "Ready to chat in Console." in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
         )
 
@@ -358,7 +376,7 @@ async def test_console_action_enablement_is_explicitly_screen_owned():
             pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
         )
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
-        assert "Console blocked: prompts are not attachable" in str(
+        assert "Chat blocked: prompts are not attachable" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
         )
 
@@ -376,7 +394,7 @@ async def test_unsaved_disables_attach_and_export_with_reason():
         assert attach.disabled is True
         assert "unsaved" in str(attach.tooltip).lower()
         assert pilot.app.query_one("#personas-export-json", Button).disabled is True
-        assert "Console blocked: unsaved edits" in str(
+        assert "Save or discard your edits to chat in Console." in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
         )
         pane.set_unsaved(False)
