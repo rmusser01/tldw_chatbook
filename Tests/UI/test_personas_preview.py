@@ -68,16 +68,18 @@ async def test_buttons_carry_shared_flat_button_classes():
             "console-action-subdued"
         )
         assert pilot.app.query_one("#personas-preview-open-console", Button).has_class(
-            "console-action-subdued"
+            "console-action-secondary"
         )
-        # F-032: the preview's Console handoff says what it continues.
+        # task-2232: the preview's Console handoff stages a draft (suggested
+        # prompt, no auto-send), so it takes the pair's secondary label
+        # verbatim - identical to the inspector's secondary CTA.
         assert (
             str(
                 pilot.app.query_one(
                     "#personas-preview-open-console", Button
                 ).label
             )
-            == "Continue this chat in Console"
+            == "Send to Console draft"
         )
         assert pilot.app.query_one("#personas-preview-toggle", Button).has_class(
             "console-action-subdued"

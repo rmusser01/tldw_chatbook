@@ -204,7 +204,9 @@ async def test_blocked_console_tooltip_uses_intent_copy():
         await pilot.pause()
         attach = pilot.app.query_one("#personas-attach-to-console", Button)
         assert attach.disabled is True
-        assert attach.tooltip == "Chat blocked: prompts are not attachable"
+        assert attach.tooltip == (
+            "Chat now and Send to Console draft blocked: prompts are not attachable"
+        )
 
 
 async def test_readiness_copy_is_compact_for_narrow_inspector():
@@ -224,7 +226,9 @@ async def test_readiness_copy_is_compact_for_narrow_inspector():
         await pilot.pause()
 
         blocked_copy = str(readiness.renderable)
-        assert blocked_copy == "Chat blocked: prompts are not attachable"
+        assert blocked_copy == (
+            "Chat now and Send to Console draft blocked: prompts are not attachable"
+        )
         assert " - " not in blocked_copy
 
 
@@ -328,7 +332,7 @@ async def test_show_selection_enables_export_actions():
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
         assert pilot.app.query_one("#personas-export-json", Button).disabled is False
         assert pilot.app.query_one("#personas-export-png", Button).disabled is False
-        assert "Chat blocked: select an item" in str(
+        assert "Chat now and Send to Console draft blocked: select an item" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
         )
 
@@ -475,7 +479,7 @@ async def test_console_action_enablement_is_explicitly_screen_owned():
             pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
         )
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
-        assert "Chat blocked: select an item" in str(
+        assert "Chat now and Send to Console draft blocked: select an item" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
         )
 
@@ -499,7 +503,7 @@ async def test_console_action_enablement_is_explicitly_screen_owned():
             pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
         )
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
-        assert "Chat blocked: prompts are not attachable" in str(
+        assert "Chat now and Send to Console draft blocked: prompts are not attachable" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
         )
 

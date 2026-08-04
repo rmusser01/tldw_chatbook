@@ -147,9 +147,14 @@ class PersonasPreviewPane(Vertical):
                     classes="console-action-subdued",
                 )
                 yield Button(
-                    "Continue this chat in Console",
+                    # task-2232: the one secondary Console CTA, verbatim. The
+                    # handoff stages a draft (suggested prompt, no auto-send),
+                    # so it takes the pair's secondary label - same as the
+                    # inspector's. (It continues the preview chat, but by
+                    # staging, not by starting a live reply.)
+                    "Send to Console draft",
                     id="personas-preview-open-console",
-                    classes="console-action-subdued",
+                    classes="console-action-secondary",
                     tooltip="Move this preview conversation into a Console session.",
                 )
                 yield Button(

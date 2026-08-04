@@ -447,7 +447,7 @@ class PersonasScreen(BaseAppScreen):
         ),
         Binding("ctrl+n", "personas_new", "New"),
         Binding("ctrl+f", "personas_search", "Search"),
-        Binding("ctrl+enter", "personas_attach", "Attach"),
+        Binding("ctrl+enter", "personas_attach", "Send to Console draft"),
         Binding("ctrl+s", "personas_save", "Save", show=False),
         Binding("escape", "personas_escape", "Back", show=False),
         # Ctrl+1..5 mirror the mode strip order (MODE_CHIP_ORDER).
@@ -855,7 +855,10 @@ class PersonasScreen(BaseAppScreen):
                                 "Back to card", id="personas-conversation-back"
                             )
                             yield Button(
-                                "Continue in Console",
+                                # task-2232: the one secondary CTA verbatim -
+                                # continue_in_console stages the transcript as
+                                # a draft handoff (no auto-send).
+                                "Send to Console draft",
                                 id="personas-conversation-continue-console",
                             )
                             yield Button(
@@ -9840,9 +9843,11 @@ class PersonasScreen(BaseAppScreen):
                 ShortcutAction("ctrl+f", "search"),
                 ShortcutAction("ctrl+s", "save", available=editing),
                 ShortcutAction("esc", "back", available=editing or transcript_open),
-                # F-032: the hint names the renamed "Send to Console draft" CTA.
+                # task-2232: the hint names the one secondary CTA verbatim.
                 ShortcutAction(
-                    "ctrl+enter", "draft", available=self._console_action_allowed()
+                    "ctrl+enter",
+                    "Send to Console draft",
+                    available=self._console_action_allowed(),
                 ),
                 # F-038: disclose the always-on accelerators that used to be
                 # invisible (show=False bindings with no footer/chip mention).
