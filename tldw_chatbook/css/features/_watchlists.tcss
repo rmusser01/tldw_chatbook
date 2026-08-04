@@ -592,6 +592,21 @@
     color: $ds-text-muted;
 }
 
+/* TASK-2304 AC#3: what the number after every tree node counts.
+ *
+ * One row, pinned to one row (`height: 1`) like every other single-line
+ * control group on this screen -- the tree is a plain `Vertical`, so a
+ * `Static` left at `auto` is fine today but would silently grow if the copy
+ * ever wrapped, pushing a watchlist off the bottom of the rail. Muted for
+ * the same reason `.watchlist-tree-actions-note` is: it is a caption for the
+ * rows below it, not one of them.
+ */
+.watchlist-tree-count-legend {
+    width: 100%;
+    height: 1;
+    color: $ds-text-muted;
+}
+
 /* The two prompts the write verbs need (TASK-895).
  *
  * Centred and sized, unlike the older OPML dialogs in the same module,

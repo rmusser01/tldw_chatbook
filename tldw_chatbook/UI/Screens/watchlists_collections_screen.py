@@ -1851,7 +1851,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # 2) the same way RunsPane/NotificationsPane already do below —
             # without this the table renders empty until the next unrelated
             # navigation happens to trigger `_load_sources` again.
-            sources_pane.sources = self._loaded_sources
+            # Scoped (TASK-2304 AC#2): a rebuild must not quietly re-widen
+            # the table back to every source while the header still names one
+            # watchlist.
+            sources_pane.sources = self.scoped_loaded_sources()
             sources_pane.selected_source = self.selected_source
             # Seed the create-form draft so it survives this pane being
             # reconstructed (see the note on `_source_create_draft` in
@@ -3186,6 +3189,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._refresh_feeds_region_for_scope()
         if self.active_section != "items":
             self._refresh_centre_header_for_scope()
+        # TASK-2304 AC#2. The Sources table follows the same scope the FEEDS
+        # heading and the centre header just took, so the two counts of "how
+        # many sources are in view" cannot disagree. An in-place push on the
+        # pane's own reactive, not a region rebuild -- see
+        # `_push_scoped_sources_to_pane`.
+        self._push_scoped_sources_to_pane()
         try:
             self.query_one("#wl-tree", WatchlistTree).active_scope = self.tree_scope
         except NoMatches:
@@ -3922,6 +3931,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self.run_worker(
             self._load_sources_preserving_selection(), exclusive=True, group="wc_sources"
         )
+        # TASK-2304 AC#1. A check is the ONE gesture that manufactures items,
+        # and the rail's numbers are unread item counts -- so this was the
+        # single most visible place they went stale. Measured in the
+        # 2026-08-04 UAT: create a watchlist, assign a source, press Check
+        # now, watch a feed's worth of items arrive in the centre while every
+        # rail count stayed on 0 until the screen was left and re-entered.
+        # `_load_tree_data` publishes through TASK-2200's surface-refresh
+        # drain, so this is a rail rebuild, not a screen recompose.
+        self._load_tree_data()
 
     async def _load_sources_preserving_selection(self) -> None:
         """Reload the source list without discarding the current selection."""
@@ -4078,6 +4096,68 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         event.stop()
         self._console_handoff.handle_stage_in_console_requested()
 
+    def scoped_loaded_sources(self) -> list[dict[str, Any]]:
+        """`_loaded_sources`, narrowed to the sources the tree scope covers.
+
+        TASK-2304 AC#2. `_load_sources` lists every source the backend holds,
+        with no scope predicate at all, so the Sources table ignored the tree
+        entirely: the 2026-08-04 UAT selected a watchlist whose own header
+        read "AI Research News (0 sources)" and the table underneath it still
+        listed an Unassigned source. Two counts of the same fact, on one
+        screen, disagreeing -- because only one of them was scoped.
+
+        Resolved through `scoped_source_rows()`, which is the SAME resolver
+        `_staging_summary_line` and `_scoped_feeds_heading` count, so the
+        header and the table cannot drift by construction; making the table
+        agree by re-deriving the scope some other way would just create a
+        third answer. That call costs one query, and the `all` scope short
+        -circuits before paying it -- it is the default, and its answer is
+        "everything" regardless.
+
+        `_loaded_sources` itself stays UNSCOPED. It is the screen's mirror of
+        the backend listing, re-seeded into a freshly built `SourcesPane` on
+        every workbench rebuild, and the Console handoff reads it too;
+        narrowing the mirror would make the scope sticky in places that never
+        asked about it. The scope is applied at each push instead, which is
+        also what lets `watch_tree_scope` re-push without re-querying the
+        backend.
+
+        Returns:
+            The subset of `_loaded_sources` in the current tree scope, in the
+            backend listing's own order.
+        """
+        if self.tree_scope.kind == "all":
+            return list(self._loaded_sources)
+        allowed = {
+            str(row.get("id")) for row in self.scoped_source_rows() if row.get("id") is not None
+        }
+        return [
+            source
+            for source in self._loaded_sources
+            # `source_id` is the bare local row id `normalize_local_
+            # subscription_row` carries alongside the namespaced `id`
+            # ("local:subscription:7"), and it is what the bundle service's
+            # row dicts hold -- comparing against `id` would match nothing.
+            if str(source.get("source_id")) in allowed
+        ]
+
+    def _push_scoped_sources_to_pane(self) -> None:
+        """Push the scoped source rows into the mounted `SourcesPane`.
+
+        In place, on the pane's own reactive -- never a region rebuild. The
+        Sources pane lives in ITEMS, which TASK-2200 deliberately excludes
+        from the surface-refresh drain precisely so an in-flight create form
+        is not torn down by something happening elsewhere on the screen; a
+        scope change must not become the exception to that.
+        """
+        if not self._dom_is_live:
+            return
+        try:
+            sources_pane = self.query_one("#watchlists-sources-pane", SourcesPane)
+        except NoMatches:
+            return
+        sources_pane.sources = self.scoped_loaded_sources()
+
     async def _load_sources(self) -> None:
         notify = getattr(self.app_instance, "notify", None)
         try:
@@ -4094,7 +4174,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if self._dom_is_live:
                 try:
                     sources_pane = self.query_one("#watchlists-sources-pane", SourcesPane)
-                    sources_pane.sources = self._loaded_sources
+                    sources_pane.sources = self.scoped_loaded_sources()
                     if self.selected_source is not None:
                         source_id = self.selected_source.get("id")
                         if source_id is not None:
@@ -8178,6 +8258,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if refresh:
             self.run_worker(self._load_items(), exclusive=True)
             self._refresh_overview_data()
+            # TASK-2304 AC#1. Every status this path writes moves the item
+            # into or out of the `new` bucket the rail counts, so the rail is
+            # stale the instant this returns.
+            #
+            # Deliberately inside `if refresh`, which is a real trade-off and
+            # not an oversight. The `refresh=False` caller is the silent
+            # mark-read-on-open (`_mark_item_read_on_open`), which fires on
+            # EVERY item selection including each `j`/`k` keystroke, and it
+            # carries no reload of any kind -- that is the whole reason the
+            # flag exists (a full refresh per selection was proven live to
+            # detach the mounted `ItemsPane` and drop keyboard focus). So the
+            # rail's unread count does lag by however many items were opened
+            # since the last deliberate action, and is corrected by the next
+            # one, by a tab switch, or by any other `_load_tree_data` caller.
+            # Two SQLite queries and a rail rebuild per arrow key is the
+            # wrong price for a number that is one out.
+            self._load_tree_data()
 
     async def _update_item_status_off_loop(
         self, *, item_id: Any, status: str
@@ -8394,6 +8491,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 notify("Failed to ignore item.", severity="error")
         self.run_worker(self._load_items(), exclusive=True)
         self._refresh_overview_data()
+        # TASK-2304 AC#1: same reasoning as `_update_item_status`'s refresh
+        # tail -- this moves an item out of the `new` bucket the rail counts.
+        self._load_tree_data()
 
     def action_switch_section(self, section_id: str) -> None:
         """Switch to the named section via keyboard shortcut."""
