@@ -1,6 +1,7 @@
 # realtime_mic_tap.py
 """Raw 24 kHz microphone tap for the realtime voice engine (V4 task 3). See
-`.superpowers/sdd/2026-08-04-realtime-voice-engine/task-3-brief.md`.
+`.superpowers/sdd/2026-08-04-realtime-voice-engine/task-3-brief.md` and
+`task-3-report.md` (review-round fix-up: F1-F4).
 
 Wraps `Audio.recording_service.AudioRecordingService`, capturing raw PCM16
 mono audio frames from the recorder's own background callback thread and
@@ -19,11 +20,24 @@ subprocess import-lightness probe.
 
 Threading: `AudioRecordingService.start_recording(callback=...)` invokes
 `callback` on the recorder's OWN background thread, not on the thread that
-called `start()`. Every internal piece of mutable state this tap keeps
-(the pre-ready buffer, the `ready`/`gated`/`stopped` flags) is therefore
-guarded by `self._lock`, since `mark_ready()`/`set_gated()`/`stop()` are
-expected to be called from a different thread (the session/UI thread) than
-the one invoking `_on_recorder_frames`.
+called `start()`. All internal mutable state (the pre-ready buffer, the
+`ready`/`flushing`/`gated`/`stopped` flags, the in-flight-callback counter)
+is guarded by `self._cond`, a `threading.Condition` -- a plain lock is not
+enough here, because `stop()` must be able to *wait* for an
+already-in-flight `on_frames` call to finish without holding the lock while
+it waits (see `stop()`'s docstring for the exact guarantee this buys, and
+why it matters).
+
+Two ordering/quiescence guarantees this module makes, both closed by
+review-round fixes (see `task-3-report.md`, findings F1/F2) after an
+earlier version of this file violated them under real thread interleaving:
+
+  - `mark_ready()` never lets a frame that arrives mid-flush overtake a
+    frame still waiting in the buffer -- every frame reaches `on_frames`
+    in arrival order across the ready transition.
+  - `stop()` never returns while a frame that already passed its
+    not-stopped check is still executing `on_frames` -- once `stop()`
+    returns, no callback is running and none will ever fire again.
 """
 
 from __future__ import annotations
@@ -82,7 +96,9 @@ class RealtimeMicTap:
                 retain, expressed as PCM16 mono bytes
                 (`max_buffer_seconds * sample_rate * 2`). Once the
                 pre-ready buffer exceeds this many bytes, the oldest
-                buffered frames are dropped to make room for new ones.
+                buffered frames are dropped to make room for new ones
+                (but never the single newest frame -- see
+                `_evict_locked`).
         """
         self._on_frames = on_frames
         self._sample_rate = sample_rate
@@ -91,12 +107,22 @@ class RealtimeMicTap:
             0, int(max_buffer_seconds * sample_rate * _BYTES_PER_SAMPLE)
         )
 
-        self._lock = threading.Lock()
+        # A Condition, not a plain Lock: `stop()` needs to wait for
+        # in-flight `on_frames` calls to finish (see `stop()`), which
+        # means releasing the lock while waiting -- exactly what
+        # `Condition.wait()` does and a bare `Lock` cannot.
+        self._cond = threading.Condition()
         self._buffer: Deque[bytes] = deque()
         self._buffered_bytes = 0
         self._ready = False
+        self._flushing = False
         self._gated = False
         self._stopped = False
+        #: Number of `on_frames` calls currently executing (dispatched by
+        #: either `_on_recorder_frames` or `mark_ready`'s flush loop),
+        #: incremented/decremented under `self._cond`. `stop()` blocks
+        #: until this reaches 0 before returning -- see `stop()`.
+        self._in_flight = 0
 
         self._recorder: Any = None
 
@@ -110,18 +136,44 @@ class RealtimeMicTap:
         turn detection, not this recorder.
 
         Returns:
-            True if the recorder reported a successful start. False if
-            the recorder's own `start_recording()` reported failure
-            (e.g. no microphone device available); the failure is logged
-            with the configured sample rate for context.
+            True if the recorder was constructed and reported a
+            successful start. False on any device failure: the
+            recorder's constructor raising (the canonical shape of
+            `AudioRecordingService.__init__`, which raises
+            `NoAudioBackendError`/`AudioRecordingError` when no backend
+            or NumPy is available), `start_recording()` raising, or
+            `start_recording()` simply returning False. Every failure is
+            logged with the configured sample rate for context; none of
+            them propagate out of this method.
         """
-        self._recorder = self._recorder_factory(
-            backend=None,
-            sample_rate=self._sample_rate,
-            channels=1,
-            use_vad=False,
-        )
-        started = self._recorder.start_recording(callback=self._on_recorder_frames)
+        try:
+            self._recorder = self._recorder_factory(
+                backend=None,
+                sample_rate=self._sample_rate,
+                channels=1,
+                use_vad=False,
+            )
+        except Exception as exc:
+            logger.error(
+                "RealtimeMicTap.start: recorder construction failed: "
+                f"op=start_construct sample_rate={self._sample_rate} "
+                f"error={exc!r}"
+            )
+            self._recorder = None
+            return False
+
+        try:
+            started = self._recorder.start_recording(
+                callback=self._on_recorder_frames
+            )
+        except Exception as exc:
+            logger.error(
+                "RealtimeMicTap.start: recorder start_recording raised: "
+                f"op=start_begin sample_rate={self._sample_rate} "
+                f"error={exc!r}"
+            )
+            return False
+
         if not started:
             logger.error(
                 "RealtimeMicTap.start: recorder failed to start capture "
@@ -131,26 +183,55 @@ class RealtimeMicTap:
         return True
 
     def mark_ready(self) -> None:
-        """Flush any buffered pre-ready frames to `on_frames`, in the
-        order they were captured, then switch to streaming every
-        subsequent frame directly (no more buffering).
+        """Drain the pre-ready buffer to `on_frames`, one frame at a time
+        in arrival order, then switch to streaming every subsequent frame
+        directly (no more buffering).
 
-        A no-op if already ready, or if `stop()` has already been
-        called -- flushing buffered audio into a stopped tap's
-        `on_frames` would be a spurious late callback.
+        A no-op if already ready or already flushing (a concurrent
+        `mark_ready()` call), or if `stop()` has already been called --
+        flushing buffered audio into a stopped tap's `on_frames` would be
+        a spurious late callback.
+
+        Ordering guarantee: `_ready` is flipped to True only once the
+        buffer has been observed truly empty, under the same lock as
+        that emptiness check. A frame captured on the recorder thread
+        while this drain is still running therefore always sees
+        `_ready` still False and is appended to the SAME buffer this
+        method is draining (`_on_recorder_frames`'s `not self._ready`
+        branch), rather than being forwarded directly -- so it can never
+        overtake a frame that was already waiting. This closes a review
+        finding where an earlier version set `_ready = True` before
+        flushing, letting a frame that arrived mid-flush jump the queue
+        (observed order `[f1, LIVE, f2]` instead of the correct
+        `[f1, f2, LIVE]`).
 
         Returns:
             None.
         """
-        with self._lock:
-            if self._ready or self._stopped:
+        with self._cond:
+            if self._ready or self._stopped or self._flushing:
                 return
-            self._ready = True
-            flushed = list(self._buffer)
-            self._buffer.clear()
-            self._buffered_bytes = 0
-        for frame in flushed:
-            self._on_frames(frame)
+            self._flushing = True
+
+        while True:
+            with self._cond:
+                if self._stopped:
+                    self._flushing = False
+                    return
+                if not self._buffer:
+                    self._ready = True
+                    self._flushing = False
+                    return
+                frame = self._buffer.popleft()
+                self._buffered_bytes -= len(frame)
+                self._in_flight += 1
+            try:
+                self._on_frames(frame)
+            finally:
+                with self._cond:
+                    self._in_flight -= 1
+                    if self._in_flight == 0:
+                        self._cond.notify_all()
 
     def set_gated(self, gated: bool) -> None:
         """Mute or unmute the tap without closing the microphone device.
@@ -168,28 +249,53 @@ class RealtimeMicTap:
         Returns:
             None.
         """
-        with self._lock:
+        with self._cond:
             self._gated = gated
 
     def stop(self) -> None:
         """Stop capturing and release the recorder. Idempotent.
 
-        Discards any still-buffered pre-ready frames (they are never
-        flushed after this) and guarantees no further `on_frames`
-        callback fires, even if a frame was already in flight on the
-        recorder thread when this is called -- `_on_recorder_frames`
-        re-checks the stopped flag under the same lock before invoking
-        `on_frames`.
+        Guarantee: once this method returns, `on_frames` will never be
+        invoked again for this tap, AND no `on_frames` call is still
+        executing. This covers two cases:
+
+          - Frames that had not yet been dispatched: the buffer is
+            discarded, and any frame arriving afterward sees `_stopped`
+            and is dropped before `on_frames` is ever considered.
+          - A frame that had ALREADY passed the not-stopped check (in
+            `_on_recorder_frames` or `mark_ready`'s flush loop) and was
+            actively executing `on_frames` when `stop()` was called:
+            `stop()` blocks, via `self._cond.wait()`, until every such
+            in-flight call finishes (tracked by `_in_flight`,
+            incremented/decremented around each `on_frames` invocation
+            under `self._cond`) before proceeding. This closes a review
+            finding where an earlier version returned immediately
+            regardless of in-flight callbacks, so a callback that had
+            already passed the check could still be running -- or start
+            running -- after `stop()` had already returned to its
+            caller.
+
+        `Condition.wait()` releases the lock while waiting, so an
+        in-flight `on_frames` call is never blocked from decrementing
+        `_in_flight` by this wait -- no deadlock there. Separately,
+        `self._recorder.stop_recording()` is called only after this
+        method has fully exited the `with self._cond:` block: that call
+        can join the recorder's background thread, and that thread must
+        never be blocked trying to acquire `self._cond` inside
+        `_on_recorder_frames` while this method still holds it, which
+        would deadlock the two threads against each other.
 
         Returns:
             None.
         """
-        with self._lock:
+        with self._cond:
             if self._stopped:
                 return
             self._stopped = True
             self._buffer.clear()
             self._buffered_bytes = 0
+            while self._in_flight > 0:
+                self._cond.wait()
         if self._recorder is not None:
             self._recorder.stop_recording()
 
@@ -203,19 +309,41 @@ class RealtimeMicTap:
         Returns:
             None.
         """
-        with self._lock:
+        with self._cond:
             if self._stopped or self._gated:
                 return
             if not self._ready:
                 self._buffer.append(frame)
                 self._buffered_bytes += len(frame)
-                while (
-                    self._buffered_bytes > self._max_buffer_bytes and self._buffer
-                ):
-                    dropped = self._buffer.popleft()
-                    self._buffered_bytes -= len(dropped)
+                self._evict_locked()
                 return
-        # Ready, not gated, not stopped: forward outside the lock so a
-        # slow/reentrant `on_frames` never holds up `mark_ready()`,
-        # `set_gated()`, or `stop()` on another thread.
-        self._on_frames(frame)
+            # Ready, not gated, not stopped: registered as in-flight
+            # (under the same lock as the decision, so `stop()` cannot
+            # miss it) before forwarding outside the lock, so a
+            # slow/reentrant `on_frames` never holds up `mark_ready()`
+            # or `set_gated()` on another thread -- `stop()` waits for
+            # `_in_flight` instead of blocking on this call directly.
+            self._in_flight += 1
+        try:
+            self._on_frames(frame)
+        finally:
+            with self._cond:
+                self._in_flight -= 1
+                if self._in_flight == 0:
+                    self._cond.notify_all()
+
+    def _evict_locked(self) -> None:
+        """Drop the oldest buffered frame(s) while over the byte budget.
+
+        Always keeps at least the single most-recently-appended frame,
+        even if that frame alone exceeds `max_buffer_seconds *
+        sample_rate * 2` bytes -- evicting it too would silently discard
+        the newest audio and leave the buffer empty with nothing to show
+        for it. Must be called with `self._cond` already held.
+
+        Returns:
+            None.
+        """
+        while self._buffered_bytes > self._max_buffer_bytes and len(self._buffer) > 1:
+            dropped = self._buffer.popleft()
+            self._buffered_bytes -= len(dropped)

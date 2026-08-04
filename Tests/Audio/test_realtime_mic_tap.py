@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 
 import pytest
 
@@ -234,6 +235,170 @@ def test_stop_before_mark_ready_discards_buffered_frames():
     tap.mark_ready()
 
     assert received == []
+
+
+# ---------------------------------------------------------------------------
+# Review-round regressions (real threads, Event-rendezvous -- not timing
+# luck): reviewer report on commit 1fc6c8174 found two concrete races plus
+# two other defects. Each test below forces the exact interleaving
+# deterministically and is confirmed to FAIL against that commit.
+# ---------------------------------------------------------------------------
+
+
+def test_f1_live_frame_arriving_mid_flush_does_not_overtake_buffered_frames():
+    """F1 regression: a frame captured on the recorder thread WHILE
+    `mark_ready()` is still flushing earlier buffered frames must not be
+    forwarded ahead of them -- the correct order is [f1, f2, LIVE], not
+    [f1, LIVE, f2].
+
+    Rendezvous, not timing: `on_frames` blocks on `release_first_flush`
+    only while flushing the FIRST buffered frame, giving a background
+    "racer" thread a guaranteed (not probabilistic) window to push a live
+    frame through the recorder callback while the flush is provably still
+    in progress. Pre-fix, `mark_ready()` flips `_ready = True` before
+    flushing, so the racer's frame sees `_ready` already True and is
+    forwarded immediately, landing between f1 and f2. Post-fix, `_ready`
+    only flips once the buffer is observed truly empty, so the racer's
+    frame is appended behind f2 instead.
+    """
+    order: list[bytes] = []
+    order_lock = threading.Lock()
+    first_flush_started = threading.Event()
+    release_first_flush = threading.Event()
+
+    def on_frames(frame: bytes) -> None:
+        with order_lock:
+            order.append(frame)
+        if frame == b"f1":
+            first_flush_started.set()
+            assert release_first_flush.wait(timeout=5), "test stalled: never released"
+
+    factory = make_factory()
+    tap = RealtimeMicTap(on_frames, recorder_factory=factory)
+    tap.start()
+
+    factory.instance.callback(b"f1")
+    factory.instance.callback(b"f2")
+
+    flush_thread = threading.Thread(target=tap.mark_ready, daemon=True)
+    flush_thread.start()
+
+    assert first_flush_started.wait(timeout=5), "flush of f1 never started"
+
+    # Simulate the recorder thread delivering a live frame WHILE f1's
+    # on_frames call is still in flight (deterministic: f1 is blocked on
+    # release_first_flush, not merely "probably still running").
+    racer = threading.Thread(
+        target=lambda: factory.instance.callback(b"LIVE"), daemon=True
+    )
+    racer.start()
+    racer.join(timeout=5)
+    assert not racer.is_alive(), "racer thread leaked past the test"
+
+    release_first_flush.set()
+    flush_thread.join(timeout=5)
+    assert not flush_thread.is_alive(), "mark_ready thread leaked past the test"
+
+    assert order == [b"f1", b"f2", b"LIVE"], f"frames delivered out of order: {order}"
+
+
+def test_f2_stop_waits_for_an_in_flight_callback_before_returning():
+    """F2 regression: a frame that already passed `stop()`'s
+    not-stopped check and is actively executing `on_frames` must finish
+    BEFORE `stop()` returns -- `stop()`'s own docstring promises no
+    further callback fires after it returns, which is violated if it can
+    race ahead of a callback already in flight.
+
+    Rendezvous: `on_frames` signals `started` the instant it begins, then
+    blocks on `release` -- so by the time a concurrent `stop()` call is
+    issued, the callback is provably in flight, not just "probably still
+    running". `stopper.join(timeout=0.3)` is a bounded wait used only to
+    prove `stop()` is genuinely still parked (a standard, non-flaky
+    pattern: the buggy implementation returns in microseconds with no
+    synchronization at all, so 0.3s is an enormous margin either way).
+    """
+    order: list[str] = []
+    order_lock = threading.Lock()
+    started = threading.Event()
+    release = threading.Event()
+
+    def on_frames(frame: bytes) -> None:
+        started.set()
+        assert release.wait(timeout=5), "test stalled: never released"
+        with order_lock:
+            order.append("callback_done")
+
+    factory = make_factory()
+    tap = RealtimeMicTap(on_frames, recorder_factory=factory)
+    tap.start()
+    tap.mark_ready()  # empty buffer -> ready flips synchronously, no flush
+
+    producer = threading.Thread(
+        target=lambda: factory.instance.callback(b"INFLIGHT"), daemon=True
+    )
+    producer.start()
+    assert started.wait(timeout=5), "producer frame callback never started"
+
+    def call_stop() -> None:
+        tap.stop()
+        with order_lock:
+            order.append("stop_returned")
+
+    stopper = threading.Thread(target=call_stop, daemon=True)
+    stopper.start()
+
+    stopper.join(timeout=0.3)
+    assert stopper.is_alive(), (
+        "stop() returned before the in-flight on_frames call finished -- "
+        "it must wait for callbacks that already passed the stopped-check"
+    )
+
+    release.set()
+    stopper.join(timeout=5)
+    producer.join(timeout=5)
+    assert not stopper.is_alive(), "stop()-calling thread leaked past the test"
+
+    assert order == ["callback_done", "stop_returned"], order
+    assert factory.instance.stop_calls == 1
+
+
+def test_f3_start_returns_false_when_recorder_constructor_raises():
+    """F3 regression: `AudioRecordingService.__init__` raises
+    `NoAudioBackendError`/`AudioRecordingError` on missing backend/numpy
+    -- canonical device-failure cases. `start()` must catch that (and any
+    other constructor exception) and return False, not propagate.
+    """
+
+    def raising_factory(**kwargs):
+        raise RuntimeError("no audio backend available")
+
+    tap = RealtimeMicTap(lambda frame: None, recorder_factory=raising_factory)
+
+    assert tap.start() is False
+
+
+def test_f4_eviction_keeps_the_newest_frame_even_if_it_alone_exceeds_the_cap():
+    """F4 regression: a single incoming frame larger than the entire byte
+    budget must not empty the buffer outright -- the newest frame is
+    always kept, even if it alone exceeds `max_buffer_seconds *
+    sample_rate * 2`.
+    """
+    received: list[bytes] = []
+    factory = make_factory()
+    # max_buffer_bytes = 0.01 * 100 * 2 = 2 bytes.
+    tap = RealtimeMicTap(
+        received.append,
+        sample_rate=100,
+        recorder_factory=factory,
+        max_buffer_seconds=0.01,
+    )
+    tap.start()
+
+    factory.instance.callback(b"AA")        # 2 bytes: fits exactly
+    factory.instance.callback(b"OVERSIZE")  # 8 bytes: alone exceeds the cap
+
+    tap.mark_ready()
+    assert received == [b"OVERSIZE"]
 
 
 def test_import_pulls_no_heavy_transcription_dependencies():
