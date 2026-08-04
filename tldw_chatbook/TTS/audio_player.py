@@ -162,8 +162,6 @@ class SimpleAudioPlayer:
 
         # Add a small delay on macOS to ensure previous afplay is fully terminated
         if self._system == "Darwin" and self._player_name == "afplay":
-            import time
-
             time.sleep(0.1)
 
         try:

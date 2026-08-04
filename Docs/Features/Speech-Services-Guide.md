@@ -317,10 +317,11 @@ delete them.
 | "new paragraph" | inline | Inserts a paragraph break (`\n\n`); capture keeps running. |
 | "new line" | inline | Inserts a line break (`\n`); capture keeps running. |
 | "stop" | capture-ending | Ends the capture and inserts the accumulated text at the caret — the same as pressing the mic button again. |
-| "send" | capture-ending | Ends the capture, inserts the text, and sends the message once insertion has completed. Refused if you switched tabs while it was transcribing (the text is in the *original* tab's draft, so sending would ship the other tab's), or if Send is blocked for any other reason — the refusal says which. |
-| "discard" | capture-ending | Ends the capture without inserting anything — the same as pressing Cancel. No confirmation is asked; saying it is treated as explicit intent. Once the capture has moved on to transcribing there is nothing left to abort, so it is refused with "Too late to discard" and the text still lands. |
-| "read that back" | capture-ending | Ends the capture (inserting the text first), then speaks the latest **completed** assistant reply. If the reply is still streaming, or there is none yet, it acknowledges instead of speaking a partial answer. |
-| "new session" | capture-ending | Ends the capture (inserting the text first), then opens a new session tab. |
+| "send" | capture-ending | Ends the capture, inserts the text, and sends the message once insertion has completed. Refused if you switched tabs while it was transcribing (the text is in the *original* tab's draft, so sending would ship the other tab's), or if Send is blocked for any other reason — the refusal says which. **In the hands-free loop:** while listening or counting down, this drives an immediate send (same as the countdown expiring on its own). Said while a reply is already outstanding (only reachable in acoustic mode, the only mode that keeps the mic open mid-reply) it cannot start a second turn on top of the first — the capture still ends, but hands-free exits instead of silently doing nothing. |
+| "discard" | capture-ending | Ends the capture without inserting anything — the same as pressing Cancel. No confirmation is asked; saying it is treated as explicit intent. Once the capture has moved on to transcribing there is nothing left to abort, so it is refused with "Too late to discard" and the text still lands. **In the hands-free loop, this also exits it** — see "Entering and exiting" above. |
+| "read that back" | capture-ending | Ends the capture (inserting the text first), then speaks the latest **completed** assistant reply. If the reply is still streaming, or there is none yet, it acknowledges instead of speaking a partial answer. **In the hands-free loop, this also exits it** — see "Entering and exiting" above. |
+| "new session" | capture-ending | Ends the capture (inserting the text first), then opens a new session tab. **In the hands-free loop, this also exits it** — see "Entering and exiting" above. |
+| "hands free" | inline | Enters the hands-free conversation loop, adopting the still-open capture as its first turn — capture keeps running. See "Hands-Free Conversation Loop" below. |
 
 Inline commands leave the capture open; every other command in the table
 ends it. A capture whose spoken segments were entirely commands — for
@@ -467,6 +468,135 @@ setting.
 device by default (`Tests/conftest.py`'s autouse `_no_real_audio_device`
 fixture patches out the `sounddevice` import); a test that genuinely needs
 real hardware must opt out with `@pytest.mark.real_audio_device`.
+
+### Hands-Free Conversation Loop
+
+Composed from the pieces above (Console dictation, the spoken-command
+grammar, and streaming reply speech): speak, pause, it sends, the reply is
+spoken back sentence by sentence, and the microphone reopens automatically
+for your next turn — a full voice-in/voice-out conversation with no keyboard
+or mouse required once it's running.
+
+**Entering and exiting.** Say **"Console, hands free."** while a capture is
+already open (the current capture becomes the loop's first turn — nothing
+you already dictated is lost), or press **`Ctrl+Shift+H`** at any time, from an
+open capture or from idle (idle opens a fresh capture).
+
+To leave the loop, **`Ctrl+Shift+H`** again, **Esc**, or the mic button work from
+**any point** in the loop (mid-listen, mid-countdown, while the reply is
+still generating, or while it is being spoken) and return the Console to
+its ordinary, pre-loop behavior. While the loop is running, **Esc takes
+priority over any widget-level Esc binding elsewhere on the screen** (e.g.
+the transcript's own clear-selection) so it reliably exits from wherever
+your focus happens to be; outside the loop this priority is inert and Esc
+behaves exactly as it always has.
+
+Four spoken commands also end the loop — **"Console, stop."**, **"Console,
+discard."**, **"Console, new session."**, and **"Console, read that
+back."** — but, like every spoken command, they need an open microphone to
+be heard. In the default (non-acoustic) mode the mic is open only while
+listening or counting down, not while the reply is generating or being
+spoken, so these four are reachable during those two states only;
+acoustic mode (see "Barge-in" below) reopens the mic as soon as the reply
+starts generating, so it widens their availability to the whole turn. The
+last three exit as a side effect of what they otherwise do: none of them
+continues the same conversation (discarding throws away what you just
+said, a new session switches tabs, and reading back speaks an
+*already-completed* reply rather than starting a new turn), so hands-free
+ends rather than being left running with nothing to listen for. There is
+an **eighth** way the loop ends: saying **"Console, send."** while a reply
+is already outstanding cannot start a second turn on top of the first —
+there is no way to interleave them — so the capture still ends and
+hands-free exits rather than silently doing nothing.
+
+**How a turn works.** Speak normally; when you pause, the composer's voice
+chip counts down ("hands-free · sending in 1.5s…") before sending — say
+anything else, or press any key, and the countdown cancels and you keep
+listening instead. Once it sends, the chip shows "hands-free · thinking…"
+while the reply generates, then "hands-free · speaking" once it starts
+talking back, sentence by sentence, through your speakers. When the reply
+finishes, the chip returns to the ordinary recording indicator and the
+microphone is live again for your next turn.
+
+**Honest timing.** The pause-to-send delay is not instantaneous — it is the
+sum of three real steps: the dictation silence gate
+(`dictation.silence_threshold_seconds`, default 2.0 s) plus that segment's
+own transcription (roughly 0.3–1 s for a short utterance on a warm local
+model) plus the hands-free countdown itself
+(`dictation.handsfree_send_delay_seconds`, default 1.5 s, cancellable the
+entire time). Budget **around 4 seconds** from the moment you stop talking
+to the moment your message actually sends — this is the same
+silence-gate-plus-transcription cost the ordinary spoken-command grammar
+above pays, with the countdown added on top so you have a visible, audible
+window to change your mind.
+
+**Barge-in (interrupting a reply).** By default, hands-free relies on a
+**keyboard barge-in**: press any key while the reply is speaking (or still
+generating) and it silences immediately — you keep whatever was already
+generated in the transcript, only the audio stops, and the microphone
+reopens right away for you to speak your next turn. There is no acoustic
+echo cancellation in this app, so **spoken barge-in is opt-in**
+(`dictation.acoustic_barge_in`, default `false`) and comes with a real
+trade-off: with it on, the microphone reopens the instant the reply starts
+generating rather than waiting for it to finish, and speaking over the
+reply silences it exactly like a keypress would — but on speakers, without
+echo cancellation, the recognizer will pick up the reply's OWN voice coming
+out of your speakers and try to transcribe it. **Headphones are strongly
+recommended whenever acoustic barge-in is enabled** — on speakers, expect
+false "speech" detection from the reply itself.
+
+**If the room goes quiet.** A capture that hits its own service-side limits
+(the 60 s wall-clock cutoff, or the recorder's buffer cap) with nothing
+dictated reopens once for a fresh turn rather than ending the loop outright
+— but a *second consecutive* empty-limit ending exits the loop rather than
+reopening forever. In practice this means an unattended hands-free session
+in a silent room exits on its own after roughly **two minutes** (two
+back-to-back 60 s captures with nothing said), rather than leaving the
+microphone open indefinitely.
+
+**Degraded mode (no `webrtcvad`).** Everything above — the countdown, the
+silence-based auto-send, and spoken/acoustic barge-in — depends on the
+recorder's voice-activity detection. Without the optional `webrtcvad-wheels`
+package installed, hands-free still opens the microphone and dictates, but
+the pause-to-send countdown and any voice-triggered barge-in never fire (the
+same limitation the plain Console dictation capture already has in this
+mode — see "Choreography and latency" above); a warning explains this the
+moment you enter the loop in that state. Use the mic button, Esc, `Ctrl+Shift+H`,
+or spoken "Console, stop." to end a turn manually instead.
+
+**What actually speaks the reply.** Reply speech goes out through each
+provider's existing synthesis path, sentence by sentence, exactly like any
+other Console TTS request — there is no separate "hands-free voice"
+pipeline. The audio.cpp adapter streams its response live to the audio
+device the same way ordinary spoken feedback does (see "Streaming playback"
+above); every other provider plays back a completed audio file per
+sentence, the same as it always has. Reply speech is intrinsic to the
+loop and does not read `dictation.spoken_feedback` — that setting only
+governs status acknowledgements ("Sent.", "Discarded.", ...) outside the
+loop; hands-free speaks its replies regardless of how it is set.
+
+**Configuration:**
+```toml
+[dictation]
+# Seconds a finalized segment sits in the hands-free countdown before it
+# auto-sends. Cancellable the whole time by speaking again or pressing any
+# key. Must be a finite, positive number; invalid or non-positive values
+# fall back to this 1.5s default.
+handsfree_send_delay_seconds = 1.5
+# Opt-in acoustic barge-in: lets spoken interruption (not just a keypress)
+# silence a reply mid-speech, and reopens the microphone as soon as the
+# reply starts generating rather than waiting for it to finish. Off by
+# default -- there is no echo cancellation, so enabling this on speakers
+# (without headphones) risks the recognizer transcribing the reply's own
+# voice. See "Barge-in (interrupting a reply)" above.
+acoustic_barge_in = false
+```
+
+**Out of scope (for now).** Wake-word activation (hands-free is entered by
+spoken command or keypress only), acoustic echo cancellation, a Settings UI
+for the two keys above (edit `config.toml` directly), and speaking replies
+outside the loop (the existing per-message Speak affordance and
+`spoken_feedback` toggle are unrelated and unaffected).
 
 ## Voice Commands
 
@@ -705,6 +835,12 @@ service.start_dictation(
 - `Ctrl+E`: Export transcript
 - `Ctrl+Shift+C`: Clear transcript
 
+### Console Hands-Free Loop
+- `Ctrl+Shift+H`: Enter the hands-free conversation loop (from idle or an open
+  capture), or exit it if already running.
+- `Esc` / mic button / spoken "Console, stop.": Exit the loop from any
+  state — see "Hands-Free Conversation Loop" above.
+
 ### TTS
 - `Ctrl+G`: Generate speech
 - `Ctrl+R`: Random example text
@@ -811,6 +947,13 @@ vad_preroll_ms = 240
 # capture hits the same missing model, one at a time, rather than the
 # capture failing fast up front.
 # model = "base"
+# Hands-free conversation loop -- see "Hands-Free Conversation Loop" above
+# for the full behavior. Countdown duration (seconds) before an auto-send;
+# invalid or non-positive values fall back to this 1.5s default.
+handsfree_send_delay_seconds = 1.5
+# Opt-in spoken barge-in for the hands-free loop; headphones recommended
+# when enabled (no echo cancellation). Default false.
+acoustic_barge_in = false
 
 [dictation.privacy]
 save_history = false

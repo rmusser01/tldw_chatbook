@@ -457,6 +457,60 @@ class VoiceSegmentTranscribing:
 
 
 @dataclass(frozen=True)
+class VoiceSpeechResumed:
+    """The microphone is delivering speech again after a silence-gated pause.
+
+    Fired from `LazyLiveDictationService._audio_callback` the instant a frame
+    arrives with `last_speech_time == 0` for any reason other than being the
+    capture's very first frame -- which only happens right after
+    `_processing_loop`'s silence gate has zeroed it mid-capture (see
+    `SILENCE_THRESHOLD_SECONDS`). Capture start itself never fires this: that
+    is `_capture_saw_first_frame`'s whole job (see `_audio_callback`'s inline
+    comment for the exact rule).
+
+    A mic-side fact, not recognizer output: it says only that the recorder is
+    receiving audio again, nothing about what the recognizer will eventually
+    produce from it. `ConsoleStreamingDictationSession._handle_event`
+    (chat_screen.py) forwards it like any other unhandled event -- generation
+    gated, same as `VoicePartial` -- and deliberately does NOT set
+    `_heard_recognizer_output` and does NOT touch `_segments` for it, for the
+    same reason `VoiceSegmentTranscribing`'s docstring gives, one step further
+    upstream: even a `VoiceSegmentTranscribing` proves the silence gate fired
+    on real accumulated audio, but this event proves nothing more than "a
+    frame arrived."
+
+    Carries no payload -- there is nothing else to say.
+    """
+
+
+@dataclass(frozen=True)
+class VoiceSegmentNoFinal:
+    """A segment finished transcribing to nothing -- no `VoiceFinal` will
+    ever follow it.
+
+    Fired from `LazyLiveDictationService._transcribe_segment_audio`, on the
+    processing thread, immediately after its own unconditional
+    `VoiceSegmentTranscribing(done=True)`, and only on that method's
+    blank/whitespace-only branch (routine for room noise or a too-short VAD
+    sliver, same as `VoiceSegmentTranscribing`'s own docstring explains --
+    `_handle_partial_text` no-ops on blank input, so neither a partial nor a
+    final ever fires for a segment like this).
+
+    `ChatScreen._handle_console_dictation_event` (chat_screen.py) forwards
+    it like any other unhandled event -- generation gated, same as
+    `VoiceSpeechResumed` -- and routes it to the hands-free loop's
+    `HandsFreeController.on_segment_no_final()`, which is the one consumer
+    that needs it: without a positive "nothing is coming" signal for a
+    blank segment, a resume latch armed while that segment was (unknowingly)
+    about to produce nothing would sit armed and incorrectly swallow the
+    NEXT real segment's `VoiceFinal` (see that method's docstring for the
+    full mechanism).
+
+    Carries no payload -- there is nothing else to say.
+    """
+
+
+@dataclass(frozen=True)
 class VoiceCommand:
     """A finalized segment that matched the spoken-command grammar.
 
@@ -614,6 +668,7 @@ COMMAND_PHRASES: dict[str, str] = {
     "discard": "discard",
     "read that back": "read-that-back",
     "new session": "new-session",
+    "hands free": "hands-free",
 }
 
 #: Recognizer mis-hearings observed on real hardware, mapped to the phrase
@@ -810,6 +865,59 @@ def warm_before_capture_enabled() -> bool:
         True when the warm-up should run.
     """
     raw = get_cli_setting("dictation.warm_model_before_capture", True)
+    if isinstance(raw, str):
+        return raw.strip().lower() not in {"false", "no", "0", "off"}
+    return bool(raw)
+
+
+#: Default seconds a finalized segment sits in `countdown` before the
+#: hands-free loop auto-sends it (`HandsFreeController`'s own default is
+#: identical -- this is the config-resolved value the screen passes in as
+#: `send_delay_seconds`). See `Docs/superpowers/specs/2026-08-02-hands-free-
+#: loop-design.md`'s honest pause-to-send arithmetic.
+DEFAULT_HANDSFREE_SEND_DELAY_SECONDS = 1.5
+
+
+def handsfree_send_delay_seconds() -> float:
+    """Countdown duration from `dictation.handsfree_send_delay_seconds`.
+
+    Sibling validation shape to `Chat/attachment_core.py`'s numeric config
+    readers (e.g. `max_image_bytes`): a non-numeric or non-positive
+    configured value is invalid, logged, and falls back to the default
+    rather than arming a zero/negative/broken countdown.
+
+    Returns:
+        The countdown duration in seconds, always positive.
+    """
+    raw = get_cli_setting(
+        "dictation", "handsfree_send_delay_seconds", DEFAULT_HANDSFREE_SEND_DELAY_SECONDS
+    )
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = 0.0
+    if value <= 0:
+        logger.warning(
+            "dictation.handsfree_send_delay_seconds invalid ({!r}); using {}",
+            raw,
+            DEFAULT_HANDSFREE_SEND_DELAY_SECONDS,
+        )
+        return DEFAULT_HANDSFREE_SEND_DELAY_SECONDS
+    return value
+
+
+def acoustic_barge_in_enabled() -> bool:
+    """Return whether acoustic (voice) barge-in is enabled for hands-free.
+
+    `dictation.acoustic_barge_in`, default False -- opt-in, "headphones
+    recommended" (see the design doc): without echo cancellation, a spoken
+    barge-in on speakers would have the recognizer transcribe the reply's
+    own voice. Sibling validation shape to `warm_before_capture_enabled`.
+
+    Returns:
+        True when acoustic barge-in should be enabled.
+    """
+    raw = get_cli_setting("dictation.acoustic_barge_in", False)
     if isinstance(raw, str):
         return raw.strip().lower() not in {"false", "no", "0", "off"}
     return bool(raw)
@@ -1185,6 +1293,12 @@ class ConsoleVoiceInputController:
                 ),
                 on_segment_transcribing=lambda done, _gen=capture_generation: (
                     self._emit_capture_event(VoiceSegmentTranscribing(done=done), _gen)
+                ),
+                on_speech_resumed=lambda _gen=capture_generation: (
+                    self._emit_capture_event(VoiceSpeechResumed(), _gen)
+                ),
+                on_segment_no_final=lambda _gen=capture_generation: (
+                    self._emit_capture_event(VoiceSegmentNoFinal(), _gen)
                 ),
                 on_state_change=lambda _state: None,  # our state machine is authoritative
                 on_error=lambda error, _gen=capture_generation: self._report_service_error(

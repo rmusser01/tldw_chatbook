@@ -4,6 +4,8 @@
 # Imports
 import asyncio
 import re
+import threading
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from functools import partial
 from typing import Dict, Optional, TypeVar
@@ -72,6 +74,31 @@ _GLOBAL_OVERRIDE_TOKEN_PATTERN = re.compile(r"[0-9a-f]{32}\Z")
 # correctness -- only saves the memory/CPU of accumulating (and then
 # copying) a body this large just to discover that.
 _MAX_WAV_SINK_UPGRADE_BYTES = 16 * 1024 * 1024
+# Task-4 review F2: `_play_legacy_clip_and_await_completion` polls
+# `SimpleAudioPlayer.get_state()`/`get_current_file()` (off the event loop)
+# until a just-started legacy clip stops being the player's current one,
+# rather than reporting completion the instant `play()` hands the clip to a
+# background process (see that function's own docstring for why the old
+# behavior amounted to truncating every sentence but the last). There is no
+# real audio duration available to bound the poll against --
+# `AudioPlayerInfo.duration` (`TTS/audio_player.py`) is declared but never
+# populated by `play()` -- so the bound is estimated from the SYNTHESIZED
+# TEXT's own length, at a deliberately slow (over-estimating) rate, divided
+# by the resolved provider speed (task-4 review N3 -- `default_speed` is
+# user-configurable and only validated as "finite positive", so a bound
+# that ignores it can under-estimate at a slower-than-1x setting), plus a
+# fixed startup/latency margin, capped at an absolute ceiling so a
+# pathological input can never poll indefinitely.
+_LEGACY_PLAYBACK_MIN_CHARS_PER_SECOND = 8.0
+_LEGACY_PLAYBACK_POLL_MARGIN_SECONDS = 3.0
+# Task-4 review N3: raised from 120s -- a 5000-char utterance (the max
+# `_prepare_tts_text` allows) at the conservative assumed rate needs ~625s;
+# no fixed ceiling can cover an arbitrarily slow real reading of arbitrarily
+# long text, but this is far more generous while staying bounded (and an
+# operator/system can still cancel a stuck utterance -- task-4 review F4's
+# `_active_tasks` registration, N4's prompt cancel-stop).
+_LEGACY_PLAYBACK_POLL_MAX_SECONDS = 300.0
+_LEGACY_PLAYBACK_POLL_INTERVAL_SECONDS = 0.05
 
 
 class _TTSResponseContractError(RuntimeError):
@@ -340,6 +367,15 @@ class TTSEventHandler:
         self._artifact_cleanup_retry: set[Path] = set()
         self._retained_tts_io_tasks: set[asyncio.Task] = set()
         self._retained_tts_cleanup_tasks: set[asyncio.Task] = set()
+        # Task-4 review N5: kept SEPARATE from `_retained_tts_cleanup_
+        # tasks` above -- that set's tasks are genuinely in-flight I/O
+        # `cleanup_tts_resources()` gives a bounded chance to finish
+        # naturally. `_schedule_legacy_playback_cleanup`'s tasks are pure
+        # `asyncio.sleep(5)`-then-delete timers; `cleanup_tts_resources()`
+        # deletes the same artifact directly moments later regardless, so
+        # AWAITING one (even boundedly) only wastes shutdown time for zero
+        # benefit -- it is CANCELLED there instead, never drained.
+        self._pending_legacy_cleanup_timers: set[asyncio.Task] = set()
         self._retained_tts_cleanup_paths: set[Path] = set()
         self._retained_tts_cleanup_requeue: dict[Path, str] = {}
         # task-559 fix round 1: which file the player last loaded, tracked
@@ -360,6 +396,30 @@ class TTSEventHandler:
         # by the same lock as `_audio_files` (related bookkeeping, always
         # touched together).
         self._last_played: Optional[tuple[str, Path]] = None
+        # Task-4 review round 2 (F3+N2), round 3 (D1): one `threading.Event`
+        # per IN-FLIGHT `_play_utterance_legacy_artifact` play-and-poll call
+        # (added just before `player.play()` runs, discarded just after the
+        # poll returns) -- a SET, not a single bool, because a bool cleared
+        # unconditionally in a `finally` left the FIRST of two overlapping
+        # handoffs to exit clearing protection for the other (round-2's
+        # `_legacy_handoff_in_flight` bug, confirmed by a forced-overlap
+        # probe; `speak_utterance` is a public entry and two concurrent
+        # calls are reachable even though the sequencer serializes them in
+        # practice). A bare/global stop (`bare_stop=True`) sets EVERY
+        # in-flight event -- "stop everything" is a bare stop's whole
+        # semantics -- so `_stop_prior_legacy_clip` gates its unconditional
+        # branch on this set being non-empty, and each handoff's own worker
+        # thread (round 3's F3 fix, `_play_legacy_clip_and_await_
+        # completion`) checks ITS OWN event to close the window a
+        # same-tick `player.stop()` call cannot: a stop issued BEFORE
+        # `Popen` has no process to kill, and `play()` proceeds past its
+        # own internal `self.stop()` and starts the clip regardless --
+        # only the worker, which alone knows when `Popen` actually
+        # happened, can catch that. Read/written only from the event loop
+        # (the SET itself, that is -- the `Event` objects it holds are
+        # deliberately cross-thread: `threading.Event.set()`/`.is_set()`
+        # are the whole point).
+        self._legacy_handoff_stop_events: set[threading.Event] = set()
         self._audio_files_lock = asyncio.Lock()  # Lock for audio files dictionary
         self._active_tasks: set[asyncio.Task] = set()  # Track active async tasks
         self._active_tasks_lock = asyncio.Lock()  # Lock for active tasks set
@@ -484,6 +544,118 @@ class TTSEventHandler:
             resolution=resolution,
         )
 
+    async def speak_utterance(
+        self,
+        text: str,
+        *,
+        on_finished: Callable[[bool], None],
+        quiet: bool = False,
+    ) -> None:
+        """Speak one cooldown-free hands-free-loop utterance.
+
+        The hands-free reply-speech path (`Chat/reply_sentence_sequencer.py`
+        's `SentenceSequencer`) dispatches one sentence-sized utterance at a
+        time, often within milliseconds of the previous one finishing --
+        the OPPOSITE of "rapid repeated requests for the same message" the
+        message-cooldown gate (`_admit_tts_generation`, keyed on
+        `COOLDOWN_SECONDS`) exists to throttle. This entry therefore skips
+        that gate -- and the `_enforce_cooldown_limit()` maintenance call
+        the ad-hoc `TTSRequestEvent` branch of `handle_tts_request` runs
+        early (:420-436) -- entirely, following the shape of the
+        `TTSMessageSpeechRequestEvent` branch instead, which never touches
+        it either (task-4 review F9: that branch DOES still reach the real
+        per-message-id cooldown throttle through `_admit_tts_generation` --
+        only the early maintenance call at :420-436 is ad-hoc-branch-
+        specific -- this entry skips BOTH by never calling
+        `_admit_tts_generation` at all). Each call is assigned its own
+        fresh message id, so even the bookkeeping this bypasses
+        (`_request_cooldown`) could never collide across utterances even if
+        something else touched it later.
+
+        Reuses the exact same generation + playback machinery every other
+        TTS caller shares (`_generate_tts`, streaming-sink branch
+        included), so one-voice displacement (a new utterance silences
+        whatever the sink or legacy player was doing) keeps working
+        identically -- see `_generate_tts`'s own `on_finished` parameter,
+        which this threads straight through as the completion signal.
+
+        `on_finished` fires EXACTLY ONCE per call, on every path: a
+        completed drain, an interrupted/stopped sink (barge-in), a
+        synthesis failure, or a legacy-player failure. The `finally` below
+        is a last-resort single-fire guard, not the primary signal source
+        -- real terminal points fire `fire` directly (see
+        `_stream_response_via_sink` and `_play_utterance_legacy_artifact`);
+        this only catches paths that reach here without ever calling it
+        (e.g. text validation rejecting the utterance before generation
+        ever starts). `fire` also isolates a RAISING `on_finished` (task-4
+        review F6) -- that is a caller bug (in production, `utterance_
+        finished -> speak -> ...`, real caller code), logged and swallowed
+        here rather than let it unwind into `_generate_tts`'s own `try`,
+        where it would be misreported as a TTS generation failure.
+
+        The generation is registered in `_active_tasks` (task-4 review F4)
+        so `cleanup_tts_resources()` can find and cancel an in-flight
+        hands-free utterance at shutdown, exactly like every other TTS
+        caller's task -- `speak_utterance` still awaits it directly (this
+        entry's own external completion timing is unchanged), only the
+        bookkeeping is new.
+
+        Args:
+            text: The utterance text to speak (one sentence-sized chunk, in
+                the hands-free caller's usage).
+            on_finished: Completion callback. Fires EXACTLY ONCE per call,
+                on every path (see above) -- a completed drain, an
+                interrupted/stopped sink (barge-in), a synthesis failure, or
+                a legacy-player failure -- with `True` for a successful
+                drain and `False` for anything else.
+            quiet: When True, suppresses the user-facing `TTSCompleteEvent
+                (error=...)` toast for a text-validation rejection or a
+                synthesis failure (task-4 review F5) -- the underlying
+                condition is still logged and `on_finished(False)` still
+                fires normally; only the toast is skipped. `speak_utterance`
+                is deliberately stateless across replies (a hard brief
+                constraint), so it has no per-reply toast-aggregation
+                policy of its own -- this is the mechanism a stateful
+                caller (task 5) can use to show at most one toast per
+                reply and quietly skip the rest.
+        """
+        fired = False
+
+        def fire(ok: bool) -> None:
+            nonlocal fired
+            if fired:
+                return
+            fired = True
+            try:
+                on_finished(ok)
+            except Exception:
+                logger.warning(
+                    "speak_utterance's on_finished callback raised; "
+                    "treating as a caller bug, not a TTS generation failure"
+                )
+
+        message_id = f"handsfree-{uuid4().hex}"
+        try:
+            prepared_text = await self._prepare_tts_text(
+                text, message_id, quiet=quiet
+            )
+            if prepared_text is None:
+                return
+            generation_task = asyncio.create_task(
+                self._generate_tts(
+                    prepared_text,
+                    message_id,
+                    voice=None,
+                    resolution=None,
+                    on_finished=fire,
+                    quiet=quiet,
+                )
+            )
+            await self._add_active_task(generation_task)
+            await generation_task
+        finally:
+            fire(False)
+
     async def handle_tts_global_override_decision(
         self,
         event: TTSGlobalOverrideDecisionEvent,
@@ -569,48 +741,62 @@ class TTSEventHandler:
         self,
         request_text: object,
         message_id: str,
+        *,
+        quiet: bool = False,
     ) -> str | None:
-        """Validate and normalize text before assignment or cooldown admission."""
+        """Validate and normalize text before assignment or cooldown admission.
+
+        Args:
+            quiet: Task-4 review F5 -- suppress the user-facing
+                `TTSCompleteEvent(error=...)` toast for a rejection.
+                Validation itself, its return value, and the (pre-existing)
+                logging are all unaffected; only the toast post is skipped.
+                `False` for every existing caller.
+        """
         if not self._tts_service:
             logger.error("TTS service not initialized")
-            await self._post_tts_message(
-                TTSCompleteEvent(
-                    message_id=message_id,
-                    error="TTS service not available",
+            if not quiet:
+                await self._post_tts_message(
+                    TTSCompleteEvent(
+                        message_id=message_id,
+                        error="TTS service not available",
+                    )
                 )
-            )
             return None
         if type(request_text) is not str or not request_text:
-            await self._post_tts_message(
-                TTSCompleteEvent(
-                    message_id=message_id,
-                    error="No text provided for TTS generation",
+            if not quiet:
+                await self._post_tts_message(
+                    TTSCompleteEvent(
+                        message_id=message_id,
+                        error="No text provided for TTS generation",
+                    )
                 )
-            )
             return None
 
         max_tts_length = 5000
         if len(request_text) > max_tts_length:
             logger.warning("TTS text exceeds the configured length limit")
-            await self._post_tts_message(
-                TTSCompleteEvent(
-                    message_id=message_id,
-                    error=(
-                        "Text is too long for TTS. Maximum "
-                        f"{max_tts_length} characters allowed."
-                    ),
+            if not quiet:
+                await self._post_tts_message(
+                    TTSCompleteEvent(
+                        message_id=message_id,
+                        error=(
+                            "Text is too long for TTS. Maximum "
+                            f"{max_tts_length} characters allowed."
+                        ),
+                    )
                 )
-            )
             return None
 
         text = " ".join(request_text.split())
         if not text:
-            await self._post_tts_message(
-                TTSCompleteEvent(
-                    message_id=message_id,
-                    error="Text contains only whitespace",
+            if not quiet:
+                await self._post_tts_message(
+                    TTSCompleteEvent(
+                        message_id=message_id,
+                        error="Text contains only whitespace",
+                    )
                 )
-            )
             return None
         return text
 
@@ -756,8 +942,32 @@ class TTSEventHandler:
         message_id: Optional[str],
         voice: Optional[str],
         resolution: CharacterTTSRequestResolution | None = None,
+        *,
+        on_finished: Callable[[bool], None] | None = None,
+        quiet: bool = False,
     ) -> None:
-        """Generate one complete resolved TTS response and publish its artifact."""
+        """Generate one complete resolved TTS response and publish its artifact.
+
+        Args:
+            on_finished: Task-4 cooldown-free-utterance completion signal.
+                ``None`` for every existing caller (spoken feedback,
+                character speech, ad-hoc requests) -- behavior for them is
+                completely unchanged. When supplied (only `speak_utterance`
+                does this), fires exactly once, from whichever terminal
+                branch this generation actually takes: the streaming sink's
+                own drained/stopped/failed outcome (reported from inside
+                `_stream_response_via_sink`), or -- for a response that
+                falls through to the legacy write path -- the outcome of
+                ALSO playing the just-written artifact directly here (see
+                `_play_utterance_legacy_artifact`), since a hands-free
+                utterance has no per-message widget for the app's own
+                `TTSCompleteEvent` handler to auto-play through.
+            quiet: Task-4 review F5 -- suppress the user-facing
+                `TTSCompleteEvent(error=...)` toast this method's own
+                `except Exception` branch posts. The failure is still
+                logged and `on_finished`/`outcome_code` are unaffected.
+                `False` for every existing caller.
+        """
         from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
         normalized_message_id = message_id or "adhoc"
@@ -769,6 +979,11 @@ class TTSEventHandler:
         start_time = asyncio.get_event_loop().time()
         outcome_code = "generation_failed"
         provider_id: str | None = None
+        # Task-4 review N3: the resolved provider speed, when available --
+        # folded into the legacy completion poll's timeout estimate
+        # (`_legacy_playback_timeout_seconds`) so a slower-than-1x
+        # configuration does not silently under-estimate playback duration.
+        effective_speed: float = 1.0
         response = None
         artifact_path: Path | None = None
 
@@ -794,6 +1009,13 @@ class TTSEventHandler:
                     )
                     if isinstance(candidate_provider_id, str) and candidate_provider_id:
                         provider_id = candidate_provider_id
+                    candidate_speed = getattr(preferences, "speed", None)
+                    if (
+                        isinstance(candidate_speed, (int, float))
+                        and not isinstance(candidate_speed, bool)
+                        and candidate_speed > 0
+                    ):
+                        effective_speed = float(candidate_speed)
                 except Exception:
                     logger.debug("TTS metric provider snapshot is unavailable")
 
@@ -942,6 +1164,7 @@ class TTSEventHandler:
                         eligible_pcm_plan,
                         response.byte_stream,
                         message_id=normalized_message_id,
+                        on_finished=on_finished,
                     )
                     if streamed_outcome_code is not None:
                         outcome_code = streamed_outcome_code
@@ -1074,6 +1297,7 @@ class TTSEventHandler:
                             _replay_drained_bytes(wav_body),
                             message_id=normalized_message_id,
                             fallback_on_failure=True,
+                            on_finished=on_finished,
                         )
                         if streamed_outcome_code is not None:
                             outcome_code = streamed_outcome_code
@@ -1125,9 +1349,38 @@ class TTSEventHandler:
             await self._post_tts_message(
                 TTSCompleteEvent(
                     message_id=normalized_message_id,
-                    audio_file=artifact_path,
+                    # Task-4 review F1: `None`, not `artifact_path`, when a
+                    # hands-free caller is about to play this artifact
+                    # directly below -- exactly the rule the streaming-sink
+                    # branch already follows ("so nothing downstream
+                    # auto-plays a file that was already played live", see
+                    # `_stream_response_via_sink`'s own docstring).
+                    # Advertising the real path here let the app's
+                    # `TTSCompleteEvent` handler (`app.py`'s
+                    # `handle_tts_complete_event`) auto-play it a SECOND
+                    # time: no `ChatMessage`/`ChatMessageEnhanced` widget
+                    # ever claims a `handsfree-<uuid4>` id, so that handler
+                    # always took its own auto-play branch on top of the
+                    # direct play below -- a real double voice on every
+                    # legacy-path utterance, confirmed by the reviewer's
+                    # probe.
+                    audio_file=artifact_path if on_finished is None else None,
                 )
             )
+            if on_finished is not None:
+                # Task-4: a hands-free utterance has no per-message widget
+                # for the app's own `TTSCompleteEvent` handler to route an
+                # auto-play through (see `_play_utterance_legacy_artifact`'s
+                # own docstring) -- play it directly here instead, gated so
+                # every OTHER caller (on_finished is always None for them)
+                # is completely unaffected.
+                await self._play_utterance_legacy_artifact(
+                    normalized_message_id,
+                    artifact_path,
+                    text,
+                    on_finished,
+                    speed=effective_speed,
+                )
             outcome_code = "success"
         except asyncio.CancelledError as cancellation:
             outcome_code = "cancelled"
@@ -1150,12 +1403,13 @@ class TTSEventHandler:
                 "TTS generation failed (outcome_code={})",
                 outcome_code,
             )
-            await self._post_tts_message(
-                TTSCompleteEvent(
-                    message_id=normalized_message_id,
-                    error=self._tts_error_copy(error),
+            if not quiet:
+                await self._post_tts_message(
+                    TTSCompleteEvent(
+                        message_id=normalized_message_id,
+                        error=self._tts_error_copy(error),
+                    )
                 )
-            )
         finally:
             if provider_id is not None:
                 labels = {
@@ -1184,6 +1438,7 @@ class TTSEventHandler:
         *,
         message_id: str,
         fallback_on_failure: bool = False,
+        on_finished: Callable[[bool], None] | None = None,
     ) -> str | None:
         """Play one response live through the streaming PCM sink.
 
@@ -1211,6 +1466,16 @@ class TTSEventHandler:
                 returning `None` so the caller falls back to the file it
                 already has, rather than surfacing a user-facing error for
                 an opportunistic upgrade that simply didn't pan out.
+            on_finished: Task-4 completion signal, threaded straight through
+                from `_generate_tts`'s own `on_finished` parameter (see its
+                docstring). Fired at most once, and ONLY for a definite
+                terminal outcome (a non-`None` return): `True` for a drain,
+                `False` for a stopped/interrupted sink or a streaming
+                failure. Never fired for a `None` return (sink open failure,
+                or -- only when `fallback_on_failure` is `True` -- a
+                mid-stream failure) -- those fall through to the caller's
+                own alternate path, which is what ultimately decides (and
+                signals) the real terminal outcome.
 
         Returns:
             The metrics `outcome_code`: `"success"` for a natural drain,
@@ -1337,6 +1602,8 @@ class TTSEventHandler:
                 TTSCompleteEvent(message_id=message_id, audio_file=None)
             )
             if result.outcome == "drained":
+                if on_finished is not None:
+                    on_finished(True)
                 return "success"
             # "stopped": the sink was interrupted -- one-voice displacement
             # by a later utterance, an explicit stop, or a barge-in -- not
@@ -1346,6 +1613,8 @@ class TTSEventHandler:
             # labeled distinctly in the metric rather than folded into
             # "success", which would misrepresent playback that was cut
             # short as if it had played out in full.
+            if on_finished is not None:
+                on_finished(False)
             return "interrupted"
 
         logger.warning(
@@ -1363,9 +1632,11 @@ class TTSEventHandler:
                 error="TTS playback failed; retry",
             )
         )
+        if on_finished is not None:
+            on_finished(False)
         return "streaming_failed"
 
-    async def _stop_prior_legacy_clip(self) -> None:
+    async def _stop_prior_legacy_clip(self, *, bare_stop: bool = False) -> None:
         """Silence any currently-playing legacy file clip before streaming.
 
         The streaming sink plays through its own `sounddevice.OutputStream`,
@@ -1377,12 +1648,237 @@ class TTSEventHandler:
         `_last_played`/`stop_audio_playback_if_current` pair), called
         directly here rather than round-tripping through a posted
         `TTSPlaybackEvent` since generation already runs on its own worker.
+
+        Task-4 review round 2 (F3+N2)/round 3 (F3, D1), replacing earlier
+        fixes that did not close the window they targeted -- see git
+        history for the analysis of each. `bare_stop` is `True` for
+        exactly one caller, `handle_tts_playback`'s bare/global-stop
+        branch. When it is true AND `_legacy_handoff_stop_events` is
+        non-empty (one or more `_play_utterance_legacy_artifact` calls
+        have a play-and-poll in progress -- see `__init__`'s docstring for
+        why this is a SET, not a single flag), this:
+
+        1. Sets EVERY in-flight handoff's own `threading.Event` -- each
+           worker thread (`_play_legacy_clip_and_await_completion`) checks
+           its own event immediately after `player.play()` returns (round
+           3's F3 fix: a same-tick `player.stop()` call issued BEFORE
+           `Popen` has no process to kill, and `play()` proceeds past its
+           own internal `self.stop()` regardless -- only the worker, which
+           alone knows when `Popen` actually happened, can catch that) and
+           on each subsequent poll iteration.
+        2. ALSO stops the shared player directly, unconditionally, right
+           here -- the identity check `stop_audio_playback_if_current`
+           normally uses cannot succeed yet in the pre-`Popen` window (the
+           player does not own the file until `play()` returns), so the
+           tracked branch below would silently no-op for the whole handoff
+           window otherwise; this direct call is what makes a POST-`Popen`
+           barge-in prompt (~0ms) rather than waiting for the worker's own
+           next poll tick. `SimpleAudioPlayer.stop()` is a cheap, safe
+           no-op when nothing is actually loaded/playing.
+
+        Deliberately NOT applied when `bare_stop` is false (the OTHER
+        caller, `_stream_response_via_sink`, on the shared path EVERY TTS
+        caller uses to silence a legacy clip before opening a new sink) --
+        an ordinary, non-hands-free utterance silencing unrelated audio
+        elsewhere in the app (watchlists, the STTS playground, ...) via the
+        SAME process-global player singleton is a real scope regression
+        (task-4 review N2), not a fix. That call site keeps the original,
+        purely-tracked behavior: a deliberate no-op when nothing is
+        tracked, exactly like `stop_audio_playback_if_current`'s own
+        message-scoped-stop sibling documents ("stopping message A must
+        never silence a different, still-playing message B").
         """
+        if bare_stop and self._legacy_handoff_stop_events:
+            for stop_requested in list(self._legacy_handoff_stop_events):
+                stop_requested.set()
+
+            from tldw_chatbook.TTS.audio_player import get_audio_player
+
+            # Task 5 (D7, carried from task-4-review.md): `SimpleAudioPlayer.
+            # stop()` takes `_lock` and can hold it for up to ~2.5s waiting
+            # out an unresponsive player process (see `stop()`'s own
+            # terminate/kill/wait sequence) -- calling it synchronously here
+            # would block the WHOLE event loop for that long, matching the
+            # `await asyncio.to_thread(player.stop)` idiom this same file
+            # already uses 3 lines away in `_play_utterance_legacy_artifact`
+            # for the identical call.
+            await asyncio.to_thread(get_audio_player().stop)
+            async with self._audio_files_lock:
+                self._last_played = None
+            return
+
         async with self._audio_files_lock:
             last_played = self._last_played
             self._last_played = None
         if last_played is not None:
             stop_audio_playback_if_current(last_played[1])
+
+    async def _play_utterance_legacy_artifact(
+        self,
+        message_id: str,
+        audio_file: Path,
+        text: str,
+        on_finished: Callable[[bool], None],
+        *,
+        speed: float = 1.0,
+    ) -> None:
+        """Play one just-written legacy artifact for a cooldown-free utterance.
+
+        `speak_utterance` (task-4) has no per-message widget for the app's
+        `TTSCompleteEvent` handler to route an auto-play through -- that
+        routing (`app.py`'s `handle_tts_complete_event`) only posts a
+        `TTSPlaybackEvent(action="play")` when NO `ChatMessage`/
+        `ChatMessageEnhanced` widget claims the message id, and even then
+        only reaches `handle_tts_playback` after a full Textual message
+        round-trip. This plays the artifact directly instead, mirroring
+        `handle_tts_playback`'s own "play" action (silence any live sink
+        first, so the two independent audio-output paths never overlap
+        into a double voice; track `_last_played` so a later stop can
+        interrupt it, and schedule the same delayed cleanup) -- but
+        additionally waits (bounded, off the event loop) for the clip to
+        actually stop being current before reporting completion through
+        `on_finished` -- see `_play_legacy_clip_and_await_completion`'s own
+        docstring for why (task-4 review F2, the headline finding: firing
+        at handoff instead of completion truncated every sentence but the
+        last).
+
+        Task-4 review round 2 (F3+N2)/round 3 (F3, D1): a fresh
+        `threading.Event` (`stop_requested`) is created for THIS handoff
+        and registered in `_legacy_handoff_stop_events` (a set, per-handoff
+        -- see `__init__`'s docstring for why a single bool was wrong) for
+        the full duration of the play-and-poll call below, so a concurrent
+        bare/global stop can reach this specific handoff even before the
+        player actually owns the file. Two earlier fixes did not close
+        this window (see git history for each): round 1's early `_last_
+        played` registration just moved the no-op from one guard to
+        another; round 2's handler-side-only `player.stop()` fires but has
+        no process to kill in the pre-`Popen` sub-window, so `play()`
+        proceeds past its own internal `self.stop()` and starts the clip
+        regardless. Round 3 closes it from the WORKER side instead --
+        `_play_legacy_clip_and_await_completion` checks `stop_requested`
+        immediately after `player.play()` returns (Popen has then
+        definitely either happened or failed) and on every poll iteration,
+        which is the only vantage point that actually knows when `Popen`
+        ran.
+
+        Task-4 review N4 (round 2), D2 guard (round 3): the play-and-poll
+        call is offloaded via a bare `asyncio.create_task(asyncio.to_
+        thread(...))` + `asyncio.shield` here, NOT the shared `_run_
+        blocking_tts_io` seam every other blocking call in this class
+        uses. That seam's cancellation handling does a BOUNDED JOIN
+        (`_TTS_IO_CANCELLATION_JOIN_TIMEOUT_SECONDS`, up to 1s) before its
+        own `on_cancelled_result` hook ever fires -- fine for a quick
+        artifact write, but it means cancelling this coroutine would NOT
+        promptly silence a clip that could still be playing for many more
+        seconds. Reimplemented narrowly here so the `except asyncio.
+        CancelledError` below runs IMMEDIATELY when this coroutine is
+        cancelled (e.g. via `cleanup_tts_resources()` cancelling the
+        `_active_tasks`-registered generation task, task-4 review F4),
+        setting `stop_requested` (closing the SAME pre-`Popen` race F3
+        closes, regardless of whether cancellation lands before, during,
+        or after the worker's own `play()` call) and stopping the player
+        directly -- but ONLY when it still owns THIS clip, or owns nothing
+        yet (D2: a DIFFERENT clip could have displaced ours in the same
+        tick, before the poll's own next iteration would have noticed;
+        stopping unconditionally would kill that unrelated clip). The
+        abandoned worker is retained in this file's existing `_retained_
+        tts_io_tasks` set so it is never garbage-collected mid-flight even
+        though nothing awaits it once this coroutine unwinds -- it settles
+        on its own once the prompt stop (or `stop_requested`) makes the
+        poll observe the state change.
+
+        Args:
+            speed: Task-4 review N3 -- the resolved provider speed, folded
+                into the completion poll's timeout estimate (see
+                `_legacy_playback_timeout_seconds`) so a slower-than-1x
+                configuration does not silently under-estimate how long
+                the clip could still be playing. `1.0` (unchanged bound)
+                when the caller could not determine it.
+        """
+        from tldw_chatbook.TTS.audio_player import get_audio_player
+
+        stop_live_sink()
+        stop_requested = threading.Event()
+        self._legacy_handoff_stop_events.add(stop_requested)
+        try:
+            async with self._audio_files_lock:
+                self._last_played = (message_id, audio_file)
+
+            player = get_audio_player()
+            timeout_seconds = _legacy_playback_timeout_seconds(len(text), speed)
+            worker: asyncio.Task[bool] = asyncio.create_task(
+                asyncio.to_thread(
+                    _play_legacy_clip_and_await_completion,
+                    player,
+                    audio_file,
+                    timeout_seconds=timeout_seconds,
+                    stop_requested=stop_requested,
+                )
+            )
+            ok = False
+            try:
+                ok = await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                # Task-4 review N4 (round 2) + D2 (round 3): stop the
+                # player IMMEDIATELY, off the event loop -- no bounded
+                # join first -- but only when it still owns OUR clip (or
+                # owns nothing yet, the pre-`Popen` case) -- D2: cancelling
+                # while a DIFFERENT clip has already displaced ours in the
+                # same tick must not kill that unrelated clip. Also sets
+                # `stop_requested` so the worker's own F3 check catches
+                # this regardless of exactly when cancellation landed
+                # relative to the worker's own `play()` call.
+                stop_requested.set()
+                self._retained_tts_io_tasks.add(worker)
+                worker.add_done_callback(self._retained_tts_io_tasks.discard)
+                # Task 5 (D7): `get_current_file()` takes the SAME `_lock`
+                # `stop()` can hold for up to ~2.5s -- calling it
+                # synchronously here would block the event loop for that
+                # long too, same as the bare-stop branch above.
+                current_file = await asyncio.to_thread(player.get_current_file)
+                if current_file in (None, audio_file):
+                    await asyncio.to_thread(player.stop)
+                raise
+            except Exception:
+                logger.warning("Legacy TTS playback failed for one utterance")
+                ok = False
+        finally:
+            self._legacy_handoff_stop_events.discard(stop_requested)
+
+        self._schedule_legacy_playback_cleanup(message_id)
+        on_finished(bool(ok))
+
+    def _schedule_legacy_playback_cleanup(self, message_id: str) -> None:
+        """Schedule the delayed artifact cleanup `_play_utterance_legacy_
+        artifact` needs, holding a strong reference (task-4 review F7 --
+        the event loop only weak-refs tasks with no other strong
+        reference) in `_pending_legacy_cleanup_timers`, NOT the file's
+        older `_retained_tts_cleanup_tasks` retention idiom (task-4 review
+        N5: that set's tasks are AWAITED, boundedly, at shutdown -- correct
+        for genuinely in-flight I/O, but this is a pure `asyncio.sleep(5)`
+        timer that `cleanup_tts_resources()` has no reason to wait out,
+        since it deletes the same artifact directly moments later
+        regardless; see `cleanup_tts_resources`'s own cancel-not-await
+        handling of this set). Deliberately NOT applied to the
+        pre-existing, untouched sibling call site in `handle_tts_
+        playback`'s own "play" action (out of this fix's scope).
+        """
+        cleanup = asyncio.create_task(self._cleanup_audio_file(message_id, delay=5.0))
+        self._pending_legacy_cleanup_timers.add(cleanup)
+
+        def observe(completed: asyncio.Task) -> None:
+            self._pending_legacy_cleanup_timers.discard(completed)
+            try:
+                completed.result()
+            except asyncio.CancelledError:
+                # Expected at shutdown: cleanup_tts_resources() cancels
+                # this timer outright rather than waiting it out, then
+                # deletes the same artifact itself moments later.
+                pass
+            except BaseException:
+                logger.warning("Retained TTS audio cleanup did not complete")
+
+        cleanup.add_done_callback(observe)
 
     def _post_sink_event(self, event: object) -> None:
         """Record one streaming-sink lifecycle event.
@@ -1800,7 +2296,7 @@ class TTSEventHandler:
                 # `is None` check here left an empty string falling
                 # between both branches, silencing neither the sink's
                 # OWN legacy-clip guard nor anything else.
-                await self._stop_prior_legacy_clip()
+                await self._stop_prior_legacy_clip(bare_stop=True)
 
         if event.action == "play" and event.message_id:
             # Get audio file with lock
@@ -1994,6 +2490,22 @@ class TTSEventHandler:
         """Clean up all TTS resources"""
         self._pending_global_overrides.clear()
 
+        # Task-4 review N5: cancel outright, never drain/await -- these are
+        # pure `asyncio.sleep(5)`-then-delete timers (`_schedule_legacy_
+        # playback_cleanup`), and this method's own artifact-deletion pass
+        # below deletes the same files directly moments later regardless.
+        # Measured cost of the old behavior (implicitly draining them via
+        # `_retained_tts_cleanup_tasks`): ~2s added to shutdown for zero
+        # benefit, since a 5s timer can never finish within `_drain_
+        # retained_tts_artifact_work`'s two 1s bounds anyway. `asyncio.
+        # sleep` responds to cancellation immediately, so this is fast.
+        pending_legacy_timers = list(self._pending_legacy_cleanup_timers)
+        for timer in pending_legacy_timers:
+            if not timer.done():
+                timer.cancel()
+        if pending_legacy_timers:
+            await asyncio.gather(*pending_legacy_timers, return_exceptions=True)
+
         # Cancel all active tasks with lock
         async with self._active_tasks_lock:
             tasks_to_cancel = list(self._active_tasks)
@@ -2071,6 +2583,159 @@ async def _replay_drained_bytes(data: bytes) -> AsyncIterator[bytes]:
     the same shape `pump()` expects a live `response.byte_stream` to be.
     """
     yield data
+
+
+def _legacy_playback_timeout_seconds(text_length: int, speed: float = 1.0) -> float:
+    """A generous, text-length-and-speed-derived bound on how long one
+    legacy-path utterance could plausibly still be playing (task-4 review
+    F2, refined by N3).
+
+    There is no real audio duration available to bound
+    `_play_legacy_clip_and_await_completion`'s poll loop against --
+    `AudioPlayerInfo.duration` (`TTS/audio_player.py`) is declared but never
+    populated by `SimpleAudioPlayer.play()`. This estimates instead from the
+    SYNTHESIZED TEXT's own character count, at a deliberately slow
+    (over-estimating) assumed speech rate, divided by `speed` (task-4
+    review N3: `default_speed` is user-configurable and `TTS/preferences.
+    py`'s `_require_speed` only enforces "finite positive" -- a bound that
+    ignores it can under-estimate, and silently, since a timeout is
+    indistinguishable from a natural finish to the caller: see
+    `_play_legacy_clip_and_await_completion`'s own `True`-on-timeout
+    return), plus a fixed margin for playback startup/executor-hop
+    latency, capped at an absolute ceiling so a pathological input can
+    never poll indefinitely (`speak_utterance`'s generation task is
+    cancellable via `_active_tasks` regardless -- see task-4 review F4,
+    and N4's prompt cancel-stop -- but a sane ceiling is still worth
+    keeping on its own merits).
+
+    Args:
+        text_length: Length of the synthesized text.
+        speed: The resolved provider speed (1.0 = normal pace). Defensively
+            floored to a small positive value -- `_require_speed` already
+            guarantees "finite positive" upstream, but this function must
+            never divide by zero or a negative number regardless of what a
+            caller passes.
+    """
+    effective_speed = speed if speed > 0 else 1.0
+    estimated = text_length / (_LEGACY_PLAYBACK_MIN_CHARS_PER_SECOND * effective_speed)
+    return min(
+        _LEGACY_PLAYBACK_POLL_MAX_SECONDS,
+        estimated + _LEGACY_PLAYBACK_POLL_MARGIN_SECONDS,
+    )
+
+
+def _play_legacy_clip_and_await_completion(
+    player,
+    audio_file: Path,
+    *,
+    timeout_seconds: float,
+    stop_requested: threading.Event | None = None,
+    poll_interval_seconds: float = _LEGACY_PLAYBACK_POLL_INTERVAL_SECONDS,
+) -> bool:
+    """Blocking: start playback on `player` and wait (bounded) for this clip
+    to stop being the player's current one (task-4 review F2, the
+    headline finding).
+
+    `SimpleAudioPlayer.play()` (`TTS/audio_player.py`) launches a
+    background player process and returns as soon as it has started --
+    NOT when playback finishes -- with a daemon `_monitor_playback` thread
+    doing the actual `process.wait()` and flipping `get_state()` to
+    `FINISHED` on a natural end. Reporting completion the instant `play()`
+    returns (the pre-fix behavior) meant `speak_utterance`'s `on_finished`
+    fired while audio was still playing; since `play()` itself calls
+    `self.stop()` first (a single-slot global singleton), the VERY NEXT
+    utterance's handoff would kill the current one mid-word the instant it
+    landed -- confirmed by the reviewer's timing probe (a completion ->
+    playback-end gap of ~0ms for a 0.35s clip). This must run entirely off
+    the event loop -- callers MUST invoke it through the existing
+    `_run_blocking_tts_io` offload seam, the same one `sink.open()` already
+    uses for exactly this "blocking work belongs on a worker thread" reason.
+
+    Task-4 review round 3 (F3, the third pass on this finding): `player.
+    play()` (the REAL `SimpleAudioPlayer`) itself calls `self.stop()`
+    FIRST, then does file/format checks and (on macOS with `afplay`) a
+    `time.sleep(0.1)`, and only THEN calls `Popen`. A stop request that
+    lands on the event-loop side, calling `player.stop()` directly, DURING
+    that pre-`Popen` window has no process to kill -- a no-op -- and
+    `play()` proceeds past its own internal `self.stop()` and starts the
+    clip regardless, playing through to this poll's own timeout. Only this
+    WORKER (which alone knows when `Popen` actually ran, since it is the
+    one that called `play()`) can close that window: `stop_requested` is
+    checked immediately after `player.play()` returns (at that point,
+    `Popen` has definitively either happened or `play()` itself failed --
+    either way this second `player.stop()` call is not a no-op if a stop
+    truly was requested mid-handoff) and again on every poll iteration
+    thereafter, for a barge-in landing later.
+
+    Args:
+        player: A `SimpleAudioPlayer`-shaped object (`play`, `get_state`,
+            `get_current_file`, `stop`) -- injected rather than looked up
+            via `get_audio_player()` internally so tests can pass a fake.
+        audio_file: The clip this call is responsible for.
+        timeout_seconds: Poll bound -- see `_legacy_playback_timeout_
+            seconds`. Because an explicit `stop()` resets `get_state()` to
+            `IDLE` and clears `get_current_file()` immediately
+            (`audio_player.py`'s own `stop()`), a barge-in exits this poll
+            promptly rather than pinning the worker for the full bound.
+        stop_requested: Set by `_stop_prior_legacy_clip`'s bare-stop branch
+            (task-4 review round 3) for THIS specific handoff. `None` is
+            treated the same as an event that is never set.
+        poll_interval_seconds: Sleep between checks.
+
+    Returns:
+        `False` if `play()` itself never started the clip, if a stop was
+        requested (checked immediately after `play()` returns, and on
+        every subsequent poll iteration), or if the clip stopped being
+        current for any OTHER reason before reaching `FINISHED` --
+        displacement by a different clip (a race with another `play()`
+        call, or the single-slot player's own next caller). `True` for a
+        natural finish, or -- best-effort -- if the poll bound was reached
+        while the clip was STILL current and still `PLAYING` (assume it
+        played through rather than penalize a long clip for an
+        under-estimated bound).
+    """
+    from tldw_chatbook.TTS.audio_player import PlaybackState
+
+    started = player.play(audio_file)
+    if not started:
+        return False
+    if stop_requested is not None and stop_requested.is_set():
+        # A stop landed in the pre-`Popen` window while `play()` was still
+        # running -- `Popen` has now definitively either happened or
+        # failed, so THIS `stop()` call has something real to act on (or
+        # is a safe no-op if `play()` itself failed). Task-4 review D2:
+        # identity-guarded, same as the async-side cancel handler -- by
+        # the time this worker notices, a DIFFERENT clip could already
+        # have displaced ours (another handoff's own `play()`, or an
+        # unrelated caller of the same process-global singleton); this
+        # utterance still completes as stopped/interrupted (`return
+        # False`) either way, but must not reach out and kill audio that
+        # is no longer ours to stop.
+        if player.get_current_file() in (None, audio_file):
+            player.stop()
+        return False
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if stop_requested is not None and stop_requested.is_set():
+            if player.get_current_file() in (None, audio_file):
+                player.stop()
+            return False
+        if player.get_current_file() != audio_file:
+            return False
+        if player.get_state() == PlaybackState.FINISHED:
+            return True
+        time.sleep(poll_interval_seconds)
+    # Task-4 review N3: the estimate under-ran -- make that DISTINGUISHABLE
+    # in the logs rather than silently indistinguishable from a natural
+    # finish (both return `True`). `logger` (loguru) is documented
+    # thread-safe; this runs off the event loop, on the same worker thread
+    # as the poll above.
+    logger.warning(
+        "Legacy TTS playback poll timed out before observing FINISHED "
+        "(bound={:.1f}s); assuming it played through",
+        timeout_seconds,
+    )
+    return True
 
 
 def play_audio_file(file_path: Path) -> None:
