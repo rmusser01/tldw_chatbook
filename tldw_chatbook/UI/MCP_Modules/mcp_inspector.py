@@ -290,6 +290,80 @@ def format_duration_ms(duration_ms: int) -> str:
     return f"{minutes}m {seconds}s"
 
 
+# RAG-49 (PR-5 task 4): the "Raw response" Collapsible's body is capped so a
+# large tool result never blows out the Test Tool panel's layout -- the old
+# 500-char cap (a flattened single-line excerpt) is retired on this path in
+# favor of a much larger, still-bounded pretty-printed dump.
+_RAW_BODY_CHAR_CAP = 20_000
+
+
+def _format_raw_body(raw: str) -> str:
+    """Cap a pretty-printed raw-response string at `_RAW_BODY_CHAR_CAP`
+    chars, appending an honest truncation note when it had to cut.
+
+    Pure and independently unit-testable (exercised end-to-end via
+    `show_tool_result()`'s own raw-body rendering below).
+    """
+    if len(raw) <= _RAW_BODY_CHAR_CAP:
+        return raw
+    total = len(raw)
+    return (
+        raw[:_RAW_BODY_CHAR_CAP]
+        + f"\n… truncated (showing {_RAW_BODY_CHAR_CAP} of {total} chars)"
+    )
+
+
+def _is_tool_error_shape(result: object) -> bool:
+    """Whether `result` is the MCP/tools.py:326 tool-returned-error shape:
+    a list of exactly one element, itself a mapping whose only key is
+    `"error"`.
+
+    Distinct from an infrastructure-level failure (`ok=False`): the HUB
+    CALL succeeded here, but the TOOL's own logical result reports an
+    error. A mapping with an `"error"` key ALONGSIDE other keys, or a list
+    of more than one element, does not match -- only the exact single-key
+    shape does.
+    """
+    if not isinstance(result, list) or len(result) != 1:
+        return False
+    item = result[0]
+    if not isinstance(item, Mapping):
+        return False
+    return list(item.keys()) == ["error"]
+
+
+def _summarize_tool_result(
+    *, ok: bool, duration_ms: float | None, source: str | None, result: object
+) -> tuple[str, str | None]:
+    """Build the Test Tool result's status-line segments and (optional)
+    quiet interpretation line, from the structured pieces `show_tool_
+    result()` was given -- pure and unit-testable without any UI harness.
+
+    Returns:
+        `(status_line, interpretation)` -- `interpretation` is `None` when
+        there is nothing further to say (a non-list result, or a
+        non-empty, non-error-shaped list -- the count segment alone is
+        the whole story there).
+    """
+    segments = ["OK" if ok else "Failed"]
+    if source:
+        segments.append(str(source))
+    if duration_ms is not None:
+        segments.append(format_duration_ms(duration_ms))
+    interpretation: str | None = None
+    if isinstance(result, list):
+        if _is_tool_error_shape(result):
+            segments.append("tool returned an error")
+            interpretation = str(result[0]["error"])
+        elif not result:
+            segments.append("0 results")
+            interpretation = "The tool ran and returned no results."
+        else:
+            count = len(result)
+            segments.append(f"{count} result" + ("s" if count != 1 else ""))
+    return " · ".join(segments), interpretation
+
+
 def audit_entry_detail_payload(entry: Mapping[str, Any]) -> dict[str, Any]:
     """Project one execution-log entry into its metadata-only display schema.
 
@@ -563,6 +637,36 @@ class MCPInspector(Vertical):
     `css/core/_variables.tcss`) -- not a visual compromise. */
     .mcp-status-muted {
         color: $text-muted;
+    }
+    /* RAG-49 (PR-5 task 4): the Test Tool result's quiet interpretation
+    line (empty/error/unusual-shape explanations) -- dimmed like the
+    cascade's non-winning rungs above, distinct from the bold status-line
+    Static it sits below. Toggled `display` per-render by show_tool_
+    result(); always mounted (never conditionally composed) per the
+    program's PR-2 always-mounted-widget lesson. */
+    .mcp-inspector-result-note {
+        color: $text-muted;
+        height: auto;
+        min-height: 0;
+    }
+    /* The "Raw response" Collapsible: always mounted (display: none until
+    show_tool_result() has raw content), collapsed by default. Bounded,
+    not `1fr`/`auto`-greedy -- mirrors #mcp-adv-collapsible's own T12
+    caveat just above: nested inside #mcp-inspector-tool's auto-height
+    container here (not a direct MCPInspector child competing for the
+    pane's own 1fr budget), so a plain auto height is enough to avoid
+    reserving empty space while collapsed. */
+    #mcp-inspector-test-result-raw {
+        height: auto;
+        min-height: 0;
+    }
+    /* The raw JSON dump itself can run long (up to the 20,000-char cap) --
+    a bounded, scrollable region keeps an expanded Collapsible from
+    dominating the rest of the inspector pane, mirroring #mcp-inspector-
+    audit-scroll's identical bounded-pretty-printed-JSON precedent above. */
+    #mcp-inspector-test-result-raw-scroll {
+        height: 12;
+        min-height: 6;
     }
     """
 
@@ -1539,6 +1643,18 @@ class MCPInspector(Vertical):
             # docstring.
             Static("", id="mcp-inspector-test-arm-notice", classes="ds-field-row", markup=False),
             Static("", id="mcp-inspector-test-result", classes="ds-field-row", markup=False),
+            # RAG-49 (PR-5 task 4): the quiet interpretation line (empty/
+            # error/unusual-shape explanations) -- a sibling of the summary
+            # Static above, not appended into it. Always mounted, hidden
+            # (`display = False`) until `show_tool_result()` has something
+            # to say; the same always-mounted discipline as the raw
+            # Collapsible below (never conditionally composed).
+            self._build_test_result_note_static(),
+            # RAG-49 (PR-5 task 4): the collapsed "Raw response" Collapsible
+            # -- always mounted (never conditionally composed, the
+            # program's PR-2 lesson), hidden (`display = False`) until
+            # `show_tool_result()` has a raw body to show.
+            self._build_test_result_raw_collapsible(),
             # Task 3 (MCP Hub Phase 6): the Test Tool panel's own "Change in
             # Permissions" jump button -- mounted once, hidden (`display =
             # False`) until `require_confirm()` (ask) or `show_tool_result
@@ -1578,6 +1694,42 @@ class MCPInspector(Vertical):
         )
         button.display = False
         return button
+
+    @staticmethod
+    def _build_test_result_note_static() -> Static:
+        """RAG-49 (PR-5 task 4): the Test Tool result's quiet interpretation
+        line -- always mounted (never conditionally composed), hidden until
+        `show_tool_result()` has something to say (an empty-result or
+        tool-error-shape explanation)."""
+        widget = Static(
+            "", id="mcp-inspector-test-result-note",
+            classes="mcp-inspector-result-note", markup=False,
+        )
+        widget.display = False
+        return widget
+
+    @staticmethod
+    def _build_test_result_raw_collapsible() -> Collapsible:
+        """RAG-49 (PR-5 task 4): the "Raw response" Collapsible -- ALWAYS
+        mounted (never conditionally composed, the program's PR-2 lesson:
+        conditional composition breeds invisible-widget bugs), hidden via
+        `display = False` until `show_tool_result()` has raw content to
+        show. Collapsed by default; the body Static inside is `markup=
+        False` -- tool output is untrusted (the builtin branch executes
+        in-process code)."""
+        collapsible = Collapsible(
+            VerticalScroll(
+                Static(
+                    "", id="mcp-inspector-test-result-raw-body", markup=False,
+                ),
+                id="mcp-inspector-test-result-raw-scroll",
+            ),
+            title="Raw response",
+            collapsed=True,
+            id="mcp-inspector-test-result-raw",
+        )
+        collapsible.display = False
+        return collapsible
 
     @property
     def current_tool(self) -> HubTool | None:
@@ -1772,7 +1924,12 @@ class MCPInspector(Vertical):
         self.post_message(self.ToolTestRequested(tool.server_key, tool.name, arguments))
 
     def show_tool_result(
-        self, *, server_key: str, tool_name: str, ok: bool, text: str, duration_ms: int,
+        self, *, server_key: str, tool_name: str, ok: bool,
+        text: str | None = None,
+        duration_ms: float | None = None,
+        result: object = None,
+        source: str | None = None,
+        raw: str | None = None,
         blocked: bool = False,
     ) -> None:
         """Render one Test Tool run's outcome, and re-enable Run.
@@ -1798,6 +1955,25 @@ class MCPInspector(Vertical):
         `ok`/`duration_ms` are still accepted (the deny-gate call site
         passes its usual `ok=False, duration_ms=0`) but ignored for the
         status line when `blocked` is True.
+
+        RAG-49 (PR-5 task 4): two ways to describe a successful (`ok=True`,
+        not blocked) run's content now coexist, kept keyword-only so Task 5
+        can add one more optional kwarg (`decision_note`) cleanly:
+          - `text` given (legacy call shape, still used by several
+            pre-existing callers/tests): rendered inline exactly as before
+            -- `f"{status_line}\\n{text}"`, no structured summary, no
+            interpretation line, no raw Collapsible content.
+          - `text` omitted: the NEW structured shape -- `result`/`source`
+            feed `_summarize_tool_result()` to build the status line (`OK ·
+            <source> · <duration> · N results`, singular/empty/error-shape
+            variants) plus an optional quiet interpretation line, and `raw`
+            (a pre-formatted, already-redacted JSON string) fills the
+            collapsed "Raw response" Collapsible, capped via
+            `_format_raw_body()`.
+        Failed (`ok=False`) and blocked paths are UNCHANGED either way --
+        they always use `text` (or `""` when absent) exactly as before,
+        with no structured summary, interpretation, or raw Collapsible
+        content -- "Failure/blocked paths keep their existing rendering".
         """
         current = self._current_tool
         if current is None or current.server_key != server_key or current.name != tool_name:
@@ -1812,12 +1988,48 @@ class MCPInspector(Vertical):
             result_widget = self.query_one("#mcp-inspector-test-result", Static)
         except NoMatches:
             return
+
+        interpretation: str | None = None
         if blocked:
-            status_line = "Blocked · not run"
+            result_widget.update(f"Blocked · not run\n{text or ''}")
+        elif not ok:
+            status_line = f"Failed · {format_duration_ms(duration_ms)}"
+            result_widget.update(f"{status_line}\n{text or ''}")
+        elif text is not None:
+            # Legacy call shape: a pre-formatted body string, rendered
+            # inline exactly as `show_tool_result()` always has -- no
+            # structured summary, no interpretation, no raw Collapsible.
+            status_line = f"OK · {format_duration_ms(duration_ms)}"
+            result_widget.update(f"{status_line}\n{text}")
         else:
-            status = "OK" if ok else "Failed"
-            status_line = f"{status} · {format_duration_ms(duration_ms)}"
-        result_widget.update(f"{status_line}\n{text}")
+            status_line, interpretation = _summarize_tool_result(
+                ok=True, duration_ms=duration_ms, source=source, result=result,
+            )
+            result_widget.update(status_line)
+
+        try:
+            note_widget = self.query_one("#mcp-inspector-test-result-note", Static)
+        except NoMatches:
+            pass
+        else:
+            note_widget.update(interpretation or "")
+            note_widget.display = interpretation is not None
+
+        try:
+            raw_collapsible = self.query_one("#mcp-inspector-test-result-raw", Collapsible)
+            raw_body_widget = raw_collapsible.query_one(
+                "#mcp-inspector-test-result-raw-body", Static
+            )
+        except NoMatches:
+            pass
+        else:
+            if raw:
+                raw_body_widget.update(_format_raw_body(raw))
+                raw_collapsible.display = True
+            else:
+                raw_body_widget.update("")
+                raw_collapsible.display = False
+
         try:
             self.query_one("#mcp-inspector-test-run", Button).disabled = False
         except NoMatches:

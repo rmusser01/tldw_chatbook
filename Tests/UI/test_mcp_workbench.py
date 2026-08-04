@@ -3158,6 +3158,14 @@ async def test_test_tool_run_error_renders_failed_with_message():
 
 @pytest.mark.asyncio
 async def test_test_tool_run_redacts_secret_shaped_result():
+    """RAG-49 deliberate contract change: the redacted envelope no longer
+    lives in the `#mcp-inspector-test-result` summary Static -- that now
+    holds only the terse `OK · <duration>` structured summary (this fake
+    envelope has neither a "result" list nor a "source" key, so there is
+    no count/source segment to show). The full redacted envelope moved to
+    the "Raw response" Collapsible's body Static; the secret-redaction
+    guarantee itself is unchanged, just re-targeted to where the content
+    now renders."""
     app = ToolTestApp()
     app.unified_mcp_service.test_result = {"ok": True, "api_key": "sk-live-secret"}
     async with app.run_test(size=(120, 40)) as pilot:
@@ -3174,7 +3182,11 @@ async def test_test_tool_run_redacts_secret_shaped_result():
         await pilot.pause()
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
         assert "sk-live-secret" not in result
-        assert "***" in result
+        raw_body = str(
+            app.query_one("#mcp-inspector-test-result-raw-body", Static).renderable
+        )
+        assert "sk-live-secret" not in raw_body
+        assert "***" in raw_body
 
 
 @pytest.mark.asyncio

@@ -1573,6 +1573,13 @@ async def test_raw_mode_tool_test_panel_shows_raw_textarea():
 
 @pytest.mark.asyncio
 async def test_show_tool_result_ok_renders_status_line_and_reenables_run():
+    """RAG-49 deliberate contract change: an OK result built from the new
+    structured `result=`/`source=` kwargs (rather than a pre-flattened
+    `text=` string) renders a `OK · <source> · <duration> · N results`
+    summary line, and the raw payload moves into a collapsed "Raw
+    response" Collapsible instead of being echoed inline in the summary
+    Static. The old pin (`OK · 123ms` prefix + `'{"ok": true}'` inline
+    containment) is superseded by this."""
     app = InspectorApp()
     async with app.run_test(size=(100, 60)) as pilot:
         inspector = app.query_one(MCPInspector)
@@ -1586,13 +1593,176 @@ async def test_show_tool_result_ok_renders_status_line_and_reenables_run():
         await pilot.pause()
         inspector.show_tool_result(
             server_key=tool.server_key, tool_name=tool.name, ok=True,
-            text='{"ok": true}', duration_ms=123,
+            duration_ms=123, source="local",
+            result=[{"id": 1}, {"id": 2}, {"id": 3}],
+            raw='{"ok": true}',
         )
         await pilot.pause()
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
-        assert result.startswith("OK · 123ms")
-        assert '{"ok": true}' in result
+        assert result == "OK · local · 123ms · 3 results"
         assert app.query_one("#mcp-inspector-test-run", Button).disabled is False
+        raw_collapsible = app.query_one("#mcp-inspector-test-result-raw", Collapsible)
+        assert raw_collapsible.display is not False
+        assert raw_collapsible.collapsed is True
+        raw_body = str(
+            app.query_one("#mcp-inspector-test-result-raw-body", Static).renderable
+        )
+        assert '{"ok": true}' in raw_body
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_ok_list_of_one_uses_singular_result():
+    """Behavior contract: N == 1 reads "1 result" (singular), not "1
+    results"."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            duration_ms=981, source="local", result=[{"id": 1}],
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result == "OK · local · 981ms · 1 result"
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_ok_empty_list_shows_zero_results_and_quiet_line():
+    """Behavior contract: `result == []` reads "0 results" plus a quiet
+    interpretation line explaining the empty result, in a sibling Static."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            duration_ms=981, source="local", result=[],
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result == "OK · local · 981ms · 0 results"
+        note = str(
+            app.query_one("#mcp-inspector-test-result-note", Static).renderable
+        )
+        assert note == "The tool ran and returned no results."
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_ok_error_shape_result_shows_error_interpretation():
+    """Behavior contract: a `[{"error": "..."}]` result (the MCP/tools.py
+    tool-error contract) reads "tool returned an error" on the summary line,
+    with the error string as the interpretation."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            duration_ms=981, source="local", result=[{"error": "Tool boom"}],
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result == "OK · local · 981ms · tool returned an error"
+        note = str(
+            app.query_one("#mcp-inspector-test-result-note", Static).renderable
+        )
+        assert note == "Tool boom"
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_ok_non_list_result_has_no_count_segment():
+    """Behavior contract: a non-list result (dict/str/number) gets no count
+    segment at all -- just `OK · <source> · <duration>`."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            duration_ms=981, source="local", result={"ok": True},
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result == "OK · local · 981ms"
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_ok_without_source_omits_source_segment():
+    """Interfaces contract: the `source` segment is present only when
+    known -- an unknown/absent source drops the segment entirely rather
+    than rendering an empty one."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            duration_ms=50, result=[{"id": 1}],
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result == "OK · 50ms · 1 result"
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_raw_body_truncated_over_20000_chars():
+    """Behavior contract: the raw body is capped at 20,000 chars with a
+    trailing `… truncated (showing 20000 of N chars)` note when over --
+    the old 500-char cap is retired on this path."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        big_raw = "x" * 25_000
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            duration_ms=10, source="local", result={"ok": True}, raw=big_raw,
+        )
+        await pilot.pause()
+        raw_body = str(
+            app.query_one("#mcp-inspector-test-result-raw-body", Static).renderable
+        )
+        assert raw_body.startswith("x" * 100)
+        assert raw_body.endswith("… truncated (showing 20000 of 25000 chars)")
+        assert len(raw_body) < 25_000
+
+
+def test_error_shape_detection():
+    """Unit test for the pure MCP/tools.py:326 tool-error-contract detector
+    (a length-1 list whose single element is a mapping with exactly one
+    key, "error") -- no UI harness needed."""
+    from tldw_chatbook.UI.MCP_Modules.mcp_inspector import _is_tool_error_shape
+
+    assert _is_tool_error_shape([{"error": "boom"}])
+    assert not _is_tool_error_shape([])
+    assert not _is_tool_error_shape([{"error": "x", "id": 1}])
+    assert not _is_tool_error_shape([{"id": 1}, {"error": "x"}])
+    assert not _is_tool_error_shape({"error": "x"})
 
 
 @pytest.mark.asyncio

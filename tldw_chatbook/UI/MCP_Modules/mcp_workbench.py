@@ -3227,14 +3227,23 @@ class MCPWorkbench(Container):
         wall-clock duration for display.
 
         The success-path result-formatting step (`redact_mapping()` then
-        `json.dumps(..., default=str)` or `str(result)`) gets its own
-        try/except too: `default=str` only rescues non-serializable VALUES,
-        not dict KEYS (a tuple key raises `TypeError`), and `redact_mapping`
-        can raise on pathological input too (e.g. `RecursionError` on a
-        self-referential dict). The `builtin:` path runs arbitrary in-process
-        tool code, so a malformed result is reachable, not just theoretical
-        -- treat a formatting failure the same as a service-call failure
-        rather than letting it escape uncaught.
+        `json.dumps(..., default=str)`) gets its own try/except too:
+        `default=str` only rescues non-serializable VALUES, not dict KEYS
+        (a tuple key raises `TypeError`), and `redact_mapping` can raise on
+        pathological input too (e.g. `RecursionError` on a self-referential
+        dict). The `builtin:` path runs arbitrary in-process tool code, so
+        a malformed result is reachable, not just theoretical -- treat a
+        formatting failure the same as a service-call failure rather than
+        letting it escape uncaught.
+
+        RAG-49 (PR-5 task 4): the envelope's raw JSON dump (`indent=2`, no
+        longer the flattened 500-char excerpt) is computed HERE, still
+        inside this same try/except -- `show_tool_result()`'s own raw-body
+        cap (`_format_raw_body()`, 20,000 chars) only bounds DISPLAY length,
+        it can't rescue a `json.dumps()` that never returns. The `result`/
+        `source` fields feed the inspector's new structured summary line
+        (`_summarize_tool_result()`); non-mapping envelopes keep the
+        original flattened-string fallback unchanged.
         """
         started = time.monotonic()
         try:
@@ -3242,7 +3251,7 @@ class MCPWorkbench(Container):
                 service = self._service()
                 if service is None:
                     raise RuntimeError("MCP control-plane service is unavailable.")
-                result = await service.test_hub_tool(server_key, tool_name, arguments)
+                envelope = await service.test_hub_tool(server_key, tool_name, arguments)
             except Exception as exc:
                 duration_ms = int((time.monotonic() - started) * 1000)
                 self._show_tool_test_result(
@@ -3251,31 +3260,39 @@ class MCPWorkbench(Container):
                 )
                 return
             duration_ms = int((time.monotonic() - started) * 1000)
-            try:
-                if isinstance(result, Mapping):
-                    excerpt = json.dumps(redact_mapping(result), default=str)[:500]
-                else:
-                    excerpt = str(result)[:500]
-            except Exception as exc:
+            if isinstance(envelope, Mapping):
+                try:
+                    raw_json = json.dumps(redact_mapping(envelope), indent=2, default=str)
+                except Exception as exc:
+                    self._show_tool_test_result(
+                        server_key=server_key, tool_name=tool_name, ok=False,
+                        text=_safe_exception_text(exc), duration_ms=duration_ms,
+                    )
+                    return
                 self._show_tool_test_result(
-                    server_key=server_key, tool_name=tool_name, ok=False,
-                    text=_safe_exception_text(exc), duration_ms=duration_ms,
+                    server_key=server_key, tool_name=tool_name, ok=True,
+                    duration_ms=duration_ms,
+                    result=envelope.get("result"), source=envelope.get("source"),
+                    raw=raw_json,
                 )
-                return
-            self._show_tool_test_result(
-                server_key=server_key, tool_name=tool_name, ok=True,
-                text=excerpt, duration_ms=duration_ms,
-            )
+            else:
+                excerpt = str(envelope)[:500]
+                self._show_tool_test_result(
+                    server_key=server_key, tool_name=tool_name, ok=True,
+                    text=excerpt, duration_ms=duration_ms,
+                )
         finally:
             self._tool_test_in_flight.discard((server_key, tool_name))
 
     def _show_tool_test_result(
-        self, *, server_key: str, tool_name: str, ok: bool, text: str, duration_ms: int
+        self, *, server_key: str, tool_name: str, ok: bool, duration_ms: int,
+        text: str | None = None, result: object = None, source: str | None = None,
+        raw: str | None = None,
     ) -> None:
         try:
             self.query_one(MCPInspector).show_tool_result(
-                server_key=server_key, tool_name=tool_name, ok=ok, text=text,
-                duration_ms=duration_ms,
+                server_key=server_key, tool_name=tool_name, ok=ok,
+                duration_ms=duration_ms, text=text, result=result, source=source, raw=raw,
             )
         except Exception as exc:
             logger.warning(f"MCP tool test result render failed: {exc}")
