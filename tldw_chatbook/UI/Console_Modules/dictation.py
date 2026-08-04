@@ -675,23 +675,17 @@ class ConsoleDictationController:
         self._ensure_console_chat_store = chat_store_accessor
         self._speak_status = speak_status
 
-        # Framework services, bound once. Safe to snapshot (unlike
-        # `is_mounted` below): each is a bound method closing over the
-        # live `screen` object, not a value that goes stale.
-        self.run_worker = screen.run_worker
-        self.post_message = screen.post_message
-        self.set_timer = screen.set_timer
-        self.set_interval = screen.set_interval
-
-        # Hands-free's own entry points (sibling cluster, not moving this
-        # wave -- see the module docstring). Bound the same way.
-        self._enter_console_hands_free_loop = screen._enter_console_hands_free_loop
-        self._console_hands_free_force_immediate_send = (
-            screen._console_hands_free_force_immediate_send
-        )
-        self._deliver_console_hands_free_capture_ended = (
-            screen._deliver_console_hands_free_capture_ended
-        )
+        # Framework services and hands-free's entry points are NOT bound
+        # here as plain attributes -- see the `@property` definitions
+        # below. A snapshot taken once at construction would go stale
+        # against a common Textual test idiom this cluster's own suite
+        # uses: `monkeypatch.setattr(console_instance, "set_timer", fake)`
+        # / `"set_interval"` (`Tests/UI/test_console_dictation.py`,
+        # `Tests/UI/test_console_dictation_streaming.py`), which replaces
+        # the attribute on the SCREEN INSTANCE after this controller
+        # already exists. A property re-reads `self._screen.<name>` on
+        # every access, so it always sees whichever bound method (real or
+        # patched) is current -- exactly like `is_mounted` already had to.
 
         # Dictation's own state, moved verbatim from `ChatScreen.__init__`.
         self._console_dictation_session: Any | None = None
@@ -709,12 +703,46 @@ class ConsoleDictationController:
     def is_mounted(self) -> bool:
         """Whether the Console screen is currently mounted.
 
-        A live check, not a value bound once at construction (unlike the
-        framework services above): mount state changes over the
-        controller's life, so this has to re-read `screen.is_mounted` on
-        every access.
+        A live check: mount state changes over the controller's life, so
+        this has to re-read `screen.is_mounted` on every access.
         """
         return self._screen.is_mounted
+
+    @property
+    def run_worker(self) -> Any:
+        """`Screen.run_worker`, bound. See `__init__`'s docstring for why
+        this is a property rather than a value snapshotted once."""
+        return self._screen.run_worker
+
+    @property
+    def post_message(self) -> Any:
+        """`Screen.post_message`, bound. See `__init__`'s docstring."""
+        return self._screen.post_message
+
+    @property
+    def set_timer(self) -> Any:
+        """`Screen.set_timer`, bound. See `__init__`'s docstring."""
+        return self._screen.set_timer
+
+    @property
+    def set_interval(self) -> Any:
+        """`Screen.set_interval`, bound. See `__init__`'s docstring."""
+        return self._screen.set_interval
+
+    @property
+    def _enter_console_hands_free_loop(self) -> Any:
+        """Hands-free's own entry point (sibling cluster). See `__init__`."""
+        return self._screen._enter_console_hands_free_loop
+
+    @property
+    def _console_hands_free_force_immediate_send(self) -> Any:
+        """Hands-free's own entry point (sibling cluster). See `__init__`."""
+        return self._screen._console_hands_free_force_immediate_send
+
+    @property
+    def _deliver_console_hands_free_capture_ended(self) -> Any:
+        """Hands-free's own entry point (sibling cluster). See `__init__`."""
+        return self._screen._deliver_console_hands_free_capture_ended
 
     @property
     def _console_hands_free(self) -> Any:

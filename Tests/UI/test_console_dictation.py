@@ -104,7 +104,7 @@ async def test_console_mic_exposes_clear_idle_recording_and_transcribing_states(
 async def test_console_mic_inserts_at_caret_without_sending(monkeypatch):
     fake = FakeDictationSession()
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen,
+        chat_screen_module.ConsoleDictationController,
         "_create_console_dictation_session",
         lambda self: fake,
     )
@@ -143,7 +143,7 @@ async def test_console_mic_has_strict_wall_timer_and_visible_limit_transition(
         stop_release=stop_release,
     )
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen,
+        chat_screen_module.ConsoleDictationController,
         "_create_console_dictation_session",
         lambda self: fake,
     )
@@ -200,7 +200,7 @@ async def test_console_mic_failures_are_visible_preserve_draft_and_recover_idle(
                 stop_error=message if stage == "stop" else "",
             )
             monkeypatch.setattr(
-                chat_screen_module.ChatScreen,
+                chat_screen_module.ConsoleDictationController,
                 "_create_console_dictation_session",
                 lambda self, fake=fake: fake,
             )

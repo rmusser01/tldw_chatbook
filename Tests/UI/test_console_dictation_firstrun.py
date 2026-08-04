@@ -177,7 +177,7 @@ def _install_session(monkeypatch, service) -> list:
         return session
 
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen,
+        chat_screen_module.ConsoleDictationController,
         "_create_console_dictation_session",
         factory,
     )

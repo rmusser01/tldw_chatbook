@@ -208,7 +208,7 @@ def _fast_countdown(monkeypatch, seconds: float = 0.3) -> None:
 async def test_key_binding_starts_loop_from_idle_and_opens_capture(monkeypatch):
     fake = FakeDictationSession()
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen,
+        chat_screen_module.ConsoleDictationController,
         "_create_console_dictation_session",
         lambda self: fake,
     )
@@ -683,7 +683,7 @@ async def test_spoken_send_mid_reply_acoustic_mode_ends_capture_and_exits(
     made for discard/new-session/read-that-back."""
     fake = FakeDictationSession()
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen,
+        chat_screen_module.ConsoleDictationController,
         "_create_console_dictation_session",
         lambda self: fake,
     )
@@ -768,7 +768,7 @@ def test_silence_speech_posts_stop_unconditionally_even_with_nothing_in_flight()
 async def test_keypress_in_speaking_silences_and_reopens_capture(monkeypatch):
     fake = FakeDictationSession()
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen,
+        chat_screen_module.ConsoleDictationController,
         "_create_console_dictation_session",
         lambda self: fake,
     )
@@ -814,7 +814,7 @@ async def test_keypress_in_speaking_silences_and_reopens_capture(monkeypatch):
 async def test_esc_exits_loop_and_restores_normal_esc_semantics(monkeypatch):
     fake = FakeDictationSession()
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen,
+        chat_screen_module.ConsoleDictationController,
         "_create_console_dictation_session",
         lambda self: fake,
     )
@@ -859,7 +859,7 @@ async def test_barge_in_and_esc_work_with_focus_off_the_composer(monkeypatch):
     when it happens to still be focused."""
     fake = FakeDictationSession()
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen,
+        chat_screen_module.ConsoleDictationController,
         "_create_console_dictation_session",
         lambda self: fake,
     )
@@ -1160,7 +1160,7 @@ async def test_typed_enter_during_listening_sends_normally_once(monkeypatch):
     must not also fire hands-free's own voice-triggered send."""
     fake = FakeDictationSession()
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen,
+        chat_screen_module.ConsoleDictationController,
         "_create_console_dictation_session",
         lambda self: fake,
     )
@@ -1210,7 +1210,7 @@ async def test_typed_enter_cancels_an_armed_countdown_first(monkeypatch):
     send logic runs, so the auto-send never fires alongside the typed one."""
     fake = FakeDictationSession()
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen,
+        chat_screen_module.ConsoleDictationController,
         "_create_console_dictation_session",
         lambda self: fake,
     )
@@ -1542,7 +1542,7 @@ async def test_exit_loop_intent_emits_silence_and_close_capture_itself(monkeypat
     perform both (binding carrier)."""
     fake = FakeDictationSession()
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen,
+        chat_screen_module.ConsoleDictationController,
         "_create_console_dictation_session",
         lambda self: fake,
     )
@@ -1591,7 +1591,7 @@ async def test_exit_loop_intent_emits_silence_and_close_capture_itself(monkeypat
 async def test_open_and_close_capture_handlers_are_idempotent_no_ops(monkeypatch):
     fake = FakeDictationSession()
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen,
+        chat_screen_module.ConsoleDictationController,
         "_create_console_dictation_session",
         lambda self: fake,
     )
@@ -1786,7 +1786,7 @@ async def test_deferred_capture_ended_is_dropped_for_a_replaced_loop():
 async def test_acoustic_barge_in_opens_capture_on_reply_started(monkeypatch):
     fake = FakeDictationSession()
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen,
+        chat_screen_module.ConsoleDictationController,
         "_create_console_dictation_session",
         lambda self: fake,
     )
@@ -1838,7 +1838,7 @@ async def test_acoustic_barge_in_opens_capture_on_reply_started(monkeypatch):
 async def test_vad_degraded_entry_warns_instead_of_promising_auto_send(monkeypatch):
     fake = FakeDictationSession()
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen,
+        chat_screen_module.ConsoleDictationController,
         "_create_console_dictation_session",
         lambda self: fake,
     )

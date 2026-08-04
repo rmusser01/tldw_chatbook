@@ -235,7 +235,7 @@ def _install_streaming_session(monkeypatch, service: FakeDictationService) -> li
         return session
 
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen,
+        chat_screen_module.ConsoleDictationController,
         "_create_console_dictation_session",
         factory,
     )
@@ -1710,7 +1710,7 @@ async def test_cancelling_releases_the_microphone_off_the_ui_thread(monkeypatch)
     """
     session = _GatedDiscardSession()
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen,
+        chat_screen_module.ConsoleDictationController,
         "_create_console_dictation_session",
         lambda self: session,
     )
