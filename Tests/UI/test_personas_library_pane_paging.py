@@ -138,6 +138,7 @@ async def test_update_rows_without_page_kwargs_keeps_plain_count():
         )
         await pilot.pause()
         count = app.query_one("#personas-library-count", Static)
-        # task-445: a total of exactly 1 reads singular ("1 dictionary").
-        assert "1 dictionary" in str(count.renderable)
+        # F-033: the plain total lives in the screen's merged purpose line;
+        # the pane count line stays empty unless a filter is active.
+        assert str(count.renderable) == ""
         assert app.query_one("#personas-library-pagebar").display is False

@@ -4135,7 +4135,7 @@ async def test_console_settings_modal_save_as_default_writes_through_config(
     # The model is written here as well as into api_settings: chat_defaults.model
     # is what `resolve_effective_provider_model` feeds to the session builder as
     # an explicit override, so omitting it left a stale model winning in every
-    # new session (roleplay UAT: character "Start Chat" silently reverted to the
+    # new session (roleplay UAT: character "Chat now" silently reverted to the
     # model onboarding had auto-picked).
     assert sections["chat_defaults"] == {
         "streaming": False,
@@ -4693,7 +4693,7 @@ async def test_console_settings_modal_discover_rejects_invalid_endpoint_url() ->
 # [api_settings.<provider>].model, leaving [chat_defaults].model stale. Because
 # `resolve_effective_provider_model` reads chat_defaults.model and passes it as an
 # explicit override into `build_default_console_session_settings` (where it
-# outranks api_settings), every NEW session -- new tab, character "Start Chat",
+# outranks api_settings), every NEW session -- new tab, character "Chat now",
 # app relaunch -- silently reverted to the old model.
 
 

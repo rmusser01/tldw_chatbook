@@ -122,6 +122,7 @@ from ...Widgets.Persona_Widgets.personas_library_pane import (
 from ...Widgets.Persona_Widgets.personas_messages import (
     PersonaActionRequested,
     PersonaEntitySelected,
+    PersonaMarksChanged,
     PersonaPageChanged,
     PersonaSearchChanged,
     PersonaSortCycleRequested,
@@ -244,7 +245,10 @@ MODE_CHIP_ORDER: tuple[str, ...] = ("characters", "personas", "dictionaries", "l
 #: One-line "what this mode is" copy, shown under the title and as chip tooltips.
 _MODE_DESCRIPTORS: dict[str, str] = {
     "characters": "Characters — who the AI plays.",
-    "personas": "Personas — assistant profiles for roleplay and chat",
+    # F-034: the descriptor teaches the genre convention (characters = who
+    # the AI plays, personas = who YOU play) instead of the vague "assistant
+    # profiles" - without reviving the retired human-identity framing.
+    "personas": "Personas — who you play in the chat.",
     "prompts": "Prompts — moving to the Library.",
     "dictionaries": "Dictionaries — text find/replace rules.",
     "lore": "Lore — world facts injected on keywords.",
@@ -261,12 +265,19 @@ _MODE_PLACEHOLDER_BODY: dict[str, str] = {
 }
 _PLACEHOLDER_FALLBACK = "This mode is coming soon."
 #: Onboarding guidance shown in the Characters center pane when nothing is
-#: selected (task-436). Non-adaptive: rendered at on_mount before the character
-#: count loads, so it must read correctly whether or not characters exist.
+#: selected (task-436) and the library is TRULY empty (F-035): only then are
+#: New/Import the next action. With rows present the picker copy below is
+#: shown instead (reachable after a delete or a mode round-trip; first paint
+#: auto-selects, F-031).
 _CHARACTERS_EMPTY_GUIDANCE = (
-    "No character selected. Pick one from the list on the left, or use "
-    "[b]New[/b] or [b]Import[/b] to add a character."
+    "No characters yet — use [b]New[/b] or [b]Import[/b] to add one."
 )
+#: No-selection copy when the library HAS characters (F-035): the next
+#: action is picking one, not creating one.
+_CHARACTERS_EMPTY_PICKER_GUIDANCE = "Pick a character from the list to see it here."
+#: F-037: reason shown on local-only actions (card Edit, inspector
+#: export/delete) while browsing server-owned characters.
+_SERVER_READ_ONLY_TOOLTIP = "Server characters are read-only here."
 PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
 #: Rows per library page. ``page_offset`` is always kept a multiple of this so
 #: the pane's "start-end of N" label math stays exact.
@@ -595,9 +606,11 @@ class PersonasScreen(BaseAppScreen):
     #personas-characters-empty {
         width: 1fr;
         height: 1fr;
-        content-align: center middle;
-        text-align: center;
-        padding: 2 4;
+        /* F-035: left/top like the app's other empty states (cf.
+           .chat-empty-state) - centered in the void read as broken layout. */
+        content-align: left top;
+        text-align: left;
+        padding: 1 2;
         color: $text-muted;
     }
 
@@ -751,6 +764,15 @@ class PersonasScreen(BaseAppScreen):
         self._workbench_compact: bool | None = None
         self._library_rail_collapsed: bool = False
         self._inspector_rail_collapsed: bool = False
+        # Set by restore_state when the mount carries saved navigation state:
+        # a Console -> back round-trip keeps its own selection semantics
+        # (restored, or deliberately cleared), so first-paint auto-select
+        # (F-031) must not fire on those mounts.
+        self._restored_from_saved_state: bool = False
+        # F-040: the library pane's marked rows ((kind, item_id, name)
+        # triples) driving bulk Delete/Export; kept in step via
+        # PersonaMarksChanged.
+        self._marked_rows: tuple[tuple[str, str, str], ...] = ()
         self.character_handler = CCPCharacterHandler(self)
         self.persona_handler = CCPPersonaHandler(self)
         self.conversations = PersonasConversationsController(self)
@@ -768,21 +790,19 @@ class PersonasScreen(BaseAppScreen):
         with Vertical(id="personas-shell"):
             yield DestinationHeader(
                 WorkbenchHeaderState(
-                    title="Roleplay & Chat Dictionaries",
+                    title="Roleplay",
                     subtitle=self._header_subtitle_text(),
                     status="ready",
                 ),
                 id="personas-header",
             )
+            # F-033: one line carries both the mode descriptor and the live
+            # item count - the old standalone status strip ("Characters: N")
+            # and the library pane's duplicate count line are retired.
             yield Static(
-                self._mode_descriptor_text(self.state.active_mode),
+                self._purpose_line_text(),
                 id="personas-purpose",
                 classes="destination-purpose",
-            )
-            yield Static(
-                self._status_row_text(),
-                id="personas-status-row",
-                classes="destination-status-row",
             )
             with DestinationModeStrip(
                 id="personas-mode-strip", classes="destination-mode-strip"
@@ -790,7 +810,7 @@ class PersonasScreen(BaseAppScreen):
                 yield Static(
                     "Modes:", id="personas-mode-label", classes="destination-section"
                 )
-                for mode in MODE_CHIP_ORDER:
+                for index, mode in enumerate(MODE_CHIP_ORDER):
                     classes = "personas-mode-chip"
                     if mode == self.state.active_mode:
                         classes = f"{classes} is-active"
@@ -801,7 +821,11 @@ class PersonasScreen(BaseAppScreen):
                         label,
                         id=f"personas-mode-{mode}",
                         classes=classes,
-                        tooltip=self._mode_descriptor_text(mode),
+                        # F-038: the chip tooltip discloses its Ctrl+N jump key
+                        # (the binding mirrors the strip order).
+                        tooltip=(
+                            f"{self._mode_descriptor_text(mode)} (Ctrl+{index + 1})"
+                        ),
                     )
             with Horizontal(
                 id="personas-workbench", classes="ds-panel destination-workbench"
@@ -832,6 +856,11 @@ class PersonasScreen(BaseAppScreen):
                 with Vertical(
                     id="personas-work-area", classes="destination-workbench-pane"
                 ):
+                    # F-039: the preview toggle anchors the TOP of the center
+                    # canvas (immediately above the detail stack) so the
+                    # affordance reads as the canvas's own section instead of
+                    # a bar stranded at the work-area bottom.
+                    yield PersonasPreviewPane(id="personas-preview-pane")
                     with Container(id="personas-detail-stack"):
                         yield PersonasCharacterCardWidget()
                         yield PersonasCharacterEditorWidget()
@@ -872,7 +901,6 @@ class PersonasScreen(BaseAppScreen):
                             id="personas-characters-empty",
                             markup=True,
                         )
-                    yield PersonasPreviewPane(id="personas-preview-pane")
                     tryit = PersonasDictionaryTryItWidget(id="personas-dict-tryit")
                     tryit.display = False
                     yield tryit
@@ -938,24 +966,32 @@ class PersonasScreen(BaseAppScreen):
         the actual re-selection is applied by ``_apply_pending_restore`` once
         the screen (and its widgets) exist.
 
-        Gated to Characters mode: ``on_mount`` only unconditionally wires the
-        Characters path (character list refresh, center-view routing) -
-        every other mode's library rows and mode-specific widgets (the
-        Preview pane, the Dictionary/Lore Try-It panes) are only refreshed
-        and toggled by ``_apply_mode``, which a restore never calls.
-        Reconstructing ``self.state`` for a saved non-Characters mode here
-        would restore the mode chip while leaving the library empty and the
-        wrong panes visible/hidden - a regression, not a restore. So a
-        non-Characters round-trip is left at the fresh ``__init__`` default
-        (Characters, no selection) instead; restoring the other modes in
-        full is a filed follow-up.
+        All chip modes restore (F-040): a saved non-Characters mode seeds
+        ``self.state`` here and ``_apply_pending_restore`` runs the full
+        ``_apply_mode`` for it before re-selecting, so the mode's library
+        rows and mode-specific panes are live when the selection lands.
+
+        The round-trip flag is set only for payloads that can resolve (a
+        saved chip mode). An invalid payload, or one whose selection later
+        fails to apply, leaves the flag False so first-paint auto-select
+        (F-031) still rescues the mount instead of showing a dead paint.
         """
         super().restore_state(state)
         if not isinstance(state, dict):
             self._pending_restore = None
+            self._restored_from_saved_state = False
             return
         wb = state.get("personas_workbench")
-        if isinstance(wb, dict) and wb.get("active_mode") == "characters":
+        # Only a payload that can actually resolve (a saved chip mode) counts
+        # as a navigation round-trip. An invalid/unsupported payload is not a
+        # restore at all, so first-paint auto-select (F-031) still fires -
+        # otherwise a stale saved state would land the user on the dead
+        # no-selection paint. A payload that then FAILS to apply its
+        # selection clears the flag again in _apply_pending_restore below.
+        self._restored_from_saved_state = isinstance(wb, dict) and wb.get(
+            "active_mode"
+        ) in MODE_CHIP_ORDER
+        if self._restored_from_saved_state:
             names = {f.name for f in dataclasses.fields(PersonasWorkbenchState)}
             self.state = PersonasWorkbenchState(
                 **{k: v for k, v in wb.items() if k in names}
@@ -983,6 +1019,13 @@ class PersonasScreen(BaseAppScreen):
         entity_id = str(pending["id"])
         name = str(pending.get("name") or "")
         try:
+            # F-040: a saved non-Characters mode needs its full mode apply
+            # (library rows, Try-It panes, preview visibility) before the
+            # selection lands; ``switch_mode`` inside clears the seeded
+            # selection, which the dispatch below re-establishes.
+            saved_mode = self.state.active_mode
+            if saved_mode != "characters" and saved_mode in MODE_CHIP_ORDER:
+                await self._apply_mode(saved_mode)
             if kind == "character":
                 await self._select_character(
                     entity_id, name, restore_preview=pending.get("preview")
@@ -997,18 +1040,64 @@ class PersonasScreen(BaseAppScreen):
             # A stale/deleted entity must degrade to a fully cleared selection,
             # not just a blank center: leaving self.state's selection populated
             # would let _console_action_allowed() keep attach/Start-Chat wrongly
-            # enabled and the inspector showing a stale selection.
+            # enabled and the inspector showing a stale selection. The flag is
+            # cleared too: this restore produced nothing, so the mount falls
+            # back to first-paint auto-select (F-031) instead of a dead paint.
             logger.opt(exception=True).warning(
                 f"Could not restore Personas selection {kind}/{entity_id}; "
                 "clearing selection."
             )
             self.state.clear_selection()
+            self._restored_from_saved_state = False
             try:
                 await self.query_one(PersonasInspectorPane).clear_selection()
             except QueryError:
                 pass
             self._show_center(None)
             self._sync_title_and_console_actions()
+
+    async def _auto_select_first_library_row(self) -> None:
+        """Select the first library row on a fresh first paint (F-031).
+
+        A non-empty library that opens with nothing selected paints a void
+        center and a disabled inspector; selecting the first row wakes the
+        card, actions, and preview instead. Skipped when a selection already
+        exists (including a successful restore) and on navigation
+        round-trips (``restore_state`` payloads keep their own selection
+        semantics, even the deliberately-cleared fallbacks). Runs the exact
+        ``_select_character`` path a row click takes, and never moves focus,
+        so the focus-steal guards are not involved. Mode switches
+        deliberately do NOT auto-select - this is a mount-time onboarding
+        behavior only.
+        """
+        if self._restored_from_saved_state:
+            return
+        if self.state.selected_entity_id:
+            return
+        if self.state.active_mode != "characters":
+            return
+        first = next(
+            (r for r in self._characters if r.get("id") is not None), None
+        )
+        if first is None:
+            return
+        try:
+            await self._select_character(
+                str(first["id"]), str(first.get("name") or "Unnamed")
+            )
+        except Exception:
+            # Auto-select is an onboarding convenience; a row that fails to
+            # load must degrade to the pre-selection guidance, never break
+            # the mount worker.
+            logger.opt(exception=True).warning(
+                "Personas first-paint auto-select failed; leaving no selection."
+            )
+            return
+        # _select_character runs outside _run_guarded here, so re-register
+        # the header/footer/console-action sync it normally gets from the
+        # guarded wrapper - the footer attach hint and header status must
+        # reflect the auto-selected row on first paint.
+        self._sync_title_and_console_actions()
 
     def on_mount(self) -> None:
         """Paint the shell now, load the library after (TASK-1320).
@@ -1054,6 +1143,7 @@ class PersonasScreen(BaseAppScreen):
                 await self.character_handler.refresh_character_list()
             self._sync_title_and_console_actions()
             await self._apply_pending_restore()
+            await self._auto_select_first_library_row()
         except Exception as exc:
             logger.opt(exception=True).error(
                 "Personas initial load failed "
@@ -1098,7 +1188,7 @@ class PersonasScreen(BaseAppScreen):
         self._count_cache_key = None
         self._characters = []
         self._character_total = 0
-        self._update_status_row()
+        self._update_purpose_line()
         self._sync_local_character_actions()
         if self.is_mounted:
             if active_mode == "characters":
@@ -1186,7 +1276,7 @@ class PersonasScreen(BaseAppScreen):
                 await self._render_library_rows()
             return
         self._characters = [dict(record) for record in (characters or [])]
-        self._update_status_row()
+        self._update_purpose_line()
         if self.state.active_mode != "characters":
             return
         try:
@@ -2077,11 +2167,18 @@ class PersonasScreen(BaseAppScreen):
             edit = self.query_one("#personas-card-edit-character", Button)
             if server_characters:
                 edit.disabled = True
+                edit.tooltip = _SERVER_READ_ONLY_TOOLTIP
             else:
                 edit.disabled = not (
                     self.state.selected_entity_kind == "character"
                     and self.state.selected_entity_id is not None
                 )
+                # Clear a stale server reason when leaving server browsing;
+                # the card widget owns the baseline tooltips otherwise.
+                if edit.tooltip == _SERVER_READ_ONLY_TOOLTIP:
+                    edit.tooltip = (
+                        None if not edit.disabled else "Select a character to edit."
+                    )
 
             inspector = self.query_one(PersonasInspectorPane)
             if server_characters:
@@ -2090,7 +2187,11 @@ class PersonasScreen(BaseAppScreen):
                     "#personas-export-png",
                     "#personas-delete",
                 ):
-                    inspector.query_one(selector, Button).disabled = True
+                    # F-037: server browsing force-disables these local-only
+                    # actions; each one must say why.
+                    button = inspector.query_one(selector, Button)
+                    button.disabled = True
+                    button.tooltip = _SERVER_READ_ONLY_TOOLTIP
             else:
                 # Restore the inspector's existing selection/unsaved gates after
                 # leaving server Characters mode.
@@ -2218,7 +2319,7 @@ class PersonasScreen(BaseAppScreen):
                 self._count_cache_key = count_cache_key
             self._characters = records
             self._character_total = total
-            self._update_status_row()
+            self._update_purpose_line()
             try:
                 library = self.query_one(PersonasLibraryPane)
             except QueryError:
@@ -2234,7 +2335,7 @@ class PersonasScreen(BaseAppScreen):
                 self._count_cache_key = None
                 self._characters = []
                 self._character_total = 0
-                self._update_status_row()
+                self._update_purpose_line()
                 if self.state.active_mode != "characters":
                     return
                 if self.state.runtime_source == "server":
@@ -2491,7 +2592,7 @@ class PersonasScreen(BaseAppScreen):
         else:
             self._profile_lookup_recovery_state = None
         self._profiles = [dict(record) for record in (profiles or [])]
-        self._update_status_row()
+        self._update_purpose_line()
         if not self.is_mounted or self.state.active_mode != "personas":
             # A late result must not render persona rows into another mode.
             return
@@ -3017,10 +3118,7 @@ class PersonasScreen(BaseAppScreen):
             self.query_one(f"#personas-mode-{chip_mode}", Button).set_class(
                 chip_mode == mode, "is-active"
             )
-        self.query_one("#personas-status-row", Static).update(self._status_row_text())
-        self.query_one("#personas-purpose", Static).update(
-            self._mode_descriptor_text(mode)
-        )
+        self._update_purpose_line()
         library = self.query_one(PersonasLibraryPane)
         library.set_mode(mode)
         self._sync_local_character_actions()
@@ -3130,31 +3228,46 @@ class PersonasScreen(BaseAppScreen):
         status = "blocked" if self._provider_send_block_reason() else "ready"
         header.sync_state(
             WorkbenchHeaderState(
-                title="Roleplay & Chat Dictionaries",
+                title="Roleplay",
                 subtitle=self._header_subtitle_text(),
                 status=status,
             )
         )
 
-    def _status_row_text(self) -> str:
+    def _purpose_line_text(self) -> str:
+        """Mode descriptor plus the live item count on one line (F-033).
+
+        The count mirrors what the retired status strip showed: the paged
+        total for characters, the loaded profile count for personas, and the
+        cached list sizes for dictionaries/lore (empty until that mode's
+        first render lands, same as the old strip's pre-load "0").
+        """
         mode = self.state.active_mode
+        descriptor = self._mode_descriptor_text(mode)
+        count: int | None = None
         if mode == "characters":
             # ``_characters`` is now one page; the full-library count lives in
             # ``_character_total``.
-            return f"Characters: {self._character_total}"
-        if mode == "personas":
-            return f"Personas: {len(self._profiles)}"
-        return f"Mode: {MODE_LABELS.get(mode, mode)}"
+            count = self._character_total
+        elif mode == "personas":
+            count = len(self._profiles)
+        elif mode == "dictionaries":
+            count = len(self._dictionaries_cache)
+        elif mode == "lore":
+            count = len(self._lore_books_cache)
+        if count is None:
+            return descriptor
+        return f"{descriptor.rstrip('.')} · {count}"
 
-    def _update_status_row(self) -> None:
-        """Refresh the status row text; tolerate refreshes racing teardown."""
+    def _update_purpose_line(self) -> None:
+        """Refresh the merged purpose/count line; tolerate teardown races."""
         try:
-            self.query_one("#personas-status-row", Static).update(
-                self._status_row_text()
+            self.query_one("#personas-purpose", Static).update(
+                self._purpose_line_text()
             )
         except Exception:
             logger.opt(exception=True).debug(
-                "Could not update the personas status row."
+                "Could not update the personas purpose line."
             )
 
     # ===== Selection =====
@@ -3180,6 +3293,18 @@ class PersonasScreen(BaseAppScreen):
             )
         # Prompts are not wired here: prompt management is retired from
         # Personas and lives entirely inside Library (Task 7).
+
+    @on(PersonaMarksChanged)
+    def _handle_marks_changed(self, message: PersonaMarksChanged) -> None:
+        """Track the library's marked set and re-gate bulk actions (F-040)."""
+        message.stop()
+        self._marked_rows = message.marks
+        try:
+            self.query_one(PersonasInspectorPane).set_marked_count(
+                len(message.marks)
+            )
+        except QueryError:
+            pass
 
     async def _fetch_server_character(
         self, entity_id: str
@@ -3276,10 +3401,15 @@ class PersonasScreen(BaseAppScreen):
             self.conversations.load_conversations(entity_id)
         else:
             inspector.set_avatar_thumbnail(None)
-            await inspector.show_conversations(())
-            self.query_one(
-                "#personas-card-edit-character", Button
-            ).disabled = True
+            # F-036: a server character with no saved conversations gets the
+            # same empty-state copy the local path renders via the
+            # controller, not a bare Conversations header.
+            await inspector.show_conversations(
+                (), empty_copy="No saved conversations."
+            )
+            edit_button = self.query_one("#personas-card-edit-character", Button)
+            edit_button.disabled = True
+            edit_button.tooltip = _SERVER_READ_ONLY_TOOLTIP
 
         if restore_preview is not None:
             await self.preview.restore_conversation(
@@ -3372,7 +3502,7 @@ class PersonasScreen(BaseAppScreen):
         )
         self._sync_inspector_console_actions()
         self._update_title()
-        self._update_status_row()
+        self._update_purpose_line()
         await self._refresh_dictionary_versions()
         await self._refresh_dictionary_attachments()
 
@@ -3432,7 +3562,7 @@ class PersonasScreen(BaseAppScreen):
         )
         self._sync_inspector_console_actions()
         self._update_title()
-        self._update_status_row()
+        self._update_purpose_line()
         await self._refresh_lore_attachments()
 
     async def _refresh_lore_attachments(self) -> None:
@@ -5014,12 +5144,11 @@ class PersonasScreen(BaseAppScreen):
         """
         # Precedence (Qodo #824-2): the provider question is only OPERATIVE
         # when the Console action gate itself passes — otherwise the header
-        # would claim provider-"Blocked" while the inspector says
-        # "Console blocked: unsaved edits/select an item" (two conflicting
-        # readiness stories for one staged intent). With the gate closed the
-        # inspector carries the action reason and the header keeps its
-        # pre-task-440 semantics; provider readiness surfaces the moment the
-        # action gate opens.
+        # would claim provider-"Blocked" while the inspector carries the
+        # no-selection/unsaved guidance (two conflicting readiness stories
+        # for one staged intent). With the gate closed the inspector carries
+        # the action reason and the header keeps its pre-task-440 semantics;
+        # provider readiness surfaces the moment the action gate opens.
         if not self._console_action_allowed():
             return None
         if self.state.selected_entity_kind not in ("character", "persona"):
@@ -5080,18 +5209,22 @@ class PersonasScreen(BaseAppScreen):
         return "\n".join(lines)
 
     async def _attach_selection_to_console(self, *, intent: str) -> None:
-        """Stage the selected card in Console (intent: "attach" or "start_chat")."""
+        """Stage the selected card in Console (intent: "attach" or "start_chat").
+
+        The inspector labels these by intent (F-032): "attach" is the
+        "Send to Console draft" button, "start_chat" is "Chat now".
+        """
         if not self._console_action_allowed():
             # The inspector disables these buttons without a saved selection;
             # this is a defensive re-check (and the ctrl+enter guard).
             self._notify("Select a saved item before using Console actions.", "warning")
             return
         if intent == "start_chat":
-            # Start Chat needs a ready handoff provider (task-523 per-intent);
+            # Chat now needs a ready handoff provider (task-523 per-intent);
             # defense-in-depth against a press racing a config change.
             block = self._provider_send_block_reason()
             if block:
-                self._notify(f"Start Chat blocked: {block}", "warning")
+                self._notify(f"Chat now blocked: {block}", "warning")
                 return
         kind = str(self.state.selected_entity_kind)
         name = self.state.selected_entity_name or "Unnamed"
@@ -5130,7 +5263,7 @@ class PersonasScreen(BaseAppScreen):
         # The legacy CCP route launched a blank main-chat tab directly via the
         # chat tab container, but that container is only queryable while the
         # chat screen is mounted - never true from a pushed destination
-        # screen. The workbench therefore routes Start Chat through the
+        # screen. The workbench therefore routes Chat now through the
         # app-level open_chat_with_handoff API with an explicit intent marker.
         event.stop()
         await self._attach_selection_to_console(intent="start_chat")
@@ -8170,7 +8303,94 @@ class PersonasScreen(BaseAppScreen):
             and not self._local_character_actions_allowed()
         ):
             return
+        # F-040: an active mark set retargets Export JSON at the marked rows.
+        if self._marked_rows:
+            if self._io_dialog_active:
+                return
+            self._io_dialog_active = True
+            self.run_worker(
+                self._export_marked_json_worker(tuple(self._marked_rows)),
+                group="personas-io",
+            )
+            return
         self._open_export_dialog("json")
+
+    async def _export_marked_json_worker(
+        self, marks: tuple[tuple[str, str, str], ...]
+    ) -> None:
+        """Export each marked character/persona as its own JSON file (F-040)."""
+        from ...Third_Party.textual_fspicker.select_directory import (
+            SelectDirectory,
+        )
+
+        try:
+            kind = marks[0][0]
+            if kind == "character" and not self._local_character_actions_allowed():
+                return
+            picker = SelectDirectory(title=f"Export {len(marks)} items as JSON")
+            try:
+                target_dir = await self.app.push_screen_wait(picker)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the export directory dialog."
+                )
+                return
+            if not target_dir:
+                return
+            if kind == "character" and not self._local_character_actions_allowed():
+                return
+            written = 0
+            failed: list[str] = []
+            used_names: set[str] = set()
+            for _, entity_id, name in marks:
+                try:
+                    # Filename sanitization mirrors the single-export route.
+                    safe = (
+                        "".join(c for c in name if c.isalnum() or c in " -_").rstrip()
+                        or "export"
+                    )
+                    candidate = safe
+                    suffix = 2
+                    while candidate in used_names:
+                        candidate = f"{safe}-{suffix}"
+                        suffix += 1
+                    used_names.add(candidate)
+                    target_path = str(Path(str(target_dir)) / f"{candidate}.json")
+                    if kind == "character":
+                        # The TTS-include checkbox is a per-selection export
+                        # decision; bulk export writes plain cards.
+                        await asyncio.to_thread(
+                            self._export_character_json_sync,
+                            int(str(entity_id)),
+                            target_path,
+                            None,
+                        )
+                    else:
+                        record = await self._fetch_profile_record(str(entity_id))
+                        content = json.dumps(
+                            record, indent=2, ensure_ascii=False, default=str
+                        )
+                        await asyncio.to_thread(
+                            self._write_text_file, target_path, content
+                        )
+                    written += 1
+                except Exception:
+                    failed.append(name)
+                    logger.opt(exception=True).warning(
+                        f"Bulk export failed for {kind} {entity_id} ({name})."
+                    )
+            if failed:
+                self._notify(
+                    f"Exported {written} of {len(marks)} items; "
+                    f"failed: {', '.join(failed[:3])}.",
+                    "error",
+                )
+            else:
+                self._notify(
+                    f"Exported {written} items to {target_dir}.", "information"
+                )
+        finally:
+            self._io_dialog_active = False
 
     @on(Button.Pressed, "#personas-export-png")
     async def _handle_export_png_pressed(self, event: Button.Pressed) -> None:
@@ -8439,7 +8659,167 @@ class PersonasScreen(BaseAppScreen):
         # routes through the unsaved guard so a dirty session shows the
         # discard dialog FIRST, then the delete confirm. Two dialogs in
         # sequence is deliberate: the user explicitly approves both losses.
+        # F-040: an active mark set retargets Delete at the marked rows.
+        if self._marked_rows:
+            await self._run_guarded(self._begin_delete_marked)
+            return
         await self._run_guarded(self._begin_delete_selection)
+
+    async def _begin_delete_marked(self) -> None:
+        """Validate the marked set and launch the bulk delete-confirm worker."""
+        marks = tuple(self._marked_rows)
+        if not marks:
+            await self._begin_delete_selection()
+            return
+        if marks[0][0] == "character" and not self._local_character_actions_allowed():
+            self._notify(_SERVER_READ_ONLY_TOOLTIP, "warning")
+            return
+        if self._delete_dialog_active:
+            logger.debug("Delete dialog already active; ignoring delete request.")
+            return
+        self._delete_dialog_active = True
+        self.run_worker(
+            self._delete_marked_worker(marks),
+            group="personas-io",
+        )
+
+    #: Plural nouns for bulk-action confirm/summary copy (F-040).
+    _BULK_NOUNS = {
+        "character": "characters",
+        "persona": "personas",
+        "dictionary": "dictionaries",
+        "lore": "lore books",
+    }
+
+    async def _delete_marked_worker(
+        self, marks: tuple[tuple[str, str, str], ...]
+    ) -> None:
+        """One confirmation, then each marked item's backend delete (F-040)."""
+        try:
+            kind = marks[0][0]
+            noun = self._BULK_NOUNS.get(kind, "items")
+            if not await self._confirm_delete(f"{len(marks)} {noun}"):
+                return
+            if kind == "character" and not self._local_character_actions_allowed():
+                return
+            deleted_ids: set[str] = set()
+            failed: list[str] = []
+            for _, entity_id, name in marks:
+                try:
+                    await self._delete_marked_backend(kind, entity_id)
+                except Exception as exc:
+                    failed.append(name)
+                    logger.opt(exception=True).warning(
+                        f"Bulk delete failed for {kind} {entity_id} ({name}): {exc}"
+                    )
+                else:
+                    deleted_ids.add(str(entity_id))
+            # Selection cleanup when the selection was among the deleted.
+            if str(self.state.selected_entity_id or "") in deleted_ids:
+                self.state.clear_selection()
+                self.state.has_unsaved_changes = False
+                try:
+                    await self.query_one(PersonasInspectorPane).clear_selection()
+                except QueryError:
+                    pass
+                self._show_center(None)
+            self.query_one(PersonasLibraryPane).clear_marks()
+            await self._refresh_rows_after_delete(kind)
+            self._sync_title_and_console_actions()
+            if failed:
+                self._notify(
+                    f"Deleted {len(deleted_ids)} of {len(marks)} {noun}; "
+                    f"failed: {', '.join(failed[:3])}.",
+                    "error",
+                )
+            else:
+                self._notify(
+                    f"Deleted {len(deleted_ids)} {noun}.", "information"
+                )
+        finally:
+            self._delete_dialog_active = False
+
+    async def _delete_marked_backend(self, kind: str, entity_id: str) -> None:
+        """One marked item's backend delete, no UI churn; raises on failure."""
+        if kind == "character":
+            # Per-item fetch: the handler's loaded record only covers the
+            # current selection, and the sparse list rows carry no version.
+            record = await asyncio.to_thread(
+                ccp_character_handler.fetch_character_by_id, entity_id
+            )
+            if not record:
+                raise ValueError(f"character {entity_id} not found")
+            version = int(record.get("version") or 1)
+            ok = await asyncio.to_thread(
+                ccp_character_handler.delete_character, entity_id, version
+            )
+            if not ok:
+                raise ValueError(f"delete conflict for character {entity_id}")
+            return
+        if kind == "persona":
+            service = getattr(
+                self.app_instance, "character_persona_scope_service", None
+            )
+            if service is None:
+                raise ValueError("personas service is not configured")
+            record = await self._fetch_profile_record(entity_id)
+            raw_version = record.get("version")
+            await service.delete_persona_profile(
+                entity_id,
+                expected_version=(
+                    int(raw_version) if raw_version is not None else None
+                ),
+                mode=self.persona_handler.current_mode(),
+            )
+            return
+        if kind == "dictionary":
+            service = self._dictionary_scope_service()
+            if service is None:
+                raise ValueError("dictionaries service is not configured")
+            record = next(
+                (
+                    r
+                    for r in self._dictionaries_cache
+                    if str(r.get("id")) == str(entity_id)
+                ),
+                None,
+            )
+            raw_version = (record or {}).get("version")
+            await service.delete_dictionary(
+                int(entity_id),
+                mode="local",
+                expected_version=(
+                    int(raw_version) if raw_version is not None else None
+                ),
+            )
+            return
+        # kind == "lore"
+        manager = self._lore_manager()
+        if manager is None:
+            raise ValueError("lore database is not configured")
+        record = next(
+            (r for r in self._lore_books_cache if str(r.get("id")) == str(entity_id)),
+            None,
+        )
+        raw_version = (record or {}).get("version")
+        ok = await asyncio.to_thread(
+            manager.delete_world_book,
+            int(entity_id),
+            expected_version=int(raw_version) if raw_version is not None else None,
+        )
+        if not ok:
+            raise ValueError(f"delete conflict for lore book {entity_id}")
+
+    async def _refresh_rows_after_delete(self, kind: str) -> None:
+        """Reload the library rows for the deleted items' mode (F-040)."""
+        if kind == "character":
+            await self.character_handler.refresh_character_list()
+        elif kind == "persona":
+            await self._refresh_profile_rows_worker()
+        elif kind == "dictionary":
+            await self._render_dictionary_rows(query=self.state.search_query)
+        elif kind == "lore":
+            await self._render_lore_rows(query=self.state.search_query)
 
     async def _begin_delete_selection(self) -> None:
         """Validate the selection and launch the delete-confirm dialog worker."""
@@ -8593,7 +8973,7 @@ class PersonasScreen(BaseAppScreen):
             await self.query_one(PersonasInspectorPane).clear_selection()
             await self._render_dictionary_rows(query=self.state.search_query)
             self._update_title()
-            self._update_status_row()
+            self._update_purpose_line()
             return
         elif kind == "lore":
             # No staleness re-check here (unlike _after_delete's character/
@@ -8634,7 +9014,7 @@ class PersonasScreen(BaseAppScreen):
             await self.query_one(PersonasInspectorPane).clear_selection()
             await self._render_lore_rows(query=self.state.search_query)
             self._update_title()
-            self._update_status_row()
+            self._update_purpose_line()
             return
         else:
             service = getattr(
@@ -9018,8 +9398,8 @@ class PersonasScreen(BaseAppScreen):
         else:
             self._profile_lookup_recovery_state = None
         self._profiles = [dict(record) for record in (profiles or [])]
-        self._update_status_row()
-        self._update_status_row()
+        self._update_purpose_line()
+        self._update_purpose_line()
         if not self.is_mounted or self.state.active_mode != "personas":
             # Leave the selection, inspector, and center pane alone.
             return
@@ -9116,11 +9496,17 @@ class PersonasScreen(BaseAppScreen):
         )
 
     def _characters_empty_guidance_text(self) -> str:
-        """Return the onboarding guidance for the empty Characters center pane.
+        """Return the no-selection guidance for the Characters center pane.
+
+        F-035 adaptive: the New/Import onboarding copy only makes sense when
+        the library is truly empty; with rows present (post-delete, mode
+        round-trip) the next action is picking one.
 
         Returns:
-            Static guidance copy naming the three next actions.
+            Guidance copy for the current library state.
         """
+        if self._character_total > 0:
+            return _CHARACTERS_EMPTY_PICKER_GUIDANCE
         return _CHARACTERS_EMPTY_GUIDANCE
 
     def _show_center(self, visible_id: str | None) -> None:
@@ -9286,7 +9672,7 @@ class PersonasScreen(BaseAppScreen):
             pass
 
     async def action_personas_attach(self) -> None:
-        """Ctrl+Enter: same path as the inspector Attach button.
+        """Ctrl+Enter: same path as the inspector Send-to-Console-draft button.
 
         No-ops silently when the attach buttons would be disabled (no saved
         selection, or unsaved edits) so the shortcut cannot bypass the guard.
@@ -9479,10 +9865,29 @@ class PersonasScreen(BaseAppScreen):
                 ShortcutAction("ctrl+f", "search"),
                 ShortcutAction("ctrl+s", "save", available=editing),
                 ShortcutAction("esc", "back", available=editing or transcript_open),
+                # F-032: the hint names the renamed "Send to Console draft" CTA.
                 ShortcutAction(
-                    "ctrl+enter", "attach", available=self._console_action_allowed()
+                    "ctrl+enter", "draft", available=self._console_action_allowed()
                 ),
+                # F-038: disclose the always-on accelerators that used to be
+                # invisible (show=False bindings with no footer/chip mention).
+                ShortcutAction("f6", "pane"),
+                ShortcutAction("ctrl+1-4", "mode"),
                 ShortcutAction("[ ]", "mode"),
+                # F-040: the sort cycle key applies where the Sort button shows.
+                ShortcutAction(
+                    "s",
+                    "sort",
+                    available=self.state.active_mode in ("characters", "personas"),
+                ),
+                # The library pane's space binding only acts on dictionary
+                # rows, so it is advertised only in that mode (never claim a
+                # key that does nothing in context).
+                ShortcutAction(
+                    "space",
+                    "toggle",
+                    available=self.state.active_mode == "dictionaries",
+                ),
             ),
         )
 

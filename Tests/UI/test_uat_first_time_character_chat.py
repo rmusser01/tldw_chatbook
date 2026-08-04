@@ -8,10 +8,10 @@ DB) and a SillyTavern-layout (post-IDAT ``tEXt`` chunk) character card PNG:
 2. User imports a character card PNG (the layout a SillyTavern user reported
    failing to import).
 3. The character appears in the library and is selected.
-4. User presses "Start Chat" with NO provider configured -> the app blocks
+4. User presses "Chat now" with NO provider configured -> the app blocks
    gracefully with an actionable tooltip (no crash, no dead end).
 5. User configures a provider (API key in settings).
-6. User presses "Start Chat" again -> a character handoff payload is staged
+6. User presses "Chat now" again -> a character handoff payload is staged
    and the Console consumes it.
 7. User types a message and sends it -> the (mocked) provider replies, the
    reply lands in the transcript, and the conversation is persisted.
@@ -431,7 +431,7 @@ async def test_first_time_user_character_chat_journey(
         assert personas.state.selected_entity_kind == "character"
         assert personas.state.selected_entity_name
 
-        # -- 4. Start Chat with NO provider configured -> graceful block ----
+        # -- 4. Chat now with NO provider configured -> graceful block ------
         # First-run UX: the button is DISABLED with an actionable tooltip
         # (prevention, not an error toast). (No click: a disabled Textual
         # button ignores presses, and click-at-coordinates on a disabled
@@ -442,9 +442,9 @@ async def test_first_time_user_character_chat_journey(
 
         assert type(app.screen).__name__ == "PersonasScreen"
         assert start_btn.disabled, (
-            "Start Chat must be disabled when the handoff provider is not ready"
+            "Chat now must be disabled when the handoff provider is not ready"
         )
-        assert start_btn.tooltip and "Start Chat blocked:" in start_btn.tooltip, (
+        assert start_btn.tooltip and "Chat now blocked:" in start_btn.tooltip, (
             f"Expected an actionable block tooltip; got: {start_btn.tooltip!r}"
         )
 
@@ -459,7 +459,7 @@ async def test_first_time_user_character_chat_journey(
         personas._sync_title_and_console_actions()
         await pilot.pause(0.3)
         assert not start_btn.disabled, (
-            f"Start Chat must enable once the provider is ready; "
+            f"Chat now must enable once the provider is ready; "
             f"tooltip: {start_btn.tooltip!r}"
         )
 
@@ -480,7 +480,7 @@ async def test_first_time_user_character_chat_journey(
 
         monkeypatch.setattr(chat_functions_module, "chat_api_call", fake_chat_api_call)
 
-        # -- 6. Start Chat again -> handoff to the Console ------------------
+        # -- 6. Chat now again -> handoff to the Console ---------------------
         # Baseline for the persistence check: anything the handoff/send
         # persists must appear AFTER this point.
         before_conversation_ids = set(db.get_all_conversation_ids())
