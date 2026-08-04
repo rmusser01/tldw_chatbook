@@ -71,13 +71,16 @@ async def test_update_rows_renders_rows_and_count():
                 "#personas-library-row-character-2", ListItem
             ).classes
         )
+        # F-033: the plain total moved up into the screen's merged purpose
+        # line; the pane count line only speaks for filtered states now.
         count = pilot.app.query_one("#personas-library-count", Static)
-        assert "2 characters" in str(count.renderable)
+        assert str(count.renderable) == ""
 
 
-async def test_singular_count_uses_singular_noun():
-    """task-445: a total of exactly 1 must read '1 character', not
-    '1 characters' -- the RP UX review flagged the plural-only count line."""
+async def test_unfiltered_count_line_stays_empty():
+    """F-033: the unfiltered total renders once (header purpose line), never
+    duplicated at the bottom of the library pane. Singularization of the
+    total (task-445) is still covered by the filtered-count tests."""
     app = LibraryPaneApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasLibraryPane)
@@ -88,7 +91,7 @@ async def test_singular_count_uses_singular_noun():
         )
         await pilot.pause()
         count = pilot.app.query_one("#personas-library-count", Static)
-        assert str(count.renderable) == "1 character"
+        assert str(count.renderable) == ""
 
 
 async def test_singular_filtered_count_uses_singular_noun():

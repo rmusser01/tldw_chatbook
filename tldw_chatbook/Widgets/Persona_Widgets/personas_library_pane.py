@@ -440,7 +440,10 @@ class PersonasLibraryPane(Vertical):
                     f"{len(rows)} of {total} {_noun_for_count(total, noun)}"
                 )
             else:
-                count_static.update(f"{total} {_noun_for_count(total, noun)}")
+                # F-033: the plain total renders once, in the screen's merged
+                # purpose line ("Characters — who the AI plays · N") - the
+                # pane's own count line only speaks for filtered states.
+                count_static.update("")
 
     def mark_active_row(self, kind: str, item_id: str) -> None:
         """Move the list highlight and the .is-active marker to one row."""

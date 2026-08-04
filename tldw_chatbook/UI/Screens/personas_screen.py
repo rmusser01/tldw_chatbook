@@ -779,15 +779,13 @@ class PersonasScreen(BaseAppScreen):
                 ),
                 id="personas-header",
             )
+            # F-033: one line carries both the mode descriptor and the live
+            # item count - the old standalone status strip ("Characters: N")
+            # and the library pane's duplicate count line are retired.
             yield Static(
-                self._mode_descriptor_text(self.state.active_mode),
+                self._purpose_line_text(),
                 id="personas-purpose",
                 classes="destination-purpose",
-            )
-            yield Static(
-                self._status_row_text(),
-                id="personas-status-row",
-                classes="destination-status-row",
             )
             with DestinationModeStrip(
                 id="personas-mode-strip", classes="destination-mode-strip"
@@ -1152,7 +1150,7 @@ class PersonasScreen(BaseAppScreen):
         self._count_cache_key = None
         self._characters = []
         self._character_total = 0
-        self._update_status_row()
+        self._update_purpose_line()
         self._sync_local_character_actions()
         if self.is_mounted:
             if active_mode == "characters":
@@ -1240,7 +1238,7 @@ class PersonasScreen(BaseAppScreen):
                 await self._render_library_rows()
             return
         self._characters = [dict(record) for record in (characters or [])]
-        self._update_status_row()
+        self._update_purpose_line()
         if self.state.active_mode != "characters":
             return
         try:
@@ -2272,7 +2270,7 @@ class PersonasScreen(BaseAppScreen):
                 self._count_cache_key = count_cache_key
             self._characters = records
             self._character_total = total
-            self._update_status_row()
+            self._update_purpose_line()
             try:
                 library = self.query_one(PersonasLibraryPane)
             except QueryError:
@@ -2288,7 +2286,7 @@ class PersonasScreen(BaseAppScreen):
                 self._count_cache_key = None
                 self._characters = []
                 self._character_total = 0
-                self._update_status_row()
+                self._update_purpose_line()
                 if self.state.active_mode != "characters":
                     return
                 if self.state.runtime_source == "server":
@@ -2545,7 +2543,7 @@ class PersonasScreen(BaseAppScreen):
         else:
             self._profile_lookup_recovery_state = None
         self._profiles = [dict(record) for record in (profiles or [])]
-        self._update_status_row()
+        self._update_purpose_line()
         if not self.is_mounted or self.state.active_mode != "personas":
             # A late result must not render persona rows into another mode.
             return
@@ -3071,10 +3069,7 @@ class PersonasScreen(BaseAppScreen):
             self.query_one(f"#personas-mode-{chip_mode}", Button).set_class(
                 chip_mode == mode, "is-active"
             )
-        self.query_one("#personas-status-row", Static).update(self._status_row_text())
-        self.query_one("#personas-purpose", Static).update(
-            self._mode_descriptor_text(mode)
-        )
+        self._update_purpose_line()
         library = self.query_one(PersonasLibraryPane)
         library.set_mode(mode)
         self._sync_local_character_actions()
@@ -3190,25 +3185,40 @@ class PersonasScreen(BaseAppScreen):
             )
         )
 
-    def _status_row_text(self) -> str:
+    def _purpose_line_text(self) -> str:
+        """Mode descriptor plus the live item count on one line (F-033).
+
+        The count mirrors what the retired status strip showed: the paged
+        total for characters, the loaded profile count for personas, and the
+        cached list sizes for dictionaries/lore (empty until that mode's
+        first render lands, same as the old strip's pre-load "0").
+        """
         mode = self.state.active_mode
+        descriptor = self._mode_descriptor_text(mode)
+        count: int | None = None
         if mode == "characters":
             # ``_characters`` is now one page; the full-library count lives in
             # ``_character_total``.
-            return f"Characters: {self._character_total}"
-        if mode == "personas":
-            return f"Personas: {len(self._profiles)}"
-        return f"Mode: {MODE_LABELS.get(mode, mode)}"
+            count = self._character_total
+        elif mode == "personas":
+            count = len(self._profiles)
+        elif mode == "dictionaries":
+            count = len(self._dictionaries_cache)
+        elif mode == "lore":
+            count = len(self._lore_books_cache)
+        if count is None:
+            return descriptor
+        return f"{descriptor.rstrip('.')} · {count}"
 
-    def _update_status_row(self) -> None:
-        """Refresh the status row text; tolerate refreshes racing teardown."""
+    def _update_purpose_line(self) -> None:
+        """Refresh the merged purpose/count line; tolerate teardown races."""
         try:
-            self.query_one("#personas-status-row", Static).update(
-                self._status_row_text()
+            self.query_one("#personas-purpose", Static).update(
+                self._purpose_line_text()
             )
         except Exception:
             logger.opt(exception=True).debug(
-                "Could not update the personas status row."
+                "Could not update the personas purpose line."
             )
 
     # ===== Selection =====
@@ -3426,7 +3436,7 @@ class PersonasScreen(BaseAppScreen):
         )
         self._sync_inspector_console_actions()
         self._update_title()
-        self._update_status_row()
+        self._update_purpose_line()
         await self._refresh_dictionary_versions()
         await self._refresh_dictionary_attachments()
 
@@ -3486,7 +3496,7 @@ class PersonasScreen(BaseAppScreen):
         )
         self._sync_inspector_console_actions()
         self._update_title()
-        self._update_status_row()
+        self._update_purpose_line()
         await self._refresh_lore_attachments()
 
     async def _refresh_lore_attachments(self) -> None:
@@ -8650,7 +8660,7 @@ class PersonasScreen(BaseAppScreen):
             await self.query_one(PersonasInspectorPane).clear_selection()
             await self._render_dictionary_rows(query=self.state.search_query)
             self._update_title()
-            self._update_status_row()
+            self._update_purpose_line()
             return
         elif kind == "lore":
             # No staleness re-check here (unlike _after_delete's character/
@@ -8691,7 +8701,7 @@ class PersonasScreen(BaseAppScreen):
             await self.query_one(PersonasInspectorPane).clear_selection()
             await self._render_lore_rows(query=self.state.search_query)
             self._update_title()
-            self._update_status_row()
+            self._update_purpose_line()
             return
         else:
             service = getattr(
@@ -9075,8 +9085,8 @@ class PersonasScreen(BaseAppScreen):
         else:
             self._profile_lookup_recovery_state = None
         self._profiles = [dict(record) for record in (profiles or [])]
-        self._update_status_row()
-        self._update_status_row()
+        self._update_purpose_line()
+        self._update_purpose_line()
         if not self.is_mounted or self.state.active_mode != "personas":
             # Leave the selection, inspector, and center pane alone.
             return

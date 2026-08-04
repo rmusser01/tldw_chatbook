@@ -242,12 +242,15 @@ def _row_text(item) -> str:
 
 
 _SHARED_MODE_OWNER_CASES = (
+    # The count slot snapshots the pane's count line, which F-033 emptied for
+    # unfiltered lists (the total now lives in the merged header purpose
+    # line), so both cases expect "".
     pytest.param(
         "dictionaries",
         "dictionary",
         "New Dictionary Owner",
         "2 entries · on",
-        "1 dictionary",
+        "",
         id="dictionaries",
     ),
     pytest.param(
@@ -255,7 +258,7 @@ _SHARED_MODE_OWNER_CASES = (
         "lore",
         "New Lore Owner",
         "3 entries · on",
-        "1 lore book",
+        "",
         id="lore",
     ),
 )
@@ -424,6 +427,44 @@ class TestWorkbenchShell:
             # readiness line never claims ready (F-031 auto-select means a
             # selection exists, so this is the provider gate talking).
             assert "blocked" in str(readiness.renderable).lower()
+
+    async def test_header_band_merges_purpose_and_count(
+        self, mock_app_instance, stub_characters
+    ):
+        """F-033: purpose + count share one line; the separate status strip
+        and the library pane's duplicate count line are gone."""
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(170, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            # The five-strip band lost the standalone count strip entirely.
+            assert not screen.query("#personas-status-row")
+            purpose = screen.query_one("#personas-purpose", Static)
+            assert str(purpose.renderable) == "Characters — who the AI plays · 2"
+            # ...so the workbench starts one row higher than the old layout.
+            assert screen.query_one("#personas-workbench").region.y == 10
+            # The count renders once (header line), not again under the list.
+            count = screen.query_one("#personas-library-count", Static)
+            assert str(count.renderable) == ""
+
+    async def test_header_purpose_count_updates_per_mode(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        """F-033: the merged line carries the live count for each mode."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            purpose = screen.query_one("#personas-purpose", Static)
+            assert str(purpose.renderable) == "Characters — who the AI plays · 2"
+            await pilot.click("#personas-mode-personas")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert "Personas" in str(purpose.renderable)
+            assert "· 1" in str(purpose.renderable)
 
     async def test_library_rail_collapses_and_reopens_from_handle(
         self,
@@ -595,26 +636,26 @@ class TestWorkbenchShell:
             assert "ctrl+enter send" in footer.shortcut_text
             assert footer.shortcut_text != AppFooterStatus.DEFAULT_SHORTCUT_TEXT
 
-    async def test_status_row_shows_live_counts_per_mode(
+    async def test_purpose_line_shows_live_counts_per_mode(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
+        """F-033: the merged purpose line carries each mode's live count."""
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            status = screen.query_one("#personas-status-row", Static)
-            assert "Characters: 2" in str(status.renderable)
-            assert str(status.renderable) == "Characters: 2"
+            purpose = screen.query_one("#personas-purpose", Static)
+            assert "· 2" in str(purpose.renderable)
+            assert "Characters" in str(purpose.renderable)
             await pilot.click("#personas-mode-personas")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            assert "Personas: 1" in str(status.renderable)
-            # "prompts" is retired from the Personas mode strip (Task 7):
-            # "dictionaries" is the next still-unwired placeholder mode.
+            assert "· 1" in str(purpose.renderable)
+            assert "Personas" in str(purpose.renderable)
             await pilot.click("#personas-mode-dictionaries")
             await pilot.pause()
-            assert "Mode: Dictionaries" in str(status.renderable)
+            assert "Dictionaries" in str(purpose.renderable)
 
     async def test_placeholder_modes_show_placeholder_panel(
         self, mock_app_instance, stub_characters
@@ -703,9 +744,9 @@ class TestWorkbenchShell:
             )  # characters is the default mode
             await screen._apply_mode("personas")
             await pilot.pause()
-            assert (
-                str(screen.query_one("#personas-purpose", Static).renderable)
-                == "Personas — assistant profiles for roleplay and chat"
+            # F-033: the purpose line also carries the live count.
+            assert str(screen.query_one("#personas-purpose", Static).renderable) == (
+                "Personas — assistant profiles for roleplay and chat · 0"
             )
 
 
@@ -1076,7 +1117,7 @@ class TestPersonasMode:
 
             assert (
                 str(screen.query_one("#personas-purpose", Static).renderable)
-                == "Personas — assistant profiles for roleplay and chat"
+                == "Personas — assistant profiles for roleplay and chat · 1"
             )
             visible_copy = "\n".join(
                 [
@@ -1186,14 +1227,14 @@ class TestPersonasMode:
             assert screen._edit_mode == "edit"
             assert screen.query_one("#ccp-persona-editor-view").display is True
 
-    async def test_profile_save_refresh_failure_updates_status_row_and_recovery(
+    async def test_profile_save_refresh_failure_updates_purpose_line_and_recovery(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
-            assert "Personas: 1" in str(
-                screen.query_one("#personas-status-row", Static).renderable
+            assert "· 1" in str(
+                screen.query_one("#personas-purpose", Static).renderable
             )
 
             stub_scope_service.list_persona_profiles.side_effect = RuntimeError(
@@ -1208,8 +1249,8 @@ class TestPersonasMode:
 
             assert screen.query_one("#personas-service-error", Static)
             assert not list(screen.query(".personas-library-row"))
-            assert "Personas: 0" in str(
-                screen.query_one("#personas-status-row", Static).renderable
+            assert "· 0" in str(
+                screen.query_one("#personas-purpose", Static).renderable
             )
 
     async def test_profile_edit_save_calls_update(
@@ -1559,11 +1600,13 @@ class TestSearch:
             await self._wait_for_search_render(pilot)
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Detective Sam"]
+            # F-033: the match count now lives in the merged header purpose
+            # line; the pane's duplicate count line stays empty.
             count = str(screen.query_one("#personas-library-count", Static).renderable)
-            # Task 4: the library pages from the DB seam, so a search reports the
-            # match count as the page total (no separate "of <library>" copy).
-            # task-445: a total of exactly 1 reads singular ("1 character").
-            assert "1 character" in count
+            assert count == ""
+            assert "· 1" in str(
+                screen.query_one("#personas-purpose", Static).renderable
+            )
 
     async def test_clearing_search_restores_all_rows(
         self, mock_app_instance, stub_characters
@@ -1582,8 +1625,11 @@ class TestSearch:
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Detective Sam", "Lab Assistant"]
             count = str(screen.query_one("#personas-library-count", Static).renderable)
-            assert "2 characters" in count
-            assert "of" not in count
+            # F-033: unfiltered count renders once, in the header purpose line.
+            assert count == ""
+            assert "· 2" in str(
+                screen.query_one("#personas-purpose", Static).renderable
+            )
 
     async def test_search_is_case_insensitive(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
@@ -1618,10 +1664,13 @@ class TestSearch:
             await self._wait_for_search_render(pilot)
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Navigator"]
+            # F-033: the pane's duplicate count line stays empty; the merged
+            # header line carries the personas library total.
             count = str(screen.query_one("#personas-library-count", Static).renderable)
-            # Task 4: personas paginate in-memory; the count is the match total.
-            # task-445: a total of exactly 1 reads singular ("1 persona").
-            assert "1 persona" in count
+            assert count == ""
+            assert "· 2" in str(
+                screen.query_one("#personas-purpose", Static).renderable
+            )
 
     async def test_mode_switch_clears_search(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -5191,6 +5240,8 @@ class TestServerCharacterSourceIsolation:
             assert screen._characters == []
             assert screen._character_total == 0
             assert not list(screen.query(".personas-library-row"))
+            # F-033: the pane count line is empty for unfiltered lists; the
+            # (zero) total shows in the merged header purpose line instead.
             assert (
                 str(
                     screen.query_one(
@@ -5198,7 +5249,10 @@ class TestServerCharacterSourceIsolation:
                         Static,
                     ).renderable
                 )
-                == "0 characters"
+                == ""
+            )
+            assert "· 0" in str(
+                screen.query_one("#personas-purpose", Static).renderable
             )
             assert (
                 str(screen.query_one("#personas-library-sort", Button).label)
@@ -5218,19 +5272,22 @@ class TestServerCharacterSourceIsolation:
             "new_count",
         ),
         (
+            # F-033: the count slot snapshots the pane's count line, which is
+            # empty for unfiltered lists (the total moved to the merged
+            # header purpose line).
             (
                 "dictionaries",
                 "dictionary",
                 "New Dictionary Owner",
                 "2 entries · on",
-                "1 dictionary",
+                "",
             ),
             (
                 "lore",
                 "lore",
                 "New Lore Owner",
                 "3 entries · on",
-                "1 lore book",
+                "",
             ),
         ),
     )
@@ -5670,7 +5727,9 @@ class TestServerCharacterSourceIsolation:
                 await screen._apply_mode("prompts")
                 expected_mode = "prompts"
                 expected_rows = ()
-                expected_count = "0 prompts"
+                # F-033: unfiltered lists leave the pane count line empty;
+                # the total lives in the merged header purpose line.
+                expected_count = ""
 
             owner_sort = f"Sort: {expected_mode} current owner"
             owner_tag = f"Tag: {expected_mode} current owner"
