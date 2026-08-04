@@ -26,6 +26,12 @@ class ReadinessState(str, Enum):
     NEEDS_ATTENTION = "needs_attention"
     NO_TOOLS = "no_tools"
     STALE = "stale"
+    # task-2239: display-only state for the off-by-choice built-in (F-051).
+    # `resolve_state()` never produces it -- `builtin_readiness()` assigns
+    # it directly -- so genuine problems keep flowing through the reason-
+    # priority states above while an off/opt-in server stops borrowing the
+    # NEEDS_SETUP alarm vocabulary ("○ Needs setup") it used to wear.
+    OFF_OPT_IN = "off_opt_in"
 
 
 class ReasonCode(str, Enum):
@@ -128,6 +134,9 @@ STATE_GLYPHS: dict[ReadinessState, str] = {
     ReadinessState.NEEDS_ATTENTION: "!",
     ReadinessState.NO_TOOLS: "∅",
     ReadinessState.STALE: "◌",
+    # A smaller, quieter ring than NEEDS_SETUP's ○ -- "nothing running
+    # here", not "something missing".
+    ReadinessState.OFF_OPT_IN: "◦",
 }
 
 STATE_LABELS: dict[ReadinessState, str] = {
@@ -137,6 +146,7 @@ STATE_LABELS: dict[ReadinessState, str] = {
     ReadinessState.NEEDS_ATTENTION: "Needs attention",
     ReadinessState.NO_TOOLS: "No tools",
     ReadinessState.STALE: "Stale",
+    ReadinessState.OFF_OPT_IN: "Off (opt-in)",
 }
 
 # Short, human-facing phrase for each reason code (A3b). The inspector leads
@@ -265,7 +275,9 @@ def aggregate_summary(snapshots: list[ReadinessSnapshot]) -> str:
 # a STATE_CSS_CLASSES bucket (NEEDS_SETUP/NO_TOOLS/STALE all map to
 # "mcp-status-warning") don't need a meaningful order relative to each
 # other, only relative to NEEDS_ATTENTION (error) / CHECKING (info) /
-# READY (ready).
+# READY (ready). OFF_OPT_IN is deliberately ABSENT -- off-by-choice never
+# outranks anything; `worst_state()` resolves the all-off aggregate
+# explicitly below its loop instead.
 STATE_SEVERITY: tuple[ReadinessState, ...] = (
     ReadinessState.NEEDS_ATTENTION,
     ReadinessState.NEEDS_SETUP,
@@ -283,12 +295,18 @@ def worst_state(snapshots: list[ReadinessSnapshot]) -> ReadinessState:
     servers configured yet) and an all-READY list both resolve to READY --
     there is nothing to warn about in either case. Off/opt-in snapshots
     (the disabled built-in, F-051) are skipped for the same reason: an
-    off-by-choice server is not something to warn about.
+    off-by-choice server is not something to warn about. task-2239: when
+    off/opt-in rows are the ONLY rows (the pristine install), the aggregate
+    resolves to the muted OFF_OPT_IN display state rather than READY -- a
+    ready ● glyph in front of the "Built-in server is off …" sentence read
+    as a contradiction.
     """
     present = {snap.state for snap in snapshots if not is_off_opt_in(snap)}
     for state in STATE_SEVERITY:
         if state in present:
             return state
+    if snapshots:
+        return ReadinessState.OFF_OPT_IN
     return ReadinessState.READY
 
 
@@ -580,9 +598,16 @@ def builtin_readiness(
     via `python -m tldw_chatbook.MCP`, never in-process)."""
     if enabled:
         reasons: tuple[ReasonCode, ...] = ()
+        state = ReadinessState.READY
         message = "Served over stdio when an MCP client launches chatbook."
     else:
         reasons = (ReasonCode.NOT_CONFIGURED,)
+        # task-2239: the disabled built-in gets the muted OFF_OPT_IN display
+        # state instead of borrowing NEEDS_SETUP ("○ Needs setup" read as a
+        # setup defect on a pristine install). The reason tuple stays
+        # NOT_CONFIGURED so `is_off_opt_in()`'s fallback and the
+        # allowed-action derivation are unchanged.
+        state = ReadinessState.OFF_OPT_IN
         # F-050: the one-line message is short, plain copy -- the
         # Servers-mode callout renders "{glyph} {label}: {message}" on a
         # single compact-Button row, so config-file syntax here both
@@ -594,7 +619,7 @@ def builtin_readiness(
         server_key=BUILTIN_SERVER_KEY,
         label="tldw_chatbook (built-in)",
         source="builtin",
-        state=resolve_state(reasons),
+        state=state,
         reasons=reasons,
         message=message,
         transport="stdio",
@@ -602,13 +627,14 @@ def builtin_readiness(
         scope_display="—",
         detail={
             # Task 10: stored directly rather than left for callers to
-            # re-derive from `state is not NEEDS_SETUP` -- today those are
-            # equivalent (NOT_CONFIGURED is the only reason this function
-            # ever attaches), but the detail toggles UI needs the raw
-            # enabled flag decoupled from readiness-state classification so
-            # a future reason code reusing NEEDS_SETUP for the built-in
-            # server (e.g. an invalid expose combination) can't silently
-            # flip the "Enabled" checkbox's displayed value.
+            # re-derive from the readiness state (`state is not
+            # NEEDS_SETUP`, now `state is not OFF_OPT_IN` after task-2239)
+            # -- today those are equivalent (NOT_CONFIGURED is the only
+            # reason this function ever attaches), but the detail toggles
+            # UI needs the raw enabled flag decoupled from readiness-state
+            # classification so a future reason code reusing NEEDS_SETUP
+            # for the built-in server (e.g. an invalid expose combination)
+            # can't silently flip the "Enabled" checkbox's displayed value.
             "enabled": enabled,
             "expose_tools": expose_tools,
             "expose_resources": expose_resources,
@@ -630,6 +656,7 @@ STATE_CSS_CLASSES: dict[ReadinessState, str] = {
     ReadinessState.NEEDS_ATTENTION: "mcp-status-error",
     ReadinessState.NO_TOOLS: "mcp-status-warning",
     ReadinessState.STALE: "mcp-status-warning",
+    ReadinessState.OFF_OPT_IN: "mcp-status-muted",
 }
 
 

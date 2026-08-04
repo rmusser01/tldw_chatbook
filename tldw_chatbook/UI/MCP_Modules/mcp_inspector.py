@@ -26,6 +26,7 @@ from tldw_chatbook.MCP.readiness import (
     HubAction,
     ReadinessSnapshot,
     ReadinessState,
+    is_off_opt_in,
 )
 from tldw_chatbook.MCP.redaction import redact_mapping
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import tool_state_kind
@@ -1205,6 +1206,15 @@ class MCPInspector(Vertical):
                 # message instead of falling through to a stale "Ready"/reason
                 # line that would contradict the "Checking" badge above.
                 why_line = snapshot.message
+            elif is_off_opt_in(snapshot):
+                # task-2240: an off-by-choice built-in is not "not
+                # configured" -- with the lone-row preselect this is the
+                # first inspector content a new user sees, so the why-line
+                # explains the opt-in (and where the fix lives) instead of
+                # filing a setup defect.
+                why_line = (
+                    "Why · Off — enable it to let MCP clients use chatbook's tools."
+                )
             elif reason is not None:
                 why_line = f"Why · {REASON_LABELS[reason]}"
             elif snapshot.tool_count is not None:

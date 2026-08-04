@@ -268,16 +268,28 @@ async def test_update_matrix_sets_kill_switch_label_without_posting_a_toggle():
         await canvas.update_matrix([_global_row()], kill_switch=True, preview="")
         await pilot.pause()
         button = app.query_one("#mcp-perm-kill-switch", Button)
-        assert str(button.label) == "block tool calls in chat: yes ▸"
+        assert str(button.label) == "Block all tool calls in chat: On ▸"
         assert app.events == []
 
 
 @pytest.mark.asyncio
-async def test_kill_switch_button_default_label_reads_no():
+async def test_kill_switch_button_default_label_reads_off():
     app = PermissionsModeApp()
     async with app.run_test():
         button = app.query_one("#mcp-perm-kill-switch", Button)
-        assert str(button.label) == "block tool calls in chat: no ▸"
+        assert str(button.label) == "Block all tool calls in chat: Off ▸"
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_scope_hint_states_built_in_blast_radius():
+    """task-2242: the kill switch's blast radius (it also disables the
+    built-in tools, not just MCP-sourced ones) is stated persistently on a
+    hint line under the toggle -- not hidden in a tooltip."""
+    app = PermissionsModeApp()
+    async with app.run_test():
+        hint = app.query_one("#mcp-perm-kill-switch-hint", Static)
+        text = str(hint.renderable)
+        assert "built-in tools" in text
 
 
 @pytest.mark.asyncio

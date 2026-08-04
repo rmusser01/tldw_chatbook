@@ -13,6 +13,7 @@ from textual.widgets import Button, Label, Select, Static
 from tldw_chatbook.MCP.readiness import (
     STATE_CSS_CLASSES,
     STATE_GLYPHS,
+    STATE_LABELS,
     ReadinessSnapshot,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
@@ -54,6 +55,35 @@ _ROW_CHROME = 8
 # gutter) -- see _row_label's return and MCPRail.compose()'s "All servers"
 # row.
 _ALL_SERVERS_GUTTER = "  "
+
+
+def _present_states_legend(snapshots: list[ReadinessSnapshot]) -> str:
+    """Compact glyph legend for the states currently present in the rail.
+
+    task-2243: rail rows show glyph+name only, and decoding them required
+    the dim, bottom-of-canvas Servers-mode legend (which wraps at ~100
+    cols). Listing ONLY the present states directly under the "Servers"
+    heading keeps the decode short in the common case (a fresh install
+    reads just "◦ off (opt-in) · ⌂ built-in"). A per-row state-word badge
+    was considered and rejected: at the rail's real rendered widths
+    (~24-46 cols) a word column of up to 15 chars ("Needs attention")
+    would re-truncate the very labels A4 widened the budget to fit (the
+    built-in's 24-char label + glyph + count already nearly fills the
+    row), and it would have to thread through the F-057 width-aware
+    truncation machinery. Derived from STATE_GLYPHS/STATE_LABELS (in
+    STATE_GLYPHS order) so the line can never drift from the rows it
+    decodes; the ⌂ built-in marker is explained whenever a built-in row
+    is present (same copy the Servers-mode legend uses).
+    """
+    present = {snap.state for snap in snapshots}
+    parts = [
+        f"{glyph} {STATE_LABELS[state].lower()}"
+        for state, glyph in STATE_GLYPHS.items()
+        if state in present
+    ]
+    if any(snap.source == "builtin" for snap in snapshots):
+        parts.append("⌂ built-in")
+    return " · ".join(parts)
 
 
 def _row_prefix_and_label(
@@ -172,6 +202,15 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
     /* F-060: the zero-servers empty state reads as quiet guidance, not a
     row -- dim it and align its left edge with the rows' padding. */
     #mcp-rail-empty {
+        color: $text-muted;
+        padding: 0 1;
+    }
+    /* task-2243: the in-rail state legend decodes the rows' glyphs right
+    under the "Servers" heading -- same quiet dim tier as the empty state,
+    hugging its own (possibly wrapped) content. */
+    #mcp-rail-state-legend {
+        height: auto;
+        min-height: 0;
         color: $text-muted;
         padding: 0 1;
     }
@@ -296,6 +335,18 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         source_select._mcp_mount_echo_value = source_value
         yield source_select
         yield Static("Servers", classes="destination-section mcp-rail-heading")
+        # task-2243: decode the rows' state glyphs inline, right under the
+        # heading, instead of leaving the decode to the dim bottom-of-
+        # canvas Servers-mode legend -- present states only, so the line
+        # stays short (a fresh install reads "◦ off (opt-in) · ⌂ built-in").
+        # Nothing to decode at zero servers: the F-060 empty state below
+        # stands alone.
+        if self.snapshots:
+            yield Static(
+                _present_states_legend(self.snapshots),
+                id="mcp-rail-state-legend",
+                markup=False,
+            )
         self._row_keys = [None] + [snap.server_key for snap in self.snapshots]
         all_row = Button(
             f"{_ALL_SERVERS_GUTTER}All servers",

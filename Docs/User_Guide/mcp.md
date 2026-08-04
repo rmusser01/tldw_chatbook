@@ -7,9 +7,9 @@
 ## What this screen is for
 
 MCP manages MCP servers, scoped tools, permissions, and audit readiness
-(on-screen subtitle: "Manage MCP servers, scoped tools, permissions, and
-audit readiness."). It's organized into four modes: Servers, Tools,
-Permissions, and Audit.
+(on-screen subtitle: "MCP (Model Context Protocol) lets chatbook use
+external tools — most people never need to change anything here."). It's
+organized into four modes: Servers, Tools, Permissions, and Audit.
 
 ## Getting there
 

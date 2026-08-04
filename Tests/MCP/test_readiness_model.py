@@ -7,6 +7,8 @@ from tldw_chatbook.MCP.readiness import (
     REASON_TO_ACTIONS,
     REASON_TO_STATE,
     STATE_CSS_CLASSES,
+    STATE_GLYPHS,
+    STATE_LABELS,
     HubAction,
     ReadinessSnapshot,
     ReadinessState,
@@ -133,6 +135,29 @@ def test_aggregate_summary_excludes_off_builtin_from_setup_math():
 def test_state_css_classes_complete():
     assert set(STATE_CSS_CLASSES) == set(ReadinessState)
     assert all(v.startswith("mcp-status-") for v in STATE_CSS_CLASSES.values())
+
+
+def test_off_opt_in_has_its_own_muted_display_state():
+    """task-2239: the off-by-choice built-in gets its own muted display
+    state -- no alarm glyph, no 'Needs setup' vocabulary -- while genuine
+    problems keep flowing through the existing states. Every display map
+    covers the new state so no surface can fall over rendering it."""
+    assert ReadinessState.OFF_OPT_IN in STATE_GLYPHS
+    assert ReadinessState.OFF_OPT_IN in STATE_LABELS
+    # Muted, and distinct from the ready/alarm vocabulary it replaces.
+    assert STATE_CSS_CLASSES[ReadinessState.OFF_OPT_IN] == "mcp-status-muted"
+    assert STATE_GLYPHS[ReadinessState.OFF_OPT_IN] not in (
+        STATE_GLYPHS[ReadinessState.READY],
+        STATE_GLYPHS[ReadinessState.NEEDS_ATTENTION],
+    )
+    off = builtin_readiness(enabled=False)
+    assert off.state is ReadinessState.OFF_OPT_IN
+    badge = off.badge_text()
+    assert badge == f"{STATE_GLYPHS[ReadinessState.OFF_OPT_IN]} Off (opt-in)"
+    assert "Needs setup" not in badge
+    # Genuine states are untouched.
+    assert builtin_readiness(enabled=True).state is ReadinessState.READY
+    assert STATE_LABELS[ReadinessState.NEEDS_SETUP] == "Needs setup"
 
 
 def test_as_checking_replaces_state_and_message():
