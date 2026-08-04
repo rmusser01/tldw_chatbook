@@ -1450,7 +1450,12 @@ class LibraryScreen(BaseAppScreen):
         # queue went from idle to active -- the settle toast reports deltas
         # against that baseline.
         self._library_ingest_last_active_count: int = 0
-        self._library_ingest_batch_baseline: tuple[int, int, int] = (0, 0, 0)
+        self._library_ingest_batch_baseline: tuple[int, int, int, int] = (
+            0,
+            0,
+            0,
+            0,
+        )
         # (task-2015) Two-press "Clear finished": first press arms, second
         # clears; any registry mutation disarms.
         self._library_ingest_clear_finished_armed: bool = False
@@ -5967,6 +5972,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_ingest_last_active_count = active_count
         done_now = counts.get("done", 0)
         failed_now = counts.get("failed", 0)
+        skipped_now = counts.get("skipped", 0)
         # (task-2041) A dedup match reaches DONE without importing anything;
         # counting it as "imported" made the toast contradict the row copy.
         # Matches are recognised by the writer's progress-message prefix
@@ -5982,13 +5988,17 @@ class LibraryScreen(BaseAppScreen):
             matched_now = count_duplicate_done_jobs(
                 jobs_fn() if callable(jobs_fn) else ()
             )
-        baseline_done, baseline_failed, baseline_matched = (
-            self._library_ingest_batch_baseline
-        )
+        (
+            baseline_done,
+            baseline_failed,
+            baseline_matched,
+            baseline_skipped,
+        ) = self._library_ingest_batch_baseline
         if (
             done_now < baseline_done
             or failed_now < baseline_failed
             or matched_now < baseline_matched
+            or skipped_now < baseline_skipped
         ):
             # (task-2015 review) Clear/dismiss mid-batch shrinks DONE/FAILED
             # below the baseline; without re-anchoring, the settle deltas go
@@ -5997,39 +6007,50 @@ class LibraryScreen(BaseAppScreen):
             baseline_done = min(baseline_done, done_now)
             baseline_failed = min(baseline_failed, failed_now)
             baseline_matched = min(baseline_matched, matched_now)
+            baseline_skipped = min(baseline_skipped, skipped_now)
             self._library_ingest_batch_baseline = (
                 baseline_done,
                 baseline_failed,
                 baseline_matched,
+                baseline_skipped,
             )
         if previous_active == 0 and active_count > 0:
             self._library_ingest_batch_baseline = (
                 done_now,
                 failed_now,
                 matched_now,
+                skipped_now,
             )
         elif previous_active > 0 and active_count == 0:
-            baseline_done, baseline_failed, baseline_matched = (
-                self._library_ingest_batch_baseline
-            )
+            (
+                baseline_done,
+                baseline_failed,
+                baseline_matched,
+                baseline_skipped,
+            ) = self._library_ingest_batch_baseline
             matched = max(0, matched_now - baseline_matched)
             imported = (done_now - baseline_done) - matched
             failed = failed_now - baseline_failed
-            if imported > 0 or matched > 0 or failed > 0:
+            skipped = max(0, skipped_now - baseline_skipped)
+            if imported > 0 or matched > 0 or failed > 0 or skipped > 0:
                 parts = []
                 if imported > 0:
                     parts.append(f"{imported} imported")
                 if matched > 0:
                     parts.append(f"{matched} already in Library")
+                if skipped > 0:
+                    parts.append(f"{skipped} skipped")
                 if failed > 0:
                     parts.append(f"{failed} failed")
                 notify = getattr(self.app_instance, "notify", None)
                 if callable(notify):
+                    # (task-2220) Skips are neutral -- only a batch whose
+                    # sole outcome is real failures warns.
                     notify(
                         "Ingest finished — " + " · ".join(parts),
                         severity=(
                             "information"
-                            if imported > 0 or matched > 0
+                            if imported > 0 or matched > 0 or failed == 0
                             else "warning"
                         ),
                     )
@@ -14384,7 +14405,12 @@ class LibraryScreen(BaseAppScreen):
             terminal = [
                 job
                 for job in jobs_fn()
-                if job.state in (IngestJobState.DONE, IngestJobState.FAILED)
+                if job.state
+                in (
+                    IngestJobState.DONE,
+                    IngestJobState.FAILED,
+                    IngestJobState.SKIPPED,
+                )
             ]
             known = {job.job_id for job in terminal}
             terminal.extend(

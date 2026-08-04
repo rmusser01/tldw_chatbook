@@ -1649,7 +1649,7 @@ def test_unsupported_line_names_files_and_matches_gate():
         ),
     )
     assert mixed.unsupported_line == (
-        "1 unsupported file will be recorded as a failure: x.json."
+        "1 unsupported file will be skipped: x.json."
     )
 
     blocked = build_library_ingest_state(
@@ -1932,3 +1932,60 @@ def test_all_match_selection_gets_consent_line_and_stays_enabled():
         "starting will re-check and match, not re-import."
     )
     assert state.commit_summary_line == "0 will import · 1 will match"
+
+
+def test_skipped_jobs_render_neutral_and_count_separately():
+    """(task-2220 ruling) A skipped job renders with the neutral glyph, no
+    Retry, dismiss offered; the tally counts skips in their own segment,
+    never as failures; the armed clear label counts them as finished but
+    not as failed."""
+    skipped = _job(
+        job_id="ingest-job-1",
+        state=IngestJobState.SKIPPED,
+        source_path="/tmp/photo.jpg",
+        error="Unsupported file type: .jpg.",
+    )
+    done = _job(job_id="ingest-job-2", state=IngestJobState.DONE)
+    state = build_library_ingest_state(
+        (skipped, done),
+        form=LibraryIngestFormState(),
+        clear_finished_armed=True,
+    )
+    row = next(r for r in state.queue_rows if r.job_id == "ingest-job-1")
+    assert row.glyph == "○"
+    assert row.line.startswith("○ skipped · photo.jpg")
+    assert row.can_retry is False
+    assert row.can_dismiss is True
+    assert state.queue_counts_line == "1 done · 1 skipped — all ingests"
+    assert state.queue_clear_finished_label == (
+        "Press again to clear 2 finished"
+    )
+    assert [j.job_id for j in state.recent_jobs] == [
+        "ingest-job-1",
+        "ingest-job-2",
+    ]
+
+
+def test_commit_summary_splits_skip_from_fail():
+    """(task-2220) Unsupported files forecast as 'will skip'; empty files
+    keep 'will fail' (they are enqueued and genuinely fail)."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/folder"),
+        preflight=PreflightResult(
+            type_groups={
+                "generic": ["/tmp/a.txt", "/tmp/b.txt"],
+                "unsupported": ["/tmp/pic.jpg"],
+            },
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=4,
+            empty_files=("/tmp/zero.txt",),
+        ),
+    )
+    assert state.commit_summary_line == (
+        "2 will import · 1 will skip · 1 will fail"
+    )
+    assert "will be skipped: pic.jpg." in state.unsupported_line

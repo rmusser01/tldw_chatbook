@@ -2611,13 +2611,29 @@ class LibraryIngestQueueMixin:
             error_text = _sanitize_library_ingest_error_text(
                 str(result.get("error") or "Library ingest parsing failed.")
             )
-            self.library_ingest_jobs.mark_failed(
-                job_id,
-                error=error_text or "Library ingest parsing failed.",
-                permanent=bool(result.get("permanent", False)),
-                error_detail=result.get("error_detail"),
-                stt_failure_provenance=result.get("stt_failure_provenance"),
-            )
+            error_detail = result.get("error_detail")
+            # (task-2220 owner ruling) An unsupported file was never
+            # attempted -- it records as SKIPPED, a neutral terminal
+            # outcome; "failed" is reserved for files the pipeline tried.
+            if (
+                isinstance(error_detail, dict)
+                and error_detail.get("category") == "unsupported_file_type"
+            ):
+                self.library_ingest_jobs.mark_skipped(
+                    job_id,
+                    reason=error_text or "Unsupported file type.",
+                    error_detail=error_detail,
+                )
+            else:
+                self.library_ingest_jobs.mark_failed(
+                    job_id,
+                    error=error_text or "Library ingest parsing failed.",
+                    permanent=bool(result.get("permanent", False)),
+                    error_detail=error_detail,
+                    stt_failure_provenance=result.get(
+                        "stt_failure_provenance"
+                    ),
+                )
         self._top_up_ingest_parse_pool()
 
     def _handle_broken_ingest_parse_pool(
