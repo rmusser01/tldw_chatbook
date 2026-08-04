@@ -1,7 +1,7 @@
 ---
 id: TASK-2050
 title: Watchlists resume affordance for auto-paused sources
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-02'
 labels:
