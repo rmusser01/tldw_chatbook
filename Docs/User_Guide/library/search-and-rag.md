@@ -280,14 +280,8 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
   unavailable."
 
 —
-*Verified against dev @ bd05a692a — 2026-07-31*
-
-*Updated for RAG UX v2 PR-2 (match bands, coverage notes, scope summary,
-quiet no-match, evidence-card keys, snippet clamping, deps copy) without a
-fresh live pass — the stamp above still refers to the last full live
-verification of this page.*
-
-*Updated for RAG UX v2 PR-3 (RAG Answer mode now generates a grounded,
-cited answer or an honest abstention — see "The generated answer" — plus
-the provider-requirement gate) without a fresh live pass — the stamp
-above still refers to the last full live verification of this page.*
+*Verified against dev @ 8807ea1e4 — 2026-08-03 (task-2150 live smoke with a
+real provider: abstention on an unsupported query and a grounded, cited
+answer with per-source honesty both observed live; match bands, coverage
+notes, scope summary, quiet no-match, and the mode-aware heading all
+confirmed on the same pass).*
