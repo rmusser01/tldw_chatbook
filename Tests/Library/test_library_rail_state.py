@@ -10,9 +10,16 @@ from tldw_chatbook.Library.library_rail_state import (
 
 def test_library_rail_defaults():
     prefs = LibraryRailPreferences()
-    assert LIBRARY_RAIL_SECTION_IDS == ("browse", "create", "ingest", "details")
+    assert LIBRARY_RAIL_SECTION_IDS == (
+        "browse",
+        "create",
+        "study",
+        "ingest",
+        "details",
+    )
     assert prefs.browse_open is True
     assert prefs.create_open is True
+    assert prefs.study_open is True
     assert prefs.ingest_open is True
     assert prefs.details_open is False
 

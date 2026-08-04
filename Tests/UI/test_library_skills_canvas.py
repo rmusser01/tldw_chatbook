@@ -1518,11 +1518,15 @@ async def test_library_skill_discard_button_leaves_without_saving():
 
         discard = screen.query_one("#library-skill-discard", Button)
         assert discard.disabled is True
+        # F-018: the disabled state carries its reason, live-flipped by the
+        # in-place patcher alongside `disabled`.
+        assert "no unsaved changes" in str(discard.tooltip).lower()
 
         screen.query_one("#library-skill-name", Input).value = "dirty-demo"
         await pilot.pause()
         assert screen._library_skill_dirty is True
         assert discard.disabled is False
+        assert "without saving" in str(discard.tooltip).lower()
 
         discard.press()
         await pilot.pause()
@@ -2051,7 +2055,13 @@ async def test_skill_editor_model_override_is_read_only():
 @pytest.mark.asyncio
 async def test_footer_u_hint_only_registered_on_search_row():
     """task-420: the u action hard-gates on the Search/RAG row; the footer
-    hint must not advertise it anywhere else."""
+    hint must not advertise it anywhere else.
+
+    F-012 update: non-search rows no longer register an EMPTY set -- they
+    advertise the one key that works there (``/`` focus search). The
+    task-420 contract being pinned here is that ``u`` (and the
+    evidence-card keys) appear ONLY on the Search row.
+    """
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesListScopeService([])
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
@@ -2067,7 +2077,8 @@ async def test_footer_u_hint_only_registered_on_search_row():
         await pilot.pause()
         await pilot.pause()
         source, shortcuts = screen._footer_shortcut_registration
-        assert shortcuts == ()
+        assert shortcuts == LibraryScreen.LIBRARY_LANDING_SHORTCUTS
+        assert all(key != "u" for key, _label in shortcuts)
 
         screen.query_one("#library-row-browse-search").press()
         await pilot.pause()
@@ -2254,7 +2265,12 @@ async def test_handle_library_skills_import_browse_folder_pushes_directory_dialo
 
 
 def test_library_screen_binds_skill_editor_keys():
-    keys = {binding[0] for binding in LibraryScreen.BINDINGS}
+    # BINDINGS mixes plain tuples with `Binding(...)` objects (the
+    # RAG-36 evidence-card keys) -- read the key off either shape.
+    keys = {
+        binding[0] if isinstance(binding, tuple) else binding.key
+        for binding in LibraryScreen.BINDINGS
+    }
     assert "ctrl+s" in keys
     assert "escape" in keys
 
@@ -2607,3 +2623,99 @@ def test_reset_requires_confirmation():
         fake, SimpleNamespace(stop=lambda: None)
     )
     assert fake._library_skill_trust_confirming_reset is True
+
+
+# -- F-019: the skill editor's accelerators advertise themselves ---------
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_shows_ctrl_s_and_escape_hints_inline():
+    """F-019: the editor's ctrl+s/escape bindings (task-424) were
+    advertised nowhere; a dim inline hint line carries them now, matching
+    the file-notes git panel's guide line."""
+    app = _EditorHost(mode="editor", editor_state=_editor_state())
+    async with app.run_test() as pilot:
+        hints = str(
+            pilot.app.query_one("#library-skill-editor-hints", Static).renderable
+        )
+        assert "ctrl+s" in hints
+        assert "esc" in hints.lower()
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_hints_hidden_where_ctrl_s_is_gated_off():
+    """ctrl+s does not save during the conflict banner or the delete
+    confirmation (the Save button is gone in both), so the hint line must
+    not advertise it there -- an advertised-but-dead key is the F-018/F-019
+    defect class."""
+    conflict_app = _EditorHost(mode="editor", editor_state=_editor_state(), conflict=True)
+    async with conflict_app.run_test() as pilot:
+        assert len(pilot.app.query("#library-skill-editor-hints")) == 0
+
+    delete_app = _EditorHost(
+        mode="editor", editor_state=_editor_state(), confirming_delete=True
+    )
+    async with delete_app.run_test() as pilot:
+        assert len(pilot.app.query("#library-skill-editor-hints")) == 0
+
+
+# -- F-018: every disabled Library button says why -----------------------
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_discard_tooltip_explains_its_disabled_state():
+    """F-018: Discard on a clean editor is disabled -- the tooltip says
+    why; once dirty, the tooltip describes the action."""
+    clean_app = _EditorHost(mode="editor", editor_state=_editor_state())
+    async with clean_app.run_test() as pilot:
+        discard = pilot.app.query_one("#library-skill-discard", Button)
+        assert discard.disabled is True
+        assert "no unsaved changes" in str(discard.tooltip).lower()
+
+    dirty_app = _EditorHost(mode="editor", editor_state=_editor_state(), dirty=True)
+    async with dirty_app.run_test() as pilot:
+        discard = pilot.app.query_one("#library-skill-discard", Button)
+        assert discard.disabled is False
+        assert "without saving" in str(discard.tooltip).lower()
+
+
+@pytest.mark.asyncio
+async def test_skill_trust_buttons_carry_reason_tooltips():
+    """F-018: the trust panel's Unlock/Review/Approve explain their
+    disabled state per trust status, and describe the action when enabled."""
+    # Trusted + clean: all three disabled, each with a reason.
+    app = _EditorHost(mode="editor", editor_state=_editor_state())
+    async with app.run_test() as pilot:
+        unlock = pilot.app.query_one("#library-skill-trust-unlock", Button)
+        review = pilot.app.query_one("#library-skill-trust-review", Button)
+        approve = pilot.app.query_one("#library-skill-trust-approve", Button)
+        assert unlock.disabled is True
+        assert "isn't locked" in str(unlock.tooltip)
+        assert review.disabled is True
+        assert "isn't trust-blocked" in str(review.tooltip)
+        assert approve.disabled is True
+        assert "review" in str(approve.tooltip).lower()
+
+    # Locked: Unlock becomes available with an action tooltip.
+    locked_app = _EditorHost(
+        mode="editor",
+        editor_state=_editor_state(trust_status="trust_locked", trust_blocked=True),
+    )
+    async with locked_app.run_test() as pilot:
+        unlock = pilot.app.query_one("#library-skill-trust-unlock", Button)
+        assert unlock.disabled is False
+        assert "unlock" in str(unlock.tooltip).lower()
+
+    # Blocked + reviewable + an active review: Review and Approve available.
+    review_app = _EditorHost(
+        mode="editor",
+        editor_state=_editor_state(
+            trust_status="quarantined_modified", trust_blocked=True
+        ),
+        active_review={"changed_files": ["SKILL.md"]},
+    )
+    async with review_app.run_test() as pilot:
+        review = pilot.app.query_one("#library-skill-trust-review", Button)
+        approve = pilot.app.query_one("#library-skill-trust-approve", Button)
+        assert review.disabled is False
+        assert approve.disabled is False

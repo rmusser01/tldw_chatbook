@@ -24,8 +24,18 @@ def test_shell_sections_rows_and_targets_are_fixed():
         )
     )
     assert shell.header_line == "Library | Local"
-    assert [s.section_id for s in shell.sections] == ["browse", "create", "ingest"]
-    assert [s.title for s in shell.sections] == ["Browse", "Create", "Import / Export"]
+    assert [s.section_id for s in shell.sections] == [
+        "browse",
+        "create",
+        "study",
+        "ingest",
+    ]
+    assert [s.title for s in shell.sections] == [
+        "Browse",
+        "Create",
+        "Study",
+        "Import / Export",
+    ]
     browse = shell.sections[0]
     assert [r.row_id for r in browse.rows] == [
         "browse-media",
@@ -80,17 +90,11 @@ def test_shell_sections_rows_and_targets_are_fixed():
         "create-note",
         LIBRARY_ROW_CREATE_PROMPT,
         LIBRARY_ROW_CREATE_SKILL,
-        "create-study",
-        "create-flashcards",
-        "create-quizzes",
     ]
     assert [r.title for r in shell.sections[1].rows] == [
         "New note",
         "New prompt",
         "New skill",
-        "Study decks",
-        "Flashcards",
-        "Quizzes",
     ]
     assert (
         shell.sections[1].rows[0].target_kind,
@@ -99,7 +103,18 @@ def test_shell_sections_rows_and_targets_are_fixed():
         "canvas",
         "notes-create",
     )
-    ingest = shell.sections[2]
+    # F-017: the Study rows are handoffs ("Continue in Study"), grouped in
+    # their own section -- not under Create, which is for making things.
+    study = shell.sections[2]
+    assert [r.row_id for r in study.rows] == [
+        "create-study",
+        "create-flashcards",
+        "create-quizzes",
+    ]
+    assert [r.title for r in study.rows] == ["Study decks", "Flashcards", "Quizzes"]
+    assert all(r.target_kind == "handoff" for r in study.rows)
+    assert [r.target_id for r in study.rows] == ["study", "flashcards", "quizzes"]
+    ingest = shell.sections[3]
     assert [r.title for r in ingest.rows] == ["Import media", "Export"]
     assert (ingest.rows[0].target_kind, ingest.rows[0].target_id) == (
         "canvas",
@@ -118,8 +133,58 @@ def test_empty_selection_yields_landing_canvas():
     assert shell.canvas_kind == "empty"
     assert (
         shell.canvas_empty_copy
-        == "Search, pick a content type, or ingest something new."
+        == "Search everything, pick a section on the left, or add something new."
     )
+
+
+def test_jargon_rows_carry_plain_language_subtitles():
+    """F-013: the load-bearing jargon rows get a one-line plain-language
+    gloss; already-plain rows stay unglossed so the rail doesn't stutter."""
+    shell = build_library_shell_state(LibraryShellInput())
+    subtitles = {
+        row.row_id: row.subtitle
+        for section in shell.sections
+        for row in section.rows
+    }
+    assert subtitles["browse-media"] == "imported files & transcripts"
+    assert subtitles[LIBRARY_ROW_BROWSE_PROMPTS] == "saved instructions for the AI"
+    assert subtitles[LIBRARY_ROW_BROWSE_SKILLS] == "installable AI abilities"
+    assert subtitles["browse-collections"] == "saved groups of content"
+    assert subtitles["browse-search"] == "search everything"
+    # Plain-language rows carry no gloss.
+    assert subtitles["browse-conversations"] == ""
+    assert subtitles["browse-notes"] == ""
+    assert subtitles["create-note"] == ""
+    assert subtitles["ingest-import-media"] == ""
+    assert subtitles["ingest-export"] == ""
+
+
+def test_counts_loading_marks_snapshot_backed_rows_but_not_collections():
+    """F-014: while the source snapshot is in flight, every row whose count
+    rides that snapshot shows the loading placeholder. Collections is the
+    one exception: its count is fetched lazily (first canvas visit), so a
+    placeholder would sit there indefinitely on the landing screen."""
+    shell = build_library_shell_state(LibraryShellInput(counts_loading=True))
+    rows = {
+        row.row_id: row for section in shell.sections for row in section.rows
+    }
+    loading_ids = {
+        "browse-media",
+        "browse-conversations",
+        "browse-notes",
+        LIBRARY_ROW_BROWSE_PROMPTS,
+        LIBRARY_ROW_BROWSE_SKILLS,
+        "create-study",
+        "create-flashcards",
+        "create-quizzes",
+    }
+    for row_id, row in rows.items():
+        assert row.count_loading is (row_id in loading_ids), row_id
+    assert rows["browse-collections"].count_loading is False
+    # Search, Create-verb and Import/Export rows carry no count at all.
+    assert rows["browse-search"].count_loading is False
+    assert rows["create-note"].count_loading is False
+    assert rows["ingest-import-media"].count_loading is False
 
 
 def test_conversations_selection_yields_conversations_canvas():
@@ -160,7 +225,7 @@ def test_handoff_rows_target_handoff_kind_and_carry_their_target_id(
     row_id, expected_target
 ):
     shell = build_library_shell_state(LibraryShellInput(), selected_row_id=row_id)
-    row = next(r for r in shell.sections[1].rows if r.row_id == row_id)
+    row = next(r for r in shell.sections[2].rows if r.row_id == row_id)
     assert row.target_kind == "handoff"
     assert row.target_id == expected_target
     assert (shell.canvas_kind, shell.canvas_target) == ("handoff", expected_target)
@@ -349,13 +414,15 @@ def test_server_header_line():
     assert shell.header_line == "Library | Server: lab-box"
 
 
-def _create_row(shell, row_id):
-    return next(r for r in shell.sections[1].rows if r.row_id == row_id)
+def _study_row(shell, row_id):
+    # F-017: the study handoff rows live in the "study" section (index 2),
+    # not under Create.
+    return next(r for r in shell.sections[2].rows if r.row_id == row_id)
 
 
 def test_flashcards_due_count_renders_bright_when_positive():
     shell = build_library_shell_state(LibraryShellInput(flashcards_due_count=12))
-    row = _create_row(shell, "create-flashcards")
+    row = _study_row(shell, "create-flashcards")
     assert row.count_display == " due: 12"
     assert row.count_emphasis == "bright"
     # count/count_known are untouched by the flashcards due copy -- the row
@@ -365,14 +432,14 @@ def test_flashcards_due_count_renders_bright_when_positive():
 
 def test_flashcards_due_count_renders_dim_when_zero():
     shell = build_library_shell_state(LibraryShellInput(flashcards_due_count=0))
-    row = _create_row(shell, "create-flashcards")
+    row = _study_row(shell, "create-flashcards")
     assert row.count_display == " due: 0"
     assert row.count_emphasis == "dim"
 
 
 def test_flashcards_due_count_none_yields_no_display_or_emphasis():
     shell = build_library_shell_state(LibraryShellInput(flashcards_due_count=None))
-    row = _create_row(shell, "create-flashcards")
+    row = _study_row(shell, "create-flashcards")
     assert row.count_display == ""
     assert row.count_emphasis == ""
 
@@ -381,8 +448,8 @@ def test_study_decks_and_quizzes_counts_land_in_row_count():
     shell = build_library_shell_state(
         LibraryShellInput(study_decks_count=3, quizzes_count=2)
     )
-    decks_row = _create_row(shell, "create-study")
-    quizzes_row = _create_row(shell, "create-quizzes")
+    decks_row = _study_row(shell, "create-study")
+    quizzes_row = _study_row(shell, "create-quizzes")
     assert (decks_row.count, decks_row.count_known) == (3, True)
     assert (quizzes_row.count, quizzes_row.count_known) == (2, True)
     # Neither the study-decks nor the quizzes row uses the count_display
@@ -393,7 +460,7 @@ def test_study_decks_and_quizzes_counts_land_in_row_count():
 
 def test_study_decks_and_quizzes_counts_default_to_none():
     shell = build_library_shell_state(LibraryShellInput())
-    decks_row = _create_row(shell, "create-study")
-    quizzes_row = _create_row(shell, "create-quizzes")
+    decks_row = _study_row(shell, "create-study")
+    quizzes_row = _study_row(shell, "create-quizzes")
     assert decks_row.count is None
     assert quizzes_row.count is None
