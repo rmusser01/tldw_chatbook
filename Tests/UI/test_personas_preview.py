@@ -45,6 +45,18 @@ def _line_texts(app) -> list[str]:
     return [str(line.renderable) for line in app.query(".personas-preview-line")]
 
 
+async def test_toggle_label_states_the_payoff():
+    """task-2234: the toggle says what you get ("try a test chat, nothing
+    saved"), not the feature name; the ▸/▾ glyph still tracks expand state."""
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        toggle = pilot.app.query_one("#personas-preview-toggle", Button)
+        assert str(toggle.label) == "▸ Try a test chat (nothing saved)"
+        pilot.app.query_one("#personas-preview-toggle", Button).press()
+        await pilot.pause()
+        assert str(toggle.label) == "▾ Try a test chat (nothing saved)"
+
+
 async def test_collapsed_by_default_and_toggle_expands():
     app = PreviewApp()
     async with app.run_test() as pilot:

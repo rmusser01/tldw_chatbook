@@ -50,7 +50,7 @@ Three rows always show: **"Tags: none"** (or a comma-separated list),
 the first alternate greeting, if any, is previewed underneath. **Edit** opens
 the editor, and stays disabled until a saved character is loaded. Below the
 rows sit the **Voice & Speech** block (next section) and, in Characters and
-Personas modes, the **Preview conversation** pane.
+Personas modes, the **Try a test chat (nothing saved)** pane.
 
 ### Voice & Speech
 
@@ -66,12 +66,12 @@ before assigning."** — save first, reopen the character, then pick a voice.
 You may also see **"Loading voice profiles…"** or, after profiles change
 underneath you, **"Voice profiles changed; reselect to retry."**
 
-### Preview conversation
+### Try a test chat (Preview conversation)
 
-In Characters and Personas modes the centre pane ends with a
-**Preview conversation** toggle — "Test the selected character or persona
-in an ephemeral conversation; nothing is saved." Expand it to try the
-character before committing to a real chat:
+In Characters and Personas modes the centre pane starts with a
+**Try a test chat (nothing saved)** toggle — "Test the selected character
+or persona in an ephemeral conversation; nothing is saved." Expand it to
+try the character before committing to a real chat:
 
 | Control | What it does |
 |---|---|
@@ -80,7 +80,7 @@ character before committing to a real chat:
 | "Test message..." | Type the line you want to try |
 | **Test Reply** | Sends it and shows the reply in the transcript above |
 | **Reset** | Clears the test conversation |
-| **Open in Console** | Carries this test into a real Console session — a third route to Console alongside the two Inspector buttons below |
+| **Send to Console draft** | Stages this test chat as a Console draft — the same secondary CTA as the Inspector button of the same name |
 | **Configure** | "Open Settings > Providers & Models to change which provider answers character chats." |
 
 Nothing here is saved: closing the pane or leaving the screen discards the
@@ -190,10 +190,10 @@ over already has one.
 **Exporting.** The Inspector offers **Export JSON** (characters and personas)
 and **Export PNG** (characters only), opening "Export as JSON" / "Export as
 PNG" with the name pre-filled; the JSON export carries the avatar. A
-checkbox, **"Include assigned voice profile"**, sits between **Start Chat**
-and **Export JSON** — tick it to carry this character's voice with the
-export. It stays greyed out until the character has a voice assigned
-("Assign a voice profile before including it."). Results read "Exported to
+checkbox, **"Include assigned voice profile"**, sits between **Send to
+Console draft** and **Export JSON** — it only appears once the character
+has a voice profile assigned; tick it to carry this character's voice with
+the export. Results read "Exported to
 the selected destination." or "Export failed. The selected item was not
 written." Refusals: "Select a saved
 item before exporting." and "PNG export is only available for characters.";
@@ -202,22 +202,23 @@ this action; the selection has unsaved edits."
 
 ### Handing a character to Console
 
-Two Inspector buttons, and they are not the same thing (a third route,
-**Open in Console**, lives in the Preview conversation pane above and
-carries your test exchange with it):
+One CTA pair everywhere: the Inspector's primary **Chat now** and secondary
+**Send to Console draft** (the preview pane's Console button is the same
+secondary, and stages your test exchange with it):
 
-| | **Attach to Console** | **Start Chat** |
+| | **Send to Console draft** | **Chat now** |
 |---|---|---|
 | Staged prompt | "Use {name} to guide the next response." | "Respond as {name}." |
 | Toast | "Staged in Console." | "Chat staged in Console." |
-| Blocked when the model isn't ready? | No | Yes — "Start Chat blocked: {reason}" |
+| Blocked when the model isn't ready? | No | Yes — "Chat now blocked: {reason}" |
 
 Both carry the character's Name plus its non-empty Description, Personality,
-Scenario and System prompt. **Attach** only stages context for you to send
-later, so it stays available even when the model isn't ready; **Start Chat**
-opens a chat, so it waits for a ready model. The Inspector's readiness line
-says which — "Console ready", "Console blocked: select an item", or the
-reason. Neither works on an unsaved selection.
+Scenario and System prompt. **Send to Console draft** only stages context
+for you to send later, so it stays available even when the model isn't
+ready; **Chat now** opens a chat, so it waits for a ready model. The
+Inspector's readiness line says which — "Ready to chat in Console.", "Chat
+now blocked: {reason}", or the reason both are blocked. Neither works on an
+unsaved selection.
 
 ### Dictionaries and World Books copied into a character
 
