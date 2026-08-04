@@ -181,6 +181,7 @@ MAX_CHUNK_SIZE = 5000
 _GLYPH_ACTIVE = "●"  # "●" -- queued, parsing, or writing
 _GLYPH_DONE = "✓"  # "✓"
 _GLYPH_FAILED = "✗"  # "✗"
+_GLYPH_SKIPPED = "○"  # neutral: never attempted (task-2220)
 _GLYPH_CANCELLED = "⊘"  # "⊘" -- stopped deliberately, not an error
 
 # L4: the marker `local_file_ingestion.py`'s "Unsupported file type" error
@@ -804,6 +805,26 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
             error_detail=job.error_detail,
         )
 
+    if job.state == IngestJobState.SKIPPED:
+        # (task-2220) Neutral outcome: the pipeline never attempted this
+        # file. No Retry (requeue is FAILED-only); dismiss offered.
+        line = f"{_GLYPH_SKIPPED} skipped · {basename}"
+        if job.error:
+            line += f" · {short_ingest_error(job.error)}"
+        return IngestQueueRow(
+            job_id=job.job_id,
+            glyph=_GLYPH_SKIPPED,
+            line=line,
+            can_open=False,
+            can_retry=False,
+            can_dismiss=True,
+            media_id=job.media_id,
+            state=job.state,
+            source_path=job.source_path,
+            progress=job.progress,
+            error_detail=job.error_detail,
+        )
+
     is_unsupported = (
         job.error_detail is not None
         and job.error_detail.get("category") == "unsupported_file_type"
@@ -835,6 +856,7 @@ _COUNTS_LINE_ORDER: tuple[IngestJobState, ...] = (
     IngestJobState.WRITING,
     IngestJobState.QUEUED,
     IngestJobState.DONE,
+    IngestJobState.SKIPPED,
     IngestJobState.FAILED,
     IngestJobState.CANCELLED,
 )
@@ -879,6 +901,7 @@ _TERMINAL_ROW_STATES = (
     IngestJobState.DONE,
     IngestJobState.FAILED,
     IngestJobState.CANCELLED,
+    IngestJobState.SKIPPED,
 )
 
 
@@ -1080,13 +1103,26 @@ def build_library_ingest_state(
         )
         for job in jobs
     )
+    # (task-2220 Qodo round) SKIPPED counts as finished everywhere, so it
+    # must also SHOW the control -- a skips-only queue was unclearble.
     queue_show_clear_finished = any(
-        job.state in (IngestJobState.DONE, IngestJobState.FAILED) for job in jobs
+        job.state
+        in (
+            IngestJobState.DONE,
+            IngestJobState.FAILED,
+            IngestJobState.SKIPPED,
+        )
+        for job in jobs
     )
     finished_count = sum(
         1
         for job in jobs
-        if job.state in (IngestJobState.DONE, IngestJobState.FAILED)
+        if job.state
+        in (
+            IngestJobState.DONE,
+            IngestJobState.FAILED,
+            IngestJobState.SKIPPED,
+        )
     )
     failed_count = sum(
         1 for job in jobs if job.state == IngestJobState.FAILED
@@ -1241,7 +1277,8 @@ def build_library_ingest_state(
         match_capped = bool(
             getattr(active_preflight, "already_in_library_capped", False)
         )
-        will_fail = len(unsupported_files) + len(empty_files)
+        will_skip = len(unsupported_files)
+        will_fail = len(empty_files)
         will_import = max(supported_total - will_match, 0)
         parts: list[str] = [f"{will_import} will import"]
         if will_match:
@@ -1249,6 +1286,8 @@ def build_library_ingest_state(
                 f"at least {will_match}" if match_capped else str(will_match)
             )
             parts.append(f"{match_text} will match")
+        if will_skip:
+            parts.append(f"{will_skip} will skip")
         if will_fail:
             parts.append(f"{will_fail} will fail")
         commit_summary_line = " · ".join(parts)
@@ -1284,12 +1323,11 @@ def build_library_ingest_state(
             )
         else:
             file_noun = "file" if unsupported_count == 1 else "files"
-            recorded_as = (
-                "a failure" if unsupported_count == 1 else "failures"
-            )
+            # (task-2220 owner ruling) Skipped, not "recorded as
+            # failures" -- the pipeline never attempts these.
             unsupported_line = (
                 f"{unsupported_count} unsupported {file_noun} will be "
-                f"recorded as {recorded_as}: {unsupported_names}."
+                f"skipped: {unsupported_names}."
             )
     else:
         unsupported_line = ""
@@ -1326,7 +1364,12 @@ def build_library_ingest_state(
     recent_jobs = [
         job
         for job in jobs
-        if job.state in (IngestJobState.DONE, IngestJobState.FAILED)
+        if job.state
+        in (
+            IngestJobState.DONE,
+            IngestJobState.FAILED,
+            IngestJobState.SKIPPED,
+        )
     ]
     live_ids = {job.job_id for job in recent_jobs}
     recent_jobs.extend(

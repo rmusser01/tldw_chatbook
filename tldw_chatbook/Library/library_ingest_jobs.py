@@ -101,6 +101,10 @@ class IngestJobState(str, Enum):
     WRITING = "writing"
     DONE = "done"
     FAILED = "failed"
+    #: (task-2220 owner ruling) An unsupported file the user pointed at via
+    #: a folder: never attempted, never an error. "failed" is reserved for
+    #: files the pipeline TRIED and could not ingest.
+    SKIPPED = "skipped"
     #: Stopped deliberately rather than succeeding or erroring. Only a
     #: server-origin job reaches this today: the server reports it for a
     #: job the user cancelled.
@@ -111,7 +115,12 @@ class IngestJobState(str, Enum):
 #: cannot drift between the places that ask -- ``clear_finished``, the
 #: cancellation guard, and the queue's terminal-row rendering.
 _TERMINAL_STATES: frozenset[IngestJobState] = frozenset(
-    {IngestJobState.DONE, IngestJobState.FAILED, IngestJobState.CANCELLED}
+    {
+        IngestJobState.DONE,
+        IngestJobState.FAILED,
+        IngestJobState.CANCELLED,
+        IngestJobState.SKIPPED,
+    }
 )
 
 
@@ -120,7 +129,7 @@ _TERMINAL_STATES: frozenset[IngestJobState] = frozenset(
 #: purpose -- but Retry stays withheld, since ``requeue`` is FAILED-only and
 #: offering a dead action is worse than offering none.
 _DISMISSIBLE_STATES: frozenset[IngestJobState] = frozenset(
-    {IngestJobState.FAILED, IngestJobState.CANCELLED}
+    {IngestJobState.FAILED, IngestJobState.CANCELLED, IngestJobState.SKIPPED}
 )
 
 
@@ -915,6 +924,48 @@ class LibraryIngestJobRegistry:
         self._jobs[index] = updated
         self._notify_listeners()
         self._persist(updated)
+        return _copy_job(updated)
+
+    def mark_skipped(
+        self,
+        job_id: str,
+        *,
+        reason: str,
+        error_detail: dict[str, Any] | None = None,
+    ) -> LibraryIngestJob | None:
+        """Transition a job to ``SKIPPED`` (task-2220 owner ruling).
+
+        For files the pipeline never attempts (unsupported type inside a
+        folder selection): a neutral terminal outcome, cleared by Clear
+        finished, dismissible like a failure, never offered Retry
+        (``requeue`` is FAILED-only and would no-op).
+
+        Args:
+            job_id: The job to transition.
+            reason: A sanitized, single-line explanation.
+            error_detail: Optional structured payload (category etc.).
+
+        Returns:
+            The updated job (a copy), or ``None`` when ``job_id`` is
+            unknown or hidden.
+        """
+        index = self._find_index(job_id)
+        if index is None:
+            return None
+        current = self._jobs[index]
+        if current.superseded or current.dismissed:
+            return None
+        updated = replace(
+            current,
+            state=IngestJobState.SKIPPED,
+            error=reason,
+            error_detail=error_detail,
+            finished_at=time.monotonic(),
+            finished_at_wall=datetime.now(timezone.utc).isoformat(),
+        )
+        self._jobs[index] = updated
+        self._persist(updated)
+        self._notify_listeners()
         return _copy_job(updated)
 
     def requeue(
