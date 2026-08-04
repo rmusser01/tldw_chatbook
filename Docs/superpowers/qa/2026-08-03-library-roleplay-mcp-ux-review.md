@@ -142,3 +142,50 @@ Severity: P0 blocking / P1 major / P2 minor / P3 polish. Status: new / confirmed
 - `$impeccable adapt` — 100x30/80x24 layouts (F-001, F-015, F-030, F-057)
 - `$impeccable harden` — disabled reasons, escape paths, focus-into-form (F-037, F-053, F-056)
 - `$impeccable distill` — header-band and status redundancy (F-011, F-033, F-059)
+
+---
+
+# Post-fix Re-review (2026-08-04, dev @ fd6ff1aa7 — all four PRs merged)
+
+Method: same dual-agent critique, fresh captures in `output/ux-after/` (170x50 + 100x30).
+
+## Score delta
+
+| Screen | Before | After | Delta |
+|--------|--------|-------|-------|
+| Library | 21/40 | 27/40 | +6 |
+| Roleplay | 27/40 | 29/40 | +2 |
+| MCP | 22/40 | 31/40 | +9 |
+
+Snapshots: `.impeccable/critique/2026-08-04T16-07-01Z__*` (trend lines now show 21→27, 27→29, 22→31).
+
+## What the re-review confirms
+
+- MCP's first run no longer opens with a false alarm: "Built-in server is off — enable it to let MCP clients use chatbook's tools." + working Enable affordance + glyph legend.
+- Library's landing is a real hub (counts, next-action triad), rail rows are one line with subtitles, sections reachable at 100x30, `/` focus-search advertised.
+- Roleplay's first paint is designed: auto-selected character, honest inspector, one primary CTA ("Chat now") + one secondary, merged purpose line with count, full accelerator footer.
+- Chrome: `⌃`-digit hints, "More ›" pager, no dead Tokens chip.
+
+## Remaining findings (new, post-fix)
+
+Library (27/40):
+- [P1] CTA identity crisis: "Add content…" (rail) vs "Import media" (hub + Import/Export row) open the same canvas — pick one canonical label.
+- [P1] F-013 subtitles truncate into noise at real widths ("imported…", "saved…") — rewrite to a ≤16-cell budget or drop below a width threshold.
+- [P1] Landing keyboard story is one working key (`/`); hub CTAs need single-letter accelerators + a rail-focus key.
+- [P2] Canvas void remains: render recents as clickable rows, not one dim line.
+
+Roleplay (29/40):
+- [P0] At 100x30 the character card is displaced by empty Dictionaries/World Books panels — collapse empty attachment panels to one line; give the card a real min-height.
+- [P1] ~10-line dead void between Dictionaries and bottom-docked World Books at 170x50 — fix the sizing contract instead of the dock workaround.
+- [P1] Four names for the Console handoff ("Chat now" / "Send to Console draft" / "Continue this chat in Console" / "ctrl+enter draft") — consolidate to one pair everywhere.
+- [P2] Disabled voice-profile checkbox still renders as a dark smear — hide it when no profile is assigned instead of disabling.
+- [P2] Preview conversation (best learning feature) is invisible behind a subdued toggle — rename to state the payoff ("▸ Try a test chat (nothing saved)").
+
+MCP (31/40):
+- [P1] Fresh-install status contradicts itself: banner "off" (● ready glyph) vs table "○ Needs setup" vs callout "turned off — Enable" — give off/opt-in its own display state and drop the alarm glyph.
+- [P1] Inspector dead on a fresh install: pre-select the single built-in row too (its detail is informational, not alarmist).
+- [P2] Plain-English explainer should lead the header; expand "MCP" once; demote the jargon purpose line.
+- [P2] Kill-switch copy under-sells a global toggle — label its blast radius persistently.
+- [P3] Rail glyph legibility; legend is load-bearing but dim/bottom/wrapping — consider word-badges at width or legend under the Servers heading.
+
+These are filed for triage as a possible round 2; not yet backlog tasks.
