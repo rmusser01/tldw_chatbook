@@ -494,6 +494,56 @@ def test_answer_region_ready_status_branches_on_citation_status_before_clean_ren
     assert "resolve" in note_text
 
 
+def test_answer_region_ready_with_unsafe_text_renders_caution_fallback_not_a_blank_card() -> (
+    None
+):
+    """Fix-review I2: `library_rag_answer_display_text` returns `""` for
+    unsafe input -- its own docstring names an embedded `<script>` block as
+    the example, plausible model output quoting HTML-ingested evidence back
+    at us. Before this fix, `ready`/`validated` rendered an EMPTY headline
+    `Static` under "Citations resolve to staged evidence." -- a silent
+    omission wearing the panel's own trust note. The fix: render the
+    caution-register fallback instead, and drop the citation note
+    entirely -- there is nothing safe for it to vouch for."""
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        ANSWER_STATUS_READY,
+        LibraryRagAnswer,
+    )
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import library_rag_answer_children
+    from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
+        LIBRARY_RAG_ANSWER_UNSAFE_TEXT_FALLBACK,
+    )
+
+    # The exact payload `library_rag_answer_display_text`'s own docstring
+    # names as an example of unsafe input that sanitizes to "".
+    answer = LibraryRagAnswer(
+        status=ANSWER_STATUS_READY,
+        text="<script>alert(1)</script>",
+        citation_status="validated",
+        citation_recovery="",
+    )
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        answer=answer,
+    )
+
+    region = library_rag_answer_children(state)[0]
+    region_children = _answer_region_children(region)
+    ids = [child.id for child in region_children]
+
+    assert "library-rag-answer-text" not in ids
+    assert "library-rag-answer-citation-note" not in ids
+    fallback = next(
+        child for child in region_children if child.id == "library-rag-answer-unsafe"
+    )
+    assert str(fallback.renderable) == LIBRARY_RAG_ANSWER_UNSAFE_TEXT_FALLBACK
+    assert fallback.has_class("library-rag-callout")
+    assert fallback.has_class("is-caution")
+
+
 def test_answer_region_abstained_and_no_evidence_render_quiet_register() -> None:
     """Carried ruling (Task 1 review): abstention -- and the no-evidence
     path, which never called a provider at all -- are NOT errors. Both

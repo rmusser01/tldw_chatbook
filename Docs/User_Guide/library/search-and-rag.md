@@ -92,7 +92,9 @@ while it works — a step Search mode never triggers.
 The call is one shot, not streamed: the full answer lands in a single
 update, not a token flow. It's grounded strictly in what was just
 retrieved, and the model is instructed to cite the specific evidence row
-it draws from with the same bracketed label the rows carry, e.g. `[S1]`.
+it draws from with a bracketed label matching that row's number in the
+list below it — e.g. `[S1]` is row 1 — not a label printed on the row
+itself.
 
 Four outcomes:
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 import threading
 
 import pytest
+from loguru import logger as loguru_logger
 
 from tldw_chatbook import config as app_config
 from tldw_chatbook.Chat.Chat_Deps import (
@@ -395,6 +396,123 @@ async def test_an_error_with_no_message_still_names_the_failure():
 
     assert answer.status == ANSWER_STATUS_FAILED
     assert answer.error == "ValueError"
+
+
+# --- Contract 4b: post-call processing failures are contained too -------
+# (fix-review I1: the try/except used to fence only `_invoke_chat`;
+# `build_answer_citation_validation` -- run AFTER the provider call, to
+# decide ready-vs-abstained -- was uncontained. An exception there escaped
+# `generate_library_rag_answer` entirely and reached the `@work` worker that
+# runs it (`LibraryScreen._execute_library_rag_answer`), which uses
+# Textual's default `exit_on_error=True`: a whole-app crash, not a stated
+# failure. The top-level handler for an uncaught worker exception also logs
+# a full traceback, reintroducing the frame-locals leak (the prompt is the
+# user's own library content) that `generate_library_rag_answer`'s own
+# provider-failure path deliberately avoids by logging only the exception's
+# type name.)
+
+
+async def test_a_post_call_processing_failure_is_contained_not_raised(monkeypatch):
+    from tldw_chatbook.Library import library_rag_answer_service
+
+    def _explode(body, bundle):
+        raise RuntimeError("citation validator exploded")
+
+    monkeypatch.setattr(
+        library_rag_answer_service, "build_answer_citation_validation", _explode
+    )
+
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="openai",
+        model=None,
+        chat=_FakeChat(reply=GROUNDED_ANSWER),
+    )
+
+    assert answer.status == ANSWER_STATUS_FAILED
+    assert answer.text == ""
+    # The bundle was built successfully before the explosion; the failed
+    # answer still carries it so the panel can show the evidence rows.
+    assert answer.evidence_bundle is not None
+
+
+async def test_a_post_call_processing_failure_logs_only_the_exception_type_name(
+    monkeypatch,
+):
+    """No traceback, and no query/evidence text, in what reaches the log --
+    only the exception's TYPE NAME. Mirrors the provider-failure path's own
+    posture (see the "No traceback" comment in `generate_library_rag_
+    answer`'s except block), extended to cover the newly-contained
+    post-call steps.
+
+    Loguru does not propagate to stdlib logging by default, so `caplog`
+    cannot see it directly -- this attaches a real loguru sink for the
+    duration of the call instead (same pattern as
+    `Tests/Chat/test_console_local_citation_boundary.py`).
+    """
+    from tldw_chatbook.Library import library_rag_answer_service
+
+    def _explode(body, bundle):
+        raise RuntimeError("citation validator exploded")
+
+    monkeypatch.setattr(
+        library_rag_answer_service, "build_answer_citation_validation", _explode
+    )
+
+    records: list[str] = []
+    sink_id = loguru_logger.add(records.append, level="DEBUG", format="{message}")
+    try:
+        answer = await generate_library_rag_answer(
+            query=QUERY,
+            results=[_row()],
+            coverage_note="",
+            provider="openai",
+            model=None,
+            chat=_FakeChat(reply=GROUNDED_ANSWER),
+        )
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert answer.status == ANSWER_STATUS_FAILED
+    logged = "\n".join(records)
+    assert "RuntimeError" in logged
+    assert QUERY not in logged
+    assert GROUNDED_ANSWER not in logged
+    # `_row()`'s snippet text -- staged evidence that reached the bundle --
+    # must not appear either.
+    assert "Expired credential caused the incident" not in logged
+
+
+async def test_a_bundle_build_failure_is_also_contained(monkeypatch):
+    """The `try` starts BEFORE `build_library_rag_evidence_bundle`, not
+    after it -- the other half of the I1 finding. `evidence_bundle` is
+    `None` on this path (nothing was built), which is a valid, documented
+    value for that field, not a crash."""
+    from tldw_chatbook.Library import library_rag_answer_service
+
+    def _explode(results, *, query):
+        raise RuntimeError("bundle build exploded")
+
+    monkeypatch.setattr(
+        library_rag_answer_service,
+        "build_library_rag_evidence_bundle",
+        _explode,
+    )
+
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="openai",
+        model=None,
+        chat=_FakeChat(reply=GROUNDED_ANSWER),
+    )
+
+    assert answer.status == ANSWER_STATUS_FAILED
+    assert answer.text == ""
+    assert answer.evidence_bundle is None
 
 
 # --- Contract 5: an empty reply is a failure, not a silent success ------

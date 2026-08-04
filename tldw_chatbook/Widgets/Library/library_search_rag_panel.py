@@ -212,6 +212,21 @@ LIBRARY_RAG_ANSWER_UNVALIDATED_CAUTION = (
     "Check the evidence rows below before relying on it."
 )
 
+#: Fallback for a `ready` answer whose escaped display text comes back empty
+#: (fix-review I2). `library_rag_answer_display_text` returns `""` for
+#: unsafe input -- its own docstring names an embedded `<script>` block as
+#: the example, and that is plausible model output here: the model is
+#: quoting HTML-ingested library evidence back at us. Without this
+#: fallback, a `ready`/`validated` answer rendered an EMPTY headline
+#: `Static` under "Citations resolve to staged evidence." -- a silent
+#: omission wearing the panel's own trust note. Rendered in the same
+#: caution register as `LIBRARY_RAG_ANSWER_UNVALIDATED_CAUTION`, not as the
+#: headline answer text, because there is nothing safe to show as the
+#: headline.
+LIBRARY_RAG_ANSWER_UNSAFE_TEXT_FALLBACK = (
+    "The answer could not be displayed safely — see the evidence rows below."
+)
+
 
 def library_rag_answer_children(state: LibraryRagPanelState) -> list[Widget]:
     """Return the Answer region (`Vertical#library-rag-answer`), or none (PR-3 Task 3).
@@ -255,6 +270,14 @@ def library_rag_answer_children(state: LibraryRagPanelState) -> list[Widget]:
     `build_answer_citation_validation` only checks that a citation label
     RESOLVES to a staged reference, never that the cited snippet actually
     supports the claim.
+
+    Fix-review (I2): a `ready` answer whose escaped display text comes back
+    empty (`library_rag_answer_display_text` returns `""` for unsafe input,
+    e.g. an embedded `<script>` block quoted from HTML-ingested evidence)
+    renders `LIBRARY_RAG_ANSWER_UNSAFE_TEXT_FALLBACK` in the caution
+    register instead of an empty headline `Static` -- and the citation note
+    is suppressed in that case, `clean` or not, since there is nothing safe
+    shown for it to vouch for.
 
     Args:
         state: Current Library Search/RAG panel display state.
@@ -308,18 +331,35 @@ def library_rag_answer_children(state: LibraryRagPanelState) -> list[Widget]:
                     classes="library-rag-callout is-caution",
                 )
             )
-        body.append(
-            Static(
-                library_rag_answer_display_text(answer.text),
-                id="library-rag-answer-text",
-            )
-        )
-        if clean:
+        display_text = library_rag_answer_display_text(answer.text)
+        if display_text.strip():
             body.append(
                 Static(
-                    "Citations resolve to staged evidence.",
-                    id="library-rag-answer-citation-note",
-                    classes="library-rag-quiet-line",
+                    display_text,
+                    id="library-rag-answer-text",
+                )
+            )
+            if clean:
+                body.append(
+                    Static(
+                        "Citations resolve to staged evidence.",
+                        id="library-rag-answer-citation-note",
+                        classes="library-rag-quiet-line",
+                    )
+                )
+        else:
+            # Fix-review (I2): `library_rag_answer_display_text` returns
+            # `""` for unsafe input -- a `ready` answer must never render
+            # as a blank headline sitting under the "Citations resolve to
+            # staged evidence." trust note (a silent omission presented as
+            # trustworthy). This fallback ALWAYS wins over the citation
+            # note, `clean` or not: there is nothing safe to show as the
+            # answer either way.
+            body.append(
+                Static(
+                    LIBRARY_RAG_ANSWER_UNSAFE_TEXT_FALLBACK,
+                    id="library-rag-answer-unsafe",
+                    classes="library-rag-callout is-caution",
                 )
             )
     elif answer.status in (ANSWER_STATUS_ABSTAINED, ANSWER_STATUS_NO_EVIDENCE):

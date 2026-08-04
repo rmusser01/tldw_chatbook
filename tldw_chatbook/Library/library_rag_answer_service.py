@@ -391,9 +391,13 @@ async def generate_library_rag_answer(
 ) -> LibraryRagAnswer:
     """Answer one Library RAG query from its own retrieved evidence.
 
-    Never raises for a provider failure: the failure becomes the answer's
-    status and error, because a failure the user can see is worth more than
-    an exception they cannot.
+    Never raises for a failure anywhere in the attempt -- building the
+    evidence bundle, the provider call, or extracting/validating its
+    response -- because a failure the user can see is worth more than an
+    exception they cannot. This runs inside `_execute_library_rag_answer`
+    (`UI/Screens/library_screen.py`), a `@work` worker with Textual's
+    default `exit_on_error=True`: anything that escapes this function
+    crashes the whole app, not just this panel.
 
     Args:
         query: The user's question.
@@ -414,27 +418,41 @@ async def generate_library_rag_answer(
     Returns:
         The attempt's outcome, whatever its status.
     """
-    bundle = build_library_rag_evidence_bundle(results, query=query)
-
-    if not bundle.available_references():
-        # Not an error, and not a provider's job: the library was searched
-        # and holds nothing that could ground an answer. Saying so is the
-        # answer.
-        logger.info(
-            "library rag answer: no citable evidence "
-            f"({len(bundle.references)} row(s) retrieved); provider not called"
-        )
-        return LibraryRagAnswer(
-            status=ANSWER_STATUS_NO_EVIDENCE,
-            text=LIBRARY_RAG_NO_EVIDENCE_TEXT,
-            evidence_bundle=bundle,
-        )
-
-    user_message = build_library_rag_answer_prompt(
-        bundle, query=query, coverage_note=coverage_note
-    )
-
+    # Fix-review (I1): EVERY step below -- building the evidence bundle, the
+    # provider call, and extracting/validating its response -- is inside
+    # this one `try`. An earlier version fenced only the provider call
+    # (`_invoke_chat`), so an exception in bundle-building or in
+    # `extract_response_content`/`build_answer_citation_validation` (both
+    # AFTER the call) escaped this function entirely -- reaching the `@work`
+    # worker that runs it with Textual's default `exit_on_error=True` and
+    # crashing the whole app, while the top-level handler's traceback log
+    # (diagnose=True) dumped this frame's locals: the user's own library
+    # content. `bundle` starts `None` and is only ever set once built, so a
+    # failure that happens before it exists still returns a well-formed
+    # `LibraryRagAnswer` rather than a `NameError` on top of the original
+    # exception.
+    bundle: EvidenceBundle | None = None
     try:
+        bundle = build_library_rag_evidence_bundle(results, query=query)
+
+        if not bundle.available_references():
+            # Not an error, and not a provider's job: the library was
+            # searched and holds nothing that could ground an answer.
+            # Saying so is the answer.
+            logger.info(
+                "library rag answer: no citable evidence "
+                f"({len(bundle.references)} row(s) retrieved); provider not called"
+            )
+            return LibraryRagAnswer(
+                status=ANSWER_STATUS_NO_EVIDENCE,
+                text=LIBRARY_RAG_NO_EVIDENCE_TEXT,
+                evidence_bundle=bundle,
+            )
+
+        user_message = build_library_rag_answer_prompt(
+            bundle, query=query, coverage_note=coverage_note
+        )
+
         raw = await _invoke_chat(
             _resolve_answer_chat(chat),
             endpoint=provider,
@@ -442,19 +460,47 @@ async def generate_library_rag_answer(
             system=LIBRARY_RAG_ANSWER_SYSTEM_PROMPT,
             user=user_message,
         )
-    except Exception as exc:  # noqa: BLE001 - every provider failure is an answer
+
+        body = extract_response_content(raw).strip()
+        if not body:
+            logger.warning(
+                f"library rag answer: {provider} returned an empty response"
+            )
+            return LibraryRagAnswer(
+                status=ANSWER_STATUS_FAILED,
+                text="",
+                error=EMPTY_ANSWER_ERROR,
+                evidence_bundle=bundle,
+            )
+
+        validation = build_answer_citation_validation(body, bundle)
+        status = (
+            ANSWER_STATUS_ABSTAINED
+            if _is_abstention(body, validation.status)
+            else ANSWER_STATUS_READY
+        )
+        return LibraryRagAnswer(
+            status=status,
+            text=body,
+            citation_status=validation.status,
+            citation_recovery=validation.recovery,
+            evidence_bundle=bundle,
+        )
+    except Exception as exc:  # noqa: BLE001 - every failure becomes an answer
         # Broad on purpose (briefing_service precedent): a provider handler
         # can raise anything from a typed `ChatAPIError` to an httpx error,
-        # and one uncaught kind would surface as a crashed panel instead of
-        # a stated failure. `BaseException` still propagates, so worker
-        # cancellation is not swallowed.
+        # and the citation validator/bundle builder are ordinary Python
+        # that can raise too -- one uncaught kind would surface as a
+        # crashed panel instead of a stated failure. `BaseException` still
+        # propagates, so worker cancellation is not swallowed.
         #
-        # No traceback: the log file sink runs with diagnose=True, which
-        # would dump this frame's locals -- and those locals are the prompt,
-        # i.e. the user's own library content, in a file they never chose to
-        # write it to.
+        # No traceback, and no exception message tied to the prompt: the
+        # log file sink runs with diagnose=True, which would dump this
+        # frame's locals -- and those locals are the prompt/response, i.e.
+        # the user's own library content, in a file they never chose to
+        # write it to. Only the exception's TYPE NAME is logged.
         logger.warning(
-            f"library rag answer: generation failed against {provider}: "
+            f"library rag answer: generation failed for provider {provider}: "
             f"{type(exc).__name__}"
         )
         return LibraryRagAnswer(
@@ -463,27 +509,3 @@ async def generate_library_rag_answer(
             error=_error_text(exc),
             evidence_bundle=bundle,
         )
-
-    body = extract_response_content(raw).strip()
-    if not body:
-        logger.warning(f"library rag answer: {provider} returned an empty response")
-        return LibraryRagAnswer(
-            status=ANSWER_STATUS_FAILED,
-            text="",
-            error=EMPTY_ANSWER_ERROR,
-            evidence_bundle=bundle,
-        )
-
-    validation = build_answer_citation_validation(body, bundle)
-    status = (
-        ANSWER_STATUS_ABSTAINED
-        if _is_abstention(body, validation.status)
-        else ANSWER_STATUS_READY
-    )
-    return LibraryRagAnswer(
-        status=status,
-        text=body,
-        citation_status=validation.status,
-        citation_recovery=validation.recovery,
-        evidence_bundle=bundle,
-    )

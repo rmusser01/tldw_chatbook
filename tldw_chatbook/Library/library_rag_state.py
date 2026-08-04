@@ -1417,11 +1417,6 @@ class LibraryRagPanelState:
     #: `None` in keyword (search) mode -- rag mode is the only mode Task 1's
     #: answer service is ever invoked for.
     answer: LibraryRagAnswer | None = None
-    #: `answer.status` mirrored onto the panel state directly, so render
-    #: code (`library_rag_answer_children`) can branch on it without
-    #: dereferencing `answer` (which is `None` before any answer lands).
-    #: `""` when `answer` is `None`.
-    answer_status: str = ""
 
     @classmethod
     def from_values(
@@ -1627,7 +1622,6 @@ class LibraryRagPanelState:
         can_use_console = (
             normalized_status in {"ready", "answering"} and selected_result is not None
         )
-        answer_status = answer.status if answer is not None else ""
         return cls(
             scope=scope,
             query_state=query_state,
@@ -1662,7 +1656,6 @@ class LibraryRagPanelState:
             coverage_note=coverage_note,
             searched_query=normalized_searched_query,
             answer=answer,
-            answer_status=answer_status,
         )
 
 
