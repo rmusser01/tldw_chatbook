@@ -119,6 +119,61 @@ async def test_validation_line_stays_hidden_until_first_selection():
         assert summary.display is False
 
 
+async def test_character_with_no_conversations_shows_empty_copy():
+    """F-036: selected-but-no-conversations renders the empty-state copy
+    instead of a bare header over nothing."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+        await pane.show_conversations((), empty_copy="No saved conversations.")
+        await pilot.pause()
+        assert (
+            pilot.app.query_one("#personas-conversations-header", Static).display
+            is True
+        )
+        assert (
+            pilot.app.query_one("#personas-conversations-list", ListView).display
+            is True
+        )
+        texts = [
+            str(s.renderable)
+            for s in pilot.app.query_one("#personas-conversations-list").query(Static)
+        ]
+        assert any("No saved conversations." in text for text in texts)
+
+
+async def test_non_character_selections_hide_conversations_section():
+    """F-036: personas/dictionaries/lore have no saved conversations - the
+    section hides for those kinds (the task-443 inspector idiom) rather
+    than dangling a header over an empty list."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        for kind in ("persona", "dictionary", "lore"):
+            pane.show_selection(name="Item", kind=kind)
+            await pilot.pause()
+            assert (
+                pilot.app.query_one(
+                    "#personas-conversations-header", Static
+                ).display
+                is False
+            ), kind
+            assert (
+                pilot.app.query_one(
+                    "#personas-conversations-list", ListView
+                ).display
+                is False
+            ), kind
+        # ...and a character selection reveals it again.
+        pane.show_selection(name="Detective Sam", kind="character")
+        await pilot.pause()
+        assert (
+            pilot.app.query_one("#personas-conversations-header", Static).display
+            is True
+        )
+
+
 async def test_readiness_copy_is_compact_for_narrow_inspector():
     app = InspectorApp()
     async with app.run_test(size=(24, 20)) as pilot:

@@ -382,10 +382,18 @@ class PersonasInspectorPane(Vertical):
         # the action stack stay hidden until there is something to act on;
         # per-button kind gating below is unchanged for when they render.
         self.query_one("#personas-validation-summary", Static).display = selected
-        self.query_one("#personas-conversations-header", Static).display = selected
-        self.query_one("#personas-conversations-list", ListView).display = selected
         self.query_one("#personas-readiness-header", Static).display = selected
         self.query_one("#personas-inspector-actions", Vertical).display = selected
+        # F-036: only characters have saved conversations - the section hides
+        # for persona/dictionary/lore selections (the task-443 kind idiom)
+        # instead of dangling a header over an empty list.
+        conversations_visible = selected and kind == "character"
+        self.query_one(
+            "#personas-conversations-header", Static
+        ).display = conversations_visible
+        self.query_one(
+            "#personas-conversations-list", ListView
+        ).display = conversations_visible
         readiness = self.query_one("#personas-readiness-console", Static)
         # F-032: readiness speaks in intent (what to do next), not app
         # topology ("Console blocked: ..."). The per-intent gating is

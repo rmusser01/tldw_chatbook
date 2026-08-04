@@ -3349,7 +3349,12 @@ class PersonasScreen(BaseAppScreen):
             self.conversations.load_conversations(entity_id)
         else:
             inspector.set_avatar_thumbnail(None)
-            await inspector.show_conversations(())
+            # F-036: a server character with no saved conversations gets the
+            # same empty-state copy the local path renders via the
+            # controller, not a bare Conversations header.
+            await inspector.show_conversations(
+                (), empty_copy="No saved conversations."
+            )
             self.query_one(
                 "#personas-card-edit-character", Button
             ).disabled = True
