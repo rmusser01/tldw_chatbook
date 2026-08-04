@@ -89,7 +89,7 @@ def test_settings_theme_copy_uses_effective_profile_paths(
         SettingsScreen._inspector_guidance(window, category)
     )
 
-    rows = list(SettingsScreen._render_category_guidance(window))
+    rows = list(SettingsScreen._render_impact_pane_body(window))
 
     assert any(
         str(row.renderable).replace("\n  ", "")
@@ -118,7 +118,7 @@ def test_settings_internal_prompt_copy_uses_effective_profile_path(
         SettingsScreen._inspector_guidance(window, category)
     )
 
-    rows = list(SettingsScreen._render_category_guidance(window))
+    rows = list(SettingsScreen._render_impact_pane_body(window))
 
     assert any(
         str(row.renderable).replace("\n  ", "")
