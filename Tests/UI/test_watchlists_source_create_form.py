@@ -714,3 +714,104 @@ async def test_creating_a_source_refreshes_the_table_and_the_tree_counts():
             "creating a source must reload the tree counts; without it the "
             "rail says 0 while the centre says 1"
         )
+
+
+# --- TASK-2200 -------------------------------------------------------------
+#
+# TASK-1960 proved the crash class here came from the SCREEN recomposing out of
+# `_apply_local_wc_snapshot`/`_load_tree_data` while this pane was mid-recompose
+# of its own, and recorded a second, masked defect on the same path: the pane's
+# form-close recompose can mount *nothing*, invisible only because the screen
+# rebuilt the pane wholesale straight afterwards. Both tests below assert
+# against the SAME pane instance the user was already looking at, so neither can
+# be satisfied by a screen-level rebuild papering over an empty pane.
+
+
+@pytest.mark.asyncio
+async def test_a_background_refresh_does_not_tear_down_an_open_create_form():
+    """AC#1: a half-typed create form survives a background load landing.
+
+    Before TASK-2200 both loaders ended in `refresh(recompose=True)`, which
+    replaced the pane, the form and every widget in it. The draft *text*
+    survived (the screen mirrors it), so text alone does not discriminate --
+    these assertions are on widget identity, which only survives if nothing
+    rebuilt the region.
+    """
+    host = _watchlists_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _open_sources_create_form(pilot, host)
+
+        await pilot.press(*"Morning")
+        await pilot.pause(0.05)
+        name_input = pane.query_one("#sources-create-name", Input)
+        assert name_input.value == "Morning", "precondition: the draft was typed"
+        assert not screen.query("#wc-service-error")
+
+        # Both background loaders, together -- the exact pair `_create_source`
+        # fires, and the pair whose recomposes TASK-1960 caught destroying this
+        # pane.
+        screen._apply_local_wc_snapshot(
+            (), 0, True, "Watchlists services unavailable; retry Watchlists later.", None
+        )
+        screen._load_tree_data()
+        for _ in range(300):
+            await pilot.pause(0.01)
+            if screen.query("#wc-service-error"):
+                break
+
+        assert screen.query("#wc-service-error"), (
+            "precondition: the background snapshot really did land and repaint "
+            "the centre header"
+        )
+        assert screen.query_one("#watchlists-sources-pane", SourcesPane) is pane, (
+            "the background load replaced the Sources pane"
+        )
+        assert pane.query_one("#sources-create-name", Input) is name_input, (
+            "the background load rebuilt the create form's Name field out from "
+            "under the user"
+        )
+        assert name_input.value == "Morning"
+        assert pane.query("#sources-create-form"), "the form must still be open"
+
+
+@pytest.mark.parametrize("size", SIZES)
+@pytest.mark.asyncio
+async def test_closing_the_create_form_repopulates_the_same_pane(size):
+    """AC#4: form-close no longer leans on a screen rebuild to look right.
+
+    The masked defect TASK-1960 recorded: `SourcesPane`'s form-close recompose
+    silently mounts nothing when the screen's own recompose prunes it
+    mid-flight, and that was invisible only because the screen immediately
+    rebuilt the pane. With the screen recompose gone, the pane the user keeps
+    looking at is the pane that has to come back correct -- so this asserts
+    identity first, then that the same instance really did remount its table
+    and drop its form.
+    """
+    host = _watchlists_host()
+    async with host.run_test(size=size) as pilot:
+        screen, pane = await _open_sources_create_form(pilot, host)
+        created = AsyncMock(return_value={"id": 1, "name": "Morning"})
+        screen._controller.create_source = created
+
+        await pilot.press(*"Morning")
+        await pilot.press("tab")
+        await pilot.pause(0.05)
+        await pilot.press(*"https://example.com/feed")
+        await pilot.pause(0.05)
+
+        pane.query_one("#sources-create-submit", Button).press()
+        settled = await _settled_sources_pane(screen, pilot)
+
+        assert created.await_count == 1, "precondition: Create reached the controller"
+        assert settled is pane, (
+            "the create flow's background loaders must not replace the pane -- "
+            "the whole point is that the pane's own form-close is what has to "
+            "come back correct"
+        )
+        assert pane.query("#sources-table"), (
+            "the pane's own form-close recompose mounted nothing: the masked "
+            "TASK-1960 defect, now unmasked"
+        )
+        assert not pane.query("#sources-create-form"), (
+            "the create form must be gone from the pane the user is looking at"
+        )

@@ -285,10 +285,14 @@ class _ItemStatusIntent:
             surface a toast. `False` only for the silent mark-read-on-open
             path, matching `_update_item_status`'s previous default.
         refresh: Whether a successful write should reload `ItemsPane.items`
-            and recompose via `_refresh_overview_data()`. `False` only for
-            mark-read-on-open, which patches `patch_item` in place instead
-            -- see `_mark_item_read_on_open`'s docstring for why a recompose
-            on every item SELECTION was a CRITICAL regression.
+            and refresh the overview counts via `_refresh_overview_data()`.
+            `False` only for mark-read-on-open, which patches `patch_item`
+            in place instead -- see `_mark_item_read_on_open`'s docstring
+            for why a recompose on every item SELECTION was a CRITICAL
+            regression. (TASK-2200 removed the screen-level recompose that
+            made it one; `refresh=False` is kept because reloading every
+            item and re-querying the overview on every arrow key is still
+            work nobody asked for.)
         patch_item: The live dict object (already held by `ItemsPane.items`/
             `_selected_content_item`/`ContentPane.item`) to mutate in place
             on a successful write, or `None` when the caller relies on
@@ -398,7 +402,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     selected_notification = reactive(None)
     selected_entity = reactive(None)
     recovery_state = reactive(None)
-    overview_data = reactive({}, recompose=True)
+    # NOT `recompose=True` (TASK-2200). Its only writer is
+    # `_refresh_overview_data`, a background worker fired by mount, every
+    # backend switch and every write verb on this screen -- so a screen-level
+    # recompose here was a third background destroyer alongside
+    # `_load_tree_data`/`_apply_local_wc_snapshot`, and a documented one: it
+    # detached the mounted `ItemsPane`, reset the `DataTable` cursor and
+    # dropped focus on any item-status write whose counts actually changed
+    # (see `_update_item_status`'s `refresh=False` path, which exists solely
+    # to dodge it). `watch_overview_data` pushes the payload into the three
+    # live surfaces that read it instead.
+    overview_data = reactive({})
     # Through Phase C, CONTENT held only a placeholder stub and started
     # collapsed to avoid spending screen space on it. Phase D wires a real
     # reader (`ContentPane`) into CONTENT, so it now starts expanded like
@@ -750,6 +764,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # new entry on its own next loop.
         self._item_status_desired: dict[Any, "_ItemStatusIntent"] = {}
         self._item_status_draining: set[Any] = set()
+        # TASK-2200. Which workbench surfaces still need rebuilding in place,
+        # and whether the drainer that rebuilds them is already running. See
+        # `_request_surface_refresh` for why this is a record-intent/drain
+        # queue rather than `run_worker(exclusive=True)` per surface.
+        self._pending_surface_refresh: set[str] = set()
+        self._surface_refresh_draining = False
         self._controller = WatchlistsBackendController(
             app_instance=app_instance,
             scope_service=getattr(app_instance, "watchlist_scope_service", None),
@@ -873,6 +893,62 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 "active_alert_rules": 0,
             }
 
+    def watch_overview_data(self) -> None:
+        """Push new overview counts into the live panes, never recompose.
+
+        TASK-2200 — see the note on the reactive itself. Three surfaces read
+        `overview_data`, and each is updated at the narrowest granularity
+        that actually re-renders it:
+
+        * `OverviewPane.data` — the pane's own `recompose=True` reactive, so
+          this is a PANE-scoped rebuild. It has to be: the pane swaps between
+          three whole layouts (loading line / first-run copy / seven cards
+          plus a failed-runs table) depending on `profile_state`, so there is
+          no set of cells to patch.
+        * `InspectorPane.profile_state` — likewise pane-scoped, and likewise
+          layout-changing.
+        * The Inspector's two count `Static`s — one `update()` each, since
+          only their text changes.
+
+        Every lookup degrades: the Overview pane exists only on its own tab,
+        and the Inspector is unmounted whenever the right rail is collapsed.
+        """
+        if not self.is_mounted:
+            return
+        try:
+            overview = self.query_one("#watchlists-overview-pane", OverviewPane)
+        except NoMatches:
+            pass
+        else:
+            overview.data = self.overview_data
+        try:
+            inspector = self.query_one("#watchlists-entity-inspector", InspectorPane)
+        except NoMatches:
+            pass
+        else:
+            inspector.profile_state = self._watchlists_profile_state()
+        # Built exactly as `_build_inspector_pane` builds them, so a rebuild
+        # and a patch cannot render differently.
+        for widget_id, text in (
+            (
+                "#watchlists-alerts-summary",
+                f"Alert rules active: {self.overview_data.get('active_alert_rules', 0)}",
+            ),
+            (
+                "#watchlists-latest-run-summary",
+                f"Latest run status: {self.overview_data.get('latest_run_status', 'unavailable')}",
+            ),
+        ):
+            try:
+                self.query_one(widget_id, Static).update(text)
+            except NoMatches:
+                continue
+        # An overview refresh follows every write verb on this screen, and a
+        # write verb is exactly when a run can have started or finished --
+        # so this is also where the Console-follow row used to be re-polled,
+        # via the recompose this reactive no longer triggers.
+        self._request_surface_refresh(self._SURFACE_INSPECTOR)
+
     @work(exclusive=True, group="wc_tree")
     async def _load_tree_data(self) -> None:
         """Load the left-rail tree's two inputs: watchlists and counts.
@@ -906,11 +982,62 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # The write verbs break that: creating a watchlist scopes to an id
         # that is not in the list yet (the crumb would read "Watchlist 3"),
         # and renaming one leaves the crumb on the old name until the user
-        # navigates away and back. The `refresh(recompose=True)` below
-        # rebuilds the Inspector, which seeds itself from this value.
+        # navigates away and back. `_apply_tree_data_to_live_surfaces` below
+        # pushes the resolved labels into the mounted Inspector.
         self._breadcrumb_labels = self._resolve_breadcrumb_labels(self.selected_scope)
-        if self.is_mounted:
-            self.refresh(recompose=True)
+        self._apply_tree_data_to_live_surfaces()
+
+    def _apply_tree_data_to_live_surfaces(self) -> None:
+        """Publish freshly loaded tree data without recomposing the screen.
+
+        TASK-2200. `_load_tree_data` used to end in `refresh(recompose=True)`,
+        which tore down and rebuilt every region — including ITEMS, whose
+        pane may be mid-recompose of its own (a `SourcesPane` closing its
+        create form, a `RulesPane` closing an edit form). That is the
+        confirmed destroyer behind TASK-1960's crash class: a widget caught
+        by the resulting prune mounts nothing, silently, while still
+        reporting `is_mounted=True`.
+
+        Only three things on this screen actually read what this loader
+        writes, so only those three are updated:
+
+        * The rail itself (`_tree_watchlists`/`_tree_counts`) — rebuilt from
+          `_build_tree_pane`, which re-seeds the expansion, tag filter and
+          scope the user had, exactly as the full recompose did.
+        * FEEDS and the centre header, whose scope heading resolves a
+          watchlist's display name out of `_tree_watchlists` (a rename would
+          otherwise sit stale) and whose source rows are re-queried.
+        * The Inspector's breadcrumb labels and the Overview's watchlist
+          count, both pushed into the live panes the way `watch_selected_scope`
+          and `_load_sources` already push theirs.
+
+        ITEMS and CONTENT are deliberately untouched: nothing in either reads
+        tree data except the Overview's `watchlist_count`, handled above.
+        """
+        if not self.is_mounted:
+            return
+        self._request_surface_refresh(
+            self._SURFACE_RAIL,
+            self._SURFACE_FEEDS,
+            self._SURFACE_HEADER,
+            self._SURFACE_INSPECTOR,
+        )
+        try:
+            inspector = self.query_one("#watchlists-entity-inspector", InspectorPane)
+        except NoMatches:
+            pass
+        else:
+            inspector.breadcrumb_labels = self._breadcrumb_labels
+        try:
+            overview = self.query_one("#watchlists-overview-pane", OverviewPane)
+        except NoMatches:
+            pass
+        else:
+            # TASK-998: the first-run panel distinguishes "no watchlists at
+            # all" from "a watchlist with no sources", and only this loader
+            # knows the answer. `_build_detail_pane` seeds the same value on
+            # a rebuild.
+            overview.watchlist_count = len(self._tree_watchlists)
 
     def _resolve_breadcrumb_labels(self, scope: TreeScope) -> list[str]:
         """Display names for `scope`'s ancestor chain, for the Inspector.
@@ -980,8 +1107,50 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._wc_lookup_error = lookup_error
         self._wc_lookup_recovery_state = recovery_state
         self._wc_loaded = True
-        if self.is_mounted:
-            self.refresh(recompose=True)
+        self._apply_snapshot_to_live_surfaces()
+
+    def _apply_snapshot_to_live_surfaces(self) -> None:
+        """Publish a freshly applied local snapshot without recomposing.
+
+        TASK-2200, the twin of `_apply_tree_data_to_live_surfaces` — see that
+        method for why the full-screen `refresh(recompose=True)` this
+        replaces was the destroyer behind TASK-1960.
+
+        The snapshot's loading/error/empty/summary marker
+        (`_watchlists_status_marker_widgets`) is rendered in exactly two
+        places, and this rebuilds both: inline in FEEDS on the Read tab, and
+        in the centre header on every other tab. Each call is a no-op where
+        that surface is not mounted, so no tab test is needed here.
+
+        The Inspector's two snapshot-derived widgets are patched rather than
+        rebuilt, following `_repaint_item_status_cell`'s discipline: the
+        `State:` line is one `Static.update`, and the Console attach control
+        is one `disabled`/`tooltip` pair straight off `_wc_attach_state()` —
+        the same tuple `compose_content` hands `_build_inspector_pane`.
+        """
+        if not self.is_mounted:
+            return
+        self._request_surface_refresh(
+            self._SURFACE_FEEDS, self._SURFACE_HEADER, self._SURFACE_INSPECTOR
+        )
+        try:
+            summary = self.query_one("#watchlists-state-summary", Static)
+        except NoMatches:
+            pass
+        else:
+            summary.update(
+                "State: ready"
+                if self._wc_loaded and not self._wc_lookup_error
+                else "State: unavailable"
+            )
+        attach_disabled, attach_tooltip = self._wc_attach_state()
+        try:
+            attach = self.query_one("#wc-attach-to-console", Button)
+        except NoMatches:
+            pass
+        else:
+            attach.disabled = attach_disabled
+            attach.tooltip = attach_tooltip
 
     @staticmethod
     def _safe_text(value: Any, fallback: str = "", *, max_length: int = 500) -> str:
@@ -1744,6 +1913,103 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         return OverviewPane.profile_state(self.overview_data)
 
+    @staticmethod
+    def _console_follow_copy(
+        latest_console_item: Any,
+    ) -> tuple[str, Any, Any, bool, str]:
+        """Everything the Inspector's Console-follow row renders, as data.
+
+        Extracted (TASK-2200) so the same derivation serves two callers: the
+        builder below, and `_resolve_console_follow_drift`, which compares it
+        against what is actually on screen. The Console-follow state comes
+        from an app-level adapter that is only ever *polled* at render time --
+        until this task, "render time" meant every full-screen recompose, so
+        an adapter that failed once (or a run that started since) was picked
+        up by whichever background loader recomposed next. With those
+        recomposes gone, the drift has to be detected deliberately.
+
+        Args:
+            latest_console_item: The adapter's answer, or `None`.
+
+        Returns:
+            `(status_widget_id, status_copy, button_label, button_disabled,
+            button_tooltip)` -- byte-identical to what this section rendered
+            before the extraction, including the two DIFFERENT status ids
+            (they are the section's own available/unavailable signal).
+        """
+        if latest_console_item is None:
+            return (
+                "watchlists-console-unavailable",
+                "No active Watchlists run is available for Console follow.",
+                "Console follow unavailable",
+                True,
+                "Unavailable until Watchlists has an active run with Console context.",
+            )
+        title = str(getattr(latest_console_item, "title", None) or "Untitled")
+        status = str(getattr(latest_console_item, "status", None) or "unknown")
+        return (
+            "watchlists-console-available",
+            Text.from_markup(
+                "Console can follow latest Watchlists run: "
+                f"{escape_markup(title)} ({escape_markup(status)})."
+            ),
+            Text.from_markup(f"Follow {escape_markup(title)} in Console"),
+            False,
+            "Open the latest active Watchlists run in Console.",
+        )
+
+    def _resolve_console_follow_drift(self) -> bool:
+        """Re-poll the Console-follow adapter and say whether the rail is stale.
+
+        Not a pure predicate despite the boolean return, which is why it is
+        named for the action: `resolve_latest_follow_item()` refreshes the
+        handoff's cached item id as a deliberate side effect ("ahead of a
+        render pass" -- see its docstring), exactly as `compose_content` used
+        to do on every recompose.
+
+        Compares against the DOM rather than a remembered key, so there is no
+        second copy of "what is currently rendered" to drift: the rendered
+        answer IS the state.
+
+        Returns:
+            True when the Inspector is mounted and its Console-follow row no
+            longer matches the adapter, so the right rail should be rebuilt.
+        """
+        status_id, status_copy, button_label, _disabled, _tooltip = (
+            self._console_follow_copy(
+                self._console_handoff.resolve_latest_follow_item()
+            )
+        )
+        try:
+            button = self.query_one("#watchlists-follow-in-console", Button)
+        except NoMatches:
+            # Nothing rendered (right rail collapsed, or mid-rebuild): the
+            # next build resolves it from scratch anyway.
+            return False
+        status_widgets = list(self.query(f"#{status_id}"))
+        if not status_widgets:
+            return True
+        if str(status_widgets[0].renderable) != str(status_copy):
+            return True
+        return str(button.label) != str(button_label)
+
+    def _build_inspector_region(self) -> Vertical:
+        """The RIGHT_RAIL content factory.
+
+        Resolves the Console-follow item and the Console attach state at CALL
+        time rather than closing over values captured in `compose_content`
+        (TASK-2200): the workbench calls this factory again on every region
+        rebuild, including the targeted right-rail rebuild
+        `_resolve_console_follow_drift` asks for, and a captured value would
+        make that rebuild repaint the very staleness it was asked to fix.
+        """
+        attach_disabled, attach_tooltip = self._wc_attach_state()
+        return self._build_inspector_pane(
+            self._console_handoff.resolve_latest_follow_item(),
+            attach_disabled,
+            attach_tooltip,
+        )
+
     def _build_inspector_pane(
         self,
         latest_console_item: Any,
@@ -1790,40 +2056,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 tooltip="Open the current watchlist/subscription surface.",
             ),
         ]
-        if latest_console_item is not None:
-            title = str(getattr(latest_console_item, "title", None) or "Untitled")
-            status = str(getattr(latest_console_item, "status", None) or "unknown")
-            children.append(
-                Static(
-                    Text.from_markup(
-                        "Console can follow latest Watchlists run: "
-                        f"{escape_markup(title)} ({escape_markup(status)})."
-                    ),
-                    id="watchlists-console-available",
-                )
+        status_id, status_copy, button_label, button_disabled, button_tooltip = (
+            self._console_follow_copy(latest_console_item)
+        )
+        children.append(Static(status_copy, id=status_id))
+        children.append(
+            Button(
+                button_label,
+                id="watchlists-follow-in-console",
+                disabled=button_disabled,
+                tooltip=button_tooltip,
             )
-            children.append(
-                Button(
-                    Text.from_markup(f"Follow {escape_markup(title)} in Console"),
-                    id="watchlists-follow-in-console",
-                    tooltip="Open the latest active Watchlists run in Console.",
-                )
-            )
-        else:
-            children.append(
-                Static(
-                    "No active Watchlists run is available for Console follow.",
-                    id="watchlists-console-unavailable",
-                )
-            )
-            children.append(
-                Button(
-                    "Console follow unavailable",
-                    id="watchlists-follow-in-console",
-                    disabled=True,
-                    tooltip="Unavailable until Watchlists has an active run with Console context.",
-                )
-            )
+        )
         # Seed from screen state (Finding 3, fix round 2): `region_layout` is
         # `recompose=True`, so any collapse/solo/rail toggle constructs a
         # brand new InspectorPane. Without this, the screen keeps
@@ -1887,7 +2131,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         return f"Backend: {self.runtime_backend}"
 
     def compose_content(self) -> ComposeResult:
-        latest_console_item = self._console_handoff.resolve_latest_follow_item()
         with Vertical(id="watchlists-collections-shell"):
             yield Static(
                 "Watchlists | Monitored sources, runs, alerts, recovery | Mixed | Local/Server",
@@ -1916,7 +2159,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     self._backend_label_text(),
                     id="watchlists-backend-label",
                 )
-            attach_disabled, attach_tooltip = self._wc_attach_state()
             yield WatchlistsWorkbench(
                 self._rendered_region_layout(),
                 content={
@@ -1931,9 +2173,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     Region.FEEDS: self._build_list_pane,
                     Region.ITEMS: self._build_detail_pane,
                     Region.CONTENT: self._build_content_pane,
-                    Region.RIGHT_RAIL: lambda: self._build_inspector_pane(
-                        latest_console_item, attach_disabled, attach_tooltip
-                    ),
+                    Region.RIGHT_RAIL: self._build_inspector_region,
                 },
                 hidden=self._hidden_centre_regions(),
                 # `None` on the Read tab: `_build_list_pane` (FEEDS's own
@@ -2847,55 +3087,148 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self._load_briefings(), exclusive=True, group="wl-briefings-load"
             )
 
-    @work(exclusive=True, group="wc_feeds_scope_refresh")
-    async def _refresh_feeds_region_for_scope(self) -> None:
-        """Worker wrapper so `watch_selected_scope` (a sync reactive watcher)
-        can await `WatchlistsWorkbench.refresh_region_content`'s remove/mount
-        pair. `exclusive=True` collapses a fast burst of tree clicks to the
-        last one requested, the same reasoning `_schedule_layout_persist`
-        documents for its own worker.
+    def _refresh_feeds_region_for_scope(self) -> None:
+        """Queue a FEEDS rebuild so it follows the tree selection.
+
+        Was its own `@work(exclusive=True, group="wc_feeds_scope_refresh")`
+        worker until TASK-2200. It now records intent on the shared surface
+        queue instead, because it is no longer the only actor that rebuilds
+        FEEDS: `_apply_local_wc_snapshot` and `_load_tree_data` both changed
+        from a full-screen recompose to a FEEDS/header rebuild, and three
+        independent `exclusive=True` workers swapping the SAME region would
+        either interleave two remove/mount pairs over one `#watchlists-list-
+        pane` id or -- with a shared group -- cancel one of them between its
+        `remove()` and its `mount()`, leaving an empty bordered box. See
+        `_request_surface_refresh`.
+        """
+        self._request_surface_refresh(self._SURFACE_FEEDS)
+
+    def _refresh_centre_header_for_scope(self) -> None:
+        """Queue a centre-header rebuild, the header's twin of the above.
+
+        Off the Read tab FEEDS is unmounted and `_build_centre_status_header`
+        carries the same scoped summary, so a FEEDS-only refresh is a silent
+        no-op there (task-1344 fix wave, Qodo correctness).
+        """
+        self._request_surface_refresh(self._SURFACE_HEADER)
+
+    #: The workbench surfaces this screen rebuilds in place, rather than by
+    #: recomposing itself (TASK-2200). Each maps to one call on
+    #: `WatchlistsWorkbench`; ITEMS and CONTENT are deliberately absent --
+    #: their panes are patched through their own reactives (see
+    #: `_load_sources`, `watch_overview_data`) precisely so an in-flight
+    #: create/edit form is never torn down by a background load.
+    #:
+    #: `_SURFACE_INSPECTOR` is the one CONDITIONAL surface: it rebuilds the
+    #: right rail only when `_resolve_console_follow_drift` finds the
+    #: Console-follow row no longer matches the adapter. The rail is where
+    #: the noise-selector editor lives, and rebuilding it unconditionally on
+    #: every background load would destroy a half-typed selector set -- the
+    #: same class of harm this task removes from the Sources create form.
+    _SURFACE_RAIL = "rail"
+    _SURFACE_FEEDS = "feeds"
+    _SURFACE_HEADER = "header"
+    _SURFACE_INSPECTOR = "inspector"
+
+    def _request_surface_refresh(self, *surfaces: str) -> None:
+        """Record that one or more workbench surfaces need rebuilding.
+
+        Record intent, drain serially, never cancel (TASK-1541's lesson,
+        applied here to DOM swaps rather than durable writes). Both
+        `WatchlistsWorkbench.refresh_region_content` and
+        `refresh_header_content` are remove-then-mount pairs with an `await`
+        between the two halves -- Textual's `NodeList._ensure_unique_id`
+        refuses to mount the replacement while the old widget still holds the
+        same id, so there is no atomic single-await swap available. A worker
+        cancelled in that window (which is exactly what `exclusive=True`
+        does to its predecessor) leaves the region with its content removed
+        and nothing put back: a bordered empty box that survives until some
+        unrelated rebuild happens along.
+
+        So callers queue a surface name here and at most one drainer ever
+        runs. Requests that arrive while it is running are picked up by its
+        next loop rather than starting -- or cancelling -- anything.
+
+        Args:
+            surfaces: Any of `_SURFACE_RAIL`/`_SURFACE_FEEDS`/
+                `_SURFACE_HEADER`. Unknown names are ignored by the drainer.
         """
         if not self.is_mounted:
             return
-        try:
-            workbench = self.query_one(WatchlistsWorkbench)
-        except NoMatches:
+        self._pending_surface_refresh.update(surfaces)
+        if self._surface_refresh_draining:
             return
-        try:
-            await workbench.refresh_region_content(Region.FEEDS)
-        except Exception:
-            logger.opt(exception=True).debug(
-                "Failed to refresh the Feeds region for the new scope."
-            )
+        self._surface_refresh_draining = True
+        # Its own group, not the default one: several call sites on this
+        # screen run `run_worker(..., exclusive=True)` without a group (e.g.
+        # `_load_active_section_data`), and those would otherwise cancel this
+        # drainer mid-swap -- the very failure this queue exists to prevent.
+        self.run_worker(self._drain_surface_refresh(), group="wc_surface_refresh")
 
-    @work(exclusive=True, group="wc_header_scope_refresh")
-    async def _refresh_centre_header_for_scope(self) -> None:
-        """Worker wrapper mirroring `_refresh_feeds_region_for_scope`, for
-        the centre header that carries the scoped summary off the Read tab.
+    async def _drain_surface_refresh(self) -> None:
+        """Rebuild every queued surface in place, one at a time.
 
-        Own exclusive worker GROUP, deliberately not shared with
-        `_refresh_feeds_region_for_scope`: `watch_tree_scope` calls both
-        from the same reactive watcher (this one only when the header
-        exists at all), and a shared `exclusive=True` group would let
-        whichever call lands second cancel the other before it finishes,
-        even though in practice only one of the two ever does real work for
-        a given tab. `exclusive=True` here still collapses a fast burst of
-        tree clicks to the last one requested, the same reasoning
-        `_refresh_feeds_region_for_scope` and `_schedule_layout_persist`
-        both already document for their own workers.
+        Loops until the queue is empty so a request that lands mid-drain is
+        served by this same worker. There is no `await` between the loop's
+        emptiness check and the `finally` that clears the flag, so a request
+        can never slip into the gap and be dropped by a drainer that has
+        already decided to stop.
         """
-        if not self.is_mounted:
-            return
         try:
-            workbench = self.query_one(WatchlistsWorkbench)
-        except NoMatches:
-            return
+            while self.is_mounted and self._pending_surface_refresh:
+                surfaces = self._pending_surface_refresh
+                self._pending_surface_refresh = set()
+                try:
+                    workbench = self.query_one(WatchlistsWorkbench)
+                except NoMatches:
+                    # Nothing to patch. Whatever removed the workbench (a tab
+                    # switch, a layout push) rebuilds every region from this
+                    # screen's current state on the way back, so the pending
+                    # update is not lost -- it arrives with that rebuild.
+                    break
+                if self._SURFACE_RAIL in surfaces:
+                    await self._rebuild_surface(
+                        workbench.refresh_region_content(Region.LEFT_RAIL),
+                        "the Watchlists rail",
+                    )
+                if self._SURFACE_FEEDS in surfaces:
+                    await self._rebuild_surface(
+                        workbench.refresh_region_content(Region.FEEDS),
+                        "the Feeds region",
+                    )
+                if self._SURFACE_HEADER in surfaces:
+                    await self._rebuild_surface(
+                        workbench.refresh_header_content(),
+                        "the centre header",
+                    )
+                if self._SURFACE_INSPECTOR in surfaces and (
+                    self._resolve_console_follow_drift()
+                ):
+                    await self._rebuild_surface(
+                        workbench.refresh_region_content(Region.RIGHT_RAIL),
+                        "the Inspector rail",
+                    )
+        finally:
+            self._pending_surface_refresh = set()
+            self._surface_refresh_draining = False
+
+    @staticmethod
+    async def _rebuild_surface(rebuild: Any, what: str) -> None:
+        """Await one surface rebuild, logging rather than killing the drain.
+
+        A single failing surface must not abandon the ones queued behind it,
+        and it must not leave `_surface_refresh_draining` stuck either (the
+        drainer's own `finally` covers that, but only if this coroutine does
+        not propagate).
+
+        Args:
+            rebuild: The workbench coroutine to await.
+            what: Human-readable surface name, for the debug log only.
+        """
         try:
-            await workbench.refresh_header_content()
+            await rebuild
         except Exception:
-            logger.opt(exception=True).debug(
-                "Failed to refresh the centre header for the new scope."
-            )
+            logger.opt(exception=True).debug(f"Failed to rebuild {what} in place.")
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         """Keep `focused_region` in step with whatever actually holds focus.
@@ -3020,12 +3353,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         except Exception:
             pass
         # task-895: push the new write-availability into the still-mounted
-        # tree, the same way `watch_tree_scope` pushes `active_scope`. The
-        # snapshot refresh below does eventually recompose the whole screen
-        # (and `_build_tree_pane` would then re-seed this), but that is an
-        # async round trip -- until it lands, the five action buttons would
-        # sit enabled over a backend that cannot service them, which is the
-        # exact "disabled button that looks enabled" shape in reverse.
+        # tree, the same way `watch_tree_scope` pushes `active_scope`. This
+        # is now the ONLY thing that updates it on a backend switch
+        # (TASK-2200): the snapshot refresh below used to recompose the whole
+        # screen, and `_build_tree_pane` re-seeded this on the way through.
+        # It no longer does, so without this the five action buttons would
+        # sit enabled over a backend that cannot service them -- the exact
+        # "disabled button that looks enabled" shape in reverse.
         try:
             self.query_one("#wl-tree", WatchlistTree).write_disabled_reason = (
                 self._tree_write_disabled_reason()
@@ -3037,8 +3371,53 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self.selected_notification = None
         self.selected_entity = None
         self._loaded_runs = []
+        # Same reason as the tree push above (TASK-2200): the four lines
+        # above clear the screen's mirrored state, and until this task the
+        # snapshot refresh's full-screen recompose is what carried that into
+        # whichever detail pane was mounted (`_build_detail_pane` re-seeds
+        # every pane from exactly these attributes). `selected_entity` is
+        # the one that already had its own watcher.
+        self._reseed_live_detail_pane()
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
+
+    def _reseed_live_detail_pane(self) -> None:
+        """Push the screen's mirrored rows/selection into the mounted pane.
+
+        The in-place half of `_build_detail_pane`'s seeding, for callers that
+        change that mirrored state without rebuilding the ITEMS region
+        (TASK-2200). Only the pane for the active section can be mounted, so
+        at most one branch does anything; each is a no-op when its pane is
+        absent (the region collapsed, or a different tab).
+        """
+        if not self.is_mounted:
+            return
+        for selector, pane_type, values in (
+            (
+                "#watchlists-sources-pane",
+                SourcesPane,
+                {"sources": self._loaded_sources, "selected_source": self.selected_source},
+            ),
+            (
+                "#watchlists-runs-pane",
+                RunsPane,
+                {"runs": self._loaded_runs, "selected_run": self.selected_run},
+            ),
+            (
+                "#watchlists-notifications-pane",
+                NotificationsPane,
+                {
+                    "notifications": self._loaded_notifications,
+                    "selected_notification": self.selected_notification,
+                },
+            ),
+        ):
+            try:
+                pane = self.query_one(selector, pane_type)
+            except NoMatches:
+                continue
+            for attribute, value in values.items():
+                setattr(pane, attribute, value)
 
     def watch_selected_entity(self) -> None:
         if not self.is_mounted:
@@ -6750,17 +7129,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `refresh=False` + `patch_item=item` (Task 5 fix round 1, CRITICAL):
         this fires on every single item SELECTION, not just a deliberate
         button click. A default `refresh` reloads `ItemsPane.items` and
-        calls `_refresh_overview_data()`, and `overview_data` is
-        `reactive({}, recompose=True)` -- a SCREEN-level recompose, which
-        rebuilds every region via its factory
+        calls `_refresh_overview_data()`, which used to set `overview_data`,
+        then a `reactive({}, recompose=True)` -- a SCREEN-level recompose,
+        which rebuilt every region via its factory
         (`_build_list_pane`/`_build_content_pane`/etc.), replacing the live
         `ItemsPane`/`DataTable` instances wholesale. Proven live: with the
         default refresh, one item selection detached the old `ItemsPane`,
         reset the table cursor to 0, cleared screen focus, and a SECOND
-        arrow-key press did nothing at all. `patch_item` mutates the same
-        dict object already held by `ItemsPane.items`/
-        `_selected_content_item`/`ContentPane.item` in place instead, so a
-        later status check sees "reviewed" without forcing a rebuild.
+        arrow-key press did nothing at all. TASK-2200 took the recompose off
+        that reactive (`watch_overview_data` patches the three surfaces that
+        read it), so the crash-shaped half of this is gone; the reload of
+        every item on every arrow key is not, which is why this path still
+        passes `refresh=False`. `patch_item` mutates the same dict object
+        already held by `ItemsPane.items`/`_selected_content_item`/
+        `ContentPane.item` in place instead, so a later status check sees
+        "reviewed" without forcing a rebuild.
 
         This reuses the exact status column Ingest/Ignore/the unread toggle
         already write -- `SubscriptionsDB.mark_item_status`, keyed by the
@@ -7265,12 +7648,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         TASK-1362 (spec §2). Deliberately does NOT call `_load_sources()`,
         `_refresh_overview_data()` or `_refresh_local_wc_snapshot()` the way
-        `_create_source` does. `overview_data` is `reactive({}, recompose=True)`
-        on this screen, so touching it rebuilds every region through its
-        factory and replaces the mounted panes wholesale -- proven live in
-        Phase D Task 5 to detach the `ItemsPane`, reset the `DataTable` cursor
-        and drop keyboard focus. Nothing the user can see is derived from a
-        source's selectors: not the Sources table's five columns, not the
+        `_create_source` does. `overview_data` was `reactive({}, recompose=
+        True)` on this screen when that decision was taken, so touching it
+        rebuilt every region through its factory and replaced the mounted
+        panes wholesale -- proven live in Phase D Task 5 to detach the
+        `ItemsPane`, reset the `DataTable` cursor and drop keyboard focus.
+        TASK-2200 removed that recompose, but the conclusion is unchanged
+        for a simpler reason: nothing the user can see is derived from a
+        source's selectors -- not the Sources table's five columns, not the
         overview counts, not the staging line. So the only stale surface is
         the entity dict itself, which is patched in place -- the SAME object
         held by `selected_entity`, `selected_source` and `SourcesPane.sources`
@@ -7544,12 +7929,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         `refresh=False` (fix round 1, CRITICAL) skips the reload of
         `ItemsPane.items` and `_refresh_overview_data()`. The latter sets
-        `overview_data`, `reactive({}, recompose=True)` on the screen, so
-        calling it after EVERY item selection forced a full screen
-        recompose -- proven live to detach the mounted `ItemsPane`, reset
-        the `DataTable` cursor, and drop keyboard focus, so a second arrow
-        key did nothing. Used only by the silent auto-mark-read-on-open
-        path; every deliberate action (Ingest/Ignore, the unread toggle)
+        `overview_data`, which was `reactive({}, recompose=True)` on the
+        screen until TASK-2200, so calling it after EVERY item selection
+        forced a full screen recompose -- proven live to detach the mounted
+        `ItemsPane`, reset the `DataTable` cursor, and drop keyboard focus,
+        so a second arrow key did nothing. Used only by the silent
+        auto-mark-read-on-open path; every deliberate action
+        (Ingest/Ignore, the unread toggle)
         keeps refreshing as before. When `refresh` is False and the write
         succeeds, `patch_item` -- the same dict object already held by
         `ItemsPane.items`/`_selected_content_item`/`ContentPane.item` -- is
@@ -7732,6 +8118,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             self.selected_entity = None
             self.selected_source = None
+            # The mounted pane keeps its own copy of the selection, and
+            # nothing rebuilds it from screen state any more (TASK-2200) --
+            # `_load_sources` below refreshes the ROWS but only re-selects
+            # when `selected_source` is set. Without this the pane's Preview
+            # / Check now buttons stay armed on a source that is gone.
+            self._reseed_live_detail_pane()
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Source deleted.", severity="information")
@@ -7760,6 +8152,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             self.selected_entity = None
             self.selected_run = None
+            # See `_delete_source`: the deleted run's own pane holds the
+            # selection, and nothing rebuilds it from screen state any more
+            # (TASK-2200).
+            self._reseed_live_detail_pane()
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Run deleted.", severity="information")

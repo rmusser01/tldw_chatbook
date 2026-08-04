@@ -1197,18 +1197,18 @@ async def test_saving_a_rule_edit_does_not_leave_a_phantom_form_open():
         }
         screen._controller.list_alert_rules = AsyncMock(return_value=[rule])
         # A fast-completing mocked save is exactly the case that lets the
-        # screen's overview-data-triggered recompose win the race against
-        # RulesPane's own RuleFormVisibilityChanged message still bubbling
-        # up to the screen (see `handle_save_rule_requested`).
+        # screen's overview-data refresh win the race against RulesPane's own
+        # RuleFormVisibilityChanged message still bubbling up to the screen
+        # (see `handle_save_rule_requested`).
         screen._controller.save_alert_rule = AsyncMock(return_value=dict(rule))
-        # `overview_data` is a `recompose=True` reactive that only rebuilds
-        # the screen when the *value* actually changes; the real
-        # `get_overview_data()` return value is otherwise byte-for-byte
-        # identical before and after this mocked save (nothing in the
-        # backing store actually changed), which would mask the race this
-        # test targets. Returning a distinct dict on every call reproduces
-        # the real-world case where a save legitimately changes a count
-        # (e.g. `active_alert_rules`), which is what triggers the recompose.
+        # A distinct payload on every call, so `overview_data` really changes
+        # value and its watcher really fires: the real `get_overview_data()`
+        # return is otherwise byte-for-byte identical before and after this
+        # mocked save (nothing in the backing store actually changed), which
+        # would mask the interleaving this test targets. TASK-2200 took
+        # `recompose=True` off that reactive -- so this now also pins that the
+        # background refresh no longer rebuilds the pane at all (see the
+        # identity assertion below), which is the whole point of that change.
         overview_call_count = itertools.count(1)
 
         async def _fake_overview_data(**_kwargs: Any) -> dict[str, Any]:
@@ -1237,22 +1237,40 @@ async def test_saving_a_rule_edit_does_not_leave_a_phantom_form_open():
 
         screen.query_one("#rules-create-submit", Button).press()
 
-        # Drive enough ticks for the save worker to finish and its
-        # overview-data refresh to trigger the screen-level recompose.
-        rebuilt_rules_pane = rules_pane
+        # Drive enough ticks for the save worker to finish, its overview-data
+        # refresh to land, and the pane's own form-close to settle.
+        settled_rules_pane = rules_pane
         for _ in range(30):
             await asyncio.sleep(0.02)
             await pilot.pause()
-            rebuilt_rules_pane = screen.query_one("#watchlists-rules-pane", RulesPane)
-            if rebuilt_rules_pane is not rules_pane:
+            settled_rules_pane = screen.query_one("#watchlists-rules-pane", RulesPane)
+            if not settled_rules_pane.show_rule_form and not screen.query(
+                "#rules-create-name"
+            ):
                 break
 
-        assert rebuilt_rules_pane is not rules_pane, (
-            "the recompose triggered by the save should have rebuilt the pane"
+        assert screen._controller.save_alert_rule.await_count == 1, (
+            "the precondition: pressing Save really did reach the controller"
         )
-        assert rebuilt_rules_pane.show_rule_form is False, (
+        assert next(overview_call_count) > 1, (
+            "the precondition: the save's `_refresh_overview_data()` really "
+            "did run, so `overview_data` really did change value"
+        )
+        # TASK-2200: the background overview refresh must NOT rebuild the
+        # pane. This used to assert the opposite (`is not rules_pane`) and
+        # relied on that rebuild to close the form; a pane rebuilt out from
+        # under an in-flight pane recompose is the destroyer TASK-1960
+        # confirmed.
+        assert settled_rules_pane is rules_pane, (
+            "a background overview refresh must not replace the mounted pane"
+        )
+        assert settled_rules_pane.show_rule_form is False, (
             "the rule edit form must be closed after a successful save, not "
             "reopened pre-filled with the just-submitted rule"
+        )
+        assert settled_rules_pane.query("#rules-table"), (
+            "the pane must still have its table -- a form that 'closed' by "
+            "leaving an empty pane behind is the masked defect, not a fix"
         )
         assert not screen.query("#rules-create-name"), (
             "no rule edit form fields should remain in the DOM after a "
@@ -2346,4 +2364,313 @@ async def test_focus_leaving_the_header_for_a_non_region_widget_clears_the_flag(
         assert not screen._focus_in_centre_header, (
             "focus outside the status header must clear the sentinel; a stale "
             "True would wrongly refuse a later z/Z"
+        )
+
+
+# --- TASK-2200: background loaders patch in place, never recompose the screen -
+#
+# `_apply_local_wc_snapshot`, `_load_tree_data` and the `overview_data` reactive
+# all used to end in a screen-level `refresh(recompose=True)`, which tore down
+# and rebuilt every region -- including whichever detail pane was mid-recompose
+# of its own. That is the confirmed destroyer behind TASK-1960's crash class.
+# Each test below drives one of the three loaders, asserts the surface it feeds
+# really did change, and asserts the ITEMS pane was NOT replaced while it did.
+
+
+async def _sources_tab(pilot, host):
+    """Put the screen on the Sources tab with its pane mounted."""
+    screen = host.screen_stack[-1]
+    screen.active_section = "sources"
+    for _ in range(200):
+        await pilot.pause(0.01)
+        if screen.query("#watchlists-sources-pane"):
+            break
+    return screen, screen.query_one("#watchlists-sources-pane", SourcesPane)
+
+
+@pytest.mark.asyncio
+async def test_a_background_snapshot_lands_in_place_without_rebuilding_the_pane():
+    """AC#1/AC#2: the snapshot's four surfaces update, the detail pane does not.
+
+    The snapshot feeds the loading/error/empty/summary marker (rendered in the
+    centre header off the Read tab), the Inspector's `State:` line, and the
+    Console attach button's `disabled`/tooltip pair. Every one of those used to
+    be repainted only as a side effect of rebuilding the entire screen.
+    """
+    app = _build_test_app()
+    # A real source, so the pre-change state is "loaded, populated, attach
+    # ENABLED" -- otherwise `disabled` is True before and after and proves
+    # nothing.
+    app.watchlist_bundle_service._db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/feed"
+    )
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen, pane = await _sources_tab(pilot, host)
+
+        attach = screen.query_one("#wc-attach-to-console", Button)
+        for _ in range(200):
+            await pilot.pause(0.01)
+            if screen._wc_loaded and not attach.disabled:
+                break
+        assert not attach.disabled, (
+            "precondition: the real snapshot resolved populated, so Stage is "
+            "armed before the failing snapshot below lands"
+        )
+        assert not screen.query("#wc-service-error")
+
+        screen._apply_local_wc_snapshot((), 0, True, "Watchlists services unavailable; retry Watchlists later.", None)
+        for _ in range(200):
+            await pilot.pause(0.01)
+            if screen.query("#wc-service-error"):
+                break
+
+        assert screen.query("#wc-service-error"), (
+            "the snapshot's own error marker must reach the centre header "
+            "without a screen recompose"
+        )
+        assert str(screen.query_one("#watchlists-state-summary").renderable) == (
+            "State: unavailable"
+        ), "the Inspector's State line must follow the snapshot"
+        attach = screen.query_one("#wc-attach-to-console", Button)
+        assert attach.disabled is True, (
+            "Stage must be disarmed once the snapshot reports the service is "
+            "unavailable"
+        )
+        assert "Watchlists services are unavailable" in str(attach.tooltip)
+        assert screen.query_one("#watchlists-sources-pane", SourcesPane) is pane, (
+            "a background snapshot must not replace the mounted detail pane"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_background_tree_reload_lands_in_the_rail_without_rebuilding_the_pane():
+    """AC#1/AC#2: newly created watchlists appear in the rail in place."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen, pane = await _sources_tab(pilot, host)
+
+        created = app.watchlist_bundle_service.create("Morning AI Brief")
+        node_id = f"#wl-tree-node-watchlist-{created['id']}"
+        assert not screen.query(node_id), (
+            "precondition: the rail has not heard about the new watchlist yet"
+        )
+
+        screen._load_tree_data()
+        for _ in range(200):
+            await pilot.pause(0.01)
+            if screen.query(node_id):
+                break
+
+        assert screen.query(node_id), (
+            "a tree reload must repaint the rail without a screen recompose"
+        )
+        assert screen.query_one("#watchlists-sources-pane", SourcesPane) is pane, (
+            "a background tree reload must not replace the mounted detail pane"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_background_overview_refresh_repaints_the_inspector_in_place():
+    """AC#1/AC#2: `overview_data`'s two Inspector counts follow the payload.
+
+    `overview_data` was `reactive({}, recompose=True)`, so these two lines were
+    only ever repainted by rebuilding the whole screen. `watch_overview_data`
+    now updates them directly; the Inspector instance must survive.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen, pane = await _sources_tab(pilot, host)
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+
+        async def _fake_overview_data(**_kwargs: Any) -> dict[str, Any]:
+            return {
+                "total_sources": 3,
+                "active_sources": 3,
+                "sources_in_error": 0,
+                "total_items": 9,
+                "new_items": 2,
+                "latest_run_status": "completed",
+                "failed_runs": [],
+                "active_alert_rules": 7,
+            }
+
+        screen._controller.get_overview_data = _fake_overview_data
+        screen._refresh_overview_data()
+        for _ in range(200):
+            await pilot.pause(0.01)
+            if "7" in str(screen.query_one("#watchlists-alerts-summary").renderable):
+                break
+
+        assert str(screen.query_one("#watchlists-alerts-summary").renderable) == (
+            "Alert rules active: 7"
+        )
+        assert str(screen.query_one("#watchlists-latest-run-summary").renderable) == (
+            "Latest run status: completed"
+        )
+        assert screen.query_one("#watchlists-entity-inspector", InspectorPane) is (
+            inspector
+        ), "a background overview refresh must not replace the Inspector"
+        assert screen.query_one("#watchlists-sources-pane", SourcesPane) is pane, (
+            "a background overview refresh must not replace the detail pane"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_background_tree_reload_updates_the_first_run_copy_in_place():
+    """AC#2: TASK-998's watchlist-count-dependent first-run copy still follows.
+
+    `OverviewPane.watchlist_count` is the one thing the ITEMS region reads out
+    of `_load_tree_data`, and it decides which of two first-run paragraphs a
+    brand-new profile is shown ("create a watchlist" vs "your watchlists have
+    no sources yet"). The full-screen recompose used to carry it via
+    `_build_detail_pane`; the tree reload now pushes it into the live pane.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        assert screen.active_section == "overview"
+
+        overview = None
+        for _ in range(300):
+            await pilot.pause(0.01)
+            overview = screen.query_one("#watchlists-overview-pane", OverviewPane)
+            if overview.query("#overview-first-run-body"):
+                break
+        body = str(overview.query_one("#overview-first-run-body").renderable)
+        assert "a watchlist is a folder of feeds" in body.lower(), (
+            f"precondition: a profile with no watchlists gets the 'make one' "
+            f"copy; it renders {body!r}"
+        )
+
+        app.watchlist_bundle_service.create("Morning AI Brief")
+        screen._load_tree_data()
+        for _ in range(300):
+            await pilot.pause(0.01)
+            overview = screen.query_one("#watchlists-overview-pane", OverviewPane)
+            if overview.watchlist_count:
+                break
+
+        assert overview.watchlist_count == 1, (
+            "the tree reload must push the new count into the live pane"
+        )
+        body = str(overview.query_one("#overview-first-run-body").renderable)
+        assert "no sources yet" in body.lower(), (
+            f"a user who already has a watchlist must be told their next step "
+            f"is a SOURCE; it renders {body!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_switching_backend_clears_the_mounted_panes_selection():
+    """AC#2: the backend switch's own state reset still reaches the pane.
+
+    `watch_runtime_backend` clears `selected_source`/`selected_run`/
+    `selected_notification` on the SCREEN, and until TASK-2200 the only thing
+    that carried those clears into the mounted pane was the full-screen
+    recompose its snapshot refresh triggered (`_build_detail_pane` re-seeds
+    every pane from exactly those attributes). Without an explicit push, the
+    Sources pane keeps its old selection -- so Preview / Check now stay armed
+    on a source from a backend the user just left.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen._controller.list_sources = AsyncMock(
+            return_value=[{"id": "s1", "name": "Feed One", "source_type": "rss"}]
+        )
+
+        screen.query_one("#wl-tab-sources", Button).press()
+        await pilot.pause()
+        await _wait_for_table_rows(pilot, "#sources-table", screen, 1)
+
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        pane.select_source_by_id("s1")
+        await pilot.pause()
+        assert pane.selected_source is not None, "precondition: a row is selected"
+
+        screen.runtime_backend = "server"
+        await pilot.pause(0.2)
+
+        assert screen.query_one("#watchlists-sources-pane", SourcesPane) is pane, (
+            "the backend switch must not rebuild the pane either"
+        )
+        assert pane.selected_source is None, (
+            "the mounted pane kept a selection the screen had already cleared"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_surface_refresh_requested_mid_drain_is_served_by_the_same_drainer():
+    """TASK-2200: record intent, drain serially, never cancel.
+
+    `refresh_region_content`/`refresh_header_content` are remove-then-mount
+    pairs with an `await` between the halves, so a worker cancelled in that
+    window (what `exclusive=True` does to its predecessor) leaves the region
+    stripped and never refilled. Three call sites now want those swaps, so the
+    screen queues surfaces and runs at most one drainer. This drives the exact
+    interleaving: a second request arrives WHILE the drainer is awaiting the
+    first swap, and must be picked up by that same drainer rather than
+    starting -- or cancelling -- anything.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
+        WatchlistsWorkbench,
+    )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        workbench = screen.query_one(WatchlistsWorkbench)
+
+        drains: list[int] = []
+        real_drain = screen._drain_surface_refresh
+
+        def _counting_drain():
+            drains.append(1)
+            return real_drain()
+
+        screen._drain_surface_refresh = _counting_drain
+
+        rebuilt: list[Region] = []
+        real_region = workbench.refresh_region_content
+
+        async def _tracking_region(region):
+            rebuilt.append(region)
+            if len(rebuilt) == 1:
+                # Lands while the drainer is inside its first swap.
+                screen._request_surface_refresh(screen._SURFACE_RAIL)
+            await real_region(region)
+
+        workbench.refresh_region_content = _tracking_region
+
+        screen._request_surface_refresh(screen._SURFACE_FEEDS)
+        for _ in range(300):
+            await pilot.pause(0.01)
+            if Region.LEFT_RAIL in rebuilt and not screen._surface_refresh_draining:
+                break
+
+        assert Region.LEFT_RAIL in rebuilt, (
+            "a request made mid-drain was dropped -- the drainer stopped "
+            "without serving it"
+        )
+        assert drains == [1], (
+            f"exactly one drainer must run for a burst; started {len(drains)}"
+        )
+        assert not screen._surface_refresh_draining, "the drainer must clear its flag"
+        assert screen.query_one("#wl-tree"), (
+            "the rail must come back populated, not stripped by an "
+            "interrupted remove/mount pair"
         )
