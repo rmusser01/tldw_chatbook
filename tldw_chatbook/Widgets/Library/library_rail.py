@@ -9,12 +9,13 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.events import Key
+from textual.events import Key, Resize
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Library.library_rail_state import LibraryRailPreferences
 from tldw_chatbook.Library.library_shell_state import (
+    LibraryRailRow,
     LibraryRailSectionState,
     LibraryShellState,
 )
@@ -50,26 +51,30 @@ def library_dim_label_text(label: str, value: str) -> Text:
     return text
 
 
-def _visible_row_title(title: str) -> str:
-    """Return a rail-safe visible title that does not clip in narrow panes.
+def _truncate_row_title(title: str, budget: int = _MAX_LIBRARY_ROW_TITLE) -> str:
+    """Return the raw row title capped to ``budget`` cells with "...".
 
-    The result is markup-escaped (after truncating) because every caller
-    interpolates it into a ``Button`` label, which Textual parses as Rich
-    markup: an unescaped user title like ``[draft] Q3 plan [wip]`` would
-    render with its bracketed segments consumed as (or crashing on) markup
-    tags -- the same bug class as the search-history Button-label lesson.
-
-    Args:
-        title: Full row title (may contain user-supplied text).
-
-    Returns:
-        The escaped title, truncated with an ellipsis when longer than the
-        rail budget.
+    The result is NOT markup-escaped: callers truncate first (escaping
+    before truncating could slice through an escape sequence) and escape
+    at label-build time, since ``Button`` labels parse Rich markup -- an
+    unescaped user title like ``[draft] Q3 plan [wip]`` would render with
+    its bracketed segments consumed as (or crashing on) markup tags.
     """
     readable = str(title).strip()
-    if len(readable) > _MAX_LIBRARY_ROW_TITLE:
-        readable = f"{readable[: _MAX_LIBRARY_ROW_TITLE - 3].rstrip()}..."
-    return escape_markup(readable)
+    if len(readable) > budget:
+        readable = f"{readable[: max(1, budget - 3)].rstrip()}..."
+    return readable
+
+
+def _visible_row_title(title: str) -> str:
+    """Return the rail-safe row title: capped at the rail budget, escaped.
+
+    Used by the Library content canvases (conversations/media rows),
+    which interpolate the result into markup-parsed ``Button`` labels.
+    The rail itself builds labels via ``LibraryRail._row_label`` (F-015
+    width-fitting), which truncates raw and escapes at build time.
+    """
+    return escape_markup(_truncate_row_title(title))
 
 
 class LibraryRailSearchInput(Input):
@@ -91,6 +96,32 @@ class LibraryRailSearchInput(Input):
             event.prevent_default()
             return
         await super()._on_key(event)
+
+
+class LibraryRailRowButton(Button):
+    """Rail row button that refits its own label when its width changes.
+
+    F-015: Textual clips an over-long label at the right edge, which ate
+    the count exactly when it mattered ("Conversations …" at 100
+    columns). The row owns the truncation instead -- the F-013 subtitle
+    drops first, then the title ellipsizes, and the count is the last
+    thing standing. Per-button ``on_resize`` (not one rail-level pass) so
+    the fit also follows the vertical scrollbar's gutter: the rail's own
+    size does not change when its scrollbar appears, but each row's
+    content width does.
+    """
+
+    #: The row record the label is rebuilt from on every width change.
+    library_row: "LibraryRailRow | None" = None
+
+    def on_resize(self, event: Resize) -> None:
+        row = self.library_row
+        width = self.content_region.width
+        if row is None or width <= 0:
+            return
+        self.label = LibraryRail._row_label(
+            row, self.has_class("library-rail-row-selected"), width
+        )
 
 
 class LibraryRail(RecomposeCaptureGuard, Vertical):
@@ -165,6 +196,66 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
         if count_known:
             return f" ({count})"
         return f" ({count}+)"
+
+    @staticmethod
+    def _row_label(row: LibraryRailRow, selected: bool, width: int = 0) -> str:
+        """Build a rail row's label, fitted to ``width`` cells when known.
+
+        Fitting order (F-015): the F-013 subtitle drops first, then the
+        title ellipsize-truncates; the count is never truncated. ``width``
+        0 (compose time, before layout) renders the full label -- each
+        ``LibraryRailRowButton`` refits itself via ``on_resize`` once it
+        learns its rendered width.
+        """
+        prefix = f"{'▸' if selected else ' '} "
+        # F-014: one count policy -- a dim "(…)" placeholder while the
+        # count is in flight, the count (or "+" estimate) when known, and
+        # no suffix at all when the source is off.
+        if row.count_loading:
+            count_markup = " [dim](…)[/dim]"
+            count_plain = " (…)"
+        else:
+            count_markup = row.count_display or LibraryRail._count_suffix(
+                row.count, row.count_known
+            )
+            count_plain = count_markup
+        raw_title = _truncate_row_title(row.title)
+        subtitle_markup = ""
+        if row.subtitle:
+            subtitle_markup = f" [dim]— {escape_markup(row.subtitle)}[/dim]"
+        if width > 0:
+            fixed_plain = f"{prefix}{raw_title}{count_plain}"
+            if len(fixed_plain) > width:
+                # The title absorbs the squeeze; the count never clips.
+                subtitle_markup = ""
+                title_budget = width - len(prefix) - len(count_plain)
+                raw_title = (
+                    _truncate_row_title(raw_title, title_budget)
+                    if title_budget >= 4
+                    else ""
+                )
+            elif row.subtitle:
+                # The F-013 gloss gets whatever room remains after
+                # title + count: rendered whole when it fits, word-cut
+                # with an ellipsis when it nearly fits, dropped only when
+                # the leftover space could not teach anything anyway.
+                subtitle_budget = width - len(fixed_plain)
+                if len(f" — {row.subtitle}") <= subtitle_budget:
+                    pass  # full gloss fits as built above
+                elif subtitle_budget >= 8:
+                    cut = row.subtitle[: subtitle_budget - 4].rstrip()
+                    if " " in cut:
+                        cut = cut.rsplit(" ", 1)[0]
+                    subtitle_markup = f" [dim]— {escape_markup(cut)}…[/dim]"
+                else:
+                    subtitle_markup = ""
+        label = f"{prefix}{escape_markup(raw_title)}{count_markup}{subtitle_markup}"
+        if row.target_kind == "handoff":
+            # F-011: a meta line survives ONLY where it discriminates --
+            # handoff rows leave the Library entirely for the Study screen
+            # family.
+            label += "\n    opens Study"
+        return label
 
     def compose(self) -> ComposeResult:
         """Render the search input, source sections, and Details disclosure.
@@ -248,16 +339,6 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
         with body:
             for row in section.rows:
                 selected = row.row_id == self.shell.selected_row_id
-                marker = "▸" if selected else " "
-                # F-014: one count policy -- a dim "(…)" placeholder while
-                # the count is in flight, the count (or "+" estimate) when
-                # known, and no suffix at all when the source is off.
-                if row.count_loading:
-                    count_suffix = " [dim](…)[/dim]"
-                else:
-                    count_suffix = row.count_display or self._count_suffix(
-                        row.count, row.count_known
-                    )
                 # F-011: one-line rows by default -- the old blanket second
                 # line ("in Library" on all ~11 rows) was pure stutter and
                 # the reason the Create section was unreachable at 100x30
@@ -265,19 +346,12 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
                 # bottom margin = 3 terminal lines per row). A meta line
                 # survives ONLY where it discriminates: handoff rows leave
                 # the Library entirely for the Study screen family.
+                # Label construction lives in `_row_label` (count policy
+                # F-014, width-fitting F-015); compose renders the unfitted
+                # label and `_refit_row_labels` fits it post-layout.
                 is_handoff = row.target_kind == "handoff"
-                label = f"{marker} {_visible_row_title(row.title)}{count_suffix}"
-                if row.subtitle:
-                    # F-013: dim plain-language gloss on the SAME line (the
-                    # F-011 one-line contract is untouched); it sits after
-                    # the count so narrow rails clip the expendable gloss
-                    # first, never the title or count. Escaped like the
-                    # title -- Button labels parse Rich markup.
-                    label += f" [dim]— {escape_markup(row.subtitle)}[/dim]"
-                if is_handoff:
-                    label += "\n    opens Study"
-                button = Button(
-                    label,
+                button = LibraryRailRowButton(
+                    self._row_label(row, selected),
                     id=f"{LIBRARY_RAIL_ROW_PREFIX}{row.row_id}",
                     classes="library-rail-row",
                     compact=True,
@@ -286,6 +360,9 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
                 button.row_id = row.row_id
                 button.target_kind = row.target_kind
                 button.target_id = row.target_id
+                # Read by the button's own on_resize to rebuild the label
+                # whenever its width changes (F-015).
+                button.library_row = row
                 button.tooltip = (
                     row.disabled_tooltip
                     if row.disabled and row.disabled_tooltip

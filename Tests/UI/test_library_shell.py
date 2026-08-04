@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from rich.cells import cell_len
 from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextArea
@@ -628,7 +629,10 @@ async def test_rail_create_section_and_details_reachable_at_100x30():
 async def test_jargon_rail_rows_render_a_dim_subtitle_on_the_same_line():
     """F-013: jargon rows gloss themselves with a dim em-dash subtitle on
     the SAME one-line row (the F-011 height contract is untouched), and
-    plain rows carry no gloss."""
+    plain rows carry no gloss. F-015 fitting: the gloss is word-cut with
+    an ellipsis when the rail is too narrow for all of it (the rail's
+    realistic widths rarely fit the full gloss), so the pin asserts the
+    rendered gloss is a dim, ellipsized PREFIX of the full subtitle."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)
@@ -640,7 +644,6 @@ async def test_jargon_rail_rows_render_a_dim_subtitle_on_the_same_line():
         search_row = screen.query_one("#library-row-browse-search", Button)
         label = search_row.label
         plain = label.plain
-        assert "— search everything" in plain
         assert "\n" not in plain
         assert search_row.styles.height.value == 1
         # The gloss renders DIM (not just present): a "dim" style span
@@ -648,9 +651,11 @@ async def test_jargon_rail_rows_render_a_dim_subtitle_on_the_same_line():
         # normal emphasis.
         dim_spans = [s for s in label.spans if "dim" in str(s.style)]
         assert dim_spans, f"no dim span on the jargon gloss: {label.spans}"
-        assert any(
-            plain[s.start : s.end] == "— search everything" for s in dim_spans
-        ), f"dim span does not cover the gloss: {label.spans}"
+        covered = plain[dim_spans[0].start : dim_spans[0].end]
+        assert covered.startswith("— "), f"gloss lost its dash: {covered!r}"
+        assert "search everything".startswith(covered[2:].rstrip("…")), (
+            f"rendered gloss is not a prefix of the full subtitle: {covered!r}"
+        )
 
         plain_row = screen.query_one("#library-row-browse-notes", Button)
         assert "—" not in plain_row.label.plain
@@ -708,6 +713,64 @@ async def test_lookup_error_hides_row_counts_instead_of_zeroing_them():
             assert "(" not in row.label.plain, (
                 f"{row_id} shows a count under lookup error: {row.label.plain!r}"
             )
+
+
+@pytest.mark.asyncio
+async def test_rail_counts_never_clip_and_titles_shrink_first_at_100x30():
+    """F-015: at 100x30 every visible rail row fits its width with the
+    COUNT intact -- subtitles drop first, then titles ellipsize, and the
+    count (the information that matters) is the last thing standing."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await pilot.pause()
+
+        # Every row's first line fits its rendered width...
+        for row in screen.query("Button.library-rail-row"):
+            first_line = row.label.plain.split("\n")[0]
+            width = row.content_region.width
+            assert cell_len(first_line) <= width, (
+                f"{row.id} overflows its width: {first_line!r} ({cell_len(first_line)} > {width})"
+            )
+
+        # ...and the count survives on the one row whose title + count
+        # exceed the rail: the TITLE absorbed the squeeze instead.
+        conv = screen.query_one("#library-row-browse-conversations", Button)
+        conv_line = conv.label.plain.split("\n")[0]
+        assert conv_line.endswith("(2)"), f"count clipped: {conv_line!r}"
+        assert "..." in conv_line or "…" in conv_line, (
+            f"title should ellipsize before the count clips: {conv_line!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_search_placeholder_fits_and_input_reads_as_a_field_at_100x30():
+    """F-015/F-016: the full 'Search Library…' placeholder fits the box at
+    100 cols, and the box carries the app's field treatment (the
+    $ds-grid-line frame its sibling filters use) instead of a borderless
+    black void."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        search = screen.query_one("#library-search-input", Input)
+        assert search.content_region.width >= cell_len(search.placeholder), (
+            f"placeholder {search.placeholder!r} clipped: "
+            f"{search.content_region.width} < {cell_len(search.placeholder)}"
+        )
+        top_style, top_color = search.styles.border.top
+        assert top_style == "tall"
+        # $ds-grid-line ($surface-lighten-1), the app's field frame token --
+        # not the near-invisible Textual default border (#191919).
+        assert top_color.hex.lower() == "#2d2d2d"
 
 
 @pytest.mark.asyncio
