@@ -6552,3 +6552,15 @@ LibraryIngestCanvas .library-ingest-recent-path {
     height: auto;
     padding: 0 0 0 2;
 }
+
+/* task-2221: per-submission batch group headers + the latest-batch tally
+   line that leads the queue section. */
+LibraryIngestCanvas .library-ingest-batch-header {
+    height: auto;
+    text-style: bold;
+    margin: 1 0 0 0;
+}
+LibraryIngestCanvas #library-ingest-latest-batch {
+    height: auto;
+    text-style: bold;
+}

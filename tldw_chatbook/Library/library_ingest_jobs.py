@@ -484,6 +484,7 @@ class LibraryIngestJobRegistry:
         detected_type: str = "",
         ingest_options: dict[str, Any] | None = None,
         origin: str = "local",
+        batch_id: str | None = None,
     ) -> LibraryIngestJob:
         """Append a new ``QUEUED`` job.
 
@@ -503,6 +504,9 @@ class LibraryIngestJobRegistry:
                 a submission to the server's ingest-jobs API. A server job
                 carries no local ``media_id``; call ``attach_remote`` once
                 the server has issued its ids.
+            batch_id: Shared id for jobs submitted together (task-2221: a
+                folder expansion mints one so the queue can group the run);
+                ``None`` for single-file submissions.
 
         Returns:
             The newly created ``QUEUED`` job (a registry-owned copy).
@@ -521,6 +525,7 @@ class LibraryIngestJobRegistry:
             detected_type=detected_type,
             ingest_options=ingest_options or {},
             origin=origin,
+            batch_id=batch_id,
         )
         self._jobs.append(job)
         self._notify_listeners()

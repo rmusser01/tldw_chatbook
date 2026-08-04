@@ -12,10 +12,16 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from pathlib import PurePath
+
+
 from collections.abc import Mapping
 from typing import Any, Sequence
 
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    format_console_relative_age as format_batch_relative_age,
+)
 from tldw_chatbook.Library.ingest_capabilities import (
     _is_installed as _dependency_installed,
     get_capabilities,
@@ -633,6 +639,8 @@ class LibraryIngestCanvasState:
     unsupported_files: list[str]
     recent_jobs: list[LibraryIngestJob]
     queue_empty_line: str
+    queue_groups: tuple["IngestQueueGroup", ...]
+    latest_batch_line: str
     #: Which backend a new ingest will target, so the canvas can say so.
     ingest_backend: str = "local"
     #: Whether to offer switching backends -- only meaningful when a
@@ -889,7 +897,6 @@ def _queue_counts_line(jobs: Sequence[LibraryIngestJob]) -> str:
     return f"{joined} — all ingests" if joined else ""
 
 
-
 #: Suffix appended to a queue row for a job that runs on the server. Local is
 #: the overwhelmingly common case, so it stays unannotated rather than every
 #: row carrying a backend tag.
@@ -1003,6 +1010,154 @@ _MISSING_DEPENDENCY_RE = re.compile(
 )
 
 
+@dataclass(frozen=True)
+class IngestQueueGroup:
+    """One per-submission run of queue rows (task-2221 owner ruling).
+
+    Attributes:
+        batch_id: The members' shared batch id, or ``None`` for a
+            single-file submission (rendered without a header).
+        header_line: Ready-to-render group header, ``""`` for singletons.
+        job_ids: The member rows' job ids, in render order.
+    """
+
+    batch_id: str | None
+    header_line: str
+    job_ids: tuple[str, ...]
+
+
+def _batch_outcome_parts(members: "Sequence[LibraryIngestJob]") -> list[str]:
+    """Per-state outcome segments for one batch, active work last.
+
+    Args:
+        members: The batch's jobs, in render order.
+
+    Returns:
+        Non-zero tally segments in ``_COUNTS_LINE_ORDER`` order (e.g.
+        ``["2 done", "1 skipped"]``), with a trailing ``"N running"``
+        segment when any member is still queued/parsing/writing.
+    """
+    tallies: dict[str, int] = {}
+    active = 0
+    for job in members:
+        if job.state in (
+            IngestJobState.QUEUED,
+            IngestJobState.PARSING,
+            IngestJobState.WRITING,
+        ):
+            active += 1
+        else:
+            tallies[job.state.value] = tallies.get(job.state.value, 0) + 1
+    parts = [
+        f"{tallies[state.value]} {state.value}"
+        for state in _COUNTS_LINE_ORDER
+        if tallies.get(state.value)
+    ]
+    if active:
+        parts.append(f"{active} running")
+    return parts
+
+
+def build_ingest_queue_groups(
+    jobs: "Sequence[LibraryIngestJob]", *, now: datetime | None = None
+) -> tuple[tuple[IngestQueueGroup, ...], str]:
+    """Group jobs into contiguous per-submission runs (task-2221).
+
+    Contiguous runs of a shared ``batch_id`` become one headed group
+    (source dirname, file count, relative age, outcome tallies); jobs
+    without a batch id are singleton groups with no header, so a
+    single-file submission reads exactly as before. Also returns the
+    latest-batch tally line ("Latest batch: …"), ``""`` when no
+    multi-file batch exists.
+
+    Args:
+        jobs: The registry snapshot, in render order.
+        now: Reference time for the header's relative age; defaults to
+            the current UTC time.
+
+    Returns:
+        ``(groups, latest_batch_line)``.
+    """
+    reference_now = now if now is not None else datetime.now(timezone.utc)
+    groups: list[IngestQueueGroup] = []
+    run: list[LibraryIngestJob] = []
+    run_batch: str | None = None
+
+    def _flush() -> None:
+        if not run:
+            return
+        members = tuple(run)
+        if run_batch is None:
+            for member in members:
+                groups.append(
+                    IngestQueueGroup(
+                        batch_id=None, header_line="", job_ids=(member.job_id,)
+                    )
+                )
+            return
+        source = PurePath(str(members[0].source_path)).parent.name or "batch"
+        count = len(members)
+        # (Qodo round) A batch is "running" until EVERY member is
+        # terminal -- a finished member's age on an in-progress batch
+        # misled about the run's state.
+        any_active = any(
+            job.state
+            in (
+                IngestJobState.QUEUED,
+                IngestJobState.PARSING,
+                IngestJobState.WRITING,
+            )
+            for job in members
+        )
+        finished_walls = [
+            job.finished_at_wall for job in members if job.finished_at_wall
+        ]
+        age = (
+            format_batch_relative_age(max(finished_walls), now=reference_now)
+            if finished_walls and not any_active
+            else "running"
+        )
+        parts = _batch_outcome_parts(members)
+        header = (
+            f"▸ {source} — {count} {'file' if count == 1 else 'files'}"
+            f" · {age}"
+        )
+        if parts:
+            header += " · " + " · ".join(parts)
+        groups.append(
+            IngestQueueGroup(
+                batch_id=run_batch,
+                header_line=header,
+                job_ids=tuple(job.job_id for job in members),
+            )
+        )
+
+    for job in jobs:
+        job_batch = getattr(job, "batch_id", None)
+        if job_batch != run_batch and run:
+            _flush()
+            run = []
+        run_batch = job_batch
+        run.append(job)
+    _flush()
+
+    latest_batch_line = ""
+    batched = [g for g in groups if g.batch_id is not None]
+    if batched:
+        by_id = {job.job_id: job for job in jobs}
+        latest = max(
+            batched,
+            key=lambda g: max(
+                by_id[jid].submitted_at for jid in g.job_ids if jid in by_id
+            ),
+        )
+        members = [by_id[jid] for jid in latest.job_ids if jid in by_id]
+        parts = _batch_outcome_parts(members)
+        if parts:
+            latest_batch_line = "Latest batch: " + " · ".join(parts)
+    return tuple(groups), latest_batch_line
+
+
 def _missing_dependency_from(message: str, chain: Sequence[str]) -> str:
     """Name the missing dependency when the failure text identifies one."""
     for text in (message, *chain):
@@ -1103,6 +1258,7 @@ def build_library_ingest_state(
         )
         for job in jobs
     )
+    queue_groups, latest_batch_line = build_ingest_queue_groups(jobs)
     # (task-2220 Qodo round) SKIPPED counts as finished everywhere, so it
     # must also SHOW the control -- a skips-only queue was unclearble.
     queue_show_clear_finished = any(
@@ -1419,6 +1575,8 @@ def build_library_ingest_state(
         unsupported_files=unsupported_files,
         recent_jobs=recent_jobs,
         queue_empty_line=queue_empty_line,
+        queue_groups=queue_groups,
+        latest_batch_line=latest_batch_line,
         transcribe_cpp_configured=transcribe_cpp_configured,
     )
 

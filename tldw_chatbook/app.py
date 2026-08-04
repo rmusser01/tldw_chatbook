@@ -65,6 +65,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 import traceback
 from copy import deepcopy
 from typing import TYPE_CHECKING, Optional, Any, Dict, List, Callable, Mapping
@@ -1903,6 +1904,7 @@ class LibraryIngestQueueMixin:
         perform_analysis: bool = False,
         chunk_enabled: bool = False,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
+        batch_id: str | None = None,
     ) -> LibraryIngestJob:
         """Submit a new Library ingest job and top up the parse pool.
 
@@ -1910,6 +1912,9 @@ class LibraryIngestQueueMixin:
         When ``self.media_db`` is unavailable, the job is failed immediately
         (with the exact copy ``"Media database is unavailable."``) and it
         never reaches the parse pool.
+        ``batch_id`` carries the folder-expansion batch id (task-2221) so
+        the queue can group one submission's jobs; ``None`` for single
+        files.
 
         Args:
             source_path: The file path to ingest.
@@ -1951,10 +1956,15 @@ class LibraryIngestQueueMixin:
                 )
                 return failed if failed is not None else empty_job
             first_job: LibraryIngestJob | None = None
+            # (task-2221 owner ruling) One batch id per folder submission,
+            # so the queue can group this run's rows under one header and
+            # the tally can answer "what did THIS run just do".
+            folder_batch_id = f"local-{uuid.uuid4().hex[:12]}"
             for expanded_path in expanded:
                 job = self.submit_library_ingest_job(
                     source_path=expanded_path,
                     ingest_options=ingest_options,
+                    batch_id=folder_batch_id,
                     # Title is per-file (the ingest form clears it on submit
                     # for exactly this reason), so a folder's files each take
                     # their own filename-derived title rather than all
@@ -2017,6 +2027,7 @@ class LibraryIngestQueueMixin:
             chunk_size=chunk_size,
             detected_type=detected_type,
             ingest_options=ingest_options or {},
+            batch_id=batch_id,
         )
         if self.media_db is None:
             failed = self.library_ingest_jobs.mark_failed(

@@ -137,6 +137,14 @@ class LibraryIngestQueuePanel(Vertical):
 
     def compose(self) -> ComposeResult:
         state = self.state
+        # (task-2221 owner ruling) The tally leads with the LATEST batch;
+        # the lifetime line stays secondary below it.
+        if state.latest_batch_line:
+            yield Static(
+                state.latest_batch_line,
+                id="library-ingest-latest-batch",
+                markup=False,
+            )
         if state.queue_counts_line:
             yield Static(
                 state.queue_counts_line,
@@ -149,7 +157,22 @@ class LibraryIngestQueuePanel(Vertical):
                 id="library-ingest-queue-empty",
                 markup=False,
             )
+        # (task-2221) Per-submission group headers: rendered before the
+        # first row of each headed group. Rows keep their flat order and
+        # identity semantics -- the header is an extra Static, not a
+        # container, so the in-place update paths are untouched.
+        headers_before: dict[str, str] = {}
+        for group in state.queue_groups:
+            if group.header_line and group.job_ids:
+                headers_before[group.job_ids[0]] = group.header_line
         for index, row in enumerate(state.queue_rows):
+            header_line = headers_before.get(row.job_id, "")
+            if header_line:
+                yield Static(
+                    header_line,
+                    classes="library-ingest-batch-header",
+                    markup=False,
+                )
             # A source filename can contain Rich markup syntax (e.g. a
             # literal "[/bracket]" in the name) -- escape_markup here is
             # what keeps a hostile filename from raising MarkupError at
