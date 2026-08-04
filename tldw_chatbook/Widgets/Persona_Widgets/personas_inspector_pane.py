@@ -224,12 +224,16 @@ class PersonasInspectorPane(Vertical):
                 classes="console-action-secondary",
                 tooltip=_NO_SELECTION_GUIDANCE,
             )
-            yield Checkbox(
+            tts_checkbox = Checkbox(
                 "Include assigned voice profile",
                 id="personas-export-include-tts",
                 value=False,
                 disabled=True,
             )
+            # task-2233: starts hidden (no profile assigned yet);
+            # _apply_action_state reveals it once an assignment is known.
+            tts_checkbox.display = False
+            yield tts_checkbox
             yield Button(
                 "Export JSON",
                 id="personas-export-json",
@@ -447,7 +451,11 @@ class PersonasInspectorPane(Vertical):
                 readiness.update("Console chat is for characters and personas.")
             else:
                 reason = self._console_action_block_reason or "unavailable"
-                readiness.update(f"Chat blocked: {reason}")
+                # task-2232: the gate closed blocks BOTH CTAs, so the copy
+                # names the pair (one vocabulary everywhere).
+                readiness.update(
+                    f"Chat now and Send to Console draft blocked: {reason}"
+                )
         elif self._provider_block_reason:
             # Per-intent (task-523): Send to Console draft stays available;
             # only Chat now is blocked because it needs an immediate reply
@@ -473,7 +481,10 @@ class PersonasInspectorPane(Vertical):
             elif unsaved:
                 attach_tooltip = _UNSAVED_TOOLTIP
             else:
-                attach_tooltip = f"Chat blocked: {self._console_action_block_reason}"
+                attach_tooltip = (
+                    "Chat now and Send to Console draft blocked: "
+                    f"{self._console_action_block_reason}"
+                )
         # Kind gates rendering (task-443); readiness/unsaved/provider-readiness
         # gate the disabled+tooltip state of whatever is rendered (see the
         # module-level constants).
@@ -481,7 +492,14 @@ class PersonasInspectorPane(Vertical):
         export_json_applies = kind is None or kind in _EXPORT_JSON_APPLICABLE_KINDS
         export_png_applies = kind is None or kind in _EXPORT_PNG_APPLICABLE_KINDS
         tts_checkbox = self.query_one("#personas-export-include-tts", Checkbox)
-        tts_checkbox.display = kind is None or kind == "character"
+        # task-2233: hidden outright unless the selection actually HAS a
+        # voice profile to include - a permanently-disabled "not applicable"
+        # checkbox read as an unreadable dark smear right under the primary
+        # CTA. When a profile IS assigned, the enabled/disabled-with-reason
+        # gating below (and the F-041 legibility CSS) covers the shown case.
+        tts_checkbox.display = (
+            (kind is None or kind == "character") and self._tts_export_available
+        )
         tts_checkbox.disabled = not (
             export_enabled
             and kind == "character"

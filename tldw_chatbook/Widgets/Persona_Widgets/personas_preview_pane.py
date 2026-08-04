@@ -30,6 +30,11 @@ from .personas_pane_messages import (
 #: while keeping pathological pastes out of the provider request.
 PREVIEW_MESSAGE_MAX_CHARS = 4000
 
+#: The toggle's label states the payoff (task-2234) - what you get and that
+#: it costs nothing - rather than the feature name. The ▸/▾ glyph still
+#: tracks expand state.
+PREVIEW_TOGGLE_LABEL = "Try a test chat (nothing saved)"
+
 #: Neutral speaker labels used before and after a character is seeded.
 _DEFAULT_CHARACTER_LABEL = "character"
 _DEFAULT_USER_LABEL = "User"
@@ -106,7 +111,7 @@ class PersonasPreviewPane(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Button(
-            "▸ Preview conversation",
+            f"▸ {PREVIEW_TOGGLE_LABEL}",
             id="personas-preview-toggle",
             tooltip="Test the selected character or persona in an ephemeral conversation; nothing is saved.",
             classes="console-action-subdued",
@@ -147,9 +152,14 @@ class PersonasPreviewPane(Vertical):
                     classes="console-action-subdued",
                 )
                 yield Button(
-                    "Continue this chat in Console",
+                    # task-2232: the one secondary Console CTA, verbatim. The
+                    # handoff stages a draft (suggested prompt, no auto-send),
+                    # so it takes the pair's secondary label - same as the
+                    # inspector's. (It continues the preview chat, but by
+                    # staging, not by starting a live reply.)
+                    "Send to Console draft",
                     id="personas-preview-open-console",
-                    classes="console-action-subdued",
+                    classes="console-action-secondary",
                     tooltip="Move this preview conversation into a Console session.",
                 )
                 yield Button(
@@ -170,7 +180,7 @@ class PersonasPreviewPane(Vertical):
         """Show the collapsible body."""
         self.query_one("#personas-preview-body").display = True
         self.query_one("#personas-preview-toggle", Button).label = (
-            "▾ Preview conversation"
+            f"▾ {PREVIEW_TOGGLE_LABEL}"
         )
 
     async def seed_greeting(self, text: str) -> None:
@@ -429,7 +439,9 @@ class PersonasPreviewPane(Vertical):
         # The toggle doubles as the section header, so it carries the
         # expand/collapse state (F-039).
         self.query_one("#personas-preview-toggle", Button).label = (
-            "▾ Preview conversation" if body.display else "▸ Preview conversation"
+            f"▾ {PREVIEW_TOGGLE_LABEL}"
+            if body.display
+            else f"▸ {PREVIEW_TOGGLE_LABEL}"
         )
 
     def _submit_preview_message(self) -> None:

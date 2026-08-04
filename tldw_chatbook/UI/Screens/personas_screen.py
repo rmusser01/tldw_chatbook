@@ -16,7 +16,7 @@ from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
 from textual.timer import Timer
 from textual.worker import Worker
@@ -447,7 +447,7 @@ class PersonasScreen(BaseAppScreen):
         ),
         Binding("ctrl+n", "personas_new", "New"),
         Binding("ctrl+f", "personas_search", "Search"),
-        Binding("ctrl+enter", "personas_attach", "Attach"),
+        Binding("ctrl+enter", "personas_attach", "Send to Console draft"),
         Binding("ctrl+s", "personas_save", "Save", show=False),
         Binding("escape", "personas_escape", "Back", show=False),
         # Ctrl+1..5 mirror the mode strip order (MODE_CHIP_ORDER).
@@ -641,50 +641,21 @@ class PersonasScreen(BaseAppScreen):
         margin-right: 1;
     }
 
-    /* The character dictionaries + world-books panels sit alongside the
+    /* The character dictionaries + world-books sections sit alongside the
        character card view (both visible when a character is selected), not
-       swapped by _show_center like the other detail-stack children. Dock
-       ONE wrapper to the bottom so PersonasCharacterCardWidget's
-       `height: 100%` resolves against the remaining space instead of the
-       panels being squeezed to nothing / clipped by the stack's hidden
-       overflow. The two panels flow top-to-bottom *inside* that wrapper -
-       Textual does not auto-stack multiple same-edge `dock` siblings (two
-       independently-docked-bottom widgets land on the SAME region and
-       overlap, silently stealing each other's clicks), so only the wrapper
-       itself is docked. */
-    #personas-detail-stack #personas-character-attachments {
-        dock: bottom;
+       swapped by _show_center like the other detail-stack children. The
+       stack is a VerticalScroll and the card fills its viewport
+       (height: 100%), so the sections flow BELOW the fold in document
+       order and the user scrolls the center column down to them
+       (task-2231). This replaced the old bottom-docked wrapper: docked,
+       the two panels owned up to 16 lines even when empty, displaced the
+       card entirely at 100x30, and left a dead void between the panels at
+       170x50. Each section is now a one-line collapsed header by default,
+       so no explicit max-height cap is needed here (the panels' own
+       DEFAULT_CSS keeps every part height: auto, which the old cap existed
+       to force). */
+    #personas-character-attachments {
         height: auto;
-        /* Explicit cap (== the sum of the two children's max-heights below)
-           is load-bearing, not decorative: each panel's button row is a
-           Horizontal, whose Textual default is `height: 1fr`. Nested inside
-           a plain `height: auto` Vertical with no cap of its own, that `1fr`
-           descendant makes auto-height measurement resolve to "fill all
-           available space" instead of "sum of children" (verified via a
-           minimal repro), which silently squeezed PersonasCharacterCardWidget
-           to zero height and made the dictionaries panel's buttons
-           unclickable (they were being covered/never actually laid out).
-           Giving the wrapper a concrete max-height breaks that circular
-           fr-resolution and restores normal auto-sizing. */
-        max-height: 16;
-        width: 100%;
-    }
-
-    #personas-character-attachments PersonasCharacterDictionariesWidget {
-        height: auto;
-        max-height: 12;
-        width: 100%;
-    }
-
-    /* Kept low (well below the dictionaries panel's 12) so the two stacked
-       panels combined still leave PersonasCharacterCardWidget some room at
-       the smallest supported terminal size (100x30 - see the geometry
-       check): #personas-detail-stack's own budget there is only ~17 lines
-       total, so 12 (dictionaries) + 4 (world books) is close to the ceiling
-       already. */
-    #personas-character-attachments PersonasCharacterWorldBooksWidget {
-        height: auto;
-        max-height: 4;
         width: 100%;
     }
     """
@@ -861,15 +832,19 @@ class PersonasScreen(BaseAppScreen):
                     # affordance reads as the canvas's own section instead of
                     # a bar stranded at the work-area bottom.
                     yield PersonasPreviewPane(id="personas-preview-pane")
-                    with Container(id="personas-detail-stack"):
+                    # The center canvas is ONE scrollable column
+                    # (task-2231): the visible center view (e.g. the
+                    # character card) fills the viewport first, and the
+                    # character-attachment sections flow below it in
+                    # document order - the user scrolls down to them.
+                    # Collapsed sections cost one line each, so the card
+                    # keeps the whole viewport by default. (This replaced
+                    # the old bottom-docked wrapper, which let the two
+                    # empty panels displace the card at 100x30 and left a
+                    # dead void between them at 170x50.)
+                    with VerticalScroll(id="personas-detail-stack"):
                         yield PersonasCharacterCardWidget()
                         yield PersonasCharacterEditorWidget()
-                        # A single docked-bottom wrapper: Textual does not
-                        # auto-stack multiple same-edge `dock` siblings (they
-                        # overlap at the same region instead), so the two
-                        # character-attachment panels flow top-to-bottom
-                        # *inside* one dock rather than each docking bottom
-                        # independently.
                         with Vertical(id="personas-character-attachments"):
                             yield PersonasCharacterDictionariesWidget()
                             yield PersonasCharacterWorldBooksWidget()
@@ -880,7 +855,10 @@ class PersonasScreen(BaseAppScreen):
                                 "Back to card", id="personas-conversation-back"
                             )
                             yield Button(
-                                "Continue in Console",
+                                # task-2232: the one secondary CTA verbatim -
+                                # continue_in_console stages the transcript as
+                                # a draft handoff (no auto-send).
+                                "Send to Console draft",
                                 id="personas-conversation-continue-console",
                             )
                             yield Button(
@@ -9551,7 +9529,7 @@ class PersonasScreen(BaseAppScreen):
                 "#ccp-character-card-view",
                 "#ccp-character-editor-view",
             ) and self.state.runtime_source == "local"
-        # The docked wrapper that holds BOTH character-attachment panels
+        # The wrapper that holds BOTH character-attachment sections
         # (Roleplay P2f Task 6 added the world-books panel alongside the
         # P1f dictionaries panel inside #personas-character-attachments)
         # is the single source of truth for the same characters-only
@@ -9560,7 +9538,7 @@ class PersonasScreen(BaseAppScreen):
         # a mode-level toggle alone) because _show_center also runs *within*
         # Characters mode when swapping to the conversation transcript view
         # (see personas_conversations_controller.open_conversation), which
-        # must hide the wrapper too so it doesn't stay docked/visible with
+        # must hide the wrapper too so it doesn't stay visible with
         # stale data over the transcript, or empty at initial mount before
         # any character is selected.
         try:
@@ -9865,9 +9843,11 @@ class PersonasScreen(BaseAppScreen):
                 ShortcutAction("ctrl+f", "search"),
                 ShortcutAction("ctrl+s", "save", available=editing),
                 ShortcutAction("esc", "back", available=editing or transcript_open),
-                # F-032: the hint names the renamed "Send to Console draft" CTA.
+                # task-2232: the hint names the one secondary CTA verbatim.
                 ShortcutAction(
-                    "ctrl+enter", "draft", available=self._console_action_allowed()
+                    "ctrl+enter",
+                    "Send to Console draft",
+                    available=self._console_action_allowed(),
                 ),
                 # F-038: disclose the always-on accelerators that used to be
                 # invisible (show=False bindings with no footer/chip mention).

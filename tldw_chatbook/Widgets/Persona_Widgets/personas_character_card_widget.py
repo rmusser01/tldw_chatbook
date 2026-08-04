@@ -28,7 +28,12 @@ class PersonasCharacterCardWidget(Container):
     DEFAULT_CSS = """
     PersonasCharacterCardWidget {
         width: 100%;
+        /* height: 100% fills the (scrollable) detail-stack viewport so the
+           character info owns the center by default; min-height is the real
+           floor under it (task-2231 AC#5) - attachment sections can never
+           squeeze the card to a sliver, the stack scrolls instead. */
         height: 100%;
+        min-height: 10;
     }
 
     PersonasCharacterCardWidget #personas-character-card-body {

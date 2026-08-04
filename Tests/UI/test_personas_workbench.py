@@ -596,9 +596,9 @@ class TestWorkbenchShell:
             # draft IS available here; "save" (no editor open) is the
             # remaining dropped hint.
             assert "save" not in rendered.lower()
-            # F-032: the footer names the renamed Console draft CTA.
+            # task-2232: the footer names the one secondary CTA verbatim.
             assert "attach" not in rendered.lower()
-            assert "ctrl+enter draft" in rendered.lower()
+            assert "ctrl+enter send to console draft" in rendered.lower()
             # F-038: the always-on accelerators are advertised, not hidden.
             assert "f6 pane" in rendered.lower()
             assert "ctrl+1-4 mode" in rendered.lower()
@@ -2661,9 +2661,13 @@ class TestImportExport:
             checkbox = inspector.query_one("#personas-export-include-tts", Checkbox)
             assert checkbox.value is False
             assert checkbox.disabled is True
+            # task-2233: hidden while the character has no assigned profile.
+            assert checkbox.display is False
 
             inspector.set_tts_export_available(True)
             assert checkbox.disabled is False
+            # task-2233: an assignment makes it reappear.
+            assert checkbox.display is True
             monkeypatch.setattr(
                 screen,
                 "_portable_tts_profile_for_export",
@@ -3759,7 +3763,7 @@ class TestConversationsPanel:
     async def test_continue_blocked_while_loading(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
-        """Continue in Console refuses to stage a transcript still in flight."""
+        """Send to Console draft refuses to stage a transcript still in flight."""
         notifications: list[tuple[str, str]] = []
         app = PersonasTestApp(mock_app_instance)
         app.open_chat_with_handoff = Mock()
@@ -3964,7 +3968,7 @@ class TestConsoleActions:
                 screen.query_one("#personas-attach-to-console", Button).disabled is True
             )
             assert screen.query_one("#personas-start-chat", Button).disabled is True
-            assert "Chat blocked: prompts are not attachable" in str(
+            assert "Chat now and Send to Console draft blocked: prompts are not attachable" in str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
 
@@ -9390,7 +9394,9 @@ class TestDirtyTracking:
             await pilot.pause()
             assert screen._console_action_allowed() is False  # no prior selection
             draft = next(
-                a for a in screen._shortcut_context().actions if a.label == "draft"
+                a
+                for a in screen._shortcut_context().actions
+                if a.label == "Send to Console draft"
             )
             assert draft.available is False  # no prior selection
             # task-264: the registration lands on the SCREEN's own footer,
@@ -9398,7 +9404,7 @@ class TestDirtyTracking:
             footer = screen.query_one(AppFooterStatus)
             # task-445: unavailable hints are dropped entirely rather than
             # rendered with a literal "unavailable" suffix.
-            assert "ctrl+enter draft" not in footer.shortcut_text
+            assert "ctrl+enter send to console draft" not in footer.shortcut_text.lower()
             await screen._import_character_from_path(str(source))
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
