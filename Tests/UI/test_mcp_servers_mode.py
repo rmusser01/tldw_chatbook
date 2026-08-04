@@ -1148,7 +1148,10 @@ async def test_off_builtin_gets_enable_affordance_not_problem_callout():
 async def test_pristine_off_builtin_summary_is_calm_not_a_false_alarm():
     """F-051: on a pristine install (only the disabled built-in), the
     aggregate line no longer reads '0 of 1 servers ready — 1 needs setup'
-    and the summary glyph stays out of the warning state."""
+    and the summary glyph stays out of the warning state.
+
+    task-2239: the glyph is the muted off/opt-in one, not the ready ● --
+    a ready glyph in front of the 'off' sentence read as a contradiction."""
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
@@ -1160,7 +1163,28 @@ async def test_pristine_off_builtin_summary_is_calm_not_a_false_alarm():
         assert "off" in text.lower()
         glyph = app.query_one("#mcp-overview-summary-glyph", Static)
         assert STATE_CSS_CLASSES[ReadinessState.NEEDS_SETUP] not in glyph.classes
-        assert STATE_CSS_CLASSES[ReadinessState.READY] in glyph.classes
+        assert STATE_CSS_CLASSES[ReadinessState.READY] not in glyph.classes
+        assert STATE_CSS_CLASSES[ReadinessState.OFF_OPT_IN] in glyph.classes
+        assert str(glyph.renderable) == STATE_GLYPHS[ReadinessState.OFF_OPT_IN]
+
+
+@pytest.mark.asyncio
+async def test_off_builtin_table_row_reads_off_opt_in_not_needs_setup():
+    """task-2239: the off built-in's Status cell uses the muted off/opt-in
+    display state -- 'Off (opt-in)', no alarm glyph, no 'Needs setup'."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview([builtin_readiness(enabled=False)])
+        await pilot.pause()
+        table = app.query_one("#mcp-servers-table", DataTable)
+        # Columns: Name, Connection, Status (index 2), …
+        status_cell = table.get_cell_at((0, 2))
+        assert str(status_cell) == (
+            f"{STATE_GLYPHS[ReadinessState.OFF_OPT_IN]} Off (opt-in)"
+        )
+        assert "Needs setup" not in str(status_cell)
+        assert status_cell.style == state_text("x", "muted").style
 
 
 @pytest.mark.asyncio

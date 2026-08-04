@@ -249,7 +249,10 @@ def test_builtin_readiness():
     # F-059: one empty-cell placeholder everywhere -- "—", not "none".
     assert on.auth_display == "—"
     off = builtin_readiness(enabled=False)
-    assert off.state is ReadinessState.NEEDS_SETUP
+    # task-2239: off-by-choice is its own muted display state, not the
+    # NEEDS_SETUP alarm vocabulary -- the reason tuple is unchanged so the
+    # is_off_opt_in() fallback and allowed-action derivation still work.
+    assert off.state is ReadinessState.OFF_OPT_IN
     assert off.primary_reason is ReasonCode.NOT_CONFIGURED
 
 
@@ -363,7 +366,14 @@ def test_worst_state_checking_outranks_ready_only():
 def test_worst_state_ignores_off_builtin_opt_in():
     """F-051: the disabled built-in is an OFF/opt-in state, not a defect --
     it must not pull the aggregate badge into a warning color on a pristine
-    install. Genuine problems still set the worst state."""
-    assert worst_state([builtin_readiness(enabled=False)]) is ReadinessState.READY
+    install. Genuine problems still set the worst state.
+
+    task-2239: the pristine all-off aggregate resolves to the muted
+    OFF_OPT_IN display state rather than READY -- a ready ● glyph in front
+    of the "Built-in server is off …" sentence read as a contradiction."""
+    assert worst_state([builtin_readiness(enabled=False)]) is ReadinessState.OFF_OPT_IN
     snaps = [builtin_readiness(enabled=False), _raw_snap(ReadinessState.NEEDS_SETUP)]
     assert worst_state(snaps) is ReadinessState.NEEDS_SETUP
+    # A ready server alongside the off built-in still reads ready overall.
+    ready_mix = [builtin_readiness(enabled=False), _raw_snap(ReadinessState.READY)]
+    assert worst_state(ready_mix) is ReadinessState.READY

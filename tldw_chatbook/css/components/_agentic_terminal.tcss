@@ -5595,6 +5595,9 @@ Button.mcp-inspector-action {
 .mcp-status-warning { color: $ds-status-warning; }
 .mcp-status-error { color: $ds-status-error; }
 .mcp-status-info { color: $ds-status-info; }
+/* task-2239: the off/opt-in display state (the disabled built-in server) --
+quiet, not alarming; same muted tier as the legend/hint lines. */
+.mcp-status-muted { color: $ds-text-muted; }
 
 .ds-info-callout {
     border: round $ds-status-info;

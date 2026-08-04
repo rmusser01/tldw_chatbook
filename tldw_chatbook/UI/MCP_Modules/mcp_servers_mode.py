@@ -303,7 +303,8 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         `save_setting_to_cli_config("mcp", key, value)` (a thread-offloaded
         config write; see `MCPWorkbench._save_builtin_flag()`) and then
         reloading the catalog so the built-in row's readiness reflects the
-        change (Phase 1 derivation: `enabled=False` -> NEEDS_SETUP).
+        change (Phase 1 derivation: `enabled=False` -> the muted OFF_OPT_IN
+        display state, task-2239).
         """
 
         def __init__(self, key: str, value: bool) -> None:
@@ -964,7 +965,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         detail = snapshot.detail or {}
         # `enabled` is read directly off `detail["enabled"]` (populated by
         # `builtin_readiness()`, Task 10) rather than re-derived from
-        # `snapshot.state is not ReadinessState.NEEDS_SETUP` -- see the
+        # `snapshot.state is not ReadinessState.OFF_OPT_IN` -- see the
         # comment on that call site for why. The `True` fallback only
         # matters for a hypothetical builtin-source snapshot built without
         # going through `builtin_readiness()` at all (none do today).
