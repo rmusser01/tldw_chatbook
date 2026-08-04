@@ -3227,23 +3227,33 @@ class MCPWorkbench(Container):
         wall-clock duration for display.
 
         The success-path result-formatting step (`redact_mapping()` then
-        `json.dumps(..., default=str)`) gets its own try/except too:
-        `default=str` only rescues non-serializable VALUES, not dict KEYS
-        (a tuple key raises `TypeError`), and `redact_mapping` can raise on
-        pathological input too (e.g. `RecursionError` on a self-referential
-        dict). The `builtin:` path runs arbitrary in-process tool code, so
-        a malformed result is reachable, not just theoretical -- treat a
-        formatting failure the same as a service-call failure rather than
-        letting it escape uncaught.
+        `json.dumps(..., default=str)`, OR `str(envelope)[:500]` for a
+        non-mapping envelope) gets its own try/except too, covering BOTH
+        branches: `default=str` only rescues non-serializable VALUES, not
+        dict KEYS (a tuple key raises `TypeError`), `redact_mapping` can
+        raise on pathological input too (e.g. `RecursionError` on a
+        self-referential dict), and a non-mapping envelope's own `__str__`
+        can just as easily raise. The `builtin:` path runs arbitrary
+        in-process tool code, so a malformed result is reachable, not just
+        theoretical -- treat a formatting failure the same as a
+        service-call failure rather than letting it escape uncaught
+        regardless of which branch it came from.
 
         RAG-49 (PR-5 task 4): the envelope's raw JSON dump (`indent=2`, no
         longer the flattened 500-char excerpt) is computed HERE, still
         inside this same try/except -- `show_tool_result()`'s own raw-body
         cap (`_format_raw_body()`, 20,000 chars) only bounds DISPLAY length,
-        it can't rescue a `json.dumps()` that never returns. The `result`/
-        `source` fields feed the inspector's new structured summary line
-        (`_summarize_tool_result()`); non-mapping envelopes keep the
-        original flattened-string fallback unchanged.
+        it can't rescue a `json.dumps()` that never returns. `redact_
+        mapping()` is called EXACTLY ONCE per mapping envelope; the `raw`
+        JSON dump AND the `result`/`source` fields fed to the inspector's
+        structured summary line (`_summarize_tool_result()`) are both
+        derived from that SAME redacted copy -- redacting twice, or
+        redacting only the raw dump while handing the summary/
+        interpretation path the original envelope, would let a secret
+        `redact_mapping` hid from the raw JSON reappear in the
+        interpretation line instead (e.g. an error-shaped result whose
+        `"error"` value is itself a secret-keyed mapping). Non-mapping
+        envelopes keep the original flattened-string fallback unchanged.
         """
         started = time.monotonic()
         try:
@@ -3260,23 +3270,39 @@ class MCPWorkbench(Container):
                 )
                 return
             duration_ms = int((time.monotonic() - started) * 1000)
+            try:
+                if isinstance(envelope, Mapping):
+                    # Redact ONCE and derive everything else (the raw dump
+                    # AND the structured result/source fed to the summary)
+                    # from that SAME redacted copy -- redacting twice (or
+                    # redacting only the raw dump while handing the
+                    # summary/interpretation path the original, unredacted
+                    # envelope) would let a secret that `redact_mapping`
+                    # hid from the raw JSON reappear in the interpretation
+                    # line (e.g. an error-shaped result whose "error" value
+                    # is itself a secret-keyed mapping). `_redact_sequence`
+                    # (MCP/redaction.py) preserves sequence length/type, and
+                    # "error" itself is never a secret-looking key, so the
+                    # count/error-shape logic downstream still matches the
+                    # redacted copy exactly as it would the original.
+                    redacted = redact_mapping(envelope)
+                    raw_json = json.dumps(redacted, indent=2, default=str)
+                else:
+                    excerpt = str(envelope)[:500]
+            except Exception as exc:
+                self._show_tool_test_result(
+                    server_key=server_key, tool_name=tool_name, ok=False,
+                    text=_safe_exception_text(exc), duration_ms=duration_ms,
+                )
+                return
             if isinstance(envelope, Mapping):
-                try:
-                    raw_json = json.dumps(redact_mapping(envelope), indent=2, default=str)
-                except Exception as exc:
-                    self._show_tool_test_result(
-                        server_key=server_key, tool_name=tool_name, ok=False,
-                        text=_safe_exception_text(exc), duration_ms=duration_ms,
-                    )
-                    return
                 self._show_tool_test_result(
                     server_key=server_key, tool_name=tool_name, ok=True,
                     duration_ms=duration_ms,
-                    result=envelope.get("result"), source=envelope.get("source"),
+                    result=redacted.get("result"), source=redacted.get("source"),
                     raw=raw_json,
                 )
             else:
-                excerpt = str(envelope)[:500]
                 self._show_tool_test_result(
                     server_key=server_key, tool_name=tool_name, ok=True,
                     text=excerpt, duration_ms=duration_ms,

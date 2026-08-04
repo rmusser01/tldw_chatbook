@@ -3190,6 +3190,51 @@ async def test_test_tool_run_redacts_secret_shaped_result():
 
 
 @pytest.mark.asyncio
+async def test_test_tool_run_redacts_secret_in_error_shaped_result_note():
+    """Review fix (RAG-49, Important #1): the quiet interpretation line
+    must be redacted too, not just the Raw response Collapsible.
+
+    Before this fix, `_run_tool_test()` redacted the envelope only to
+    build the raw JSON dump, then fed the ORIGINAL (unredacted) envelope's
+    `result`/`source` to `show_tool_result()` -- so a secret embedded
+    inside an error-shaped result's `"error"` value would render straight
+    into `#mcp-inspector-test-result-note` (via `_summarize_tool_result()`'s
+    `str(result[0]["error"])`) even though the raw body correctly showed
+    `***`. Now `result`/`source` are derived from the SAME redacted copy
+    the raw dump uses, so the secret cannot appear on ANY of the three
+    result surfaces (summary, note, raw body)."""
+    app = ToolTestApp()
+    app.unified_mcp_service.test_result = {
+        "ok": True, "source": "local",
+        "result": [{"error": {"api_key": "sk-live-x"}}],
+    }
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch (raw, default "{}")
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        summary = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        note = str(app.query_one("#mcp-inspector-test-result-note", Static).renderable)
+        raw_body = str(
+            app.query_one("#mcp-inspector-test-result-raw-body", Static).renderable
+        )
+        assert "sk-live-x" not in summary
+        assert "sk-live-x" not in note
+        assert "sk-live-x" not in raw_body
+        assert "***" in note
+        assert "***" in raw_body
+        assert summary.startswith("OK · local · ")
+        assert summary.endswith("ms · tool returned an error")
+
+
+@pytest.mark.asyncio
 async def test_test_tool_run_error_with_dict_shaped_args_is_redacted():
     """I1 (ledger #5): some errors carry a raw dict payload in `exc.args`
     (e.g. an echoed request/arguments dict) -- `str(exc)` would otherwise
@@ -3313,6 +3358,46 @@ async def test_test_tool_run_non_str_dict_key_result_does_not_crash():
     caught and rendered as a failed result like any other test failure."""
     app = ToolTestApp()
     app.unified_mcp_service.test_result = {("tuple", "key"): 1}
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch (raw, default "{}")
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        first_line = result.split("\n", 1)[0]
+        assert first_line.startswith("Failed · ")
+        assert app.query_one("#mcp-inspector-test-run", Button).disabled is False
+        assert workbench._tool_test_in_flight == set()
+
+
+@pytest.mark.asyncio
+async def test_test_tool_run_non_mapping_result_str_raises_does_not_crash():
+    """Review fix (RAG-49, Important #2): the non-mapping envelope fallback
+    (`str(envelope)[:500]`) must share the SAME try/except as the mapping
+    branch's `json.dumps(redact_mapping(...))` step.
+
+    Before this fix, the non-mapping `else` branch's `str(envelope)[:500]`
+    sat OUTSIDE any try/except -- a non-mapping envelope whose own
+    `__str__` raises would escape `_run_tool_test()` entirely uncaught.
+    Textual's `run_worker()` defaults to `exit_on_error=True`, so that
+    would panic the whole app rather than just failing this one tool
+    test -- the exact regression class `test_test_tool_run_non_str_dict_
+    key_result_does_not_crash` above already pins for the MAPPING branch.
+    This is the non-mapping-branch sibling of that same pin."""
+
+    class _RaisingStr:
+        def __str__(self) -> str:
+            raise ValueError("cannot stringify this result")
+
+    app = ToolTestApp()
+    app.unified_mcp_service.test_result = _RaisingStr()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
