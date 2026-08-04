@@ -721,9 +721,13 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
     """
     basename = _basename(job.source_path)
     if job.state == IngestJobState.PARSING:
-        line = f"{_GLYPH_ACTIVE} parsing · {basename}{_retry_suffix(job)}"
+        line = f"{_GLYPH_ACTIVE} parsing · {basename}"
         if job.detected_type:
             line += f" · {job.detected_type}"
+        # (Qodo round) The attempt marker is the row's LAST element in every
+        # state -- appending it before detected_type made it read
+        # "… · attempt 2 · plaintext" only on rows that had a type.
+        line += _retry_suffix(job)
         return IngestQueueRow(
             job_id=job.job_id,
             glyph=_GLYPH_ACTIVE,
@@ -737,9 +741,10 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
             error_detail=job.error_detail,
         )
     if job.state == IngestJobState.WRITING:
-        line = f"{_GLYPH_ACTIVE} writing · {basename}{_retry_suffix(job)}"
+        line = f"{_GLYPH_ACTIVE} writing · {basename}"
         if job.detected_type:
             line += f" · {job.detected_type}"
+        line += _retry_suffix(job)
         return IngestQueueRow(
             job_id=job.job_id,
             glyph=_GLYPH_ACTIVE,
@@ -900,14 +905,26 @@ def _queue_counts_line(jobs: Sequence[LibraryIngestJob]) -> str:
     in this module -- e.g. ``"2 parsing · 1 writing · 3 queued · 1 done · 1
     failed"``), joined by ``" · "``.
     """
+    # (Qodo round) The tally must bucket the way the group headers and the
+    # rows do: counting every DONE job as "done" made the queue line say
+    # "2 done" while a header right below it said "1 done · 1 matched".
     counts = {state.value: 0 for state in IngestJobState}
+    matched = 0
     for job in jobs:
-        counts[job.state.value] += 1
-    joined = " · ".join(
+        if job.state == IngestJobState.DONE and str(
+            (job.progress or {}).get("message", "")
+        ).startswith(INGEST_DUPLICATE_PROGRESS_PREFIX):
+            matched += 1
+        else:
+            counts[job.state.value] += 1
+    segments = [
         f"{counts[state.value]} {state.value}"
         for state in _COUNTS_LINE_ORDER
         if counts[state.value]
-    )
+    ]
+    if matched:
+        segments.append(f"{matched} matched")
+    joined = " · ".join(segments)
     # (task-2043) The registry restores prior sessions from the jobs DB, so
     # these totals span ALL ingests -- say so, or a fresh batch's outcome
     # blurs into history.

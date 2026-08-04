@@ -2180,16 +2180,20 @@ def test_active_rows_show_the_attempt_number_after_a_retry() -> None:
     count, but the in-flight rows never showed it — so pressing Retry
     looked identical to nothing happening.
     """
-    for state_value, word in (
-        (IngestJobState.QUEUED, "queued"),
-        (IngestJobState.PARSING, "parsing"),
-        (IngestJobState.WRITING, "writing"),
+    # (Qodo round) detected_type is appended by the parsing/writing
+    # branches, so the marker must be the row's TRAILING element -- with a
+    # type present it used to read "… · attempt 2 · pdf".
+    for state_value, word, detected in (
+        (IngestJobState.QUEUED, "queued", ""),
+        (IngestJobState.PARSING, "parsing", "pdf"),
+        (IngestJobState.WRITING, "writing", "pdf"),
     ):
         job = _job(
             job_id="ingest-job-1",
             state=state_value,
             source_path="/tmp/broken.pdf",
             retry_count=1,
+            detected_type=detected,
         )
         row = build_library_ingest_state(
             (job,), form=LibraryIngestFormState()
@@ -2245,3 +2249,41 @@ def test_consent_line_requires_every_importable_file_to_match() -> None:
         ),
     )
     assert total.start_quiet_line.startswith("Everything here")
+
+
+def test_queue_tally_and_group_header_agree_on_matched() -> None:
+    """The tally buckets the way the headers and rows do.
+
+    (task-2231 Qodo round) The top-level counts line bucketed purely by
+    state, so it read "2 done" while a group header directly below it
+    read "1 done · 1 matched" — two contradictory summaries on one
+    screen.
+    """
+    imported = _job(
+        job_id="ingest-job-1",
+        state=IngestJobState.DONE,
+        source_path="/tmp/fresh.txt",
+        progress={"message": "Ingested fresh.txt"},
+        batch_id="local-aaa",
+        submitted_at=10.0,
+    )
+    matched = _job(
+        job_id="ingest-job-2",
+        state=IngestJobState.DONE,
+        source_path="/tmp/twin.txt",
+        progress={
+            "message": (
+                "Already in Library — matched an existing item; nothing "
+                "new was imported."
+            )
+        },
+        batch_id="local-aaa",
+        submitted_at=11.0,
+    )
+    state = build_library_ingest_state(
+        (imported, matched), form=LibraryIngestFormState()
+    )
+    assert state.queue_counts_line == "1 done · 1 matched — in queue"
+    headed = next(g for g in state.queue_groups if g.header_line)
+    assert "1 done" in headed.header_line
+    assert "1 matched" in headed.header_line
