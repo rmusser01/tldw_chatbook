@@ -71,6 +71,7 @@ from ...Subscriptions.briefing_cast import (
 )
 from ...Utils.input_validation import validate_text_input
 from ...Widgets.confirmation_dialog import ConfirmationDialog
+from ...Widgets.prune_safe_select import PruneSafeSelect
 
 #: Shown as a speaker Select's tooltip when the screen could not supply any
 #: options for it -- degrades the FIELD, never the modal (brief, Task 3).
@@ -284,7 +285,7 @@ class BriefingPresetModal(ModalScreen[bool]):
                                 classes="bpm-speaker-role",
                             )
                             character_id = speaker.get("character_card_id")
-                            yield Select(
+                            yield PruneSafeSelect(
                                 _select_options_for(
                                     self.character_options, character_id
                                 ),
@@ -303,7 +304,7 @@ class BriefingPresetModal(ModalScreen[bool]):
                                 ),
                             )
                             voice_id = speaker.get("voice_profile_id")
-                            yield Select(
+                            yield PruneSafeSelect(
                                 _select_options_for(self.voice_options, voice_id),
                                 value=(
                                     voice_id if voice_id is not None else Select.NULL

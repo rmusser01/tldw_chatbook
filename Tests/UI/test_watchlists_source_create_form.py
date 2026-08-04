@@ -75,6 +75,32 @@ def _watchlists_host():
     return _visual_destination_harness(app, "watchlists_collections")
 
 
+async def _settled_sources_pane(screen, pilot, timeout: float = 5.0) -> SourcesPane:
+    """The live `SourcesPane` once the post-submit recompose storm has settled.
+
+    TASK-1960 review, Important 2. A submit fires the pane's own form-close
+    recompose *and* a full-screen recompose from `_create_source`'s worker
+    chain, and for a measured 0.14-0.32s there is no `SourcesPane` mounted at
+    all. Anything asserted against a pane captured before that window is
+    asserted against a pruned, zero-child widget and is vacuously true.
+
+    Waits for a pane that is attached to this screen and has finished
+    mounting its own children, so callers observe the state the user
+    actually ends up looking at.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        panes = list(screen.query(SourcesPane))
+        if len(panes) == 1 and panes[0].is_mounted and panes[0].query("#sources-table"):
+            await pilot.pause()
+            return panes[0]
+        await pilot.pause(0.02)
+    raise AssertionError(
+        f"no settled SourcesPane after {timeout}s: "
+        f"found {len(list(screen.query(SourcesPane)))}"
+    )
+
+
 async def _open_sources_create_form(pilot, host):
     """Open the form exactly as a user does: click through `New Source`."""
     screen = _active_destination_screen(host)
@@ -569,8 +595,29 @@ async def test_a_source_can_be_created_end_to_end_through_the_form(size):
         payload = created.await_args.kwargs["payload"]
         assert payload["name"] == "Morning"
         assert payload["url"] == "https://example.com/feed"
-        assert not pane.query("#sources-create-form"), (
-            "the form should close once the source is submitted"
+
+        # Re-query the pane from the SCREEN rather than reusing the captured
+        # `pane` (TASK-1960 review, Important 2). Submitting fires the pane's
+        # own form-close recompose AND -- through `_create_source`'s worker
+        # chain -- a full-screen recompose that replaces the SourcesPane
+        # wholesale. Measured during that review, the captured `pane` is
+        # `_pruning=True, children=0, is_running=False` by the time this runs,
+        # and there is NO SourcesPane on screen at all for 0.14-0.32s. So
+        # `assert not pane.query(...)` against the captured object was true no
+        # matter what: verified during this fix wave that it stayed GREEN under
+        # a mutation which left a create form on the settled pane.
+        live_pane = await _settled_sources_pane(screen, pilot)
+        # Positively: the rebuilt pane really is populated, so "no form" below
+        # cannot be satisfied by an empty or half-mounted pane.
+        assert live_pane.query("#sources-table"), (
+            "the settled Sources pane never remounted its table"
+        )
+        assert not live_pane.query("#sources-create-form"), (
+            "the form should be gone from the settled Sources pane once the "
+            "source is submitted"
+        )
+        assert not screen.query("#sources-create-form"), (
+            "a create form survived somewhere else on the screen"
         )
 
 

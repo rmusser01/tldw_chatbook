@@ -80,6 +80,7 @@ from ...TTS.audio_player import play_audio_file
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Utils.path_validation import validate_path_simple
 from ...Widgets.confirmation_dialog import ConfirmationDialog
+from ...Widgets.prune_safe_select import PruneSafeSelect
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Subscription_Modules.notifications_inbox_controller import (
@@ -1899,7 +1900,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 # `height: 1` and a bordered Select is three rows, so this
                 # backend picker was painting its top border and nothing
                 # else. See `sources_pane.compose()`.
-                yield Select(
+                yield PruneSafeSelect(
                     [("Local", "local"), ("Server", "server")],
                     value=self.runtime_backend,
                     id="watchlists-backend-select",
