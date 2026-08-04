@@ -7,7 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from textual.widgets import Button, DataTable, Input, Select, TextArea
+from textual.widgets import Button, DataTable, Input, Select, Static, TextArea
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Subscriptions.noise_defaults import default_ignore_selectors_text
@@ -2673,4 +2673,164 @@ async def test_a_surface_refresh_requested_mid_drain_is_served_by_the_same_drain
         assert screen.query_one("#wl-tree"), (
             "the rail must come back populated, not stripped by an "
             "interrupted remove/mount pair"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_background_tree_reload_repaints_the_artifacts_scope_note():
+    """Review wave I1: a rename must reach EVERY surface that names the scope.
+
+    `ArtifactsPane.scope_label` resolves the scoped watchlist's display name
+    from `_tree_watchlists` (`_briefing_scope_label` ->
+    `_watchlist_display_name`), so it is tree data like the rail, the FEEDS
+    heading and the Inspector breadcrumb -- but it lives on an ITEMS-region
+    pane, which the first pass of TASK-2200 left alone wholesale. The result
+    was two surfaces on one screen naming the same watchlist differently until
+    the user changed tab or scope.
+
+    Drives exactly what `_rename_watchlist_flow` does once its dialog returns:
+    `service.rename(...)` then `_load_tree_data()`.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import ArtifactsPane
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+        TreeScope,
+        TreeScopeChanged,
+    )
+
+    app = _build_test_app()
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Mroning AI Brief")
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
+        )
+        await pilot.pause()
+        screen.active_section = "artifacts"
+        for _ in range(300):
+            await pilot.pause(0.01)
+            if screen.query("#artifacts-scope-note"):
+                break
+
+        note = screen.query_one("#artifacts-scope-note", Static)
+        assert "Mroning AI Brief" in str(note.renderable), (
+            f"precondition: the pane names the scoped watchlist; it renders "
+            f"{str(note.renderable)!r}"
+        )
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+
+        service.rename(watchlist["id"], "Morning AI Brief")
+        screen._load_tree_data()
+        for _ in range(300):
+            await pilot.pause(0.01)
+            note = screen.query_one("#artifacts-scope-note", Static)
+            if "Morning AI Brief" in str(note.renderable):
+                break
+
+        note = screen.query_one("#artifacts-scope-note", Static)
+        assert "Morning AI Brief" in str(note.renderable), (
+            f"the Artifacts pane still names the pre-rename watchlist: "
+            f"{str(note.renderable)!r}"
+        )
+        assert screen.query_one("#watchlists-artifacts-pane", ArtifactsPane) is pane, (
+            "the scope-label push must patch the mounted pane, not have the "
+            "screen rebuild the region around it"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_failed_surface_refresh_start_does_not_wedge_the_queue():
+    """Review wave M1, the sibling of `test_a_failed_tree_write_start_...`.
+
+    `_surface_refresh_draining` is lowered only by `_drain_surface_refresh`'s
+    `finally`, which never runs if `run_worker` raises synchronously. Arming
+    before scheduling would leave the flag stuck True for the life of the
+    screen: every later request would queue and return, and the rail, FEEDS
+    and centre header would silently stop following every background loader.
+    """
+    import inspect
+
+    app = _build_test_app()
+    service = app.watchlist_bundle_service
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        exploded: list[Any] = []
+        real_run_worker = screen.run_worker
+
+        def _exploding_run_worker(work, **kwargs):
+            if kwargs.get("group") == "wc_surface_refresh" and not exploded:
+                exploded.append(work)
+                raise RuntimeError("worker could not be scheduled")
+            return real_run_worker(work, **kwargs)
+
+        screen.run_worker = _exploding_run_worker
+        screen._request_surface_refresh(screen._SURFACE_HEADER)
+        await pilot.pause()
+
+        assert exploded, "precondition: scheduling really did raise"
+        assert screen._surface_refresh_draining is False, (
+            "a drain that never started must leave the guard down, or every "
+            "later background refresh is silently swallowed"
+        )
+        assert inspect.getcoroutinestate(exploded[0]) == "CORO_CLOSED", (
+            "the un-awaited drain coroutine must be closed, not left to leak "
+            "a RuntimeWarning at collection time"
+        )
+
+        # ...and the next request really drains.
+        created = service.create("Morning AI Brief")
+        node_id = f"#wl-tree-node-watchlist-{created['id']}"
+        screen._load_tree_data()
+        for _ in range(300):
+            await pilot.pause(0.01)
+            if screen.query(node_id):
+                break
+        assert screen.query(node_id), (
+            "the queue stayed wedged: a later background loader never reached "
+            "the rail"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_raising_console_follow_poll_does_not_take_the_app_down():
+    """Review wave M2: every step of the drain loop must be non-fatal.
+
+    `run_worker` defaults to `exit_on_error=True`, so an exception escaping
+    the drainer reaches `App._handle_exception` and the app goes down. The
+    Console-follow poll was the one step outside `_rebuild_surface`'s
+    `except Exception`.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        polls: list[int] = []
+
+        def _exploding_drift() -> bool:
+            polls.append(1)
+            raise RuntimeError("the active-work adapter exploded")
+
+        screen._resolve_console_follow_drift = _exploding_drift
+        screen._request_surface_refresh(screen._SURFACE_INSPECTOR)
+        for _ in range(300):
+            await pilot.pause(0.01)
+            if polls and not screen._surface_refresh_draining:
+                break
+
+        assert polls, "precondition: the drain really did reach the poll"
+        assert screen._surface_refresh_draining is False, (
+            "the drainer must clear its flag even when a step raises"
+        )
+        assert app.is_running, "a raising poll must not take the app down"
+        assert screen.query("#watchlists-follow-in-console"), (
+            "the Inspector must be left standing, not half-swapped"
         )

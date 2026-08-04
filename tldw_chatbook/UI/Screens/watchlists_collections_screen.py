@@ -770,6 +770,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # queue rather than `run_worker(exclusive=True)` per surface.
         self._pending_surface_refresh: set[str] = set()
         self._surface_refresh_draining = False
+        # The Console-follow adapter's latest answer, mirrored here so the
+        # RIGHT_RAIL factory reads an attribute instead of polling from
+        # `compose()` (TASK-2200 review wave, M4). Refreshed by
+        # `compose_content` and by `_resolve_console_follow_drift`.
+        self._console_follow_item: Any = None
         self._controller = WatchlistsBackendController(
             app_instance=app_instance,
             scope_service=getattr(app_instance, "watchlist_scope_service", None),
@@ -943,10 +948,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self.query_one(widget_id, Static).update(text)
             except NoMatches:
                 continue
-        # An overview refresh follows every write verb on this screen, and a
-        # write verb is exactly when a run can have started or finished --
-        # so this is also where the Console-follow row used to be re-polled,
-        # via the recompose this reactive no longer triggers.
+        # An overview refresh follows every write verb on this screen, so this
+        # is one of the points where the recompose this reactive no longer
+        # triggers used to re-enter the Console-follow adapter. What that
+        # actually recovers is an adapter that FAILED on the first compose --
+        # not a run that has since started, which the handoff caches away
+        # permanently after one success. See `_resolve_console_follow_drift`,
+        # which states both halves of that cache's behaviour.
         self._request_surface_refresh(self._SURFACE_INSPECTOR)
 
     @work(exclusive=True, group="wc_tree")
@@ -998,8 +1006,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         by the resulting prune mounts nothing, silently, while still
         reporting `is_mounted=True`.
 
-        Only three things on this screen actually read what this loader
-        writes, so only those three are updated:
+        Everything on this screen that reads what this loader writes, and
+        nothing else:
 
         * The rail itself (`_tree_watchlists`/`_tree_counts`) — rebuilt from
           `_build_tree_pane`, which re-seeds the expansion, tag filter and
@@ -1007,12 +1015,27 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         * FEEDS and the centre header, whose scope heading resolves a
           watchlist's display name out of `_tree_watchlists` (a rename would
           otherwise sit stale) and whose source rows are re-queried.
-        * The Inspector's breadcrumb labels and the Overview's watchlist
-          count, both pushed into the live panes the way `watch_selected_scope`
-          and `_load_sources` already push theirs.
+        * The Inspector's breadcrumb labels, and — in the ITEMS region — the
+          Overview's watchlist count and the Artifacts pane's scope label,
+          all pushed into the live panes the way `watch_selected_scope` and
+          `_load_sources` already push theirs.
 
-        ITEMS and CONTENT are deliberately untouched: nothing in either reads
-        tree data except the Overview's `watchlist_count`, handled above.
+        The two ITEMS-region pushes are not an exception to "background loads
+        leave ITEMS alone"; they are the reason that rule is stated as "no
+        pane is REBUILT" rather than "no pane is touched". Both are single
+        reactive assignments onto whichever pane happens to be mounted, so a
+        `SourcesPane` create form or a `RulesPane` edit form -- neither of
+        which reads tree data -- is not even queried, let alone torn down.
+
+        `ArtifactsPane.scope_label` was missed on the first pass and found by
+        the whole-branch review (I1): it resolves a watchlist DISPLAY NAME via
+        `_briefing_scope_label` -> `_watchlist_display_name` -> the same
+        `_tree_watchlists` list, so renaming the scoped watchlist while the
+        Artifacts tab was open repainted the rail, the FEEDS heading and the
+        breadcrumb but left `#artifacts-scope-note` naming the old one — two
+        surfaces on one screen disagreeing about the same watchlist.
+
+        CONTENT is untouched: `ContentPane` reads nothing this loader writes.
         """
         if not self.is_mounted:
             return
@@ -1038,6 +1061,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # knows the answer. `_build_detail_pane` seeds the same value on
             # a rebuild.
             overview.watchlist_count = len(self._tree_watchlists)
+        try:
+            artifacts = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            pass
+        else:
+            # Review wave, I1. `_briefing_scope_label` resolves the scoped
+            # watchlist's display NAME out of `_tree_watchlists`, so a rename
+            # left `#artifacts-scope-note` on the old one. Same seed
+            # `_build_detail_pane` applies on a rebuild.
+            artifacts.scope_label = self._briefing_scope_label()
 
     def _resolve_breadcrumb_labels(self, scope: TreeScope) -> list[str]:
         """Display names for `scope`'s ancestor chain, for the Inspector.
@@ -1924,9 +1957,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         against what is actually on screen. The Console-follow state comes
         from an app-level adapter that is only ever *polled* at render time --
         until this task, "render time" meant every full-screen recompose, so
-        an adapter that failed once (or a run that started since) was picked
-        up by whichever background loader recomposed next. With those
-        recomposes gone, the drift has to be detected deliberately.
+        an adapter that failed once was picked up by whichever background
+        loader recomposed next. With those recomposes gone, that recovery has
+        to be detected deliberately.
 
         Args:
             latest_console_item: The adapter's answer, or `None`.
@@ -1961,24 +1994,47 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _resolve_console_follow_drift(self) -> bool:
         """Re-poll the Console-follow adapter and say whether the rail is stale.
 
+        **What this can and cannot detect** (review wave, M3 -- verified
+        against `WatchlistsConsoleHandoff._latest_console_follow_item`,
+        `watchlists_console_handoff.py:39-75`, not assumed):
+
+        * A **successful** poll sets `_latest_console_follow_loaded = True`,
+          and nothing ever resets it -- so after one success the adapter's
+          answer is frozen for the life of this screen, and this method can
+          only return `False`. That is not a regression: the full-screen
+          recompose this replaces hit the identical cache. A live re-poll on
+          every background load would be NEW behaviour -- and expensive, since
+          the adapter fans out over watchlist-run, chatbook-artifact,
+          ingest-job and notification queries plus a server-event fetch -- so
+          it is deliberately not built here.
+        * A **failed** poll does NOT set that flag, so failure is retried. That
+          is the one real case this exists for, and it is the case the old
+          recompose covered: an adapter that fails during the first compose
+          renders `#watchlists-console-unavailable`, and the next background
+          loader picks up the recovered answer. Pinned by
+          `test_watchlists_destination_retries_console_follow_after_initial_adapter_failure`.
+
         Not a pure predicate despite the boolean return, which is why it is
-        named for the action: `resolve_latest_follow_item()` refreshes the
-        handoff's cached item id as a deliberate side effect ("ahead of a
-        render pass" -- see its docstring), exactly as `compose_content` used
-        to do on every recompose.
+        named for the action: it refreshes the handoff's cached item id (a
+        deliberate side effect, "ahead of a render pass" -- see
+        `resolve_latest_follow_item`) and mirrors the answer onto
+        `_console_follow_item` for `_build_inspector_region` to render.
 
         Compares against the DOM rather than a remembered key, so there is no
         second copy of "what is currently rendered" to drift: the rendered
-        answer IS the state.
+        answer IS the state. Because the only reachable transition is
+        failure -> success, which changes the status widget's *id*, the
+        `if not status_widgets` branch below is what actually fires; the two
+        text comparisons after it are belt-and-braces for a future handoff
+        whose cache does expire.
 
         Returns:
             True when the Inspector is mounted and its Console-follow row no
             longer matches the adapter, so the right rail should be rebuilt.
         """
+        self._console_follow_item = self._console_handoff.resolve_latest_follow_item()
         status_id, status_copy, button_label, _disabled, _tooltip = (
-            self._console_follow_copy(
-                self._console_handoff.resolve_latest_follow_item()
-            )
+            self._console_follow_copy(self._console_follow_item)
         )
         try:
             button = self.query_one("#watchlists-follow-in-console", Button)
@@ -1996,16 +2052,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _build_inspector_region(self) -> Vertical:
         """The RIGHT_RAIL content factory.
 
-        Resolves the Console-follow item and the Console attach state at CALL
-        time rather than closing over values captured in `compose_content`
-        (TASK-2200): the workbench calls this factory again on every region
-        rebuild, including the targeted right-rail rebuild
-        `_resolve_console_follow_drift` asks for, and a captured value would
-        make that rebuild repaint the very staleness it was asked to fix.
+        Reads `_console_follow_item` -- a plain attribute -- rather than
+        polling the adapter (review wave, M4). The workbench calls this
+        factory again on every region rebuild, and `region_layout` is
+        `recompose=True`, so a `z`/`Z`/`[`/`]`/chevron toggle would otherwise
+        re-run the adapter's multi-query fan-out from inside `compose()`. The
+        handoff's cache makes that free once a poll has SUCCEEDED, but on the
+        failure path it is retried every time -- exactly the shape this file
+        insists its content factories must not have.
+
+        The attribute is refreshed in the two places a fresh answer is
+        actually wanted: once per compose pass (`compose_content`, restoring
+        the pre-TASK-2200 call site) and by `_resolve_console_follow_drift`
+        immediately before it asks for this rebuild -- so the targeted rail
+        rebuild still repaints the staleness it was asked to fix.
         """
         attach_disabled, attach_tooltip = self._wc_attach_state()
         return self._build_inspector_pane(
-            self._console_handoff.resolve_latest_follow_item(),
+            self._console_follow_item,
             attach_disabled,
             attach_tooltip,
         )
@@ -2131,6 +2195,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         return f"Backend: {self.runtime_backend}"
 
     def compose_content(self) -> ComposeResult:
+        # Resolved once per compose pass, as it was before TASK-2200 -- but
+        # mirrored onto the screen instead of captured in the RIGHT_RAIL
+        # factory's closure, so a region rebuild reads an attribute rather
+        # than re-running the adapter (review wave, M4). See
+        # `_build_inspector_region`.
+        self._console_follow_item = self._console_handoff.resolve_latest_follow_item()
         with Vertical(id="watchlists-collections-shell"):
             yield Static(
                 "Watchlists | Monitored sources, runs, alerts, recovery | Mixed | Local/Server",
@@ -3150,20 +3220,44 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         next loop rather than starting -- or cancelling -- anything.
 
         Args:
-            surfaces: Any of `_SURFACE_RAIL`/`_SURFACE_FEEDS`/
-                `_SURFACE_HEADER`. Unknown names are ignored by the drainer.
+            surfaces: Any of `_SURFACE_RAIL`, `_SURFACE_FEEDS`,
+                `_SURFACE_HEADER` (each an unconditional rebuild of that
+                surface) or `_SURFACE_INSPECTOR` (conditional -- the right
+                rail is rebuilt only when the Console-follow row no longer
+                matches the adapter; see `_resolve_console_follow_drift`).
+                Unknown names are ignored by the drainer.
         """
         if not self.is_mounted:
             return
         self._pending_surface_refresh.update(surfaces)
         if self._surface_refresh_draining:
             return
-        self._surface_refresh_draining = True
+        # Arm, then disarm if scheduling fails -- `_start_tree_write`'s
+        # discipline, for the identical failure mode (review wave, M1). Only
+        # `_drain_surface_refresh`'s `finally` ever lowers this flag, and it
+        # never runs if `run_worker` raises synchronously; the flag would then
+        # be stuck True for the life of the screen, every later request would
+        # queue and return, and the rail/FEEDS/header would silently stop
+        # following every background loader. Arming *after* scheduling is not
+        # the fix either: the drainer's `finally` could already have lowered
+        # the flag by the time we raised it.
+        #
         # Its own group, not the default one: several call sites on this
         # screen run `run_worker(..., exclusive=True)` without a group (e.g.
         # `_load_active_section_data`), and those would otherwise cancel this
         # drainer mid-swap -- the very failure this queue exists to prevent.
-        self.run_worker(self._drain_surface_refresh(), group="wc_surface_refresh")
+        drain = self._drain_surface_refresh()
+        self._surface_refresh_draining = True
+        try:
+            self.run_worker(drain, group="wc_surface_refresh")
+        except Exception:
+            self._surface_refresh_draining = False
+            # Close the un-awaited coroutine explicitly, or it leaks a
+            # `RuntimeWarning` at collection time.
+            drain.close()
+            logger.opt(exception=True).warning(
+                "Watchlists surface refresh could not be scheduled."
+            )
 
     async def _drain_surface_refresh(self) -> None:
         """Rebuild every queued surface in place, one at a time.
@@ -3201,16 +3295,33 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         workbench.refresh_header_content(),
                         "the centre header",
                     )
-                if self._SURFACE_INSPECTOR in surfaces and (
-                    self._resolve_console_follow_drift()
-                ):
+                if self._SURFACE_INSPECTOR in surfaces:
                     await self._rebuild_surface(
-                        workbench.refresh_region_content(Region.RIGHT_RAIL),
+                        self._rebuild_inspector_if_console_follow_drifted(workbench),
                         "the Inspector rail",
                     )
         finally:
             self._pending_surface_refresh = set()
             self._surface_refresh_draining = False
+
+    async def _rebuild_inspector_if_console_follow_drifted(
+        self, workbench: WatchlistsWorkbench
+    ) -> None:
+        """Re-poll the Console-follow adapter; rebuild the rail if it moved.
+
+        Wrapped in a coroutine rather than inlined into the drain loop's `if`
+        (review wave, M2) so `_rebuild_surface`'s `except Exception` covers
+        the poll as well as the rebuild. `run_worker` defaults to
+        `exit_on_error=True`, so an exception escaping the drainer reaches
+        `App._handle_exception` and takes the app down -- and every other step
+        in that loop was deliberately made non-fatal.
+
+        Args:
+            workbench: The mounted workbench, resolved once by the drainer.
+        """
+        if not self._resolve_console_follow_drift():
+            return
+        await workbench.refresh_region_content(Region.RIGHT_RAIL)
 
     @staticmethod
     async def _rebuild_surface(rebuild: Any, what: str) -> None:

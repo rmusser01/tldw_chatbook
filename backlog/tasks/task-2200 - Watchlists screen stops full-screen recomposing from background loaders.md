@@ -196,3 +196,50 @@ no form, so a screen-level rebuild can no longer satisfy it).
   (+2: AC#1 draft survival, AC#4 pane identity),
   `Tests/Watchlists/test_watchlists_collections_screen.py` (the rename test now
   also asserts the mounted Inspector's breadcrumb).
+
+### Review wave (whole-branch adversarial review: 0 Critical, 1 Important, 5 Minor + 1 nit)
+
+The intent queue was independently scaffold-attacked and judged sound (two
+drainers impossible, no gap at the loop-exit boundary, `CancelledError`
+propagates past `_rebuild_surface`'s `except Exception` to the `finally`,
+unmount/tab-switch/gated-region all degrade). All findings fixed:
+
+* **I1 — a real AC#2 regression, now fixed.** `ArtifactsPane.scope_label`
+  resolves a watchlist DISPLAY NAME out of `_tree_watchlists`
+  (`_briefing_scope_label` → `_watchlist_display_name`), so it is tree data
+  living on an ITEMS-region pane — and the first pass left ITEMS alone
+  wholesale. Renaming the scoped watchlist while the Artifacts tab was open
+  repainted the rail, the FEEDS heading and the breadcrumb but left
+  `#artifacts-scope-note` on the old name. Pushed alongside the other two
+  ITEMS-region pushes, with a discriminating test. The method's docstring
+  now states the actual rule ("no pane is REBUILT", not "no pane is touched")
+  and enumerates every consumer.
+* **M1 — the drain armed before it scheduled.** A raising `run_worker` would
+  wedge `_surface_refresh_draining` True for the life of the screen, silently
+  stopping every background refresh. Now follows this file's own
+  `_start_tree_write` discipline (arm, disarm on failure, `close()` the
+  un-awaited coroutine), pinned by the sibling of that method's own test.
+* **M2 — one unguarded step in the drain loop.** The Console-follow poll sat
+  outside `_rebuild_surface`'s `except Exception`, and `run_worker` defaults
+  to `exit_on_error=True`, so a raising adapter took the app down. Moved into
+  `_rebuild_inspector_if_console_follow_drifted`, inside the guard.
+* **M3 — decided (b), documented.** Verified the cache's exact semantics
+  rather than assuming: `WatchlistsConsoleHandoff._latest_console_follow_loaded`
+  is set on success and on "no adapter", **never on failure** — so failure is
+  retried and success is frozen for the life of the screen. The drift check is
+  therefore *only* a failure-recovery mechanism, which is exactly what the old
+  full recompose provided (it hit the identical cache). Making the re-poll live
+  would be new product behaviour plus a multi-query fan-out per background
+  load, so it was not built. The machinery is kept (it is the only thing making
+  `test_watchlists_destination_retries_console_follow_after_initial_adapter_failure`
+  pass), and the comment that promised a live re-poll is corrected.
+* **M4 — adapter call out of `compose()`.** `_console_follow_item` is now a
+  screen-held mirror: `compose_content` resolves once per compose pass (the
+  pre-TASK-2200 call site) and `_resolve_console_follow_drift` refreshes it
+  before asking for the rail rebuild; the RIGHT_RAIL factory reads the
+  attribute. Region toggles cost zero adapter calls again.
+* **M5** — `_request_surface_refresh`'s `Args:` now documents
+  `_SURFACE_INSPECTOR` and that it is the conditional one.
+* **M6 (nit)** — `_watchlists_are_empty()` was already orphaned on `dev`
+  (`git show b5a8fcec5:…` finds the definition and no callers), so it is left
+  alone: not orphaned by this branch, and deleting it is not this task's call.
