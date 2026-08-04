@@ -601,3 +601,69 @@ def test_keypress_barges_in_identically_in_acoustic_mode():
     assert any(isinstance(e, SilenceSpeech) for e in ev)
     assert any(isinstance(e, ModeChanged) and e.state == "live" for e in ev)
     assert c.state == "live"
+
+
+# ---------------------------------------------------------------------------
+# Import lightness. Runs in fresh subprocesses -- importing anything else in
+# this module (or an earlier-collected test) may already have pulled the
+# heavy modules into `sys.modules`, which would make an in-process check
+# meaningless. Mirrors `Tests/LLM_Calls/test_realtime_protocol.py`'s shape.
+# ---------------------------------------------------------------------------
+
+
+def test_console_realtime_loop_import_stays_headless():
+    """This FSM is documented "free of Textual, wall-clock, and direct
+    audio/session/WebSocket imports" (module docstring) -- that is what
+    makes it unit-testable without an app, and what keeps it importable
+    from the screen at module scope without dragging the realtime stack
+    into every Console mount (final review M8).
+
+    `textual` is deliberately NOT in the absence set: the baseline
+    (`import tldw_chatbook.Chat`) already pulls it in through the package's
+    own `__init__`, so asserting its absence here would assert something
+    about a package this module does not own. `websockets`, `numpy` and
+    `sounddevice` -- the realtime transport and the audio stack -- are
+    exactly what this module must never reach, and none of them are in the
+    baseline.
+    """
+    import subprocess
+    import sys
+
+    baseline_probe = (
+        "import time\n"
+        "t0 = time.monotonic()\n"
+        "import tldw_chatbook.Chat\n"
+        "print(time.monotonic() - t0)\n"
+    )
+    loop_probe = (
+        "import sys, time\n"
+        "import tldw_chatbook.Chat\n"
+        "t0 = time.monotonic()\n"
+        "import tldw_chatbook.Chat.console_realtime_loop\n"
+        "elapsed = time.monotonic() - t0\n"
+        "for name in ('websockets', 'numpy', 'sounddevice'):\n"
+        "    assert name not in sys.modules, name + ' imported by "
+        "console_realtime_loop'\n"
+        "print(elapsed)\n"
+    )
+
+    baseline = subprocess.run(
+        [sys.executable, "-c", baseline_probe],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert baseline.returncode == 0, baseline.stdout + baseline.stderr
+
+    result = subprocess.run(
+        [sys.executable, "-c", loop_probe],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    incremental_seconds = float(result.stdout.strip().splitlines()[-1])
+    assert incremental_seconds < 0.2, (
+        f"console_realtime_loop added {incremental_seconds:.3f}s on top of "
+        "an already-imported tldw_chatbook.Chat -- check for a heavy import"
+    )

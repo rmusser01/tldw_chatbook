@@ -463,6 +463,15 @@ async def test_send_seed_creates_items_in_order_without_response(fake_server):
                 "expect",
                 lambda e: (
                     e.get("type") == "session.update"
+                    # `session.type` is a REQUIRED field on every
+                    # `session.update`, including this partial
+                    # instructions-only one -- live-confirmed
+                    # (`missing_required_parameter: session.type`, see this
+                    # module's ground-truth header). Asserted here because
+                    # without it the field could be deleted with this suite
+                    # still green while the live endpoint rejected every
+                    # seed the app ever sent (final review I3).
+                    and e.get("session", {}).get("type") == "realtime"
                     and e.get("session", {}).get("instructions") == "Be nice."
                 ),
             ),
