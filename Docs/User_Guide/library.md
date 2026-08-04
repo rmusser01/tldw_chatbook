@@ -61,8 +61,9 @@ pages:
     headers toggle open (**▾**) and closed (**▸**).
 - **Canvas** (the right pane) — there are no tabs here: the canvas swaps
   to match whichever rail row is selected. Before you pick one it shows
-  the landing hub: per-source counts, recent items when the Library has
-  content, and quick actions (Add content… / Search / New note), under
+  the landing hub: per-source counts, quick actions (Add content… /
+  Search / New note, also reachable with **i** and **n**), and one
+  clickable row per recent item that jumps straight into it, under
   the guidance line "Search everything, pick a section on the left, or
   add something new."
 - **Footer** — shows the keys that work where you are: "/ focus search"

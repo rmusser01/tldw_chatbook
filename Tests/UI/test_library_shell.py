@@ -534,6 +534,71 @@ async def test_ingest_cta_uses_one_canonical_label_everywhere():
 
 
 @pytest.mark.asyncio
+async def test_hub_recents_render_as_clickable_rows_that_open_the_item():
+    """task-2238 (R2): the hub's recents are one quiet clickable row per
+    source -- not one dim text line -- and pressing one jumps straight
+    into the item via the same route the Search/RAG 'Open' action uses."""
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        # The detail fetch (`get_note_detail`) matches on "id", so the seed
+        # must too -- `_source_record_id` resolves either key for the row.
+        notes=[{"title": "Reading list", "id": "n1"}],
+        media=[{"title": "Quarterly report.pdf", "media_id": "m1"}],
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        # One row per source, titles intact; the one-line Static is gone.
+        notes_row = screen.query_one("#library-hub-recent-notes", Button)
+        media_row = screen.query_one("#library-hub-recent-media", Button)
+        conv_row = screen.query_one("#library-hub-recent-conversations", Button)
+        assert "Reading list" in str(notes_row.label)
+        assert "Quarterly report.pdf" in str(media_row.label)
+        assert "Quarterly planning sync" in str(conv_row.label)
+        assert not screen.query("#library-hub-recents")
+
+        # The next-action triad stays on top of the recents.
+        actions = screen.query_one("#library-hub-actions")
+        assert actions.region.y < notes_row.region.y
+
+        # Pressing a row jumps into the item.
+        notes_row.press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._selected_note_id == "n1"
+        assert screen._library_notes_view == "editor"
+        assert screen._library_selected_row_id == "browse-notes"
+
+
+@pytest.mark.asyncio
+async def test_hub_recents_rows_absent_on_an_empty_library():
+    """task-2238 (R2): no content -> no recents rows (and no stale
+    one-line Static), matching the old line's None-when-empty contract."""
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        assert not screen.query(".library-hub-recent")
+        assert not screen.query("#library-hub-recents")
+
+
+def test_hub_recents_one_line_helpers_are_removed():
+    """task-2238: the one-line recents helpers are gone -- wired or
+    deleted, no lingering dead code (the F-010 discipline)."""
+    for name in ("_hub_recents_line", "_source_recent_value"):
+        assert not hasattr(LibraryScreen, name), name
+
+
+@pytest.mark.asyncio
 async def test_library_landing_hub_shows_next_actions_counts_and_recents():
     """F-010: the landing canvas is the wired hub, not a one-line void --
     actionable next-step rows (Import media / Search / New note) plus the

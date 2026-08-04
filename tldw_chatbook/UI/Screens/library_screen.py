@@ -1110,6 +1110,15 @@ class LibraryScreen(BaseAppScreen):
         height: 1;
         min-height: 1;
     }
+    /* task-2238: the hub's recents rows hug their own height, quiet like
+    the action triad above them. */
+    Button.library-hub-recent {
+        height: 1;
+        min-height: 1;
+        width: 100%;
+        text-align: left;
+        content-align: left middle;
+    }
 
     #library-collection-form Input {
         height: 3;
@@ -3507,11 +3516,30 @@ class LibraryScreen(BaseAppScreen):
         suffix = "" if self._local_source_total_known.get(source_type, True) else "+"
         return f"{count}{suffix}"
 
-    def _source_recent_value(self, source_type: str) -> str:
-        titles = self._source_sample_titles(source_type)
-        if not titles:
-            return "none"
-        return self._hub_table_cell(titles[0])
+    def _hub_recent_items(self) -> list[tuple[str, str, str, str]]:
+        """One recent item per source for the landing hub (task-2238).
+
+        Returns:
+            ``(source_type, record_id, title, label)`` tuples in the hub's
+            source order, for sources whose most recent record resolves an
+            id -- empty sources are skipped, so a fresh library yields an
+            empty list (the old line's None-when-empty contract).
+        """
+        items: list[tuple[str, str, str, str]] = []
+        for source_type, label in (
+            ("notes", "Notes"),
+            ("media", "Media"),
+            ("conversations", "Conversations"),
+        ):
+            records = self._local_source_records.get(source_type) or ()
+            if not records:
+                continue
+            record_id = self._source_record_id(records[0])
+            if not record_id:
+                continue
+            title = self._hub_table_cell(self._source_title(source_type, records[0]))
+            items.append((source_type, record_id, title, label))
+        return items
 
     def _hub_counts_line(self) -> str:
         """Per-source counts for the F-010 landing hub.
@@ -3538,23 +3566,6 @@ class LibraryScreen(BaseAppScreen):
             f"Notes {value('notes')} · Media {value('media')} · "
             f"Conversations {value('conversations')}"
         )
-
-    def _hub_recents_line(self) -> str | None:
-        """Recent-item line for the F-010 landing hub, or None when the
-        library has no content yet (a bare 'Recent: none ×3' line on a
-        fresh install would read as broken, not empty)."""
-        parts = [
-            f"{label}: {recent}"
-            for label, source_type in (
-                ("Notes", "notes"),
-                ("Media", "media"),
-                ("Conversations", "conversations"),
-            )
-            if (recent := self._source_recent_value(source_type)) != "none"
-        ]
-        if not parts:
-            return None
-        return f"Recent — {' · '.join(parts)}"
 
     @classmethod
     def _source_record_id(cls, record: Mapping[str, Any]) -> str | None:
@@ -4477,25 +4488,19 @@ class LibraryScreen(BaseAppScreen):
                         markup=False,
                     )
                     # F-010: the landing canvas is the wired hub, not a
-                    # one-line void -- per-source counts and recents from
-                    # the existing helpers, plus quiet next-action rows
-                    # that dispatch exactly like their rail-row
-                    # counterparts (same `@on(.library-hub-action)` path,
-                    # same dirty-edit guards).
+                    # one-line void -- per-source counts from the existing
+                    # helpers, quiet next-action rows that dispatch exactly
+                    # like their rail-row counterparts (same
+                    # `@on(.library-hub-action)` path, same dirty-edit
+                    # guards), and (task-2238) the recents as one clickable
+                    # row per source, jumping straight into the item via
+                    # the same route the Search/RAG "Open" action uses.
                     yield Static(
                         self._hub_counts_line(),
                         id="library-hub-counts",
                         classes="library-hub-meta",
                         markup=False,
                     )
-                    recents_line = self._hub_recents_line()
-                    if recents_line is not None:
-                        yield Static(
-                            recents_line,
-                            id="library-hub-recents",
-                            classes="library-hub-meta",
-                            markup=False,
-                        )
                     with Horizontal(id="library-hub-actions", classes="ds-toolbar"):
                         for label, tooltip, row_id, target_id, button_id in (
                             # task-2235 (R2): the canonical ingest CTA label
@@ -4523,6 +4528,21 @@ class LibraryScreen(BaseAppScreen):
                             action.target_kind = "canvas"
                             action.target_id = target_id
                             yield action
+                    # task-2238 (R2): the triad stays on top; the recents
+                    # follow as clickable rows, not one dim text line.
+                    for source_type, record_id, title, source_label in (
+                        self._hub_recent_items()
+                    ):
+                        recent = Button(
+                            f"{source_label} · {escape_markup(title)}",
+                            id=f"library-hub-recent-{source_type}",
+                            classes="library-hub-recent console-action-subdued",
+                            compact=True,
+                            tooltip=f"Open {source_label.lower()}: {title}",
+                        )
+                        recent.source_type = source_type
+                        recent.record_id = record_id
+                        yield recent
 
     def _build_library_shell_input(self) -> LibraryShellInput:
         """Build the pure shell input from live counts and runtime state.
@@ -7591,6 +7611,26 @@ class LibraryScreen(BaseAppScreen):
         """Jump from the rail-top Ingest button to the Ingest media canvas."""
         event.stop()
         await self._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
+
+    @on(Button.Pressed, ".library-hub-recent")
+    def _on_library_hub_recent(self, event: Button.Pressed) -> None:
+        """Open a landing-hub recent row straight into its item (task-2238).
+
+        The row carries the same (source_type, record_id) pair the
+        Search/RAG evidence "Open" action resolves, so both share
+        `_open_library_item_by_id`'s route (dirty-edit guards included).
+        Runs as a worker because that route awaits the note/prompt flushes.
+        """
+        event.stop()
+        source_type = str(getattr(event.button, "source_type", "") or "")
+        record_id = str(getattr(event.button, "record_id", "") or "")
+        if not source_type or not record_id:
+            return
+        self.run_worker(
+            self._open_library_item_by_id(source_type, record_id),
+            exclusive=True,
+            group="library_hub_open_recent",
+        )
 
     @on(Button.Pressed, "#library-notes-source-files")
     async def _show_library_file_notes(self, event: Button.Pressed) -> None:
