@@ -914,11 +914,16 @@ class MCPWorkbench(Container):
         await self._consume_pending_view_state()
 
     def _preselect_single_problem_on_load(self) -> None:
-        """Pre-select the one problem server on the workbench's first load (F-054).
+        """Pre-select on the workbench's first load (F-054, task-2240).
 
         When nothing is selected and exactly one server needs attention,
         the inspector should open on what's wrong and what you can do
-        instead of dead space. Guarded to run at most once per mount
+        instead of dead space. task-2240: a LONE rail row is pre-selected
+        the same way even when it isn't a "problem" -- the fresh-install
+        rail is exactly one row (the off/opt-in built-in, which the
+        problem rule below deliberately excludes), and its inspector
+        detail (what it is, why it's off, the Enable affordance) is
+        informational, not alarmist. Guarded to run at most once per mount
         (`_did_initial_preselect`) so a later resync (lifecycle
         completions, background refreshes) can never re-hijack a selection
         the user deliberately cleared -- and a restored view state
@@ -941,6 +946,10 @@ class MCPWorkbench(Container):
         ]
         if len(problems) == 1:
             self._selected_server_key = problems[0].server_key
+        elif len(self._snapshots) == 1:
+            # task-2240: the lone rail row (fresh install's off/opt-in
+            # built-in) is worth landing on too -- see the docstring.
+            self._selected_server_key = self._snapshots[0].server_key
 
     def _selected_target_id(self) -> str | None:
         """The server-target id implied by `_selected_server_key`.

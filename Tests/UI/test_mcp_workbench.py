@@ -237,9 +237,10 @@ class ProblemRecordsApp(App):
 @pytest.mark.asyncio
 async def test_single_problem_row_is_preselected_on_load(monkeypatch):
     """F-054: when the first load surfaces exactly ONE problem server (the
-    off/opt-in built-in doesn't count -- see is_off_opt_in), the workbench
-    pre-selects it so the inspector opens on what's wrong and what you can
-    do instead of dead space."""
+    off/opt-in built-in doesn't count as a problem -- see is_off_opt_in;
+    the LONE-row case is task-2240's own preselect, tested below), the
+    workbench pre-selects it so the inspector opens on what's wrong and
+    what you can do instead of dead space."""
     # Deterministic builtin state: the workbench's own get_cli_setting
     # (separate import from the inspector's fixture-patched one) returns
     # every key's default -- mcp.enabled=False, i.e. off/opt-in.
@@ -260,22 +261,46 @@ async def test_single_problem_row_is_preselected_on_load(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_no_preselection_with_zero_or_multiple_problems(monkeypatch):
-    """F-054: the heuristic only fires for EXACTLY one problem -- zero
-    problems (all ready / off-opt-in) or an ambiguous two-plus both leave
-    the selection alone."""
+async def test_lone_off_builtin_row_is_preselected_on_fresh_install(monkeypatch):
+    """task-2240: a fresh install's rail has exactly one row -- the
+    off/opt-in built-in, which F-054's problem-only preselect deliberately
+    excluded -- so the inspector stayed dead on the exact state every new
+    user sees. A lone rail row is now pre-selected even when it isn't a
+    "problem": the built-in's detail (what it is, why it's off, the Enable
+    affordance) is informational, not alarmist."""
     monkeypatch.setattr(
         mcp_workbench_module, "get_cli_setting",
         lambda section, key=None, default=None: default,
     )
-    zero = ProblemRecordsApp([])
-    async with zero.run_test() as pilot:
+    app = ProblemRecordsApp([])
+    async with app.run_test() as pilot:
         await pilot.pause()
-        await zero.workers.wait_for_complete()
+        await app.workers.wait_for_complete()
         await pilot.pause()
-        workbench = zero.query_one(MCPWorkbench)
-        assert workbench._selected_server_key is None
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._selected_server_key == "builtin:tldw_chatbook"
+        # Observable effect: the inspector opens on the built-in's own
+        # informational detail (task-2239's muted off/opt-in display
+        # state), not the dead empty state...
+        state = app.query_one("#mcp-inspector-state", Static)
+        assert "tldw_chatbook (built-in)" in str(state.renderable)
+        assert "Off (opt-in)" in str(state.renderable)
+        # ...and the why-line explains the opt-in rather than filing a
+        # setup defect ("Why · Not configured").
+        message = app.query_one("#mcp-inspector-message", Static)
+        assert "Not configured" not in str(message.renderable)
+        assert "Off" in str(message.renderable)
 
+
+@pytest.mark.asyncio
+async def test_no_preselection_with_multiple_problems(monkeypatch):
+    """F-054: the heuristic only fires for EXACTLY one candidate -- an
+    ambiguous two-plus problems leaves the selection alone. (The
+    zero-problem lone-row case is task-2240's preselect, covered above.)"""
+    monkeypatch.setattr(
+        mcp_workbench_module, "get_cli_setting",
+        lambda section, key=None, default=None: default,
+    )
     multi = ProblemRecordsApp([_missing_env_record("docs"), _missing_env_record("web")])
     async with multi.run_test() as pilot:
         await pilot.pause()
@@ -765,7 +790,9 @@ async def test_builtin_flag_toggle_saves_setting_and_reloads_catalog(monkeypatch
         builtin_snap = next(
             s for s in workbench._snapshots if s.server_key == "builtin:tldw_chatbook"
         )
-        assert builtin_snap.state.value == "needs_setup"
+        # task-2239: the disabled built-in reports the muted off/opt-in
+        # display state, not the old NEEDS_SETUP alarm vocabulary.
+        assert builtin_snap.state.value == "off_opt_in"
 
 
 @pytest.mark.asyncio
