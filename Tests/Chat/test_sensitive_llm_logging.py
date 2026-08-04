@@ -5,9 +5,13 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
+import subprocess
+import sys
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
+from pathlib import Path
 
 import httpx
 import pytest
@@ -1105,3 +1109,226 @@ async def test_auxiliary_huggingface_router_url_matches_ordinary_adapter_after_d
     assert ordinary["choices"][0]["message"]["content"] == "ok"
     assert auxiliary.text == "ok"
     assert [post["url"] for post in session.posts] == [expected_url, expected_url]
+
+
+# ---- task-2119: sink-level diagnose=False must stop credential leaks ------
+#
+# `logger.opt(exception=True)` in the provider handlers attaches the live
+# exception to the log record. Loguru's own `diagnose` option (default True)
+# then dumps every stack frame's LOCAL VARIABLES alongside the traceback --
+# for these handlers that includes `headers` (the raw
+# `Authorization`/`x-api-key` value) and `final_api_key`. A real Moonshot key
+# was disclosed this way via an ordinary HTTP 429 on 2026-08-03 (see
+# .superpowers/sdd/multi-provider-usage-verification-2026-08-03.md). Payload
+# redaction (the allowlist tests above) cannot touch this -- the secret
+# arrives via frame locals, not a logged dict. The fix is sink-level
+# (`Logging_Config.py`, `Metrics/logger_config.py`, and
+# `tldw_chatbook/__init__.py`'s package-import default), not per call site;
+# these tests pin that sink-level contract directly with a distinctive,
+# obviously-fake sentinel standing in for a live credential.
+
+SENTINEL_API_KEY = "sk-SENTINEL-DO-NOT-LOG-1234567890"
+
+# task-2119: deliberately NOT a fully-mocked `requests.Session`. A fake
+# `.post()` that raises immediately has no intermediate frames, and this
+# app's own call site (`chat_with_openai`'s `response = session.post(`) is a
+# multi-line call -- `headers=` lands on a continuation line, past the
+# single source line loguru's diagnose renderer annotates for that specific
+# frame, so a fully-mocked session does not actually reproduce a leak and
+# would make the positive-control test below pass for the wrong reason
+# (verified empirically while writing this test). The real 2026-08-03 leak
+# happened a few frames deeper, inside `requests` itself
+# (`Session.request`'s `**kwargs`, which contains `headers`) -- reachable
+# only by letting a REAL `ConnectionError` propagate through `requests`'
+# actual internals. Port 1 on loopback is always refused immediately (no
+# real network access, no listener ever binds a privileged port as a normal
+# user), so this is fast and deterministic while still exercising the real
+# code path end-to-end.
+_UNREACHABLE_LOCAL_URL = "http://127.0.0.1:1"
+
+
+@contextmanager
+def _loguru_sink_with_diagnose(diagnose: bool) -> Iterator[list[str]]:
+    """Capture loguru's fully-formatted sink text under a pinned ``diagnose``.
+
+    Mirrors what a real stream/file sink receives: ``str(message)`` includes
+    loguru's own traceback rendering, with per-frame locals attached when
+    ``diagnose=True``. Unlike ``_captured_logs()`` above, this pins
+    ``diagnose`` explicitly instead of inheriting the ambient process
+    default -- the ambient default is not a reliable proxy for production
+    behavior in this suite: ``Tests/conftest.py`` imports loguru ahead of
+    ``tldw_chatbook``, so this package's own ``LOGURU_DIAGNOSE``-setting
+    import (see ``tldw_chatbook/__init__.py``) never gets to influence the
+    bound default for the whole test session.
+    """
+    messages: list[str] = []
+    sink_id = logger.add(
+        lambda message: messages.append(str(message)),
+        level="DEBUG",
+        diagnose=diagnose,
+        backtrace=True,
+    )
+    try:
+        yield messages
+    finally:
+        logger.remove(sink_id)
+
+
+def _plant_sentinel_openai_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        cloud_adapters,
+        "load_settings",
+        lambda: {
+            "openai_api": {
+                "api_key": SENTINEL_API_KEY,
+                "api_base_url": _UNREACHABLE_LOCAL_URL,
+                "api_retries": 0,
+                "api_timeout": 2,
+            }
+        },
+    )
+
+
+@pytest.mark.parametrize("sensitive", [False, True])
+def test_sentinel_api_key_never_reaches_diagnose_false_sink_on_request_exception(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive: bool,
+) -> None:
+    """task-2119 AC#1/#3: a real credential-shaped local must never leak.
+
+    Forces the OpenAI adapter's ``RequestException`` handler (the branch
+    that calls ``logger.opt(exception=True)`` on the non-sensitive path --
+    LLM_API_Calls.py's ``chat_with_openai``, ``except
+    requests.exceptions.RequestException`` block) with a distinctive
+    sentinel standing in for the live API key, on BOTH the sensitive and
+    non-sensitive request paths, and asserts the sentinel never reaches a
+    sink configured the way this app's real sinks now are
+    (``diagnose=False``).
+    """
+    _plant_sentinel_openai_config(monkeypatch)
+
+    context = sensitive_llm_request() if sensitive else nullcontext()
+    with _loguru_sink_with_diagnose(False) as logs, context:
+        with pytest.raises(requests.exceptions.ConnectionError):
+            cloud_adapters.chat_with_openai(
+                input_data=[{"role": "user", "content": "hi"}],
+                api_key=SENTINEL_API_KEY,
+                model="gpt-test",
+                streaming=False,
+            )
+
+    rendered = "\n".join(logs)
+    assert SENTINEL_API_KEY not in rendered
+
+
+def test_sentinel_api_key_leaks_via_diagnose_true_sink_confirming_mechanism_is_real(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Positive control for the regression test above.
+
+    Without a ``diagnose=False`` sink, the SAME non-sensitive
+    ``RequestException`` DOES attach ``headers``/``final_api_key``
+    frame-local values to the sink text -- this is the exact mechanism that
+    disclosed a real Moonshot key on 2026-08-03. If this test ever stops
+    leaking, the regression test above has stopped proving anything (it
+    would be passing vacuously, e.g. because the sentinel was never actually
+    exercised).
+    """
+    _plant_sentinel_openai_config(monkeypatch)
+
+    with _loguru_sink_with_diagnose(True) as logs:
+        with pytest.raises(requests.exceptions.ConnectionError):
+            cloud_adapters.chat_with_openai(
+                input_data=[{"role": "user", "content": "hi"}],
+                api_key=SENTINEL_API_KEY,
+                model="gpt-test",
+                streaming=False,
+            )
+
+    rendered = "\n".join(logs)
+    assert SENTINEL_API_KEY in rendered
+
+
+def test_persistent_and_legacy_sink_configuration_pin_diagnose_false() -> None:
+    """task-2119 AC#2/#4: pin the sink-level contract itself.
+
+    A future contributor flipping ``diagnose=False`` back to unset (or to
+    ``True``) on either of this app's real loguru sinks must fail a test
+    rather than silently reopening the credential-leak hole.
+    ``backtrace=True`` is pinned alongside it: traceback/diagnostic value
+    (exception type, message, stack of source lines) must stay intact --
+    only frame-local dumping goes away.
+    """
+    from tldw_chatbook import Logging_Config
+    from tldw_chatbook.Metrics import logger_config as metrics_logger_config
+
+    app_logging_source = inspect.getsource(
+        Logging_Config.configure_application_logging
+    )
+    add_call_start = app_logging_source.index("loguru_logger.add(")
+    add_call_end = app_logging_source.index(")\n", add_call_start)
+    add_call_block = app_logging_source[add_call_start:add_call_end]
+    assert "_forward_loguru_to_standard" in add_call_block
+    assert "diagnose=False" in add_call_block
+    assert "backtrace=True" in add_call_block
+
+    metrics_source = inspect.getsource(metrics_logger_config.setup_logger)
+    add_call_start = metrics_source.index("logger.add(")
+    add_call_end = metrics_source.index(")\n", add_call_start)
+    add_call_block = metrics_source[add_call_start:add_call_end]
+    assert "diagnose=False" in add_call_block
+    assert "backtrace=True" in add_call_block
+
+
+def test_package_import_sets_loguru_diagnose_env_default() -> None:
+    """task-2119: importing ``tldw_chatbook`` sets the safe library default.
+
+    Cheap in-process check that the env-var lever from
+    ``tldw_chatbook/__init__.py`` is actually wired (the full "does this
+    make loguru's own default sink safe" property needs a fresh process --
+    see the subprocess test below -- since this test SESSION already
+    imported loguru, via ``Tests/conftest.py``, before ``tldw_chatbook``
+    ever got a chance to set this).
+    """
+    assert os.environ.get("LOGURU_DIAGNOSE") == "0"
+
+
+def test_fresh_process_importing_package_alone_leaves_loguru_diagnose_false() -> (
+    None
+):
+    """task-2119: reproduce the exact shape of the 2026-08-03 live incident.
+
+    A subprocess that imports only ``tldw_chatbook`` (nothing else touches
+    loguru first, unlike this test session's own ``conftest.py``) must end
+    up with every loguru sink ``diagnose=False`` and ``LOGURU_DIAGNOSE=0``
+    in its environment. This is run out-of-process on purpose: the live
+    incident happened in a script that imported the provider adapters
+    directly and never called
+    ``Logging_Config.configure_application_logging`` -- exactly this
+    shape -- and ``Tests/conftest.py`` importing loguru ahead of this
+    package (for its own, unrelated fixture-ordering reasons) means the
+    property under test is already gone by the time any in-process test
+    body runs in this suite.
+    """
+    script = (
+        "import os, sys\n"
+        "import tldw_chatbook\n"
+        "from loguru import logger\n"
+        "assert os.environ.get('LOGURU_DIAGNOSE') == '0', os.environ.get('LOGURU_DIAGNOSE')\n"
+        "handlers = list(logger._core.handlers.values())\n"
+        "assert handlers, 'expected at least one loguru sink after package import'\n"
+        "for handler in handlers:\n"
+        "    ef = getattr(handler, '_exception_formatter', None)\n"
+        "    assert getattr(ef, '_diagnose', None) is False, 'diagnose not disabled'\n"
+        "print('OK')\n"
+    )
+    project_root = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=str(project_root),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert "OK" in result.stdout
