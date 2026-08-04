@@ -28,6 +28,8 @@ fixes the underlying escape hatch; if that day comes, that test fails and
 tells us `PruneSafeSelect` can be retired.
 """
 
+import pathlib
+
 import pytest
 from textual import events
 from textual.app import App, ComposeResult
@@ -35,7 +37,13 @@ from textual.css.query import NoMatches
 from textual.widgets import Select
 from textual.widgets._select import SelectCurrent
 
-from tldw_chatbook.Widgets.prune_safe_select import PruneSafeSelect
+from tldw_chatbook.Widgets.prune_safe_select import (
+    _GUARDED_FLAGS,
+    _GUARDED_METHODS,
+    _require_internals,
+    PruneSafeSelect,
+    PruneSafeSelectCompatibilityError,
+)
 
 OPTIONS = [("All", "all"), ("RSS", "rss")]
 
@@ -255,3 +263,115 @@ async def test_prune_safe_select_keeps_matching_the_select_css_type_selector():
         select = app.query_one("#probe", PruneSafeSelect)
         assert "Select" in select._css_types
         assert app.query(Select), "query(Select) must still find the subclass"
+
+
+# ---------------------------------------------------------------------------
+# Fail-fast compatibility check (Qodo: "private Textual API coupling")
+#
+# `PruneSafeSelect` hooks Textual private API because the defect it works
+# around IS private API -- there is nowhere public to hook. `pyproject.toml`
+# allows any `textual>=8.2.8,<9`, and an in-range rename of either overridden
+# method would leave the overrides defining two methods nothing ever calls:
+# no error, no warning, guard silently inert, and TASK-1960's race back as
+# unattributable flakiness. These pin the loud failure instead.
+# ---------------------------------------------------------------------------
+
+
+def test_the_guarded_internals_actually_exist_on_this_textual():
+    """The check passes against the real `Select` it is written for."""
+    _require_internals(Select, _GUARDED_METHODS, "method")
+
+
+def test_a_renamed_method_is_caught_not_silently_ignored():
+    """A stand-in `Select` missing one override target must raise."""
+
+    class _RenamedSelect:
+        def _watch_value(self, value):  # kept
+            ...
+
+        # `_setup_options_renderables` renamed away.
+
+    with pytest.raises(PruneSafeSelectCompatibilityError) as caught:
+        _require_internals(_RenamedSelect, _GUARDED_METHODS, "method")
+
+    message = str(caught.value)
+    assert "_setup_options_renderables" in message, "must name the missing internal"
+    assert "_watch_value" not in message, "must not blame the internal that is fine"
+    assert "TASK-1960" in message, "must point at what has to be re-verified"
+
+
+def test_a_missing_flag_is_caught_too():
+    """The instance half: the guard reads `_pruning`/`_closing`."""
+
+    class _FlaglessWidget:
+        _pruning = False
+        # `_closing` gone.
+
+    with pytest.raises(PruneSafeSelectCompatibilityError) as caught:
+        _require_internals(_FlaglessWidget(), _GUARDED_FLAGS, "attribute")
+    assert "_closing" in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_constructing_the_widget_runs_the_flag_check():
+    """Wired up, not merely defined: a real construction exercises it.
+
+    Pins that `__init__` calls the check, so neutering the call is caught
+    even though every live widget has the flags.
+    """
+    calls: list[tuple] = []
+    real = _require_internals
+
+    def _spy(owner, names, kind):
+        calls.append((names, kind))
+        return real(owner, names, kind)
+
+    import tldw_chatbook.Widgets.prune_safe_select as module
+
+    module._require_internals = _spy
+    try:
+        app = _Host(PruneSafeSelect)
+        async with app.run_test():
+            pass
+    finally:
+        module._require_internals = real
+
+    assert any(names == _GUARDED_FLAGS for names, _ in calls), (
+        f"constructing a PruneSafeSelect never checked {_GUARDED_FLAGS}: {calls}"
+    )
+
+
+def test_importing_the_module_refuses_a_textual_with_a_renamed_method(monkeypatch):
+    """The import-time half is WIRED UP, not merely defined.
+
+    This is the failure Qodo named as insidious: rename either overridden
+    method upstream and the overrides below stop overriding anything, in
+    total silence. Re-executes the module's own source against a stand-in
+    `Select` missing one of them and requires the import itself to blow up.
+
+    Executed in a throwaway namespace rather than via `importlib.reload`, so
+    the real, already-imported module is never left half-initialised for the
+    tests that follow.
+    """
+    import textual.widgets
+
+    import tldw_chatbook.Widgets.prune_safe_select as module
+
+    class _RenamedSelect:
+        """Textual after a hypothetical in-range rename."""
+
+        def _watch_value(self, value):
+            ...
+
+    monkeypatch.setattr(textual.widgets, "Select", _RenamedSelect)
+    source = pathlib.Path(module.__file__).read_text(encoding="utf-8")
+
+    # Matched on base class + name, not identity: the fresh namespace defines
+    # its own `PruneSafeSelectCompatibilityError`, a different class object
+    # from the imported one however identical the source.
+    with pytest.raises(RuntimeError) as caught:
+        exec(compile(source, module.__file__, "exec"), {"__name__": "_probe"})
+
+    assert type(caught.value).__name__ == PruneSafeSelectCompatibilityError.__name__
+    assert "_setup_options_renderables" in str(caught.value)
+    assert "TASK-1960" in str(caught.value)

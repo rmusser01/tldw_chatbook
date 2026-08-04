@@ -55,7 +55,70 @@ from __future__ import annotations
 
 from textual.widgets import Select
 
-__all__ = ["PruneSafeSelect"]
+__all__ = ["PruneSafeSelect", "PruneSafeSelectCompatibilityError"]
+
+#: The stock `Select` methods this class overrides. If Textual renames either,
+#: the overrides below stop being overrides: Python happily defines two unused
+#: methods, nothing raises, and the guard is silently bypassed -- the race
+#: returns as intermittent flakiness with no signal at all. That is the one
+#: failure mode this task refuses (a hidden race), so it is checked at import.
+_GUARDED_METHODS = ("_setup_options_renderables", "_watch_value")
+
+#: The private flags the guard reads. Set by `DOMNode`/`MessagePump.__init__`,
+#: so they exist on every constructed widget -- until they do not.
+_GUARDED_FLAGS = ("_pruning", "_closing")
+
+#: Named in the failure message so whoever hits it knows what to redo, not
+#: merely that something moved.
+_REVERIFY = (
+    "Textual internals PruneSafeSelect guards against have changed; "
+    "re-verify the prune-time mount no-op mechanism (TASK-1960) against "
+    "this Textual version"
+)
+
+
+class PruneSafeSelectCompatibilityError(RuntimeError):
+    """Raised when the Textual internals this class hooks have moved."""
+
+
+def _textual_version() -> str:
+    """Best-effort Textual version, for the failure message only."""
+    try:
+        from importlib.metadata import version
+
+        return version("textual")
+    except Exception:  # pragma: no cover - diagnostics must never mask the real error
+        return "unknown"
+
+
+def _require_internals(owner: object, names: tuple[str, ...], kind: str) -> None:
+    """Fail loudly if any of `names` is missing from `owner`.
+
+    Args:
+        owner: The class (for methods) or instance (for flags) to check.
+        names: Attribute names that must be present.
+        kind: Human-readable noun for the message, e.g. `"method"`.
+
+    Raises:
+        PruneSafeSelectCompatibilityError: If any name is absent. Deliberately
+            an exception, not a warning: a warning in a TUI goes to a log
+            nobody reads while the app keeps crashing intermittently.
+    """
+    missing = [name for name in names if not hasattr(owner, name)]
+    if missing:
+        owner_name = getattr(owner, "__name__", type(owner).__name__)
+        raise PruneSafeSelectCompatibilityError(
+            f"{_REVERIFY}. PruneSafeSelect expects {kind}(s) "
+            f"{', '.join(missing)} on {owner_name} "
+            f"(textual {_textual_version()}); pin textual and re-run "
+            f"Tests/Widgets/test_prune_safe_select.py, whose two "
+            f"`test_stock_select_still_raises_*` controls say whether the "
+            f"underlying Textual defect still exists at all."
+        )
+
+
+# Import-time half: the overrides are only overrides while these names exist.
+_require_internals(Select, _GUARDED_METHODS, "method")
 
 
 class PruneSafeSelect(Select):
@@ -70,7 +133,25 @@ class PruneSafeSelect(Select):
     class that inherits CSS (`DOMNode._css_bases`), so an existing
     `Select { ... }` or `.destination-filter-strip Select` rule still
     applies to instances of this class.
+
+    This class couples to Textual private API on purpose — the defect it
+    works around is itself in Textual private API, so there is nowhere
+    public to hook. `pyproject.toml` allows any `textual>=8.2.8,<9`, and an
+    in-range upgrade could rename any of it. Both halves are therefore
+    checked (module import for the overridden methods, `__init__` for the
+    flags) and failure is an exception, never a default-to-safe: a guard
+    that quietly becomes inert would restore the exact intermittent race
+    TASK-1960 exists to eliminate, which is strictly worse than a loud stop.
     """
+
+    def __init__(self, *args, **kwargs) -> None:
+        """Construct a stock `Select`, then confirm the guard can still work.
+
+        Cheap by design — two `hasattr` calls per widget, after
+        `super().__init__` has had its chance to set them.
+        """
+        super().__init__(*args, **kwargs)
+        _require_internals(self, _GUARDED_FLAGS, "attribute")
 
     def _setup_options_renderables(self) -> None:
         """Skip the `query_one(SelectOverlay)` rebuild while pruning.

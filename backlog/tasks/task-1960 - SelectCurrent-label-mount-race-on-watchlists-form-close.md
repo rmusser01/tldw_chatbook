@@ -279,4 +279,29 @@ parent), which is what makes a guard on the parent correct. All six findings are
 - **Minor 4** — corrected the Textual line citations above (`app.py` 4394→4381-4395, assignment at
   4395; `message_pump.py` 588→598-613, `finally` at 609-612) and recorded the third unguarded
   lookup the review found, `query_one(SelectOverlay)` at `_select.py:613`.
+
+### Qodo wave (PR #1315): private Textual API coupling
+
+One finding: `PruneSafeSelect` reads `_pruning`/`_closing` and overrides two private `Select`
+methods, while `pyproject.toml` allowed any `textual>=8.0.0,<9`. The insidious mode is a *rename*:
+the overrides silently stop being overrides — Python defines two methods nothing ever calls, nothing
+raises, and TASK-1960's race returns as unattributable flakiness.
+
+- **Accepted, fail-fast check.** `_require_internals()` raises
+  `PruneSafeSelectCompatibilityError` (a `RuntimeError`) naming the missing internal and telling the
+  reader to re-verify the prune-time mount no-op mechanism against their Textual version. Called at
+  **module import** for `_setup_options_renderables`/`_watch_value` on stock `Select`, and in
+  **`__init__`** (after `super().__init__`) for the `_pruning`/`_closing` instance flags. Cost: one
+  import-time check plus two `hasattr` calls per widget.
+- **Accepted, floor tightened.** `textual>=8.0.0,<9` → `>=8.2.8,<9`: the declared range now starts
+  at the version the mechanism was actually verified against.
+- **Declined: `getattr(self, "_pruning", False)`.** Defaulting a missing flag to `False` makes the
+  guard silently inert — precisely the hidden-race class this task exists to refuse. A loud stop is
+  strictly better than a guard that quietly does nothing, and the fail-fast check covers the same
+  risk with a signal.
+
+Four tests pin it, including two wiring tests (the checks are *called*, not merely defined): the
+`__init__` half via a spy over a real construction, and the import half by re-executing the module's
+own source in a throwaway namespace against a stand-in `Select` with one method renamed away — so
+neither call can be deleted without a red test.
 <!-- SECTION:NOTES:END -->
