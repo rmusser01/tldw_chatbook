@@ -51,6 +51,7 @@ from ..Console_Modules.frame import (
     CONSOLE_QUIET_FRAME_BORDER,
     frame_console_region,
 )
+from ..Console_Modules.left_rail import ConsoleLeftRail
 from ...Chat.chat_persistence_service import ChatPersistenceService
 from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import ConsoleChatController
@@ -484,7 +485,6 @@ from ...Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
 )
 from ...Widgets.destination_rail import (
-    RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailSectionHeader,
 )
 from ...Widgets.Console.console_session_switcher_modal import (
@@ -2050,6 +2050,21 @@ class ChatScreen(BaseAppScreen):
         if not _is_empty_select_value(event.value):
             self._console_control_model = str(event.value)
         self._sync_console_control_bar()
+
+    @on(ConsoleLeftRail.SectionToggled)
+    def on_console_left_rail_section_toggled(
+        self, message: ConsoleLeftRail.SectionToggled
+    ) -> None:
+        """Handle a left-rail section toggle button press.
+
+        The rail catches its own toggle buttons and stops the underlying
+        ``Button.Pressed`` (see ``ConsoleLeftRail.on_button_pressed``) --
+        formerly this matched ``RAIL_SECTION_TOGGLE_PREFIX`` directly inside
+        this screen's own ``on_button_pressed`` if-chain. The actual open/
+        close decision, persistence, and Inspector-rail interaction stay
+        here unchanged: they reach beyond the rail's own DOM.
+        """
+        self._toggle_console_rail_section(message.section_id)
 
     @on(Button.Pressed, "#console-context-rail-collapse")
     def on_console_context_rail_collapse(self, event: Button.Pressed) -> None:
@@ -12476,7 +12491,12 @@ class ChatScreen(BaseAppScreen):
 
     def _sync_console_rail_visibility(self, rail_state: ConsoleRailState) -> None:
         """Apply Console rail visibility without recomposing the screen."""
-        self._sync_console_rail_sections(rail_state)
+        try:
+            left_rail = self.query_one("#console-left-rail", ConsoleLeftRail)
+        except (NoMatches, QueryError):
+            pass
+        else:
+            left_rail.sync_sections(rail_state)
         for selector, label, badge in (
             (
                 "#console-context-rail-handle",
@@ -12660,34 +12680,6 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_rail_visibility_if_changed(rail_state)
         return rail_state
 
-    def _sync_console_rail_sections(self, rail_state: ConsoleRailState) -> None:
-        """Apply left-rail section open flags to section bodies and headers.
-
-        Stored section preferences are scoped per workspace/conversation, so a
-        runtime scope switch (for example resuming a saved conversation after a
-        relaunch) can change the effective flags without a recompose.
-        """
-        for section_id in CONSOLE_RAIL_SECTION_IDS:
-            section_open = bool(getattr(rail_state, f"{section_id}_open", True))
-            self._apply_console_rail_section_open(section_id, section_open)
-
-    def _apply_console_rail_section_open(
-        self,
-        section_id: str,
-        section_open: bool,
-    ) -> None:
-        """Sync one section's body display and header glyph to an open state."""
-        try:
-            body = self.query_one(f"#console-rail-section-body-{section_id}")
-            header = self.query_one(
-                f"#console-rail-section-header-{section_id}",
-                DestinationRailSectionHeader,
-            )
-        except (NoMatches, QueryError):
-            return
-        body.styles.display = "block" if section_open else "none"
-        header.sync_open(section_open)
-
     def _toggle_console_rail_section(self, section_id: str) -> None:
         """Flip one left-rail section open state, then sync body and header."""
         if section_id not in CONSOLE_RAIL_SECTION_IDS:
@@ -12707,7 +12699,12 @@ class ChatScreen(BaseAppScreen):
             section_updates={section_id: next_open},
             notify_on_failure=False,
         )
-        self._apply_console_rail_section_open(section_id, next_open)
+        try:
+            left_rail = self.query_one("#console-left-rail", ConsoleLeftRail)
+        except (NoMatches, QueryError):
+            pass
+        else:
+            left_rail.apply_section_open(section_id, next_open)
         if section_id == "character" and next_open:
             # A collapsed body has `display: none`, so
             # `_character_avatar_available_cols()` measures 0 and
@@ -14851,9 +14848,50 @@ class ChatScreen(BaseAppScreen):
                     left_handle.styles.display = "none"
                 yield self._frame_console_region(left_handle)
 
-                left_rail = Vertical(
-                    id="console-left-rail",
-                    classes="console-region destination-workbench-pane",
+                # The section-level values below are computed here, on the
+                # screen, exactly as they were computed inline before this
+                # extraction (wave-1 console decomposition, task 3) --
+                # session-settings resolution, the agent bridge, and
+                # character avatar rendering all stay screen-owned; only the
+                # already-computed results are handed to `ConsoleLeftRail`.
+                fleet_line = self._console_agent_fleet_summary_line()
+                settings_summary_state = self._build_console_settings_summary_state()
+                system_line_text, system_line_dim = (
+                    self._console_rail_system_line_state()
+                )
+                agent_status_line, agent_steps_text, agent_subagents_text = (
+                    self._console_agent_section_lines()
+                )
+                show_character_section = resolve_show_character_avatar(
+                    getattr(getattr(self, "app_instance", None), "app_config", {})
+                    or {}
+                )
+                character_avatar_widget = None
+                character_avatar_name = ""
+                if show_character_section:
+                    character_avatar_widget = self._build_character_avatar_widget(
+                        self._active_character_avatar
+                    )
+                    character_avatar_name = (
+                        self._active_character_avatar_name
+                        or "No character in this chat"
+                    )
+
+                left_rail = ConsoleLeftRail(
+                    rail_state=rail_state,
+                    workspace_context_state=workspace_context_state,
+                    settings_summary_state=settings_summary_state,
+                    system_line_text=system_line_text,
+                    system_line_dim=system_line_dim,
+                    fleet_line=fleet_line,
+                    agent_status_line=agent_status_line,
+                    agent_steps_text=agent_steps_text,
+                    agent_subagents_text=agent_subagents_text,
+                    agent_drilldown_active=bool(self._console_agent_drilldown_run_id),
+                    agent_full_log_available=self._console_agent_full_log_available(),
+                    show_character_section=show_character_section,
+                    character_avatar_widget=character_avatar_widget,
+                    character_avatar_name=character_avatar_name,
                 )
                 left_rail.can_focus = True
                 left_rail.styles.width = "3fr"
@@ -14862,395 +14900,7 @@ class ChatScreen(BaseAppScreen):
                 left_rail.styles.min_width = 24
                 if not rail_state.left_open:
                     left_rail.styles.display = "none"
-                with self._frame_console_region(left_rail):
-                    left_rail_header = Horizontal(classes="console-rail-header")
-                    left_rail_header.styles.height = 1
-                    left_rail_header.styles.min_height = 1
-                    left_rail_header.styles.max_height = 1
-                    with left_rail_header:
-                        # The "Context" (staged sources) section moved into
-                        # the Inspector rail (task-400); this title now only
-                        # names the rail itself.
-                        rail_label = Static(
-                            "Console context",
-                            id="console-context-rail-title",
-                            classes="console-rail-title",
-                        )
-                        rail_label.styles.width = "1fr"
-                        yield rail_label
-                        collapse_button = Button(
-                            GLYPH_COLLAPSE_LEFT,
-                            id="console-context-rail-collapse",
-                            classes="console-rail-collapse-button",
-                            compact=True,
-                        )
-                        collapse_button.tooltip = "Collapse Console context rail"
-                        collapse_button.styles.width = 3
-                        collapse_button.styles.min_width = 3
-                        collapse_button.styles.max_width = 3
-                        yield collapse_button
-
-                    # TASK-1140 (UAT F1, fix round 1): the fleet summary --
-                    # "N other agents running, M waiting for approval."
-                    # (parallel-agents spec §6, PA-T8) -- is pinned HERE, a
-                    # plain sibling of `left_rail_header` inside the
-                    # non-scrolling `left_rail` Vertical, deliberately
-                    # OUTSIDE `#console-left-rail-body` (the `VerticalScroll`
-                    # every section below shares). `#console-left-rail-body`
-                    # is CSS `height: 1fr` -- it only ever claims whatever
-                    # vertical space is left over after ITS non-scrolling
-                    # siblings (the header, this line) are laid out, so this
-                    # widget is painted unconditionally: independent of rail
-                    # scroll position, which sections are open/collapsed,
-                    # and how much step content the Agent section carries.
-                    # Round 1 (compose-order-only, fleet line first inside
-                    # the Agent section body) was insufficient -- Session
-                    # and Model are BOTH open by persisted default
-                    # (`ConsoleRailPreferences.session_open`/`model_open`)
-                    # and together already exceed the rail body's own
-                    # ~10-row visible budget in a 44-row terminal, so any
-                    # position inside that shared scrollable flow could
-                    # still land below the fold before a user ever touches
-                    # the Agent section's own content.
-                    #
-                    # Present but display:none when both counts are zero
-                    # (mirrors the recovery Static in the Model section),
-                    # so `_sync_console_agent_section`'s targeted update
-                    # never needs to mount/unmount it -- and the pinned slot
-                    # collapses to zero rows rather than leaving a blank
-                    # line (`height: auto` + `display: none` both cooperate
-                    # here: Textual excludes a `display: none` widget from
-                    # layout entirely).
-                    fleet_line = self._console_agent_fleet_summary_line()
-                    fleet_summary = Static(
-                        fleet_line,
-                        id="console-agent-fleet-summary",
-                        classes="console-agent-section-fleet-summary",
-                        markup=False,
-                    )
-                    fleet_summary.styles.height = "auto"
-                    fleet_summary.styles.display = "block" if fleet_line else "none"
-                    yield fleet_summary
-
-                    with VerticalScroll(
-                        id="console-left-rail-body",
-                        classes="console-left-rail-body",
-                    ):
-                        # Section 1: Session (workspace + conversations).
-                        yield DestinationRailSectionHeader(
-                            "Session",
-                            section_id="session",
-                            open=rail_state.session_open,
-                            id="console-rail-section-header-session",
-                        )
-                        session_body = Vertical(
-                            id="console-rail-section-body-session",
-                            classes="console-rail-section-body",
-                        )
-                        session_body.styles.height = "auto"
-                        if not rail_state.session_open:
-                            session_body.styles.display = "none"
-                        with session_body:
-                            workspace_context_tray = ConsoleWorkspaceContextTray(
-                                workspace_context_state,
-                                show_heading=False,
-                                id="console-workspace-context",
-                                classes="console-left-rail-section",
-                            )
-                            workspace_context_tray.styles.width = "100%"
-                            workspace_context_tray.styles.min_width = 0
-                            yield self._frame_console_region(
-                                workspace_context_tray,
-                                variant=self._workspace_context_frame_variant(
-                                    workspace_context_state
-                                ),
-                            )
-
-                        # Section 2: Model (provider/model readout lines plus a
-                        # Configure shortcut into the Console session settings).
-                        yield DestinationRailSectionHeader(
-                            "Model",
-                            section_id="model",
-                            open=rail_state.model_open,
-                            id="console-rail-section-header-model",
-                        )
-                        model_body = Vertical(
-                            id="console-rail-section-body-model",
-                            classes="console-rail-section-body",
-                        )
-                        model_body.styles.height = "auto"
-                        if not rail_state.model_open:
-                            model_body.styles.display = "none"
-                        with model_body:
-                            summary_state = self._build_console_settings_summary_state()
-                            provider_value = (
-                                _summary_row_value(summary_state.provider_row) or "—"
-                            )
-                            model_value = (
-                                _summary_row_value(summary_state.model_row) or "—"
-                            )
-                            temperature_match = re.search(
-                                r"T ([\d.]+)", summary_state.sampling_row or ""
-                            )
-                            temperature_value = (
-                                temperature_match.group(1) if temperature_match else "—"
-                            )
-                            max_tokens_match = re.search(
-                                r"max_tokens (\d+)", summary_state.sampling_row or ""
-                            )
-                            max_tokens_value = (
-                                max_tokens_match.group(1) if max_tokens_match else "—"
-                            )
-
-                            with Horizontal(
-                                id="console-model-section-provider",
-                                classes="console-model-section-line",
-                            ):
-                                yield Static(
-                                    "Provider",
-                                    classes="console-model-section-label",
-                                    markup=False,
-                                )
-                                yield Static(
-                                    provider_value,
-                                    classes="console-model-section-value",
-                                    markup=False,
-                                )
-                            with Horizontal(
-                                id="console-model-section-model",
-                                classes="console-model-section-line",
-                            ):
-                                yield Static(
-                                    "Model",
-                                    classes="console-model-section-label",
-                                    markup=False,
-                                )
-                                yield Static(
-                                    model_value,
-                                    classes="console-model-section-value",
-                                    markup=False,
-                                )
-                            with Horizontal(
-                                id="console-model-section-temperature",
-                                classes="console-model-section-line",
-                            ):
-                                yield Static(
-                                    "Temperature",
-                                    classes="console-model-section-label",
-                                    markup=False,
-                                )
-                                yield Static(
-                                    temperature_value,
-                                    classes="console-model-section-value",
-                                    markup=False,
-                                )
-                            with Horizontal(
-                                id="console-model-section-max-tokens",
-                                classes="console-model-section-line",
-                            ):
-                                yield Static(
-                                    "Max tokens",
-                                    classes="console-model-section-label",
-                                    markup=False,
-                                )
-                                yield Static(
-                                    max_tokens_value,
-                                    classes="console-model-section-value",
-                                    markup=False,
-                                )
-
-                            readiness = (summary_state.readiness_label or "").strip()
-                            recovery = Static(
-                                readiness or "",
-                                id="console-model-section-recovery",
-                                classes="console-model-section-recovery",
-                                markup=False,
-                            )
-                            recovery.styles.display = "none"
-                            yield recovery
-
-                            system_line_text, system_line_dim = (
-                                self._console_rail_system_line_state()
-                            )
-                            system_line = Static(
-                                system_line_text,
-                                id="console-rail-system-line",
-                                markup=False,
-                            )
-                            # Same one-row clipping hazard as the model line
-                            # above (task-186): nowrap + ellipsis so a long
-                            # system prompt truncates visibly instead of
-                            # word-wrapping onto a hidden second row.
-                            system_line.styles.text_wrap = "nowrap"
-                            system_line.styles.text_overflow = "ellipsis"
-                            system_line.set_class(
-                                system_line_dim, "console-rail-system-line-dim"
-                            )
-                            yield system_line
-                            configure = Button(
-                                "Configure",
-                                id="console-model-section-configure",
-                                classes="console-workspace-action",
-                                compact=True,
-                            )
-                            configure.tooltip = "Configure Console session settings"
-                            yield configure
-
-                        # Section 3: Agent (run inspector -- the watch-and-drill
-                        # surface for the live/most-recent agent run and its
-                        # historical sub-agent runs).
-                        yield DestinationRailSectionHeader(
-                            "Agent",
-                            section_id="agent",
-                            open=rail_state.agent_open,
-                            id="console-rail-section-header-agent",
-                        )
-                        agent_body = Vertical(
-                            id="console-rail-section-body-agent",
-                            classes="console-rail-section-body console-agent-section",
-                        )
-                        agent_body.styles.height = "auto"
-                        if not rail_state.agent_open:
-                            agent_body.styles.display = "none"
-                        with agent_body:
-                            # TASK-1140 (UAT F1, fix round 1): the fleet
-                            # summary Static used to mount HERE (first, per
-                            # round 1's compose-order-only fix). Round 1's
-                            # own harness proved that placement insufficient
-                            # once the reviewer ran it against Session/Model
-                            # left at their real PERSISTED DEFAULTS (both
-                            # open) rather than collapsed: those two
-                            # sections alone already exceed the rail's own
-                            # ~10-row visible budget in a 44-row terminal,
-                            # so ANY position inside the shared, scrollable
-                            # `#console-left-rail-body` -- including the top
-                            # of the Agent section -- can still land below
-                            # the fold. The widget now lives OUTSIDE that
-                            # scrollable flow entirely (see `left_rail_header`
-                            # below, a few hundred lines up in this same
-                            # compose method) so it is painted regardless of
-                            # scroll position, section open/collapsed state,
-                            # or step-content length. Not duplicated here --
-                            # two widgets sharing one id is invalid, and the
-                            # pinned copy already covers "does the Agent
-                            # section's own busy state show a fleet line".
-                            status_line, steps_text, subagents_text = (
-                                self._console_agent_section_lines()
-                            )
-                            yield Static(
-                                status_line,
-                                id="console-agent-section-status",
-                                classes="console-agent-section-line",
-                                markup=False,
-                            )
-                            yield Static(
-                                steps_text,
-                                id="console-agent-section-steps",
-                                classes="console-agent-section-steps",
-                                markup=False,
-                            )
-                            yield Static(
-                                subagents_text,
-                                id="console-agent-section-subagents",
-                                classes="console-agent-section-subagents",
-                                markup=False,
-                            )
-                            back_button = Button(
-                                "Back",
-                                id="console-agent-drilldown-back",
-                                classes="console-workspace-action console-agent-drilldown-back",
-                                compact=True,
-                            )
-                            back_button.tooltip = "Return to the live agent run view"
-                            if not self._console_agent_drilldown_run_id:
-                                back_button.styles.display = "none"
-                            yield back_button
-                            # TASK-870 (AC#6/#7): the full-run-log
-                            # affordance -- present only while a run log
-                            # actually exists for whatever run this section
-                            # is currently showing.
-                            full_log_button = Button(
-                                "View full log",
-                                id="console-agent-view-full-log",
-                                classes=(
-                                    "console-workspace-action "
-                                    "console-agent-view-full-log"
-                                ),
-                                compact=True,
-                            )
-                            full_log_button.tooltip = (
-                                "Open the full, untruncated run log for this "
-                                "run -- what the model actually saw, before "
-                                "the Console's display cap trimmed it."
-                            )
-                            if not self._console_agent_full_log_available():
-                                full_log_button.styles.display = "none"
-                            yield full_log_button
-
-                        # Section 4: Details (storage, sync, handoff plumbing).
-                        yield DestinationRailSectionHeader(
-                            "Details",
-                            section_id="details",
-                            open=rail_state.details_open,
-                            id="console-rail-section-header-details",
-                        )
-                        details_body = Vertical(
-                            id="console-rail-section-body-details",
-                            classes="console-rail-section-body",
-                        )
-                        details_body.styles.height = "auto"
-                        if not rail_state.details_open:
-                            details_body.styles.display = "none"
-                        with details_body:
-                            details_tray = ConsoleWorkspaceDetailsTray(
-                                workspace_context_state,
-                                id="console-workspace-details",
-                                classes="console-left-rail-section",
-                            )
-                            details_tray.styles.width = "100%"
-                            details_tray.styles.min_width = 0
-                            yield details_tray
-
-                        # Section 5: Character (avatar of the active character).
-                        if resolve_show_character_avatar(
-                            getattr(
-                                getattr(self, "app_instance", None), "app_config", {}
-                            )
-                            or {}
-                        ):
-                            yield DestinationRailSectionHeader(
-                                "Character",
-                                section_id="character",
-                                open=rail_state.character_open,
-                                id="console-rail-section-header-character",
-                            )
-                            character_body = Vertical(
-                                id="console-rail-section-body-character",
-                                classes="console-rail-section-body",
-                            )
-                            character_body.styles.height = "auto"
-                            if not rail_state.character_open:
-                                character_body.styles.display = "none"
-                            with character_body:
-                                avatar_holder = ClickableAvatarBox(
-                                    id="console-character-avatar"
-                                )
-                                # task-1661: Container defaults to
-                                # width/height 1fr, so the holder claimed the
-                                # entire rail section -- the portrait sat in
-                                # the corner of a tall empty box with the name
-                                # pushed to the bottom. Hug the image instead.
-                                avatar_holder.styles.width = "auto"
-                                avatar_holder.styles.height = "auto"
-                                with avatar_holder:
-                                    yield self._build_character_avatar_widget(
-                                        self._active_character_avatar
-                                    )
-                                yield Static(
-                                    self._active_character_avatar_name
-                                    or "No character in this chat",
-                                    id="console-character-name",
-                                )
+                yield self._frame_console_region(left_rail)
 
                 main_column = Vertical(id="console-main-column")
                 main_column.styles.width = "13fr"
@@ -22406,12 +22056,6 @@ class ChatScreen(BaseAppScreen):
         if button_id == "console-agent-view-full-log":
             event.stop()
             self._open_console_agent_run_log_viewer()
-            return
-        if button_id and button_id.startswith(RAIL_SECTION_TOGGLE_PREFIX):
-            event.stop()
-            self._toggle_console_rail_section(
-                button_id.removeprefix(RAIL_SECTION_TOGGLE_PREFIX)
-            )
             return
         if button_id == "console-new-chat-tab":
             event.stop()
