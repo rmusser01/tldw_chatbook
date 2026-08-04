@@ -503,6 +503,36 @@ class HandsFreeController:
         self._cancel_countdown()
         self._transition("countdown")
 
+    def on_segment_no_final(self) -> None:
+        """A segment finished transcribing to nothing, so no `on_voice_
+        final()` will ever arrive for it (see `Audio/dictation_service_
+        lazy.py`'s `_transcribe_segment_audio`: a blank/whitespace-only
+        result -- routine for room noise or a too-short VAD sliver --
+        fires neither a partial nor a final).
+
+        Qodo review (task-5 follow-up): a resume latched via
+        `on_speech_resumed()` (carried finding #1, see `on_voice_final`
+        above) is normally consumed by the very next `on_voice_final()`.
+        But `_notify_segment_transcribing(done=True)` -- the ONLY other
+        unconditional signal this blank outcome ever produces -- fires
+        BEFORE a text segment's own final would (finalization runs in
+        `_processing_loop`, after `_transcribe_segment_audio` returns), so
+        clearing the latch there instead would re-admit a stale final the
+        latch exists to drop. Without a dedicated blank-segment signal, a
+        latch armed while THIS segment was (unknowingly) about to produce
+        nothing would sit armed indefinitely and incorrectly swallow the
+        NEXT REAL segment's `on_voice_final()`, silently dropping a whole
+        turn's countdown.
+
+        One-shot, exactly like `on_voice_final`'s own consumption: only
+        clears a latch armed for the segment that just ended, never a
+        later one. Meaningful only while `listening` (mirroring
+        `on_voice_final`'s own state gate) -- a no-op everywhere else,
+        including when nothing is latched."""
+        if self._state != "listening":
+            return
+        self._resume_latched = False
+
     def on_speech_resumed(self) -> None:
         """Silence-to-speech transition (`VoiceSpeechResumed`). Effect
         depends on state; a no-op in `idle`/`awaiting_reply`, and in

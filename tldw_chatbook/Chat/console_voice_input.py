@@ -484,6 +484,33 @@ class VoiceSpeechResumed:
 
 
 @dataclass(frozen=True)
+class VoiceSegmentNoFinal:
+    """A segment finished transcribing to nothing -- no `VoiceFinal` will
+    ever follow it.
+
+    Fired from `LazyLiveDictationService._transcribe_segment_audio`, on the
+    processing thread, immediately after its own unconditional
+    `VoiceSegmentTranscribing(done=True)`, and only on that method's
+    blank/whitespace-only branch (routine for room noise or a too-short VAD
+    sliver, same as `VoiceSegmentTranscribing`'s own docstring explains --
+    `_handle_partial_text` no-ops on blank input, so neither a partial nor a
+    final ever fires for a segment like this).
+
+    `ChatScreen._handle_console_dictation_event` (chat_screen.py) forwards
+    it like any other unhandled event -- generation gated, same as
+    `VoiceSpeechResumed` -- and routes it to the hands-free loop's
+    `HandsFreeController.on_segment_no_final()`, which is the one consumer
+    that needs it: without a positive "nothing is coming" signal for a
+    blank segment, a resume latch armed while that segment was (unknowingly)
+    about to produce nothing would sit armed and incorrectly swallow the
+    NEXT real segment's `VoiceFinal` (see that method's docstring for the
+    full mechanism).
+
+    Carries no payload -- there is nothing else to say.
+    """
+
+
+@dataclass(frozen=True)
 class VoiceCommand:
     """A finalized segment that matched the spoken-command grammar.
 
@@ -1269,6 +1296,9 @@ class ConsoleVoiceInputController:
                 ),
                 on_speech_resumed=lambda _gen=capture_generation: (
                     self._emit_capture_event(VoiceSpeechResumed(), _gen)
+                ),
+                on_segment_no_final=lambda _gen=capture_generation: (
+                    self._emit_capture_event(VoiceSegmentNoFinal(), _gen)
                 ),
                 on_state_change=lambda _state: None,  # our state machine is authoritative
                 on_error=lambda error, _gen=capture_generation: self._report_service_error(

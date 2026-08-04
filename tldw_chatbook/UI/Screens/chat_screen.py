@@ -210,6 +210,7 @@ from ...Chat.console_voice_input import (
     VoiceModelWarmupFailed,
     VoicePartial,
     VoiceProviderOverridden,
+    VoiceSegmentNoFinal,
     VoiceSegmentTranscribing,
     VoiceSpeechResumed,
     VoiceVadUnavailable,
@@ -5559,6 +5560,22 @@ class ChatScreen(BaseAppScreen):
                 composer = self._console_composer_or_none()
                 if composer is not None:
                     composer.set_voice_segment_transcribing(not event.done)
+            return
+        if isinstance(event, VoiceSegmentNoFinal):
+            # Qodo review (task-5 follow-up): positive proof no `VoiceFinal`
+            # is coming for this segment -- fired right after this same
+            # segment's own `VoiceSegmentTranscribing(done=True)` above, on
+            # the blank/whitespace-only branch. Same `_console_dictation_
+            # state == "recording"` same-capture guard as `VoiceFinal` below
+            # (not a second source of truth): a stale signal from an already-
+            # ended capture must not touch a later turn's resume latch.
+            # Meaningless outside the hands-free loop -- see `HandsFree
+            # Controller.on_segment_no_final`'s docstring for why this must
+            # exist at all (a resume latch armed for a blank segment would
+            # otherwise never be consumed, and would incorrectly swallow the
+            # NEXT real segment's `VoiceFinal`/countdown).
+            if self._console_dictation_state == "recording" and self._console_hands_free is not None:
+                self._console_hands_free.controller.on_segment_no_final()
             return
         if isinstance(event, VoiceFinal):
             # The segment is committed; the partial that previewed it is spent.

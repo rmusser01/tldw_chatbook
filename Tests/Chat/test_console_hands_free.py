@@ -309,6 +309,54 @@ def test_resume_latch_is_consumed_only_once():
     assert c.state == "countdown"
 
 
+def test_segment_no_final_consumes_a_latch_so_the_next_real_final_arms_countdown():
+    """Qodo review (task-5 follow-up): the silence gate zeroes its
+    timestamp BEFORE the (possibly seconds-long) transcription runs, so a
+    resume for the NEXT segment's speech can arrive while THIS segment is
+    still transcribing -- carried finding #1's whole premise. But when
+    that in-flight segment turns out blank, no `on_voice_final()` ever
+    arrives to consume the latch (a blank/whitespace-only result fires no
+    final at all -- see `Audio/dictation_service_lazy.py`'s
+    `_transcribe_segment_audio`). Without `on_segment_no_final()`, that
+    latch would sit armed indefinitely and incorrectly swallow the NEXT
+    REAL segment's `on_voice_final()`, silently dropping a whole turn's
+    countdown -- this fails today (before the fix) because the swallowed
+    final never arms a countdown at all."""
+    c, ev = mk()
+    c.enter(capture_live=True)
+    c.on_speech_resumed()    # latches, before the blank segment's own final
+    c.on_segment_no_final()  # THIS segment transcribed to nothing
+    c.on_voice_final()       # a genuine final, for the NEXT segment
+    assert c.state == "countdown"
+
+
+def test_segment_no_final_is_a_noop_outside_listening():
+    """Mirrors `on_voice_final`'s own state gate: meaningless anywhere but
+    `listening`, and must never touch state elsewhere."""
+    c, ev = mk()
+    c.enter(capture_live=True)
+    c.on_voice_final()
+    c.tick(now=0.0)
+    c.tick(now=1.6)
+    assert c.state == "awaiting_reply"
+    c.on_segment_no_final()  # must not raise or change state
+    assert c.state == "awaiting_reply"
+
+
+def test_segment_no_final_without_a_latched_resume_is_a_noop():
+    """No latch armed at all: consuming nothing is still safe, and a
+    genuine final right after still arms the countdown normally -- the
+    text-segment path (a real final consuming its own latch) is untouched
+    by this method, pinned separately by `test_resume_latch_is_consumed_
+    only_once` above."""
+    c, ev = mk()
+    c.enter(capture_live=True)
+    c.on_segment_no_final()  # nothing latched; must not raise
+    assert c.state == "listening"
+    c.on_voice_final()
+    assert c.state == "countdown"
+
+
 def test_sequencer_drained_arriving_in_listening_is_a_noop():
     """Carried finding #2: a barged-in reply still fires `reply_completed()`
     on the sequencer, so `on_sequencer_drained` can arrive after the

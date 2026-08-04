@@ -396,6 +396,54 @@ async def test_countdown_cancel_restores_the_chip(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_segment_no_final_consumes_latch_so_the_next_real_final_still_arms_countdown(
+    monkeypatch,
+):
+    """Qodo review (task-5 follow-up): wiring-level pin for `HandsFree
+    Controller.on_segment_no_final` -- proves the SCREEN actually routes a
+    real `VoiceSegmentNoFinal` event to it (through `ConsoleDictationEvent`
+    -> `_handle_console_dictation_event`'s `_console_dictation_state ==
+    "recording"` guard, the same one `VoiceFinal`/`VoiceSpeechResumed` use),
+    not just that the FSM method is correct in isolation (see `Tests/Chat/
+    test_console_hands_free.py`'s own pin for that half).
+
+    Without this wiring, a resume latched via `VoiceSpeechResumed` while a
+    segment was transcribing to nothing would sit armed forever (no
+    `VoiceFinal` ever arrives for a blank segment to consume it) and
+    incorrectly swallow the NEXT real segment's final -- dropping a whole
+    turn's countdown silently.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _fast_countdown(monkeypatch, seconds=5.0)  # generous -- must not expire
+    _, host = _ready_host()
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one(
+            "#console-native-composer", chat_screen_module.ConsoleComposerBar
+        )
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        console.action_toggle_console_hands_free()
+        await pilot.pause()
+        session = console._console_hands_free
+
+        service.emit_speech_resumed()  # latches, before this segment's own outcome
+        await pilot.pause()
+        assert session.controller.state == "listening"
+
+        service.emit_segment_no_final()  # THIS segment transcribed to nothing
+        await pilot.pause()
+
+        service.emit_final("hello from hands free")  # a genuine final: next segment
+        await pilot.pause()
+
+        assert session.controller.state == "countdown"
+
+
+@pytest.mark.asyncio
 async def test_spoken_feedback_false_still_speaks_reply(monkeypatch):
     """Reply speech is intrinsic to hands-free -- it must not read
     `dictation.spoken_feedback` (which governs status acks only)."""

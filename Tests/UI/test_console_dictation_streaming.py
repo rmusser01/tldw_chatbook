@@ -72,6 +72,7 @@ class FakeDictationService:
         self.on_error = None
         self.on_segment_transcribing = None
         self.on_speech_resumed = None
+        self.on_segment_no_final = None
         #: Set once `stop_dictation()` is running; if `stop_gate` is set too,
         #: it blocks there until released, so a test can drain events while
         #: the stop worker is provably mid-flight.
@@ -104,6 +105,7 @@ class FakeDictationService:
         on_error,
         on_segment_transcribing=None,
         on_speech_resumed=None,
+        on_segment_no_final=None,
         save_audio: bool = False,
     ) -> bool:
         self.start_calls += 1
@@ -112,6 +114,7 @@ class FakeDictationService:
         self.on_error = on_error
         self.on_segment_transcribing = on_segment_transcribing
         self.on_speech_resumed = on_speech_resumed
+        self.on_segment_no_final = on_segment_no_final
         self.save_audio = save_audio
         self.start_entered.set()
         if self.start_gate is not None:
@@ -144,6 +147,12 @@ class FakeDictationService:
     def emit_speech_resumed(self) -> None:
         assert self.on_speech_resumed is not None, "start_dictation() has not run yet"
         self.on_speech_resumed()
+
+    def emit_segment_no_final(self) -> None:
+        assert self.on_segment_no_final is not None, (
+            "start_dictation() has not run yet"
+        )
+        self.on_segment_no_final()
 
     def emit_error(self, message: str) -> None:
         assert self.on_error is not None, "start_dictation() has not run yet"
