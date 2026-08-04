@@ -264,12 +264,16 @@ _MODE_PLACEHOLDER_BODY: dict[str, str] = {
 }
 _PLACEHOLDER_FALLBACK = "This mode is coming soon."
 #: Onboarding guidance shown in the Characters center pane when nothing is
-#: selected (task-436). Non-adaptive: rendered at on_mount before the character
-#: count loads, so it must read correctly whether or not characters exist.
+#: selected (task-436) and the library is TRULY empty (F-035): only then are
+#: New/Import the next action. With rows present the picker copy below is
+#: shown instead (reachable after a delete or a mode round-trip; first paint
+#: auto-selects, F-031).
 _CHARACTERS_EMPTY_GUIDANCE = (
-    "No character selected. Pick one from the list on the left, or use "
-    "[b]New[/b] or [b]Import[/b] to add a character."
+    "No characters yet — use [b]New[/b] or [b]Import[/b] to add one."
 )
+#: No-selection copy when the library HAS characters (F-035): the next
+#: action is picking one, not creating one.
+_CHARACTERS_EMPTY_PICKER_GUIDANCE = "Pick a character from the list to see it here."
 PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
 #: Rows per library page. ``page_offset`` is always kept a multiple of this so
 #: the pane's "start-end of N" label math stays exact.
@@ -598,9 +602,11 @@ class PersonasScreen(BaseAppScreen):
     #personas-characters-empty {
         width: 1fr;
         height: 1fr;
-        content-align: center middle;
-        text-align: center;
-        padding: 2 4;
+        /* F-035: left/top like the app's other empty states (cf.
+           .chat-empty-state) - centered in the void read as broken layout. */
+        content-align: left top;
+        text-align: left;
+        padding: 1 2;
         color: $text-muted;
     }
 
@@ -9186,11 +9192,17 @@ class PersonasScreen(BaseAppScreen):
         )
 
     def _characters_empty_guidance_text(self) -> str:
-        """Return the onboarding guidance for the empty Characters center pane.
+        """Return the no-selection guidance for the Characters center pane.
+
+        F-035 adaptive: the New/Import onboarding copy only makes sense when
+        the library is truly empty; with rows present (post-delete, mode
+        round-trip) the next action is picking one.
 
         Returns:
-            Static guidance copy naming the three next actions.
+            Guidance copy for the current library state.
         """
+        if self._character_total > 0:
+            return _CHARACTERS_EMPTY_PICKER_GUIDANCE
         return _CHARACTERS_EMPTY_GUIDANCE
 
     def _show_center(self, visible_id: str | None) -> None:

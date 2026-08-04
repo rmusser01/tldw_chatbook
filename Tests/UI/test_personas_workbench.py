@@ -8484,8 +8484,57 @@ class TestCharactersEmptyStateGuidance:
             guidance = screen.query_one("#personas-characters-empty", Static)
             assert guidance.display is True
             body = str(guidance.renderable)
+            # F-035: the truly-empty copy names the creation actions (and no
+            # longer claims there is a list to pick from).
+            assert "No characters yet" in body
             assert "New" in body and "Import" in body
+            assert "Pick one from the list" not in body
             assert screen.query_one("#ccp-character-card-view").display is False
+
+    async def test_guidance_adapts_when_library_has_items(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """F-035: with characters in the library, a cleared selection asks
+        for a pick - the New/Import onboarding copy would be wrong here."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            # F-031 auto-selected row 1; a mode round-trip clears the
+            # selection while the non-empty library stays.
+            await screen._apply_mode("lore")
+            await pilot.pause()
+            await screen._apply_mode("characters")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert not screen.state.selected_entity_id
+            assert screen._character_total > 0
+            guidance = screen.query_one("#personas-characters-empty", Static)
+            assert guidance.display is True
+            body = str(guidance.renderable)
+            assert body == "Pick a character from the list to see it here."
+            assert "Import" not in body
+
+    async def test_guidance_uses_left_aligned_empty_state_convention(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """F-035: empty copy aligns like the app's other empty states
+        (left/top, cf. .chat-empty-state), not centered in a void."""
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", lambda: []
+        )
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            guidance = screen.query_one("#personas-characters-empty", Static)
+            assert guidance.display is True
+            assert str(guidance.styles.text_align) == "left"
+            assert guidance.styles.content_align_horizontal == "left"
+            assert guidance.styles.content_align_vertical == "top"
 
     async def test_guidance_hidden_after_selection(
         self, mock_app_instance, stub_characters, stub_conversations
