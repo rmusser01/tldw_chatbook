@@ -80,12 +80,19 @@ live-gated, 51-test machine with semantics that don't apply to it).
      *client* gates outbound audio in default barge-in mode).
    - Key resolution: the app's standard chain (`api_settings.openai` →
      `OPENAI_API_KEY` env). No new key surface.
-2. **Raw mic-frame tap** on the existing capture stack: continuous 16 kHz
-   pcm16 mono frames, **no STT loaded at all** in this mode (the model does
-   the hearing). The device stays open for the whole loop; the *stream* is
-   gated client-side per barge-in mode. Frames buffer locally (bounded,
-   ~10 s) from entry until `on_ready`, then flush — first words during the
-   connect handshake are not lost.
+2. **Raw mic-frame tap** on the existing capture stack: continuous pcm16
+   mono frames **at the provider's required input rate** — OpenAI Realtime is
+   24 kHz both directions, and since realtime mode runs no client-side VAD,
+   webrtcvad's 8/16/32/48 kHz constraint does not apply; the recorder opens
+   at 24 kHz directly (client-side resampling is the fallback only if a
+   device refuses the rate). **No STT is loaded at all** in this mode (the
+   model does the hearing), and the tap must neither import the transcription
+   stack nor trigger the lazy model load — the programme's oldest trap
+   (`Audio/__init__` → transcription imports torch at module scope) applies
+   to this new entry point. The device stays open for the whole loop; the
+   *stream* is gated client-side per barge-in mode. Frames buffer locally
+   (bounded, ~10 s) from entry until `on_ready`, then flush — first words
+   during the connect handshake are not lost.
 3. **Audio out**: the API's 24 kHz pcm16 deltas feed an async iterator into
    the existing `pump()`/`StreamingPcmSink` (`open(24000, 1)`). Barge-in
    aborts in ≤2 blocks exactly as V3 does. Played-bytes accounting supplies
@@ -125,6 +132,10 @@ handsfree_engine = "auto"     # "auto" | "pipeline" | "realtime"
 - **Honest UX difference, documented in guide + chip copy:** spoken commands
   do not exist inside realtime mode — no client STT is running, so
   "Console, stop." cannot be classified. Exits are key/mouse only.
+- **Privacy honesty, documented in the guide's privacy section:** in realtime
+  mode, microphone audio streams to the provider continuously for the whole
+  live session (subject to barge-in gating) — not just after a silence gate
+  as in the pipeline engine.
 
 ### Continuity
 
@@ -179,8 +190,10 @@ new UI surfaces.
 - Unexpected drop mid-loop: **one** automatic reconnect (fresh WS, re-seed
   from store, toast "reconnected"). A second failure in the same loop entry
   exits loudly with the reason. No infinite retry; no silent death.
-- **Idle ceiling:** no committed user turn for `idle_timeout_minutes`
-  (default 5) → exit the loop with a toast naming the reason. Unattended
+- **Idle ceiling:** no activity — user turn commit or reply-audio end,
+  whichever is later — for `idle_timeout_minutes` (default 5) → exit the
+  loop with a toast naming the reason. Never fires while a reply is active
+  (a long reply must not be cut mid-sentence by the cost guard). Unattended
   sessions must not bill indefinitely.
 - `on_usage` per-response token counts are recorded onto turn metadata.
   Feeding the Console cost chip is a named follow-up task, not V4 scope.
