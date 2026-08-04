@@ -189,3 +189,61 @@ async def test_active_tab_is_scrolled_into_view() -> None:
 
         strip = app.query_one("#console-native-tab-strip", HorizontalScroll)
         assert strip.scroll_x > 0
+
+
+def _rendered_text(app: App) -> str:
+    """Join every compositor strip's segment text into one blob.
+
+    Textual 8.2.7 has no `App.export_text()`; `screen._compositor.render_strips()`
+    is the way to read what was ACTUALLY rendered (post-clipping), as opposed to
+    inferring it from styles or the un-clipped `Button.label` source string.
+    """
+    strips = app.screen._compositor.render_strips()
+    return "\n".join("".join(segment.text for segment in strip) for strip in strips)
+
+
+class _PaddedTabStripHost(TabStripHost):
+    """`TabStripHost` plus the ONE production CSS rule this pin cares about.
+
+    `TabStripHost` composes `ConsoleSessionSurface` bare -- it never loads
+    the app's real stylesheet, so the tab-strip buttons' production
+    `padding: 0 1` (`_agentic_terminal.tcss`, selector
+    `#console-new-chat-tab, #console-new-temporary-tab`) never applies there.
+    Without it, `CONSOLE_NEW_TAB_BUTTON_WIDTH`'s box math is short by the 2
+    padding cells the real Console screen always reserves, so a bare
+    `TabStripHost` cannot reproduce the "Temporar" clip this pin guards
+    against. Reproducing just that one rule (rather than the whole bundle)
+    keeps the test isolated to what it actually verifies.
+    """
+
+    CSS = """
+    #console-new-chat-tab,
+    #console-new-temporary-tab {
+        padding: 0 1;
+    }
+    """
+
+
+@pytest.mark.asyncio
+async def test_new_tab_and_temporary_buttons_render_unclipped_labels() -> None:
+    """RAG-47: at the old `CONSOLE_NEW_TAB_BUTTON_WIDTH = 12`, the fixed
+    inline width, the production `padding: 0 1`, and Textual's own
+    `line-pad: 1` box math left only 8 usable cells for "Temporary" (9
+    chars), clipping it to "Temporar". Assert the actual COMPOSITED text
+    (not the un-clipped `Button.label` source) shows both tab-strip
+    buttons' full labels -- "New tab" (the shorter sibling sharing the
+    same width constant) must still fit too.
+    """
+    app = _PaddedTabStripHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        surface = app.query_one(ConsoleSessionSurface)
+        await surface.sync_sessions(sessions=_sessions(1), active_session_id="s1")
+        await pilot.pause()
+
+        rendered = _rendered_text(app)
+        assert "Temporary" in rendered, (
+            f"'Temporary' tab-strip button label was clipped:\n{rendered}"
+        )
+        assert "New tab" in rendered, (
+            f"'New tab' tab-strip button label was clipped:\n{rendered}"
+        )

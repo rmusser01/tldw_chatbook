@@ -22,6 +22,41 @@ def _chip_focus_body(css_text: str) -> str:
     return match.group(1) if match else ""
 
 
+def _chip_base_body(css_text: str) -> str:
+    """Return the body of the base ``.console-control-chip { ... }`` rule.
+
+    Anchored on ``.console-control-chip`` immediately followed by ``{``
+    (only whitespace between) so it does not also match the
+    ``.console-control-chip:focus`` variant, which has a ``:focus`` pseudo
+    -class between the selector and the brace.
+    """
+    uncommented = re.sub(r"/\*.*?\*/", "", css_text, flags=re.DOTALL)
+    match = re.search(r"\.console-control-chip\s*\{([^}]*)\}", uncommented)
+    return match.group(1) if match else ""
+
+
+def test_chip_hit_target_min_width_and_padding_are_widened():
+    """RAG-46: a ~10x1-cell chip hit target is easy to miss with mouse/touch.
+    ``min-width`` raised 7 -> 12 and horizontal ``padding`` raised ``0 1`` ->
+    ``0 2`` (source + regenerated bundle) to widen both the box and its
+    clickable interior."""
+    for css_path in (AGENTIC, BUNDLE):
+        body = _chip_base_body(css_path.read_text(encoding="utf-8"))
+        assert body, f"{css_path.name}: no base .console-control-chip rule"
+
+        min_width = re.search(r"\bmin-width\s*:\s*([^;]+);", body)
+        assert min_width, f"{css_path.name}: chip must set min-width"
+        assert min_width.group(1).strip() == "12", (
+            f"{css_path.name}: chip min-width must be raised to 12"
+        )
+
+        padding = re.search(r"\bpadding\s*:\s*([^;]+);", body)
+        assert padding, f"{css_path.name}: chip must set padding"
+        assert padding.group(1).strip() == "0 2", (
+            f"{css_path.name}: chip padding must be raised to 0 2"
+        )
+
+
 def test_focused_chip_suppresses_the_obscuring_outline_but_keeps_the_cue():
     """The chip focus rule drops the outline while keeping the readable cue."""
     for css_path in (AGENTIC, BUNDLE):

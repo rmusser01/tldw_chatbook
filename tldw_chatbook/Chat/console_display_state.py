@@ -31,6 +31,37 @@ CONSOLE_INSPECTOR_NO_APPROVAL_REASON = "No approval is pending."
 CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON = "No tool calls are ready for review."
 CONSOLE_INSPECTOR_NO_CHATBOOK_ARTIFACT_REASON = "No Chatbook artifact is available."
 
+#: How many staged references the composer-level evidence strip lists before
+#: it collapses the rest into a "+N more" line. The strip sits between the
+#: status chips and the composer, so it must stay short enough never to push
+#: the composer off a small terminal.
+CONSOLE_STAGED_EVIDENCE_STRIP_MAX_ROWS = 3
+CONSOLE_STAGED_EVIDENCE_UNSTAGE_ID = "console-unstage-evidence"
+CONSOLE_STAGED_EVIDENCE_UNSTAGE_LABEL = "Un-stage"
+
+_SOURCE_STATUS_CLASS_MAP = {
+    "ready": {"ready", "available", "attached", "staged"},
+    "running": {"retrieving", "running", "searching", "stale"},
+    "blocked": {"blocked", "missing", "unavailable"},
+}
+
+
+def normalize_console_source_status(status: Any) -> str:
+    """Map a raw source/launch status onto one of the UI status classes.
+
+    Args:
+        status: Raw status value from a display row, evidence reference, or
+            live-work launch.
+
+    Returns:
+        One of ``ready``, ``running``, ``blocked``, or ``muted``.
+    """
+    normalized = str(status or "").strip().lower()
+    for class_name, synonyms in _SOURCE_STATUS_CLASS_MAP.items():
+        if normalized in synonyms:
+            return class_name
+    return "muted"
+
 
 def _clean(value: Any, fallback: str) -> str:
     if value is None:
@@ -514,6 +545,158 @@ class ConsoleStagedContextState:
             summary="",
             is_empty=True,
         )
+
+
+def console_staged_source_count(launch: ConsoleLiveWorkLaunch | None) -> int:
+    """Return how many sources a staged live-work launch actually carries.
+
+    The Console "Sources: N staged" chip used to hardcode ``1`` for any
+    staged launch while the staged bundle routinely carried several
+    references, so a four-result Library RAG run advertised one source.
+
+    Args:
+        launch: Currently staged live-work launch, if any.
+
+    Returns:
+        The staged bundle's reference count; ``1`` for a launch with no (or
+        an empty) evidence bundle, since the launch itself is one staged
+        item; ``0`` when nothing is staged.
+    """
+    if launch is None:
+        return 0
+    bundle = evidence_bundle_from_launch(launch)
+    if bundle is None:
+        return 1
+    return len(bundle.references) or 1
+
+
+def console_prompted_source_count(launch: ConsoleLiveWorkLaunch | None) -> int:
+    """Return how many staged references a Console send will actually prompt.
+
+    Distinct from :func:`console_staged_source_count`, which answers "how
+    much is staged". This answers "how much reaches the model", and it
+    applies exactly the filter
+    ``capture_console_staged_evidence_for_chat`` applies before formatting
+    the prompt blocks: available status (``EvidenceBundle.
+    available_references``) AND ``source_owner == "local"``. A four-result
+    bundle carrying two blocked references stages four and sends two.
+
+    Args:
+        launch: Currently staged live-work launch, if any.
+
+    Returns:
+        Count of references eligible to enter the prompt; ``0`` when nothing
+        is staged or the launch carries no evidence bundle (a bundleless
+        launch yields no prompt context at all).
+    """
+    bundle = evidence_bundle_from_launch(launch)
+    if bundle is None:
+        return 0
+    return sum(
+        1
+        for reference in bundle.available_references()
+        if reference.source_owner.strip().lower() == "local"
+    )
+
+
+@dataclass(frozen=True)
+class ConsoleStagedEvidenceRow:
+    """One compact staged-evidence line for the composer-level strip.
+
+    ``title`` and ``source`` are already display-escaped; renderers must
+    keep console markup parsing OFF so escaping stays the terminal step.
+    """
+
+    title: str
+    source: str
+    status: str = "ready"
+
+
+@dataclass(frozen=True)
+class ConsoleStagedEvidenceStripState:
+    """Display state for the staged-evidence strip above the composer.
+
+    Three mutually exclusive shapes, all built by
+    :func:`build_console_staged_evidence_strip_state`:
+
+    * hidden -- nothing staged and nothing just sent;
+    * staged -- a heading, up to
+      :data:`CONSOLE_STAGED_EVIDENCE_STRIP_MAX_ROWS` rows, an optional
+      "+N more" overflow line, and the single un-stage action;
+    * sent -- the one-send ``notice`` line, which is the only confirmation
+      an unpersisted session ever gets that evidence went out with the
+      message (the transcript's ``Sources (N)`` row needs persistence).
+    """
+
+    visible: bool = False
+    heading: str = ""
+    rows: tuple[ConsoleStagedEvidenceRow, ...] = ()
+    overflow: str = ""
+    notice: str = ""
+    unstage_label: str = CONSOLE_STAGED_EVIDENCE_UNSTAGE_LABEL
+
+
+def _source_noun(count: int) -> str:
+    return "source" if count == 1 else "sources"
+
+
+def build_console_staged_evidence_strip_state(
+    launch: ConsoleLiveWorkLaunch | None,
+    *,
+    sent_source_count: int | None = None,
+) -> ConsoleStagedEvidenceStripState:
+    """Build the staged-evidence strip state for the current Console turn.
+
+    Args:
+        launch: Currently staged live-work launch, if any.
+        sent_source_count: Source count of the evidence consumed by the most
+            recent send, when that send has not yet been superseded.
+
+    Returns:
+        The hidden, staged, or just-sent strip state. Live staging always
+        wins over a stale "sent" notice -- a strip that showed both would
+        claim evidence was consumed while new evidence sits waiting.
+    """
+    if launch is not None:
+        bundle = evidence_bundle_from_launch(launch)
+        if bundle is not None and bundle.references:
+            rows = tuple(
+                ConsoleStagedEvidenceRow(
+                    title=_safe_display_text(reference.title, "Untitled source"),
+                    source=_safe_display_text(reference.source_type, "source"),
+                    status=("ready" if reference.status == "available" else "blocked"),
+                )
+                for reference in bundle.references
+            )
+        else:
+            # A launch with no bundle (a generic handoff, or a retrieval
+            # still running / blocked) is still one staged item; show it
+            # rather than rendering an empty strip that contradicts the chip.
+            rows = (
+                ConsoleStagedEvidenceRow(
+                    title=_safe_display_text(launch.title, "Untitled source"),
+                    source=_safe_display_text(launch.source, "unknown"),
+                    status=normalize_console_source_status(launch.status),
+                ),
+            )
+        total = len(rows)
+        shown = rows[:CONSOLE_STAGED_EVIDENCE_STRIP_MAX_ROWS]
+        hidden_count = total - len(shown)
+        return ConsoleStagedEvidenceStripState(
+            visible=True,
+            heading=f"Staged for next send · {total} {_source_noun(total)}",
+            rows=shown,
+            overflow=f"+{hidden_count} more" if hidden_count > 0 else "",
+        )
+
+    if sent_source_count:
+        count = int(sent_source_count)
+        return ConsoleStagedEvidenceStripState(
+            visible=True,
+            notice=f"Evidence sent with this message · {count} {_source_noun(count)}",
+        )
+
+    return ConsoleStagedEvidenceStripState()
 
 
 @dataclass(frozen=True)

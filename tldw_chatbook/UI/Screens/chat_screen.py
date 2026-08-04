@@ -13,6 +13,7 @@ import re
 import threading
 import time
 from typing import Any, Dict, Iterable, Literal, Optional, TYPE_CHECKING
+from urllib.parse import urlparse
 import uuid
 
 import toml
@@ -242,8 +243,13 @@ from ...Chat.console_display_state import (
     ConsoleInspectorState,
     ConsoleRetrievalScopeState,
     ConsoleStagedContextState,
+    ConsoleStagedEvidenceStripState,
     build_console_evidence_display_state,
+    build_console_staged_evidence_strip_state,
     coerce_non_negative_int,
+    console_prompted_source_count,
+    console_staged_source_count,
+    evidence_bundle_from_launch,
 )
 from ...Chat.console_onboarding_state import (
     ConsoleSetupCardState,
@@ -330,6 +336,7 @@ from ...Library.library_rag_service import (
     run_library_rag_search,
     scope_empty_recovery_state,
 )
+from ...Library.library_rag_state import library_rag_source_scope_summary
 from ...Notes.notes_scope_service import ScopeType
 from ...Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
@@ -376,6 +383,7 @@ from ...Widgets.Console import (
     ConsoleSettingsSummary,
     ConsoleSetupModal,
     ConsoleStagedContextTray,
+    ConsoleStagedEvidenceStrip,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceRenameModal,
@@ -398,8 +406,11 @@ from ...Widgets.Console.console_generation_card import (
     generation_card_signature,
 )
 from ...Widgets.Console.console_rag_settings_modal import (
+    CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
+    CONSOLE_RAG_SOURCE_SUMMARY_PREFIX,
     ConsoleRagSettingsModal,
     ConsoleRagSettingsResult,
+    normalize_console_rag_source_types,
 )
 from ...Widgets.Console.console_status_chips import (
     ConsoleModelChip,
@@ -537,12 +548,16 @@ CONSOLE_DICTATION_MAX_BYTES = int(
     * CONSOLE_DICTATION_MAX_SECONDS
     * CONSOLE_DICTATION_BUFFER_HEADROOM
 )
-CONSOLE_LIBRARY_RAG_SOURCE_SCOPE = ("notes", "media", "conversations")
+#: The Console's DEFAULT Library RAG source kinds, unchanged by RAG-44's
+#: editable toggles: this same tuple is the settings modal's default
+#: (`CONSOLE_RAG_DEFAULT_SOURCE_TYPES` -- one object, not a second copy),
+#: so retrieval reads exactly what it always did until a user edits it.
+#: This is a `source_types` selection (which KINDS of sources), NOT the
+#: retrieval item scope (`EffectiveScope`, conversation ∩ workspace) that
+#: `_resolve_console_library_rag_scope` resolves separately.
+CONSOLE_LIBRARY_RAG_SOURCE_SCOPE = CONSOLE_RAG_DEFAULT_SOURCE_TYPES
 CONSOLE_LIBRARY_RAG_RECOVERY_COPY = "Review citations before sending."
 CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
-CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE = (
-    "Type a Library RAG query before running retrieval."
-)
 # TASK-346: below this terminal height the composer row was clipped out of
 # existence at 97x30 (no input box, no warning). The visible header banner
 # (title + purpose + Ready, ~5 rows) is pure chrome; dropping it below the
@@ -1586,6 +1601,79 @@ def _sanitize_console_library_rag_query(value: Any) -> str:
     ):
         return ""
     return query
+
+
+def _console_library_rag_source_scope(screen: Any) -> tuple[str, ...]:
+    """Return a Console screen's stored Library RAG source kinds (RAG-44).
+
+    The ONE read seam for `_console_library_rag_source_types`, so every
+    caller (the readiness-card label, the settings modal, the retrieval
+    request) sees the same normalized tuple, and a screen that predates
+    the attribute -- or never ran ``__init__`` -- still retrieves over the
+    unchanged default instead of raising.
+
+    Args:
+        screen: The Console `ChatScreen` (or a stand-in) holding the state.
+
+    Returns:
+        The normalized, non-empty selection of Library source kinds.
+    """
+    return normalize_console_rag_source_types(
+        getattr(screen, "_console_library_rag_source_types", None)
+    )
+
+
+#: RAG-43: above this length a composer draft reads as a paste/attachment,
+#: not a retrieval question -- well under ``CONSOLE_LIBRARY_RAG_QUERY_MAX_
+#: LENGTH`` (2000, a safety ceiling for an explicitly-typed query, not a
+#: "does this look like a question" heuristic for an implicit prefill).
+CONSOLE_LIBRARY_RAG_DRAFT_PREFILL_MAX_LENGTH = 200
+
+
+def _console_draft_looks_like_rag_query(draft: Any) -> bool:
+    """Return whether a composer draft is safe to prefill as a RAG query.
+
+    RAG-43: live UAT saw a fixture file path prefill verbatim into the
+    Library RAG query -- the modal-open prefill and the visible Run
+    Library RAG action's queryless fallback both used to hand the raw
+    composer draft straight to ``_sanitize_console_library_rag_query``.
+    This is the one guard both sites call before doing that.
+
+    Detection reuses the Console's own path-paste shape detector,
+    ``extract_dropped_path`` (``Chat/console_paste_attach.py``, which
+    already recognizes bare absolute paths, quoted paths, backslash-
+    escaped paths, and ``file://`` URIs -- Unix and Windows/UNC alike),
+    plus the ``urlparse(...).scheme in ("http", "https")`` URL check
+    already used for Library ingest sources (``library_screen.py``). No
+    new regex family.
+
+    Ruling on drafts that merely *mention* a path or URL alongside other
+    text (e.g. "check out https://example.com/notes for context"): those
+    still prefill. Only a draft that IS a path/URL in its entirety is
+    guarded -- a question is exactly the text the user is about to send,
+    same as any other question draft, and the whitespace surrounding an
+    embedded path/URL already keeps it out of both entirety checks below.
+
+    Args:
+        draft: Raw composer draft text (unsanitized).
+
+    Returns:
+        True when the draft is reasonable to sanitize and use as a
+        Library RAG query; False when it should be dropped (left
+        queryless) instead of silently prefilled.
+    """
+    stripped = str(draft or "").strip()
+    if not stripped:
+        return False
+    if len(stripped) > CONSOLE_LIBRARY_RAG_DRAFT_PREFILL_MAX_LENGTH:
+        return False
+    if extract_dropped_path(stripped) is not None:
+        return False
+    if not any(character.isspace() for character in stripped):
+        parsed = urlparse(stripped)
+        if parsed.scheme in ("http", "https") and parsed.netloc:
+            return False
+    return True
 
 
 def _apply_console_message_attachments(
@@ -3086,6 +3174,14 @@ class ChatScreen(BaseAppScreen):
         self._handoff_consumption_in_progress = False
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
         self._pending_console_launch_auto_open_inspector = False
+        # PR-4/task-1: source count of the evidence the LAST send consumed,
+        # kept only until the next thing happens (a new send, new staging, or
+        # an un-stage). It drives the strip's one-send "Evidence sent with
+        # this message" line, which is the only round-trip confirmation an
+        # unpersisted session gets -- the transcript's "Sources (N)" row
+        # needs a persisted conversation. Deliberately NOT a timer: a timed
+        # clear races the strip's own recompose.
+        self._console_evidence_sent_notice: Optional[int] = None
         # TASK-259: dedupe guard for the scheduled inspector-rail card swap
         # (rapid searching->staged staging would otherwise remove+remount
         # the card once per stage; each swap re-reads the current context).
@@ -3093,6 +3189,14 @@ class ChatScreen(BaseAppScreen):
         self._console_control_provider: Optional[Any] = None
         self._console_control_model: Optional[Any] = None
         self._console_library_rag_query = ""
+        # RAG-44: which KINDS of Library sources "Run Library RAG" reads.
+        # Console-local (the Library screen keeps its own screen-local
+        # selection; neither is promoted to shared state), editable in the
+        # RAG settings modal, and restored with the rest of the native
+        # Console screen state. Defaults to today's three -- prompts OFF.
+        self._console_library_rag_source_types: tuple[str, ...] = (
+            CONSOLE_LIBRARY_RAG_SOURCE_SCOPE
+        )
         self._console_chat_store: ConsoleChatStore | None = None
         # task-9: cache of persisted-conversation RAG retrieval scopes,
         # keyed by conversation id -- populated off-loop at resume time and
@@ -4564,21 +4668,54 @@ class ChatScreen(BaseAppScreen):
         pending_launch = self._pending_console_launch_context
         if pending_launch is not None:
             payload = pending_launch.payload
-            source_id = (
-                payload.get("source_id")
-                or payload.get("target_id")
-                or payload.get("run_id")
-                or pending_launch.title
-            )
             source_workspace = payload.get("workspace_id")
-            staged_sources.append(
-                ConsoleStagedSource(
-                    source_id=str(source_id),
-                    label=pending_launch.title,
-                    source_type=str(pending_launch.source),
-                    workspace_id=str(source_workspace) if source_workspace else None,
-                )
+            launch_workspace_id = (
+                str(source_workspace) if source_workspace else None
             )
+            # RAG UX v2 PR-4: this builder is the SINGLE seam feeding both
+            # the Inspector rail badge ("{n} staged") and the settings
+            # context estimate, and it used to append exactly ONE staged
+            # source per launch -- so the status chip could read "Sources: 4
+            # staged" while its two siblings read 1. One row per bundle
+            # reference puts all three in the same vocabulary (and gives the
+            # workspace policy check a real per-source id to gate on).
+            bundle = evidence_bundle_from_launch(pending_launch)
+            references = bundle.references if bundle is not None else ()
+            for reference in references:
+                chunk_id = reference.metadata.get("chunk_id")
+                # Two chunks of one document share a source_id; qualify with
+                # the chunk id (exactly as the capture adapter does) so
+                # `allowed_sources`' source_id dedupe cannot collapse them.
+                staged_sources.append(
+                    ConsoleStagedSource(
+                        source_id=str(
+                            chunk_id
+                            if isinstance(chunk_id, str) and chunk_id
+                            else reference.source_id
+                        ),
+                        label=reference.title,
+                        source_type=reference.source_type,
+                        workspace_id=reference.workspace_id or launch_workspace_id,
+                    )
+                )
+            if not staged_sources:
+                # A launch with no (or an empty) evidence bundle is still one
+                # staged item -- the same fallback `console_staged_source_count`
+                # and the strip use, so all three surfaces still agree.
+                source_id = (
+                    payload.get("source_id")
+                    or payload.get("target_id")
+                    or payload.get("run_id")
+                    or pending_launch.title
+                )
+                staged_sources.append(
+                    ConsoleStagedSource(
+                        source_id=str(source_id),
+                        label=pending_launch.title,
+                        source_type=str(pending_launch.source),
+                        workspace_id=launch_workspace_id,
+                    )
+                )
 
         return ConsoleWorkspaceContext(
             active_workspace_id=workspace_id,
@@ -5180,13 +5317,123 @@ class ChatScreen(BaseAppScreen):
         return self._console_chat_controller
 
     async def _capture_console_staged_rag(self, draft: str):
-        """Resolve the current staged Library-RAG bundle for one Console send."""
+        """Resolve the current staged Library-RAG bundle for one Console send.
 
-        return await capture_console_staged_evidence_for_chat(
+        This is the ONLY consume-on-send seam. The controller calls it once
+        per accepted send, AFTER every block gate (provider readiness, skill
+        substitution refusal), so a blocked send never reaches this method
+        and keeps its staging -- which is why the release below needs no
+        block check of its own.
+
+        Capture-boundary ruling: the launch is released only when the
+        capture returned a non-empty ``context`` string -- exactly the
+        predicate ``ConsoleChatController._capture_rag_context`` uses to
+        decide whether the evidence is prepended to the provider messages.
+        ``capture_console_staged_evidence_for_chat`` has several honest
+        no-op returns (invalid bundle, no canonical-local references, prompt
+        authority incomplete, empty formatted context) that all yield
+        ``context=None``; releasing on those would silently discard evidence
+        that never reached the model.
+        """
+
+        # Whatever the previous send consumed is no longer "this message".
+        self._clear_console_evidence_sent_notice()
+        launch = self._consume_pending_console_launch()
+        result = await capture_console_staged_evidence_for_chat(
             self.app_instance,
-            self._consume_pending_console_launch(),
+            launch,
             user_message=draft,
         )
+        context = getattr(result, "context", None)
+        if launch is not None and isinstance(context, str) and context.strip():
+            self._release_consumed_console_launch(launch, result)
+        # The captured result is returned unconditionally: nothing in the
+        # release above may change what this send transmits (see the
+        # containment note there).
+        return result
+
+    def _release_consumed_console_launch(
+        self,
+        launch: ConsoleLiveWorkLaunch,
+        result: Any,
+    ) -> None:
+        """Clear the launch context a send just consumed and refresh surfaces.
+
+        Ordering matters. The clear happens FIRST and cannot raise; both
+        fallible steps (counting what was prompted, refreshing surfaces) are
+        contained here. This method sits on the provider's capture path, and
+        ``ConsoleChatController._capture_rag_context`` converts ANY exception
+        from that provider into ``context=None`` -- so an escaping failure
+        here would send the message WITHOUT the evidence it had just
+        consumed. A stale chip is recoverable; a silently unsent bundle is
+        not.
+
+        Args:
+            launch: The launch handed to the capture adapter for this send.
+                A staging that landed while the capture was awaited wins:
+                the identity check below leaves the newer context alone
+                rather than dropping evidence the user just staged.
+            result: The capture's ``LocalRagContextResult``, read only for
+                the exact prompted-entry count.
+        """
+        if self._pending_console_launch_context is not launch:
+            return
+        self._pending_console_launch_context = None
+        self._pending_console_launch_auto_open_inspector = False
+        try:
+            self._console_evidence_sent_notice = self._console_prompted_source_count(
+                launch, result
+            )
+            self._sync_console_pending_launch_surfaces()
+        except Exception as exc:
+            logger.warning(
+                "Console staged-evidence surfaces did not refresh after a "
+                "consuming send (exception_category={})",
+                type(exc).__name__,
+            )
+
+    @staticmethod
+    def _console_prompted_source_count(
+        launch: ConsoleLiveWorkLaunch,
+        result: Any,
+    ) -> int:
+        """Return how many sources this send actually put in front of the model.
+
+        The "Evidence sent with this message" line is a claim about what
+        reached the provider, so it must never report the staged total: the
+        capture prompts only available, locally-owned references.
+
+        Preference order:
+
+        1. ``citation_repair_contract.allowed_ordinals`` -- one ordinal per
+           FORMATTED prompt entry, so this is the exact count, and the
+           capture attaches the contract to every context-bearing return.
+        2. :func:`console_prompted_source_count` -- the same
+           available-and-local filter applied to the bundle, used when the
+           contract could not be built.
+
+        Args:
+            launch: The launch this send consumed.
+            result: The capture's ``LocalRagContextResult``.
+
+        Returns:
+            The number of evidence entries carried into the prompt.
+        """
+        ordinals = getattr(
+            getattr(result, "citation_repair_contract", None),
+            "allowed_ordinals",
+            None,
+        )
+        if isinstance(ordinals, tuple) and ordinals:
+            return len(ordinals)
+        return console_prompted_source_count(launch)
+
+    def _clear_console_evidence_sent_notice(self) -> None:
+        """Drop the one-send "evidence sent" line and refresh only the strip."""
+        if self._console_evidence_sent_notice is None:
+            return
+        self._console_evidence_sent_notice = None
+        self._sync_console_staged_evidence_strip()
 
     def _sync_console_chat_core_state(self) -> ConsoleProviderSelection:
         """Push current workspace/provider selection into native Console services."""
@@ -8189,7 +8436,10 @@ class ChatScreen(BaseAppScreen):
             assistant_name=getattr(active_session, "assistant_name", None),
             assistant_id=getattr(active_session, "assistant_id", None),
             rag_enabled=_source_mentions_rag(source),
-            staged_source_count=1 if pending_launch else 0,
+            # RAG UX v2 PR-4: was hardcoded to 1 while the staged bundle
+            # routinely carries several references -- a four-result Library
+            # RAG run advertised "Sources: 1 staged".
+            staged_source_count=console_staged_source_count(pending_launch),
             tool_count=self._console_tool_count(),
             mcp_tool_count=self._console_mcp_tool_count(),
             approval_count=self._console_pending_approval_count(),
@@ -8944,12 +9194,14 @@ class ChatScreen(BaseAppScreen):
         if not prefill:
             composer = self._console_composer_or_none()
             if composer is not None:
-                prefill = _sanitize_console_library_rag_query(composer.draft_text())
+                draft_text = composer.draft_text()
+                if _console_draft_looks_like_rag_query(draft_text):
+                    prefill = _sanitize_console_library_rag_query(draft_text)
         pending = self._pending_console_launch_context
         self.app.push_screen(
             ConsoleRagSettingsModal(
                 query=prefill,
-                scope_label=self._console_library_rag_scope_label(),
+                source_types=_console_library_rag_source_scope(self),
                 # Matches the chip exactly: the chip's "RAG: on" derives from
                 # this same pending-launch source test.
                 rag_active=_source_mentions_rag(
@@ -8984,12 +9236,34 @@ class ChatScreen(BaseAppScreen):
         else:
             run_button.disabled = not query
 
+    def _set_console_library_rag_source_scope(self, source_types: Any) -> None:
+        """Store which Library source kinds retrieval reads, and re-label.
+
+        The single writer, mirroring `_set_console_library_rag_query`: the
+        readiness card's source line is updated in place so it cannot
+        disagree with what the next retrieval will actually read.
+
+        Args:
+            source_types: The chosen selection (normalized here, so an
+                empty or unknown value falls back to the default rather
+                than retrieving over nothing).
+        """
+        self._console_library_rag_source_types = normalize_console_rag_source_types(
+            source_types
+        )
+        try:
+            scope_label = self.query_one("#console-library-rag-scope", Static)
+        except QueryError:
+            return
+        scope_label.update(self._console_library_rag_scope_label())
+
     def _apply_console_rag_settings_choice(
         self, result: ConsoleRagSettingsResult | None
     ) -> None:
-        """Store the modal's query and optionally run retrieval now."""
+        """Store the modal's query and sources, then optionally run now."""
         if result is None:
             return
+        self._set_console_library_rag_source_scope(result.source_types)
         self._set_console_library_rag_query(
             _sanitize_console_library_rag_query(result.query)
         )
@@ -13471,7 +13745,19 @@ class ChatScreen(BaseAppScreen):
         yield self._build_console_live_work_status_card(launch)
 
     def _console_library_rag_scope_label(self) -> str:
-        return f"Scope: {', '.join(CONSOLE_LIBRARY_RAG_SOURCE_SCOPE)}"
+        """Return the readiness card's Library RAG source line (RAG-44).
+
+        Library's scope-summary grammar (`library_rag_source_scope_summary`
+        -- selected sources in canonical order, the deselected ones named
+        as off) under the Console's own noun: "Sources", never "Scope",
+        which this screen already spends on the retrieval ITEM scope
+        ("Scope: 2 items"). The settings modal's own summary line is the
+        same builder on the same state -- two seams, one builder.
+        """
+        return library_rag_source_scope_summary(
+            _console_library_rag_source_scope(self),
+            prefix=CONSOLE_RAG_SOURCE_SUMMARY_PREFIX,
+        )
 
     @staticmethod
     def _hidden_static(text: str, *, id: str, classes: str = "") -> Static:
@@ -14102,28 +14388,35 @@ class ChatScreen(BaseAppScreen):
         screen while this always-visible action is. The fallback is STORED
         through ``_set_console_library_rag_query`` so the rail input and
         the RAG settings modal agree with what actually ran. An explicit
-        query always wins; the empty-everything warning survives.
+        query always wins.
+
+        RAG-41/42: with no query anywhere -- no dedicated query AND an empty
+        composer draft -- this used to toast "Type a Library RAG query
+        before running retrieval," pointing at an input that may not even
+        be visible. It now opens the RAG settings modal instead (the same
+        surface the RAG chip opens), which is where a query can actually be
+        typed. The modal's own Run callback re-enters this method with the
+        query it collected, so this is a one-shot redirect, not a loop; a
+        Cancel just closes it with nothing stored and nothing run.
         """
         query = _sanitize_console_library_rag_query(self._console_library_rag_query)
         if not query:
             composer = self._console_composer_or_none()
+            draft_text = composer.draft_text() if composer is not None else ""
             draft_query = (
-                _sanitize_console_library_rag_query(composer.draft_text())
-                if composer is not None
+                _sanitize_console_library_rag_query(draft_text)
+                if _console_draft_looks_like_rag_query(draft_text)
                 else ""
             )
             if draft_query:
                 self._set_console_library_rag_query(draft_query)
                 query = draft_query
         if not query:
-            self.app_instance.notify(
-                CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE,
-                severity="warning",
-            )
+            self._open_console_rag_settings()
             return
         request = LibraryRagSearchRequest(
             query=query,
-            source_types=CONSOLE_LIBRARY_RAG_SOURCE_SCOPE,
+            source_types=_console_library_rag_source_scope(self),
             mode="rag",
             top_k=5,
             include_citations=True,
@@ -14156,6 +14449,8 @@ class ChatScreen(BaseAppScreen):
             launch: Live-work launch metadata to stage for Console.
         """
         self._pending_console_launch_context = launch
+        # New staging supersedes the previous send's "evidence sent" line.
+        self._console_evidence_sent_notice = None
         if not self._sync_console_pending_launch_surfaces():
             self.refresh(recompose=True)
 
@@ -14171,6 +14466,9 @@ class ChatScreen(BaseAppScreen):
         * ``_build_console_inspector_state`` -> ``ConsoleRunInspector`` rows
           and composer Chatbook action: pushed inside
           ``_sync_console_control_bar``.
+        * ``build_console_staged_evidence_strip_state`` -> the composer-level
+          staged-evidence strip (``_sync_console_staged_evidence_strip``),
+          the main-surface reader added by PR-4/task-1.
         * ``_build_console_staged_context_state`` -> staged-context tray
           (``_sync_console_staged_context_tray``), rail badges/summary and
           the pending-launch inspector auto-open (both applied through the
@@ -14198,12 +14496,61 @@ class ChatScreen(BaseAppScreen):
         if not self._console_live_work_card_swap_scheduled:
             self._console_live_work_card_swap_scheduled = True
             self.call_later(self._apply_console_live_work_card_swap)
+        self._sync_console_staged_evidence_strip()
         self._sync_console_staged_context_tray()
         self._sync_console_control_bar()
         self._sync_console_workspace_context()
         self._sync_console_settings_summary()
         self._sync_console_mode_bar()
         return True
+
+    def _build_console_staged_evidence_strip_state(
+        self,
+        pending_launch: Optional[ConsoleLiveWorkLaunch],
+    ) -> ConsoleStagedEvidenceStripState:
+        """Build the composer-level staged-evidence strip state."""
+        return build_console_staged_evidence_strip_state(
+            pending_launch,
+            sent_source_count=self._console_evidence_sent_notice,
+        )
+
+    def _sync_console_staged_evidence_strip(self) -> None:
+        """Refresh the mounted staged-evidence strip from the launch context."""
+        try:
+            strip = self.query_one(
+                "#console-staged-evidence-strip", ConsoleStagedEvidenceStrip
+            )
+        except QueryError:
+            return
+        strip.sync_state(
+            self._build_console_staged_evidence_strip_state(
+                self._pending_console_launch_context
+            )
+        )
+
+    @on(Button.Pressed, "#console-unstage-evidence")
+    def handle_console_unstage_evidence(self, event: Button.Pressed) -> None:
+        """Drop the whole staged live-work context from the main surface.
+
+        One button clears the entire launch (not per-reference): the bundle
+        is staged, prompted, and captured as ONE unit, so a partial un-stage
+        would advertise a granularity the send path does not have.
+        """
+        event.stop()
+        # M4 (final review): resync BEFORE the early return so a strip that
+        # is still showing stale staged rows -- because the context field
+        # was already cleared from under it elsewhere (e.g. a send's
+        # consume-on-send clear) without a matching surface sync -- heals
+        # on click instead of dead-ending as a silent no-op.
+        self._sync_console_staged_evidence_strip()
+        if self._pending_console_launch_context is None:
+            return
+        self._pending_console_launch_context = None
+        self._pending_console_launch_auto_open_inspector = False
+        self._console_evidence_sent_notice = None
+        if not self._sync_console_pending_launch_surfaces():
+            self.refresh(recompose=True)
+        self.notify("Staged evidence cleared")
 
     async def _apply_console_live_work_card_swap(self) -> None:
         """Swap the inspector-rail live-work card to match the launch context.
@@ -15049,6 +15396,14 @@ class ChatScreen(BaseAppScreen):
                 id="console-status-chips",
                 classes="ds-panel",
             )
+            # RAG-40: staged evidence belongs on the MAIN surface, directly
+            # above the composer it is about to be prepended to -- not only
+            # in an Inspector rail the staging path never opens.
+            yield ConsoleStagedEvidenceStrip(
+                self._build_console_staged_evidence_strip_state(pending_launch),
+                id="console-staged-evidence-strip",
+                classes="ds-panel",
+            )
             composer = ConsoleComposerBar(
                 id="console-native-composer",
                 classes="ds-panel",
@@ -15569,6 +15924,11 @@ class ChatScreen(BaseAppScreen):
                 for session in store.sessions()
             },
             "image_view_modes": image_state.serialize(),
+            # RAG-44: an edited Library RAG source selection is Console-local,
+            # but it must survive a tab switch like the sessions around it --
+            # otherwise "Prompts on" silently reverts the next time the user
+            # comes back and retrieval quietly reads something else.
+            "library_rag_source_types": list(_console_library_rag_source_scope(self)),
         }
 
     def _console_session_from_state(
@@ -15734,6 +16094,13 @@ class ChatScreen(BaseAppScreen):
         cache.clear()
         self._task_resume_state = TaskResumeState.from_dict(
             payload.get("task_resume_state")
+        )
+        # Plain assignment, not `_set_console_library_rag_source_scope`: the
+        # readiness card is (re)built after a restore, and this path also
+        # runs against screen shells that never mounted a DOM to query.
+        # A legacy payload has no key at all -> the unchanged default.
+        self._console_library_rag_source_types = normalize_console_rag_source_types(
+            payload.get("library_rag_source_types")
         )
 
     def _rehydrate_console_message_image(self, message: ConsoleChatMessage) -> None:
@@ -16219,13 +16586,25 @@ class ChatScreen(BaseAppScreen):
                     type(exc).__name__,
                 )
 
-        self._pending_console_launch_context = ConsoleLiveWorkLaunch.from_values(
-            source=payload.source,
-            title=payload.title,
-            payload=launch_payload,
-            status=payload.status or "staged",
-        )
+        # PR-4/task-1: route through the staging SEAM, never a bare
+        # assignment. This method finishes via `_sync_native_console_chat_ui`,
+        # which refreshes the chip but not the staged-evidence strip or the
+        # Inspector tray -- so a "Use in Console" handoff landing on a
+        # composed screen used to read "Sources: 1 staged" with nothing
+        # listed and no reachable un-stage control, and then had the strip
+        # announce "Evidence sent" for evidence the user was never shown.
+        # The auto-open flag is set BEFORE staging for the same reason the
+        # Library-RAG failure path does: staging syncs the rail state
+        # synchronously, so a flag set afterwards misses that pass.
         self._pending_console_launch_auto_open_inspector = True
+        self._stage_console_library_rag_launch(
+            ConsoleLiveWorkLaunch.from_values(
+                source=payload.source,
+                title=payload.title,
+                payload=launch_payload,
+                status=payload.status or "staged",
+            )
+        )
 
         suggested_prompt = launch_payload["suggested_prompt"]
         if suggested_prompt:

@@ -52,6 +52,10 @@ Top to bottom:
 - **Status chip strip** — one row of chips directly above the composer:
   **Provider**, **Model**, **Assistant**, **RAG**, **Sources**, **Tools**,
   **Approvals**, and — once retrieval is narrowed — **Scope**.
+- **Staged-evidence strip** — appears between the status chips and the
+  composer only while Library RAG evidence is staged (or briefly after a
+  send consumes it); lists what's staged with an **Un-stage** button — see
+  [Context & RAG](console/context-and-rag.md).
 - **Composer row** — the "Composer ▾" collapse toggle, the draft area
   ("Ask, command, or paste task..."), then **Send**, **Mic**, **Attach**,
   and **Save**; a **Stop** button appears between Send and Mic while a
@@ -220,4 +224,5 @@ are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.
   "Console: Change model…".
 
 —
-*Verified against dev @ ff435772c — 2026-07-31*
+*Verified against 4646922ed — 2026-08-04 (PR-4 Task 6 live check, including
+a real-provider send round trip)*

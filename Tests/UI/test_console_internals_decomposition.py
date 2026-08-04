@@ -1,6 +1,7 @@
 # ruff: noqa: F811
 import time
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from rich.console import Console
@@ -52,6 +53,9 @@ from tldw_chatbook.Widgets.Console import (
     ConsoleComposerBar,
     ConsoleSetupModal,
     ConsoleStagedContextTray,
+)
+from tldw_chatbook.Widgets.Console.console_rag_settings_modal import (
+    ConsoleRagSettingsModal,
 )
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
@@ -2825,8 +2829,15 @@ async def test_console_inspector_source_readiness_rows_fit_without_tooltip_overl
 
         assert run_rag.disabled is True
         assert str(run_rag.tooltip or "") == ""
-        scope_plain = getattr(scope.render(), "plain", str(scope.render()))
-        assert len(scope_plain) <= scope.region.width
+        # RAG-44: the source line now carries Library's summary grammar
+        # ("Sources: Notes, Media, Conversations (Prompts off)"), which is
+        # wider than this 35-column rail, so it is held to the same
+        # no-clipping rule as the source rows below rather than to a
+        # single-line rule it can no longer meet.
+        scope_lines = _wrapped_plain_lines(scope.render(), scope.region.width)
+        assert scope_lines
+        assert len(scope_lines) <= scope.region.height
+        assert all(len(line) <= scope.region.width for line in scope_lines)
         assert rows
         for row in rows:
             lines = _wrapped_plain_lines(row.render(), row.region.width)
@@ -3760,7 +3771,14 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result()
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        assert "Scope: notes, media, conversations" in _visible_text(console)
+        # RAG-44: the readiness card's source line is now Library's
+        # scope-summary grammar under the Console's own "Sources" noun
+        # ("Scope" here already means the retrieval ITEM scope), and it
+        # names what is off -- the default still being today's three.
+        assert (
+            "Sources: Notes, Media, Conversations (Prompts off)"
+            in _visible_text(console)
+        )
         query_input = console.query_one("#console-library-rag-query-input", Input)
         query_input.value = query
         await pilot.pause(0.1)
@@ -4060,6 +4078,167 @@ async def test_console_rag_action_without_service_stages_recoverable_blocker(
         assert "Unavailable: Library Search/RAG retrieval." in text
         assert "Owner: Library retrieval service." in text
         assert rag_factory_calls == []
+
+
+@pytest.mark.asyncio
+async def test_console_control_bar_run_library_rag_opens_settings_modal_when_blank():
+    """RAG-41/42: the always-visible control-bar action has no place for a
+    query to live -- it toasted "Type a Library RAG query" at an invisible
+    input. With no dedicated query AND no composer draft, it must now open
+    the same RAG settings modal the chip opens, not toast, and it must not
+    run retrieval underneath the modal (the loop-guard proof: Cancel leaves
+    no query stored and the search service uncalled)."""
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService({"results": []})
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-run-library-rag")
+
+        assert console._console_library_rag_query == ""
+        console.app_instance.notify = Mock()
+
+        await pilot.click("#console-control-run-library-rag")
+        await pilot.pause()
+
+        modal = host.screen
+        assert isinstance(modal, ConsoleRagSettingsModal)
+        console.app_instance.notify.assert_not_called()
+        assert service.calls == []
+
+        # Loop-guard: Cancel dismisses with no changes -- no query gets
+        # stored and the modal's own Run callback (which re-enters
+        # `_run_console_library_rag_from_visible_action`) never fires.
+        await pilot.click("#console-rag-settings-cancel")
+        await pilot.pause()
+
+        assert host.screen is console
+        assert console._console_library_rag_query == ""
+        assert service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_console_control_bar_run_library_rag_guards_a_path_shaped_draft():
+    """RAG-43 end to end: the mock-level guard tests in
+    `test_console_rag_settings_modal.py` pin `_console_draft_looks_like_rag_query`
+    against a `Mock()` screen, never a real composer or a real control-bar
+    click -- so a wiring mistake at either call site (e.g. reading the wrong
+    composer, or the control-bar action not routing through the guarded
+    fallback at all) would pass every mock-level test while still leaking a
+    path straight into retrieval live. This drives the real thing: a real
+    `ConsoleComposerBar` holding a path-shaped draft, a real control-bar
+    click, and confirms both halves of the guard hold together -- no query
+    gets stored anywhere AND the settings modal (not a toast, not silent
+    retrieval) is what actually opens, exactly like the blank-draft case
+    above."""
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService({"results": []})
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-run-library-rag")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("/Users/x/notes.md")
+        await pilot.pause()
+
+        assert console._console_library_rag_query == ""
+        console.app_instance.notify = Mock()
+
+        await pilot.click("#console-control-run-library-rag")
+        await pilot.pause()
+
+        modal = host.screen
+        assert isinstance(modal, ConsoleRagSettingsModal)
+        assert modal._query == ""
+        assert console._console_library_rag_query == ""
+        console.app_instance.notify.assert_not_called()
+        assert service.calls == []
+        # The guarded draft is left exactly where the user typed it -- the
+        # guard drops the prefill, it does not touch the composer.
+        assert composer.draft_text() == "/Users/x/notes.md"
+
+
+@pytest.mark.asyncio
+async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request():
+    """RAG-44 end to end: the settings modal's source toggles decide what
+    retrieval actually reads. Switching Media off and running must send a
+    request WITHOUT media to the search service (and leave the Inspector's
+    source line saying so) -- the critique's complaint was that Library
+    offered these toggles while the Console showed a read-only line."""
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService({"results": []})
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-run-library-rag")
+
+        # Queryless control-bar action opens the settings modal (task-2).
+        await pilot.click("#console-control-run-library-rag")
+        await pilot.pause()
+        modal = host.screen
+        assert isinstance(modal, ConsoleRagSettingsModal)
+
+        modal.query_one("#console-rag-settings-query", Input).value = "why did it fail"
+        await pilot.pause()
+        await pilot.click("#console-rag-settings-source-media")
+        await pilot.pause()
+        await pilot.click("#console-rag-settings-run")
+        for _ in range(10):
+            await pilot.pause()
+
+        assert service.calls == [
+            {
+                "query": "why did it fail",
+                "scope": ("notes", "conversations"),
+                "mode": "rag",
+                "top_k": 5,
+                "include_citations": True,
+            }
+        ]
+        assert console._console_library_rag_source_types == ("notes", "conversations")
+        # The staged live-work card reports the same narrowed selection the
+        # request carried, so what ran is visible after the fact too.
+        assert "source_scope: notes, conversations" in _visible_text(console)
+        assert (
+            ChatScreen._console_library_rag_scope_label(console)
+            == "Sources: Notes, Conversations (Media, Prompts off)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_inspector_run_library_rag_gating_unaffected_by_modal_seam():
+    """The Inspector's own Run button stays disabled while its query input
+    is blank -- unaffected by the control-bar action now opening the
+    settings modal instead of toasting (this task changes the empty-query
+    path of the SAME `_run_console_library_rag_from_visible_action` method
+    the control-bar and Inspector button both call, so the two entry
+    points' gating must not cross-contaminate)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-run-library-rag")
+
+        run_rag = console.query_one("#console-run-library-rag", Button)
+        assert run_rag.disabled is True
+
+        await pilot.click("#console-control-run-library-rag")
+        await pilot.pause()
+        assert isinstance(host.screen, ConsoleRagSettingsModal)
+        await pilot.click("#console-rag-settings-cancel")
+        await pilot.pause()
+
+        run_rag = console.query_one("#console-run-library-rag", Button)
+        assert run_rag.disabled is True
 
 
 @pytest.mark.asyncio

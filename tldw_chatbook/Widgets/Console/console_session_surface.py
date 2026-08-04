@@ -33,7 +33,17 @@ from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 CONSOLE_CLOSE_TAB_BUTTON_WIDTH = 3
 CONSOLE_CLOSE_TAB_BUTTON_HEIGHT = 1
-CONSOLE_NEW_TAB_BUTTON_WIDTH = 12
+# RAG-47: at 12, the "Temporary" tab-strip button (9 chars) clipped to
+# "Temporar" -- the fixed inline `width`/`min_width`/`max_width` below win
+# over the CSS `padding: 0 1` (`_agentic_terminal.tcss`
+# `#console-new-chat-tab, #console-new-temporary-tab`), and Textual's
+# `Button` also reserves its own `line-pad: 1` on each side, so the usable
+# label width is `CONSOLE_NEW_TAB_BUTTON_WIDTH - 4`. 12 - 4 = 8, one cell
+# short of "Temporary"'s 9; 13 - 4 = 9 fits it exactly. Verified empirically
+# by rendering both buttons at this width (see
+# ``test_console_session_tab_strip.py``'s width-pin test) -- the shorter
+# sibling "New tab" (7 chars) still fits comfortably.
+CONSOLE_NEW_TAB_BUTTON_WIDTH = 13
 CONSOLE_NEW_TAB_BUTTON_HEIGHT = 1
 CONSOLE_SESSION_TAB_DISPLAY_CHARS = 19
 CONSOLE_SESSION_TAB_WIDTH = 21

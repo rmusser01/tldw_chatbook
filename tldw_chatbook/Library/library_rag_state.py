@@ -62,7 +62,15 @@ LIBRARY_RAG_USE_IN_CONSOLE_DISABLED_REASON = (
 # strip in that case -- the scope toggle buttons directly below already
 # carry them (L6); a real subset instead gets the explicit source list (and
 # what's off) built by `library_rag_scope_summary`.
-LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY = "Scope: all local sources"
+#: The scope-summary line's leading noun on the Library screen. The Console
+#: passes its own ("Sources") to `library_rag_source_scope_summary` -- see
+#: that function -- because "Scope" is already spent there on the retrieval
+#: item scope ("Scope: 2 items"), a different concept.
+LIBRARY_RAG_SCOPE_SUMMARY_PREFIX = "Scope"
+_ALL_LOCAL_SOURCES_SUMMARY_TAIL = "all local sources"
+LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY = (
+    f"{LIBRARY_RAG_SCOPE_SUMMARY_PREFIX}: {_ALL_LOCAL_SOURCES_SUMMARY_TAIL}"
+)
 LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
 LIBRARY_RAG_DISPLAY_MAX_LENGTH = 1_000
 LIBRARY_RAG_SNIPPET_MAX_LENGTH = 4_000
@@ -773,27 +781,78 @@ def library_rag_scope_summary(scope: LibraryRagScopeState) -> str:
         sources" after deselecting Media), so the fix names what's off,
         not just what's on.
 
+    The grammar itself lives in `library_rag_source_scope_summary` below,
+    which this delegates to -- the Console's Library RAG surfaces hold a
+    bare tuple of source types (no counts, so no `LibraryRagScopeState`)
+    and share that same builder rather than growing a second grammar.
+
     Args:
         scope: Current Library Search/RAG source scope display state.
 
     Returns:
         The scope-summary strip's user-facing text.
     """
+    return library_rag_source_scope_summary(
+        scope.selected_source_types,
+        available_source_types=[
+            source_type
+            for source_type in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES
+            if scope.option_by_type(source_type).available
+        ],
+    )
+
+
+def library_rag_source_scope_summary(
+    selected_source_types: Sequence[str],
+    *,
+    available_source_types: Sequence[str] = LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
+    prefix: str = LIBRARY_RAG_SCOPE_SUMMARY_PREFIX,
+) -> str:
+    """Return the source-scope summary line for a raw source-type selection.
+
+    The grammar owned here -- canonical order, the named negative, the
+    "all local sources" common case -- is `library_rag_scope_summary`'s
+    (see its docstring for why each case reads the way it does). This is
+    that same builder reached without a `LibraryRagScopeState`: the
+    Console's Library RAG surfaces (the Inspector readiness card's label
+    and the RAG settings modal's toggle row, RAG-44) hold a plain tuple of
+    source types and no per-source counts, so they cannot construct one.
+    Two seams, one builder -- the PR-2 lesson that produced RAG-32's fix.
+
+    Args:
+        selected_source_types: The selected raw source-type identifiers.
+        available_source_types: The source types the caller can actually
+            toggle. Defaults to every real toggle source; the Library
+            screen narrows it to the ones with sources on disk.
+        prefix: The line's leading noun. Defaults to Library's "Scope";
+            the Console passes "Sources" because its own "Scope:" already
+            names the retrieval ITEM scope (conversation ∩ workspace),
+            which this line has nothing to do with.
+
+    Returns:
+        The user-facing summary line, e.g. `Scope: Notes, Conversations
+        (Media, Prompts off)`.
+    """
+    available_values = {
+        _clean_text(source_type).lower() for source_type in available_source_types
+    }
     toggle_types = [
         source_type
         for source_type in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES
-        if scope.option_by_type(source_type).available
+        if source_type in available_values
     ]
     if not toggle_types:
-        return LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
-    selected_values = set(scope.selected_source_types)
+        return f"{prefix}: {_ALL_LOCAL_SOURCES_SUMMARY_TAIL}"
+    selected_values = {
+        _clean_text(source_type).lower() for source_type in selected_source_types
+    }
     selected_types = [
         source_type for source_type in toggle_types if source_type in selected_values
     ]
     if len(selected_types) == len(toggle_types):
-        return LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
+        return f"{prefix}: {_ALL_LOCAL_SOURCES_SUMMARY_TAIL}"
     if not selected_types:
-        return "Scope: no sources selected"
+        return f"{prefix}: no sources selected"
     off_types = [
         source_type for source_type in toggle_types if source_type not in selected_values
     ]
@@ -803,7 +862,7 @@ def library_rag_scope_summary(scope: LibraryRagScopeState) -> str:
     off_labels = ", ".join(
         _source_type_display_label(source_type) for source_type in off_types
     )
-    return f"Scope: {selected_labels} ({off_labels} off)"
+    return f"{prefix}: {selected_labels} ({off_labels} off)"
 
 
 def library_rag_empty_state_quiet_copy(query: str, scope: LibraryRagScopeState) -> str:

@@ -30,6 +30,9 @@ Where this page's controls live:
   blocks at the bottom.
 - **The status chips** above the composer — "RAG: on/off", "Sources: N
   staged", and the "Scope: N" chip once retrieval is narrowed.
+- **The staged-evidence strip** — between the status chips and the
+  composer; shown only while something is staged (or right after a send
+  that used it).
 - **The composer** — where `/prompt`, `/system`, and `/prefill` are typed;
   the left rail's Model section carries the clickable `System:` line.
 
@@ -140,7 +143,30 @@ the staging itself is done from the Library screen.
 To gather evidence *before* sending, use the Inspector's **Live work
 sources** card: type a question into "Ask Library sources before sending"
 and press **Run Library RAG** (also a control-bar action). It searches
-your Library (notes, media, conversations) and stages what it finds.
+your Library and stages what it finds.
+
+Which *kinds* of sources it searches is shown on that card's **Sources:**
+line — by default "Sources: Notes, Media, Conversations (Prompts off)" —
+and is editable: the **RAG** chip (or **Run Library RAG** with nothing
+typed) opens the **Library RAG** settings modal, which carries the query
+box plus a toggle per source kind (**✓ Notes**, **○ Media**,
+**✓ Conversations**, **○ Prompts**). Running keeps the edited selection
+(it also survives leaving and returning to Console); **Cancel** discards
+it. Run stays disabled until there is both a query and at least one
+source kind. Note this is a different setting from **RAG scope** above:
+"Sources" picks the source *kinds*, "Scope" picks the *items*.
+
+The Inspector tray is not the only place staged evidence shows up: a
+**staged-evidence strip** sits on the main surface itself, between the
+status chips and the composer, so staging is visible without opening the
+Inspector at all. Staged, it lists the titles (up to three, "+N more"
+beyond that) with an **Un-stage** button that drops the whole bundle in
+one click; after a send that used it, the strip briefly instead reads
+"Evidence sent with this message · N sources". Staged evidence rides only
+the **next** send — once a send consumes it, the field clears itself, so
+the strip and the settings modal's "staged for your next send" wording
+are both literally true (an earlier build let one staged bundle silently
+ride every later send too; that is fixed).
 
 ### Citations
 
@@ -227,4 +253,5 @@ Enter again to send as text."
   a billing meter.
 
 —
-*Verified against dev @ ff435772c — 2026-07-31*
+*Verified against 4646922ed — 2026-08-04 (PR-4 Task 6 live check, including
+a real-provider send round trip)*

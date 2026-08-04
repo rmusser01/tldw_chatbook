@@ -215,8 +215,9 @@ class ConsoleWorkspaceContextState:
     recovery_copy: str
     workspace_name: str = ""
     scope_label: str = ""
-    #: TASK-373: raw conversation identifier kept out of the primary Scope row,
-    #: surfaced only as a hover detail.
+    #: TASK-373: raw conversation identifier kept out of the primary
+    #: Conversation row (RAG-45: renamed from "Scope"), surfaced only as a
+    #: hover detail.
     scope_detail: str = ""
     new_workspace_enabled: bool = False
     #: Whether the workspace-level RAG retrieval-scope affordance (task-13)
@@ -298,9 +299,11 @@ def build_console_workspace_state(
         Renderable Console workspace context state.
     """
 
-    # TASK-373/387: the rail Scope row showed the raw conversation UUID (no user
-    # meaning, wrapped mid-token across two lines). Show a human-readable label
-    # and keep the identifier as a hover detail (below), not in the primary row.
+    # TASK-373/387: the rail Conversation row (RAG-45: renamed from "Scope",
+    # which collided with the unrelated RAG-retrieval-scope concept) showed
+    # the raw conversation UUID (no user meaning, wrapped mid-token across
+    # two lines). Show a human-readable label and keep the identifier as a
+    # hover detail (below), not in the primary row.
     scope_label = "This conversation" if current_conversation else ""
     scope_detail = str(current_conversation or "")
     if registry_service is None:
