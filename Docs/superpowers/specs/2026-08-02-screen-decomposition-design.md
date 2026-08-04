@@ -97,7 +97,7 @@ A region widget is a compound `Widget` that:
   existing subclasses) for not orphaning mouse capture across its own teardown;
 - posts messages upward for anything the screen must coordinate, rather than being
   called downward;
-- owns the CSS for its own subtree in `css/features/`.
+- owns the CSS for its own subtree in `tldw_chatbook/css/features/`.
 
 The screen keeps layout, cross-region coordination, and the Textual lifecycle.
 
@@ -219,8 +219,8 @@ Rules, all non-negotiable:
    **and** 235x52. Where such a test already exists for the region, it must pass
    unchanged; where none exists, it is written *before* the move, against the current
    code, so it is proven to pass before it is relied upon.
-4. **CSS moves with its region**, into `css/features/`, and the bundle is regenerated via
-   `build_css.py`. The bundle is never hand-edited.
+4. **CSS moves with its region**, into `tldw_chatbook/css/features/`, and the bundle is regenerated via
+   `/private/tmp/tldw-venv/bin/python tldw_chatbook/css/build_css.py`. The bundle is never hand-edited.
 5. **Behaviour changes are forbidden in an extraction.** An extraction that also fixes a
    bug is two changes; do the fix separately, before or after, so a regression has one
    candidate cause.
