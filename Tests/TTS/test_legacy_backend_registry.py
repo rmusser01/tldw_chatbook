@@ -233,9 +233,12 @@ def test_builtin_import_attribute_error_propagates(
 
 
 @pytest.mark.asyncio
-async def test_openai_backend_uses_configured_endpoint_and_organization_header(
+async def test_openai_backend_uses_configured_endpoint_without_organization_header(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """TASK-2260: a configured org ID must not be forwarded to a custom
+    (non-OpenAI) endpoint; the official-endpoint case is covered in
+    test_openai_compatible_endpoint.py."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     requests: list[httpx.Request] = []
 
@@ -269,7 +272,7 @@ async def test_openai_backend_uses_configured_endpoint_and_organization_header(
 
     assert chunks == [b"audio"]
     assert str(requests[0].url) == "https://tts.example.test/v1/audio/speech"
-    assert requests[0].headers["OpenAI-Organization"] == "org-test"
+    assert "openai-organization" not in requests[0].headers
 
 
 @pytest.mark.asyncio
