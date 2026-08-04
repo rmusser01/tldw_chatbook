@@ -730,8 +730,11 @@ async def test_keypress_barge_in_stops_the_sink_and_cancels_with_played_ms(
         )
         assert rig.sink.opened == (24000, 1)
         # Default (keyboard-only) barge-in mode gates the mic while a reply
-        # is outstanding.
+        # is outstanding -- asserted on the TAP's real behavior (a pushed
+        # frame is dropped), not just on the wiring's own bookkeeping.
         await _wait_for(lambda: console._console_realtime.mic_gated is True, pilot)
+        rig.recorder.push(b"while speaking")
+        assert b"while speaking" not in session.audio_frames
 
         console._console_realtime.controller.on_keypress()
         await pilot.pause()
@@ -740,6 +743,8 @@ async def test_keypress_barge_in_stops_the_sink_and_cancels_with_played_ms(
         assert session.cancels == [1000]
         assert console._console_realtime.controller.state == "live"
         assert console._console_realtime.mic_gated is False
+        rig.recorder.push(b"after barge in")
+        assert b"after barge in" in session.audio_frames
 
 
 @pytest.mark.asyncio
@@ -1003,6 +1008,40 @@ async def test_exit_tears_down_tap_then_session_then_sink(monkeypatch):
         assert rig.recorder.stop_calls == 1
         assert rig.order[0] == "tap.stop"
         assert rig.order.index("session.close") < rig.order.index("sink.stop")
+
+
+@pytest.mark.asyncio
+async def test_exit_mid_reply_closes_the_reply_row_as_interrupted(monkeypatch):
+    """A loop torn down while the assistant is still talking must not leave
+    a `pending` transcript row nothing will ever complete."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        session.fire_turn_committed()
+        session.fire_reply_started("item-1")
+        session.fire_output_transcript_delta("Mid sen")
+        await _wait_for(
+            lambda: any(
+                row.role is ConsoleMessageRole.ASSISTANT and row.content
+                for row in _messages(console)
+            ),
+            pilot,
+        )
+
+        console._console_realtime.controller.on_exit_request()
+        await _wait_for(lambda: console._console_realtime is None, pilot)
+
+        assistant = [
+            row for row in _messages(console) if row.role is ConsoleMessageRole.ASSISTANT
+        ][0]
+        assert assistant.status == "complete"
+        assert assistant.content.endswith("interrupted"), assistant.content
 
 
 @pytest.mark.asyncio

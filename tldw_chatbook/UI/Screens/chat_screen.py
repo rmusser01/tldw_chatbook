@@ -2008,17 +2008,28 @@ class ChatScreen(BaseAppScreen):
                 and not self._console_setup_modal_blocking()
             )
         if action == "exit_console_hands_free":
-            return self._console_hands_free is not None
+            return (
+                self._console_hands_free is not None
+                or self._console_realtime is not None
+            )
         return super().check_action(action, parameters)
 
     def action_exit_console_hands_free(self) -> None:
         """Priority Esc: exit the hands-free loop from any point (task-5
         review I2) -- see `check_action`'s gate and the `BINDINGS` entry's
         docstring-comment for why this needs to be `priority=True` rather
-        than relying on `on_key`'s own (bubbling-order) branch alone."""
+        than relying on `on_key`'s own (bubbling-order) branch alone.
+
+        Covers BOTH engines (V4 task 5): "Esc from any point in the loop"
+        is a promise the docs make about hands-free, not about one
+        engine's implementation of it.
+        """
         hands_free = self._console_hands_free
         if hands_free is not None:
             hands_free.controller.on_exit_request()
+        realtime = self._console_realtime
+        if realtime is not None:
+            realtime.controller.on_exit_request()
 
     def action_expand_collapsed_console_composer(self) -> None:
         """Expand the hidden Console composer and return keyboard focus to it.
@@ -7946,7 +7957,11 @@ class ChatScreen(BaseAppScreen):
         config = RealtimeSessionConfig(
             api_key=self._console_realtime_api_key(),
             model=realtime_model(),
-            voice=realtime_voice(),
+            # `or None` rather than the raw value: an empty configured
+            # voice means "use the provider default", which is what None
+            # means on the wire -- sending `""` would ask for a voice named
+            # nothing.
+            voice=realtime_voice() or None,
             input_sample_rate=CONSOLE_REALTIME_SAMPLE_RATE,
             output_sample_rate=CONSOLE_REALTIME_SAMPLE_RATE,
             instructions=self._console_realtime_instructions(),
@@ -8517,6 +8532,12 @@ class ChatScreen(BaseAppScreen):
         """
         provider_session, session.session = session.session, None
         session.ready = False
+        # A reply that was in flight when the transport died is over, and
+        # over abruptly: close its audio and its transcript row as an
+        # interruption rather than leaving a `pending` row that will never
+        # complete and a pump parked on a queue nobody feeds.
+        self._end_console_realtime_reply_audio(session, abort=True)
+        self._finish_console_realtime_reply_row(session, interrupted=True)
         if provider_session is not None:
             self.run_worker(
                 self._close_console_realtime_session(provider_session),
@@ -8731,6 +8752,10 @@ class ChatScreen(BaseAppScreen):
         if session is None:
             return None
         self._console_realtime = None
+        # Exiting mid-reply IS an interruption: close the row that way
+        # rather than leaving a `pending` assistant message that nothing
+        # will ever complete.
+        self._finish_console_realtime_reply_row(session, interrupted=True)
         if session.tick_timer is not None:
             try:
                 session.tick_timer.stop()
