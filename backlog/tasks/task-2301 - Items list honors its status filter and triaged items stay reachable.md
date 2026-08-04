@@ -1,7 +1,7 @@
 ---
 id: TASK-2301
 title: Items list honors its status filter and triaged items stay reachable
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04'
 labels:
