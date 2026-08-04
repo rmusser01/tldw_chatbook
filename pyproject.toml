@@ -251,6 +251,9 @@ speech_recording = [
     "sounddevice>=0.4.6",  # Fallback audio backend
     "webrtcvad-wheels>=2.0.14",  # Voice activity detection (drop-in `webrtcvad` fork; upstream webrtcvad 2.0.10 imports pkg_resources, which setuptools>=81 removed)
 ]
+realtime = [
+    "websockets>=12.0",  # Transport for the realtime voice engine (LLM_Calls/realtime); imported lazily by transport/session modules, never at package-import time
+]
 ocr_docext = [
     "docext",  # NanoNets document extraction toolkit
     "gradio_client",  # For API-based usage

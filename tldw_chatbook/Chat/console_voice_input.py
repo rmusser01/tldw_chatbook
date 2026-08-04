@@ -923,6 +923,155 @@ def acoustic_barge_in_enabled() -> bool:
     return bool(raw)
 
 
+#: Provider default for `realtime_provider()`. OpenAI's Realtime API is the
+#: only transport this V4 work implements first (see the design doc); other
+#: providers are additive later, not a reason to leave this unset.
+DEFAULT_REALTIME_PROVIDER = "openai"
+
+#: Model default for `realtime_model()`, OpenAI's current realtime model id.
+DEFAULT_REALTIME_MODEL = "gpt-realtime"
+
+#: Default idle-session timeout in *minutes* for `realtime_idle_timeout_
+#: seconds()` -- the raw config unit is minutes (human-facing), the reader's
+#: return value is seconds (what the session timer actually consumes).
+DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES = 5
+
+#: Valid values for `dictation.handsfree_engine`; anything else falls back
+#: to `"auto"`.
+_HANDSFREE_ENGINE_VALUES = {"auto", "pipeline", "realtime"}
+
+
+def realtime_enabled() -> bool:
+    """Return whether the realtime voice engine is enabled at all.
+
+    `realtime.enabled`, default False -- opt-in: the realtime engine talks
+    to a provider's realtime API over a live connection (billed differently
+    than the pipeline STT/TTS engines, and provider-specific), so it must be
+    turned on explicitly before `resolve_handsfree_engine()` can ever select
+    it via `"auto"`. Sibling validation shape to `acoustic_barge_in_enabled`.
+
+    Returns:
+        True when the realtime engine is enabled.
+    """
+    raw = get_cli_setting("realtime", "enabled", False)
+    if isinstance(raw, str):
+        return raw.strip().lower() not in {"false", "no", "0", "off"}
+    return bool(raw)
+
+
+def realtime_provider() -> str:
+    """Return the configured realtime voice provider id.
+
+    `realtime.provider`, default `"openai"`.
+
+    Returns:
+        The provider id.
+    """
+    return get_cli_setting("realtime", "provider", DEFAULT_REALTIME_PROVIDER)
+
+
+def realtime_model() -> str:
+    """Return the configured realtime voice model id.
+
+    `realtime.model`, default `"gpt-realtime"`.
+
+    Returns:
+        The model id.
+    """
+    return get_cli_setting("realtime", "model", DEFAULT_REALTIME_MODEL)
+
+
+def realtime_voice() -> str | None:
+    """Return the configured realtime output voice name.
+
+    `realtime.voice`, default None -- leaving this unset means the
+    provider's server-side default voice is used rather than this app
+    pinning one.
+
+    Returns:
+        The configured voice name, or None to use the provider default.
+    """
+    return get_cli_setting("realtime", "voice", None)
+
+
+def realtime_idle_timeout_seconds() -> float:
+    """Idle-session timeout, in seconds, from `realtime.idle_timeout_minutes`.
+
+    The configured unit is minutes (human-facing config), default 5 minutes
+    -- returned here as 300.0 seconds, the unit the session's idle timer
+    actually consumes. Sibling validation shape to `handsfree_send_delay_
+    seconds`: a non-numeric or non-positive configured value is invalid,
+    logged, and falls back to the default rather than arming a zero/
+    negative/broken timeout.
+
+    Returns:
+        The idle timeout in seconds, always positive.
+    """
+    raw = get_cli_setting(
+        "realtime", "idle_timeout_minutes", DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES
+    )
+    try:
+        minutes = float(raw)
+    except (TypeError, ValueError):
+        minutes = 0.0
+    if minutes <= 0:
+        logger.warning(
+            "realtime.idle_timeout_minutes invalid ({!r}); using {} minutes",
+            raw,
+            DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES,
+        )
+        return float(DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES) * 60.0
+    return minutes * 60.0
+
+
+def handsfree_engine() -> str:
+    """Return the configured hands-free engine selection.
+
+    `dictation.handsfree_engine`, one of `"auto"`, `"pipeline"`, or
+    `"realtime"`; default `"auto"`. Any other value is invalid, logged, and
+    falls back to `"auto"` rather than propagating an unrecognized engine
+    name into `resolve_handsfree_engine()`.
+
+    Returns:
+        One of `"auto"`, `"pipeline"`, `"realtime"`.
+    """
+    raw = get_cli_setting("dictation", "handsfree_engine", "auto")
+    value = raw.strip().lower() if isinstance(raw, str) else raw
+    if value not in _HANDSFREE_ENGINE_VALUES:
+        logger.warning(
+            "dictation.handsfree_engine invalid ({!r}); using 'auto'", raw
+        )
+        return "auto"
+    return value
+
+
+def resolve_handsfree_engine() -> str:
+    """Resolve which engine the hands-free loop should actually use.
+
+    Pure combination of `handsfree_engine()` and `realtime_enabled()`:
+    `"pipeline"` unless the engine is explicitly forced to `"realtime"`, or
+    the engine is `"auto"` and the realtime engine is enabled.
+
+    This function does NOT gate on whether realtime is actually usable
+    (e.g. an API key configured, the `realtime` extra installed) -- forcing
+    `"realtime"` while `realtime_enabled()` is False still returns
+    `"realtime"` here. That is deliberate: this reader stays a pure,
+    testable combination, and it is the caller's job to be honest with the
+    user about *why* a forced-but-disabled selection can't proceed (toast +
+    refuse), rather than this function silently downgrading the user's
+    explicit choice to `"pipeline"`.
+
+    Returns:
+        `"pipeline"` or `"realtime"`.
+    """
+    engine = handsfree_engine()
+    if engine == "realtime":
+        return "realtime"
+    if engine == "auto" and realtime_enabled():
+        return "realtime"
+    return "pipeline"
+
+
 def warm_transcription_model(transcriber: Any, effective: EffectiveConfig) -> None:
     """Load the speech model by transcribing silence through it.
 
