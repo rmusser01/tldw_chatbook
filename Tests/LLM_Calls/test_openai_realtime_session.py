@@ -23,11 +23,19 @@ import threading
 from collections.abc import Callable
 
 import pytest
+
+# `websockets` ships only in the `realtime` extra -- a base/dev install
+# without it must skip this module's collection, not error out, matching
+# the `pytest.importorskip` convention used by the ~16 other optional-dep
+# test files in this suite (e.g. Tests/Subscriptions/
+# test_briefing_audio_synthesis.py for `pydub`).
+pytest.importorskip("websockets")
 import websockets
 
 from tldw_chatbook.LLM_Calls.realtime.openai_session import OpenAIRealtimeSession
 from tldw_chatbook.LLM_Calls.realtime.protocol import (
     RealtimeCallbacks,
+    RealtimeSession,
     RealtimeSessionConfig,
 )
 
@@ -162,30 +170,48 @@ async def fake_server():
         await server.wait_closed()
 
 
-def _is_session_update(event: dict) -> bool:
-    """Predicate: `event` is a well-formed `session.update` with pcm16
-    audio in/out, input transcription enabled, and server VAD on.
+def _make_is_session_update(
+    input_rate: int = 24000, output_rate: int = 24000
+) -> Callable[[dict], bool]:
+    """Build a predicate asserting `event` is a well-formed `session.update`:
+    single-modality (`["audio"]`, never `["audio", "text"]` together --
+    live-confirmed the API rejects that combination), pcm16 audio in/out at
+    the exact given rates (not merely present -- a swapped input/output
+    rate must fail this predicate, not just a missing one), input
+    transcription enabled, and server VAD on.
 
     Args:
-        event: The decoded event received from the client.
+        input_rate: Expected `session.audio.input.format.rate`.
+        output_rate: Expected `session.audio.output.format.rate`.
 
     Returns:
-        True if `event` matches the expected outbound `session.update`
-        shape produced by `OpenAIRealtimeSession.connect`.
+        A predicate `(dict) -> bool` for use as an `"expect"` script step.
     """
-    if event.get("type") != "session.update":
-        return False
-    session = event.get("session", {})
-    audio = session.get("audio", {})
-    input_cfg = audio.get("input", {})
-    output_cfg = audio.get("output", {})
-    return (
-        session.get("type") == "realtime"
-        and input_cfg.get("format", {}).get("type") == "audio/pcm"
-        and output_cfg.get("format", {}).get("type") == "audio/pcm"
-        and input_cfg.get("transcription") is not None
-        and input_cfg.get("turn_detection", {}).get("type") == "server_vad"
-    )
+
+    def _predicate(event: dict) -> bool:
+        if event.get("type") != "session.update":
+            return False
+        session = event.get("session", {})
+        audio = session.get("audio", {})
+        input_cfg = audio.get("input", {})
+        output_cfg = audio.get("output", {})
+        return (
+            session.get("type") == "realtime"
+            and session.get("output_modalities") == ["audio"]
+            and input_cfg.get("format", {}).get("type") == "audio/pcm"
+            and input_cfg.get("format", {}).get("rate") == input_rate
+            and output_cfg.get("format", {}).get("type") == "audio/pcm"
+            and output_cfg.get("format", {}).get("rate") == output_rate
+            and input_cfg.get("transcription") is not None
+            and input_cfg.get("turn_detection", {}).get("type") == "server_vad"
+        )
+
+    return _predicate
+
+
+# Default predicate for the handshake helper and most tests: matches
+# `_config()`'s default 24000/24000 rates.
+_is_session_update = _make_is_session_update()
 
 
 def _config(**overrides) -> RealtimeSessionConfig:
@@ -240,7 +266,10 @@ async def test_connect_sends_session_update_and_fires_ready(fake_server):
     callbacks = RealtimeCallbacks(
         on_ready=lambda: fired.__setitem__("ready", fired["ready"] + 1)
     )
-    _, scripted = await _connect_and_handshake(fake_server, [], callbacks=callbacks)
+    session, scripted = await _connect_and_handshake(
+        fake_server, [], callbacks=callbacks
+    )
+    assert isinstance(session, RealtimeSession)
     await scripted.wait_done()
     # `wait_done` only proves the server's script finished (it sent
     # session.updated); the client's recv loop processes that frame and
@@ -301,6 +330,7 @@ async def test_audio_delta_decodes_to_bytes_and_first_audio_fires_once(fake_serv
     _, scripted = await _connect_and_handshake(
         fake_server,
         [
+            ("send", {"type": "response.created", "response": {"id": "resp-1"}}),
             (
                 "send",
                 {
@@ -362,6 +392,7 @@ async def test_speech_started_fires_during_active_response(fake_server):
     _, scripted = await _connect_and_handshake(
         fake_server,
         [
+            ("send", {"type": "response.created", "response": {"id": "resp-1"}}),
             (
                 "send",
                 {
@@ -391,6 +422,7 @@ async def test_cancel_response_sends_cancel_then_truncate_with_played_ms(fake_se
     script = [
         ("expect", _is_session_update),
         ("send", {"type": "session.updated"}),
+        ("send", {"type": "response.created", "response": {"id": "resp-1"}}),
         (
             "send",
             {
@@ -412,9 +444,10 @@ async def test_cancel_response_sends_cancel_then_truncate_with_played_ms(fake_se
     session = track(OpenAIRealtimeSession(_config(), RealtimeCallbacks(), url=url))
     await session.connect()
 
-    # Give the recv loop a tick to process session.updated and the
-    # response.output_item.added send, so the session has tracked the
-    # current assistant item id before we cancel.
+    # Give the recv loop a tick to process session.updated, response.created,
+    # and the response.output_item.added send, so the session has both an
+    # active response and the current assistant item id tracked before we
+    # cancel.
     await asyncio.sleep(0.1)
 
     session.cancel_response(1234)
@@ -477,7 +510,7 @@ async def test_send_text_item_with_request_response_true_sends_response_create(
     await scripted.wait_done()
 
 
-async def test_response_done_fires_reply_done_and_usage(fake_server):
+async def test_response_done_completed_fires_reply_done_and_usage(fake_server):
     reply_done_calls = {"n": 0}
     usage_calls: list[dict] = []
     callbacks = RealtimeCallbacks(
@@ -505,6 +538,71 @@ async def test_response_done_fires_reply_done_and_usage(fake_server):
 
     assert reply_done_calls["n"] == 1
     assert usage_calls == [usage_payload]
+
+
+async def test_response_done_cancelled_does_not_fire_reply_done(fake_server):
+    """F5: a client-cancelled response (barge-in) must not also fire
+    on_reply_done -- the client already ended the reply locally when it
+    called cancel_response; a second "reply finished" signal is spurious."""
+    reply_done_calls = {"n": 0}
+    callbacks = RealtimeCallbacks(
+        on_reply_done=lambda: reply_done_calls.__setitem__(
+            "n", reply_done_calls["n"] + 1
+        )
+    )
+    _, scripted = await _connect_and_handshake(
+        fake_server,
+        [
+            ("send", {"type": "response.created", "response": {"id": "resp-1"}}),
+            ("send", {"type": "response.done", "response": {"status": "cancelled"}}),
+        ],
+        callbacks=callbacks,
+    )
+    await scripted.wait_done()
+    await asyncio.sleep(0.05)
+
+    assert reply_done_calls["n"] == 0
+
+
+async def test_response_done_failed_routes_to_error_and_still_fires_reply_done(
+    fake_server,
+):
+    """F5: a failed response must route a descriptive error to on_error AND
+    still fire on_reply_done, since callers that only unwind "reply in
+    progress" UI state on on_reply_done must still see it."""
+    errors: list[Exception] = []
+    reply_done_calls = {"n": 0}
+    callbacks = RealtimeCallbacks(
+        on_error=lambda exc: errors.append(exc),
+        on_reply_done=lambda: reply_done_calls.__setitem__(
+            "n", reply_done_calls["n"] + 1
+        ),
+    )
+    _, scripted = await _connect_and_handshake(
+        fake_server,
+        [
+            ("send", {"type": "response.created", "response": {"id": "resp-1"}}),
+            (
+                "send",
+                {
+                    "type": "response.done",
+                    "response": {
+                        "status": "failed",
+                        "status_details": {
+                            "error": {"message": "rate limit exceeded"}
+                        },
+                    },
+                },
+            ),
+        ],
+        callbacks=callbacks,
+    )
+    await scripted.wait_done()
+    await asyncio.sleep(0.05)
+
+    assert len(errors) == 1
+    assert "rate limit exceeded" in str(errors[0])
+    assert reply_done_calls["n"] == 1
 
 
 async def test_server_close_fires_on_closed_with_reason(fake_server):
@@ -597,3 +695,261 @@ async def test_callback_exception_is_isolated_and_routed_to_on_error(fake_server
     assert len(errors) == 1
     assert "callback exploded" in str(errors[0])
     assert reply_done_calls["n"] == 1
+
+
+async def test_bad_frame_does_not_kill_recv_loop_and_response_done_still_fires(
+    fake_server,
+):
+    """F1: a well-formed JSON frame that isn't an object (e.g. a bare
+    array) must not kill the recv loop with an AttributeError -- proven by
+    a subsequent, well-formed response.done still firing on_reply_done."""
+    reply_done_calls = {"n": 0}
+    callbacks = RealtimeCallbacks(
+        on_reply_done=lambda: reply_done_calls.__setitem__(
+            "n", reply_done_calls["n"] + 1
+        )
+    )
+    start, track = fake_server
+    script = [
+        ("expect", _is_session_update),
+        ("send", {"type": "session.updated"}),
+        ("send", [1, 2, 3]),
+        ("send", {"type": "response.done", "response": {"status": "completed"}}),
+    ]
+    url, scripted = await start(script)
+    session = track(OpenAIRealtimeSession(_config(), callbacks, url=url))
+    await session.connect()
+    await scripted.wait_done()
+    await asyncio.sleep(0.05)
+
+    assert reply_done_calls["n"] == 1
+
+
+async def test_append_audio_after_close_from_foreign_thread_does_not_raise_or_queue(
+    fake_server,
+):
+    """F2: append_audio calling into a closed session from a foreign
+    thread must not raise (recorder threads have no way to observe/handle
+    a RuntimeError) and must not queue anything nobody will ever drain."""
+    session, scripted = await _connect_and_handshake(fake_server, [])
+    await scripted.wait_done()
+    await session.close()
+
+    errors: list[Exception] = []
+
+    def _call() -> None:
+        try:
+            session.append_audio(b"\x01\x02")
+        except Exception as exc:  # noqa: BLE001 - the property under test
+            errors.append(exc)
+
+    thread = threading.Thread(target=_call)
+    thread.start()
+    thread.join(timeout=5)
+    # `thread.join()` only proves append_audio's own call returned (it just
+    # schedules `call_soon_threadsafe` and returns immediately) -- the
+    # scheduled callback itself needs the event loop to actually get a
+    # turn before `qsize()` is a meaningful check, not a race that happens
+    # to read the queue before the scheduled put ever runs.
+    await asyncio.sleep(0.05)
+
+    assert not thread.is_alive()
+    assert errors == []
+    assert session._outbound_queue is not None
+    assert session._outbound_queue.qsize() == 0
+
+
+async def test_connect_sends_correct_input_and_output_rates_without_swapping(
+    fake_server,
+):
+    """F3: a config with distinct, non-default input/output rates must
+    reach the wire as-is -- a swapped input/output rate bug would fail
+    this predicate even though the old (rate-agnostic) predicate could
+    not have caught it."""
+    config = _config(input_sample_rate=16000, output_sample_rate=22050)
+    start, track = fake_server
+    predicate = _make_is_session_update(input_rate=16000, output_rate=22050)
+    script = [("expect", predicate), ("send", {"type": "session.updated"})]
+    url, scripted = await start(script)
+    session = track(OpenAIRealtimeSession(config, RealtimeCallbacks(), url=url))
+    await session.connect()
+    await scripted.wait_done()
+
+
+async def test_close_does_not_hang_when_sender_task_is_stalled(fake_server):
+    """F7: close() must bound its wait for the sender task and close the
+    transport regardless -- a stalled connection (send() never returns)
+    must not hang teardown forever."""
+    session, scripted = await _connect_and_handshake(fake_server, [])
+    await scripted.wait_done()
+
+    async def _hang_forever(_obj: dict) -> None:
+        await asyncio.sleep(999)
+
+    session._transport.send_json = _hang_forever
+    session.append_audio(b"\x01\x02")
+    await asyncio.sleep(0.05)  # let the sender loop pick it up and get stuck
+
+    await asyncio.wait_for(session.close(), timeout=3.5)
+
+
+async def test_sender_loop_death_marks_session_closed_and_fires_on_error_once(
+    fake_server,
+):
+    """F6: when the sender loop dies (send() raises), the session must be
+    marked closed so further sends stop silently vanishing into a queue
+    nobody drains any more, and on_error must fire exactly once."""
+    errors: list[Exception] = []
+    callbacks = RealtimeCallbacks(on_error=lambda exc: errors.append(exc))
+    session, scripted = await _connect_and_handshake(
+        fake_server, [], callbacks=callbacks
+    )
+    await scripted.wait_done()
+
+    async def _boom(_obj: dict) -> None:
+        raise RuntimeError("transport send exploded")
+
+    session._transport.send_json = _boom
+    session.append_audio(b"\x01\x02")
+    await asyncio.sleep(0.1)
+
+    assert len(errors) == 1
+    assert "transport send exploded" in str(errors[0])
+    assert session._closed is True
+
+    before = session._outbound_queue.qsize() if session._outbound_queue else 0
+    session.append_audio(b"\x03\x04")
+    await asyncio.sleep(0.05)
+    after = session._outbound_queue.qsize() if session._outbound_queue else 0
+    assert after == before
+
+
+async def test_cancel_response_noops_when_no_response_active(fake_server):
+    """F8: cancelling with no response ever started must not send
+    response.cancel -- live-confirmed a stale/unmatched cancel produces an
+    error event from the provider."""
+    session, scripted = await _connect_and_handshake(
+        fake_server,
+        [("expect_none", None)],
+    )
+    session.cancel_response(500)
+    await scripted.wait_done()
+
+
+async def test_cancel_response_noops_after_response_already_done(fake_server):
+    """F8: cancelling after the tracked response has already completed
+    must also no-op -- live-confirmed a stale cancel produces TWO error
+    events (one for response.cancel, one for the resulting truncate)."""
+    session, scripted = await _connect_and_handshake(
+        fake_server,
+        [
+            ("send", {"type": "response.created", "response": {"id": "resp-1"}}),
+            (
+                "send",
+                {
+                    "type": "response.output_item.added",
+                    "item": {"id": "item-1", "role": "assistant"},
+                },
+            ),
+            ("send", {"type": "response.done", "response": {"status": "completed"}}),
+            ("expect_none", None),
+        ],
+    )
+    # Let the client fully process response.done (and flip _response_active
+    # to False) before attempting the stale cancel.
+    await asyncio.sleep(0.1)
+    session.cancel_response(500)
+    await scripted.wait_done()
+
+
+async def test_output_item_added_ignores_non_assistant_role_items(fake_server):
+    """F9: output items without role=="assistant" (e.g. function-call
+    items) must not be treated as the start of a spoken reply."""
+    reply_started: list[str] = []
+    callbacks = RealtimeCallbacks(
+        on_reply_started=lambda item_id: reply_started.append(item_id)
+    )
+    _, scripted = await _connect_and_handshake(
+        fake_server,
+        [
+            ("send", {"type": "response.created", "response": {"id": "resp-1"}}),
+            (
+                "send",
+                {
+                    "type": "response.output_item.added",
+                    "item": {"id": "item-fn", "type": "function_call"},
+                },
+            ),
+        ],
+        callbacks=callbacks,
+    )
+    await scripted.wait_done()
+    await asyncio.sleep(0.05)
+
+    assert reply_started == []
+
+
+async def test_output_item_added_only_resets_first_audio_once_per_response(
+    fake_server,
+):
+    """F9: a second response.output_item.added for the SAME response must
+    not re-fire on_reply_started or reset the first-audio flag, but must
+    still retarget the tracked item id (so cancel_response truncates the
+    item actually currently playing)."""
+    reply_started: list[str] = []
+    first_audio_calls = {"n": 0}
+    callbacks = RealtimeCallbacks(
+        on_reply_started=lambda item_id: reply_started.append(item_id),
+        on_first_audio=lambda: first_audio_calls.__setitem__(
+            "n", first_audio_calls["n"] + 1
+        ),
+    )
+    chunk = base64.b64encode(b"\x00\x01").decode("ascii")
+    session, scripted = await _connect_and_handshake(
+        fake_server,
+        [
+            ("send", {"type": "response.created", "response": {"id": "resp-1"}}),
+            (
+                "send",
+                {
+                    "type": "response.output_item.added",
+                    "item": {"id": "item-a", "role": "assistant"},
+                },
+            ),
+            ("send", {"type": "response.output_audio.delta", "delta": chunk}),
+            (
+                "send",
+                {
+                    "type": "response.output_item.added",
+                    "item": {"id": "item-b", "role": "assistant"},
+                },
+            ),
+        ],
+        callbacks=callbacks,
+    )
+    await scripted.wait_done()
+    await asyncio.sleep(0.05)
+
+    assert reply_started == ["item-a"]
+    assert first_audio_calls["n"] == 1
+    assert session._current_assistant_item_id == "item-b"
+
+
+def test_safe_invoke_isolates_exceptions_from_on_error_itself_and_as_reporter():
+    """Adjudication: _safe_invoke must isolate an exception whether it
+    comes from on_error itself (case A: must not recurse) or from a
+    different callback whose failure on_error itself then also fails to
+    report (case B). Success is simply neither case raising."""
+    session = OpenAIRealtimeSession(_config(), RealtimeCallbacks(), url="ws://unused")
+
+    def _raise_on_error(_exc: Exception) -> None:
+        raise RuntimeError("on_error exploded")
+
+    session._callbacks.on_error = _raise_on_error
+    session._safe_invoke(session._callbacks.on_error, RuntimeError("boom"), op="on_error")
+
+    def _raise_on_ready() -> None:
+        raise RuntimeError("on_ready exploded")
+
+    session._callbacks.on_ready = _raise_on_ready
+    session._safe_invoke(session._callbacks.on_ready, op="on_ready")

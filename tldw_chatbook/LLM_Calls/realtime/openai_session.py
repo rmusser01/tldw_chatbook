@@ -13,17 +13,25 @@ event *names*:
     response.output_audio_transcript.done, response.done,
     input_audio_buffer.speech_started, input_audio_buffer.speech_stopped,
     input_audio_buffer.committed, error.
-Also observed but not in the brief's list (extra lifecycle events this
-session ignores, forward-compatibly, since they carry no callback this
-module fires): conversation.item.added, conversation.item.done,
+`conversation.item.input_audio_transcription.completed` (field
+`transcript`) -- in the brief's list, but not captured by this task's own
+probe run (an ad hoc audio-turn script raced a second spurious
+`input_audio_buffer.speech_started` that interrupted the response first)
+-- was subsequently CONFIRMED live by the task-2 reviewer's own re-probe.
+That re-probe also discovered a sibling event this session was not told
+about: `conversation.item.input_audio_transcription.delta`, which arrives
+*first* (before `...completed`), carrying the same incremental text under
+a `delta` field rather than `transcript`. Deliberately still ignored here
+-- `on_input_transcript` fires once, from `...completed`'s full transcript,
+not incrementally from the `.delta` sibling; a future task can wire the
+`.delta` variant to a streaming callback if that granularity is ever
+needed. Also observed but not in the brief's list (extra lifecycle events
+this session ignores, forward-compatibly, since they carry no callback
+this module fires): conversation.item.added, conversation.item.done,
 response.content_part.added, response.content_part.done,
-response.output_item.done.
-`conversation.item.input_audio_transcription.completed` (in the brief's
-list) was not captured live -- the ad hoc audio-turn probe run raced a
-second spurious `input_audio_buffer.speech_started` that interrupted the
-response before transcription completed. Kept as the brief specifies since
-nothing contradicts it and the naming convention is otherwise unchanged
-for input-side events.
+response.output_item.done, `rate_limits.updated`. `_TRANSCRIPTION_MODEL =
+"whisper-1"` (this module's hardcoded transcription model choice) is
+confirmed accepted live.
 
 *** DISCREPANCY (prominent, request-shape not event-name): *** the brief's
 Step 1 description ("send session.update with audio+text modalities, pcm16,
@@ -69,6 +77,13 @@ from .transport import WsTransport
 
 _DEFAULT_URL_TEMPLATE = "wss://api.openai.com/v1/realtime?model={model}"
 _TRANSCRIPTION_MODEL = "whisper-1"
+
+# Sentinel distinct from any real response id (including None, which is
+# itself a possible -- if degenerate -- `response.id` in test doubles) so
+# `_reply_started_for_response_id`'s "have we already handled this
+# response's first item" guard cannot be accidentally satisfied before any
+# `response.created` has ever been seen.
+_UNSET = object()
 
 
 class OpenAIRealtimeSession:
@@ -120,8 +135,13 @@ class OpenAIRealtimeSession:
         self._sender_task: asyncio.Task | None = None
 
         self._current_assistant_item_id: str | None = None
+        self._current_response_id: str | None = None
+        self._response_active = False
+        self._reply_started_for_response_id: object = _UNSET
         self._first_audio_fired = False
         self._closed = False
+        self._teardown_done = False
+        self._enqueue_error_logged = False
 
     # ------------------------------------------------------------------
     # RealtimeSession protocol
@@ -217,10 +237,17 @@ class OpenAIRealtimeSession:
     def cancel_response(self, played_ms: int) -> None:
         """Cancel the assistant's in-progress response (barge-in).
 
-        Always sends `response.cancel`. If an assistant item id has been
-        tracked (from a prior `response.output_item.added`), also sends
+        No-ops (logged, not raised) if no response is currently active --
+        live-confirmed: sending `response.cancel` for a response that has
+        already ended produces an `error` event from the provider, and a
+        stale/duplicate cancel would produce two of them. When a response
+        is active, sends `response.cancel`, then, if an assistant item id
+        has been tracked (from a prior `response.output_item.added`),
         `conversation.item.truncate` for that item so the provider's
-        record matches what the user actually heard.
+        record matches what the user actually heard. The tracked item id
+        is never cleared by a completed response (see `_on_response_done`),
+        so truncating a just-completed-but-still-playing item is still the
+        normal, successful barge-in case.
 
         Args:
             played_ms: Milliseconds of the current response's audio that
@@ -229,6 +256,12 @@ class OpenAIRealtimeSession:
         Returns:
             None.
         """
+        if not self._response_active:
+            logger.debug(
+                "OpenAIRealtimeSession.cancel_response: no active response, "
+                f"skipping: op=cancel_response played_ms={played_ms}"
+            )
+            return
         self._enqueue({"type": "response.cancel"})
         item_id = self._current_assistant_item_id
         if item_id is not None:
@@ -244,18 +277,36 @@ class OpenAIRealtimeSession:
     async def close(self) -> None:
         """Close the session and release its transport. Idempotent.
 
+        Sets the closed flag immediately (rejecting any further
+        `_enqueue` calls, e.g. from `append_audio` racing in from a
+        foreign thread during shutdown), then runs teardown at most once
+        -- guarded separately from the closed flag, since
+        `_run_sender_loop` also sets it after an unrecoverable send
+        failure without having run teardown. The sender task's join is
+        bounded to 2 seconds: a stalled connection must not hang teardown
+        forever; if it doesn't finish in time, it's cancelled and the
+        transport is closed anyway.
+
         Returns:
             None.
         """
-        if self._closed:
-            return
         self._closed = True
+        if self._teardown_done:
+            return
+        self._teardown_done = True
 
         if self._loop is not None and self._outbound_queue is not None:
             self._loop.call_soon_threadsafe(self._outbound_queue.put_nowait, None)
         if self._sender_task is not None:
             try:
-                await self._sender_task
+                await asyncio.wait_for(self._sender_task, timeout=2.0)
+            except TimeoutError:
+                logger.warning(
+                    "OpenAIRealtimeSession.close: sender task did not finish "
+                    "within 2s, cancelling and closing transport anyway: "
+                    "op=close_sender"
+                )
+                self._sender_task.cancel()
             except Exception as exc:
                 logger.warning(
                     f"OpenAIRealtimeSession.close: sender task ended with "
@@ -336,24 +387,51 @@ class OpenAIRealtimeSession:
     def _enqueue(self, item: dict) -> None:
         """Post `item` onto the outbound queue from any thread.
 
+        Silently drops `item` once the session is closed (whether by an
+        explicit `close()` call or because the sender loop already died --
+        see `_run_sender_loop`), rather than raising into whatever thread
+        called it -- `append_audio` is documented to be safe from the
+        recorder thread even after shutdown races ahead of it. The
+        `call_soon_threadsafe` marshal itself is also guarded: if the
+        event loop closes in the narrow window between the `self._closed`
+        check and this call, the resulting `RuntimeError` is caught and
+        logged once (not per dropped frame, to avoid log-flooding a busy
+        audio stream) rather than propagating.
+
         Args:
             item: A JSON-serializable event dict to send.
 
         Returns:
             None.
         """
+        if self._closed:
+            return
         if self._loop is None or self._outbound_queue is None:
             logger.error(
                 "OpenAIRealtimeSession._enqueue called before connect(): "
                 f"op=enqueue item_type={item.get('type')!r}"
             )
             return
-        self._loop.call_soon_threadsafe(self._outbound_queue.put_nowait, item)
+        try:
+            self._loop.call_soon_threadsafe(self._outbound_queue.put_nowait, item)
+        except RuntimeError as exc:
+            if not self._enqueue_error_logged:
+                self._enqueue_error_logged = True
+                logger.error(
+                    "OpenAIRealtimeSession._enqueue: loop rejected marshal, "
+                    "session is effectively closed (further drops logged "
+                    f"once): op=enqueue item_type={item.get('type')!r} "
+                    f"error={exc!r}"
+                )
 
     async def _run_sender_loop(self) -> None:
         """Drain the outbound queue and send each item serially.
 
-        A `None` item is the shutdown sentinel posted by `close()`.
+        A `None` item is the shutdown sentinel posted by `close()`. If
+        sending an item raises (e.g. the connection died), the loop marks
+        the session closed -- so callers stop silently no-oping into a
+        queue nobody drains any more, per `_enqueue`'s guard -- fires
+        `on_error` once, and exits. It does not retry or restart itself.
 
         Returns:
             None.
@@ -367,9 +445,10 @@ class OpenAIRealtimeSession:
                 await self._transport.send_json(item)
         except Exception as exc:
             logger.error(
-                f"OpenAIRealtimeSession sender loop failed: op=sender_loop "
-                f"error={exc!r}"
+                f"OpenAIRealtimeSession sender loop failed, marking session "
+                f"closed: op=sender_loop error={exc!r}"
             )
+            self._closed = True
             self._safe_invoke(self._callbacks.on_error, exc, op="on_error")
 
     # ------------------------------------------------------------------
@@ -406,11 +485,21 @@ class OpenAIRealtimeSession:
         transport's receive loop and kill it.
 
         Args:
-            event: The decoded JSON event dict from the server.
+            event: The decoded JSON payload from the server -- typed `dict`
+                because that's the well-formed case, but not guaranteed to
+                actually be one: any JSON value (a bare list, string,
+                number...) decodes successfully at the transport layer, so
+                this method must not assume `.get` exists on it.
 
         Returns:
             None.
         """
+        if not isinstance(event, dict):
+            logger.warning(
+                "OpenAIRealtimeSession dropping non-dict inbound frame: "
+                f"op=handle_event received_type={type(event).__name__}"
+            )
+            return
         event_type = event.get("type", "")
         handler = self._EVENT_HANDLERS.get(event_type)
         if handler is None:
@@ -436,21 +525,57 @@ class OpenAIRealtimeSession:
         """
         self._safe_invoke(self._callbacks.on_ready, op="on_ready")
 
-    def _on_output_item_added(self, event: dict) -> None:
-        """Handle `response.output_item.added`: a new assistant reply item
-        started -- track its id for later truncation and reset the
-        first-audio-of-this-reply flag.
+    def _on_response_created(self, event: dict) -> None:
+        """Handle `response.created`: a new response started -- mark one
+        active and remember its id.
+
+        The id lets `_on_output_item_added` tell whether a later
+        `response.output_item.added` is the first item of this response
+        (reset first-audio, fire `on_reply_started`) or an additional item
+        within a response already underway (retarget the tracked item id
+        only). `_response_active` gates `cancel_response`: cancelling with
+        no active response live-produces an `error` event from the
+        provider, so `cancel_response` no-ops instead of sending a stale
+        `response.cancel`.
 
         Args:
-            event: The decoded event; `event["item"]["id"]` is the new
-                assistant item id.
+            event: The decoded event; `event["response"]["id"]` is the new
+                response id.
+
+        Returns:
+            None.
+        """
+        response = event.get("response") or {}
+        self._response_active = True
+        self._current_response_id = response.get("id")
+
+    def _on_output_item_added(self, event: dict) -> None:
+        """Handle `response.output_item.added`: track the latest assistant
+        item id for later truncation, and -- only for the first assistant
+        item of each response, guarded on response id rather than firing
+        per item -- reset the first-audio-of-this-reply flag and fire
+        `on_reply_started`.
+
+        Non-assistant output items (e.g. function-call items, which carry
+        no `role`) are ignored entirely: they are not part of the spoken
+        reply this session's callbacks describe.
+
+        Args:
+            event: The decoded event; `event["item"]["id"]`/`["role"]`
+                describe the new output item.
 
         Returns:
             None.
         """
         item = event.get("item") or {}
+        if item.get("role") != "assistant":
+            return
         item_id = item.get("id")
-        self._current_assistant_item_id = item_id
+        if item_id is not None:
+            self._current_assistant_item_id = item_id
+        if self._reply_started_for_response_id == self._current_response_id:
+            return
+        self._reply_started_for_response_id = self._current_response_id
         self._first_audio_fired = False
         if item_id is not None:
             self._safe_invoke(
@@ -536,18 +661,54 @@ class OpenAIRealtimeSession:
         self._safe_invoke(self._callbacks.on_turn_committed, op="on_turn_committed")
 
     def _on_response_done(self, event: dict) -> None:
-        """Handle `response.done`: fire `on_reply_done`, plus `on_usage` if
-        the event carries usage information.
+        """Handle `response.done`: fire `on_reply_done` unless the response
+        was client-cancelled, route a descriptive error to `on_error` (in
+        addition to `on_reply_done`, so downstream still unwinds) if it
+        failed, and fire `on_usage` if usage info is present.
+
+        Status handling:
+          - `"cancelled"`: no `on_reply_done` -- this is the barge-in path,
+            the client already handled ending the reply locally when it
+            called `cancel_response`; firing `on_reply_done` too would be
+            a spurious second "reply finished" signal.
+          - `"failed"`: routes a `RuntimeError` built from
+            `response.status_details.error.message` to `on_error`, AND
+            still fires `on_reply_done` -- callers that only unwind
+            "reply in progress" UI state on `on_reply_done` must still see
+            it even though the reply also failed.
+          - `"completed"` (or an unset/unrecognized status): fires
+            `on_reply_done` as the normal case.
+
+        Marks no response active any more, but deliberately does NOT clear
+        `_current_assistant_item_id` -- a `cancel_response` call arriving
+        just after a response completes (audio still playing client-side)
+        must still be able to truncate that item; this is the ordinary
+        successful barge-in case, live-confirmed to succeed against a
+        completed-but-still-playing item.
 
         Args:
-            event: The decoded event; `event["response"]["usage"]`, if
-                present, is passed to `on_usage`.
+            event: The decoded event; `event["response"]["status"]` drives
+                the branching above.
 
         Returns:
             None.
         """
-        self._safe_invoke(self._callbacks.on_reply_done, op="on_reply_done")
-        usage = (event.get("response") or {}).get("usage")
+        response = event.get("response") or {}
+        self._response_active = False
+        status = response.get("status", "completed")
+
+        if status == "cancelled":
+            pass
+        elif status == "failed":
+            details = (response.get("status_details") or {}).get("error") or {}
+            message = details.get("message", "response failed")
+            exc = RuntimeError(f"OpenAI realtime response failed: {message}")
+            self._safe_invoke(self._callbacks.on_error, exc, op="on_error")
+            self._safe_invoke(self._callbacks.on_reply_done, op="on_reply_done")
+        else:
+            self._safe_invoke(self._callbacks.on_reply_done, op="on_reply_done")
+
+        usage = response.get("usage")
         if usage is not None:
             self._safe_invoke(self._callbacks.on_usage, usage, op="on_usage")
 
@@ -570,6 +731,7 @@ class OpenAIRealtimeSession:
 
     _EVENT_HANDLERS: dict[str, Any] = {
         "session.updated": _on_session_updated,
+        "response.created": _on_response_created,
         "response.output_item.added": _on_output_item_added,
         "response.output_audio.delta": _on_audio_delta,
         "response.output_audio_transcript.delta": _on_output_transcript_delta,
