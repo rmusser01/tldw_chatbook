@@ -11,6 +11,7 @@ from typing import Any
 from loguru import logger
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message
@@ -150,6 +151,15 @@ _REALLOW_TOOLTIP = "Store the new definition hash and allow again."
 # shared by both "Change in Permissions" buttons below (Task 3) -- one
 # copy, so the two call sites can never drift.
 _GOTO_PERMISSION_TOOLTIP = "Switch to Permissions mode and select this tool's row."
+
+# F-054: the nothing-selected header copy, shared by compose() and
+# update_readiness(None) so the two can never drift. Contextual instead of
+# a bare "Select an item to inspect." -- it says what picking a row gets
+# you. Mode-agnostic on purpose: this pane serves Servers, Tools,
+# Permissions, and Audit selections alike.
+_EMPTY_STATE_COPY = (
+    "Pick a server, tool, or entry to see what's wrong and what you can do."
+)
 
 
 def _cascade_rungs(
@@ -399,12 +409,28 @@ def _render_section_payload(section: str, payload: Any) -> str:
 class MCPInspector(Vertical):
     """Right-pane inspector: what is selected, why, what can I do."""
 
+    # F-056: Escape closes the Test Tool panel when it's open (same path as
+    # its Close button); no-op otherwise.
+    BINDINGS = [Binding("escape", "close_test_panel", "Close test panel", show=False)]
+
     DEFAULT_CSS = """
     MCPInspector {
         width: 3fr;
         min-width: 28;
         height: 100%;
         min-height: 0;
+    }
+    /* F-054: let the empty-state/badge line WRAP at narrow widths instead
+    of clipping mid-word -- the shared `.ds-status-badge` rule pins
+    `height: 1`. This override covers the bare test harnesses that never
+    load the app bundle; the REAL app gets the identical rule from
+    _agentic_terminal.tcss (app-tier CSS beats widget DEFAULT_CSS on ties
+    in this Textual version, so the bundle carries its own copy -- the
+    established lockstep pattern documented there). */
+    #mcp-inspector-state {
+        width: 1fr;
+        height: auto;
+        min-height: 1;
     }
     #mcp-inspector-actions {
         /* Vertical defaults to height: 1fr, which would make this empty-by-
@@ -728,7 +754,7 @@ class MCPInspector(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static("Inspector", classes="destination-section")
-        yield Static("Select an item to inspect.", id="mcp-inspector-state",
+        yield Static(_EMPTY_STATE_COPY, id="mcp-inspector-state",
                      classes="ds-status-badge", markup=False)
         yield Static("", id="mcp-inspector-message", classes="ds-field-row", markup=False)
         yield Vertical(id="mcp-inspector-actions")
@@ -752,26 +778,35 @@ class MCPInspector(Vertical):
         # Task 5 (MCP Hub Phase 6): the Advanced (legacy control plane)
         # runner is opt-in now -- `mcp.hub_state.advanced_visible` (default
         # False) gates whether the Collapsible composes at all. False (the
-        # common case, and every fresh install) renders a small reveal
-        # Button instead; pressing it flips the setting and mounts the
-        # SAME widget tree this branch would have composed, via
-        # `_reveal_advanced()` below. True (a user who has already opted
-        # in during a previous session) composes the collapsible
-        # immediately, exactly as every phase before this one did.
+        # common case, and every fresh install) renders just the toggle
+        # Button; pressing it flips the setting and mounts the SAME widget
+        # tree this branch would have composed, via `_reveal_advanced()`
+        # below. True (a user who has already opted in during a previous
+        # session) composes the collapsible immediately, exactly as every
+        # phase before this one did.
+        # F-053: the toggle is a REVERSIBLE two-way control -- it is always
+        # rendered (as "Hide advanced" while the runner is visible) instead
+        # of being removed on reveal, and hiding persists
+        # `advanced_visible=False`. Whatever the user last explicitly chose
+        # is what future visits compose, so neither direction is a one-way
+        # door.
         # `get_cli_setting` reads the real user config in a bare test App;
         # tests monkeypatch this module's `get_cli_setting` name for
         # determinism (see test_mcp_inspector.py).
         self._advanced_visible = bool(get_cli_setting("mcp.hub_state", "advanced_visible", False))
+        yield Button(
+            "Hide advanced" if self._advanced_visible else "Advanced…",
+            id="mcp-inspector-advanced-reveal",
+            classes="console-action-subdued",
+            compact=True,
+            tooltip=(
+                "Hide the legacy control-plane action runner."
+                if self._advanced_visible
+                else "Show the legacy control-plane action runner."
+            ),
+        )
         if self._advanced_visible:
             yield self._build_advanced_collapsible()
-        else:
-            yield Button(
-                "Advanced…",
-                id="mcp-inspector-advanced-reveal",
-                classes="console-action-subdued",
-                compact=True,
-                tooltip="Show the legacy control-plane action runner.",
-            )
 
     def _build_advanced_collapsible(self, *, force_open: bool = False) -> Collapsible:
         """Construct the Advanced (legacy control plane) Collapsible tree.
@@ -828,22 +863,31 @@ class MCPInspector(Vertical):
             id="mcp-adv-collapsible",
         )
 
+    async def _toggle_advanced(self) -> None:
+        """Dispatch the Advanced toggle (F-053) to the right direction.
+
+        The button's press handler disables it synchronously before
+        scheduling this worker, so at most one toggle is ever in flight;
+        each direction re-enables the button as its last step.
+        """
+        if self._advanced_visible:
+            await self._hide_advanced()
+        else:
+            await self._reveal_advanced()
+
     async def _reveal_advanced(self) -> None:
         """Opt into the Advanced control-plane runner (Task 5, MCP Hub Phase 6).
 
-        The reveal Button's press handler (see `on_button_pressed` below).
-        Persists `mcp.hub_state.advanced_visible=True` (thread-offloaded,
-        same pattern as `_persist_advanced_open()` below) so a future mount
-        composes the collapsible directly instead of the reveal Button --
-        this is a one-way opt-in for the session (and, once persisted,
-        every session after): a fresh screen mount is the only way to hide
-        it again.
+        One direction of the F-053 toggle. Persists
+        `mcp.hub_state.advanced_visible=True` (thread-offloaded, same
+        pattern as `_persist_advanced_open()` below) so a future mount
+        composes the collapsible directly -- an explicit user choice, now
+        reversible via `_hide_advanced()` (the same control), so opting in
+        is no longer a one-way door.
 
-        Semantics for the button itself: it is REMOVED (not merely
-        disabled) once revealed -- there is nothing left for it to do this
-        session, and leaving a disabled "Advanced…" button sitting above
-        the now-visible panel it used to gate would read as broken, not
-        opted-in.
+        Semantics for the button itself (F-053): it is RELABELLED to
+        "Hide advanced" (and re-enabled) rather than removed -- it is the
+        hide path as well as the reveal path.
 
         `set_service_context()` may already have been called while
         Advanced was hidden (the workbench rebinds on every `reload()`/
@@ -882,17 +926,46 @@ class MCPInspector(Vertical):
         except Exception as exc:
             logger.warning(f"MCP advanced-visible preference save failed: {exc}")
         await self._persist_advanced_open(True)
-        try:
-            reveal_button = self.query_one("#mcp-inspector-advanced-reveal", Button)
-        except NoMatches:
-            pass
-        else:
-            await reveal_button.remove()
         await self.mount(self._build_advanced_collapsible(force_open=True))
+        toggle = self.query_one("#mcp-inspector-advanced-reveal", Button)
+        toggle.label = "Hide advanced"
+        toggle.tooltip = "Hide the legacy control-plane action runner."
+        toggle.disabled = False
         self.set_service_context(
             self._service, self._sections,
             source=self._advanced_source, target_label=self._advanced_target_label,
         )
+
+    async def _hide_advanced(self) -> None:
+        """Hide the Advanced control-plane runner again (F-053).
+
+        The reverse direction of the toggle, mirroring
+        `_reveal_advanced()`: persists `advanced_visible=False` (explicit
+        user choice, honored by future mounts), removes the collapsible,
+        and flips the toggle back to its "Advanced…" reveal state
+        (re-enabled). The `advanced_open` disclosure preference is left
+        untouched -- collapsing-vs-expanded is a separate, already
+        reversible choice the Collapsible's own triangle owns.
+        """
+        if not self._advanced_visible:
+            return
+        self._advanced_visible = False
+        try:
+            await asyncio.to_thread(
+                save_setting_to_cli_config, "mcp.hub_state", "advanced_visible", False
+            )
+        except Exception as exc:
+            logger.warning(f"MCP advanced-visible preference save failed: {exc}")
+        try:
+            collapsible = self.query_one("#mcp-adv-collapsible", Collapsible)
+        except NoMatches:
+            pass
+        else:
+            await collapsible.remove()
+        toggle = self.query_one("#mcp-inspector-advanced-reveal", Button)
+        toggle.label = "Advanced…"
+        toggle.tooltip = "Show the legacy control-plane action runner."
+        toggle.disabled = False
 
     # -- T12: Advanced disclosure open/collapsed persistence -----------------
 
@@ -979,7 +1052,7 @@ class MCPInspector(Vertical):
             for css_class in STATE_CSS_CLASSES.values():
                 state.remove_class(css_class)
             if snapshot is None:
-                state.update("Select an item to inspect.")
+                state.update(_EMPTY_STATE_COPY)
                 message.update("")
                 return
             state.add_class(STATE_CSS_CLASSES[snapshot.state])
@@ -1480,6 +1553,21 @@ class MCPInspector(Vertical):
             id="mcp-inspector-test-panel",
         )
         await container.mount(panel)
+        # F-056: opening the panel moves keyboard focus into it -- the
+        # schema form's first control when there is one (a raw-JSON
+        # TextArea, an enum Select, or a scalar Input), the Close button
+        # otherwise. `call_after_refresh` so this lands after Textual's own
+        # mount-time focus settling instead of racing it.
+        first_control = panel.query("Input, Select, TextArea").first()
+        if first_control is None:
+            first_control = panel.query_one("#mcp-inspector-test-close", Button)
+        self.call_after_refresh(first_control.focus)
+
+    async def action_close_test_panel(self) -> None:
+        """F-056: Escape -- close the Test Tool panel exactly like its
+        Close button; no-op when no panel is open."""
+        if self.query("#mcp-inspector-test-panel"):
+            await self._close_test_tool_panel()
 
     @staticmethod
     def _build_test_goto_permission_button() -> Button:
@@ -1913,16 +2001,17 @@ class MCPInspector(Vertical):
             # without the check, `exclusive=True` would let it CANCEL
             # worker A mid-save (`_reveal_advanced()`'s
             # `self._advanced_visible = True` already landed, but the
-            # button removal + collapsible mount never ran) and leave a
+            # button relabel + collapsible mount never ran) and leave a
             # dead-looking button no further press could ever recover,
             # since every future call into `_reveal_advanced()` now
-            # short-circuits on that same flag.
+            # short-circuits on that same flag. F-053: each direction of
+            # the toggle re-enables the button as its last step.
             if event.button.disabled:
                 return
             event.button.disabled = True
             # A CALLABLE, not a pre-created coroutine -- same rationale as
             # `set_service_context()`'s own schedule for `mcp-adv-section`.
-            self.run_worker(partial(self._reveal_advanced), group="mcp-adv-reveal", exclusive=True)
+            self.run_worker(partial(self._toggle_advanced), group="mcp-adv-reveal", exclusive=True)
             return
         if button_id == "mcp-adv-run":
             event.stop()

@@ -1748,7 +1748,7 @@ async def test_watchlists_right_rail_does_not_clip_action_labels(size):
         (
             "settings",
             "#settings-workbench",
-            ("Settings Sections", "Preference Detail", "Overview", "Scope Inspector"),
+            ("Overview", "Scope Inspector"),
         ),
         # The legacy ccp route/screen was retired; its workbench is the Personas
         # destination, covered by Tests/UI/test_personas_workbench.py.

@@ -13,6 +13,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Checkbox, ContentSwitcher, DataTable, Input, Select, Static, TextArea
 
+import tldw_chatbook
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 import tldw_chatbook.UI.MCP_Modules.mcp_workbench as mcp_workbench_module
 from tldw_chatbook.MCP.permission_store import (
@@ -38,6 +39,10 @@ from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench
 from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
+
+_BUNDLED_CSS_PATH = str(
+    Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -143,6 +148,203 @@ async def test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers():
         assert len(list(app.query("Button.mcp-rail-row"))) == 3
         canvas = app.query_one(MCPServersMode)
         assert canvas.query_one("#mcp-servers-overview").display
+
+
+class WorkbenchAppWithBundledCSS(WorkbenchApp):
+    """WorkbenchApp under the real bundled stylesheet, so bundle-layer rules
+    (e.g. `.ds-status-badge { height: 1; }` in _agentic_terminal.tcss) apply
+    exactly as in the live app -- mirrors `CanvasAppWithBundledCSS` in
+    test_mcp_servers_mode.py."""
+
+    CSS_PATH = _BUNDLED_CSS_PATH
+
+
+@pytest.mark.asyncio
+async def test_workbench_at_100x30_keeps_primary_content_reachable(monkeypatch):
+    """F-057: below ~120 cols the hub must not silently lose primary
+    content -- the summary wraps (the bundle's `.ds-status-badge`
+    `height: 1` used to clip it mid-sentence), the overview table switches
+    to a compact column set that fits the viewport (dropped columns' facts
+    stay one click away in the detail pane), primary actions stay on
+    screen, and rail rows truncate with an ellipsis instead of cropping
+    mid-word."""
+    # Deterministic builtin state (off/opt-in -> the Enable affordance).
+    monkeypatch.setattr(
+        mcp_workbench_module, "get_cli_setting",
+        lambda section, key=None, default=None: default,
+    )
+    app = WorkbenchAppWithBundledCSS()
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        # Summary wraps to multiple lines instead of clipping at one.
+        summary = app.query_one("#mcp-overview-summary", Static)
+        assert summary.region.height >= 2
+        # Compact columns: everything shown fits the viewport -- no column
+        # silently lost behind horizontal overflow.
+        table = app.query_one("#mcp-servers-table", DataTable)
+        assert [str(c.label) for c in table.ordered_columns] == [
+            "Name",
+            "Status",
+            "Tools",
+        ]
+        assert table.max_scroll_x == 0
+        # Primary actions stay reachable.
+        assert app.query_one("#mcp-add-server", Button).region.width > 0
+        assert app.query_one("#mcp-builtin-enable", Button).region.width > 0
+        # The built-in rail row truncates with an ellipsis (honest
+        # truncation) rather than cropping mid-word.
+        rows = list(app.query("Button.mcp-rail-row"))
+        assert "..." in str(rows[1].label)
+
+
+class ProblemRecordsService(FakeHubService):
+    """FakeHubService whose local catalog is a caller-supplied record list,
+    so a test can control exactly how many problem servers load (F-054)."""
+
+    def __init__(self, records: list[dict]) -> None:
+        super().__init__()
+        self._records = records
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if self.context.selected_source == "local" and effective_section == "external_servers":
+            return list(self._records)
+        return await super().load_section(section)
+
+
+def _missing_env_record(profile_id: str) -> dict:
+    return {
+        "profile_id": profile_id,
+        "command": "python",
+        "args": [],
+        "env_placeholders": {"K": "$TLDW_TEST_DEFINITELY_MISSING_VAR"},
+        "discovery_snapshot": {"tools": [{"name": "a"}], "resources": [], "prompts": []},
+        "is_connected": False,
+    }
+
+
+class ProblemRecordsApp(App):
+    def __init__(self, records: list[dict]) -> None:
+        super().__init__()
+        self.unified_mcp_service = ProblemRecordsService(records)
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_single_problem_row_is_preselected_on_load(monkeypatch):
+    """F-054: when the first load surfaces exactly ONE problem server (the
+    off/opt-in built-in doesn't count -- see is_off_opt_in), the workbench
+    pre-selects it so the inspector opens on what's wrong and what you can
+    do instead of dead space."""
+    # Deterministic builtin state: the workbench's own get_cli_setting
+    # (separate import from the inspector's fixture-patched one) returns
+    # every key's default -- mcp.enabled=False, i.e. off/opt-in.
+    monkeypatch.setattr(
+        mcp_workbench_module, "get_cli_setting",
+        lambda section, key=None, default=None: default,
+    )
+    app = ProblemRecordsApp([_missing_env_record("docs")])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._selected_server_key == "local:docs"
+        # Observable effect: the inspector is showing the problem server.
+        state = app.query_one("#mcp-inspector-state", Static)
+        assert "docs" in str(state.renderable)
+
+
+@pytest.mark.asyncio
+async def test_no_preselection_with_zero_or_multiple_problems(monkeypatch):
+    """F-054: the heuristic only fires for EXACTLY one problem -- zero
+    problems (all ready / off-opt-in) or an ambiguous two-plus both leave
+    the selection alone."""
+    monkeypatch.setattr(
+        mcp_workbench_module, "get_cli_setting",
+        lambda section, key=None, default=None: default,
+    )
+    zero = ProblemRecordsApp([])
+    async with zero.run_test() as pilot:
+        await pilot.pause()
+        await zero.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = zero.query_one(MCPWorkbench)
+        assert workbench._selected_server_key is None
+
+    multi = ProblemRecordsApp([_missing_env_record("docs"), _missing_env_record("web")])
+    async with multi.run_test() as pilot:
+        await pilot.pause()
+        await multi.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = multi.query_one(MCPWorkbench)
+        assert workbench._selected_server_key is None
+
+
+@pytest.mark.asyncio
+async def test_cleared_selection_is_not_re_hijacked_by_later_resync(monkeypatch):
+    """F-054: the pre-selection is a one-shot load default, not a standing
+    policy -- once the user clears the selection ('All servers'), a later
+    resync must not force the problem row back into focus."""
+    monkeypatch.setattr(
+        mcp_workbench_module, "get_cli_setting",
+        lambda section, key=None, default=None: default,
+    )
+    app = ProblemRecordsApp([_missing_env_record("docs")])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._selected_server_key == "local:docs"
+        await workbench._select_server_key(None)
+        await pilot.pause()
+        assert workbench._selected_server_key is None
+        # A further resync (e.g. a lifecycle completion) must not re-select.
+        await workbench._sync_children()
+        await pilot.pause()
+        assert workbench._selected_server_key is None
+
+
+@pytest.mark.asyncio
+async def test_restored_all_servers_selection_wins_over_problem_preselect(monkeypatch):
+    """F-054 restore path: a saved view state carrying an EXPLICIT
+    `selected_server_key=None` ("All servers") must clear the lone-problem
+    preselect the load heuristic just made. The heuristic runs before
+    `_consume_pending_view_state()`, but the user's saved "no selection"
+    from the previous session wins over the default."""
+
+    class RestoreClearApp(ProblemRecordsApp):
+        def compose(self) -> ComposeResult:
+            workbench = MCPWorkbench(app_instance=self, id="mcp-workbench")
+            # Saved state from a session where the user explicitly cleared
+            # the selection ("All servers").
+            workbench.set_initial_view_state(
+                {
+                    "mode": "servers",
+                    "source": "local",
+                    "selected_server_key": None,
+                    "scope": "personal",
+                    "scope_ref": None,
+                }
+            )
+            yield workbench
+
+    monkeypatch.setattr(
+        mcp_workbench_module, "get_cli_setting",
+        lambda section, key=None, default=None: default,
+    )
+    app = RestoreClearApp([_missing_env_record("docs")])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._selected_server_key is None
 
 
 @pytest.mark.asyncio
@@ -1283,6 +1485,18 @@ def _capture_notifications(app: App) -> list[tuple[str, str]]:
     return notifications
 
 
+async def _clear_initial_preselection(app: App, pilot) -> None:
+    """F-054: the workbench pre-selects a lone problem row on first load
+    (`ProfileFormHubService`'s docs profile is AUTH_MISSING, so exactly one
+    problem exists) -- form-flow tests drive the OVERVIEW, so clear that
+    heuristic selection first, via the same path the rail's 'All servers'
+    row drives."""
+    workbench = app.query_one(MCPWorkbench)
+    if workbench._selected_server_key is not None:
+        await workbench._select_server_key(None)
+        await pilot.pause()
+
+
 @pytest.mark.asyncio
 async def test_validate_action_runs_test_lifecycle_and_notifies_int_tool_count():
     """VALIDATE dispatch through the real click path, and the
@@ -1434,6 +1648,7 @@ async def test_add_server_requested_shows_add_mode_form():
     app = ProfileFormApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _clear_initial_preselection(app, pilot)
         await pilot.click("#mcp-add-server")
         await pilot.pause()
         form = app.query_one(MCPProfileForm)
@@ -1447,6 +1662,7 @@ async def test_submit_with_service_value_error_renders_store_copy_in_form():
     app = ProfileFormApp(fail_next=True)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _clear_initial_preselection(app, pilot)
         await pilot.click("#mcp-add-server")
         await pilot.pause()
         app.query_one("#mcp-form-id", Input).value = "leaky"
@@ -1474,6 +1690,7 @@ async def test_submit_success_hides_form_notifies_and_reloads_catalog():
     app = ProfileFormApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _clear_initial_preselection(app, pilot)
         notifications = _capture_notifications(app)
         await pilot.click("#mcp-add-server")
         await pilot.pause()
@@ -1509,6 +1726,7 @@ async def test_submit_success_with_secret_shaped_arg_toasts_warning():
     app = ProfileFormApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _clear_initial_preselection(app, pilot)
         notifications = _capture_notifications(app)
         await pilot.click("#mcp-add-server")
         await pilot.pause()
@@ -1540,6 +1758,7 @@ async def test_submit_success_with_clean_args_toasts_no_warning():
     app = ProfileFormApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _clear_initial_preselection(app, pilot)
         notifications = _capture_notifications(app)
         await pilot.click("#mcp-add-server")
         await pilot.pause()
@@ -1564,6 +1783,7 @@ async def test_cancelled_hides_form_without_saving():
     app = ProfileFormApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _clear_initial_preselection(app, pilot)
         await pilot.click("#mcp-add-server")
         for _ in range(200):
             cancel_buttons = list(app.query("#mcp-form-cancel"))
@@ -1595,6 +1815,7 @@ async def test_reload_while_add_form_open_does_not_stack_overview_and_form():
     app = ProfileFormApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _clear_initial_preselection(app, pilot)
         await pilot.click("#mcp-add-server")
         await pilot.pause()
         app.query_one("#mcp-form-command", Input).value = "still-typing"
@@ -1722,6 +1943,7 @@ async def test_double_submit_dispatches_exactly_one_save():
     app.unified_mcp_service.save_gate = asyncio.Event()  # hold save in flight
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _clear_initial_preselection(app, pilot)
         notifications = _capture_notifications(app)
         await pilot.click("#mcp-add-server")
         await pilot.pause()
@@ -3147,10 +3369,12 @@ async def test_open_test_for_selected_tool_with_no_selection_notifies():
     """T8: the `t` keybinding's workbench entry point -- with nothing
     selected in the inspector's tool-detail view, notifies instead of
     silently no-opping, mirroring `open_add_server_form()`'s T13 rationale
-    for a keybinding that can reach a state no disabled button gates. Also
-    switches to Tools mode even though nothing is selected there yet --
-    same "the keybinding always lands you in the right mode" contract as
-    `action_mcp_add_server`.
+    for a keybinding that can reach a state no disabled button gates.
+
+    F-055: it must NOT hijack the mode to get there -- the old
+    switch-first behavior force-landed the user in Tools mode with a
+    "Select a tool first." toast on top. Now the mode stays put and the
+    hint says where the working key lives.
     """
     app = ToolTestApp()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -3162,11 +3386,11 @@ async def test_open_test_for_selected_tool_with_no_selection_notifies():
         await workbench.open_test_for_selected_tool()
         await pilot.pause()
 
-        assert workbench.active_mode == "tools"
+        assert workbench.active_mode == "servers"
         assert not list(app.query("#mcp-inspector-test-panel"))
         assert notifications
         message, severity = notifications[-1]
-        assert message == "Select a tool first."
+        assert message == "Select a tool in Tools mode first."
         assert severity == "warning"
 
 

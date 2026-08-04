@@ -55,6 +55,24 @@
     background: $ds-surface-raised;
 }
 
+/* F-054/F-057: these two badges carry whole SENTENCES (the inspector's
+   empty-state explainer, the servers-mode aggregate summary), not one-word
+   chips -- they must wrap at narrow widths instead of clipping mid-word.
+   ID selectors beat the `.ds-status-badge` class rule above on
+   specificity; every other `.ds-status-badge` consumer keeps the fixed
+   height. `width: 1fr` is required alongside: the class rule's
+   `width: auto` would otherwise size the badge to its content's natural
+   width (no wrap at all -- the line just overflows its pane). Kept in
+   lockstep with the matching overrides in MCPInspector.DEFAULT_CSS and
+   MCPServersMode.DEFAULT_CSS, which cover the bare test harnesses that
+   never load this bundle. */
+#mcp-inspector-state,
+#mcp-overview-summary {
+    width: 1fr;
+    height: auto;
+    min-height: 1;
+}
+
 .ds-recovery-callout {
     height: auto;
     padding: 1 2;
@@ -747,7 +765,8 @@ ConsoleRunLogModal {
 }
 
 #settings-category-pane {
-    width: 3fr;
+    width: 30;
+    max-width: 34;
     overflow-y: hidden;
     overflow-x: hidden;
 }
@@ -3726,6 +3745,13 @@ ConsoleCitationSourcesModal {
     background: $ds-surface-panel;
 }
 
+/* Settings density: the workbench panes themselves carry borders and
+   padding, so the frame would only double them up. */
+#settings-workbench {
+    padding: 0;
+    border: none;
+}
+
 #artifacts-list-pane,
 #artifacts-detail-pane,
 #artifacts-inspector-pane,
@@ -3960,27 +3986,31 @@ Button.settings-category-button.settings-secondary-search-match {
 
 #settings-category-search {
     width: 100%;
-    height: 3;
-    min-height: 3;
-    max-height: 3;
-    margin: 0 0 1 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
     padding: 0 1;
-    border: solid $ds-grid-line;
-    background: $ds-surface-panel;
+    /* No border: at height 1 a border would clip the content row. The
+       raised background carries the "this is a field" affordance, and
+       focus/active below swap background+weight only, so the strip never
+       changes height (stable-border-geometry contract). */
+    border: none;
+    background: $ds-surface-raised;
     color: $ds-text-primary;
 }
 
 #settings-category-search:focus {
-    border: solid $ds-action-focus;
-    background: $ds-surface-raised;
+    border: none;
+    background: $ds-surface-inspector;
     color: $ds-text-primary;
     text-style: bold;
     outline: none;
 }
 
 #settings-category-search.settings-category-search-active {
-    border: solid $ds-action-focus;
-    background: $ds-surface-raised;
+    border: none;
+    background: $ds-surface-inspector;
     color: $ds-text-primary;
 }
 
@@ -4030,11 +4060,49 @@ Button.settings-category-button.settings-secondary-search-match {
     text-style: bold;
 }
 
+/* Collapsible rail-group toggle (Domain Defaults): renders like a group
+   heading but behaves like the compact category buttons. */
+Button.settings-category-group-toggle {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    content-align: left middle;
+    text-align: left;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+Button.settings-category-group-toggle:focus {
+    outline: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+/* Section headers inside the settings detail pane get a raised bar and a
+   blank line above, so each content block reads as a distinct section.
+   (The class itself is shared; scope stays inside settings.) */
+#settings-detail-pane .destination-section {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    margin: 1 0 0 0;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
 .settings-state-banner {
     width: 100%;
     min-height: 1;
     padding: 0 1;
-    margin: 0 0 1 0;
+    margin: 0;
     /* task-1625: the State strip reads as a raised status surface (the
        task-345 focus steel at low alpha), not another flat prose row --
        it now leads with the persistence badge (task-1717), so it earns
@@ -4048,23 +4116,30 @@ Button.settings-category-button.settings-secondary-search-match {
     width: 100%;
     min-height: 1;
     padding: 0 1;
-    margin: 0 0 1 0;
+    margin: 0;
     background: $ds-surface-panel;
     color: $ds-text-primary;
+}
+
+/* The narrow Scope Inspector keeps the airy row rhythm: its prose wraps at
+   ~30 columns, so the blank line between rows earns its keep there (and
+   the F6 fold-geometry contract measures against it). */
+#settings-impact-pane .settings-detail-row {
+    margin: 0 0 1 0;
 }
 
 .settings-input-row {
     width: 100%;
     height: 1;
     min-height: 1;
-    margin: 0 0 1 0;
+    margin: 0;
 }
 
 .settings-select-row {
     width: 100%;
     height: 3;
     min-height: 3;
-    margin: 0 0 1 0;
+    margin: 0;
 }
 
 .settings-input-label {
@@ -4224,7 +4299,7 @@ Button.settings-category-button.settings-secondary-search-match {
     width: 100%;
     min-height: 1;
     padding: 0 1;
-    margin: 0 0 1 0;
+    margin: 0;
     background: $ds-surface-inspector;
     color: $ds-text-muted;
 }
@@ -4297,8 +4372,7 @@ _CredentialClearModal {
 .settings-focus-card {
     width: 100%;
     height: auto;
-    min-height: 10;
-    padding: 1;
+    padding: 0 1;
     margin: 0 0 1 0;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
@@ -4316,8 +4390,7 @@ _CredentialClearModal {
     border-title-style: bold;
     width: 100%;
     height: auto;
-    min-height: 6;
-    padding: 1;
+    padding: 0 1;
     margin: 0 0 1 0;
     border: solid $ds-column-line;
     background: $ds-surface-panel;
@@ -4342,7 +4415,7 @@ _CredentialClearModal {
     width: 100%;
     height: 1;
     min-height: 1;
-    margin: 1 0;
+    margin: 0;
 }
 
 .settings-action-row Button {
@@ -5332,13 +5405,45 @@ ListItem.personas-library-row.is-active.-highlight {
     min-width: 28;
 }
 
+/* F-057: below ~120 cols (`.mcp-compact` on #mcp-hub-grid, toggled by
+   MCPWorkbench.on_resize) the triad rebalances toward the canvas so the
+   servers table keeps its primary columns in-viewport; the rail/inspector
+   take narrower shares + min-widths (their content wraps/truncates
+   honestly -- see `#mcp-inspector-state` above and MCPRail's width-aware
+   row truncation budget). More specific AND later than the pane rules
+   above, so it wins both contests. Kept in lockstep with the bare-harness
+   copy in MCPWorkbench.DEFAULT_CSS. */
+#mcp-hub-grid.mcp-compact #mcp-hub-rail {
+    width: 2fr;
+    min-width: 16;
+}
+
+#mcp-hub-grid.mcp-compact #mcp-hub-canvas {
+    width: 7fr;
+    min-width: 30;
+}
+
+#mcp-hub-grid.mcp-compact #mcp-hub-inspector {
+    width: 2fr;
+    min-width: 20;
+}
+
 /* A5: the row wrapping the aggregate summary's colored glyph + neutral
    sentence (kept in lockstep with the width rules in
    MCPServersMode.DEFAULT_CSS, mcp_servers_mode.py -- required in EVERY
    harness, not just the bundled one: without an explicit width split, both
    Static children of the Horizontal default to 1fr/full-width and the
-   second one renders entirely off-screen). */
-#mcp-overview-summary-row,
+   second one renders entirely off-screen).
+   F-057: `height: auto` (was 1) so the wrapped summary sentence's second
+   line actually gets rows to render on at ~100-col widths -- the child
+   `#mcp-overview-summary` override above can only wrap into space the row
+   itself provides. `#mcp-detail-title` stays at exactly 1 (single-line
+   badge + label). */
+#mcp-overview-summary-row {
+    height: auto;
+    min-height: 1;
+}
+
 #mcp-detail-title {
     height: 1;
     min-height: 1;
@@ -6299,6 +6404,25 @@ LibraryIngestCanvas Button:disabled {
    mount); two rows clears both frame borders. */
 Toast {
     margin-bottom: 2;
+}
+
+/* Slash-command completion popup: floats above the composer. Position,
+ * offset, width, and height are set imperatively in
+ * ConsoleCommandPopup.show_suggestions/reposition. */
+#console-command-popup {
+    position: absolute;
+    display: none;
+    background: $ds-surface-panel;
+    padding: 0 1;
+}
+
+/* Textual's default OptionList chrome (tall border + padding) costs two
+ * rows and pushed every option row out of small popups (a 1-row popup had a
+ * 0-row content region and painted an empty band). The popup itself carries
+ * the background, so strip the inner chrome. */
+#console-command-popup OptionList {
+    border: none;
+    padding: 0;
 }
 
 /* task-2160: clicking dead text focuses the scroll container itself, and
