@@ -447,6 +447,131 @@ def test_builtin_allow_survives_schema_change(tmp_path):
     assert after.config_changed is False
 
 
+def test_builtin_allow_with_legacy_stored_hash_is_not_rug_pulled():
+    """Real on-disk data: entries written under the OLD code (before this
+    task shipped) carry a REAL definition_hash(description, None) -- prior
+    to RAG-48 part 1, builtin tools' input_schema was always None, so that
+    is exactly what unified_control_plane_service.py's set_tool_state()
+    hashed and stored for every builtin "allow" a user had already granted.
+
+    The hash-free skip in resolve_effective_state() must key off
+    tool.server_key (HASH_FREE_SERVER_KEYS membership) -- NOT off whether
+    the stored entry happens to carry a hash. An implementation that
+    instead skipped the comparison only when `tool_entry.get(
+    "definition_hash")` was falsy would pass
+    test_builtin_allow_survives_schema_change (which arranges its stored
+    entry via the new hash-free set_tool_state(), so definition_hash is
+    always None there) while still rug-pulling every REAL upgraded user,
+    whose stored entry carries a real legacy digest -- exactly the failure
+    the ORDER constraint in the task brief exists to prevent.
+
+    Arrange the payload directly (bypassing set_tool_state entirely) to
+    reproduce the actual legacy on-disk shape, not the shape the new
+    hash-free write path produces.
+    """
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+    from tldw_chatbook.MCP.permission_store import (
+        definition_hash,
+        resolve_effective_state,
+    )
+
+    server_key = "builtin:tldw_chatbook"
+    tool_name = "chat_with_llm"
+    description = "Chat."
+    legacy_hash = definition_hash(description, None)  # what the OLD code stored
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "kill_switch": False,
+        "profiles": {
+            "default": {
+                "global_default": DEFAULT_GLOBAL,
+                "servers": {
+                    server_key: {
+                        "tools": {
+                            tool_name: {
+                                "state": "allow",
+                                "definition_hash": legacy_hash,
+                            }
+                        }
+                    }
+                },
+            }
+        },
+    }
+    tool = HubTool(
+        server_key=server_key,
+        server_label="tldw_chatbook",
+        source="builtin",
+        name=tool_name,
+        description=description,
+        # The schema has now arrived (RAG-48 part 2's catalog flip) -- this
+        # does NOT match the None the legacy hash was computed against.
+        input_schema={"type": "object", "properties": {"message": {"type": "string"}}},
+        tags=(),
+        stale=False,
+        executable=True,
+    )
+
+    result = resolve_effective_state(payload, tool)
+
+    assert result.state == "allow"
+    assert result.origin == "tool_override"
+    assert result.config_changed is False
+
+
+def test_builtin_allow_with_legacy_config_changed_marker_is_ignored():
+    """A persisted config_changed=True marker (e.g. set by a pre-fix
+    resolve pass, or a hand-edited store) must also be ignored for
+    hash-free server keys -- resolve_builtin_state's precedent
+    (agent:builtin) never reads any hash/config_changed field at all for
+    its namespace; resolve_effective_state's hash-free skip must match
+    that for builtin:tldw_chatbook too. Neither the stale-hash branch nor
+    the marked-changed branch of the rug-pull guard may fire for this
+    namespace."""
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+    from tldw_chatbook.MCP.permission_store import resolve_effective_state
+
+    server_key = "builtin:tldw_chatbook"
+    tool_name = "chat_with_llm"
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "kill_switch": False,
+        "profiles": {
+            "default": {
+                "global_default": DEFAULT_GLOBAL,
+                "servers": {
+                    server_key: {
+                        "tools": {
+                            tool_name: {
+                                "state": "allow",
+                                "definition_hash": "stale-and-wrong",
+                                "config_changed": True,
+                            }
+                        }
+                    }
+                },
+            }
+        },
+    }
+    tool = HubTool(
+        server_key=server_key,
+        server_label="tldw_chatbook",
+        source="builtin",
+        name=tool_name,
+        description="Chat.",
+        input_schema={"type": "object"},
+        tags=(),
+        stale=False,
+        executable=True,
+    )
+
+    result = resolve_effective_state(payload, tool)
+
+    assert result.state == "allow"
+    assert result.origin == "tool_override"
+    assert result.config_changed is False
+
+
 def test_allow_without_hash_is_permitted_for_the_builtin_namespace(tmp_path):
     store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
 
