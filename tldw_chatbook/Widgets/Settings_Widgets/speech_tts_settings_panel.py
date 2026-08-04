@@ -111,6 +111,30 @@ _GLOBAL_SPEECH_TTS_STACK_WIDTH = 104
 _COLLAPSIBLE_TITLE_FOCUS_SUFFIX = "::collapsible-title"
 
 _REALTIME_PROVIDER_OPTIONS = [("OpenAI", DEFAULT_REALTIME_PROVIDER)]
+
+
+def _realtime_provider_options(configured: str) -> list[tuple[str, str]]:
+    """Provider choices, including an unsupported configured value.
+
+    A `Select` cannot hold a value that is not one of its options, so a
+    config naming a provider this release does not implement (a typo, or
+    an aspirational edit) has to appear as an explicit unsupported entry.
+    Composing with the DEFAULT instead -- what this did before -- made the
+    panel report unsaved changes the moment it opened and silently
+    rewrote the user's value to "openai" on Save, without anyone touching
+    the field (final review M5).
+
+    Args:
+        configured: The provider currently in config.
+
+    Returns:
+        The supported options, plus `configured` labelled unsupported when
+        it is not among them.
+    """
+    value = str(configured or "").strip()
+    if not value or any(value == option for _label, option in _REALTIME_PROVIDER_OPTIONS):
+        return list(_REALTIME_PROVIDER_OPTIONS)
+    return [*_REALTIME_PROVIDER_OPTIONS, (f"{value} (not supported)", value)]
 _REALTIME_HANDSFREE_ENGINE_OPTIONS = [
     ("Auto (realtime when enabled)", "auto"),
     ("Pipeline (record / transcribe / reply / speak)", "pipeline"),
@@ -1274,8 +1298,8 @@ class SpeechTTSSettingsPanel(Vertical):
             yield self._row(
                 "Provider",
                 Select(
-                    _REALTIME_PROVIDER_OPTIONS,
-                    value=DEFAULT_REALTIME_PROVIDER,
+                    _realtime_provider_options(draft.provider),
+                    value=draft.provider or DEFAULT_REALTIME_PROVIDER,
                     id="settings-speech-realtime-provider",
                     allow_blank=False,
                     compact=True,
@@ -1934,6 +1958,11 @@ class SpeechTTSSettingsPanel(Vertical):
                 "idle_timeout_minutes",
                 "Idle timeout must be a positive number of minutes.",
             )
+        if idle_minutes.is_integer():
+            # A whole number of minutes belongs in the user's config file
+            # as `5`, not `5.0` (final review M5). `float` stays for a
+            # deliberate fractional value like 2.5.
+            idle_minutes = int(idle_minutes)
         model = self._realtime_draft.model.strip()
         if not model:
             raise GlobalSpeechTTSValidationError(

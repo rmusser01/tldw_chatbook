@@ -2039,6 +2039,94 @@ async def test_realtime_block_renders_with_config_defaults() -> None:
 
 
 @pytest.mark.asyncio
+async def test_realtime_unsupported_configured_provider_is_not_silently_rewritten(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Final review M5: the provider Select used to compose with the
+    DEFAULT value regardless of what was configured, so a config naming an
+    unsupported provider made the panel report unsaved changes the instant
+    it opened -- and Save silently rewrote the user's value to "openai"
+    without anyone touching the field."""
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module, "_read_realtime_provider", lambda: "gemini"
+    )
+    calls: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "save_settings_to_cli_config",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or True,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        await _settle(pilot)
+        provider = app.query_one("#settings-speech-realtime-provider", Select)
+
+        assert provider.value == "gemini"
+        assert "gemini" in [value for _label, value in provider._options]
+        assert panel.has_unsaved_changes() is False
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+        assert calls == [], "an untouched unsupported provider was rewritten"
+
+
+@pytest.mark.asyncio
+async def test_realtime_idle_timeout_is_written_as_an_int(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M5: a whole number of minutes belongs in config as `5`, not `5.0` --
+    the float form is what the user's own config file ends up carrying."""
+    calls: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "save_settings_to_cli_config",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or True,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+    async with app.run_test(size=(150, 60)) as pilot:
+        await _settle(pilot)
+        app.query_one(
+            "#settings-speech-realtime-idle-timeout-minutes", Input
+        ).value = "8"
+        await pilot.pause()
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        (section_values,), _kwargs = calls[0]
+        written = section_values["realtime"]["idle_timeout_minutes"]
+        assert written == 8
+        assert isinstance(written, int), f"wrote {written!r}"
+
+
+@pytest.mark.asyncio
+async def test_realtime_fractional_idle_timeout_stays_a_float(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The int coercion above must not round a deliberate 2.5 to 2."""
+    calls: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "save_settings_to_cli_config",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or True,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+    async with app.run_test(size=(150, 60)) as pilot:
+        await _settle(pilot)
+        app.query_one(
+            "#settings-speech-realtime-idle-timeout-minutes", Input
+        ).value = "2.5"
+        await pilot.pause()
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        (section_values,), _kwargs = calls[0]
+        assert section_values["realtime"]["idle_timeout_minutes"] == 2.5
+
+
+@pytest.mark.asyncio
 async def test_realtime_toggle_and_save_writes_exact_keys_through_shared_helper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2082,7 +2170,7 @@ async def test_realtime_toggle_and_save_writes_exact_keys_through_shared_helper(
                 "provider": "openai",
                 "model": "gpt-realtime-mini",
                 "voice": "marin",
-                "idle_timeout_minutes": 8.0,
+                "idle_timeout_minutes": 8,
             },
             "dictation": {"handsfree_engine": "realtime"},
         }
