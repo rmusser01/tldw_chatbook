@@ -62,8 +62,9 @@ class PruneSafeSelect(Select):
     """A `Select` that declines to touch its children once it is pruning.
 
     Behaviourally identical to `textual.widgets.Select` in every state
-    except `_pruning`/`_closing`, where its two mount-time children-touching
-    steps become no-ops rather than raising `NoMatches`.
+    except `_pruning`/`_closing`, where the two mount-time steps that reach
+    into children stop doing so rather than raising `NoMatches`. Non-DOM
+    state (`_value`) is still kept in sync — see `_watch_value`.
 
     CSS is unaffected: Textual's type selectors match against every base
     class that inherits CSS (`DOMNode._css_bases`), so an existing
@@ -83,12 +84,38 @@ class PruneSafeSelect(Select):
         super()._setup_options_renderables()
 
     def _watch_value(self, value) -> None:
-        """Skip the `SelectCurrent.update` write-through while pruning.
+        """Skip only the DOM half of the watcher while pruning.
 
-        This is the exact crash site of TASK-1960: upstream's `_watch_value`
-        guards `query_one(SelectCurrent)` but not the `#label` lookup one
-        level below it.
+        This is the exact crash site of TASK-1960. Upstream's `_watch_value`
+        guards `query_one(SelectCurrent)` but neither the `#label` lookup one
+        level below it (`_select.py:256`) nor the `query_one(SelectOverlay)`
+        in its own `else:` branch (`_select.py:613`) — three unguarded child
+        lookups behind one guarded one.
+
+        Split exactly along upstream's own line: `Select._watch_value`
+        (`_select.py:601-617`) does precisely one thing that is not a child
+        lookup — `self._value = value`, its first statement — and everything
+        after it queries children. So the shadow is kept in sync here and
+        only the DOM work is dropped, rather than dropping both. Skipping the
+        assignment as well left `value` and `_value` divergent (measured in
+        the TASK-1960 review: `value='all' _value=Select.NULL`), which is a
+        worse state to hand to anything that reads the shadow — `_on_mount`
+        does, via `_init_selected_option(self._value)`.
+
+        Not painting is safe because `_pruning`/`_closing` are terminal in
+        Textual 8.2.8: `App._prune` posts `Prune()` -> `_close_messages` ->
+        `_message_loop_exit`, which unregisters the node, and the only reset
+        (`App._register`, `app.py:3662`) requires re-registering this exact
+        instance — which never happens here, since every Watchlists `Select`
+        is constructed fresh inside `compose()`. That is an invariant of
+        *Textual*, not of this class: a future Textual that revives pruned
+        nodes would resurrect one holding a real `value` whose `#label` still
+        shows the placeholder, because the reactive sees no change on the way
+        back and never re-fires. If this class ever survives such an upgrade,
+        that revival path needs an explicit repaint, not just this sync.
         """
         if self._pruning or self._closing:
+            # The one non-DOM statement of `Select._watch_value`.
+            self._value = value
             return
         super()._watch_value(value)

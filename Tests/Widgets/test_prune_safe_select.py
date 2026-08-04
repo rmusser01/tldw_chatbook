@@ -51,13 +51,19 @@ class _Host(App):
         yield self._select_class(OPTIONS, value="all", allow_blank=False, id="probe")
 
 
-async def _mounted_then_pruned_mid_compose(app):
-    """Recreate "pruned between registration and Compose" on a live Select.
+async def _mounted_then_pruned_mid_compose(app, *, flag: str = "_pruning"):
+    """Reconstruct "pruned between registration and Compose" on a live Select.
 
-    Strips `SelectCurrent`'s children the way a suppressed `mount()` would
-    have left them and stamps the `_pruning` flags the prune walk sets, so
-    the widget is byte-for-byte in the state the instrumented failure
-    recorded.
+    A reconstruction, not a replay: zero children is reached by removing
+    them and the pre-mount `value` by rewinding the reactive, rather than by
+    a suppressed `mount()`. The resulting DOM state is equivalent for this
+    crash — a mounted `SelectCurrent` with no `#label` under a flagged
+    `Select` — which is what the guard is specified against.
+
+    Args:
+        flag: `"_pruning"` or `"_closing"` — the two flags the guard tests.
+            Both are set by real, distinct Textual paths (`App._prune` and
+            `MessagePump._close_messages`), so both need covering.
     """
     select = app.query_one("#probe", Select)
     current = select.query_one(SelectCurrent)
@@ -72,9 +78,10 @@ async def _mounted_then_pruned_mid_compose(app):
     # Select assigns the value it already holds, the reactive sees no change,
     # and `_watch_value` -- the crash site -- never runs at all.
     select.set_reactive(Select.value, Select.NULL)
-    # What `App._prune` stamps on every node in its walk.
-    select._pruning = True
-    current._pruning = True
+    # What `App._prune` stamps on every node in its walk (or, for `_closing`,
+    # what `MessagePump._close_messages` sets on the way out).
+    setattr(select, flag, True)
+    setattr(current, flag, True)
     return select
 
 
@@ -105,7 +112,7 @@ async def test_stock_select_still_raises_in_this_state():
             select._on_mount(events.Mount())
 
 
-async def _pruned_before_its_own_children_mounted(app):
+async def _pruned_before_its_own_children_mounted(app, *, flag: str = "_pruning"):
     """The sibling shape: the prune caught the `Select` one level higher.
 
     When `Widget.mount` is suppressed on the `Select` itself, neither
@@ -118,7 +125,7 @@ async def _pruned_before_its_own_children_mounted(app):
     await select.query_children("*").remove()
     assert not select.query(SelectCurrent)
     select.set_reactive(Select.value, Select.NULL)
-    select._pruning = True
+    setattr(select, flag, True)
     return select
 
 
@@ -139,6 +146,81 @@ async def test_stock_select_still_raises_with_no_children_at_all():
         select = await _pruned_before_its_own_children_mounted(app)
         with pytest.raises(NoMatches):
             select._on_mount(events.Mount())
+
+
+def _clear_closing(select) -> None:
+    """Undo a hand-set `_closing` across the subtree before teardown.
+
+    `MessagePump._close_messages` early-returns when `_closing` is already
+    set (`message_pump.py:530-532`), so it never enqueues the `None` sentinel
+    that stops the widget's message loop — and `run_test`'s teardown then
+    waits on that task forever. Real `_closing` always arrives *from*
+    `_close_messages`, so this asymmetry only bites a test that sets the flag
+    by hand, which is what these two do in order to exercise the flag in
+    isolation from `_pruning`.
+    """
+    for node in select.walk_children(with_self=True):
+        node._closing = False
+
+
+@pytest.mark.asyncio
+async def test_closing_alone_is_enough_to_disarm_the_watcher():
+    """The `_closing` half of the `_watch_value` guard (review, Minor 2).
+
+    `_closing` is a genuinely separate path — `MessagePump._close_messages`
+    sets it on app shutdown and on `Widget.on_prune`, without `App._prune`
+    necessarily having stamped `_pruning` on this widget. Without this test,
+    deleting `or self._closing` leaves the suite green.
+    """
+    app = _Host(PruneSafeSelect)
+    async with app.run_test():
+        select = await _mounted_then_pruned_mid_compose(app, flag="_closing")
+        try:
+            assert not select._pruning, "this test must exercise _closing alone"
+            select._on_mount(events.Mount())
+        finally:
+            _clear_closing(select)
+
+
+@pytest.mark.asyncio
+async def test_closing_alone_is_enough_to_disarm_the_options_rebuild():
+    """The `_closing` half of the `_setup_options_renderables` guard."""
+    app = _Host(PruneSafeSelect)
+    async with app.run_test():
+        select = await _pruned_before_its_own_children_mounted(app, flag="_closing")
+        try:
+            assert not select._pruning, "this test must exercise _closing alone"
+            select._on_mount(events.Mount())
+        finally:
+            _clear_closing(select)
+
+
+@pytest.mark.asyncio
+async def test_the_guard_keeps_value_and_its_shadow_in_step():
+    """Review, Minor 1: skip the DOM work, not the bookkeeping.
+
+    `Select._watch_value`'s first statement is `self._value = value`; every
+    statement after it queries a child. Returning before both left `value`
+    and `_value` divergent, and `_on_mount` reads the shadow
+    (`_init_selected_option(self._value)`). The guard must drop only the
+    child lookups.
+    """
+    app = _Host(PruneSafeSelect)
+    async with app.run_test():
+        select = await _mounted_then_pruned_mid_compose(app)
+        # Put the shadow somewhere the incoming value is NOT, so "did the
+        # guard advance it?" is answerable. `_on_mount` reads the shadow
+        # (`_init_selected_option(self._value)`), so `NULL` here is exactly
+        # the divergence the review measured on a guarded widget.
+        select._value = Select.NULL
+        select.set_reactive(Select.value, Select.NULL)
+
+        select._on_mount(events.Mount())
+
+        assert select.value == "all", "the reactive should still have advanced"
+        assert select._value == select.value, (
+            f"shadow diverged: value={select.value!r} _value={select._value!r}"
+        )
 
 
 @pytest.mark.asyncio
