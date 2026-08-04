@@ -2845,6 +2845,44 @@ def test_chat_api_kwargs_system_message_is_byte_stable_across_turns() -> None:
 # ---- per-turn cache_control opt-in (Console-only) ----
 
 
+def test_chat_api_kwargs_forwards_configured_anthropic_base_url() -> None:
+    """Confirm a configured Anthropic api_base_url reaches the primary send path's kwargs."""
+    resolution = ConsoleProviderResolution(
+        provider="anthropic",
+        base_url="https://proxy.example.test/v1",
+        model="claude-x",
+        ready=True,
+        execution_key="anthropic",
+        api_key="k",
+        streaming=False,
+    )
+
+    kwargs = ConsoleProviderGateway._chat_api_kwargs(
+        resolution, [{"role": "user", "content": "hi"}]
+    )
+
+    assert kwargs["api_base_url"] == "https://proxy.example.test/v1"
+
+
+def test_chat_api_kwargs_omits_api_base_url_for_non_anthropic() -> None:
+    """Confirm the api_base_url forwarding fix is scoped to Anthropic only."""
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://proxy.example.test/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        api_key="k",
+        streaming=False,
+    )
+
+    kwargs = ConsoleProviderGateway._chat_api_kwargs(
+        resolution, [{"role": "user", "content": "hi"}]
+    )
+
+    assert "api_base_url" not in kwargs
+
+
 def test_chat_api_kwargs_omits_prompt_caching_for_non_anthropic() -> None:
     """`prompt_caching=None` is stripped, so non-Anthropic kwargs are
     unchanged from before prompt caching existed."""
@@ -2978,6 +3016,137 @@ async def test_non_anthropic_resolution_has_no_prompt_caching_flag() -> None:
     )
 
     assert resolution.prompt_caching is None
+
+
+# ---- task-2114: configured api_base_url reaches the real posted URL ----
+
+
+def _fake_anthropic_message_response() -> dict:
+    return {
+        "id": "msg_test",
+        "model": "claude-sonnet-4-6",
+        "content": [{"type": "text", "text": "ok"}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+    }
+
+
+class _CapturedURLSession:
+    """Minimal `requests.Session` stand-in recording only the posted URL --
+    a narrower cousin of `Tests/Chat/test_chat_functions.py::_CapturedSession`
+    (that file already owns the full request-capture fixture; this one only
+    needs the URL for the assertion below)."""
+
+    def __init__(self, captured: dict) -> None:
+        self._captured = captured
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc_info):
+        return False
+
+    def mount(self, *_args, **_kwargs) -> None:
+        return None
+
+    def post(self, url, *, headers=None, json=None, stream=False, timeout=None):
+        self._captured["url"] = url
+        return _FakeAnthropicPostResponse()
+
+
+class _FakeAnthropicPostResponse:
+    status_code = 200
+    text = "{}"
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return _fake_anthropic_message_response()
+
+
+@pytest.mark.asyncio
+async def test_console_send_honors_configured_anthropic_base_url(monkeypatch) -> None:
+    """Confirm the real gateway-to-adapter chain posts to a configured Anthropic api_base_url.
+
+    Drives the real gateway -> ``chat_api_call`` -> ``chat_with_anthropic``
+    chain (no ``chat_api_call_fn`` stand-in) on the primary Console send
+    path, not just the auxiliary/one-shot path.
+
+    Args:
+        monkeypatch: Pytest fixture used to stub the outgoing HTTP session.
+    """
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        LLM_API_Calls.requests, "Session", lambda: _CapturedURLSession(captured)
+    )
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "anthropic": {
+                    "api_key": "k",
+                    "api_base_url": "https://proxy.example.test/v1",
+                }
+            }
+        },
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="anthropic",
+            explicit_model="claude-sonnet-4-6",
+            streaming=False,
+        )
+    )
+    assert resolution.base_url == "https://proxy.example.test/v1"
+
+    _ = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
+
+    assert captured["url"] == "https://proxy.example.test/v1/messages"
+
+
+@pytest.mark.asyncio
+async def test_console_send_default_anthropic_url_unchanged_when_unconfigured(
+    monkeypatch,
+) -> None:
+    """Confirm the default Anthropic endpoint is unchanged when api_base_url is not configured.
+
+    Args:
+        monkeypatch: Pytest fixture used to stub the outgoing HTTP session.
+    """
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        LLM_API_Calls.requests, "Session", lambda: _CapturedURLSession(captured)
+    )
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"anthropic": {"api_key": "k"}}},
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="anthropic",
+            explicit_model="claude-sonnet-4-6",
+            streaming=False,
+        )
+    )
+
+    _ = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
+
+    assert captured["url"] == "https://api.anthropic.com/v1/messages"
 
 
 @pytest.mark.asyncio

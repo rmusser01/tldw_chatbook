@@ -353,6 +353,24 @@ estimator and set `has_estimated_entries`.
   from last-send ground truth plus fingerprint break alerts, no countdown.
 - App restart: warm-until is in-memory → shows cold even if the provider
   cache is still warm. Under-promises, never lies. Accepted.
+- **Revert of a break, TTL remaining (task-2115, real-provider live
+  verification, 2026-08-03):** editing then reverting the system prompt
+  (or any other break source) never touches `warm_until`/`had_activity` —
+  only a real send does (see the ground-truth bullet above) — so the chip
+  correctly returns to plain warm `●` with the ORIGINAL deadline, byte-
+  identical to before the edit, confirmed by a scripted repro with zero
+  clock manipulation
+  (`Tests/UI/test_console_cost_chip_screen.py::test_reverting_system_prompt_edit_with_ttl_remaining_returns_to_warm`).
+  A live-verification pass once observed the chip land on cold `○`
+  immediately after such a revert despite believing TTL time remained;
+  investigation found no code path that could produce that from the
+  mechanism above — the far more likely explanation is that the manual,
+  multi-step round trip (reopening the editor modal, clicking, capturing
+  the pane) took long enough in real wall-clock time to genuinely cross
+  the 5-minute deadline between the last fresh tooltip read and the
+  revert completing, i.e. the chip was reporting truthfully. This is not
+  a distinct "unverified since your edit" state; the existing "expired"
+  copy already covers it.
 
 ### Projection math (always shown with `~`)
 

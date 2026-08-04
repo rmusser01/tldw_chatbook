@@ -1783,6 +1783,22 @@ class ConsoleProviderGateway:
             # for byte what they were before prompt caching existed.
             "prompt_caching": resolution.prompt_caching,
         }
+        if resolution.execution_key == "anthropic":
+            # task-2114: `resolve_for_send` already resolves the effective
+            # endpoint (configured `[api_settings.anthropic].api_base_url`,
+            # or the built-in default when unset -- see
+            # `effective_provider_endpoint`) into `resolution.base_url`, but
+            # this dict never forwarded it, so a configured proxy/relay was
+            # silently a no-op on the main Console send: only the
+            # auxiliary/one-shot path's `_auxiliary_chat_api_kwargs` passed
+            # `api_base_url` through. Scoped to Anthropic only, matching
+            # this task's fix -- other adapters sharing the same gap are
+            # tracked separately (see the task's Implementation Notes).
+            # When unset, `resolution.base_url` is already the SAME
+            # built-in default `chat_with_anthropic` would fall back to on
+            # its own, so this is a byte-identical no-op for the common
+            # case, never a behavior change.
+            kwargs["api_base_url"] = resolution.base_url or None
         return {key: value for key, value in kwargs.items() if value is not None}
 
     @staticmethod
