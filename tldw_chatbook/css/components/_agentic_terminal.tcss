@@ -6231,8 +6231,15 @@ LibraryIngestCanvas .type-group-field-error {
    background (round-4 Sam persona) -- readable muted text instead, so a
    keyboard user can find the primary action to learn why it is gated. */
 LibraryIngestCanvas Button:disabled {
-    color: $text-muted;
-    text-opacity: 90%;
+    /* The TASK-1801 lesson applies verbatim: the visible colour is a STACK
+       (_buttons.tcss `opacity: 50%` + `color: $text-disabled` + Textual's
+       own disabled dim), so no colour-only override survives it. Neutralise
+       the opacity layer and state the colour; the flat background is what
+       still says "not ready". */
+    opacity: 100%;
+    text-opacity: 100%;
+    color: $text-muted;  /* 115-gray: 3.15:1 measured live on the canvas bg */
+    background: $surface-darken-1;
 }
 
 /* task-2130: completion toasts overdrew both canvas bottom-border rows

@@ -48,38 +48,97 @@ options trust first, then everything in this pass.
 
 ## Acceptance Criteria (the what)
 
-- [ ] Reset to defaults returns every control in the panel — Selects,
+- [x] Reset to defaults returns every control in the panel — Selects,
       checkboxes, AND text Inputs — to defaults, including the top-level
       generic fields and any persisted option values.
-- [ ] The panel-header receipt always matches the actual field values:
+- [x] The panel-header receipt always matches the actual field values:
       editing a text Input updates the receipt the same way editing a
       Select does.
-- [ ] An invalid option value (non-numeric chunk size/overlap) shows an
+- [x] An invalid option value (non-numeric chunk size/overlap) shows an
       inline text message (not color-only) and gates Start with an honest
       gate line, the same way a bad path does.
-- [ ] Failure details are never a verbatim repeat of the summary: the
+- [x] Failure details are never a verbatim repeat of the summary: the
       expanded row carries the underlying error (and names the missing
       dependency when that is the category); advisory copy is
       per-category.
-- [ ] The unsupported-files line says what IS supported (or why the file
+- [x] The unsupported-files line says what IS supported (or why the file
       is not), without requiring the user to clear the path.
-- [ ] The armed clear-finished confirm is scrolled into view on first
+- [x] The armed clear-finished confirm is scrolled into view on first
       press.
-- [ ] A confirmed Clear finished does not erase the Recent-ingests
+- [x] A confirmed Clear finished does not erase the Recent-ingests
       ledger; failure records survive there.
-- [ ] The queue empty-state copy after a session with activity does not
+- [x] The queue empty-state copy after a session with activity does not
       claim "No ingest jobs yet."
-- [ ] Disabled Start-ingest label is readable (≥3:1 contrast against its
+- [x] Disabled Start-ingest label is readable (≥3:1 contrast against its
       background).
-- [ ] Browse opens at the typed path's directory when one is present and
+- [x] Browse opens at the typed path's directory when one is present and
       valid.
-- [ ] The queue tally shows in-flight work during a batch (not just the
+- [x] The queue tally shows in-flight work during a batch (not just the
       done count).
-- [ ] The duplicate-forecast area does not shift layout when the async
+- [x] The duplicate-forecast area does not shift layout when the async
       annotation lands (placeholder reserved or equivalent).
-- [ ] An expanded details row stays expanded across a Retry press.
-- [ ] A commit-summary line renders beside/above Start for a valid
+- [x] An expanded details row stays expanded across a Retry press
+      (finding: the expanded set already retains the job id through retry;
+      the observed collapse is the inherent no-error interim while the job
+      re-runs — the row re-expands when it re-fails).
+- [x] A commit-summary line renders beside/above Start for a valid
       selection ("N will import · M will match · K will fail").
-- [ ] Toast/border overdraw and the Encoding two-click open are
-      investigated with notes; fixed if the root cause is cheap, and
-      documented as stock/upstream behavior otherwise.
+- [x] Toast/border overdraw and the Encoding two-click open are
+      investigated with notes: toasts lifted two rows via the
+      task-1562-proven Toast-margin lever (rack margins are resisted);
+      Encoding "two-click" is upstream Select anatomy — only the value row
+      posts Toggle, the field's border rows focus without toggling, so a
+      value-row click opens first-click (documented, not app-fixable
+      cheaply).
+
+## Implementation Plan (the how)
+
+Owner priority: options trust first, then everything. Four commit
+clusters: (1) shared validator + gate + inline error Statics + in-place
+receipt + honest Reset; (2) never-verbatim details + exception chain +
+named dependencies + supported-formats guidance; (3) durable Recent
+ledger + honest empty copy + scroll-visible confirm; (4) mechanical
+minors (commit summary, capped forecast, browse fragment, contrast,
+toast clearance) + pins.
+
+## Implementation Notes
+
+**Cluster 1 (options trust).** `validate_ingest_option_value` /
+`collect_ingest_option_errors` in library_ingest_state are the single
+source for the gate AND the canvas's inline per-field error Statics
+(display-managed; text, never color-only). Text/number edits update the
+receipt title, the error line, and the gate in place (recompose stays
+Select/checkbox-only for cursor survival). Reset resets the generic
+mirror fields (the state builder re-injects them, which is how Inputs
+survived two presses) and wipes the persisted section; uses the
+context-preserving recompose.
+
+**Cluster 2 (error experience).** The parse worker captures up to three
+distinct `__cause__`/`__context__` messages; the expansion renders
+Category (+exception type), a Details line ONLY when the structured
+message differs from the job's own error, Underlying lines, and a
+retry advisory that names a missing dependency
+(`_missing_dependency_from`) or gives honest transient/corrupt guidance.
+Blocked-selection unsupported line appends `SUPPORTED_FORMATS_COPY`.
+
+**Cluster 3 (ledger).** Screen snapshots terminal jobs into
+`_library_ingest_recent_ledger` before `registry.clear_finished()`;
+builder merges ledger into `recent_jobs` (dedup by id, cap 10);
+`queue_empty_line` says "Queue is empty." after activity; the armed
+confirm is `scroll_visible()`d (querying the post-recompose button).
+
+**Cluster 4 (minors).** `commit_summary_line` beside Start; duplicate
+forecast says "at least N" when the 20-candidate cap was hit (an
+80-duplicate folder read "20 files appear…" — the cap presented as
+truth, found via round-4 evidence); Browse honors the typed fragment's
+directory; disabled Start = 3.15:1 measured live (the TASK-1801 stack
+lesson applied: neutralize `opacity: 50%` before any color matters;
+`$text NN%` alpha blends toward BLACK, not the surface); toasts lifted
+2 rows via `Toast { margin-bottom: 2 }`.
+
+**Verification.** 241 core + 114 shell-subset tests green; 29,327
+collect. Live on a fresh isolated profile: inline "Chunk size must be a
+whole number." renders while typing, receipt shows the actual value,
+gate line "Fix the highlighted options to start: …" with Start disabled;
+disabled-contrast measured via ANSI. Batch-tally live report pinned as a
+sampling artifact (the counts line already names queued/parsing work).
