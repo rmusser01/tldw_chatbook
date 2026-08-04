@@ -283,8 +283,12 @@ async def test_ingest_repaints_the_live_row_instead_of_removing_it():
             "includes it"
         )
         assert (
+            # Literal, not `_status_label("ingested")` (round 2, O3): a
+            # helper that asks production code what it displays stays green
+            # when production code stops mapping at all -- the same vacuity
+            # the m1 mutation caught in this file's other assertions.
             str(table.get_cell(str(target["id"]), pane._column_keys[2]))
-            == ItemsPane._status_label("ingested")
+            == STATUS_LABELS["ingested"]
         ), "the row the user acted on must show its new status immediately"
 
 
@@ -539,3 +543,125 @@ async def test_the_delete_gesture_on_an_item_says_and_does_ignore():
         assert any("ignored" in message.lower() for message in toasts), (
             f"the gesture must report what it did; saw {toasts!r}"
         )
+
+
+@pytest.mark.asyncio
+async def test_the_open_item_survives_a_reload_under_a_narrow_filter():
+    """Round 2, O2. The pin's guarantee must survive query-side filtering.
+
+    `ItemsPane._filtered_items` pins the open item into the list whatever the
+    filter says, because opening an item MARKS IT READ -- so under a "New"
+    filter it drops out of its own list the instant it is opened, and `j`/`k`
+    break for the rest of the session. That pin can only retain what the query
+    returned. Pushing the status filter into the query (I2) meant a reload
+    under `status="new"` came back without it, and the item the user was
+    reading vanished.
+
+    Driven through the real gesture: filter to New, open the only unread item
+    (which marks it `reviewed`), then force the reload that any deliberate
+    action would cause.
+    """
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    raw_ids = _seed_one_item_per_status(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        pane = await _settled_items_pane(screen, pilot, len(SEEDED))
+
+        pane.status_filter = "new"
+        for _ in range(60):
+            await pilot.pause(0.05)
+            pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+            if [row for row in pane.items if row.get("status") == "new"]:
+                break
+        assert [row["title"] for row in pane.displayed_items()] == [SEEDED["new"]]
+
+        target = pane.items[0]
+        pane.select_item_by_id(str(target["id"]))
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if db.get_item_status(raw_ids["new"]) == "reviewed":
+                break
+        assert db.get_item_status(raw_ids["new"]) == "reviewed", (
+            "precondition: opening the item marked it read, so the New "
+            "filter no longer matches it"
+        )
+
+        # Any deliberate action reloads. Force exactly that.
+        await screen._load_items()
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        titles = [row["title"] for row in pane.displayed_items()]
+        assert SEEDED["new"] in titles, (
+            "the item the reader has open must survive a reload whose filter "
+            f"no longer matches it; the list showed {titles!r}"
+        )
+        assert pane.selected_item is not None
+        assert str(pane.selected_item.get("id")) == str(target["id"]), (
+            "and it must still be the selected item, or j/k walk a list the "
+            "cursor is not in"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_carried_open_item_keeps_the_pages_ordering():
+    """Round 2, O2. Carried, not prepended.
+
+    `j`/`k` walk this sequence, so an item jumping to the top of the list the
+    moment its status changed would be its own small lie about recency.
+    """
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_one_item_per_status(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        await _settled_items_pane(screen, pilot, len(SEEDED))
+
+        # An item older than every row of the page it will be carried into.
+        screen._selected_content_item = {
+            "id": "local:watchlist_item:99999",
+            "title": "The oldest thing here",
+            "status": "ignored",
+            "created_at": "2000-01-01T00:00:00+00:00",
+        }
+        screen._items_status_filter = "new"
+        await screen._load_items()
+
+        titles = [row["title"] for row in screen._loaded_items]
+        assert titles[-1] == "The oldest thing here", (
+            f"the carried item must sort by created_at, not jump; got {titles!r}"
+        )
+
+
+def test_the_d_binding_names_both_verbs_it_performs():
+    """Round 2, O3. The label stopped matching the action for one kind.
+
+    `d` deletes a source/run/rule behind a confirmation, and IGNORES an item
+    without one (review wave, Minor 2). A Textual binding description is
+    static, so it has to name the pair rather than promise whichever verb the
+    current selection is not.
+    """
+    from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+        WatchlistsCollectionsScreen,
+    )
+
+    binding = next(
+        entry
+        for entry in WatchlistsCollectionsScreen.BINDINGS
+        if entry[0] == "d"
+    )
+    assert binding[1] == "delete_selected"
+    label = binding[2].lower()
+    assert "delete" in label and "ignore" in label, (
+        f"the key performs both verbs; its label says {binding[2]!r}"
+    )
+    assert "after confirmation" not in (
+        WatchlistsCollectionsScreen.action_delete_selected.__doc__ or ""
+    ).split("\n")[0], "the summary line must not promise a dialog for every kind"

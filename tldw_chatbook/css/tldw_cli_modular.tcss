@@ -1127,6 +1127,25 @@ TextArea:focus {
  * that draws its own frame outside. Review wave, Critical 1: this family of
  * rules keeps losing to the fact that "a Select" is three different shapes,
  * so the app now styles only what every shape has -- its colours.
+ *
+ * ROUND 2, O1 -- and how far even that reaches is worth stating, because the
+ * previous wording claimed more than it delivered ("the recolouring half is
+ * what marks focus now"). It is NOT, on its own. `SelectCurrent` is a child
+ * with an opaque `background: $surface` covering the whole parent, so on a
+ * borderless compact `Select` this declaration is painted over completely and
+ * only Textual's 5% `background-tint` survives (~1.10:1, measured). What
+ * actually marks focus is per shape:
+ *
+ *   three-row `Select`    Textual's own `&:focus > SelectCurrent { border:
+ *                         tall $border; }` -- a real, visible border swap
+ *   `.settings-compact-*` its own `:focus` rules, border AND background
+ *   borderless compact    `Select.-textual-compact:focus > SelectCurrent`
+ *                         in components/_lists.tcss, added by O1
+ *
+ * This rule is kept because it is the one that reaches a `Select` whose child
+ * does NOT cover it (padding, a themed variant), and because removing a
+ * pre-existing app-wide declaration on the strength of one shape's geometry
+ * is how this family of bugs started.
  */
 Select:focus {
     background: $ds-input-focus-bg;
@@ -1557,9 +1576,38 @@ SelectOverlay:focus {
  * costs no geometry and therefore genuinely cannot be reserved for.
  * `.settings-compact-select:focus` sets `outline: none` itself, so this
  * agrees with it rather than overriding it.
+ *
+ * ROUND 2, O1 -- and taking the outline away left nothing behind. The
+ * replacement cue was supposed to be `Select:focus`'s recolour
+ * (components/_forms.tcss), but that paints the SELECT, and `SelectCurrent`
+ * covers the whole of it with an opaque `background: $surface` of its own, so
+ * the recolour never reached the screen. All that did was Textual's 5%
+ * `background-tint`. Measured on `#items-status-select` and
+ * `#watchlists-backend-select`:
+ *
+ *     rest #1e1e1e   focused #272727    ~1.10:1
+ *
+ * `core/_variables.tcss` (TASK-345) names 1.1:1 as *exactly* the failure that
+ * killed the non-obscuring focus contract once already -- an invisible focus
+ * ring is how a Tab+Enter activated the wrong control. And with the hover cue
+ * fixed in the same wave, hover (#2d2d2d) had become STRONGER than focus,
+ * which is backwards.
+ *
+ * So the recolour is re-homed one level in, onto the child that actually
+ * paints. Unlike Critical 1's rule this is a COLOUR, not geometry: it cannot
+ * resize anything, and its specificity ((0,2,2), which does outrank
+ * `.settings-compact-select:focus > SelectCurrent`'s (0,2,1)) is harmless
+ * because that rule sets `$ds-input-focus-bg` too -- the same token, so the
+ * bordered controls are byte-identical either way. Verified by measurement,
+ * not by reading: `#settings-provider-value` focuses to #586d82 before and
+ * after.
  */
 Select.-textual-compact:focus {
     outline: none;
+}
+
+Select.-textual-compact:focus > SelectCurrent {
+    background: $ds-input-focus-bg;
 }
 
 /* ===== MODULE: components/_navigation.tcss ===== */

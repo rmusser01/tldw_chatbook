@@ -255,7 +255,36 @@ SelectOverlay:focus {
  * costs no geometry and therefore genuinely cannot be reserved for.
  * `.settings-compact-select:focus` sets `outline: none` itself, so this
  * agrees with it rather than overriding it.
+ *
+ * ROUND 2, O1 -- and taking the outline away left nothing behind. The
+ * replacement cue was supposed to be `Select:focus`'s recolour
+ * (components/_forms.tcss), but that paints the SELECT, and `SelectCurrent`
+ * covers the whole of it with an opaque `background: $surface` of its own, so
+ * the recolour never reached the screen. All that did was Textual's 5%
+ * `background-tint`. Measured on `#items-status-select` and
+ * `#watchlists-backend-select`:
+ *
+ *     rest #1e1e1e   focused #272727    ~1.10:1
+ *
+ * `core/_variables.tcss` (TASK-345) names 1.1:1 as *exactly* the failure that
+ * killed the non-obscuring focus contract once already -- an invisible focus
+ * ring is how a Tab+Enter activated the wrong control. And with the hover cue
+ * fixed in the same wave, hover (#2d2d2d) had become STRONGER than focus,
+ * which is backwards.
+ *
+ * So the recolour is re-homed one level in, onto the child that actually
+ * paints. Unlike Critical 1's rule this is a COLOUR, not geometry: it cannot
+ * resize anything, and its specificity ((0,2,2), which does outrank
+ * `.settings-compact-select:focus > SelectCurrent`'s (0,2,1)) is harmless
+ * because that rule sets `$ds-input-focus-bg` too -- the same token, so the
+ * bordered controls are byte-identical either way. Verified by measurement,
+ * not by reading: `#settings-provider-value` focuses to #586d82 before and
+ * after.
  */
 Select.-textual-compact:focus {
     outline: none;
+}
+
+Select.-textual-compact:focus > SelectCurrent {
+    background: $ds-input-focus-bg;
 }

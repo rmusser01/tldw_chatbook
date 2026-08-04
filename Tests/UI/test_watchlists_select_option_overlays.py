@@ -140,19 +140,26 @@ async def test_the_status_filter_still_shows_its_value_when_focused_or_hovered()
         blurred = _painted_rows(screen, select.region)[0]
         assert "All statuses" in blurred, "precondition: the value is readable at rest"
 
+        # Hover FIRST, on a blurred control -- which is the order a user meets
+        # them in, and the only order that measures hover at all. Round 2, O1
+        # gave the focused state a real background, and focus deliberately
+        # outranks hover, so hovering an already-focused Select correctly
+        # shows the focus colour and says nothing about the hover rule.
+        current, rest_background = await _hover(pilot, screen, select)
+        assert "All statuses" in _painted_rows(screen, select.region)[0], (
+            "a hovered one-row Select must still say what it is set to"
+        )
+        assert current.styles.background != rest_background, (
+            "the hover cue must actually land -- see `_hover`"
+        )
+
+        await pilot.hover("#items-search-input")
+        await pilot.pause()
         select.focus()
         await pilot.pause()
         await pilot.pause()
         assert "All statuses" in _painted_rows(screen, select.region)[0], (
-            "a focused one-row Select must still say what it is set to"
-        )
-
-        current, rest_background = await _hover(pilot, screen, select)
-        assert "All statuses" in _painted_rows(screen, select.region)[0], (
-            "and so must a hovered one"
-        )
-        assert current.styles.background != rest_background, (
-            "the hover cue must actually land -- see `_hover`"
+            "and so must a focused one"
         )
 
 
@@ -398,4 +405,136 @@ async def test_a_bordered_compact_select_keeps_its_frame_under_focus_and_hover()
         assert _frame() == (rest_top, rest_bottom), (
             "and on hover -- a frame that appears and disappears under the "
             "pointer is a self-sustaining flicker, not a cue"
+        )
+
+
+def _relative_luminance(color) -> float:
+    """WCAG relative luminance of a Rich `Color`."""
+    triplet = color.get_truecolor()
+
+    def _channel(value: int) -> float:
+        srgb = value / 255
+        return srgb / 12.92 if srgb <= 0.04045 else ((srgb + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * _channel(triplet.red)
+        + 0.7152 * _channel(triplet.green)
+        + 0.0722 * _channel(triplet.blue)
+    )
+
+
+def _contrast(first, second) -> float:
+    """WCAG contrast ratio between two rendered background colours."""
+    lighter, darker = sorted(
+        (_relative_luminance(first), _relative_luminance(second)), reverse=True
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _rendered_background(screen, region, row_offset: int = 0):
+    """The background colour the compositor actually painted, one cell in.
+
+    One cell in, not at the edge: on a bordered control the edge cell is the
+    frame. Reading the compositor's own segments rather than
+    `widget.styles.background` is the same discipline as the rest of this file
+    -- a style that is set but painted over by an opaque child is not a cue.
+    """
+    strips = list(screen.app.screen._compositor.render_strips())
+    strip = strips[region.y + row_offset]
+    x = 0
+    for segment in strip._segments:
+        for _character in segment.text:
+            if x == region.x + 1:
+                return segment.style.bgcolor
+            x += 1
+    raise AssertionError("no segment covers that cell")
+
+
+#: The floor a focus cue has to clear to BE a cue. `core/_variables.tcss`
+#: (TASK-345) records ~1.1:1 as the measured value of the nullified-focus
+#: failure -- "an invisible-focus Tab+Enter activated 'Save as…'" -- and sets
+#: `$ds-focus-bg` to a steel blue that measures ~3:1 against the dark control
+#: surfaces. 2.0 sits between the two: comfortably above the failure, below
+#: the token's own value, so this fails on a regression rather than on a
+#: theme tweak.
+MIN_FOCUS_CONTRAST = 2.0
+
+
+@pytest.mark.parametrize(
+    "select_id", ["#items-status-select", "#watchlists-backend-select"]
+)
+async def test_a_borderless_compact_select_has_a_visible_focus_cue(select_id):
+    """Round 2, O1. Removing the outline must not leave focus invisible.
+
+    The outline that TASK-2300 took off these controls was destroying their
+    only row, so it had to go -- but the replacement was assumed rather than
+    measured. `Select:focus`'s recolour paints the SELECT, and `SelectCurrent`
+    covers the whole of it with an opaque `background: $surface`, so nothing
+    of it reached the screen: all that survived was Textual's 5%
+    `background-tint`.
+
+        rest #1e1e1e   focused #272727   ~1.10:1
+
+    which is the exact number `core/_variables.tcss` records as the failure
+    that nullified the focus contract once already -- and, with the hover cue
+    repaired in the same wave, hover had become STRONGER than focus.
+
+    Asserted on the colour the compositor painted, not on
+    `styles.background`, because "set but painted over by a child" is the
+    whole defect.
+    """
+    host = _watchlists_host()
+    async with host.run_test(size=UAT_SIZE) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "items"
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, select_id, timeout=5.0)
+        select = screen.query_one(select_id, Select)
+
+        rest = _rendered_background(screen, select.region)
+        select.focus()
+        await pilot.pause()
+        await pilot.pause()
+        focused = _rendered_background(screen, select.region)
+
+        ratio = _contrast(rest, focused)
+        assert ratio >= MIN_FOCUS_CONTRAST, (
+            f"focus must be visible on {select_id}: {rest} -> {focused} is "
+            f"{ratio:.2f}:1, below the {MIN_FOCUS_CONTRAST}:1 floor"
+        )
+        # And it must still be readable while focused.
+        assert _painted_rows(screen, select.region)[0].strip(), (
+            "the focused control must still paint its value"
+        )
+
+
+async def test_focus_is_at_least_as_loud_as_hover():
+    """Round 2, O1's other half: the two cues must not be inverted.
+
+    Hover says "you could interact with this"; focus says "you ARE interacting
+    with this, and Enter will act here". A hover cue louder than the focus cue
+    is worse than a missing one -- it points at the wrong control.
+    """
+    host = _watchlists_host()
+    async with host.run_test(size=UAT_SIZE) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "items"
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#items-status-select", timeout=5.0)
+        select = screen.query_one("#items-status-select", Select)
+
+        rest = _rendered_background(screen, select.region)
+
+        await _hover(pilot, screen, select)
+        hovered = _rendered_background(screen, select.region)
+
+        await pilot.hover("#items-search-input")
+        await pilot.pause()
+        select.focus()
+        await pilot.pause()
+        await pilot.pause()
+        focused = _rendered_background(screen, select.region)
+
+        assert _contrast(rest, focused) >= _contrast(rest, hovered), (
+            f"focus ({focused}) must not be quieter than hover ({hovered})"
         )

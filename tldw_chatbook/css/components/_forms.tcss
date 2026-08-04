@@ -168,6 +168,25 @@ TextArea:focus {
  * that draws its own frame outside. Review wave, Critical 1: this family of
  * rules keeps losing to the fact that "a Select" is three different shapes,
  * so the app now styles only what every shape has -- its colours.
+ *
+ * ROUND 2, O1 -- and how far even that reaches is worth stating, because the
+ * previous wording claimed more than it delivered ("the recolouring half is
+ * what marks focus now"). It is NOT, on its own. `SelectCurrent` is a child
+ * with an opaque `background: $surface` covering the whole parent, so on a
+ * borderless compact `Select` this declaration is painted over completely and
+ * only Textual's 5% `background-tint` survives (~1.10:1, measured). What
+ * actually marks focus is per shape:
+ *
+ *   three-row `Select`    Textual's own `&:focus > SelectCurrent { border:
+ *                         tall $border; }` -- a real, visible border swap
+ *   `.settings-compact-*` its own `:focus` rules, border AND background
+ *   borderless compact    `Select.-textual-compact:focus > SelectCurrent`
+ *                         in components/_lists.tcss, added by O1
+ *
+ * This rule is kept because it is the one that reaches a `Select` whose child
+ * does NOT cover it (padding, a themed variant), and because removing a
+ * pre-existing app-wide declaration on the strength of one shape's geometry
+ * is how this family of bugs started.
  */
 Select:focus {
     background: $ds-input-focus-bg;

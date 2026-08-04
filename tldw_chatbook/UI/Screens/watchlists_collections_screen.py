@@ -384,7 +384,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ("7", "switch_section('artifacts')", "Artifacts"),
         ("question", "show_help", "Help"),
         ("n", "new_source", "New source"),
-        ("d", "delete_selected", "Delete"),
+        # Round 2, O3: the label names BOTH verbs because the key performs
+        # both. On a source/run/rule it deletes, after a confirmation dialog;
+        # on an ITEM it ignores, unconfirmed, exactly as the Inspector's own
+        # Ignore button does (review wave, Minor 2 -- it used to say "Delete"
+        # in a dialog and then write `ignored`, which was the lie). A Textual
+        # binding description is static, so it states the pair rather than
+        # promising whichever verb the current selection is not.
+        ("d", "delete_selected", "Delete / Ignore"),
         ("c", "check_now_selected", "Check now"),
         ("p", "preview_selected", "Preview"),
         ("j", "next_item", "Next item"),
@@ -7400,6 +7407,60 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         status = str(self._items_status_filter or "all")
         return None if status == "all" else status
 
+    def _with_open_item(
+        self, page: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """`page`, guaranteed to contain the item the reader currently has open.
+
+        Round 2, O2. Pushing the status filter into the query (I2) reopened
+        the CRITICAL that `ItemsPane._filtered_items`'s pin exists to prevent,
+        and its docstring names the scenario exactly: opening an item marks it
+        read, so under a "New" filter it drops out of its own list the instant
+        it is opened, and everything keyed off "where is the open item in the
+        displayed list" fails at once -- `j` walks backwards from a not-found
+        index and `k` is dead for the rest of the session.
+
+        The pin can only retain what the query RETURNED. Pre-I2 the query
+        returned every status, so it always had the open item to keep;
+        afterwards a reload under `status="new"` came back without it and the
+        item the user was reading vanished. Measured: filter New, open the
+        only unread item, any `_load_items()` -> `items == []`.
+
+        Two fixes were on the table. Dropping the status predicate while an
+        item is open was rejected: it un-fixes I2 for the whole time the
+        reader is in use -- which is precisely when a user is triaging, and so
+        precisely when "unread items past the newest 100 are unreachable"
+        bites hardest. Carrying the open item alongside the page keeps both
+        guarantees at once, and costs no query: the dict is the same object
+        the reader, the pane and `_mark_item_read_on_open`'s in-place patch
+        all already share, so its status is current by construction.
+
+        Inserted in `created_at DESC` order rather than at either end, so the
+        page keeps the ordering every other consumer assumes -- `j`/`k` walk
+        this sequence, and an item teleporting to the top of the list when its
+        status changed would be its own small lie.
+
+        Args:
+            page: The rows the backend returned for the current filter.
+
+        Returns:
+            `page` unchanged when no item is open, when the filter is "All
+            statuses" (the page already covers every status), or when the open
+            item is in it already; otherwise `page` plus that one item.
+        """
+        open_item = self._selected_content_item
+        if open_item is None or self._items_status_query() is None:
+            return page
+        open_id = str(open_item.get("id") or "")
+        if not open_id or any(str(row.get("id")) == open_id for row in page):
+            return page
+        carried = dict(open_item)
+        created = str(carried.get("created_at") or "")
+        for index, row in enumerate(page):
+            if str(row.get("created_at") or "") < created:
+                return [*page[:index], carried, *page[index:]]
+        return [*page, carried]
+
     async def _load_items(self) -> None:
         notify = getattr(self.app_instance, "notify", None)
         try:
@@ -7412,7 +7473,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # Mirror to screen state (Finding 2, fix round 2) — see the note
             # on `_loaded_sources` in `_load_sources` above; same rebuild,
             # same gap, same fix.
-            self._loaded_items = [dict(item) for item in items]
+            self._loaded_items = self._with_open_item(
+                [dict(item) for item in items]
+            )
             if self._dom_is_live:
                 try:
                     items_pane = self.query_one("#watchlists-items-pane", ItemsPane)
@@ -8641,7 +8704,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """Show a notification with available keyboard shortcuts."""
         self.app_instance.notify(
             "1=Overview 2=Sources 3=Items 4=Runs 5=Rules 6=Notifications "
-            "7=Artifacts | n=new d=delete c=check p=preview ?=help",
+            "7=Artifacts | n=new d=delete/ignore c=check p=preview ?=help",
             severity="information",
             timeout=8,
         )
@@ -8660,11 +8723,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 pass
 
     def action_delete_selected(self) -> None:
-        """Delete the currently selected entity after confirmation."""
+        """Delete the selected entity, or IGNORE it when it is an item.
+
+        Round 2, O3: this docstring used to say "after confirmation" flatly,
+        which stopped being true for one of the four kinds. The split lives in
+        `handle_delete_requested`, which is the single place that knows what
+        each kind's destructive verb actually is:
+
+        * source / run / rule -- deleted, behind `ConfirmDeleteDialog`.
+        * item -- ignored, unconfirmed, through the same dispatch the
+          Inspector's `Ignore` button uses. Unconfirmed on purpose: it is the
+          same write as that button, which has never had a dialog, and adding
+          one only here would make the keyboard path stricter than the mouse
+          path for an identical action.
+
+        The method keeps its name because the binding, the help line and this
+        action are one triple and the rename would touch every caller for no
+        behavioural gain; the copy is what had to become honest.
+        """
         entity = self.selected_entity
         if entity is None:
             self.app_instance.notify(
-                "Nothing selected to delete.",
+                "Nothing selected.",
                 severity="warning",
             )
             return
