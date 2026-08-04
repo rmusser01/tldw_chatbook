@@ -482,6 +482,19 @@ All chat features listed here work with the core installation:
 - **Notification system**: Alert on new content
 - **Flexible scheduling**: Configure update frequencies
 
+### Voice Conversation in the Console (Hands-Free)
+Talk to the Console instead of typing. Three layers, each usable on its own:
+- **Dictation**: press the mic button in the Console composer and speak; the transcript lands in your draft.
+- **Spoken commands**: "Console, send.", "Console, stop.", "Console, discard.", and more — drive the capture by voice.
+- **Hands-free loop** (`Ctrl+Shift+H` or "Console, hands free."): speak, pause, it sends; the reply is spoken back sentence by sentence; the microphone reopens for your next turn. Any key interrupts the reply; `Esc`, the mic button, or `Ctrl+Shift+H` exit.
+
+Quickstart:
+1. **Microphone + STT**: `pip install -e ".[speech_recording,transcription_parakeet]"` (macOS; use `transcription_faster_whisper` elsewhere). The first-run wizard's Speech step can also set this up.
+2. **A voice for replies** (needed for spoken feedback and the hands-free loop): configure any TTS provider under `[app_tts]` — an OpenAI API key is the fastest start; a local [audio.cpp](https://github.com/0xShug0/audio.cpp) server is the recommended local option.
+3. Open the Console, press the mic (or `Ctrl+Shift+H`), and talk.
+
+Full walkthrough — including every spoken command, hands-free timing, barge-in modes, and local TTS server setup — in the [Speech Services User Guide](Docs/Features/Speech-Services-Guide.md).
+
 ### Text-to-Speech System
 Comprehensive TTS support with multiple backends:
 - **OpenAI TTS**: High-quality cloud-based synthesis
