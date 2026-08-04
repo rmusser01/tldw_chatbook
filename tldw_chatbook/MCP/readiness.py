@@ -213,6 +213,13 @@ def is_off_opt_in(snapshot: ReadinessSnapshot) -> bool:
     recovery callouts) exclude off/opt-in snapshots so a pristine install
     does not open with a false alarm; the Servers mode presents a separate
     Enable affordance for it instead.
+
+    Args:
+        snapshot: The readiness snapshot to classify.
+
+    Returns:
+        True when the snapshot belongs to the built-in server and that
+        server is disabled (opt-in OFF), False otherwise.
     """
     if snapshot.source != "builtin":
         return False

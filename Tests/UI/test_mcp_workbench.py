@@ -311,6 +311,43 @@ async def test_cleared_selection_is_not_re_hijacked_by_later_resync(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_restored_all_servers_selection_wins_over_problem_preselect(monkeypatch):
+    """F-054 restore path: a saved view state carrying an EXPLICIT
+    `selected_server_key=None` ("All servers") must clear the lone-problem
+    preselect the load heuristic just made. The heuristic runs before
+    `_consume_pending_view_state()`, but the user's saved "no selection"
+    from the previous session wins over the default."""
+
+    class RestoreClearApp(ProblemRecordsApp):
+        def compose(self) -> ComposeResult:
+            workbench = MCPWorkbench(app_instance=self, id="mcp-workbench")
+            # Saved state from a session where the user explicitly cleared
+            # the selection ("All servers").
+            workbench.set_initial_view_state(
+                {
+                    "mode": "servers",
+                    "source": "local",
+                    "selected_server_key": None,
+                    "scope": "personal",
+                    "scope_ref": None,
+                }
+            )
+            yield workbench
+
+    monkeypatch.setattr(
+        mcp_workbench_module, "get_cli_setting",
+        lambda section, key=None, default=None: default,
+    )
+    app = RestoreClearApp([_missing_env_record("docs")])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._selected_server_key is None
+
+
+@pytest.mark.asyncio
 async def test_server_source_add_button_gated_when_mutations_unavailable():
     """T9: `service.available_actions()` not offering `external_server.create`
     (e.g. scope below team/org/system-admin) must disable the overview

@@ -2274,9 +2274,17 @@ class MCPWorkbench(Container):
         # chip highlight -- set_mode() itself posts ModeChanged on any
         # actual change (single emission point), so no extra post here.
         self.set_mode(str(state.get("mode") or "servers"))
-        server_key = state.get("selected_server_key")
-        if isinstance(server_key, str) and self._snapshot_for(server_key) is not None:
-            self._selected_server_key = server_key
+        # Distinguish "key absent" (leave the current selection alone --
+        # e.g. the F-054 lone-problem preselect) from "key present with
+        # value None" (an explicit "All servers" clear from the previous
+        # session, which must win over the preselect). Mirrors the
+        # `scope_ref` handling below.
+        if "selected_server_key" in state:
+            server_key = state["selected_server_key"]
+            if server_key is None:
+                self._selected_server_key = None
+            elif isinstance(server_key, str) and self._snapshot_for(server_key) is not None:
+                self._selected_server_key = server_key
         scope = state.get("scope") or state.get("selected_scope")
         if isinstance(scope, str) and scope:
             self._scope = scope
