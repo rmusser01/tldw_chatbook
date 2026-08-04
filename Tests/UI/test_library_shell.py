@@ -916,10 +916,11 @@ async def test_rail_shows_a_visible_scrollbar_when_content_overflows():
 
 
 @pytest.mark.asyncio
-async def test_landing_footer_advertises_the_focus_search_key():
-    """F-012: the landing state is not a keyboard dead zone -- the footer
-    advertises the one Library key that works there (`/` focuses the rail
-    search box) instead of the bare global default."""
+async def test_landing_footer_advertises_the_landing_keyboard_story():
+    """task-2237 (R2): the landing footer advertises every key that works
+    there -- `/` focus search, the hub accelerators `i` (add content) and
+    `n` (new note), and F6 pane cycling -- instead of the bare one-key
+    hint F-012 shipped."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)
@@ -929,7 +930,9 @@ async def test_landing_footer_advertises_the_focus_search_key():
         await _wait_for_library_shell(screen, pilot)
 
         footer = screen.query_one(AppFooterStatus)
-        assert footer.shortcut_text == "/ focus search"
+        assert footer.shortcut_text == (
+            "/ focus search | i add content | n new note | F6 next pane"
+        )
 
 
 @pytest.mark.asyncio
@@ -1022,6 +1025,82 @@ async def test_search_deep_link_registers_the_use_in_console_footer_hint():
         footer = screen.query_one(AppFooterStatus)
         assert "u use Library context in Console" in footer.shortcut_text
         assert "/ focus search" in footer.shortcut_text
+
+
+@pytest.mark.asyncio
+async def test_hub_accelerators_open_their_canvases_from_the_landing():
+    """task-2237 (R2): `i` opens the ingest canvas and `n` the new-note
+    canvas from the landing -- the same dispatch the hub action rows use."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await pilot.press("i")
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+
+        # Back to the landing for `n`.
+        screen._library_selected_row_id = ""
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await pilot.pause()
+
+        await pilot.press("n")
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
+
+
+@pytest.mark.asyncio
+async def test_hub_accelerators_never_fire_in_text_fields_or_off_landing():
+    """task-2237 (R2): the accelerators type literally in an Input and do
+    nothing off the landing canvas -- the F-012 `/` guard pattern."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        # In the rail search box, `i`/`n` are just text.
+        search = screen.query_one("#library-search-input", Input)
+        search.focus()
+        await pilot.pause()
+        await pilot.press("i")
+        await pilot.pause()
+        assert search.value == "i"
+        assert screen._library_selected_row_id == ""
+
+        # Off the landing (a canvas row selected), the keys are inert.
+        search.value = ""
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-filter")
+        await pilot.press("n")
+        await pilot.pause()
+        assert screen._library_selected_row_id == "browse-conversations"
+
+
+@pytest.mark.asyncio
+async def test_f6_focuses_the_rail_search_box_from_the_landing():
+    """task-2237 (R2): F6 (the app's pane-cycle key) reaches the Library
+    rail -- previously the screen had no pane target and F6 dead-ended in
+    a 'no target' notification. The harness lacks the app-level binding,
+    so the test drives the screen action it delegates to."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.action_focus_next_workbench_pane()
+        await pilot.pause()
+        assert screen.query_one("#library-search-input", Input).has_focus
 
 
 @pytest.mark.asyncio

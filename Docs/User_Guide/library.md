@@ -66,7 +66,9 @@ pages:
   the guidance line "Search everything, pick a section on the left, or
   add something new."
 - **Footer** — shows the keys that work where you are: "/ focus search"
-  on every canvas, and on the Search / RAG canvas also "u use Library
+  and "F6 next pane" on every canvas; the landing adds "i add content"
+  and "n new note" (single-letter accelerators for the hub actions);
+  and the Search / RAG canvas adds "u use Library
   context in Console", "enter select evidence", and "o open evidence".
 
 One special case: selecting **Notes** adds a **Database | Files** strip

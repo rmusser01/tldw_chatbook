@@ -233,8 +233,13 @@ from ...Workspaces import (
 )
 from ...Workspaces.registry_service import next_local_workspace_identity
 from ...Widgets.destination_rail import (
+
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailSectionHeader,
+)
+from ...Widgets.workbench_focus import (
+    WorkbenchPaneTarget,
+    focus_relative_workbench_pane,
 )
 from ...Widgets.Library import (
     LibraryCollectionsPanel,
@@ -972,12 +977,37 @@ class LibraryScreen(BaseAppScreen):
         ("/", "focus search"),
     )
 
-    #: F-012: the landing state (and every non-Search canvas) still has one
-    #: working Library key -- `/` focuses the rail search box. Advertising
-    #: only what works beats the old bare-default footer, which read as
-    #: "no keyboard support here".
+    #: task-2237 (R2): the landing state advertises its full keyboard
+    #: story -- `/` focuses the rail search box, `i`/`n` are the hub
+    #: next-action accelerators (landing-scoped, like the actions they
+    #: mirror), and F6 cycles the workbench panes.
     LIBRARY_LANDING_SHORTCUTS = (
         ("/", "focus search"),
+        ("i", "add content"),
+        ("n", "new note"),
+        ("F6", "next pane"),
+    )
+
+    #: The non-landing, non-Search canvases: `/` and F6 work there; the
+    #: hub accelerators are landing-scoped, so they are not advertised.
+    LIBRARY_GENERAL_SHORTCUTS = (
+        ("/", "focus search"),
+        ("F6", "next pane"),
+    )
+
+    #: task-2237 (R2): F6 pane-cycle targets (the app's
+    #: ``focus_relative_workbench_pane`` idiom, per personas). The rail's
+    #: preferred focus is its search box; the canvas's is the hub's first
+    #: action, which exists only on the landing.
+    _WORKBENCH_FOCUS_TARGETS = (
+        WorkbenchPaneTarget(
+            "library-rail",
+            ("library-search-input",),
+        ),
+        WorkbenchPaneTarget(
+            "library-canvas",
+            ("library-hub-action-import",),
+        ),
     )
 
     # Baseline workbench geometry so the screen renders correctly even without
@@ -1577,18 +1607,20 @@ class LibraryScreen(BaseAppScreen):
         # everywhere else -- they register only where they work,
         # re-registered on every rail-row switch AND on navigation-context
         # deep links (F-012: `_apply_navigation_context_state` can land on
-        # the Search canvas without a rail-row press). F-012: everywhere
-        # else gets the one key that works there instead of the bare
-        # default -- `/` focuses the rail search box on every canvas.
-        shortcuts = (
-            self.LIBRARY_SHORTCUTS
-            if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
-            else self.LIBRARY_LANDING_SHORTCUTS
-        )
+        # the Search canvas without a rail-row press). task-2237 (R2):
+        # three honest contexts -- the landing advertises its full
+        # keyboard story (`/`, hub accelerators, F6), other canvases get
+        # the keys that work there, never a dead key.
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
+            shortcuts = self.LIBRARY_SHORTCUTS
+        elif not self._library_selected_row_id:
+            shortcuts = self.LIBRARY_LANDING_SHORTCUTS
+        else:
+            shortcuts = self.LIBRARY_GENERAL_SHORTCUTS
         self.register_footer_shortcuts(source="library", shortcuts=shortcuts)
 
     def on_key(self, event: Key) -> None:
-        """``/``: focus the rail search box from anywhere but a text field.
+        """Keyboard affordances: ``/`` anywhere, plus landing accelerators.
 
         F-012's focus-search key, implemented as a screen-level key handler
         (the settings screen's task-1715 pattern) rather than a ``Binding``:
@@ -1598,21 +1630,58 @@ class LibraryScreen(BaseAppScreen):
         braces for any field that lets an event through. Once the rail box
         itself has focus, its own ``_on_key`` re-arms the query instead
         (see ``LibraryRailSearchInput``).
+
+        task-2237 (R2): on the LANDING only, `i` and `n` are the hub
+        next-action accelerators (add content / new note), dispatched
+        through the same guarded row-switch the hub rows use. They are
+        advertised on the landing footer and nowhere else, so they never
+        fire off the landing.
         """
+        if isinstance(self.focused, (Input, TextArea)):
+            return
         is_slash = (
             event.key in {"/", "slash"}
             or getattr(event, "character", None) == "/"
         )
-        if not is_slash:
+        if is_slash:
+            try:
+                self.query_one("#library-search-input", Input).focus()
+            except (NoMatches, QueryError):
+                return
+            event.stop()
+            event.prevent_default()
             return
-        if isinstance(self.focused, (Input, TextArea)):
+        # Landing-scoped hub accelerators (task-2237).
+        if self._library_selected_row_id:
             return
-        try:
-            self.query_one("#library-search-input", Input).focus()
-        except (NoMatches, QueryError):
+        accelerator_row = {
+            "i": LIBRARY_ROW_INGEST_MEDIA,
+            "n": LIBRARY_ROW_CREATE_NOTE,
+        }.get(event.key)
+        if accelerator_row is None:
             return
+        self.run_worker(
+            self._select_library_rail_row(accelerator_row),
+            exclusive=True,
+            group="library_rail_row_switch",
+        )
         event.stop()
         event.prevent_default()
+
+    def action_focus_next_workbench_pane(self) -> None:
+        """F6: move focus to the next Library workbench pane (task-2237).
+
+        Previously the screen defined no pane targets, so the app's global
+        F6 dead-ended in a "no focus target" notification here. The rail's
+        search box is the rail target; on the landing the hub's first
+        action is the canvas target (other canvases mount their own focus
+        order and are skipped when the target is absent).
+        """
+        focus_relative_workbench_pane(
+            self,
+            self._WORKBENCH_FOCUS_TARGETS,
+            direction=1,
+        )
 
     def on_mount(self) -> None:
         """Populate the Library on entry, rendering instantly from cache.
