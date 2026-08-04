@@ -6,6 +6,7 @@ from .console_composer_bar import (
     ConsoleComposerUndoHistory,
     ConsoleDraftStash,
 )
+from .console_command_popup import ConsoleCommandPopup
 from .console_background_effect import ConsoleBackgroundEffect, ConsoleTranscriptSurface
 from .console_citation_sources_modal import (
     ConsoleCitationSourceRow,
@@ -38,6 +39,7 @@ __all__ = [
     "ConsoleComposerBar",
     "ConsoleComposerUndoHistory",
     "ConsoleDraftStash",
+    "ConsoleCommandPopup",
     "ConsoleBackgroundEffect",
     "ConsoleCitationSourceRow",
     "ConsoleCitationSourcesModal",
