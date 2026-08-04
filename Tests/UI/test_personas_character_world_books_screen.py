@@ -381,13 +381,23 @@ class TestCharacterAttachmentsWrapperGating:
         worldbooks_db,
         seeded_character_with_worldbook,
         stub_characters_for_worldbooks,
+        monkeypatch,
     ):
+        # F-031: a non-empty library auto-selects its first row on first
+        # paint (which shows the card and this wrapper), so the no-selection
+        # state this test pins needs an empty library.
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", lambda: []
+        )
         mock_app_instance.chachanotes_db = worldbooks_db
         mock_app_instance.chat_dictionary_scope_service = None
 
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert not screen.state.selected_entity_id
             wrapper = screen.query_one("#personas-character-attachments")
             assert wrapper.display is False, (
                 "the world-books/dictionaries wrapper must not be visible "
