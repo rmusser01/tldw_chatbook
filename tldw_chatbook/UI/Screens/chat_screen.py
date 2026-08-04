@@ -784,7 +784,7 @@ def _voice_command_chip_ack(name: str) -> str:
 
 
 @dataclass
-class _ConsoleHandsFreeSession:
+class ConsoleHandsFreeSession:
     """Everything the hands-free conversation loop needs while it runs.
 
     Constructed once per loop entry (`ChatScreen._enter_console_hands_free_
@@ -3254,9 +3254,9 @@ class ChatScreen(BaseAppScreen):
         #: "Capture ended." rather than doubling up with it.
         self._console_dictation_late_discard_ack = False
         #: The hands-free conversation loop's live session, or None when the
-        #: loop is not running. See `_ConsoleHandsFreeSession` and
+        #: loop is not running. See `ConsoleHandsFreeSession` and
         #: `_enter_console_hands_free_loop`/`_teardown_console_hands_free_loop`.
-        self._console_hands_free: _ConsoleHandsFreeSession | None = None
+        self._console_hands_free: ConsoleHandsFreeSession | None = None
         #: True once `_install_console_hands_free_store_tap` has wrapped the
         #: store's `append_stream_chunk`/`mark_message_*` methods. The store
         #: itself is a lazily-created singleton for this screen instance
@@ -5957,7 +5957,7 @@ class ChatScreen(BaseAppScreen):
     _CONSOLE_HANDS_FREE_CAPTURE_ENDED_WAIT_SECONDS: float = 40.0
 
     async def _deliver_console_hands_free_capture_ended(
-        self, scheduled_for: "_ConsoleHandsFreeSession", had_segments: bool
+        self, scheduled_for: "ConsoleHandsFreeSession", had_segments: bool
     ) -> None:
         """Wait for a limit-triggered stop to actually release the
         microphone, THEN deliver `on_capture_ended` (task-5 review B2).
@@ -7144,7 +7144,7 @@ class ChatScreen(BaseAppScreen):
             speak=self._dispatch_console_hands_free_speak,
             stop_speech=self._stop_console_hands_free_speech,
         )
-        session = _ConsoleHandsFreeSession(controller=controller, sequencer=sequencer)
+        session = ConsoleHandsFreeSession(controller=controller, sequencer=sequencer)
         sequencer.on_drained = self._on_console_hands_free_sequencer_drained
         self._console_hands_free = session
         self._install_console_hands_free_store_tap()
@@ -7600,7 +7600,7 @@ class ChatScreen(BaseAppScreen):
             )
 
     def _console_hands_free_try_claim_reply(
-        self, session: "_ConsoleHandsFreeSession", message_id: str
+        self, session: "ConsoleHandsFreeSession", message_id: str
     ) -> bool:
         """Claim `message_id` as the outstanding reply's id, if eligible.
 

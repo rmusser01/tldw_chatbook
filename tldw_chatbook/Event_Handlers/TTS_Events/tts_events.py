@@ -601,6 +601,13 @@ class TTSEventHandler:
         bookkeeping is new.
 
         Args:
+            text: The utterance text to speak (one sentence-sized chunk, in
+                the hands-free caller's usage).
+            on_finished: Completion callback. Fires EXACTLY ONCE per call,
+                on every path (see above) -- a completed drain, an
+                interrupted/stopped sink (barge-in), a synthesis failure, or
+                a legacy-player failure -- with `True` for a successful
+                drain and `False` for anything else.
             quiet: When True, suppresses the user-facing `TTSCompleteEvent
                 (error=...)` toast for a text-validation rejection or a
                 synthesis failure (task-4 review F5) -- the underlying

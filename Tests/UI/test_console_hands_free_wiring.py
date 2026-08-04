@@ -743,7 +743,7 @@ def test_silence_speech_posts_stop_unconditionally_even_with_nothing_in_flight()
             self.flush_calls += 1  # nothing in flight -> stop_speech() never called
 
     fake_sequencer = _FakeSequencer()
-    console._console_hands_free = chat_screen_module._ConsoleHandsFreeSession(
+    console._console_hands_free = chat_screen_module.ConsoleHandsFreeSession(
         controller=object(), sequencer=fake_sequencer
     )
 
@@ -1745,11 +1745,11 @@ async def test_deferred_capture_ended_is_dropped_for_a_replaced_loop():
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
 
-        session_a = chat_screen_module._ConsoleHandsFreeSession(
+        session_a = chat_screen_module.ConsoleHandsFreeSession(
             controller=HandsFreeController(emit=lambda intent: None),
             sequencer=object(),
         )
-        session_b = chat_screen_module._ConsoleHandsFreeSession(
+        session_b = chat_screen_module.ConsoleHandsFreeSession(
             controller=HandsFreeController(emit=lambda intent: None),
             sequencer=object(),
         )

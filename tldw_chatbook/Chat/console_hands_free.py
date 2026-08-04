@@ -410,7 +410,15 @@ class HandsFreeController:
         bookkeeping (never trusting a possibly-stale `capture_live`
         argument -- see the module docstring's "Re-entry" section and
         task-3-review.md F7), and silences any reply audio still in
-        flight first."""
+        flight first.
+
+        Args:
+            capture_live: Whether the microphone is already open at the
+                moment of a genuine entry from `idle`. Ignored on a
+                re-entry (state != `idle`) -- see the docstring above for
+                why a stale caller-supplied snapshot cannot be trusted
+                there.
+        """
         was_speaking = self._state == "speaking"
         from_idle = self._state == "idle"
         self._cancel_countdown()
@@ -435,7 +443,14 @@ class HandsFreeController:
     def tick(self, now: float) -> None:
         """Injected-clock heartbeat. A no-op outside `countdown` and
         `awaiting_reply`. See the module docstring's "Countdown timing" and
-        "`awaiting_reply` watchdog" sections for what each does."""
+        "`awaiting_reply` watchdog" sections for what each does.
+
+        Args:
+            now: The caller's own monotonic clock reading. Expected to be
+                non-decreasing across calls; see the module docstring's
+                "Countdown timing" section for the (defensive-only)
+                handling of a backwards step.
+        """
         if self._state == "countdown":
             self._tick_countdown(now)
             return
@@ -559,7 +574,13 @@ class HandsFreeController:
     def on_voice_command(self, name: str) -> None:
         """V2 spoken commands keep working mid-loop; only "stop" is this
         controller's business (exit from any state). Every other command
-        name is out of scope here -- the screen dispatches it normally."""
+        name is out of scope here -- the screen dispatches it normally.
+
+        Args:
+            name: The recognized command name (e.g. `"stop"`,
+                `"new-paragraph"`) -- one of `console_voice_input.py`'s
+                `COMMAND_PHRASES` values.
+        """
         if name == "stop":
             self._exit()
 
@@ -587,7 +608,16 @@ class HandsFreeController:
         watchdog of its own, so this ceiling is the only bound on it: an
         ending WITH segments resets the ceiling (it is not a "silent room"
         ending, even without a send for it), a SECOND consecutive
-        empty-limit ending exits the loop exactly as it would elsewhere."""
+        empty-limit ending exits the loop exactly as it would elsewhere.
+
+        Args:
+            had_segments: Whether the capture had already-finalized
+                segments pending when the limit hit.
+            limit_hit: Whether this ending was the recorder's own
+                service-side limit, as opposed to a normal ending (which
+                does not call this method at all). False is a documented
+                no-op, not a distinct code path.
+        """
         if not limit_hit:
             return
         self._capture_open = False  # the capture already ended, any state

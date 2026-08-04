@@ -357,7 +357,11 @@ class SentenceSequencer:
         self._suppressed = False
 
     def feed(self, delta: str) -> None:
-        """Consume a streamed reply text delta."""
+        """Consume a streamed reply text delta.
+
+        Args:
+            delta: The next incremental chunk of streamed reply text.
+        """
         if self._drained_fired:
             # A reused instance whose caller forgot `begin_reply()`: the
             # symptom is otherwise SILENT (speech still works, but
