@@ -30,6 +30,20 @@ def _safe_size(path: Path) -> int:
         return 0
 
 
+def _statted_size(path: Path) -> int | None:
+    """Size in bytes from a SUCCESSFUL stat, else ``None``.
+
+    (task-2160 Qodo round) The empty-file classifier must not treat an
+    unstatable file as "0 B" -- ``_safe_size``'s error fallback of ``0``
+    would mislabel it; an unreadable file stays in its type group so the
+    pipeline surfaces the real error at ingest time.
+    """
+    try:
+        return path.stat().st_size
+    except OSError:
+        return None
+
+
 def collect_directory_files(directory: Path, scan_limit: int) -> tuple[list[Path], bool]:
     """Expand a directory into the files an ingest submission should cover.
 
@@ -223,8 +237,8 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
             errors.append(f"Path not found: {path_or_url}")
             path_invalid = True
         elif p.is_file():
-            size = _safe_size(p)
-            total_size = size
+            size = _statted_size(p)
+            total_size = size or 0
             total_files = 1
             if size == 0:
                 empty_files.append(str(p))
@@ -236,8 +250,8 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
             files, truncated = _collect_files(p, scan_limit)
             total_files = len(files)
             for file_path in files:
-                size = _safe_size(file_path)
-                total_size += size
+                size = _statted_size(file_path)
+                total_size += size or 0
                 if size == 0:
                     empty_files.append(str(file_path))
                     continue
