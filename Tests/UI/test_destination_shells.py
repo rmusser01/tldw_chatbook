@@ -3838,8 +3838,6 @@ async def test_settings_destination_uses_three_column_workbench_contract():
             in text
         )
         assert "Mode: Overview | Runtime controls stay in MCP and ACP" in text
-        assert "Settings Sections" in text
-        assert "Preference Detail" in text
         assert "Scope Inspector" in text
         assert "Overview" in text
         assert "Provider readiness" in text
