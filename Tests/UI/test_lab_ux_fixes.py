@@ -103,9 +103,10 @@ async def test_llm_sidebar_is_grouped_with_guidance(monkeypatch) -> None:
         assert "Model library" in joined
         assert "Ollama is the easiest" in joined
         buttons = [str(w.label) for w in sidebar.query(".llm-nav-button")]
-        # Ollama leads the server group as the recommended first path.
-        assert buttons[0] == "Ollama"
-        assert buttons[-2:] == ["Local Models", "Download Models"]
+        # Ollama leads the server group as the recommended first path, and
+        # every button carries its jump digit (1-9 jump to view).
+        assert buttons[0] == "1 Ollama"
+        assert buttons[-2:] == ["8 Local Models", "9 Download Models"]
 
 
 def test_llm_view_cycling_wraps() -> None:

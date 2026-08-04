@@ -65,12 +65,12 @@ class SchedulesWorkbench(BaseAppScreen):
     # actions (ADR-031). Single letters are safe: focused inputs consume
     # printable keys before screen bindings fire.
     SCHEDULES_SHORTCUTS = (
-        ("c", "create task"),
+        ("c", "create"),
         ("e", "edit"),
-        ("space", "enable/disable"),
+        ("space", "toggle"),
         ("d", "delete"),
-        ("x", "mark for bulk"),
-        ("s", "sync now"),
+        ("x", "mark"),
+        ("s", "sync"),
     )
 
     def __init__(

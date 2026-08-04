@@ -83,7 +83,7 @@ class ConflictsTab(Vertical):
             classes="conflict-detail-muted",
         )
         yield Static(
-            "No conflicts — local and server are in sync.",
+            "No unresolved conflicts.",
             id="scheduling-conflicts-empty",
         )
         with Horizontal(id="scheduling-conflict-actions"):
@@ -124,7 +124,9 @@ class ConflictsTab(Vertical):
         self._set_actions_enabled(has_rows)
 
     def _set_actions_enabled(self, enabled: bool) -> None:
-        """Enable resolution buttons only when there is something to resolve."""
+        """Show the resolution row only when there is something to resolve."""
+        actions = self.query_one("#scheduling-conflict-actions", Horizontal)
+        actions.display = enabled
         for button_id in ("#scheduling-use-server", "#scheduling-use-local"):
             button = self.query_one(button_id, Button)
             button.disabled = not enabled

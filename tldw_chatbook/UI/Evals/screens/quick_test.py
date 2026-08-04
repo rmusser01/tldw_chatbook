@@ -49,6 +49,7 @@ class QuickTestScreen(Container):
         width: 100%;
         height: 100%;
         padding: 1 2;
+        align-horizontal: center;
     }
     
     .form-section {
@@ -580,6 +581,16 @@ Run ID: {results.get("run_id", "—")}
         """Handle evaluation error."""
         if self.nav_bar:
             self.nav_bar.set_status(EvalStatus.ERROR)
+        # Persist the failure where results live — a transient toast alone
+        # leaves the previous run's output looking current (round-5 finding).
+        try:
+            self.query_one("#summary-text", Static).update(
+                f"Run failed: {error}"
+            )
+            detail = self.query_one("#results-detail", TextArea)
+            detail.text = f"Run failed:\n\n{error}"
+        except Exception:  # noqa: BLE001 - widgets not mounted
+            pass
         self._show_status(f"Evaluation failed: {error}", "error")
 
     def _cleanup_evaluation(self) -> None:

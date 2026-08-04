@@ -73,10 +73,25 @@ def _styled_line(record: LogRecord) -> Text:
     so color is a redundant scanner cue, never the only carrier (UX-075).
     Bright variants keep ERROR/WARNING legible on dark themes."""
     if record.level in ("ERROR", "CRITICAL"):
-        return Text(record.message, style="bold bright_red")
+        return Text(_display_message(record), style="bold bright_red")
     if record.level == "WARNING":
-        return Text(record.message, style="bright_yellow")
-    return Text(record.message)
+        return Text(_display_message(record), style="bright_yellow")
+    return Text(_display_message(record))
+
+
+def _display_message(record: LogRecord) -> str:
+    """Compact display form: short time, tail module segments, level, message.
+
+    The full prefixed line is preserved in the record (copy actions use it);
+    on screen, the message is the part that must survive the right edge.
+    """
+    parts = record.message.split(" - ", 3)
+    if len(parts) != 4:
+        return record.message
+    timestamp, name, level, message = parts
+    time_part = timestamp[11:19] if len(timestamp) >= 19 else timestamp
+    short_name = ".".join(name.split(".")[-2:])
+    return f"{time_part} {short_name} {level} {message}"
 
 
 class LogsWindow(Container):
@@ -118,7 +133,9 @@ class LogsWindow(Container):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self._records: deque[LogRecord] = deque(maxlen=MAX_LOG_RECORDS)
-        self._level_chip = "all"
+        # "Info+" is the front door: the level word and the message stay
+        # visible without the DEBUG firehose (users can still hit "All").
+        self._level_chip = "info"
         self._paused = False
         self._pending_while_paused = 0
         self._rendered_count = 0
@@ -133,7 +150,8 @@ class LogsWindow(Container):
                 yield Button(
                     label,
                     id=f"logs-filter-{chip_id}",
-                    classes="logs-filter-chip" + (" is-active" if chip_id == "all" else ""),
+                    classes="logs-filter-chip"
+                    + (" is-active" if chip_id == "info" else ""),
                 )
             yield Input(placeholder="Filter logs (regex ok)…", id="logs-filter-text")
             yield Button("Pause", id="logs-pause")

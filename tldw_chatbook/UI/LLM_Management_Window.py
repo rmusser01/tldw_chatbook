@@ -307,6 +307,47 @@ class LLMManagementWindow(Container):
         self.call_after_refresh(self._initialize_view)
         # Autofill the Ollama executable when it's discoverable (UX-078).
         self.call_after_refresh(self._autofill_ollama_path)
+        # Keep the Ollama API controls gated on a live service (UX-091).
+        self.call_after_refresh(self._update_ollama_api_state)
+        self.set_interval(3.0, self._update_ollama_api_state)
+
+    def _ollama_api_available(self) -> bool:
+        """True when an Ollama service answers (app-launched or external)."""
+        proc = getattr(self.app_instance, "ollama_server_process", None)
+        if proc is not None and proc.poll() is None:
+            return True
+        from .Screens.llm_screen import _probe_local_server
+
+        return _probe_local_server()
+
+    def _update_ollama_api_state(self) -> None:
+        """Disable API controls when no Ollama service is running.
+
+        The banner already says "requires running service"; without gating,
+        every dependent action fails at click-time (UX-091).
+        """
+        excluded = {
+            "ollama-start-service-button",
+            "ollama-stop-service-button",
+            "ollama-browse-exec-button",
+        }
+        try:
+            view = self.query_one("#llm-view-ollama")
+        except Exception:  # noqa: BLE001 - view not mounted
+            return
+        available = self._ollama_api_available()
+        for button in view.query(Button):
+            if not button.id or button.id in excluded:
+                continue
+            if not hasattr(button, "_pre_gate_tooltip"):
+                button._pre_gate_tooltip = button.tooltip  # type: ignore[attr-defined]
+            if available:
+                if button.disabled:
+                    button.disabled = False
+                    button.tooltip = button._pre_gate_tooltip  # type: ignore[attr-defined]
+            else:
+                button.disabled = True
+                button.tooltip = "Requires a running Ollama service — start it above."
 
     def _autofill_ollama_path(self) -> None:
         """Prefill the Ollama executable path from PATH when empty."""
@@ -404,21 +445,21 @@ class LLMManagementWindow(Container):
                 "New here? Ollama is the easiest way to run a local model.",
                 classes="sidebar-hint",
             )
-            yield Button("Ollama", id="nav-ollama", classes="llm-nav-button")
-            yield Button("Llama.cpp", id="nav-llama-cpp", classes="llm-nav-button")
-            yield Button("Llamafile", id="nav-llamafile", classes="llm-nav-button")
-            yield Button("vLLM", id="nav-vllm", classes="llm-nav-button")
-            yield Button("ONNX", id="nav-onnx", classes="llm-nav-button")
+            yield Button("1 Ollama", id="nav-ollama", classes="llm-nav-button")
+            yield Button("2 Llama.cpp", id="nav-llama-cpp", classes="llm-nav-button")
+            yield Button("3 Llamafile", id="nav-llamafile", classes="llm-nav-button")
+            yield Button("4 vLLM", id="nav-vllm", classes="llm-nav-button")
+            yield Button("5 ONNX", id="nav-onnx", classes="llm-nav-button")
             yield Button(
-                "Transformers", id="nav-transformers", classes="llm-nav-button"
+                "6 Transformers", id="nav-transformers", classes="llm-nav-button"
             )
-            yield Button("MLX-LM", id="nav-mlx-lm", classes="llm-nav-button")
+            yield Button("7 MLX-LM", id="nav-mlx-lm", classes="llm-nav-button")
             yield Static("Model library", classes="sidebar-title")
             yield Button(
-                "Local Models", id="nav-local-models", classes="llm-nav-button"
+                "8 Local Models", id="nav-local-models", classes="llm-nav-button"
             )
             yield Button(
-                "Download Models", id="nav-download-models", classes="llm-nav-button"
+                "9 Download Models", id="nav-download-models", classes="llm-nav-button"
             )
             yield Static("", id="llm-sidebar-hint", classes="sidebar-hint")
 

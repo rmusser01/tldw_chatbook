@@ -68,9 +68,9 @@ EVAL_NAV_CARDS: tuple[NavigationCard, ...] = (
     ),
     NavigationCard(
         id="tasks",
-        title="Evaluations",
+        title="Tasks & Datasets",
         icon="📋",
-        description="Browse evaluation definitions,\ndatasets and recent runs",
+        description="Browse evaluation definitions\nand datasets",
         shortcut="Press [5]",
         color="secondary",
     ),

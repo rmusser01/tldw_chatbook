@@ -4924,6 +4924,7 @@ class STTSWindow(Container):
                 id="view-effects-btn",
                 classes="sidebar-button",
                 disabled=True,
+                tooltip="Planned — not available yet.",
             )
             capability_status = Static(
                 self._speech_capability_status_text(),
@@ -5031,8 +5032,6 @@ class STTSWindow(Container):
             self.app.push_screen(VoiceCloningWindow())
         elif event.button.id == "view-stt-btn":
             self.current_view = "dictation"
-        elif event.button.id == "view-effects-btn":
-            self.app.notify("Audio Effects coming soon!", severity="information")
         else:
             # Try to delegate to the active content widget
             try:

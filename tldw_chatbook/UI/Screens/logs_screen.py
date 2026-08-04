@@ -18,9 +18,27 @@ class LogsScreen(BaseAppScreen):
     Logs screen wrapper.
     """
 
+    # Screen-level mirrors of LogsWindow.BINDINGS: widget bindings only fire
+    # when focus is inside the window, so the advertised keys were dead from
+    # the landed state (nav bar has initial focus). Both layers delegate to
+    # the same actions; whichever is nearest the focus wins.
+    BINDINGS = LogsWindow.BINDINGS
+
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "logs", **kwargs)
         self.logs_window = None
+
+    def action_focus_filter(self) -> None:
+        self.logs_window.action_focus_filter()
+
+    def action_toggle_pause(self) -> None:
+        self.logs_window.action_toggle_pause()
+
+    def action_level(self, chip_id: str) -> None:
+        self.logs_window.action_level(chip_id)
+
+    def action_copy_visible(self) -> None:
+        self.logs_window.action_copy_visible()
 
     def compose_content(self) -> ComposeResult:
         """Compose the logs window content with its destination header."""

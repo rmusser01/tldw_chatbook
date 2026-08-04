@@ -43,9 +43,23 @@ class LLMScreen(BaseAppScreen):
     LLM Management screen wrapper.
     """
 
+    # Screen-level mirrors of LLMManagementWindow.BINDINGS so the advertised
+    # keys work from the landed state (nav bar has initial focus; widget
+    # bindings only fire with in-window focus).
+    BINDINGS = LLMManagementWindow.BINDINGS
+
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "llm", **kwargs)
         self.llm_window = None
+
+    def action_prev_llm_view(self) -> None:
+        self.llm_window.action_prev_llm_view()
+
+    def action_next_llm_view(self) -> None:
+        self.llm_window.action_next_llm_view()
+
+    def action_jump_view(self, index: int) -> None:
+        self.llm_window.action_jump_view(index)
 
     def compose_content(self) -> ComposeResult:
         """Compose the LLM management window content with its destination header."""

@@ -28,6 +28,8 @@ class SyncStatusWidget(Horizontal):
     }
     #scheduling-sync-error {
         width: 1fr;
+        height: 1;
+        overflow: hidden;
         color: $error;
     }
     #scheduling-clear-error {
@@ -108,8 +110,12 @@ class SyncStatusWidget(Horizontal):
         )
         error_widget = self.query_one("#scheduling-sync-error", Static)
         if sync_errors:
-            error_widget.update(str(sync_errors[-1].get("message", "")))
+            message = str(sync_errors[-1].get("message", ""))
+            error_widget.update(message)
+            # One line on screen; the full message stays available on hover.
+            error_widget.tooltip = message
         else:
             error_widget.update("")
+            error_widget.tooltip = None
         clear_button = self.query_one("#scheduling-clear-error", Button)
         clear_button.disabled = not sync_errors

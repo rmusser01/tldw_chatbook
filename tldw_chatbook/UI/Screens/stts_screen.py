@@ -4,6 +4,7 @@ Screen wrapper for STTS functionality in screen-based navigation.
 """
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.reactive import reactive
 from typing import Optional, TYPE_CHECKING
 from loguru import logger
@@ -21,6 +22,26 @@ if TYPE_CHECKING:
 class STTSScreen(BaseAppScreen):
     """Screen wrapper for Speech-to-Text/Text-to-Speech functionality."""
 
+    #: Footer hint context (registered on mount; matches BINDINGS, ADR-031).
+    STTS_SHORTCUTS: tuple[tuple[str, str], ...] = (
+        ("g", "generate"),
+        ("r", "random text"),
+        ("x", "clear"),
+        ("p", "play"),
+        ("s", "stop"),
+    )
+
+    # Screen-level mirrors of TTSPlaygroundWidget.BINDINGS so the keys work
+    # from the landed state (nav bar holds initial focus; widget bindings
+    # only fire with in-window focus).
+    BINDINGS = [
+        Binding("g", "generate_tts", "Generate Speech", show=False),
+        Binding("r", "random_text", "Random Text", show=False),
+        Binding("x", "clear_text", "Clear Text", show=False),
+        Binding("p", "play_audio", "Play Audio", show=False),
+        Binding("s", "stop_audio", "Stop Audio", show=False),
+    ]
+
     # Screen-specific state
     current_model: reactive[str] = reactive("")
     is_processing: reactive[bool] = reactive(False)
@@ -29,6 +50,35 @@ class STTSScreen(BaseAppScreen):
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "stts", **kwargs)
         self.stts_window: Optional[STTSWindow] = None
+
+    def _playground(self):
+        """Return the playground widget, if mounted."""
+        from ..STTS_Window import TTSPlaygroundWidget
+
+        try:
+            return self.query_one(TTSPlaygroundWidget)
+        except Exception:  # noqa: BLE001 - playground not mounted
+            return None
+
+    def action_generate_tts(self) -> None:
+        if widget := self._playground():
+            widget.action_generate_tts()
+
+    def action_random_text(self) -> None:
+        if widget := self._playground():
+            widget.action_random_text()
+
+    def action_clear_text(self) -> None:
+        if widget := self._playground():
+            widget.action_clear_text()
+
+    def action_play_audio(self) -> None:
+        if widget := self._playground():
+            widget.action_play_audio()
+
+    def action_stop_audio(self) -> None:
+        if widget := self._playground():
+            widget.action_stop_audio()
 
     def compose_content(self) -> ComposeResult:
         """Compose the STTS screen with the STTS window and its destination header."""
@@ -51,6 +101,9 @@ class STTSScreen(BaseAppScreen):
     async def on_mount(self) -> None:
         """Initialize STTS services when screen is mounted."""
         logger.info("STTS screen mounted")
+        self.register_footer_shortcuts(
+            source="stts", shortcuts=self.STTS_SHORTCUTS
+        )
 
         # Get the STTS window
         stts_window = self.stts_window or self.query_one(STTSWindow)
