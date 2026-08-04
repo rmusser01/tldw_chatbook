@@ -491,6 +491,114 @@ async def test_landing_hub_shows_the_error_instead_of_false_zero_counts():
 
 
 @pytest.mark.asyncio
+async def test_ingest_cta_uses_one_canonical_label_everywhere():
+    """task-2235 (R2): the ingest canvas's CTA is one label across the
+    rail-top primary button, the landing hub action row, the Import /
+    Export rail row, and the command palette -- 'Add content…' (the
+    F-013 plain-language pick). 'Import media' survives only inside the
+    ingest flow itself (canvas header, file-picker title)."""
+    from tldw_chatbook.Library.library_shell_state import (
+        LIBRARY_ROW_INGEST_MEDIA,
+        LibraryShellInput,
+        build_library_shell_state,
+    )
+
+    # Pure state: the rail row title is canonical.
+    shell = build_library_shell_state(LibraryShellInput())
+    row = next(
+        r
+        for s in shell.sections
+        for r in s.rows
+        if r.row_id == LIBRARY_ROW_INGEST_MEDIA
+    )
+    assert row.title == "Add content…"
+
+    # Palette entry is canonical.
+    from tldw_chatbook.app import LibraryIngestProvider
+
+    assert LibraryIngestProvider.COMMANDS[0][0] == "Library: Add content…"
+
+    # Rendered: rail-top button and hub action row share the label.
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        top = screen.query_one("#library-ingest-top-button", Button)
+        hub = screen.query_one("#library-hub-action-import", Button)
+        assert str(top.label) == "Add content…"
+        assert str(hub.label) == "Add content…"
+
+
+@pytest.mark.asyncio
+async def test_hub_recents_render_as_clickable_rows_that_open_the_item():
+    """task-2238 (R2): the hub's recents are one quiet clickable row per
+    source -- not one dim text line -- and pressing one jumps straight
+    into the item via the same route the Search/RAG 'Open' action uses."""
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        # The detail fetch (`get_note_detail`) matches on "id", so the seed
+        # must too -- `_source_record_id` resolves either key for the row.
+        notes=[{"title": "Reading list", "id": "n1"}],
+        media=[{"title": "Quarterly report.pdf", "media_id": "m1"}],
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        # One row per source, titles intact; the one-line Static is gone.
+        notes_row = screen.query_one("#library-hub-recent-notes", Button)
+        media_row = screen.query_one("#library-hub-recent-media", Button)
+        conv_row = screen.query_one("#library-hub-recent-conversations", Button)
+        assert "Reading list" in str(notes_row.label)
+        assert "Quarterly report.pdf" in str(media_row.label)
+        assert "Quarterly planning sync" in str(conv_row.label)
+        assert not screen.query("#library-hub-recents")
+
+        # The next-action triad stays on top of the recents.
+        actions = screen.query_one("#library-hub-actions")
+        assert actions.region.y < notes_row.region.y
+
+        # Pressing a row jumps into the item.
+        notes_row.press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._selected_note_id == "n1"
+        assert screen._library_notes_view == "editor"
+        assert screen._library_selected_row_id == "browse-notes"
+
+
+@pytest.mark.asyncio
+async def test_hub_recents_rows_absent_on_an_empty_library():
+    """task-2238 (R2): no content -> no recents rows (and no stale
+    one-line Static), matching the old line's None-when-empty contract."""
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        assert not screen.query(".library-hub-recent")
+        assert not screen.query("#library-hub-recents")
+
+
+def test_hub_recents_one_line_helpers_are_removed():
+    """task-2238: the one-line recents helpers are gone -- wired or
+    deleted, no lingering dead code (the F-010 discipline)."""
+    for name in ("_hub_recents_line", "_source_recent_value"):
+        assert not hasattr(LibraryScreen, name), name
+
+
+@pytest.mark.asyncio
 async def test_library_landing_hub_shows_next_actions_counts_and_recents():
     """F-010: the landing canvas is the wired hub, not a one-line void --
     actionable next-step rows (Import media / Search / New note) plus the
@@ -669,10 +777,9 @@ async def test_rail_create_section_and_details_reachable_at_100x30():
 async def test_jargon_rail_rows_render_a_dim_subtitle_on_the_same_line():
     """F-013: jargon rows gloss themselves with a dim em-dash subtitle on
     the SAME one-line row (the F-011 height contract is untouched), and
-    plain rows carry no gloss. F-015 fitting: the gloss is word-cut with
-    an ellipsis when the rail is too narrow for all of it (the rail's
-    realistic widths rarely fit the full gloss), so the pin asserts the
-    rendered gloss is a dim, ellipsized PREFIX of the full subtitle."""
+    plain rows carry no gloss. task-2236 (R2): the glosses are rewritten
+    to fit the rail's realistic width budget, so at 170x48 the FULL gloss
+    renders -- no word-cut noise."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)
@@ -686,22 +793,49 @@ async def test_jargon_rail_rows_render_a_dim_subtitle_on_the_same_line():
         plain = label.plain
         assert "\n" not in plain
         assert search_row.styles.height.value == 1
+        assert "— find all" in plain
+        assert "…" not in plain and "..." not in plain
         # The gloss renders DIM (not just present): a "dim" style span
         # covers exactly the em-dash subtitle, leaving title/count at
         # normal emphasis.
         dim_spans = [s for s in label.spans if "dim" in str(s.style)]
         assert dim_spans, f"no dim span on the jargon gloss: {label.spans}"
         covered = plain[dim_spans[0].start : dim_spans[0].end]
-        assert covered.startswith("— "), f"gloss lost its dash: {covered!r}"
-        assert "search everything".startswith(covered[2:].rstrip("…")), (
-            f"rendered gloss is not a prefix of the full subtitle: {covered!r}"
-        )
+        assert covered == "— find all", f"gloss not fully rendered: {covered!r}"
 
         plain_row = screen.query_one("#library-row-browse-notes", Button)
         assert "—" not in plain_row.label.plain
         assert not [
             s for s in plain_row.label.spans if "dim" in str(s.style)
         ]
+
+
+@pytest.mark.asyncio
+async def test_rail_subtitles_drop_cleanly_instead_of_partial_noise_at_100x30():
+    """task-2236 (R2): when the full gloss does not fit, the row drops it
+    entirely -- never a mid-word 'saved…'/'imported…' fragment -- while
+    the F-015 count protection keeps working."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await pilot.pause()
+
+        for row in screen.query("Button.library-rail-row"):
+            first_line = row.label.plain.split("\n")[0]
+            # No partial gloss fragments: either the full " — <gloss>"
+            # renders, or the em-dash is gone entirely.
+            if "—" in first_line:
+                tail = first_line.split("—", 1)[1].strip()
+                assert "…" not in tail and "..." not in tail, (
+                    f"{row.id} renders a partial gloss: {first_line!r}"
+                )
+            # The count protection contract still holds.
+            if row.id == "library-row-browse-conversations":
+                assert first_line.endswith("(2)"), first_line
 
 
 @pytest.mark.asyncio
@@ -847,10 +981,11 @@ async def test_rail_shows_a_visible_scrollbar_when_content_overflows():
 
 
 @pytest.mark.asyncio
-async def test_landing_footer_advertises_the_focus_search_key():
-    """F-012: the landing state is not a keyboard dead zone -- the footer
-    advertises the one Library key that works there (`/` focuses the rail
-    search box) instead of the bare global default."""
+async def test_landing_footer_advertises_the_landing_keyboard_story():
+    """task-2237 (R2): the landing footer advertises every key that works
+    there -- `/` focus search, the hub accelerators `i` (add content) and
+    `n` (new note), and F6 pane cycling -- instead of the bare one-key
+    hint F-012 shipped."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)
@@ -860,7 +995,9 @@ async def test_landing_footer_advertises_the_focus_search_key():
         await _wait_for_library_shell(screen, pilot)
 
         footer = screen.query_one(AppFooterStatus)
-        assert footer.shortcut_text == "/ focus search"
+        assert footer.shortcut_text == (
+            "/ focus search | i add content | n new note | F6 next pane"
+        )
 
 
 @pytest.mark.asyncio
@@ -953,6 +1090,82 @@ async def test_search_deep_link_registers_the_use_in_console_footer_hint():
         footer = screen.query_one(AppFooterStatus)
         assert "u use Library context in Console" in footer.shortcut_text
         assert "/ focus search" in footer.shortcut_text
+
+
+@pytest.mark.asyncio
+async def test_hub_accelerators_open_their_canvases_from_the_landing():
+    """task-2237 (R2): `i` opens the ingest canvas and `n` the new-note
+    canvas from the landing -- the same dispatch the hub action rows use."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await pilot.press("i")
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+
+        # Back to the landing for `n`.
+        screen._library_selected_row_id = ""
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await pilot.pause()
+
+        await pilot.press("n")
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
+
+
+@pytest.mark.asyncio
+async def test_hub_accelerators_never_fire_in_text_fields_or_off_landing():
+    """task-2237 (R2): the accelerators type literally in an Input and do
+    nothing off the landing canvas -- the F-012 `/` guard pattern."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        # In the rail search box, `i`/`n` are just text.
+        search = screen.query_one("#library-search-input", Input)
+        search.focus()
+        await pilot.pause()
+        await pilot.press("i")
+        await pilot.pause()
+        assert search.value == "i"
+        assert screen._library_selected_row_id == ""
+
+        # Off the landing (a canvas row selected), the keys are inert.
+        search.value = ""
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-filter")
+        await pilot.press("n")
+        await pilot.pause()
+        assert screen._library_selected_row_id == "browse-conversations"
+
+
+@pytest.mark.asyncio
+async def test_f6_focuses_the_rail_search_box_from_the_landing():
+    """task-2237 (R2): F6 (the app's pane-cycle key) reaches the Library
+    rail -- previously the screen had no pane target and F6 dead-ended in
+    a 'no target' notification. The harness lacks the app-level binding,
+    so the test drives the screen action it delegates to."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.action_focus_next_workbench_pane()
+        await pilot.pause()
+        assert screen.query_one("#library-search-input", Input).has_focus
 
 
 @pytest.mark.asyncio

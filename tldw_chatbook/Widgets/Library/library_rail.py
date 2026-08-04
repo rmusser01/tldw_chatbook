@@ -235,19 +235,12 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
                     else ""
                 )
             elif row.subtitle:
-                # The F-013 gloss gets whatever room remains after
-                # title + count: rendered whole when it fits, word-cut
-                # with an ellipsis when it nearly fits, dropped only when
-                # the leftover space could not teach anything anyway.
-                subtitle_budget = width - len(fixed_plain)
-                if len(f" — {row.subtitle}") <= subtitle_budget:
-                    pass  # full gloss fits as built above
-                elif subtitle_budget >= 8:
-                    cut = row.subtitle[: subtitle_budget - 4].rstrip()
-                    if " " in cut:
-                        cut = cut.rsplit(" ", 1)[0]
-                    subtitle_markup = f" [dim]— {escape_markup(cut)}…[/dim]"
-                else:
+                # task-2236 (R2): the gloss renders whole or not at all --
+                # a partial gloss is noise at real rail widths (the
+                # review's "imported…"/"saved…" complaint), so when the
+                # full gloss doesn't fit after title + count, it drops
+                # and the row falls back to its tooltip.
+                if len(fixed_plain) + len(f" — {row.subtitle}") > width:
                     subtitle_markup = ""
         label = f"{prefix}{escape_markup(raw_title)}{count_markup}{subtitle_markup}"
         if row.target_kind == "handoff":

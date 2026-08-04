@@ -2077,7 +2077,9 @@ async def test_footer_u_hint_only_registered_on_search_row():
         await pilot.pause()
         await pilot.pause()
         source, shortcuts = screen._footer_shortcut_registration
-        assert shortcuts == LibraryScreen.LIBRARY_LANDING_SHORTCUTS
+        # task-2237 (R2): a selected non-search canvas gets the general set
+        # (`/` + F6); the landing's fuller set is landing-scoped.
+        assert shortcuts == LibraryScreen.LIBRARY_GENERAL_SHORTCUTS
         assert all(key != "u" for key, _label in shortcuts)
 
         screen.query_one("#library-row-browse-search").press()

@@ -17,7 +17,7 @@ then either:
 
 - Click **"Add content…"** — the primary button at the very top of the
   left rail — to land on Import media directly.
-- In the rail's **Import / Export** section, click **"Import media"** or
+- In the rail's **Import / Export** section, click **"Add content…"** or
   **"Export"**.
 
 Scoped exports also arrive here on their own: pressing **"Export…"** or
