@@ -336,3 +336,29 @@ recompose rows=1`. All twelve now use `_dom_is_live`.
 Guards on user-gesture watchers (`watch_selected_scope`, `watch_tree_scope`,
 `_open_sources_create_form`, …) are deliberately left on `is_mounted`: none can
 fire inside the mount window, and rewriting them is not this task's business.
+
+#### Qodo round (PR #1331) — the surviving `is_mounted` guards, adjudicated
+
+Qodo claimed the mount-window class continues into the two selection watchers
+this task had left on `is_mounted` as "user-gesture, cannot fire in the
+window". **Half right, and the half that was right was a real defect.** Every
+remaining guard on this screen was then swept with the same question — *does
+anything in the mount window write the state this guard protects?* — so this is
+the last round of this class.
+
+| Guard | In-window writer? | Verdict |
+|---|---|---|
+| `watch_selected_entity` | **YES** — the run deep link arms `_pending_navigation_run_id` pre-mount, `on_mount` starts `_load_runs`, its `had_pending_target` branch calls `_select_entity(requested_run)` | **FIXED** → `_dom_is_live`. Proven RED first: screen holds the run, mounted Inspector holds `None`. Nothing recovered it — `_build_inspector_pane` re-seeds only on a rebuild, and the right rail's only remaining rebuild is gated on `_resolve_console_follow_drift()`, `False` on a cold start. |
+| `watch_selected_scope` | **NO** — measured, 0 firings in-window | **DECLINED, no production change.** `_select_entity` is the only in-window writer and can only ever write `TreeScope(kind="all")`, which is byte-equal to the reactive's class default and to the value nothing pre-mount changes — so the write is structurally a no-op, not a lucky one. Probe: `scope_before == scope_after == TreeScope(kind='all', …)`, `watch_selected_scope fired 0 time(s)`. Confirmed behaviour-neutral by the inverse mutation (swapping it to `_dom_is_live` anyway leaves 112 tests unchanged). Its other half, `breadcrumb_labels`, is already pushed directly by `_apply_tree_data_to_live_surfaces`. |
+| `watch_active_section` | writes are pre-attach only (`apply_navigation_context`) | **KEEP, load-bearing as `is_mounted`.** Flipping it would make an in-window section write recompose a screen whose `compose()` already reflects it *and* double-start the loader `on_mount` starts. |
+| `apply_navigation_context` | n/a — it is itself the pre-mount caller | **KEEP.** A "should I start work" gate, not a "can I paint" gate; `on_mount` owns the first load. |
+| `watch_tree_scope` | no — only `_apply_tree_scope` (tree click, breadcrumb promotion, tree write flows) | KEEP |
+| `watch_runtime_backend` | pre-attach only (`apply_navigation_context`) or the Backend `Select` | KEEP |
+| `_open_sources_create_form`, `_open_sources_import_opml` | reached via a 0.05 s `set_timer` or `action_new_source` | KEEP |
+| `_load_sources_preserving_selection` | callers are `_check_now_source` / `_resume_source` | KEEP |
+| `_open_citation`, `open_edit_form`, `action_new_source`, `_load_briefing_presets` | user gestures / modal returns | KEEP |
+
+The rule that falls out: **`is_attached` for "can I paint into my own subtree",
+`is_mounted` only where the guard genuinely means "has the first mount already
+happened"** — which on this screen is exactly the two places that decide
+whether `on_mount` or a watcher owns the first load.

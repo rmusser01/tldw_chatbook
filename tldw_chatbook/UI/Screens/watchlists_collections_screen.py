@@ -3576,7 +3576,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 setattr(pane, attribute, value)
 
     def watch_selected_entity(self) -> None:
-        if not self.is_mounted:
+        """Push the current selection into the live Inspector.
+
+        `_dom_is_live`, not `is_mounted` (Qodo, PR #1331): this watcher IS
+        reachable inside the mount window, unlike its `watch_selected_scope`
+        sibling. The Watchlists run deep link arms `_pending_navigation_run_id`
+        on an unmounted screen (`apply_navigation_context`), `on_mount` starts
+        `_load_runs`, and on a cold database that loader resolves the target
+        and calls `_select_entity(requested_run)` before Textual has flipped
+        `_is_mounted`. An `is_mounted` guard dropped that push, and nothing
+        re-seeds it: `_build_inspector_pane` re-seeds only on a REBUILD, and
+        the one right-rail rebuild this screen still schedules is gated on
+        `_resolve_console_follow_drift()`, which is `False` on a normal cold
+        start. The user followed a run link and the Inspector said "Nothing to
+        inspect yet." over a run the screen believed was selected.
+        """
+        if not self._dom_is_live:
             return
         try:
             inspector = self.query_one("#watchlists-entity-inspector", InspectorPane)

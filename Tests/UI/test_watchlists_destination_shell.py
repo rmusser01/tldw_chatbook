@@ -3102,3 +3102,65 @@ async def test_section_loader_results_landing_in_the_mount_window_still_paint():
             assert artifacts.can_generate is True
         finally:
             screen._is_mounted = True
+
+
+@pytest.mark.asyncio
+async def test_a_deep_linked_run_seeds_the_inspector_from_the_mount_window():
+    """Qodo, PR #1331: the selection watchers are in the mount-window class too.
+
+    The deep link that carries a run id is the reachable path.
+    `apply_navigation_context` sets `active_section = "runs"` **and**
+    `_pending_navigation_run_id` on an unmounted screen; `on_mount` then starts
+    `_load_runs`, which on a cold database finishes inside the mount window and
+    calls `_select_entity(requested_run)` (`_load_runs`'s `had_pending_target`
+    branch). That writes `selected_entity`, `watch_selected_entity` fires -- and
+    an `is_mounted` guard drops the push while the Inspector is mounted and
+    queryable.
+
+    Nothing recovers it afterwards: `_build_inspector_pane` re-seeds only on a
+    REBUILD, and the one rebuild this screen still schedules for the right rail
+    is gated on `_resolve_console_follow_drift()`, which is False on a normal
+    cold start. So the user follows a run deep link and the Inspector shows
+    "Nothing to inspect yet." over a run the screen believes is selected.
+    """
+    run = {"id": "r1", "source_title": "Feed One", "status": "ok", "backend": "local"}
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    screen._controller.list_runs = AsyncMock(return_value=[run])
+    screen.apply_navigation_context({"section": "runs", "run_id": "r1"})
+    assert screen.active_section == "runs"
+    assert screen._pending_navigation_run_id == "r1", (
+        "precondition: the deep link armed a run target pre-mount"
+    )
+
+    host = WatchlistsContextHarness(screen)
+    async with host.run_test(size=(180, 50)) as pilot:
+        for _ in range(300):
+            await pilot.pause(0.01)
+            if screen.query("#watchlists-runs-pane"):
+                break
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+
+        # Rewind to the instant `on_mount` fired: the deep-link target armed,
+        # nothing selected yet, the Inspector mounted and empty.
+        screen._pending_navigation_run_id = "r1"
+        screen._pending_navigation_run_backend = "local"
+        screen.selected_entity = None
+        screen.selected_run = None
+        inspector.selected_entity = None
+        await pilot.pause()
+        assert inspector.selected_entity is None, "precondition: Inspector rewound"
+
+        screen._is_mounted = False
+        try:
+            await screen._load_runs()
+            assert screen.selected_entity is not None, (
+                "precondition: the deep link really did resolve to a run"
+            )
+            assert inspector.selected_entity == screen.selected_entity, (
+                "the deep-linked run never reached the mounted Inspector: the "
+                "selection landed while Textual still reported is_mounted=False "
+                "and nothing re-seeds it"
+            )
+        finally:
+            screen._is_mounted = True
