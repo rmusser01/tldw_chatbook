@@ -15,6 +15,7 @@ from .personas_messages import (
     PersonaActionRequested,
     PersonaEntityKind,
     PersonaEntitySelected,
+    PersonaMarksChanged,
     PersonaPageChanged,
     PersonaSearchChanged,
     PersonaSortCycleRequested,
@@ -74,6 +75,10 @@ class PersonasLibraryPane(Vertical):
 
     BINDINGS = [
         ("space", "toggle_highlighted", "Toggle on/off"),
+        # F-040: m marks rows for bulk delete/export; s cycles the sort
+        # (both no-op outside their applicable modes/rows).
+        ("m", "toggle_mark", "Mark row"),
+        ("s", "cycle_sort", "Cycle sort"),
     ]
 
     # Structure only: colors come from the app stylesheet
@@ -155,6 +160,13 @@ class PersonasLibraryPane(Vertical):
         super().__init__(**kwargs)
         self._row_lookup: dict[str, LibraryRow] = {}
         self._import_visible: bool = True
+        # F-040: marked (multi-selected) rows for bulk delete/export, as row
+        # dom ids; pruned to the rendered rows on every update_rows.
+        self._marked_ids: set[str] = set()
+        self._sort_visible: bool = True
+        # The count line's filter-state text from the last update_rows; the
+        # "N marked" summary overrides it while marks exist.
+        self._base_count_text: str = ""
 
     def on_mount(self) -> None:
         """Initialize control visibility for default characters mode.
@@ -250,7 +262,7 @@ class PersonasLibraryPane(Vertical):
             yield Button(
                 "Sort: Name",
                 id="personas-library-sort",
-                tooltip="Cycle the list sort order.",
+                tooltip="Cycle the list sort order. (s)",
                 classes="console-action-secondary",
             )
             yield Button(
@@ -303,6 +315,7 @@ class PersonasLibraryPane(Vertical):
             "lore",
         )
         sort_visible = mode in ("characters", "personas")
+        self._sort_visible = sort_visible
         self.query_one("#personas-library-sort", Button).display = sort_visible
         self.query_one("#personas-library-tag", Button).display = mode == "characters"
         if not sort_visible:
@@ -310,6 +323,8 @@ class PersonasLibraryPane(Vertical):
             self.query_one("#personas-library-pagebar").display = False
         # Which buttons render changed, so the single-row fit changed too.
         self._sync_control_layout()
+        # Marks are mode-scoped: a mode switch drops them (F-040).
+        self.clear_marks()
 
     async def update_rows(
         self,
@@ -386,10 +401,14 @@ class PersonasLibraryPane(Vertical):
             classes = "personas-library-row console-action-subdued"
             if row.is_unsaved:
                 classes += " is-unsaved"
+            # F-040: marked rows carry a glyph prefix on the name line.
+            name_text = (
+                f"● {row.name}" if dom_id in self._marked_ids else row.name
+            )
             if row.meta:
                 item = ListItem(
                     Vertical(
-                        Static(row.name, markup=False),
+                        Static(name_text, markup=False),
                         Static(
                             row.meta,
                             markup=False,
@@ -406,15 +425,19 @@ class PersonasLibraryPane(Vertical):
                 items.append(item)
             else:
                 items.append(
-                    ListItem(Static(row.name, markup=False), id=dom_id, classes=classes)
+                    ListItem(Static(name_text, markup=False), id=dom_id, classes=classes)
                 )
         await list_view.extend(items)
+        # F-040: a mark never outlives its row - a refresh that drops a
+        # marked row drops the mark with it.
+        pruned = self._marked_ids - seen
+        if pruned:
+            self._marked_ids -= pruned
         pagebar = self.query_one("#personas-library-pagebar")
-        count_static = self.query_one("#personas-library-count", Static)
         paginated = page_offset is not None and page_size is not None
         if recovery_copy:
             pagebar.display = False
-            count_static.update(f"{noun.capitalize()} unavailable")
+            self._base_count_text = f"{noun.capitalize()} unavailable"
         elif paginated and total > page_size:
             start = page_offset + 1 if total else 0
             end = page_offset + len(rows)
@@ -426,24 +449,27 @@ class PersonasLibraryPane(Vertical):
                 page_offset + page_size >= total
             )
             pagebar.display = True
-            count_static.update("")
+            self._base_count_text = ""
         else:
             pagebar.display = False
             if filtered and filtered_total_unbounded:
                 match_word = "match" if len(rows) == 1 else "matches"
-                count_static.update(
+                self._base_count_text = (
                     f"Showing {len(rows)} {_singular_noun(noun)} "
                     f"{match_word} from full library"
                 )
             elif filtered:
-                count_static.update(
+                self._base_count_text = (
                     f"{len(rows)} of {total} {_noun_for_count(total, noun)}"
                 )
             else:
                 # F-033: the plain total renders once, in the screen's merged
                 # purpose line ("Characters — who the AI plays · N") - the
                 # pane's own count line only speaks for filtered states.
-                count_static.update("")
+                self._base_count_text = ""
+        self._sync_marked_count_line()
+        if pruned:
+            self._post_marks_changed()
 
     def mark_active_row(self, kind: str, item_id: str) -> None:
         """Move the list highlight and the .is-active marker to one row."""
@@ -483,6 +509,70 @@ class PersonasLibraryPane(Vertical):
         self.query_one("#personas-library-sort", Button).label = text
         # A longer/shorter label changes the single-row fit (F-030).
         self._sync_control_layout()
+
+    # ===== F-040: marks (multi-select) =====
+
+    def _sync_marked_count_line(self) -> None:
+        """The count line reports active marks ahead of filter state."""
+        text = (
+            f"{len(self._marked_ids)} marked"
+            if self._marked_ids
+            else self._base_count_text
+        )
+        self.query_one("#personas-library-count", Static).update(text)
+
+    def _post_marks_changed(self) -> None:
+        marks = tuple(
+            (row.kind, row.item_id, row.name)
+            for dom_id, row in self._row_lookup.items()
+            if dom_id in self._marked_ids
+        )
+        self.post_message(PersonaMarksChanged(marks))
+
+    @staticmethod
+    def _render_row_marker(item: ListItem, row: LibraryRow, marked: bool) -> None:
+        """Prefix/unprefix the row's name line with the marked glyph."""
+        name_static = item.query_one(Static)
+        name_static.update(f"● {row.name}" if marked else row.name)
+
+    def clear_marks(self) -> None:
+        """Drop every mark (mode switch, or after a bulk action consumes them)."""
+        if not self._marked_ids:
+            return
+        self._marked_ids = set()
+        list_view = self.query_one("#personas-library-rows", ListView)
+        for item in list_view.children:
+            row = self._row_lookup.get(str(item.id or ""))
+            if row is not None:
+                self._render_row_marker(item, row, False)
+        self._sync_marked_count_line()
+        self._post_marks_changed()
+
+    def action_toggle_mark(self) -> None:
+        """m: mark/unmark the highlighted row for bulk delete/export (F-040)."""
+        list_view = self.query_one("#personas-library-rows", ListView)
+        index = list_view.index
+        if index is None or not 0 <= index < len(list_view.children):
+            return
+        item = list_view.children[index]
+        dom_id = str(item.id or "")
+        row = self._row_lookup.get(dom_id)
+        if row is None:
+            # Placeholder/recovery rows are not markable.
+            return
+        marked = dom_id not in self._marked_ids
+        if marked:
+            self._marked_ids.add(dom_id)
+        else:
+            self._marked_ids.discard(dom_id)
+        self._render_row_marker(item, row, marked)
+        self._sync_marked_count_line()
+        self._post_marks_changed()
+
+    def action_cycle_sort(self) -> None:
+        """s: cycle the list sort order where sorting applies (F-040)."""
+        if self._sort_visible:
+            self.post_message(PersonaSortCycleRequested())
 
     def set_tag_label(self, text: str) -> None:
         """Update the tag button's label (the screen owns the active tag)."""

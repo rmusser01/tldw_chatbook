@@ -108,6 +108,23 @@ class PersonasInspectorPane(Vertical):
         width: 100%;
         height: auto;
     }
+
+    /* F-041: a disabled checkbox must still READ as a checkbox. Textual's
+       base *:disabled:can-focus rule dims it to 0.7 and the stock toggle
+       glyph box is panel-on-panel (a dark gap in the rail). Keep the label
+       dimmed per the ds disabled idiom, restore full opacity, and give the
+       glyph box a visible surface. ($text-disabled/$surface are the theme
+       variables the ds-text-disabled/ds-surface-raised tokens alias; widget
+       DEFAULT_CSS cannot see bundle-scoped ds-* names.) */
+    PersonasInspectorPane #personas-export-include-tts:disabled {
+        opacity: 100%;
+        color: $text-disabled;
+    }
+
+    PersonasInspectorPane #personas-export-include-tts:disabled .toggle--button {
+        background: $surface;
+        color: $text;
+    }
     """
 
     def __init__(self, **kwargs) -> None:
@@ -120,6 +137,18 @@ class PersonasInspectorPane(Vertical):
         self._provider_block_reason: str | None = None
         self._conversation_lookup: dict[str, str] = {}
         self._tts_export_available = False
+        # F-040: marked library rows drive bulk Delete/Export JSON affordances.
+        self._marked_count = 0
+
+    def set_marked_count(self, count: int) -> None:
+        """Bulk-mark awareness for Delete/Export (F-040).
+
+        With marks active, Delete and Export JSON target the marked set
+        (their tooltips say so) and Export PNG - a single-card format - is
+        disabled with a reason. Zero restores the selection-owned gates.
+        """
+        self._marked_count = max(0, int(count))
+        self._apply_action_state()
 
     def compose(self) -> ComposeResult:
         """Compose the Inspector pane summary, readiness, and actions.
@@ -487,17 +516,32 @@ class PersonasInspectorPane(Vertical):
             start_btn.tooltip = f"Chat now blocked: {self._provider_block_reason}"
         else:
             start_btn.tooltip = None
+        # F-040: an active mark set retargets Delete/Export JSON at the
+        # marked rows (tooltips say so) and sidesteps the single-selection
+        # unsaved gate (bulk actions discard/ignore edit state by design,
+        # like single Delete). Export PNG stays single-card.
+        marked = self._marked_count
         json_button = self.query_one("#personas-export-json", Button)
         json_button.display = export_json_applies
-        json_button.disabled = not export_enabled
-        json_button.tooltip = export_tooltip
+        json_button.disabled = (not export_enabled) and marked == 0
+        json_button.tooltip = (
+            f"Export the {marked} marked items as JSON."
+            if marked
+            else export_tooltip
+        )
         png_button = self.query_one("#personas-export-png", Button)
         png_button.display = export_png_applies
-        png_button.disabled = not (export_enabled and kind == "character")
-        png_button.tooltip = export_tooltip
+        png_button.disabled = marked > 0 or not (export_enabled and kind == "character")
+        png_button.tooltip = (
+            "Bulk export is JSON only." if marked else export_tooltip
+        )
         delete_button = self.query_one("#personas-delete", Button)
-        delete_button.disabled = not selected
-        delete_button.tooltip = None if selected else _NO_SELECTION_DELETE_TOOLTIP
+        delete_button.disabled = (not selected) and marked == 0
+        delete_button.tooltip = (
+            f"Delete the {marked} marked items."
+            if marked
+            else (None if selected else _NO_SELECTION_DELETE_TOOLTIP)
+        )
 
     def set_avatar_thumbnail(self, renderable: object | None) -> None:
         """Mount a prepared portrait renderable, or clear the box.

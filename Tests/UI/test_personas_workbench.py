@@ -14,7 +14,7 @@ from uuid import UUID
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, ListView, Select, Static, TextArea
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Persona_Modules.personas_conversations_controller as conversations_controller_module
@@ -8160,6 +8160,183 @@ def legacy_human_config(tmp_path, monkeypatch):
     finally:
         monkeypatch.setenv("TLDW_CONFIG_PATH", str(previous_config_path))
         config_module.load_cli_config_and_ensure_existence(force_reload=True)
+
+
+class TestBulkLibraryActions:
+    """F-040: the library pane's mark set drives bulk delete/export."""
+
+    @pytest.fixture
+    def stub_conversations(self, monkeypatch):
+        monkeypatch.setattr(
+            character_handler_module, "_default_character_db", lambda: object()
+        )
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "list_character_conversations",
+            lambda db, character_id, limit=50, offset=0: [
+                {"id": "conv-1", "title": "First case"}
+            ],
+        )
+
+    @staticmethod
+    def _capture_notifications(app) -> list[tuple[str, str]]:
+        captured: list[tuple[str, str]] = []
+        app.notify = lambda message, severity="information", **kwargs: captured.append(
+            (str(message), severity)
+        )
+        return captured
+
+    async def _mount_with_marks(self, pilot, row_indexes=(0, 1)):
+        """Mount and mark rows through the pane's m key, like a user."""
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        list_view = screen.query_one("#personas-library-rows", ListView)
+        list_view.focus()
+        await pilot.pause()
+        for index in row_indexes:
+            list_view.index = index
+            await pilot.press("m")
+            await pilot.pause()
+        return screen
+
+    async def test_marks_retarget_delete_and_export_affordances(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._mount_with_marks(pilot, (0, 1))
+            inspector = screen.query_one(PersonasInspectorPane)
+            delete = inspector.query_one("#personas-delete", Button)
+            export_json = inspector.query_one("#personas-export-json", Button)
+            export_png = inspector.query_one("#personas-export-png", Button)
+            assert delete.disabled is False
+            assert delete.tooltip == "Delete the 2 marked items."
+            assert export_json.disabled is False
+            assert export_json.tooltip == "Export the 2 marked items as JSON."
+            assert export_png.disabled is True
+            assert export_png.tooltip == "Bulk export is JSON only."
+            # Clearing the marks restores the selection-owned gates.
+            screen.query_one("#personas-library-pane").clear_marks()
+            await pilot.pause()
+            assert export_png.disabled is False
+            assert delete.tooltip is None
+
+    async def test_bulk_delete_marked_characters(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        deleted: list[tuple[str, int]] = []
+
+        def _delete(character_id, expected_version):
+            deleted.append((str(character_id), expected_version))
+            return True
+
+        monkeypatch.setattr(character_handler_module, "delete_character", _delete)
+        # The live read shrinks as deletes land, so the refresh renders empty.
+        monkeypatch.setattr(
+            character_handler_module,
+            "fetch_all_characters",
+            lambda: [
+                dict(c)
+                for c in CHARACTERS
+                if str(c["id"]) not in {did for did, _ in deleted}
+            ],
+        )
+        confirm_calls: list[str] = []
+
+        async def _confirm(name: str) -> bool:
+            confirm_calls.append(name)
+            return True
+
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._mount_with_marks(pilot, (0, 1))
+            screen._confirm_delete = _confirm
+            screen.query_one("#personas-delete", Button).press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            # One confirm for the whole batch; each item deleted once.
+            assert confirm_calls == ["2 characters"]
+            assert sorted(deleted) == [("1", 1), ("2", 1)]
+            assert not list(screen.query(".personas-library-row"))
+            assert screen.state.selected_entity_id is None
+            assert screen._marked_rows == ()
+        assert ("Deleted 2 characters.", "information") in notifications
+
+    async def test_bulk_delete_keeps_unmarked_selection(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        deleted: list[str] = []
+
+        def _delete(character_id, expected_version):
+            deleted.append(str(character_id))
+            return True
+
+        monkeypatch.setattr(character_handler_module, "delete_character", _delete)
+        monkeypatch.setattr(
+            character_handler_module,
+            "fetch_all_characters",
+            lambda: [
+                dict(c) for c in CHARACTERS if str(c["id"]) not in set(deleted)
+            ],
+        )
+
+        async def _confirm(name: str) -> bool:
+            return True
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            # F-031 auto-selected row 1; only row 2 is marked for deletion.
+            screen = await self._mount_with_marks(pilot, (1,))
+            screen._confirm_delete = _confirm
+            screen.query_one("#personas-delete", Button).press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert deleted == ["2"]
+            assert screen.state.selected_entity_id == "1"
+
+    async def test_bulk_export_marked_characters_writes_one_file_per_card(
+        self, mock_app_instance, stub_characters, stub_conversations, tmp_path
+    ):
+        exports: list[tuple[int, str]] = []
+
+        def _fake_export(character_id, target_path, portable_profile):
+            exports.append((character_id, target_path))
+
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._mount_with_marks(pilot, (0, 1))
+            screen._export_character_json_sync = _fake_export
+            pilot.app.push_screen_wait = AsyncMock(return_value=str(tmp_path))
+            screen.query_one("#personas-export-json", Button).press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert [character_id for character_id, _ in exports] == [1, 2]
+            paths = sorted(target for _, target in exports)
+            assert paths[0].endswith("Detective Sam.json")
+            assert paths[1].endswith("Lab Assistant.json")
+        assert any(
+            message.startswith("Exported 2 items") and severity == "information"
+            for message, severity in notifications
+        )
+
+    async def test_footer_discloses_sort_key_in_sortable_modes(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert "s sort" in screen._shortcut_context().render().lower()
+            await screen._apply_mode("dictionaries")
+            await pilot.pause()
+            assert "s sort" not in screen._shortcut_context().render().lower()
 
 
 class TestPersonaHumanIdentityRemoval:

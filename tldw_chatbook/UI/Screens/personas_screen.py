@@ -122,6 +122,7 @@ from ...Widgets.Persona_Widgets.personas_library_pane import (
 from ...Widgets.Persona_Widgets.personas_messages import (
     PersonaActionRequested,
     PersonaEntitySelected,
+    PersonaMarksChanged,
     PersonaPageChanged,
     PersonaSearchChanged,
     PersonaSortCycleRequested,
@@ -768,6 +769,10 @@ class PersonasScreen(BaseAppScreen):
         # (restored, or deliberately cleared), so first-paint auto-select
         # (F-031) must not fire on those mounts.
         self._restored_from_saved_state: bool = False
+        # F-040: the library pane's marked rows ((kind, item_id, name)
+        # triples) driving bulk Delete/Export; kept in step via
+        # PersonaMarksChanged.
+        self._marked_rows: tuple[tuple[str, str, str], ...] = ()
         self.character_handler = CCPCharacterHandler(self)
         self.persona_handler = CCPPersonaHandler(self)
         self.conversations = PersonasConversationsController(self)
@@ -961,17 +966,10 @@ class PersonasScreen(BaseAppScreen):
         the actual re-selection is applied by ``_apply_pending_restore`` once
         the screen (and its widgets) exist.
 
-        Gated to Characters mode: ``on_mount`` only unconditionally wires the
-        Characters path (character list refresh, center-view routing) -
-        every other mode's library rows and mode-specific widgets (the
-        Preview pane, the Dictionary/Lore Try-It panes) are only refreshed
-        and toggled by ``_apply_mode``, which a restore never calls.
-        Reconstructing ``self.state`` for a saved non-Characters mode here
-        would restore the mode chip while leaving the library empty and the
-        wrong panes visible/hidden - a regression, not a restore. So a
-        non-Characters round-trip is left at the fresh ``__init__`` default
-        (Characters, no selection) instead; restoring the other modes in
-        full is a filed follow-up.
+        All chip modes restore (F-040): a saved non-Characters mode seeds
+        ``self.state`` here and ``_apply_pending_restore`` runs the full
+        ``_apply_mode`` for it before re-selecting, so the mode's library
+        rows and mode-specific panes are live when the selection lands.
         """
         super().restore_state(state)
         if not isinstance(state, dict):
@@ -979,11 +977,11 @@ class PersonasScreen(BaseAppScreen):
             self._restored_from_saved_state = False
             return
         wb = state.get("personas_workbench")
-        # Any saved workbench payload - even one the Characters-only gate
-        # below falls back from - marks this as a navigation round-trip, not
-        # a first paint, so auto-select stays out of the restore semantics.
+        # Any saved workbench payload marks this as a navigation round-trip,
+        # not a first paint, so auto-select stays out of the restore
+        # semantics.
         self._restored_from_saved_state = isinstance(wb, dict)
-        if isinstance(wb, dict) and wb.get("active_mode") == "characters":
+        if isinstance(wb, dict) and wb.get("active_mode") in MODE_CHIP_ORDER:
             names = {f.name for f in dataclasses.fields(PersonasWorkbenchState)}
             self.state = PersonasWorkbenchState(
                 **{k: v for k, v in wb.items() if k in names}
@@ -1011,6 +1009,13 @@ class PersonasScreen(BaseAppScreen):
         entity_id = str(pending["id"])
         name = str(pending.get("name") or "")
         try:
+            # F-040: a saved non-Characters mode needs its full mode apply
+            # (library rows, Try-It panes, preview visibility) before the
+            # selection lands; ``switch_mode`` inside clears the seeded
+            # selection, which the dispatch below re-establishes.
+            saved_mode = self.state.active_mode
+            if saved_mode != "characters" and saved_mode in MODE_CHIP_ORDER:
+                await self._apply_mode(saved_mode)
             if kind == "character":
                 await self._select_character(
                     entity_id, name, restore_preview=pending.get("preview")
@@ -3275,6 +3280,18 @@ class PersonasScreen(BaseAppScreen):
             )
         # Prompts are not wired here: prompt management is retired from
         # Personas and lives entirely inside Library (Task 7).
+
+    @on(PersonaMarksChanged)
+    def _handle_marks_changed(self, message: PersonaMarksChanged) -> None:
+        """Track the library's marked set and re-gate bulk actions (F-040)."""
+        message.stop()
+        self._marked_rows = message.marks
+        try:
+            self.query_one(PersonasInspectorPane).set_marked_count(
+                len(message.marks)
+            )
+        except QueryError:
+            pass
 
     async def _fetch_server_character(
         self, entity_id: str
@@ -8273,7 +8290,94 @@ class PersonasScreen(BaseAppScreen):
             and not self._local_character_actions_allowed()
         ):
             return
+        # F-040: an active mark set retargets Export JSON at the marked rows.
+        if self._marked_rows:
+            if self._io_dialog_active:
+                return
+            self._io_dialog_active = True
+            self.run_worker(
+                self._export_marked_json_worker(tuple(self._marked_rows)),
+                group="personas-io",
+            )
+            return
         self._open_export_dialog("json")
+
+    async def _export_marked_json_worker(
+        self, marks: tuple[tuple[str, str, str], ...]
+    ) -> None:
+        """Export each marked character/persona as its own JSON file (F-040)."""
+        from ...Third_Party.textual_fspicker.select_directory import (
+            SelectDirectory,
+        )
+
+        try:
+            kind = marks[0][0]
+            if kind == "character" and not self._local_character_actions_allowed():
+                return
+            picker = SelectDirectory(title=f"Export {len(marks)} items as JSON")
+            try:
+                target_dir = await self.app.push_screen_wait(picker)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the export directory dialog."
+                )
+                return
+            if not target_dir:
+                return
+            if kind == "character" and not self._local_character_actions_allowed():
+                return
+            written = 0
+            failed: list[str] = []
+            used_names: set[str] = set()
+            for _, entity_id, name in marks:
+                try:
+                    # Filename sanitization mirrors the single-export route.
+                    safe = (
+                        "".join(c for c in name if c.isalnum() or c in " -_").rstrip()
+                        or "export"
+                    )
+                    candidate = safe
+                    suffix = 2
+                    while candidate in used_names:
+                        candidate = f"{safe}-{suffix}"
+                        suffix += 1
+                    used_names.add(candidate)
+                    target_path = str(Path(str(target_dir)) / f"{candidate}.json")
+                    if kind == "character":
+                        # The TTS-include checkbox is a per-selection export
+                        # decision; bulk export writes plain cards.
+                        await asyncio.to_thread(
+                            self._export_character_json_sync,
+                            int(str(entity_id)),
+                            target_path,
+                            None,
+                        )
+                    else:
+                        record = await self._fetch_profile_record(str(entity_id))
+                        content = json.dumps(
+                            record, indent=2, ensure_ascii=False, default=str
+                        )
+                        await asyncio.to_thread(
+                            self._write_text_file, target_path, content
+                        )
+                    written += 1
+                except Exception:
+                    failed.append(name)
+                    logger.opt(exception=True).warning(
+                        f"Bulk export failed for {kind} {entity_id} ({name})."
+                    )
+            if failed:
+                self._notify(
+                    f"Exported {written} of {len(marks)} items; "
+                    f"failed: {', '.join(failed[:3])}.",
+                    "error",
+                )
+            else:
+                self._notify(
+                    f"Exported {written} items to {target_dir}.", "information"
+                )
+        finally:
+            self._io_dialog_active = False
 
     @on(Button.Pressed, "#personas-export-png")
     async def _handle_export_png_pressed(self, event: Button.Pressed) -> None:
@@ -8542,7 +8646,167 @@ class PersonasScreen(BaseAppScreen):
         # routes through the unsaved guard so a dirty session shows the
         # discard dialog FIRST, then the delete confirm. Two dialogs in
         # sequence is deliberate: the user explicitly approves both losses.
+        # F-040: an active mark set retargets Delete at the marked rows.
+        if self._marked_rows:
+            await self._run_guarded(self._begin_delete_marked)
+            return
         await self._run_guarded(self._begin_delete_selection)
+
+    async def _begin_delete_marked(self) -> None:
+        """Validate the marked set and launch the bulk delete-confirm worker."""
+        marks = tuple(self._marked_rows)
+        if not marks:
+            await self._begin_delete_selection()
+            return
+        if marks[0][0] == "character" and not self._local_character_actions_allowed():
+            self._notify(_SERVER_READ_ONLY_TOOLTIP, "warning")
+            return
+        if self._delete_dialog_active:
+            logger.debug("Delete dialog already active; ignoring delete request.")
+            return
+        self._delete_dialog_active = True
+        self.run_worker(
+            self._delete_marked_worker(marks),
+            group="personas-io",
+        )
+
+    #: Plural nouns for bulk-action confirm/summary copy (F-040).
+    _BULK_NOUNS = {
+        "character": "characters",
+        "persona": "personas",
+        "dictionary": "dictionaries",
+        "lore": "lore books",
+    }
+
+    async def _delete_marked_worker(
+        self, marks: tuple[tuple[str, str, str], ...]
+    ) -> None:
+        """One confirmation, then each marked item's backend delete (F-040)."""
+        try:
+            kind = marks[0][0]
+            noun = self._BULK_NOUNS.get(kind, "items")
+            if not await self._confirm_delete(f"{len(marks)} {noun}"):
+                return
+            if kind == "character" and not self._local_character_actions_allowed():
+                return
+            deleted_ids: set[str] = set()
+            failed: list[str] = []
+            for _, entity_id, name in marks:
+                try:
+                    await self._delete_marked_backend(kind, entity_id)
+                except Exception as exc:
+                    failed.append(name)
+                    logger.opt(exception=True).warning(
+                        f"Bulk delete failed for {kind} {entity_id} ({name}): {exc}"
+                    )
+                else:
+                    deleted_ids.add(str(entity_id))
+            # Selection cleanup when the selection was among the deleted.
+            if str(self.state.selected_entity_id or "") in deleted_ids:
+                self.state.clear_selection()
+                self.state.has_unsaved_changes = False
+                try:
+                    await self.query_one(PersonasInspectorPane).clear_selection()
+                except QueryError:
+                    pass
+                self._show_center(None)
+            self.query_one(PersonasLibraryPane).clear_marks()
+            await self._refresh_rows_after_delete(kind)
+            self._sync_title_and_console_actions()
+            if failed:
+                self._notify(
+                    f"Deleted {len(deleted_ids)} of {len(marks)} {noun}; "
+                    f"failed: {', '.join(failed[:3])}.",
+                    "error",
+                )
+            else:
+                self._notify(
+                    f"Deleted {len(deleted_ids)} {noun}.", "information"
+                )
+        finally:
+            self._delete_dialog_active = False
+
+    async def _delete_marked_backend(self, kind: str, entity_id: str) -> None:
+        """One marked item's backend delete, no UI churn; raises on failure."""
+        if kind == "character":
+            # Per-item fetch: the handler's loaded record only covers the
+            # current selection, and the sparse list rows carry no version.
+            record = await asyncio.to_thread(
+                ccp_character_handler.fetch_character_by_id, entity_id
+            )
+            if not record:
+                raise ValueError(f"character {entity_id} not found")
+            version = int(record.get("version") or 1)
+            ok = await asyncio.to_thread(
+                ccp_character_handler.delete_character, entity_id, version
+            )
+            if not ok:
+                raise ValueError(f"delete conflict for character {entity_id}")
+            return
+        if kind == "persona":
+            service = getattr(
+                self.app_instance, "character_persona_scope_service", None
+            )
+            if service is None:
+                raise ValueError("personas service is not configured")
+            record = await self._fetch_profile_record(entity_id)
+            raw_version = record.get("version")
+            await service.delete_persona_profile(
+                entity_id,
+                expected_version=(
+                    int(raw_version) if raw_version is not None else None
+                ),
+                mode=self.persona_handler.current_mode(),
+            )
+            return
+        if kind == "dictionary":
+            service = self._dictionary_scope_service()
+            if service is None:
+                raise ValueError("dictionaries service is not configured")
+            record = next(
+                (
+                    r
+                    for r in self._dictionaries_cache
+                    if str(r.get("id")) == str(entity_id)
+                ),
+                None,
+            )
+            raw_version = (record or {}).get("version")
+            await service.delete_dictionary(
+                int(entity_id),
+                mode="local",
+                expected_version=(
+                    int(raw_version) if raw_version is not None else None
+                ),
+            )
+            return
+        # kind == "lore"
+        manager = self._lore_manager()
+        if manager is None:
+            raise ValueError("lore database is not configured")
+        record = next(
+            (r for r in self._lore_books_cache if str(r.get("id")) == str(entity_id)),
+            None,
+        )
+        raw_version = (record or {}).get("version")
+        ok = await asyncio.to_thread(
+            manager.delete_world_book,
+            int(entity_id),
+            expected_version=int(raw_version) if raw_version is not None else None,
+        )
+        if not ok:
+            raise ValueError(f"delete conflict for lore book {entity_id}")
+
+    async def _refresh_rows_after_delete(self, kind: str) -> None:
+        """Reload the library rows for the deleted items' mode (F-040)."""
+        if kind == "character":
+            await self.character_handler.refresh_character_list()
+        elif kind == "persona":
+            await self._refresh_profile_rows_worker()
+        elif kind == "dictionary":
+            await self._render_dictionary_rows(query=self.state.search_query)
+        elif kind == "lore":
+            await self._render_lore_rows(query=self.state.search_query)
 
     async def _begin_delete_selection(self) -> None:
         """Validate the selection and launch the delete-confirm dialog worker."""
@@ -9597,6 +9861,12 @@ class PersonasScreen(BaseAppScreen):
                 ShortcutAction("f6", "pane"),
                 ShortcutAction("ctrl+1-4", "mode"),
                 ShortcutAction("[ ]", "mode"),
+                # F-040: the sort cycle key applies where the Sort button shows.
+                ShortcutAction(
+                    "s",
+                    "sort",
+                    available=self.state.active_mode in ("characters", "personas"),
+                ),
                 # The library pane's space binding only acts on dictionary
                 # rows, so it is advertised only in that mode (never claim a
                 # key that does nothing in context).
