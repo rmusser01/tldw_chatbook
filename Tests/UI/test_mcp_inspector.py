@@ -3262,3 +3262,64 @@ def test_render_section_payload_falls_back_to_str_on_non_typeerror_json_failure(
     result = mcp_inspector_module._render_section_payload("advanced", circular)
     assert isinstance(result, str)
     assert result  # fell back to str(payload) rather than raising
+
+
+# -- Task 6 (RAG-50): retire the stale empty-state badge over populated ----
+# tool detail. `#mcp-inspector-state` is seeded with `_EMPTY_STATE_COPY` at
+# compose() time and written only by `update_readiness()`, whose only
+# caller (`MCPWorkbench._sync_children()`) is fed by the selected SERVER.
+# `show_tool()` never touched it, so Tools mode with no server selected
+# left the empty-state badge sitting above fully populated tool detail.
+
+
+@pytest.mark.asyncio
+async def test_empty_state_badge_hidden_when_tool_shown():
+    """No prior `update_readiness()` call at all (mirrors Tools mode with
+    no server selected) -- `show_tool()` alone must hide the badge."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        badge = app.query_one("#mcp-inspector-state", Static)
+        assert badge.display is False
+
+
+@pytest.mark.asyncio
+async def test_empty_state_badge_returns_when_detail_cleared():
+    """The clear path is `show_tool(None)` itself (see
+    `MCPWorkbench._clear_tool_view()`, which calls exactly that) -- no
+    separate blank/clear method exists. Restoring `display = True` must not
+    disturb the content `update_readiness()` maintains -- untouched here,
+    so it is still the compose()-time `_EMPTY_STATE_COPY`."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await inspector.show_tool(None)
+        await pilot.pause()
+        badge = app.query_one("#mcp-inspector-state", Static)
+        assert badge.display is True
+        assert str(badge.renderable) == mcp_inspector_module._EMPTY_STATE_COPY
+
+
+@pytest.mark.asyncio
+async def test_update_readiness_does_not_resurrect_badge_over_displayed_tool():
+    """A server-selection sync (`update_readiness()`) firing while Tools
+    mode has a tool displayed (e.g. a background readiness refresh) must
+    not force the badge back visible over the populated tool detail."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        badge = app.query_one("#mcp-inspector-state", Static)
+        assert badge.display is False
+        await inspector.update_readiness(_ready_snap())
+        await pilot.pause()
+        assert badge.display is False
+        # Clearing afterwards still restores it correctly.
+        await inspector.show_tool(None)
+        await pilot.pause()
+        assert badge.display is True

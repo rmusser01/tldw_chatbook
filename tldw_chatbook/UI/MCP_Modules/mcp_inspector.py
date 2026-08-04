@@ -1165,6 +1165,17 @@ class MCPInspector(Vertical):
         async with self._refresh_lock:
             self._snapshot = snapshot
             state = self.query_one("#mcp-inspector-state", Static)
+            # RAG-50: `show_tool()` owns `state.display` (hidden while tool
+            # detail is shown, restored on `show_tool(None)`) -- this method
+            # only ever touches `state`'s CONTENT/CSS class below and must
+            # keep it that way. A server-selection sync
+            # (`MCPWorkbench._sync_children()`) can legitimately fire while
+            # Tools mode has a tool displayed (e.g. a background readiness
+            # refresh with no server selected, or a stale-selection race);
+            # if this method ever starts writing `state.display` too, guard
+            # it on "a detail container is currently displayed"
+            # (`not self._current_tool`) so it can't resurrect the badge
+            # over populated detail.
             message = self.query_one("#mcp-inspector-message", Static)
             actions = self.query_one("#mcp-inspector-actions", Vertical)
             await actions.remove_children()
@@ -1275,11 +1286,28 @@ class MCPInspector(Vertical):
             self._test_run_armed = False
             container = self.query_one("#mcp-inspector-tool", Vertical)
             await container.remove_children()
+            # RAG-50: `#mcp-inspector-state` is composed once with
+            # `_EMPTY_STATE_COPY` and its CONTENT is written only by
+            # `update_readiness()`, whose only caller is fed by the
+            # selected SERVER -- this populate path has no such dependency
+            # (Tools mode can show a tool with no server selected at all),
+            # so left untouched the empty-state badge sat above fully
+            # populated tool detail. This is the seam that owns its
+            # DISPLAY: hidden the instant any tool detail is shown, restored
+            # on the clear path (`show_tool(None)` -- the same method is
+            # the clear/blank entry point; see `MCPWorkbench.
+            # _clear_tool_view()`). Content is untouched here -- still
+            # `update_readiness()`'s job -- restoring visibility just
+            # reveals whatever it last wrote (or the compose()-time
+            # `_EMPTY_STATE_COPY` if it never ran).
+            state = self.query_one("#mcp-inspector-state", Static)
             if tool is None:
                 container.display = False
+                state.display = True
                 await self._render_permission_container(None, None)
                 return
             container.display = True
+            state.display = False
             widgets: list[Any] = [
                 Static(
                     f"{tool.name} — {tool.server_label}",
