@@ -60,16 +60,29 @@ class ConsoleCommandPopup(Widget):
     def show_suggestions(self, suggestions: list[CommandSuggestion]) -> None:
         """Replace rows, reset the highlight, reposition, and show."""
         self._suggestions = list(suggestions)
+        self._desired_height = min(len(self._suggestions), MAX_VISIBLE_ROWS)
+        self.styles.height = self._desired_height
+        # Set the final width BEFORE rebuilding the OptionList: option row
+        # heights are computed (and cached) against the width at add time, so
+        # adding options while the popup is still narrow wraps rows, inflates
+        # the virtual size, and strands the list in a scrollbar-stuck state
+        # that paints nothing.
+        self.reposition()
         option_list = self.query_one(OptionList)
         option_list.clear_options()
         option_list.add_options(
             [_SuggestionOption(suggestion) for suggestion in self._suggestions]
         )
-        self._desired_height = min(len(self._suggestions), MAX_VISIBLE_ROWS)
-        self.styles.height = self._desired_height
         option_list.highlighted = 0
-        self.reposition()
         self.display = True
+        # The shell's post-keystroke machinery (console-sync worker, guidance
+        # dismissal) can reflow the composer a beat AFTER even the
+        # post-refresh anchor runs (verified: both immediate and
+        # call_after_refresh repositions can observe the pre-shift composer).
+        # The trailing timer re-anchor covers that settle; every subsequent
+        # keystroke re-anchors anyway. Idempotent and cheap.
+        self.call_after_refresh(self.reposition)
+        self.set_timer(0.1, self.reposition)
 
     def hide(self) -> None:
         """Hide the popup and drop its rows."""

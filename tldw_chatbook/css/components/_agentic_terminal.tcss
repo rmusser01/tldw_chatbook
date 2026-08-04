@@ -6364,3 +6364,12 @@ Toast {
     background: $ds-surface-panel;
     padding: 0 1;
 }
+
+/* Textual's default OptionList chrome (tall border + padding) costs two
+ * rows and pushed every option row out of small popups (a 1-row popup had a
+ * 0-row content region and painted an empty band). The popup itself carries
+ * the background, so strip the inner chrome. */
+#console-command-popup OptionList {
+    border: none;
+    padding: 0;
+}

@@ -1,11 +1,13 @@
 """ConsoleCommandPopup widget behavior; ChatScreen integration (Tasks 3-4)."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
+import tldw_chatbook
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -194,6 +196,45 @@ async def _spy_submit_draft(console) -> AsyncMock:
     spy = AsyncMock(wraps=controller.submit_draft)
     controller.submit_draft = spy
     return spy
+
+
+class _StyledConsoleHarness(ConsoleHarness):
+    """ConsoleHarness with the real bundled stylesheet loaded.
+
+    The bare harness App has no CSS_PATH, so the popup's TCSS
+    ``position: absolute`` rule never applies in the other tests — fine for
+    behavior assertions, but positioning must be verified with real CSS.
+    """
+
+    CSS_PATH = str(
+        Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
+    )
+
+
+@pytest.mark.asyncio
+async def test_popup_anchors_above_composer_with_real_css():
+    """The popup's bottom edge sits at the composer's top edge, no overlap."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _StyledConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
+
+        await pilot.press("/")
+        await pilot.pause()
+        # Let the call_after_refresh re-anchor land and layout settle.
+        await pilot.pause(0.2)
+        assert popup.is_open
+        assert popup.region.height > 0
+        popup_bottom = popup.region.y + popup.region.height
+        assert popup_bottom <= composer.region.y, (
+            f"popup {popup.region} overlaps composer {composer.region}"
+        )
+        assert popup.region.y >= 0
 
 
 @pytest.mark.asyncio
