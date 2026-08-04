@@ -100,9 +100,26 @@ async def _settle_settings_mount_storm(pilot) -> None:
     await pilot.pause()
 
 
+async def _reveal_settings_category_button(screen, pilot, selector: str) -> None:
+    """Expand the Domain Defaults nav group when the target button is collapsed away."""
+    try:
+        button = screen.query_one(selector)
+    except Exception:
+        return
+    if button.display:
+        return
+    toggles = screen.query("#settings-category-group-domain-defaults")
+    if toggles:
+        # press() instead of pilot.click: hit-testing is unreliable in the
+        # unstyled harness near the viewport edge.
+        toggles.first().press()
+        await pilot.pause()
+
+
 async def _open_settings_category(pilot, selector: str) -> None:
     """Click a Settings category rail button with the mount storm settled."""
     await _settle_settings_mount_storm(pilot)
+    await _reveal_settings_category_button(pilot.app.screen, pilot, selector)
     try:
         button = pilot.app.screen.query_one(selector)
         category_list = pilot.app.screen.query_one("#settings-category-list")
@@ -316,6 +333,7 @@ async def _select_settings_category(
     )
     button_selector = f"#settings-category-{category_value}"
     await _wait_for_selector(screen, pilot, button_selector, timeout=timeout)
+    await _reveal_settings_category_button(screen, pilot, button_selector)
     try:
         category_list = screen.query_one("#settings-category-list")
         category_list.scroll_to_widget(
@@ -379,7 +397,11 @@ async def _click_scrolled_settings_button(screen, pilot, selector: str) -> Butto
         force=True,
     )
     await pilot.pause()
-    await pilot.click(selector)
+    # press() instead of pilot.click: with the pinned action strip above the
+    # scroll body, the button's top-left cell (pilot.click's default target)
+    # sits on the viewport seam and the mouse event misses the button.
+    button.press()
+    await pilot.pause()
     return button
 
 
@@ -1235,7 +1257,11 @@ async def test_settings_appearance_preview_updates_runtime_without_saving(monkey
         theme.value = "textual-light"
         screen.handle_appearance_theme_changed(Select.Changed(theme, theme.value))
 
-        await pilot.click("#settings-preview-appearance")
+        # press() instead of pilot.click: hit-testing misses the button in
+        # the unstyled harness now that the pinned action strip shifted the
+        # detail rows.
+        screen.query_one("#settings-preview-appearance", Button).press()
+        await pilot.pause()
         text = _visible_text(screen)
 
         assert app.theme == "textual-light"
@@ -2768,7 +2794,7 @@ def test_settings_action_button_focus_style_keeps_label_readable():
     )
     css = css_path.read_text()
     match = re.search(
-        r"\.settings-action-row Button:focus,\s*#settings-impact-pane Button:focus\s*\{(?P<body>[^}]*)\}",
+        r"\.settings-action-row Button:focus\s*\{(?P<body>[^}]*)\}",
         css,
         flags=re.DOTALL,
     )
@@ -2837,20 +2863,21 @@ async def test_settings_detail_shows_state_banner_and_structured_rows():
 
 
 @pytest.mark.asyncio
-async def test_settings_long_detail_and_inspector_panes_are_scrollable_containers():
+async def test_settings_long_detail_pane_and_category_list_are_scrollable_containers():
     app = _build_test_app()
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
 
-        # task-1716: BOTH panes are now fixed-header-over-scroll-body;
-        # the scrollable container is the -body child in each.
+        # task-1716: the detail pane is fixed-header-over-scroll-body;
+        # the scrollable container is the -body child. The retired third
+        # pane's long-content scrolling now falls to the category list.
         assert isinstance(
             screen.query_one("#settings-detail-pane-body"), VerticalScroll
         )
         assert isinstance(
-            screen.query_one("#settings-impact-pane-body"), VerticalScroll
+            screen.query_one("#settings-category-list"), VerticalScroll
         )
 
         await _open_settings_category(pilot, "#settings-category-providers-models")
@@ -2891,7 +2918,7 @@ def _assert_field_guide_row_painted(host, widget) -> None:
 @pytest.mark.asyncio
 async def test_settings_console_behavior_focus_auto_scrolls_to_field_guide():
     """Fleet-UX expert review F6 (task-1234): focusing "Max parallel" must
-    scroll the Scope Inspector so the Focused field guide's first row
+    scroll the detail pane so the Focused field guide's first row
     (Purpose) is actually PAINTED, not merely present somewhere below the
     fold -- live UAT found only "Purpose:" visible with the rest of the
     guide (Consequences/Saved as/Applies) clipped by the pane's own scroll
@@ -2913,7 +2940,7 @@ async def test_settings_console_behavior_focus_auto_scrolls_to_field_guide():
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
 
-        pane = screen.query_one("#settings-impact-pane-body", VerticalScroll)
+        pane = screen.query_one("#settings-detail-pane-body", VerticalScroll)
         pane.styles.height = 6
         await pilot.pause()
         # Reset to a known baseline: opening the category already scrolls
@@ -2968,7 +2995,7 @@ async def test_settings_console_behavior_focus_reveals_full_guide_when_purpose_s
 
     Must fail against the pre-fix implementation (which only ever scrolls
     to the first row, and only when that row isn't already "in window");
-    reverting the ``_scroll_impact_pane_to_field_guide`` change confirms
+    reverting the ``_scroll_detail_pane_to_field_guide`` change confirms
     this.
     """
     app = _build_test_app()
@@ -2977,21 +3004,22 @@ async def test_settings_console_behavior_focus_reveals_full_guide_when_purpose_s
     async with host.run_test(size=(180, 66)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
-        pane = screen.query_one("#settings-impact-pane-body", VerticalScroll)
+        pane = screen.query_one("#settings-detail-pane-body", VerticalScroll)
         field = screen.query_one("#settings-console-max-parallel-runs", Input)
         other_field = screen.query_one("#settings-console-default-streaming", Input)
         guide_ids = [f"#settings-console-behavior-field-guide-{i}" for i in range(4)]
 
         # Measure the REAL (focused) guide's total span first, so the pane
-        # can be grown to hold it end to end.
+        # can be grown to hold it end to end. The rows are nested inside
+        # the guidance Collapsible now, so their `virtual_region` is
+        # relative to the Collapsible contents, not the scroll body --
+        # measure with painted `region` coordinates instead.
         field.focus()
         await pilot.pause()
         await pilot.pause()
         first_measured = screen.query_one(guide_ids[0])
         last_measured = screen.query_one(guide_ids[-1])
-        guide_span = (
-            last_measured.virtual_region.y + last_measured.virtual_region.height
-        ) - first_measured.virtual_region.y
+        guide_span = last_measured.region.bottom - first_measured.region.y
         # +8, not the guide's span alone: `scrollable_content_region` (the
         # interior window scrolling actually targets) is smaller than
         # `styles.height` by the pane's own border + padding overhead
@@ -3015,11 +3043,10 @@ async def test_settings_console_behavior_focus_reveals_full_guide_when_purpose_s
         await pilot.pause()
 
         fallback_row0 = screen.query_one(guide_ids[0])
+        interior_bottom = pane.scrollable_content_region.bottom
         target_scroll_y = max(
             0,
-            fallback_row0.virtual_region.y
-            + fallback_row0.virtual_region.height
-            - viewport_height,
+            pane.scroll_y + fallback_row0.region.bottom - interior_bottom,
         )
         pane.scroll_to(y=target_scroll_y, animate=False, force=True)
         await pilot.pause()
@@ -3299,9 +3326,96 @@ async def test_settings_category_search_escape_clears_filter():
 
         search = screen.query_one("#settings-category-search", Input)
         assert search.value == ""
+        # Clearing the filter restores the collapsed Domain Defaults group:
+        # only non-domain categories are visible until the group is expanded.
+        expected_visible = sum(
+            1
+            for summary in screen._category_summaries()
+            if summary.category
+            not in settings_screen_module.DOMAIN_SETTINGS_CATEGORY_IDS
+        )
         assert sum(
             1 for button in screen.query(".settings-category-button") if button.display
-        ) == len(screen._category_summaries())
+        ) == expected_visible
+
+
+@pytest.mark.asyncio
+async def test_settings_domain_defaults_group_toggle_expands_and_collapses():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _settle_settings_mount_storm(pilot)
+
+        domain_values = {
+            category.value
+            for category in settings_screen_module.DOMAIN_SETTINGS_CATEGORY_IDS
+        }
+
+        def visible_domain_buttons() -> list[Button]:
+            return [
+                button
+                for button in screen.query(".settings-category-button")
+                if button.id
+                and button.id.removeprefix("settings-category-") in domain_values
+                and button.display
+            ]
+
+        assert not visible_domain_buttons()
+
+        # press() instead of pilot.click: hit-testing is unreliable in the
+        # unstyled harness near the viewport edge; the toggle handler is what
+        # is under test here.
+        toggle = screen.query_one("#settings-category-group-domain-defaults", Button)
+        toggle.press()
+        await pilot.pause()
+        assert len(visible_domain_buttons()) == len(domain_values)
+        assert "▾" in str(toggle.label)
+
+        toggle.press()
+        await pilot.pause()
+        assert not visible_domain_buttons()
+
+
+@pytest.mark.asyncio
+async def test_settings_domain_group_expands_when_restored_to_domain_category():
+    app = _build_test_app()
+    host = DestinationHarness(
+        app, "settings", restored_state={"active_category": "personas"}
+    )
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _settle_settings_mount_storm(pilot)
+
+        button = screen.query_one("#settings-category-personas", Button)
+        assert button.display
+        assert screen.active_category == SettingsCategoryId.PERSONAS.value
+
+
+@pytest.mark.asyncio
+async def test_settings_category_search_reveals_domain_matches():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _settle_settings_mount_storm(pilot)
+
+        personas_button = screen.query_one("#settings-category-personas", Button)
+        assert not personas_button.display
+
+        await pilot.press("/")
+        await _wait_for_settings_search_focus(screen, pilot)
+        await pilot.press(*"personas")
+        await pilot.pause()
+        assert personas_button.display
+
+        search = screen.query_one("#settings-category-search", Input)
+        search.value = ""
+        await pilot.pause()
+        assert not personas_button.display
 
 
 @pytest.mark.asyncio
@@ -3321,7 +3435,13 @@ async def test_settings_overview_paste_summary_updates_after_toggle(monkeypatch)
 
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
-        await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        # press() instead of pilot.click: hit-testing misses the toggle in
+        # the unstyled harness now that the pinned action strip shifted the
+        # detail rows.
+        pilot.app.screen.query_one(
+            "#settings-console-collapse-large-pastes-toggle", Button
+        ).press()
+        await pilot.pause()
         await _open_settings_category(pilot, "#settings-category-overview")
         screen = _active_destination_screen(host)
 
@@ -3457,7 +3577,13 @@ async def test_settings_console_behavior_stages_save_and_revert(monkeypatch):
 
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
-        await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        # press() instead of pilot.click: hit-testing misses the toggle in
+        # the unstyled harness now that the pinned action strip shifted the
+        # detail rows.
+        pilot.app.screen.query_one(
+            "#settings-console-collapse-large-pastes-toggle", Button
+        ).press()
+        await pilot.pause()
         screen = _active_destination_screen(host)
 
         assert "Unsaved" in _visible_text(screen)
@@ -4514,7 +4640,13 @@ async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
 
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
-        await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        # press() instead of pilot.click: hit-testing misses the toggle in
+        # the unstyled harness now that the pinned action strip shifted the
+        # detail rows.
+        pilot.app.screen.query_one(
+            "#settings-console-collapse-large-pastes-toggle", Button
+        ).press()
+        await pilot.pause()
         screen = _active_destination_screen(host)
 
         assert "Unsaved" in _visible_text(screen)
@@ -4571,7 +4703,13 @@ async def test_settings_console_guided_save_revert_enable_only_when_dirty():
         assert screen.query_one("#settings-revert-category", Button).disabled is True
         assert "Guided edits: change a field first." in _visible_text(screen)
 
-        await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        # press() instead of pilot.click: hit-testing misses the toggle in
+        # the unstyled harness now that the pinned action strip shifted the
+        # detail rows.
+        pilot.app.screen.query_one(
+            "#settings-console-collapse-large-pastes-toggle", Button
+        ).press()
+        await pilot.pause()
 
         assert screen.query_one("#settings-save-category", Button).disabled is False
         assert screen.query_one("#settings-revert-category", Button).disabled is False
@@ -7251,9 +7389,8 @@ def test_settings_pane_widths_are_owned_by_stylesheet_not_inline_python():
 
     assert ".styles.width" not in source
     for selector, expected_width in (
-        ("#settings-category-pane", "3fr"),
-        ("#settings-detail-pane", "6fr"),
-        ("#settings-impact-pane", "2fr"),
+        ("#settings-category-pane", "30"),
+        ("#settings-detail-pane", "1fr"),
     ):
         marker = f"{selector} {{"
         block_start = css.index(marker)
@@ -7466,7 +7603,7 @@ async def test_settings_advanced_config_guided_path_buttons_escape_raw_toml():
         await _wait_for_settings_text(screen, pilot, "Provider catalog")
 
         assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
-        assert "Selected category: Providers & Models" in _visible_text(screen)
+        assert "Mode: Providers & Models" in _visible_text(screen)
 
 
 def test_settings_advanced_config_new_file_save_reports_no_backup(
@@ -7850,8 +7987,8 @@ def test_detail_row_folds_long_config_keys():
 
 @pytest.mark.asyncio
 async def test_local_scope_note_is_pinned_outside_scrollable_body():
-    """The standing local-scope reassurance must live in the pinned header
-    region, not as the scroll body's clip-bait last row (8 of 20 critique
+    """The standing local-scope reassurance must live in the pinned action
+    strip, not as the scroll body's clip-bait last row (8 of 20 critique
     captures cut it mid-sentence: 'Nothing is sent to')."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -7859,7 +7996,7 @@ async def test_local_scope_note_is_pinned_outside_scrollable_body():
         await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
         note = screen.query_one("#settings-local-scope-note", Static)
-        body = screen.query_one("#settings-impact-pane-body")
+        body = screen.query_one("#settings-detail-pane-body")
         assert body not in note.ancestors, (
             "local-scope note is inside the scrollable body"
         )
@@ -8123,24 +8260,6 @@ async def test_numeric_labels_carry_units():
         text = _visible_text(screen)
         assert "Threshold (chars)" in text
         assert "Display cap (chars)" in text
-
-
-@pytest.mark.asyncio
-async def test_inspector_overflow_hint_matches_body_overflow():
-    """The reserved fold-indicator row shows exactly when the inspector
-    body has more content than its viewport (task-1623)."""
-    app = _build_test_app()
-    host = StyledSettingsDestinationHarness(app, "settings")
-    async with host.run_test(size=(190, 40)) as pilot:
-        await _open_settings_category(pilot, "#settings-category-privacy-security")
-        screen = _active_destination_screen(host)
-        for _ in range(6):
-            await pilot.pause()
-        body = screen.query_one("#settings-impact-pane-body", VerticalScroll)
-        hint = screen.query_one("#settings-impact-overflow-hint", Static)
-        overflows = body.virtual_size.height > body.container_size.height
-        assert hint.display == overflows
-        assert overflows, "expected Privacy inspector to overflow a 40-row harness"
 
 
 @pytest.mark.asyncio

@@ -3820,7 +3820,7 @@ async def test_skills_attach_to_console_sanitizes_listed_skill_text():
 
 
 @pytest.mark.asyncio
-async def test_settings_destination_uses_three_column_workbench_contract():
+async def test_settings_destination_uses_two_column_workbench_contract():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -3838,9 +3838,9 @@ async def test_settings_destination_uses_three_column_workbench_contract():
             in text
         )
         assert "Mode: Overview | Runtime controls stay in MCP and ACP" in text
-        assert "Settings Sections" in text
-        assert "Preference Detail" in text
-        assert "Scope Inspector" in text
+        assert "Settings Sections" not in text
+        assert "Preference Detail" not in text
+        assert "Scope Inspector" not in text
         assert "Overview" in text
         assert "Provider readiness" in text
         assert "Storage" in text
@@ -3861,12 +3861,13 @@ async def test_settings_destination_uses_three_column_workbench_contract():
         assert screen.query_one("#settings-overview-card").region.height >= 6
         category_pane = screen.query_one("#settings-category-pane")
         detail_pane = screen.query_one("#settings-detail-pane")
-        impact_pane = screen.query_one("#settings-impact-pane")
         assert category_pane.region.height > 0
         assert detail_pane.region.height > 0
-        assert impact_pane.region.height > 0
-        assert screen.query_one("#settings-category-detail-divider")
-        assert screen.query_one("#settings-detail-impact-divider")
+        # The pinned recovery action and per-category guidance live inside
+        # the detail pane now (the third "impact" pane is retired); Overview
+        # has no Save/Revert pair -- its action is the Theme editor button.
+        assert screen.query_one("#settings-open-appearance")
+        assert screen.query_one("#settings-category-guidance")
 
 
 def test_settings_sync_safety_state_failure_logs_context(caplog):
@@ -3942,7 +3943,10 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
 
         assert expected_label in str(toggle.label)
 
-        await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        # press() instead of pilot.click: hit-testing misses the toggle in
+        # the unstyled harness now that the pinned action strip shifted the
+        # detail rows.
+        toggle.press()
         await pilot.pause(0.1)
 
         assert app.app_config["console"]["collapse_large_pastes"] == initial_value
