@@ -111,6 +111,8 @@ class PersonasCharacterCardWidget(Container):
                 id="personas-card-edit-character",
                 classes="console-action-secondary",
                 disabled=True,
+                # F-037: a disabled Edit explains itself.
+                tooltip="Select a character to edit.",
             )
 
     # ===== Public API =====
@@ -181,8 +183,12 @@ class PersonasCharacterCardWidget(Container):
         # for the handler's call_from_thread continuation.
         self.query_one("#personas-character-card-empty").display = False
         self.query_one("#personas-character-card-body").display = True
-        self.query_one("#personas-card-edit-character", Button).disabled = (
-            self._character_id is None
+        edit_button = self.query_one("#personas-card-edit-character", Button)
+        edit_button.disabled = self._character_id is None
+        edit_button.tooltip = (
+            None
+            if self._character_id is not None
+            else "This character has no saved record to edit."
         )
 
     # ===== Events =====

@@ -4763,6 +4763,35 @@ class TestServerCharacterSourceIsolation:
             )
             assert screen.query_one("#personas-start-chat", Button).disabled is False
 
+    async def test_server_browsing_disables_actions_with_reason_tooltips(
+        self, mock_app_instance, stub_characters
+    ):
+        """F-037: every action disabled by server browsing says why."""
+        mock_app_instance.runtime_backend = "server"
+        mock_app_instance.active_server_id = "server-a"
+        mock_app_instance.character_persona_scope_service = self._server_service()
+        mock_app_instance.chat_dictionary_scope_service = None
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            # F-031 auto-selects the first server row; the local-only actions
+            # must be disabled AND explained.
+            assert screen.state.selected_entity_id == "7"
+            for control_id in (
+                "#personas-card-edit-character",
+                "#personas-export-json",
+                "#personas-export-png",
+                "#personas-delete",
+            ):
+                control = screen.query_one(control_id, Button)
+                assert control.disabled is True, control_id
+                assert control.tooltip == (
+                    "Server characters are read-only here."
+                ), control_id
+
     async def test_server_footer_does_not_advertise_local_character_creation(
         self, mock_app_instance, stub_characters
     ):

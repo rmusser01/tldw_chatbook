@@ -274,6 +274,9 @@ _CHARACTERS_EMPTY_GUIDANCE = (
 #: No-selection copy when the library HAS characters (F-035): the next
 #: action is picking one, not creating one.
 _CHARACTERS_EMPTY_PICKER_GUIDANCE = "Pick a character from the list to see it here."
+#: F-037: reason shown on local-only actions (card Edit, inspector
+#: export/delete) while browsing server-owned characters.
+_SERVER_READ_ONLY_TOOLTIP = "Server characters are read-only here."
 PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
 #: Rows per library page. ``page_offset`` is always kept a multiple of this so
 #: the pane's "start-end of N" label math stays exact.
@@ -2138,11 +2141,18 @@ class PersonasScreen(BaseAppScreen):
             edit = self.query_one("#personas-card-edit-character", Button)
             if server_characters:
                 edit.disabled = True
+                edit.tooltip = _SERVER_READ_ONLY_TOOLTIP
             else:
                 edit.disabled = not (
                     self.state.selected_entity_kind == "character"
                     and self.state.selected_entity_id is not None
                 )
+                # Clear a stale server reason when leaving server browsing;
+                # the card widget owns the baseline tooltips otherwise.
+                if edit.tooltip == _SERVER_READ_ONLY_TOOLTIP:
+                    edit.tooltip = (
+                        None if not edit.disabled else "Select a character to edit."
+                    )
 
             inspector = self.query_one(PersonasInspectorPane)
             if server_characters:
@@ -2151,7 +2161,11 @@ class PersonasScreen(BaseAppScreen):
                     "#personas-export-png",
                     "#personas-delete",
                 ):
-                    inspector.query_one(selector, Button).disabled = True
+                    # F-037: server browsing force-disables these local-only
+                    # actions; each one must say why.
+                    button = inspector.query_one(selector, Button)
+                    button.disabled = True
+                    button.tooltip = _SERVER_READ_ONLY_TOOLTIP
             else:
                 # Restore the inspector's existing selection/unsaved gates after
                 # leaving server Characters mode.
@@ -3355,9 +3369,9 @@ class PersonasScreen(BaseAppScreen):
             await inspector.show_conversations(
                 (), empty_copy="No saved conversations."
             )
-            self.query_one(
-                "#personas-card-edit-character", Button
-            ).disabled = True
+            edit_button = self.query_one("#personas-card-edit-character", Button)
+            edit_button.disabled = True
+            edit_button.tooltip = _SERVER_READ_ONLY_TOOLTIP
 
         if restore_preview is not None:
             await self.preview.restore_conversation(

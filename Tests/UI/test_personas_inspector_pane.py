@@ -174,6 +174,39 @@ async def test_non_character_selections_hide_conversations_section():
         )
 
 
+async def test_disabled_actions_carry_reason_tooltips_without_selection():
+    """F-037: every disabled inspector action explains why - even in the
+    pre-selection state (hidden on the screen, but the pane contract holds)."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        expectations = {
+            "#personas-start-chat": "Pick a character or persona to start chatting.",
+            "#personas-attach-to-console": (
+                "Pick a character or persona to start chatting."
+            ),
+            "#personas-export-json": "Select an item to export.",
+            "#personas-export-png": "Select an item to export.",
+            "#personas-delete": "Select an item to delete.",
+        }
+        for button_id, expected_tooltip in expectations.items():
+            button = pilot.app.query_one(button_id, Button)
+            assert button.disabled is True, button_id
+            assert button.tooltip == expected_tooltip, button_id
+
+
+async def test_blocked_console_tooltip_uses_intent_copy():
+    """F-037: a screen-blocked Console action explains itself in intent copy."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Tutor", kind="character")
+        pane.set_console_actions_enabled(False, reason="prompts are not attachable")
+        await pilot.pause()
+        attach = pilot.app.query_one("#personas-attach-to-console", Button)
+        assert attach.disabled is True
+        assert attach.tooltip == "Chat blocked: prompts are not attachable"
+
+
 async def test_readiness_copy_is_compact_for_narrow_inspector():
     app = InspectorApp()
     async with app.run_test(size=(24, 20)) as pilot:
