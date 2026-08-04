@@ -26,6 +26,7 @@ from .item_persist import (
 from .watchlist_content_alert_service import WatchlistContentAlertService
 from .watchlist_filter_service import WatchlistFilterService
 from .watchlist_normalizers import (
+    WATCHLIST_NAME_SEPARATOR,
     build_watchlist_item_id,
     normalize_local_subscription_row,
     normalize_watchlist_alert_rule,
@@ -268,6 +269,34 @@ def _max_withheld_percentage(dispositions: list[dict[str, Any]]) -> float | None
 
 class LocalWatchlistsService:
     """Thin adapter over `SubscriptionsDB` for the shared watchlists seam."""
+
+    #: TASK-2305. Every local run read goes through this projection, so a run
+    #: arrives already knowing which source produced it and which watchlists
+    #: that source belongs to. `local_watchlist_runs` stores only a
+    #: `source_id`, and nothing on the Runs pane's path had ever resolved it
+    #: -- so a whole run history rendered as "Untitled". `LEFT JOIN`, not
+    #: `JOIN`: a run whose source cannot be resolved must still be listed
+    #: (unnameable is a better history than absent).
+    #:
+    #: The watchlist names arrive as one `WATCHLIST_NAME_SEPARATOR`-joined
+    #: column rather than a second query per run, ordered by name so the
+    #: display is stable between reads.
+    _RUN_SELECT = f"""
+        SELECT r.*,
+               s.name AS source_title,
+               (
+                   SELECT group_concat(name, '{WATCHLIST_NAME_SEPARATOR}')
+                   FROM (
+                       SELECT w.name AS name
+                       FROM watchlist_sources ws
+                       JOIN watchlists w ON w.id = ws.watchlist_id
+                       WHERE ws.subscription_id = r.source_id
+                       ORDER BY w.name
+                   )
+               ) AS watchlist_names
+        FROM local_watchlist_runs r
+        LEFT JOIN subscriptions s ON s.id = r.source_id
+    """
 
     def __init__(
         self,
@@ -630,6 +659,12 @@ class LocalWatchlistsService:
             )
             stats["items_ingested"] = len(kept_items)
             stats["new_items_found"] = len(kept_items)
+            # TASK-2305: how many items this run's own filters excluded. The
+            # Runs pane has a Filtered column and the number was only ever
+            # derivable (found minus ingested) -- recorded here, where the
+            # exclusion actually happens, so the run says what it did rather
+            # than leaving every reader to infer it.
+            stats["items_filtered"] = max(len(raw_items) - len(kept_items), 0)
 
             self._upsert_subscription_items(db, source_id, int(run_id), kept_items)
             # task-1394 fix wave (review Finding #1): a `url_list`/`sitemap`
@@ -740,51 +775,44 @@ class LocalWatchlistsService:
         values: list[Any] = []
         resolved_source_id = source_id if source_id is not None else job_id
         if resolved_source_id is not None:
-            filters.append("source_id = ?")
+            filters.append("r.source_id = ?")
             values.append(int(resolved_source_id))
         where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
         values.extend([int(limit), int(offset)])
         cursor = db.conn.cursor()
         cursor.execute(
             f"""
-            SELECT * FROM local_watchlist_runs
+            {self._RUN_SELECT}
             {where_clause}
-            ORDER BY id DESC
+            ORDER BY r.id DESC
             LIMIT ? OFFSET ?
             """,
             values,
         )
-        return [
-            normalize_watchlist_run("local", self._run_row_to_dict(row))
-            for row in cursor.fetchall()
-        ]
+        return [self._normalize_run_row(row) for row in cursor.fetchall()]
 
     def list_home_run_snapshot(self, *, limit: int = 20) -> list[dict[str, Any]]:
         """Return recent local watchlist runs from a synchronous Home-safe path."""
         db = self._db()
         cursor = db.conn.cursor()
         cursor.execute(
-            """
-            SELECT local_watchlist_runs.*, subscriptions.name AS source_title
-            FROM local_watchlist_runs
-            LEFT JOIN subscriptions ON subscriptions.id = local_watchlist_runs.source_id
-            ORDER BY local_watchlist_runs.id DESC
+            f"""
+            {self._RUN_SELECT}
+            ORDER BY r.id DESC
             LIMIT ?
             """,
             (int(limit),),
         )
-        return [self._normalize_home_run_snapshot(row) for row in cursor.fetchall()]
+        return [self._normalize_run_row(row) for row in cursor.fetchall()]
 
     async def get_run(self, run_id: Any) -> dict[str, Any]:
         db = self._db()
         cursor = db.conn.cursor()
-        cursor.execute(
-            "SELECT * FROM local_watchlist_runs WHERE id = ?", (int(run_id),)
-        )
+        cursor.execute(f"{self._RUN_SELECT} WHERE r.id = ?", (int(run_id),))
         row = cursor.fetchone()
         if row is None:
             raise KeyError(f"Watchlist run not found: {run_id}")
-        return normalize_watchlist_run("local", self._run_row_to_dict(row))
+        return self._normalize_run_row(row)
 
     async def get_run_detail(self, run_id: Any, **_: Any) -> dict[str, Any]:
         return await self.get_run(run_id)
@@ -1534,14 +1562,31 @@ class LocalWatchlistsService:
             "log_text": payload.get("log_text"),
             "created_at": payload.get("created_at"),
             "updated_at": payload.get("updated_at"),
+            # TASK-2305: joined identity. Carried through the row dict so
+            # `normalize_watchlist_run` -- which also serves the server
+            # backend, where neither exists -- reads them the same way it
+            # reads every other field.
+            "source_title": payload.get("source_title"),
+            "watchlist_names": payload.get("watchlist_names"),
         }
 
-    def _normalize_home_run_snapshot(self, row: Mapping[str, Any]) -> dict[str, Any]:
+    def _normalize_run_row(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        """Normalize one `_RUN_SELECT` row.
+
+        The single normalizer for every local run read (`list_runs`,
+        `get_run`, `list_home_run_snapshot`). Before TASK-2305 only the Home
+        snapshot resolved a run's source name, with its own hand-written JOIN,
+        and the Runs pane's own list did not -- so the Runs tab showed
+        "Untitled" for every run while Home, reading the same table, showed
+        the real name. One query and one normalizer is what keeps those two
+        from drifting again.
+        """
         payload = dict(row)
         normalized = normalize_watchlist_run("local", self._run_row_to_dict(payload))
-        source_title = payload.get("source_title")
+        source_title = normalized.get("source_title")
         if source_title:
-            normalized["source_title"] = source_title
+            # Home's active-work rail reads `title` (see
+            # `HomeActiveWorkAdapter._local_watchlist_run_items`).
             normalized["title"] = source_title
         return normalized
 

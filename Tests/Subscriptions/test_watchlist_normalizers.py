@@ -202,3 +202,144 @@ def test_normalize_server_watchlist_source_never_reports_paused() -> None:
     )
 
     assert source["paused"] is False
+
+
+# --- TASK-2305: run accounting is lifted out of the nested `stats` blob ----
+
+
+def _run(**payload):
+    from tldw_chatbook.Subscriptions.watchlist_normalizers import (
+        normalize_watchlist_run,
+    )
+
+    base = {"id": 4, "source_id": 2, "job_id": 2, "status": "completed"}
+    base.update(payload)
+    return normalize_watchlist_run("local", base)
+
+
+def test_run_counters_come_from_the_names_the_pipeline_actually_writes():
+    """The whole of F33 in one assertion.
+
+    `execute_run` records `items_found`/`items_ingested`/`items_filtered`
+    inside `stats`; the Runs pane reads `found_count`/`processed_count`/
+    `filtered_count` off the run's top level. Nothing bridged the two, so
+    every run displayed four zeros.
+    """
+    run = _run(
+        stats={
+            "items_found": 30,
+            "items_ingested": 28,
+            "items_filtered": 2,
+            "response_time_ms": 412,
+        }
+    )
+
+    assert run["found_count"] == 30
+    assert run["processed_count"] == 28
+    assert run["filtered_count"] == 2
+    assert run["error_count"] == 0
+    # The nested blob is still carried verbatim for the consumers that read it.
+    assert run["stats"]["items_found"] == 30
+
+
+def test_a_run_recorded_before_the_filtered_count_existed_derives_it():
+    """Rows written before TASK-2305 have no `items_filtered` to lift."""
+    run = _run(stats={"items_found": 10, "items_ingested": 4})
+
+    assert run["filtered_count"] == 6
+
+
+def test_a_malformed_stats_blob_never_reports_negative_filtering():
+    run = _run(stats={"items_found": 2, "items_ingested": 9})
+
+    assert run["filtered_count"] == 0
+
+
+def test_a_failed_run_with_no_error_counter_reports_one_error():
+    run = _run(status="failed", error_msg="feed unreachable", stats={})
+
+    assert run["error_count"] == 1
+    assert run["found_count"] == 0
+
+
+def test_a_url_family_runs_error_count_comes_from_its_dispositions():
+    """`dispositions` is the per-URL truth for the url/url_list/sitemap arms."""
+    run = _run(
+        status="completed",
+        stats={
+            "items_found": 3,
+            "items_ingested": 3,
+            "dispositions": {"changed": 3, "error": 2},
+        },
+    )
+
+    assert run["error_count"] == 2
+
+
+def test_duration_is_measured_between_the_runs_own_timestamps():
+    run = _run(
+        started_at="2026-08-04T10:00:00+00:00",
+        finished_at="2026-08-04T10:00:04.800000+00:00",
+        stats={},
+    )
+
+    assert run["duration"] == "4.8s"
+
+
+@pytest.mark.parametrize(
+    "finished,expected",
+    [
+        ("2026-08-04T10:00:00.820000+00:00", "820ms"),
+        ("2026-08-04T10:02:03+00:00", "2m 3s"),
+        ("2026-08-04T11:04:00+00:00", "1h 4m"),
+    ],
+)
+def test_duration_scales_its_units(finished, expected):
+    run = _run(
+        started_at="2026-08-04T10:00:00+00:00", finished_at=finished, stats={}
+    )
+
+    assert run["duration"] == expected
+
+
+def test_an_unfinished_run_reports_no_duration():
+    """`-` is honest for a queued or running row; an elapsed time is not."""
+    run = _run(status="running", started_at="2026-08-04T10:00:00+00:00", stats={})
+
+    assert run["duration"] is None
+
+
+def test_duration_falls_back_to_the_recorded_response_time():
+    """A payload missing a timestamp still has the pipeline's own measurement."""
+    run = _run(status="completed", stats={"response_time_ms": 1500})
+
+    assert run["duration"] == "1.5s"
+
+
+def test_watchlist_names_split_on_the_unit_separator_not_a_comma():
+    """Watchlist names are user-typed; a comma in one must not split it."""
+    from tldw_chatbook.Subscriptions.watchlist_normalizers import (
+        WATCHLIST_NAME_SEPARATOR,
+    )
+
+    run = _run(
+        source_title="Hacker News",
+        watchlist_names=f"Morning read{WATCHLIST_NAME_SEPARATOR}Security, daily",
+        stats={},
+    )
+
+    assert run["source_title"] == "Hacker News"
+    assert run["watchlist_names"] == ["Morning read", "Security, daily"]
+
+
+def test_a_server_run_carries_no_source_name_rather_than_a_wrong_one():
+    from tldw_chatbook.Subscriptions.watchlist_normalizers import (
+        normalize_watchlist_run,
+    )
+
+    run = normalize_watchlist_run(
+        "server", {"id": 8, "job_id": 3, "status": "completed", "stats": {}}
+    )
+
+    assert run["source_title"] is None
+    assert run["watchlist_names"] == []

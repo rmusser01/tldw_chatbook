@@ -131,7 +131,7 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         """
         style = RunsPane._SELECTED_ROW_STYLE if highlighted else ""
         return (
-            Text(str(run.get("source_title") or run.get("job_name") or "Untitled"), style=style),
+            Text(RunsPane._run_identity(run), style=style),
             Text(str(run.get("status") or "-"), style=style),
             Text(str(run.get("started_at") or "-"), style=style),
             Text(str(run.get("duration") or "-"), style=style),
@@ -142,11 +142,52 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         )
 
     @staticmethod
+    def _run_identity(run: dict[str, Any]) -> str:
+        """What the "Source / Job" column says for `run` (task-2305).
+
+        The source's name, plus the watchlist it sits in when it sits in one
+        -- a run history that names only sources is ambiguous the moment the
+        same feed is watched from two watchlists. Only the FIRST watchlist is
+        spelled out, with a `+N` for the rest: `DataTable` sizes a column to
+        its widest cell, so an unbounded join would push the eight accounting
+        columns off the side of the pane.
+
+        Args:
+            run: A normalized run record.
+
+        Returns:
+            e.g. `"Hacker News · Morning read"`, `"Hacker News · Morning read
+            +2"`, `"Hacker News"`, or `"Untitled"` for a run whose source can
+            no longer be resolved.
+        """
+        source = str(run.get("source_title") or run.get("job_name") or "").strip()
+        if not source:
+            source = "Untitled"
+        names = [str(name).strip() for name in (run.get("watchlist_names") or []) if str(name).strip()]
+        if not names:
+            return source
+        suffix = names[0] if len(names) == 1 else f"{names[0]} +{len(names) - 1}"
+        return f"{source} · {suffix}"
+
+    @staticmethod
     def _stats_text(run: dict[str, Any] | None) -> str:
         if not run:
             return "No run selected."
+        # task-2305: the detail block names the run's source outright, and
+        # lists EVERY watchlist it belongs to -- the row abbreviates for width,
+        # the detail block has no such constraint and is where the full answer
+        # belongs.
+        identity = f"Source: {run.get('source_title') or run.get('job_name') or 'Untitled'}\n"
+        watchlists = [
+            str(name).strip()
+            for name in (run.get("watchlist_names") or [])
+            if str(name).strip()
+        ]
+        if watchlists:
+            identity += f"Watchlists: {', '.join(watchlists)}\n"
         base = (
-            f"Status: {run.get('status', '-')}\n"
+            identity
+            + f"Status: {run.get('status', '-')}\n"
             f"Started: {run.get('started_at', '-')}\n"
             f"Duration: {run.get('duration', '-')}\n"
             f"Found: {run.get('found_count', 0)} | "

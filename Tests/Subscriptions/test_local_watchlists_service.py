@@ -13,6 +13,7 @@ from tldw_chatbook.Notifications import (
 from tldw_chatbook.Subscriptions import LocalWatchlistsService
 from tldw_chatbook.Subscriptions.watchlist_content_alert_service import WatchlistContentAlertService
 from tldw_chatbook.Subscriptions.watchlist_filter_service import WatchlistFilterService
+from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 
 
 @pytest.mark.asyncio
@@ -82,6 +83,12 @@ async def test_local_watchlists_service_exposes_sync_home_run_snapshot(tmp_path)
     assert snapshot[0]["source_id"] == failed_source["source_id"]
     assert snapshot[1]["status"] == "queued"
     assert snapshot[1]["source_title"] == "Queued Feed"
+    # `title` is the key Home's active-work rail reads FIRST (see
+    # `HomeActiveWorkAdapter._local_watchlist_run_items`). Only the
+    # Home-specific normalizer set it before TASK-2305 folded the three run
+    # reads into one, so it is pinned here rather than left to the rail's
+    # `source_title` fallback to cover for it.
+    assert snapshot[0]["title"] == "Failed Feed"
 
 
 @pytest.mark.asyncio
@@ -1408,3 +1415,179 @@ async def test_list_items_reports_zero_alerts_for_an_unmatched_item(tmp_path):
 
     assert len(items) == 1
     assert items[0]["alert_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_real_check_produces_a_run_that_names_its_source_and_counts(
+    tmp_path,
+):
+    """TASK-2305 AC#1/AC#2/AC#3, against a stub feed and the real pipeline.
+
+    UAT: a check that demonstrably harvested ~30 items produced a Runs row
+    reading `Untitled · completed · Found 0 · Processed 0 · Filtered 0 ·
+    Errors 0 · Duration -`. Both halves are asserted here on the record the
+    Runs pane actually reads -- `list_runs`' output -- not on the nested
+    `stats` blob that was never the problem.
+    """
+
+    async def fake_run_executor(subscription):
+        return {
+            "items": [
+                {
+                    "url": f"https://example.com/post-{index}",
+                    "title": f"Post {index}",
+                    "content_hash": f"hash-{index}",
+                }
+                for index in range(30)
+            ],
+            "stats": {},
+        }
+
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(
+        db_factory=lambda: db, run_executor=fake_run_executor
+    )
+    source = await service.create_source(
+        {
+            "name": "Hacker News",
+            "url": "https://hnrss.org/frontpage",
+            "source_type": "rss",
+        }
+    )
+    # One filter excluding a single post, so Processed and Filtered are
+    # distinguishable from Found and from each other.
+    db.add_filter(
+        name="exclude one",
+        conditions={"type": "keyword", "pattern": "Post 7"},
+        action="exclude",
+        subscription_id=source["source_id"],
+    )
+    bundles = WatchlistBundleService(db)
+    watchlist = bundles.create("Morning read")
+    bundles.add_source(watchlist["id"], source["source_id"])
+
+    launched = await service.launch_run(source_id=source["source_id"])
+    await service.execute_run(launched["run_id"])
+
+    listed = await service.list_runs()
+    run = listed[0]
+
+    assert run["source_title"] == "Hacker News", (
+        "F32: a run row must name its source, not read 'Untitled'"
+    )
+    assert run["watchlist_names"] == ["Morning read"]
+    assert run["found_count"] == 30, (
+        "F33: the ~30-item check must show ~30 found"
+    )
+    assert run["processed_count"] == 29
+    assert run["filtered_count"] == 1
+    assert run["error_count"] == 0
+    assert run["duration"] is not None and run["duration"] != "-", (
+        "a finished run knows how long it took"
+    )
+    # The same record, read one at a time, must agree with the list.
+    fetched = await service.get_run(launched["run_id"])
+    assert fetched["source_title"] == "Hacker News"
+    assert fetched["found_count"] == 30
+
+
+@pytest.mark.asyncio
+async def test_a_failed_run_reports_one_error_and_no_found_items(tmp_path):
+    """The discriminating half: zeros must be REAL zeros, not missing keys."""
+
+    async def exploding_executor(subscription):
+        raise RuntimeError("feed unreachable")
+
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(
+        db_factory=lambda: db, run_executor=exploding_executor
+    )
+    source = await service.create_source(
+        {"name": "Broken", "url": "https://example.com/x.xml", "source_type": "rss"}
+    )
+    launched = await service.launch_run(source_id=source["source_id"])
+    await service.execute_run(launched["run_id"])
+
+    run = (await service.list_runs())[0]
+
+    assert run["status"] == "failed"
+    assert run["source_title"] == "Broken"
+    assert run["watchlist_names"] == []
+    assert run["found_count"] == 0
+    assert run["processed_count"] == 0
+    assert run["filtered_count"] == 0
+    assert run["error_count"] == 1, (
+        "a failed run reporting zero errors is the flattering answer"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_queued_run_has_no_duration_yet(tmp_path):
+    """A run that has not finished reports no duration rather than a fake one."""
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    source = await service.create_source(
+        {"name": "Feed", "url": "https://example.com/feed.xml", "source_type": "rss"}
+    )
+
+    launched = await service.launch_run(source_id=source["source_id"])
+
+    assert launched["status"] == "queued"
+    assert launched["duration"] is None
+    assert launched["source_title"] == "Feed"
+
+
+@pytest.mark.asyncio
+async def test_the_filtered_count_is_recorded_not_inferred(tmp_path):
+    """`found - processed` is not the number of items a filter excluded.
+
+    `execute_run` does `stats.setdefault("items_found", len(raw_items))`, so an
+    executor is free to report what the FEED held rather than what it handed
+    over -- and then the inferred filtered count is the gap between the feed
+    and the run, not the work the filters did. The run records what it
+    actually excluded.
+    """
+
+    async def fake_run_executor(subscription):
+        return {
+            # The feed advertises 100 entries; this fetch returns 2 of them.
+            "stats": {"items_found": 100},
+            "items": [
+                {
+                    "url": "https://example.com/keep",
+                    "title": "Keep me",
+                    "content_hash": "hash-keep",
+                },
+                {
+                    "url": "https://example.com/drop",
+                    "title": "Drop me",
+                    "content_hash": "hash-drop",
+                },
+            ],
+        }
+
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(
+        db_factory=lambda: db, run_executor=fake_run_executor
+    )
+    source = await service.create_source(
+        {"name": "Feed", "url": "https://example.com/feed.xml", "source_type": "rss"}
+    )
+    db.add_filter(
+        name="exclude drop",
+        conditions={"type": "keyword", "pattern": "Drop me"},
+        action="exclude",
+        subscription_id=source["source_id"],
+    )
+
+    launched = await service.launch_run(source_id=source["source_id"])
+    await service.execute_run(launched["run_id"])
+
+    run = (await service.list_runs())[0]
+
+    assert run["found_count"] == 100
+    assert run["processed_count"] == 1
+    assert run["filtered_count"] == 1, (
+        "one item was excluded by a filter; inferring 100 - 1 = 99 would "
+        "report the feed's backlog as filtering work"
+    )
