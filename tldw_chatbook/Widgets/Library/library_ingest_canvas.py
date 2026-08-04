@@ -179,6 +179,14 @@ class LibraryIngestQueuePanel(Vertical):
             # mount time (the L3a lesson; mirrors
             # ``library_rag_history_children``'s escaped Button labels).
             row_classes = "library-ingest-row"
+            # (task-2230 a11y) Severity gets a colour IN ADDITION to the
+            # glyph+word it already carries -- failed and done rows were
+            # byte-identical in colour, so scanning a tall queue for the
+            # one failure was a linear read.
+            if row.state == IngestJobState.FAILED:
+                row_classes += " library-ingest-row-failed"
+            elif row.state == IngestJobState.SKIPPED:
+                row_classes += " library-ingest-row-skipped"
             stt_actions = _stt_recovery_actions(row.error_detail)
             has_actions = (
                 row.can_open
@@ -609,6 +617,10 @@ class LibraryIngestCanvas(VerticalScroll):
                 error_message = (
                     "" if disabled else validate_ingest_option_value(field, value)
                 )
+                if error_message:
+                    # (task-2230 a11y) Persistent marker: the stock invalid
+                    # border only paints while focused.
+                    children[-1].add_class("-ingest-option-invalid")
                 error_line = Static(
                     error_message,
                     id=f"{widget_id}-error",

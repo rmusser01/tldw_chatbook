@@ -459,7 +459,7 @@ def test_queue_counts_line_lists_only_nonzero_states_in_fixed_order():
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     assert (
         state.queue_counts_line
-        == "1 parsing · 1 writing · 1 queued · 2 done · 1 failed — all ingests"
+        == "1 parsing · 1 writing · 1 queued · 2 done · 1 failed — in queue"
     )
 
 
@@ -490,7 +490,7 @@ def test_queue_counts_line_omits_zero_states():
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     # (task-2043) The suffix says the totals span ALL ingests (the
     # registry restores prior sessions from the jobs DB).
-    assert state.queue_counts_line == "2 done · 1 failed — all ingests"
+    assert state.queue_counts_line == "2 done · 1 failed — in queue"
 
 
 def test_queue_counts_line_hidden_with_no_jobs():
@@ -1768,7 +1768,7 @@ def test_queue_counts_line_shows_in_flight_batch_work():
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     assert state.queue_counts_line == (
-        "1 parsing · 2 queued · 1 done — all ingests"
+        "1 parsing · 2 queued · 1 done — in queue"
     )
 
 
@@ -1956,7 +1956,7 @@ def test_skipped_jobs_render_neutral_and_count_separately():
     assert row.line.startswith("○ skipped · photo.jpg")
     assert row.can_retry is False
     assert row.can_dismiss is True
-    assert state.queue_counts_line == "1 done · 1 skipped — all ingests"
+    assert state.queue_counts_line == "1 done · 1 skipped — in queue"
     assert state.queue_clear_finished_label == (
         "Press again to clear 2 finished"
     )
@@ -2038,7 +2038,9 @@ def test_queue_groups_batches_with_headers_and_latest_line():
     assert headed.header_line.startswith("▸ folder_a — 2 files")
     assert "1 done" in headed.header_line
     assert "1 skipped" in headed.header_line
-    assert state.latest_batch_line == "Latest batch: 1 done · 1 skipped"
+    # The batch carries the newer submitted_at here, so it is the latest
+    # run (the single job's default timestamp is older).
+    assert state.latest_batch_line == "Latest run: 1 done · 1 skipped"
 
 
 def test_single_file_submission_reads_naturally_without_header():
@@ -2049,3 +2051,68 @@ def test_single_file_submission_reads_naturally_without_header():
     assert len(state.queue_groups) == 1
     assert state.queue_groups[0].header_line == ""
     assert state.latest_batch_line == ""
+
+
+def test_latest_run_line_follows_a_single_file_submission():
+    """(task-2230) THE round-7 regression: the line was computed only from
+    groups carrying a batch_id, so a single-file run left it reporting the
+    previous multi-file batch. Every submission is a run."""
+    b1 = _job(
+        job_id="ingest-job-1",
+        state=IngestJobState.DONE,
+        source_path="/data/folder_a/one.txt",
+        batch_id="local-aaa",
+        submitted_at=100.0,
+    )
+    b2 = _job(
+        job_id="ingest-job-2",
+        state=IngestJobState.SKIPPED,
+        source_path="/data/folder_a/pic.jpg",
+        batch_id="local-aaa",
+        submitted_at=101.0,
+    )
+    later_single = _job(
+        job_id="ingest-job-3",
+        state=IngestJobState.DONE,
+        source_path="/tmp/solo.txt",
+        submitted_at=500.0,
+    )
+    state = build_library_ingest_state(
+        (b1, b2, later_single), form=LibraryIngestFormState()
+    )
+    assert state.latest_batch_line == "Latest run: 1 done", (
+        "the single-file run is the latest submission and must be reported"
+    )
+
+
+def test_latest_run_line_hidden_when_the_queue_holds_one_run():
+    """(task-2230) With a single run the group header already says it --
+    the line would just repeat itself."""
+    only = _job(job_id="ingest-job-1", state=IngestJobState.DONE)
+    state = build_library_ingest_state((only,), form=LibraryIngestFormState())
+    assert state.latest_batch_line == ""
+
+
+def test_unresolvable_path_gates_start_with_an_explanation():
+    """(task-2230) A path that cannot be resolved gates Start like every
+    other known-doomed selection -- it used to leave Start styled exactly
+    like a valid selection with a BLANK gate line, and pressing it left no
+    queue record at all."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/nope_does_not_exist.txt"),
+        preflight=PreflightResult(
+            type_groups={},
+            warnings=[],
+            errors=["Path not found: /tmp/nope_does_not_exist.txt"],
+            total_size=0,
+            truncated=False,
+            total_files=0,
+            path_invalid=True,
+        ),
+    )
+    assert not state.start_enabled
+    assert state.start_quiet_line == (
+        "Can't find that path — check it, or use Browse… to pick a file "
+        "or folder."
+    )

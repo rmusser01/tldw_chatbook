@@ -10422,7 +10422,7 @@ async def test_library_ingest_canvas_counts_line_shown_when_jobs_present():
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         await pilot.pause()
         counts_line = host.query_one("#library-ingest-queue-counts", Static)
-        assert str(counts_line.renderable) == "1 queued — all ingests"
+        assert str(counts_line.renderable) == "1 queued — in queue"
         assert not list(host.query("#library-ingest-queue-empty"))
 
 

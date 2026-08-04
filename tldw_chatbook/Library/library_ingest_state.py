@@ -894,7 +894,11 @@ def _queue_counts_line(jobs: Sequence[LibraryIngestJob]) -> str:
     # (task-2043) The registry restores prior sessions from the jobs DB, so
     # these totals span ALL ingests -- say so, or a fresh batch's outcome
     # blurs into history.
-    return f"{joined} — all ingests" if joined else ""
+    # (task-2230) The count is QUEUE-scoped -- it drops when the user
+    # clears finished rows, while Recent ingests keeps the real history.
+    # Saying "all ingests" over a number that shrinks was a lie the label
+    # itself denied.
+    return f"{joined} — in queue" if joined else ""
 
 
 #: Suffix appended to a queue row for a job that runs on the server. Local is
@@ -1141,20 +1145,25 @@ def build_ingest_queue_groups(
         run.append(job)
     _flush()
 
+    # (task-2230) EVERY submission counts as a run, single files included
+    # -- filtering to batch_id-bearing groups meant a single-file ingest
+    # left this line reporting the previous multi-file batch (round-7 P1,
+    # a task-2221 regression). And with only one run in the queue the
+    # group header already says it, so the line would just repeat itself.
     latest_batch_line = ""
-    batched = [g for g in groups if g.batch_id is not None]
-    if batched:
+    if len(groups) > 1:
         by_id = {job.job_id: job for job in jobs}
         latest = max(
-            batched,
+            groups,
             key=lambda g: max(
-                by_id[jid].submitted_at for jid in g.job_ids if jid in by_id
+                (by_id[jid].submitted_at for jid in g.job_ids if jid in by_id),
+                default=0.0,
             ),
         )
         members = [by_id[jid] for jid in latest.job_ids if jid in by_id]
         parts = _batch_outcome_parts(members)
         if parts:
-            latest_batch_line = "Latest batch: " + " · ".join(parts)
+            latest_batch_line = "Latest run: " + " · ".join(parts)
     return tuple(groups), latest_batch_line
 
 
@@ -1376,12 +1385,18 @@ def build_library_ingest_state(
     option_errors = collect_ingest_option_errors(
         form.type_options, groups=("generic", *type_groups)
     )
+    # (task-2230) An unresolvable source gates like every other
+    # known-doomed selection: a nonexistent path used to leave Start
+    # styled exactly like a valid one, and pressing it produced a
+    # transient toast and NO queue record -- the least recovery for the
+    # most common user error.
     start_enabled = (
         registry_available
         and media_db_available
         and bool(form.path.strip())
         and not nothing_importable
         and not option_errors
+        and not errors_are_path_problem
     )
     # (L3b AB wave, A4) At most one gate line ever renders at once: the
     # unavailable line wins, then the guaranteed-failure explanation, then
@@ -1410,6 +1425,11 @@ def build_library_ingest_state(
         start_quiet_line = (
             f"Nothing in this selection can be imported — "
             f"{' and '.join(blocker_parts)}."
+        )
+    elif errors_are_path_problem:
+        start_quiet_line = (
+            "Can't find that path — check it, or use Browse… to pick a "
+            "file or folder."
         )
     elif option_errors:
         start_quiet_line = (

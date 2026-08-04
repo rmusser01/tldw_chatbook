@@ -2,7 +2,7 @@
 id: TASK-2230
 title: >-
   Library ingest round-7 P1s (latest-batch regression, unresolvable-source gating, severity contrast)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04 16:00'
 labels:
@@ -42,19 +42,46 @@ correctness defects:
 
 ## Acceptance Criteria (the what)
 
-- [ ] The latest-run line updates for EVERY submission including a
+- [x] The latest-run line updates for EVERY submission including a
       single file; it is suppressed when the queue holds only one run
       (the group header already says it).
-- [ ] The lifetime tally line does not claim "all" for a queue-scoped
+- [x] The lifetime tally line does not claim "all" for a queue-scoped
       count (renamed, or sourced from the durable ledger).
-- [ ] A path that cannot be resolved gates Start with an explanatory
+- [x] A path that cannot be resolved gates Start with an explanatory
       gate line, consistent with unsupported/empty/invalid-option; if
       any unresolvable source stays submittable, the gate line says so
       and the attempt always leaves a queue record.
-- [ ] Validation/error text meets WCAG AA (≥4.5:1) against the canvas
+- [x] Validation/error text meets WCAG AA (≥4.5:1) against the canvas
       background.
-- [ ] An invalid field stays visibly marked when it loses focus (the
+- [x] An invalid field stays visibly marked when it loses focus (the
       gate line's "highlighted" is true).
-- [ ] Failed and skipped rows are distinguishable from done rows by
+- [x] Failed and skipped rows are distinguishable from done rows by
       colour IN ADDITION to their existing glyph+word (never
       colour-only).
+
+## Implementation Notes
+
+- **Latest-run regression (mine, task-2221):** the line filtered to
+  groups with a `batch_id`, so single-file runs never became "latest".
+  Now computed from the newest submission across ALL groups, relabelled
+  "Latest run:", and suppressed when the queue holds one run (the group
+  header already says it). Two regression tests: a later single-file run
+  wins over an older batch; a one-run queue hides the line.
+- **Lifetime tally:** "— all ingests" → "— in queue". The count is
+  queue-scoped and drops on Clear while Recent keeps the history, so the
+  old label denied its own number.
+- **Unresolvable source:** `errors_are_path_problem` now gates Start and
+  gets its own gate line ("Can't find that path — check it, or use
+  Browse… to pick a file or folder."), consistent with
+  unsupported/empty/invalid-option. Live-verified: Start renders
+  disabled (115,115,115) with the explanation.
+- **A11y:** validation text `$error` (3.06:1, AA fail, less readable
+  than help text at 7.21:1) → `#ff8fa3` (7.71:1). Invalid fields keep a
+  persistent `-ingest-option-invalid` border so the gate line's
+  "highlighted" is true without focus. Failed rows carry `#ff8fa3` and
+  skipped rows muted colour IN ADDITION to their glyph+word (the
+  monochrome contract from round 4 holds). Live ANSI: failed
+  `255,143,163` vs done `226,227,229`.
+
+**Verification.** 297 core + 55 shell-subset green; collect clean.
+Live-verified all three fixes on a fresh isolated profile.

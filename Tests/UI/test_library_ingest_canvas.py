@@ -1494,3 +1494,56 @@ async def test_duplicate_forecast_line_renders_in_summary():
     async with app.run_test() as pilot:
         line = pilot.app.query_one("#ingest-duplicate-summary", Static)
         assert "already be in your Library" in str(line.renderable)
+
+
+@pytest.mark.asyncio
+async def test_severity_colour_supplements_glyphs_and_invalid_field_marked():
+    """(task-2230 a11y) Failed/skipped rows carry a severity class ON TOP
+    of the glyph+word they already have (never colour-only), and an
+    invalid option field stays marked without focus -- the gate line's
+    "highlighted" pointed at a border that only existed while focused."""
+    failed = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/broken.pdf",
+        state=IngestJobState.FAILED,
+        error="Failed to process pdf file.",
+    )
+    skipped = LibraryIngestJob(
+        job_id="ingest-job-2",
+        source_path="/tmp/photo.jpg",
+        state=IngestJobState.SKIPPED,
+        error="Unsupported file type: .jpg.",
+    )
+    done = LibraryIngestJob(
+        job_id="ingest-job-3",
+        source_path="/tmp/report.txt",
+        state=IngestJobState.DONE,
+    )
+    form = LibraryIngestFormState(path="/tmp/report.txt")
+    form.type_options["generic"] = {"chunk_size": "abc"}
+    state = build_library_ingest_state((failed, skipped, done), form=form)
+
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        rows = list(pilot.app.query(".library-ingest-row"))
+        classes = [set(row.classes) for row in rows]
+        assert any("library-ingest-row-failed" in c for c in classes)
+        assert any("library-ingest-row-skipped" in c for c in classes)
+        # The done row carries neither severity class.
+        assert sum(
+            1
+            for c in classes
+            if "library-ingest-row-failed" in c
+            or "library-ingest-row-skipped" in c
+        ) == 2
+
+        # Glyph + word survive alongside the colour (monochrome contract).
+        by_id = {row.job_id: row for row in state.queue_rows}
+        assert by_id["ingest-job-1"].line.startswith("✗ failed")
+        assert by_id["ingest-job-2"].line.startswith("○ skipped")
+
+        invalid = pilot.app.query_one("#opt-generic-chunk_size", Input)
+        assert invalid.has_class("-ingest-option-invalid"), (
+            "an invalid field must stay marked without focus"
+        )
+        assert pilot.app.focused is not invalid
