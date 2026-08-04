@@ -1520,7 +1520,8 @@ def test_expanded_details_render_unwrapped_lines_and_retry_hint():
     )
     row = state.queue_rows[0]
     assert row.details_expanded is True
-    assert row.detail_lines[0] == "Category: parse error (RuntimeError)"
+    # (task-2160) No parenthesized exception class -- it serves no user.
+    assert row.detail_lines[0] == "Category: parse error"
     assert not any(
         line.startswith("Details:") for line in row.detail_lines
     ), "a Details line that repeats the summary is the round-4 P1"
@@ -1844,3 +1845,65 @@ def test_underlying_lines_skip_prefixed_restatements_of_the_row_error():
         for line in row.detail_lines
     ), "prefixed restatement of the row error leaked into the details"
     assert "Underlying: ValueError: startxref not found" in row.detail_lines
+
+
+def test_empty_files_forecast_as_failures_not_imports():
+    """(task-2160) A 0-byte file is pulled out of its type group at
+    analysis time and forecast as a failure -- the forecast used to
+    promise '1 will import' for a file it had measured at 0 B."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/folder"),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/real.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=2,
+            empty_files=("/tmp/empty.txt",),
+        ),
+    )
+    assert state.empty_line == "1 empty file will fail — empty.txt is 0 B."
+    assert state.commit_summary_line == "1 will import · 1 will fail"
+
+    solo = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/empty.txt"),
+        preflight=PreflightResult(
+            type_groups={},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+            empty_files=("/tmp/empty.txt",),
+        ),
+    )
+    # A selection that is ONLY an empty file has nothing importable --
+    # the gate blocks exactly like a solo-unsupported selection.
+    assert not solo.start_enabled
+
+
+def test_armed_clear_label_names_failed_rows():
+    """(task-2160) 'finished' includes failed rows -- the armed label must
+    say so at the moment of destruction."""
+    jobs = (
+        _job(job_id="ingest-job-1", state=IngestJobState.DONE),
+        _job(job_id="ingest-job-2", state=IngestJobState.FAILED),
+        _job(job_id="ingest-job-3", state=IngestJobState.FAILED),
+    )
+    armed = build_library_ingest_state(
+        jobs, form=LibraryIngestFormState(), clear_finished_armed=True
+    )
+    assert armed.queue_clear_finished_label == (
+        "Press again to clear 3 finished (incl. 2 failed)"
+    )
+    done_only = build_library_ingest_state(
+        (_job(job_id="ingest-job-1", state=IngestJobState.DONE),),
+        form=LibraryIngestFormState(),
+        clear_finished_armed=True,
+    )
+    assert done_only.queue_clear_finished_label == (
+        "Press again to clear 1 finished"
+    )

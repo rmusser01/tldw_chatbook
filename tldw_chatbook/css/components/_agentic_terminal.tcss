@@ -6424,3 +6424,16 @@ Toast {
     border: none;
     padding: 0;
 }
+
+/* task-2160: clicking dead text focuses the scroll container itself, and
+   its inherited focus decoration painted fragmented blue dashes down the
+   pane edges (round-5's "stray blue tick-marks", root-caused in round 6).
+   The container keeps keyboard scrollability; its focus stops painting. */
+LibraryIngestCanvas:focus {
+    border: none;
+    outline: none;
+}
+LibraryIngestCanvas:focus-within {
+    border: none;
+    outline: none;
+}

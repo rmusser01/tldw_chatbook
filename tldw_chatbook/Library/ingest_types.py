@@ -40,6 +40,11 @@ class PreflightResult:
     truncated: bool
     total_files: int
     path_invalid: bool = False
+    #: (task-2160) 0-byte files, pulled out of their type group at
+    #: analysis time: the pipeline is guaranteed to fail them ("<name> is
+    #: empty; there was nothing to ingest"), so the forecast must say so
+    #: instead of promising "1 will import" for a file it measured at 0 B.
+    empty_files: tuple[str, ...] = ()
     #: (task-2043) How many staged files appear to already exist in the
     #: Library (content-hash match, generic/text group only -- the DB hashes
     #: PARSED content, so only read≈parse types can be checked pre-parse).
