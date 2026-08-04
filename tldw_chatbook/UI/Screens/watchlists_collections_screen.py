@@ -3390,9 +3390,30 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     @on(ResumeSourceRequested)
     def handle_resume_source_requested(self, event: ResumeSourceRequested) -> None:
+        """Dispatch a Resume press to `_resume_source` on a worker (task-2050).
+
+        Refuses any entity that is not a LOCAL `subscription` (task-2050
+        Qodo): `resume_source` takes a raw local db id, so a message carrying
+        some other entity kind that happens to hold a numeric `source_id`
+        (e.g. a server `watchlist_source`) would reset the counters of
+        whatever unrelated LOCAL subscription shares that number. The
+        Inspector's render gate already makes that unreachable today; this
+        guard keeps it unreachable from any future caller too. Type-only log,
+        no toast -- a refused programmatic message is not a user action.
+        """
         event.stop()
         entity = event.entity
         if entity is None:
+            return
+        if (
+            str(entity.get("backend") or "") != "local"
+            or str(entity.get("entity_kind") or "") != "subscription"
+        ):
+            logger.warning(
+                "ResumeSourceRequested for a non-local-subscription entity "
+                f"(backend={entity.get('backend')!r}, "
+                f"kind={entity.get('entity_kind')!r}); refusing."
+            )
             return
         self.run_worker(self._resume_source(entity), exclusive=True)
 

@@ -2070,3 +2070,42 @@ async def test_resume_on_a_source_that_is_not_paused_is_a_harmless_no_op():
     assert after["error_count"] == 0
     assert after["consecutive_failures"] == 0
     assert resumed["paused"] is False
+
+
+@pytest.mark.asyncio
+async def test_resume_refuses_a_non_local_subscription_entity():
+    """task-2050 Qodo: `_resume_source` takes a RAW local db id, so a
+    `ResumeSourceRequested` carrying some other entity kind whose numeric
+    `source_id` happens to collide (e.g. a server `watchlist_source` with
+    id 5) must be refused at the handler — otherwise it would reset the
+    counters of whatever unrelated LOCAL subscription shares that number.
+    The Inspector's render gate makes this unreachable from the UI today;
+    this pins the handler-level guard against any future caller. Reds if the
+    backend/entity_kind guard is dropped.
+    """
+    app = _build_test_app()
+    db, _service, source_id = await _seed_paused_source(app)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        # A foreign entity that happens to carry the SAME numeric source_id
+        # as the seeded paused LOCAL subscription.
+        foreign = {
+            "backend": "server",
+            "entity_kind": "watchlist_source",
+            "source_id": source_id,
+            "paused": True,
+            "name": "Foreign lookalike",
+        }
+        screen.handle_resume_source_requested(ResumeSourceRequested(foreign))
+        await pilot.pause(0.3)
+
+        row = db.get_subscription(source_id)
+        assert row["is_paused"] == 1, (
+            "a non-local-subscription entity must never resume the local "
+            "subscription that shares its numeric id"
+        )
+        assert row["consecutive_failures"] > 0, "counters must be untouched"

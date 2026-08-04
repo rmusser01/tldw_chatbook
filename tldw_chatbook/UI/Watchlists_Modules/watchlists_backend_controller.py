@@ -338,13 +338,18 @@ class WatchlistsBackendController:
         # were failing, so the "Sources in error" card on the Overview was a
         # permanent zero. Same resolution and same fallback as
         # `SourcesPane.source_status_text`.
-        sources_in_error = sum(
-            1
-            for s in sources
-            if str(s.get("status_summary") or s.get("status") or "")
-            .lower()
-            .startswith("error")
-        )
+        # `paused` counts as in-error too (task-2050 review), for the same
+        # reason it stays in the Sources pane's Error filter bucket: an
+        # auto-paused source failed PAST the threshold -- the most broken
+        # state there is -- and its `status_summary` now reads "paused"
+        # rather than "error (N)". Excluding it would make the Overview's
+        # error card DROP the moment a failing source finally trips
+        # auto-pause.
+        sources_in_error = 0
+        for s in sources:
+            status = str(s.get("status_summary") or s.get("status") or "").lower()
+            if status.startswith("error") or status == "paused":
+                sources_in_error += 1
         total_items = len(items)
         new_items = sum(1 for item in items if str(item.get("status") or "").lower() == "new")
 

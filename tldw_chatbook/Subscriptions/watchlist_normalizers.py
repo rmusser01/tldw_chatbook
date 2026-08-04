@@ -103,6 +103,15 @@ def normalize_local_subscription_row(row: Mapping[str, Any]) -> dict[str, Any]:
     still being retried when it is not. The underlying `last_error`/
     `error_count` columns are untouched by this normalizer either way, and
     remain available to a future source-detail affordance.
+
+    Args:
+        row: A `subscriptions` table row (or an equivalent mapping) as the
+            local backend reads it.
+
+    Returns:
+        The normalized watch-item dict: namespaced ``id``, ``entity_kind``
+        ``"subscription"``, the display fields, ``paused`` (task-2050), and
+        ``status_summary`` per the precedence above.
     """
     source_id = row["id"]
     paused = bool(row.get("is_paused", False))
