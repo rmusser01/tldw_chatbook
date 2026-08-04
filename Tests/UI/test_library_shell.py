@@ -14076,3 +14076,52 @@ async def test_arming_clear_finished_disturbs_nothing_and_dead_zone_holds(tmp_pa
         assert screen._build_library_ingest_state().recent_jobs, (
             "ledger must survive the confirmed clear"
         )
+
+
+@pytest.mark.asyncio
+async def test_ingest_browse_offers_select_folder_action(tmp_path):
+    """(task-2222 owner ruling) The ingest Browse dialog offers a 'Select
+    folder' action returning the directory being viewed; Open keeps
+    descending. Off by default for every other FileOpen caller."""
+    from tldw_chatbook.Third_Party.textual_fspicker import FileOpen
+
+    folder = tmp_path / "pickme"
+    folder.mkdir()
+    (folder / "doc.txt").write_text("hello")
+
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c8-pick")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        picked: list[object] = []
+        dialog = FileOpen(
+            location=str(folder),
+            title="Import media",
+            offer_select_folder=True,
+        )
+        harness.push_screen(dialog, picked.append)
+        await pilot.pause()
+        await pilot.pause()
+
+        button = dialog.query_one("#select-current-folder", Button)
+        assert "folder" in str(button.label).lower()
+        button.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert picked and str(picked[0]) == str(folder), (
+            "Select folder must return the directory being viewed"
+        )
+
+        plain = FileOpen(location=str(folder), title="Open")
+        harness.push_screen(plain, lambda _result: None)
+        await pilot.pause()
+        await pilot.pause()
+        assert not list(plain.query("#select-current-folder")), (
+            "the folder affordance must stay opt-in"
+        )
+        plain.dismiss(None)
+        await pilot.pause()

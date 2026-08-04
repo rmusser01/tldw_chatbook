@@ -32,6 +32,7 @@ class FileOpen(BaseFileDialog):
         filters: Filters | None = None,
         must_exist: bool = True,
         default_file: str | Path | None = None,
+        offer_select_folder: bool = False,
     ) -> None:
         """Initialise the `FileOpen` dialog.
 
@@ -43,6 +44,10 @@ class FileOpen(BaseFileDialog):
             filters: Optional filters to show in the dialog.
             must_exist: Flag to say if the file must exist.
             default_file: The default filename to place in the input.
+            offer_select_folder: When True, the dialog also offers a
+                "Select folder" action returning the directory being
+                viewed (task-2222) -- for callers that accept either a
+                file or a folder.
 
         Notes:
             `open_button` and `cancel_button` can either be strings that
@@ -59,6 +64,8 @@ class FileOpen(BaseFileDialog):
         )
         self._must_exist = must_exist
         """Must the file exist?"""
+        self._offer_select_folder = offer_select_folder
+        """Offer the "select the folder being viewed" action?"""
 
     def _should_return(self, candidate: Path) -> bool:
         """Perform the final checks on the chosen file.
