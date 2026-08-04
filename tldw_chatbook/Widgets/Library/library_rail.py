@@ -218,12 +218,19 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
                 count_suffix = row.count_display or self._count_suffix(
                     row.count, row.count_known
                 )
-                section_hint = (
-                    "opens screen" if row.target_kind == "screen" else "in Library"
-                )
+                # F-011: one-line rows by default -- the old blanket second
+                # line ("in Library" on all ~11 rows) was pure stutter and
+                # the reason the Create section was unreachable at 100x30
+                # and Details clipped even at 170x50 (2-line rows + 1-line
+                # bottom margin = 3 terminal lines per row). A meta line
+                # survives ONLY where it discriminates: handoff rows leave
+                # the Library entirely for the Study screen family.
+                is_handoff = row.target_kind == "handoff"
+                label = f"{marker} {_visible_row_title(row.title)}{count_suffix}"
+                if is_handoff:
+                    label += "\n    opens Study"
                 button = Button(
-                    f"{marker} {_visible_row_title(row.title)}{count_suffix}"
-                    f"\n    {section_hint}",
+                    label,
                     id=f"{LIBRARY_RAIL_ROW_PREFIX}{row.row_id}",
                     classes="library-rail-row",
                     compact=True,
@@ -240,6 +247,6 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
                 button.set_class(selected, "library-rail-row-selected")
                 if row.count_emphasis:
                     button.add_class(f"library-rail-row-due-{row.count_emphasis}")
-                button.styles.height = 2
-                button.styles.min_height = 2
+                button.styles.height = 2 if is_handoff else 1
+                button.styles.min_height = 2 if is_handoff else 1
                 yield button

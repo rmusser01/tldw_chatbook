@@ -538,6 +538,87 @@ def test_library_dead_hub_helpers_are_removed():
 
 
 @pytest.mark.asyncio
+async def test_rail_rows_are_one_line_by_default_with_meta_only_for_handoffs():
+    """F-011: rail rows are one terminal line by default -- the blanket
+    "in Library" second line (pure stutter on all ~11 rows) is gone. A
+    meta line survives ONLY where it discriminates: the Study handoff
+    rows, which leave the Library for another screen."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        handoff_ids = {
+            "library-row-create-study",
+            "library-row-create-flashcards",
+            "library-row-create-quizzes",
+        }
+        rows = list(screen.query("Button.library-rail-row"))
+        assert rows, "expected rail rows to be mounted"
+        for row in rows:
+            label = str(row.label)
+            if row.id in handoff_ids:
+                assert "\n" in label, f"{row.id} lost its handoff discriminator"
+                assert "opens Study" in label
+                assert row.styles.height.value == 2
+            else:
+                assert "\n" not in label, f"{row.id} still carries a second line"
+                assert "in Library" not in label
+                assert row.styles.height.value == 1
+
+
+@pytest.mark.asyncio
+async def test_rail_create_section_and_details_reachable_at_100x30():
+    """F-011: the regression the stutter caused -- at 100x30 the Create
+    section is inside the viewport without scrolling (it was pushed out of
+    reach by 3-line rows), and the Details status group is reachable after
+    expanding the disclosure and scrolling the rail."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        rail = screen.query_one("#library-rail")
+        fold = rail.region.y + rail.region.height
+
+        # Create section: fully in view, no scroll required.
+        create_header = screen.query_one("#library-rail-section-header-create")
+        assert create_header.display and create_header.region.height > 0
+        assert create_header.region.y >= rail.region.y, (
+            f"create header above rail viewport: {create_header.region}"
+        )
+        assert create_header.region.y + create_header.region.height <= fold, (
+            f"create header below rail viewport: {create_header.region} (fold {fold})"
+        )
+
+        # Details toggle: one scroll to the bottom of the rail.
+        rail.scroll_end(animate=False)
+        await pilot.pause()
+        toggle = screen.query_one("#console-rail-section-toggle-library-details", Button)
+        assert toggle.region.y + toggle.region.height <= fold, (
+            f"details toggle unreachable after scroll_end: {toggle.region}"
+        )
+
+        # Expand it and the Status group is there, in view.
+        toggle.press()
+        await pilot.pause()
+        await pilot.pause()
+        rail.scroll_end(animate=False)
+        await pilot.pause()
+        status = screen.query_one("#library-details-group-status", Static)
+        assert status.display and status.region.height > 0
+        assert status.region.y + status.region.height <= fold, (
+            f"status group pushed below rail viewport: {status.region}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_library_shell_browse_conversations_renders_canvas():
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -9209,6 +9290,11 @@ class _LibraryIngestCanvasHarness(LibraryIngestQueueMixin, App):
 
 
 async def _open_library_ingest_canvas(screen, pilot):
+    # Wait for the row, not just press blind: a background ingest job landing
+    # in `done` pokes the source snapshot, whose apply recomposes the rail --
+    # the row is briefly unmounted mid-rebuild (surfaced by the F-010 landing
+    # hub, which made that recompose reliably straddle this call).
+    await _wait_for_selector(screen, pilot, "#library-row-ingest-import-media")
     screen.query_one("#library-row-ingest-import-media").press()
     await _wait_for_selector(screen, pilot, "#library-ingest-path")
 
