@@ -47,6 +47,7 @@ from tldw_chatbook.Chat.answer_citations import (
 )
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call, extract_response_content
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
 )
@@ -209,6 +210,23 @@ class LibraryRagAnswer:
         evidence_bundle: The bundle the attempt used, so the panel can map
             citation labels back to rows -- present even on the no-evidence
             path, where it explains why each row was ineligible.
+        provider: The configured endpoint a provider call was made against,
+            or ``""`` when no call was made (no-evidence path) or it raised
+            before a response existed. NOT the provider's own model name --
+            see ``model``.
+        model: The MODEL THE PROVIDER ACTUALLY RAN, read from the response
+            payload's own ``"model"`` key -- never the configured endpoint
+            name. This is the only app-side source of the model, since
+            ``resolve_library_rag_answer_provider`` deliberately resolves
+            ``model=None`` and leaves the handler to pick its own default.
+            ``""`` when no call was made, it raised before a response
+            existed, or the response carried no ``"model"`` key.
+        usage: Normalized token usage from the response payload's ``"usage"``
+            block, or ``None`` when no call was made, it raised before a
+            response existed, or the payload carried no usage the normalizer
+            recognizes. Populated on the ready, abstained, AND empty-response
+            failure paths -- a call that cost money and returned nothing
+            still cost money.
     """
 
     status: str
@@ -217,6 +235,9 @@ class LibraryRagAnswer:
     citation_recovery: str = ""
     error: str = ""
     evidence_bundle: EvidenceBundle | None = None
+    provider: str = ""
+    model: str = ""
+    usage: ProviderUsage | None = None
 
 
 def _error_text(exc: BaseException) -> str:
@@ -461,6 +482,29 @@ async def generate_library_rag_answer(
             user=user_message,
         )
 
+        # Captured BEFORE `extract_response_content` discards `raw` --
+        # `chat_api_call` returns the handler's response unmodified, and the
+        # OpenAI/Anthropic normalizers both put the provider's own model and
+        # raw usage block in (`"model"`, `"usage"`). `raw` is not guaranteed
+        # to be a dict (several of this module's own tests fake a bare
+        # string reply, and `extract_response_content` itself tolerates
+        # that) -- so both reads are guarded rather than assumed.
+        #
+        # `model` here is the answer's own field: it is the provider's
+        # ACTUAL model, never the configured endpoint (`provider`) and never
+        # duplicated from `resolve_library_rag_answer_provider`, which
+        # deliberately resolves `model=None` for exactly this reason -- only
+        # the response itself knows what ran.
+        raw_model = raw.get("model") if isinstance(raw, dict) else None
+        response_model = str(raw_model or "")
+        raw_usage_payload = raw.get("usage") if isinstance(raw, dict) else None
+        # `from_provider_payload` never raises: a non-mapping, unrecognized,
+        # or otherwise malformed usage payload degrades to `None` rather
+        # than a fabricated zero-filled record.
+        usage = ProviderUsage.from_provider_payload(
+            raw_usage_payload, provider=provider, model=response_model
+        )
+
         body = extract_response_content(raw).strip()
         if not body:
             logger.warning(
@@ -471,6 +515,9 @@ async def generate_library_rag_answer(
                 text="",
                 error=EMPTY_ANSWER_ERROR,
                 evidence_bundle=bundle,
+                provider=provider,
+                model=response_model,
+                usage=usage,
             )
 
         validation = build_answer_citation_validation(body, bundle)
@@ -485,6 +532,9 @@ async def generate_library_rag_answer(
             citation_status=validation.status,
             citation_recovery=validation.recovery,
             evidence_bundle=bundle,
+            provider=provider,
+            model=response_model,
+            usage=usage,
         )
     except Exception as exc:  # noqa: BLE001 - every failure becomes an answer
         # Broad on purpose (briefing_service precedent): a provider handler

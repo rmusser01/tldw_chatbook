@@ -34,6 +34,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatProviderError,
     ChatRateLimitError,
 )
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Library.library_rag_answer_service import (
     ANSWER_MAX_TOKENS,
     ANSWER_STATUS_ABSTAINED,
@@ -86,6 +87,46 @@ def _blocked_row():
         workspace_ids=("workspace-b",),
         active_workspace_id="workspace-a",
     )
+
+
+#: The exact Anthropic-native usage fixture from
+#: `Tests/Chat/test_provider_usage.py::test_anthropic_native_payload_maps_directly`
+#: -- copied, not invented, per the task-2 brief.
+ANTHROPIC_USAGE_PAYLOAD = {
+    "input_tokens": 3571,
+    "output_tokens": 727,
+    "cache_read_input_tokens": 6656,
+    "cache_creation_input_tokens": 1024,
+}
+
+
+def _anthropic_raw_response(
+    *, model="claude-sonnet-4-6", content=GROUNDED_ANSWER, usage=ANTHROPIC_USAGE_PAYLOAD
+):
+    """A realistic `chat_api_call` return value, Anthropic-normalized shape.
+
+    Matches the OpenAI-style envelope `LLM_API_Calls.py`'s Anthropic
+    normalizer builds (`normalized_response` at :1787-1800): the provider's
+    own `model` and raw `usage` block ride alongside the
+    `choices[0].message.content` that `extract_response_content` reads.
+    `resolve_library_rag_answer_provider` deliberately resolves `model=None`
+    (the handler picks its own default) -- this `model` field is the only
+    app-side source of the model that actually answered.
+    """
+    return {
+        "id": "anthropic-test-123",
+        "object": "chat.completion",
+        "created": 0,
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": usage,
+    }
 
 
 class _FakeChat:
@@ -647,6 +688,177 @@ def test_insufficient_evidence_validation_counts_as_an_abstention():
     assert _is_abstention(LIBRARY_RAG_NO_EVIDENCE_TEXT, "uncited") is True
     assert _is_abstention("Nothing in your library supports an answer to that", "uncited") is True
     assert _is_abstention("An expired credential caused the incident [S1].", "validated") is False
+
+
+# --- Contract 7: the answer keeps what the provider told it (PR-T2 task 2) -
+#
+# `chat_api_call` returns the handler's FULL response; `extract_response_
+# content` reads only `choices[0].message.content` and everything else used
+# to be discarded one line later. A real, billable provider call deserves to
+# have its provider/model/usage survive -- on the ready path, the abstained
+# path, AND the empty-response failure path (a call that cost money and
+# returned nothing still cost money). `resolve_library_rag_answer_provider`
+# deliberately resolves `model=None`, so `raw["model"]` -- the provider's own
+# answer -- is the ONLY app-side source of what model actually ran; it must
+# never be confused with `provider`, which is the configured endpoint name.
+
+
+async def test_a_ready_answer_carries_provider_model_and_usage():
+    raw = _anthropic_raw_response(model="claude-sonnet-4-6")
+    chat = _FakeChat(reply=raw)
+
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="anthropic",
+        model=None,
+        chat=chat,
+    )
+
+    assert answer.status == ANSWER_STATUS_READY
+    assert answer.provider == "anthropic"
+    # The provider's OWN model, not the configured endpoint name.
+    assert answer.model == "claude-sonnet-4-6"
+    assert answer.model != answer.provider
+    assert answer.usage == ProviderUsage(
+        uncached_input=3571,
+        cache_read=6656,
+        cache_write=1024,
+        output=727,
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+    )
+
+
+async def test_an_abstained_answer_carries_provider_model_and_usage():
+    raw = _anthropic_raw_response(
+        model="claude-haiku-4-5", content=f"  {LIBRARY_RAG_NO_EVIDENCE_TEXT}\n"
+    )
+    chat = _FakeChat(reply=raw)
+
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="anthropic",
+        model=None,
+        chat=chat,
+    )
+
+    assert answer.status == ANSWER_STATUS_ABSTAINED
+    assert answer.provider == "anthropic"
+    assert answer.model == "claude-haiku-4-5"
+    assert answer.usage is not None
+    assert answer.usage.total_tokens == 3571 + 6656 + 1024 + 727
+
+
+async def test_an_empty_response_failure_still_carries_provider_model_and_usage():
+    """A call that cost money and returned nothing still cost money."""
+    raw = _anthropic_raw_response(model="claude-sonnet-4-6", content="")
+    chat = _FakeChat(reply=raw)
+
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="anthropic",
+        model=None,
+        chat=chat,
+    )
+
+    assert answer.status == ANSWER_STATUS_FAILED
+    assert answer.error == EMPTY_ANSWER_ERROR
+    assert answer.provider == "anthropic"
+    assert answer.model == "claude-sonnet-4-6"
+    assert answer.usage == ProviderUsage(
+        uncached_input=3571,
+        cache_read=6656,
+        cache_write=1024,
+        output=727,
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+    )
+
+
+async def test_a_payload_with_no_usage_key_yields_none_usage_without_raising():
+    """`response_data.get("usage")` is `None` when the provider's own
+    payload carried no usage block at all -- a realistic case, not an
+    invented one."""
+    raw = _anthropic_raw_response(usage=None)
+    chat = _FakeChat(reply=raw)
+
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="anthropic",
+        model=None,
+        chat=chat,
+    )
+
+    assert answer.status == ANSWER_STATUS_READY
+    assert answer.usage is None
+    assert answer.model == "claude-sonnet-4-6"
+
+
+async def test_an_unrecognized_usage_shape_degrades_to_none_without_raising():
+    """A malformed/unrecognized usage payload must never raise -- it just
+    means the call's cost cannot be normalized, not that generation failed."""
+    raw = _anthropic_raw_response(usage={"tokens": 5})
+    chat = _FakeChat(reply=raw)
+
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="anthropic",
+        model=None,
+        chat=chat,
+    )
+
+    assert answer.status == ANSWER_STATUS_READY
+    assert answer.usage is None
+
+
+async def test_a_missing_model_key_yields_an_empty_model_without_raising():
+    raw = _anthropic_raw_response()
+    del raw["model"]
+    chat = _FakeChat(reply=raw)
+
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="anthropic",
+        model=None,
+        chat=chat,
+    )
+
+    assert answer.status == ANSWER_STATUS_READY
+    assert answer.model == ""
+    # Usage normalization is independent of the missing model key.
+    assert answer.usage is not None
+    assert answer.usage.total_tokens == 3571 + 6656 + 1024 + 727
+
+
+async def test_a_plain_string_reply_yields_empty_provider_fields_without_raising():
+    """Most of this suite's fakes return a plain string (the reply text
+    only), not a full response envelope -- `extract_response_content`
+    already tolerates that shape. The new provider/model/usage capture must
+    tolerate it too: no `.get()` call on a bare string."""
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="openai",
+        model=None,
+        chat=_FakeChat(reply=GROUNDED_ANSWER),
+    )
+
+    assert answer.status == ANSWER_STATUS_READY
+    assert answer.model == ""
+    assert answer.usage is None
 
 
 # --- The honesty prompt itself ------------------------------------------
