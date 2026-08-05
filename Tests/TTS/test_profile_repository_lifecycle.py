@@ -23,6 +23,7 @@ import pytest
 
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_schema import (
+    CURRENT_PROFILE_SCHEMA_VERSION,
     open_profile_store,
     validate_profile_candidate,
 )
@@ -2900,13 +2901,15 @@ async def test_invalid_restore_candidates_preserve_original_and_rebind_open(
     if variant == "partial":
         partial = sqlite3.connect(candidate)
         partial.execute("CREATE TABLE unexpected(value TEXT)")
-        partial.execute("PRAGMA user_version = 1")
+        partial.execute(f"PRAGMA user_version = {CURRENT_PROFILE_SCHEMA_VERSION}")
         partial.close()
     else:
         await _create_profile_store(candidate, "Candidate")
         hostile = sqlite3.connect(candidate)
         if variant == "unsupported":
-            hostile.execute("PRAGMA user_version = 2")
+            hostile.execute(
+                f"PRAGMA user_version = {CURRENT_PROFILE_SCHEMA_VERSION + 1}"
+            )
         elif variant == "domain":
             hostile.execute("UPDATE tts_generation_profiles SET revision = 0")
         else:

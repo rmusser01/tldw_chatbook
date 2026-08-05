@@ -30,6 +30,7 @@ from tldw_chatbook.TTS.migrations.v0_to_v1 import (
     PROFILE_TABLE_DDL as _PROFILE_TABLE_DDL,
 )
 from tldw_chatbook.TTS.migrations.v0_to_v1 import migrate as _migrate_v0_to_v1
+from tldw_chatbook.TTS.migrations.v1_to_v2 import migrate as _migrate_v1_to_v2
 from tldw_chatbook.TTS.profile_types import (
     AssignedTTSProfileSnapshot,
     CharacterRef,
@@ -41,7 +42,7 @@ from tldw_chatbook.TTS.profile_types import (
     canonical_json_options,
 )
 
-CURRENT_PROFILE_SCHEMA_VERSION = 1
+CURRENT_PROFILE_SCHEMA_VERSION = 2
 BUSY_TIMEOUT_MS = 5_000
 _DEADLINE_PROGRESS_OPCODE_INTERVAL = 1_000
 _MAX_PERSISTED_DISPLAY_NAME_CHARACTERS = 128
@@ -360,7 +361,10 @@ def decode_assigned_snapshot(row: RowLike) -> AssignedTTSProfileSnapshot:
         raise _repository_error("corrupt_data") from None
 
 
-MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {0: _migrate_v0_to_v1}
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    0: _migrate_v0_to_v1,
+    1: _migrate_v1_to_v2,
+}
 
 
 def _configure_connection(connection: sqlite3.Connection) -> None:
@@ -692,11 +696,19 @@ class _CleanupState:
             raise self.control_flow
 
 
-def _migrate_empty_store(connection: sqlite3.Connection) -> None:
+def _run_migrations(connection: sqlite3.Connection, from_version: int) -> None:
+    """Run every registered migration from ``from_version`` up to current.
+
+    Used both to build a brand-new store from version 0 and to upgrade an
+    existing populated store from any older version in place. The whole
+    climb runs inside one ``BEGIN IMMEDIATE`` transaction so a mid-flight
+    failure leaves the store exactly as it was found.
+    """
+
     body_error: BaseException | None = None
     try:
         connection.execute("BEGIN IMMEDIATE")
-        version = 0
+        version = from_version
         while version < CURRENT_PROFILE_SCHEMA_VERSION:
             migration = MIGRATIONS.get(version)
             if migration is None:
@@ -721,6 +733,10 @@ def _migrate_empty_store(connection: sqlite3.Connection) -> None:
     cleanup.attempt(connection.rollback)
     cleanup.raise_control_flow()
     raise _repository_error("migration_failed") from None
+
+
+def _migrate_empty_store(connection: sqlite3.Connection) -> None:
+    _run_migrations(connection, 0)
 
 
 def open_profile_store(
@@ -813,8 +829,15 @@ def open_profile_store(
             if journal_mode != "wal":
                 raise _repository_error("schema_corrupt")
             _migrate_empty_store(connection)
-        elif version != CURRENT_PROFILE_SCHEMA_VERSION:
-            raise _repository_error("schema_unsupported")
+        elif version < CURRENT_PROFILE_SCHEMA_VERSION:
+            _validate_schema(
+                connection,
+                check_deadline=check_deadline,
+            )
+            journal_mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+            if journal_mode != "wal":
+                raise _repository_error("schema_corrupt")
+            _run_migrations(connection, version)
         else:
             _validate_schema(
                 connection,
