@@ -39,5 +39,5 @@ with nothing recording why. A store-level metadata field closes all three.
 
 - [x] Messages can carry structured metadata (engine, provider, model, interrupted,
       transcript-status) without content markers.
-- [ ] The reseed builder and exports read the field instead of string-matching.
+- [x] The reseed builder and exports read the field instead of string-matching.
 - [ ] The spec's Continuity deferral note is updated to point at the shipped field.

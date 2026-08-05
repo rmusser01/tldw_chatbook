@@ -38,6 +38,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
@@ -2299,3 +2300,247 @@ async def test_unmount_abandons_the_realtime_loop(monkeypatch):
         assert console._console_realtime is None
         assert rig.recorder.stop_calls == 1
         assert session.closed is True
+
+
+# ---------------------------------------------------------------------------
+# task-2364: structured message metadata instead of parsed UI copy
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_realtime_rows_carry_engine_provenance(monkeypatch):
+    """The V4 spec's engine/provider/model provenance now has a field to
+    live in, so it stops riding usage-attach and a visible marker."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        session.fire_turn_committed()
+        await _wait_for(lambda: len(_messages(console)) == 1, pilot)
+        session.fire_reply_started("item-1")
+        session.fire_output_transcript_delta("spoken answer")
+        session.fire_input_transcript("what is the weather")
+        await _wait_for(lambda: len(_messages(console)) == 2, pilot)
+        await _wait_for(
+            lambda: _messages(console)[0].content == "what is the weather", pilot
+        )
+
+        user, assistant = _messages(console)
+        assert user.metadata is not None
+        assert user.metadata.engine == "realtime"
+        assert user.metadata.provider == "openai"
+        # The user row is attributed to the TRANSCRIPTION model, matching
+        # how its usage (spoken-audio duration) is attributed.
+        assert (
+            user.metadata.model
+            == chat_screen_module.CONSOLE_REALTIME_TRANSCRIPTION_MODEL
+        )
+        assert assistant.metadata is not None
+        assert assistant.metadata.engine == "realtime"
+        assert assistant.metadata.model == "gpt-realtime"
+
+
+@pytest.mark.asyncio
+async def test_barge_in_sets_the_structured_interrupted_flag(monkeypatch):
+    """The visible marker stays for the human reader; machine consumers
+    read the flag."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        session.fire_turn_committed()
+        session.fire_reply_started("item-1")
+        session.fire_output_transcript_delta("Half a sen")
+        await _wait_for(
+            lambda: any(
+                row.role is ConsoleMessageRole.ASSISTANT and row.content
+                for row in _messages(console)
+            ),
+            pilot,
+        )
+
+        console._console_realtime.controller.on_keypress()
+        await pilot.pause()
+
+        assistant = [
+            row for row in _messages(console) if row.role is ConsoleMessageRole.ASSISTANT
+        ][0]
+        assert assistant.content.endswith("interrupted"), assistant.content
+        assert assistant.metadata is not None
+        assert assistant.metadata.interrupted is True
+
+
+@pytest.mark.asyncio
+async def test_a_completed_reply_is_not_marked_interrupted(monkeypatch):
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        session.fire_turn_committed()
+        session.fire_reply_started("item-1")
+        session.fire_output_transcript_delta("A whole answer.")
+        session.fire_reply_done()
+        await _wait_for(
+            lambda: any(
+                row.role is ConsoleMessageRole.ASSISTANT and row.status == "complete"
+                for row in _messages(console)
+            ),
+            pilot,
+        )
+
+        assistant = [
+            row for row in _messages(console) if row.role is ConsoleMessageRole.ASSISTANT
+        ][0]
+        assert assistant.metadata is not None
+        assert assistant.metadata.interrupted is False
+
+
+@pytest.mark.asyncio
+async def test_seed_uses_the_interrupted_flag_not_the_marker_text(monkeypatch):
+    """AC#2: the reseed builder reads the structured flag. The marker is
+    still trimmed off what the model sees -- it is our chrome -- but the
+    DECISION comes from metadata, not from matching UI copy."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        store.append_message(
+            session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=(
+                "Half a sentence"
+                + chat_screen_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
+            ),
+            metadata=MessageMetadata(engine="realtime", interrupted=True),
+        )
+
+        await _enter_live_realtime(console, pilot, rig)
+
+        items, _instructions = rig.session.seeds[0]
+        assert items == [("assistant", "Half a sentence")]
+
+
+@pytest.mark.asyncio
+async def test_seed_keeps_marker_shaped_text_a_user_actually_said(monkeypatch):
+    """The old blind string-strip mangled any row containing the marker
+    text; only a row the engine actually marked interrupted is trimmed."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        store.append_message(
+            session_id,
+            role=ConsoleMessageRole.USER,
+            content="type ⏹ interrupted into the log",
+            metadata=MessageMetadata(engine="realtime", transcript_status="final"),
+        )
+
+        await _enter_live_realtime(console, pilot, rig)
+
+        items, _instructions = rig.session.seeds[0]
+        assert items == [("user", "type ⏹ interrupted into the log")]
+
+
+@pytest.mark.asyncio
+async def test_turn_commit_records_a_pending_transcript_status(monkeypatch):
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        session.fire_turn_committed()
+        await _wait_for(lambda: len(_messages(console)) == 1, pilot)
+
+        user = _messages(console)[0]
+        assert user.content == ""
+        assert user.metadata is not None
+        assert user.metadata.transcript_status == "pending"
+
+        session.fire_input_transcript("what is the weather")
+        await _wait_for(lambda: _messages(console)[0].content, pilot)
+        assert _messages(console)[0].metadata.transcript_status == "final"
+
+
+@pytest.mark.asyncio
+async def test_an_empty_transcript_records_why_the_row_is_empty(monkeypatch):
+    """The strand case: the provider transcribed the turn and it held no
+    words. Before the field, the row sat empty forever with nothing saying
+    whether the user was silent or the pipeline broke."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        session.fire_turn_committed()
+        await _wait_for(lambda: len(_messages(console)) == 1, pilot)
+        session.fire_input_transcript("   ")
+        await _wait_for(
+            lambda: _messages(console)[0].metadata is not None
+            and _messages(console)[0].metadata.transcript_status == "empty",
+            pilot,
+        )
+
+        user = _messages(console)[0]
+        assert user.content == ""
+        assert user.metadata.engine == "realtime"
+
+
+@pytest.mark.asyncio
+async def test_a_late_empty_transcript_never_restates_a_filled_row(monkeypatch):
+    """`on_input_transcript` carries no item id (see F5). An empty payload
+    landing after the row was filled must not relabel a good transcript as
+    'empty'."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        session.fire_turn_committed()
+        await _wait_for(lambda: len(_messages(console)) == 1, pilot)
+        session.fire_input_transcript("what is the weather")
+        await _wait_for(lambda: _messages(console)[0].content, pilot)
+
+        session.fire_input_transcript("")
+        await pilot.pause()
+        await pilot.pause()
+
+        user = _messages(console)[0]
+        assert user.content == "what is the weather"
+        assert user.metadata.transcript_status == "final"

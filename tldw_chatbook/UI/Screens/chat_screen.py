@@ -79,6 +79,7 @@ from ...Chat.console_cost_tracker import (
     build_cost_state,
     fingerprint_break_reason,
 )
+from ...Chat.message_metadata import MessageMetadata
 from ...Chat.provider_usage import ProviderUsage
 from ...LLM_Calls.pricing_catalog import get_pricing_catalog
 from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
@@ -884,6 +885,11 @@ CONSOLE_REALTIME_SEED_CHARS = 8000
 #: sentence they cut off mid-word -- and that transcript is what later
 #: seeds/exports/summarizes the conversation.
 CONSOLE_REALTIME_INTERRUPTED_MARKER = " ⏹ interrupted"
+
+#: `MessageMetadata.engine` value stamped on every row this loop writes
+#: (task-2364). The marker above stays as the reader's cue; machine
+#: consumers -- reseed, exports, summaries -- read the structured record.
+CONSOLE_REALTIME_ENGINE = "realtime"
 
 #: Chip copy per `RealtimeLoopState`. States absent from this map
 #: (`idle`) never paint: the loop is gone by then and
@@ -7650,13 +7656,7 @@ class ChatScreen(BaseAppScreen):
                 ConsoleMessageRole.ASSISTANT,
             ):
                 continue
-            # The interrupted marker is OUR chrome for the human reader
-            # (final review M4). Replaying it into the model's context on
-            # every reseed would teach it that "⏹ interrupted" is part of
-            # how the assistant speaks.
-            text = str(message.content or "").replace(
-                CONSOLE_REALTIME_INTERRUPTED_MARKER, ""
-            ).strip()
+            text = self._console_realtime_seed_text(message)
             if not text:
                 continue
             if used_chars + len(text) > CONSOLE_REALTIME_SEED_CHARS:
@@ -7667,6 +7667,72 @@ class ChatScreen(BaseAppScreen):
                 break
         selected.reverse()
         return selected
+
+    @staticmethod
+    def _console_realtime_seed_text(message: ConsoleChatMessage) -> str:
+        """The model-facing text of one prior turn, without our chrome.
+
+        The interrupted marker is OUR chrome for the human reader (final
+        review M4): replaying it into the model's context on every reseed
+        would teach it that "⏹ interrupted" is part of how the assistant
+        speaks. What changed in task-2364 is WHERE the decision comes
+        from -- `metadata.interrupted`, a fact the engine recorded, rather
+        than a blind string match on UI copy that also mangled any turn
+        whose words happened to contain the marker text.
+
+        Rows persisted before the metadata field existed carry the marker
+        with no flag to read; the old unconditional strip is kept for
+        exactly those, so resuming an older conversation does not start
+        seeding chrome again.
+
+        Args:
+            message: A transcript row from the loop's Console session.
+
+        Returns:
+            The row's text with any interruption marker removed, stripped.
+        """
+        raw = str(message.content or "")
+        metadata = message.metadata
+        if metadata is None:
+            return raw.replace(CONSOLE_REALTIME_INTERRUPTED_MARKER, "").strip()
+        if metadata.interrupted:
+            # The marker is always the LAST thing appended to a cut reply
+            # (`_finish_console_realtime_reply_row`), so a suffix trim is
+            # exact where a global replace was not.
+            return raw.removesuffix(CONSOLE_REALTIME_INTERRUPTED_MARKER).strip()
+        return raw.strip()
+
+    def _console_realtime_row_metadata(
+        self,
+        *,
+        model: str,
+        interrupted: bool = False,
+        transcript_status: str = "",
+    ) -> MessageMetadata:
+        """Build the provenance record every realtime row carries.
+
+        The V4 spec puts engine/provider/model provenance on the row
+        itself; before task-2364 it could only ride the attached usage and
+        a visible marker (spec "Turn metadata deferred").
+
+        Args:
+            model: Model this row is attributed to -- the realtime model
+                for a reply, the transcription model for a user row, which
+                is exactly how each row's usage is attributed too.
+            interrupted: Whether the row's generation was cut short.
+            transcript_status: One of ``MessageMetadata``'s closed
+                vocabulary; ``""`` for rows that are not transcriptions.
+
+        Returns:
+            The metadata record to store on the row.
+        """
+        return MessageMetadata(
+            engine=CONSOLE_REALTIME_ENGINE,
+            provider=CONSOLE_REALTIME_SUPPORTED_PROVIDER,
+            model=model,
+            interrupted=interrupted,
+            transcript_status=transcript_status,
+        )
 
     def _build_console_realtime_session(
         self, config: RealtimeSessionConfig, callbacks: RealtimeCallbacks
@@ -8090,7 +8156,17 @@ class ChatScreen(BaseAppScreen):
             phase=session.controller.state,
         )
         session.user_row_id = self._append_console_realtime_row(
-            session, ConsoleMessageRole.USER, ""
+            session,
+            ConsoleMessageRole.USER,
+            "",
+            # The row is deliberately empty until its transcript lands, so
+            # it records WHY it is empty from the moment it exists
+            # (task-2364): a transcript that never arrives leaves a row
+            # saying "pending", not an unexplained blank.
+            metadata=self._console_realtime_row_metadata(
+                model=CONSOLE_REALTIME_TRANSCRIPTION_MODEL,
+                transcript_status="pending",
+            ),
         )
         session.controller.on_turn_committed(time.monotonic())
 
@@ -8120,14 +8196,29 @@ class ChatScreen(BaseAppScreen):
         putting words in the user's mouth in the durable record. Dropped
         instead, with the row id, because a wrong transcript is worse than
         a missing one and this is the only place it can be diagnosed.
+
+        Every outcome is RECORDED on the row (task-2364): a transcript that
+        legitimately came back empty marks its row `empty`, a write that
+        failed marks it `failed`, and a filled row becomes `final`. Before
+        the metadata field, the empty case simply returned here and left an
+        empty user row stranded forever with nothing saying whether the
+        user had been silent or the pipeline had broken.
         """
         spoken = str(text or "").strip()
-        if not spoken:
-            return
         row_id = session.user_row_id
+        if not spoken:
+            if row_id is not None and not self._console_realtime_row_has_text(row_id):
+                self._set_console_realtime_transcript_status(row_id, "empty")
+            return
         if row_id is None:
             session.user_row_id = self._append_console_realtime_row(
-                session, ConsoleMessageRole.USER, spoken
+                session,
+                ConsoleMessageRole.USER,
+                spoken,
+                metadata=self._console_realtime_row_metadata(
+                    model=CONSOLE_REALTIME_TRANSCRIPTION_MODEL,
+                    transcript_status="final",
+                ),
             )
             return
         store = self._ensure_console_chat_store()
@@ -8152,8 +8243,58 @@ class ChatScreen(BaseAppScreen):
             logger.opt(exception=True).warning(
                 "Console realtime: could not write the input transcript"
             )
+            self._set_console_realtime_transcript_status(row_id, "failed")
             return
+        # AFTER the content write, never before: a status of "final" on a
+        # row whose text never landed would be a lie of exactly the kind
+        # this field exists to prevent.
+        self._set_console_realtime_transcript_status(row_id, "final")
         session.transcript_dirty = True
+
+    def _console_realtime_row_has_text(self, row_id: str) -> bool:
+        """Whether a transcript row already holds text; never raises.
+
+        Args:
+            row_id: Native store id of the row.
+
+        Returns:
+            True when the row exists and its content is non-blank. An
+            unreadable row reports True so a late empty payload is treated
+            as "leave it alone" rather than relabelling a row it cannot
+            see.
+        """
+        store = self._ensure_console_chat_store()
+        try:
+            return bool(str(store.get_message(row_id).content or "").strip())
+        except Exception:  # noqa: BLE001 - an unreadable row is left untouched
+            logger.opt(exception=True).debug(
+                "Console realtime: could not read a transcript row's text: "
+                f"op=realtime_transcript_status row_id={row_id}"
+            )
+            return True
+
+    def _set_console_realtime_transcript_status(self, row_id: str, status: str) -> None:
+        """Record what became of a user row's transcript (task-2364).
+
+        Args:
+            row_id: Native store id of the user row.
+            status: A `MessageMetadata` transcript status
+                ("final"/"empty"/"failed").
+        """
+        store = self._ensure_console_chat_store()
+        try:
+            store.set_message_metadata(
+                row_id,
+                self._console_realtime_row_metadata(
+                    model=CONSOLE_REALTIME_TRANSCRIPTION_MODEL,
+                    transcript_status=status,
+                ),
+            )
+        except Exception:  # noqa: BLE001 - bookkeeping is never worth a crash
+            logger.opt(exception=True).debug(
+                "Console realtime: could not record a transcript status: "
+                f"op=realtime_transcript_status row_id={row_id} status={status}"
+            )
 
     def _on_console_realtime_reply_started(
         self, session: ConsoleRealtimeSession, item_id: str
@@ -8170,7 +8311,10 @@ class ChatScreen(BaseAppScreen):
             phase=session.controller.state,
         )
         row_id = self._append_console_realtime_row(
-            session, ConsoleMessageRole.ASSISTANT, ""
+            session,
+            ConsoleMessageRole.ASSISTANT,
+            "",
+            metadata=self._console_realtime_row_metadata(model=str(realtime_model())),
         )
         session.assistant_row_id = row_id
         session.last_reply_row_id = row_id or session.last_reply_row_id
@@ -8293,13 +8437,27 @@ class ChatScreen(BaseAppScreen):
             )
 
     def _append_console_realtime_row(
-        self, session: ConsoleRealtimeSession, role: ConsoleMessageRole, content: str
+        self,
+        session: ConsoleRealtimeSession,
+        role: ConsoleMessageRole,
+        content: str,
+        *,
+        metadata: MessageMetadata | None = None,
     ) -> str | None:
         """Append one continuity row to the loop's OWN Console session.
 
         Persisted like any other Console turn: a spoken conversation is a
         conversation, and a realtime exchange that vanished on restart
         would be the only kind that does.
+
+        Args:
+            session: The live realtime loop state.
+            role: Transcript role for the new row.
+            content: Row text ("" for a placeholder filled in later).
+            metadata: Structured provenance/state to store with the row
+                (task-2364). Passed at creation so the row's engine,
+                provider and model are written by the same DB write as its
+                text rather than chased with a second update.
 
         Returns:
             The new row's id, or None when the write failed (already
@@ -8312,6 +8470,7 @@ class ChatScreen(BaseAppScreen):
                 role=role,
                 content=content,
                 persist=True,
+                metadata=metadata,
             )
         except Exception:  # noqa: BLE001 - a store failure must not end the call
             logger.opt(exception=True).warning(
@@ -8337,6 +8496,23 @@ class ChatScreen(BaseAppScreen):
         if row_id is None:
             return
         store = self._ensure_console_chat_store()
+        # The structured record (task-2364) is what the reseed builder,
+        # exports and summaries read; the marker below stays because the
+        # HUMAN reading the transcript needs to see it too. Written before
+        # the terminal mark so the flush that persists the final text
+        # carries the flag in the same write.
+        try:
+            store.set_message_metadata(
+                row_id,
+                self._console_realtime_row_metadata(
+                    model=str(realtime_model()),
+                    interrupted=interrupted,
+                ),
+            )
+        except Exception:  # noqa: BLE001 - bookkeeping is never worth a crash
+            logger.opt(exception=True).debug(
+                "Console realtime: could not record the reply's metadata"
+            )
         if interrupted:
             try:
                 store.append_stream_chunk(row_id, CONSOLE_REALTIME_INTERRUPTED_MARKER)
@@ -8389,7 +8565,20 @@ class ChatScreen(BaseAppScreen):
         and never painting `thinking`. Driving the same input directly
         here is what makes an adopted turn behave like any other turn.
         """
-        self._append_console_realtime_row(session, ConsoleMessageRole.USER, text)
+        self._append_console_realtime_row(
+            session,
+            ConsoleMessageRole.USER,
+            text,
+            # An adopted capture's WORDS came from the pipeline engine's
+            # STT, not from the realtime provider's transcription, so no
+            # transcription model is claimed here (task-2364) -- the row
+            # belongs to this realtime session and its text is already
+            # final, and that is all this record asserts.
+            metadata=self._console_realtime_row_metadata(
+                model="",
+                transcript_status="final",
+            ),
+        )
         provider_session = session.session
         if provider_session is None:
             return
@@ -10964,6 +11153,7 @@ class ChatScreen(BaseAppScreen):
             raw_mime = node.get("image_mime_type")
             image_mime_type = str(raw_mime) if raw_mime else None
             usage = ProviderUsage.from_json(node.get("usage_json"))
+            metadata = MessageMetadata.from_json(node.get("metadata_json"))
             raw_id = node.get("id")
             node_persisted_id = str(raw_id) if raw_id is not None else None
             kept = bool(content) or image_data is not None
@@ -10994,6 +11184,7 @@ class ChatScreen(BaseAppScreen):
                         image_mime_type=image_mime_type,
                         attachments=attachments,
                         usage=usage,
+                        metadata=metadata,
                     )
                 )
             # Children re-parent to this node when kept, else pass the nearest
@@ -16421,6 +16612,16 @@ class ChatScreen(BaseAppScreen):
                 if (usage := getattr(message, "usage", None)) is not None
                 else None
             ),
+            # Structured message metadata (task-2364): same reasoning as
+            # `usage_json` above -- a screen-state round trip that dropped
+            # it would lose the interrupted flag and a voice row's
+            # transcript status, silently re-stranding what this field
+            # exists to record.
+            "metadata_json": (
+                metadata.to_json()
+                if (metadata := getattr(message, "metadata", None)) is not None
+                else None
+            ),
         }
 
     @classmethod
@@ -16489,6 +16690,8 @@ class ChatScreen(BaseAppScreen):
             # `from_json` returns None for missing/legacy/corrupt payloads,
             # which is exactly the "no usage known" state.
             usage=ProviderUsage.from_json(payload.get("usage_json")),
+            # Same degrade-never-raise contract for structured metadata.
+            metadata=MessageMetadata.from_json(payload.get("metadata_json")),
         )
 
     # App-object attribute holding staged-but-unsent attachments across screen
