@@ -244,6 +244,19 @@ def test_vad_threshold_accepts_the_configured_value(monkeypatch):
     assert cvi.realtime_vad_threshold() == 0.6
 
 
+def test_vad_threshold_rejects_toml_true(monkeypatch):
+    """`vad_threshold = true` in TOML is a typo, not a threshold of 1.0.
+
+    `bool` is a subclass of `int`, so `float(True)` is 1.0 and sails
+    through the range check -- silently pinning the gate at "only the
+    loudest possible audio counts as speech", which reads to the user as
+    a microphone that stopped working (task-2365, folded in here).
+    """
+    for bad in (True, False):
+        _patch_setting(monkeypatch, {("realtime", "vad_threshold"): bad})
+        assert cvi.realtime_vad_threshold() is None, bad
+
+
 def test_vad_threshold_rejects_out_of_range_and_non_numeric(monkeypatch):
     for bad in (1.5, -0.1, "loud"):
         _patch_setting(monkeypatch, {("realtime", "vad_threshold"): bad})

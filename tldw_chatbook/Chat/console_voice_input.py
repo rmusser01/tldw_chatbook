@@ -1088,10 +1088,18 @@ def realtime_vad_threshold() -> float | None:
     raw = get_cli_setting("realtime", "vad_threshold", None)
     if raw is None:
         return None
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
+    if isinstance(raw, bool):
+        # `bool` is a subclass of `int`, so `float(True)` is 1.0 and would
+        # sail through the range check below -- pinning the gate at "only
+        # the loudest possible audio counts as speech", which reads as a
+        # microphone that stopped working. Same guard its sibling
+        # `realtime_vad_silence_ms` already had.
         value = None
+    else:
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            value = None
     if value is None or not 0.0 <= value <= 1.0:
         logger.warning(
             "realtime.vad_threshold must be a number between 0 and 1 "
