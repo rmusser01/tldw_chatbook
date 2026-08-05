@@ -850,6 +850,67 @@ def test_panel_state_answering_keeps_selected_evidence_usable_in_console() -> No
     assert nothing_selected.use_in_console_action.enabled is False
 
 
+def test_panel_state_carries_in_flight_answer_provider_for_the_asking_line() -> None:
+    """PR-3 Task 3: the panel state must carry the provider resolved for an
+    answer call CURRENTLY IN FLIGHT through to `library_rag_answer_children`'s
+    "Asking <provider>..." line -- distinct from `state.answer.provider`,
+    which is only set once a call has SETTLED onto `state.answer`. Defaults
+    to `""` (every call site that predates this field), so a caller that
+    never threads it through keeps the prior generic "Generating answer..."
+    line rather than a broken "Asking ..." with nothing named.
+    """
+    with_provider = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Find policy evidence",
+        mode="rag",
+        retrieval_status="answering",
+        in_flight_answer_provider="anthropic",
+    )
+    assert with_provider.in_flight_answer_provider == "anthropic"
+
+    default_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Find policy evidence",
+        mode="rag",
+        retrieval_status="answering",
+    )
+    assert default_state.in_flight_answer_provider == ""
+
+
+def test_panel_state_answer_field_round_trips_provider_model_usage() -> None:
+    """`from_values` must pass Task 2's `LibraryRagAnswer.provider`/`model`/
+    `usage` through to `state.answer` completely untouched -- the Task 3
+    footer's whole provenance depends on these three surviving the state
+    build unchanged."""
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        ANSWER_STATUS_READY,
+        LibraryRagAnswer,
+    )
+
+    usage = ProviderUsage(
+        uncached_input=1000, output=240, provider="anthropic", model="claude-sonnet-4-6"
+    )
+    answer = LibraryRagAnswer(
+        status=ANSWER_STATUS_READY,
+        text="Expired credential caused the incident.",
+        citation_status="validated",
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        usage=usage,
+    )
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        answer=answer,
+    )
+    assert state.answer is answer
+    assert state.answer.provider == "anthropic"
+    assert state.answer.model == "claude-sonnet-4-6"
+    assert state.answer.usage == usage
+
+
 def test_panel_state_defaults_stable_selectors_for_recovery_paths() -> None:
     failed = LibraryRagPanelState.from_values(
         source_counts={"notes": 1},

@@ -1270,6 +1270,14 @@ class LibraryScreen(BaseAppScreen):
         # screen is a new instance with no worker running, so a restored
         # "answering" status could never be resolved by anything.
         self._library_rag_answer_in_flight: bool = False
+        # The provider `resolve_library_rag_answer_provider` resolved for
+        # the answer call `_library_rag_answer_in_flight` is currently
+        # tracking (PR-3 Task 3) -- feeds the in-flight "Asking
+        # <provider>..." line. Cleared everywhere the flag above is
+        # cleared; the panel-state builder additionally only ever forwards
+        # this value while the flag is True, so a value left behind by a
+        # reset gap could never surface on its own.
+        self._library_rag_answer_in_flight_provider: str = ""
         # What the Answer region currently shows, as
         # `(mode, is_answering, answer_object)` -- the three inputs
         # `library_rag_answer_children` reads. `_refresh_library_rag_answer_
@@ -2033,10 +2041,11 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_answer_mode = (
             rag_answer_mode if rag_answer_mode in ("search", "rag") else ""
         )
-        # `_library_rag_answer_in_flight` is intentionally left at its
-        # `__init__` default (False): this instance has no answer worker
-        # running, so restoring an in-flight "answering" status would be a
-        # dangling one nothing could ever resolve.
+        # `_library_rag_answer_in_flight` (and its Task 3 companion,
+        # `_library_rag_answer_in_flight_provider`) are intentionally left
+        # at their `__init__` defaults (False / ""): this instance has no
+        # answer worker running, so restoring an in-flight "answering"
+        # status would be a dangling one nothing could ever resolve.
 
         media_type_filter = state.get("library_media_type_filter")
         self._library_media_type_filter = (
@@ -3820,6 +3829,15 @@ class LibraryScreen(BaseAppScreen):
                 "answering"
                 if self._library_rag_answer_in_flight
                 else self._library_rag_retrieval_status
+            ),
+            # PR-3 Task 3: named for the in-flight "Asking <provider>..."
+            # line -- gated on the same flag as `retrieval_status` above,
+            # belt-and-suspenders against a reset gap ever leaving a stale
+            # provider name forwarded once the flag itself reads False.
+            in_flight_answer_provider=(
+                self._library_rag_answer_in_flight_provider
+                if self._library_rag_answer_in_flight
+                else ""
             ),
             recovery_copy=(
                 self._library_rag_recovery_state.visible_copy
@@ -16688,6 +16706,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_answer_query = ""
         self._library_rag_answer_mode = ""
         self._library_rag_answer_in_flight = False
+        self._library_rag_answer_in_flight_provider = ""
 
     def _reset_library_rag_in_flight_status(self) -> None:
         """Un-stick the run gate without touching landed results (B5/task-284).
@@ -16714,6 +16733,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_retrieval_status = ""
         self._library_rag_recovery_state = None
         self._library_rag_answer_in_flight = False
+        self._library_rag_answer_in_flight_provider = ""
 
     @on(Button.Pressed, "#library-rag-run-query")
     async def run_library_rag_query(self, event: Button.Pressed) -> None:
@@ -17423,6 +17443,11 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_answer_query = request.query
         self._library_rag_answer_mode = request.mode
         self._library_rag_answer_in_flight = bool(outcome.results)
+        # PR-3 Task 3: named for the in-flight "Asking <provider>..." line
+        # -- set unconditionally alongside the flag above (never gated on
+        # `outcome.results` itself) since the panel-state builder is what
+        # decides whether to forward it, keyed off that same flag.
+        self._library_rag_answer_in_flight_provider = provider
         self._execute_library_rag_answer(
             request,
             results=outcome.results,

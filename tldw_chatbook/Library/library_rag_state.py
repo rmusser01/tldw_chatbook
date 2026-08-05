@@ -1540,6 +1540,17 @@ class LibraryRagPanelState:
     #: `None` in keyword (search) mode -- rag mode is the only mode Task 1's
     #: answer service is ever invoked for.
     answer: LibraryRagAnswer | None = None
+    #: The provider `resolve_library_rag_answer_provider` resolved for the
+    #: single grounded-answer call CURRENTLY IN FLIGHT (PR-3 Task 3) --
+    #: distinct from `answer.provider`, which only exists once a call has
+    #: SETTLED onto `answer`. Feeds `library_rag_answer_children`'s
+    #: "Asking <provider>..." in-flight line: the one moment the answer
+    #: region has something true to say about cost before the outcome
+    #: (and therefore the token usage) is known at all -- which provider is
+    #: about to be billed. `""` (the default -- every call site that
+    #: predates this field) keeps the prior generic "Generating answer..."
+    #: line, since there is no provider name to report.
+    in_flight_answer_provider: str = ""
 
     @classmethod
     def from_values(
@@ -1562,6 +1573,7 @@ class LibraryRagPanelState:
         history_collapsed: bool = False,
         diagnostics: Mapping[str, Any] | None = None,
         answer: LibraryRagAnswer | None = None,
+        in_flight_answer_provider: str = "",
     ) -> "LibraryRagPanelState":
         """Build full Library Search/RAG panel display state.
 
@@ -1611,6 +1623,10 @@ class LibraryRagPanelState:
             answer: PR-3 Task 1's grounded-answer outcome for the current
                 `results`, or `None` before one has landed (every call site
                 that predates Task 3).
+            in_flight_answer_provider: The provider resolved for the answer
+                call currently in flight (PR-3 Task 3), or `""` (the
+                default -- every call site that predates this parameter)
+                when none is in flight or none was resolved yet.
 
         Returns:
             Display state for the destination-native Library Search/RAG panel.
@@ -1841,6 +1857,7 @@ class LibraryRagPanelState:
             coverage_note=coverage_note,
             searched_query=normalized_searched_query,
             answer=answer,
+            in_flight_answer_provider=str(in_flight_answer_provider or ""),
         )
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from rich.markup import escape as escape_markup
 
 from textual.app import ComposeResult
@@ -9,11 +11,14 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Collapsible, Input, Static
 from textual.widget import Widget
 
+from ...Chat.cost_display import build_provenance_line
+from ...LLM_Calls.pricing_catalog import get_pricing_catalog
 from ...Library.library_rag_answer_service import (
     ANSWER_STATUS_ABSTAINED,
     ANSWER_STATUS_FAILED,
     ANSWER_STATUS_NO_EVIDENCE,
     ANSWER_STATUS_READY,
+    LibraryRagAnswer,
 )
 from ...Library.library_rag_state import (
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
@@ -279,6 +284,18 @@ def library_rag_answer_children(state: LibraryRagPanelState) -> list[Widget]:
     is suppressed in that case, `clean` or not, since there is nothing safe
     shown for it to vouch for.
 
+    Paid-moment footer (PR-3 Task 3): every settled status except
+    `no_evidence` (the one path where no provider call was ever attempted)
+    gets a trailing `#library-rag-answer-provenance` line naming what the
+    call actually cost -- provider, model, and either a real dollar figure
+    or an honest "pricing unknown"/no-usage statement, built by
+    `_answer_provenance_line` from Task 1's shared
+    `Chat.cost_display.build_provenance_line` and Task 2's
+    `answer.provider`/`model`/`usage`. It renders for `failed` too whenever
+    a real, billable response was already parsed before the failure (Task
+    2's fix round) -- a call that cost money says so even though it did
+    not produce a usable answer.
+
     Args:
         state: Current Library Search/RAG panel display state.
 
@@ -294,11 +311,27 @@ def library_rag_answer_children(state: LibraryRagPanelState) -> list[Widget]:
     )
 
     if state.retrieval_status == "answering":
+        # PR-3 Task 3: the one moment this region has something true to say
+        # about cost BEFORE the outcome (and its token usage) is even
+        # known -- which provider is about to be billed. Names it whenever
+        # the screen resolved one (`state.in_flight_answer_provider`);
+        # falls back to the pre-existing generic line when it did not
+        # (every state built before this field existed, and the "answering"
+        # override reached without ever resolving a provider -- unreachable
+        # through the UI, since `_start_library_rag_answer` only raises
+        # this status after `resolve_library_rag_answer_provider` already
+        # returned one, but still a safe default for a direct `from_values`
+        # call like this module's own gate16 tests use).
+        in_flight_text = (
+            f"Asking {state.in_flight_answer_provider}…"
+            if state.in_flight_answer_provider
+            else "Generating answer…"
+        )
         return [
             Vertical(
                 heading,
                 Static(
-                    "Generating answer…",
+                    in_flight_text,
                     id="library-rag-answer-status",
                     classes="library-rag-quiet-line",
                 ),
@@ -395,7 +428,69 @@ def library_rag_answer_children(state: LibraryRagPanelState) -> list[Widget]:
         # presentation for it.
         return []
 
+    provenance_line = _answer_provenance_line(answer)
+    if provenance_line is not None:
+        body.append(
+            Static(
+                provenance_line,
+                id="library-rag-answer-provenance",
+                classes="library-rag-quiet-line",
+                markup=False,
+            )
+        )
+
     return [Vertical(*body, id="library-rag-answer", classes="library-rag-region")]
+
+
+def _answer_provenance_line(answer: LibraryRagAnswer) -> str | None:
+    """The footer's provenance line for a settled answer, or `None` (PR-3 Task 3).
+
+    Priced at RENDER time from `pricing_catalog.get_pricing_catalog()` --
+    never stored on `answer` itself, so a pricing-config change is reflected
+    on the very next render rather than freezing whatever rate was live
+    when the answer landed.
+
+    `None` (no footer at all) in two cases:
+
+    * `answer.provider == ""` -- the no-evidence path, the ONLY path where
+      no provider call was ever attempted (Task 2's own contract). A line
+      naming an empty provider would be worse than no line.
+    * `answer.model == "" and answer.usage is None` -- the OTHER empty
+      shape, reachable when `generate_library_rag_answer`'s containment
+      `try` raises before `_invoke_chat` ever returns a response (a
+      bundle-build failure, or the provider call itself raising, e.g. a
+      realistic upstream 503): `provider` is still set (a plain function
+      parameter, always safe -- Task 2's fix-review comment), but nothing
+      else is known. `build_provenance_line`'s header is `"provider ·
+      model"` with no branch for a blank model, so calling it here would
+      print a dangling "anthropic · " naming nothing useful. Since neither
+      a model nor any usage is actually known in this shape, saying nothing
+      is more honest than that half-line -- a judgment call made entirely
+      in this renderer, without touching Task 1's or Task 2's contracts.
+
+    Every other combination (model known, usage known, or both) renders --
+    including a `failed` status whose usage survived a post-call
+    processing failure (Task 2's fix round): a call that cost real money
+    must say so even though it ultimately failed.
+    """
+    if not answer.provider or (not answer.model and answer.usage is None):
+        return None
+
+    cost: Decimal | None = None
+    pricing_known = False
+    if answer.usage is not None:
+        breakdown = get_pricing_catalog().cost_for_usage(answer.usage)
+        if breakdown is not None:
+            cost = Decimal(str(breakdown.total))
+            pricing_known = True
+
+    return build_provenance_line(
+        provider=answer.provider,
+        model=answer.model,
+        usage=answer.usage,
+        cost=cost,
+        pricing_known=pricing_known,
+    )
 
 
 def _query_blocked_is_quiet(query_state: LibraryRagQueryState) -> bool:
