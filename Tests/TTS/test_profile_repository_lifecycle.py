@@ -345,9 +345,7 @@ async def test_populated_v1_store_upgrades_under_exclusive_lease_through_reposit
     try:
         assert opened == ProfileStoreResult(generation=1, value=None)
         page = await repository.list_profiles()
-        assert [profile.display_name for profile in page.value.profiles] == [
-            "Legacy"
-        ]
+        assert [profile.display_name for profile in page.value.profiles] == ["Legacy"]
     finally:
         await repository.close()
 
@@ -363,9 +361,7 @@ async def test_populated_v1_store_upgrades_under_exclusive_lease_through_reposit
             == CURRENT_PROFILE_SCHEMA_VERSION
         )
         assert (
-            check.execute(
-                "SELECT COUNT(*) FROM tts_generation_profiles"
-            ).fetchone()[0]
+            check.execute("SELECT COUNT(*) FROM tts_generation_profiles").fetchone()[0]
             == 1
         )
     finally:
@@ -400,9 +396,7 @@ async def test_already_current_store_open_never_takes_exclusive_lease(
     await repository.open()
     try:
         page = await repository.list_profiles()
-        assert [profile.display_name for profile in page.value.profiles] == [
-            "Current"
-        ]
+        assert [profile.display_name for profile in page.value.profiles] == ["Current"]
     finally:
         await repository.close()
 

@@ -3023,7 +3023,9 @@ class TTSProfileRepository:
         if expected_profile is not None and selected_profile != expected_profile:
             raise _repository_error("conflict")
         existing = self._worker_get_persisted_assignment(connection, character_ref)
-        current_profile_id = None if existing is None else existing.assignment.profile_id
+        current_profile_id = (
+            None if existing is None else existing.assignment.profile_id
+        )
         if current_profile_id != expected_current_profile_id:
             raise _repository_error("conflict")
         assignment = CharacterTTSAssignment(
@@ -3032,7 +3034,9 @@ class TTSProfileRepository:
         )
         timestamp = self._clock()
         created_at = timestamp if existing is None else existing.created_at
-        updated_at = timestamp if existing is None else max(existing.updated_at, timestamp)
+        updated_at = (
+            timestamp if existing is None else max(existing.updated_at, timestamp)
+        )
         expected = _PersistedAssignment(
             assignment=assignment,
             created_at=created_at,

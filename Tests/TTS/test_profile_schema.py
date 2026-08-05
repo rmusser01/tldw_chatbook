@@ -507,9 +507,12 @@ def test_populated_v1_store_upgrades_in_place_to_v2(tmp_path: Path) -> None:
             "SELECT COUNT(*) FROM tts_generation_profiles"
         ).fetchone()[0]
         assert rows == 1
-        assert decode_profile(
-            connection.execute("SELECT * FROM tts_generation_profiles").fetchone()
-        ) == _profile()
+        assert (
+            decode_profile(
+                connection.execute("SELECT * FROM tts_generation_profiles").fetchone()
+            )
+            == _profile()
+        )
     finally:
         connection.close()
 
@@ -1187,7 +1190,9 @@ def test_profile_and_assignment_codecs_round_trip_exact_values(tmp_path: Path) -
         connection.close()
 
 
-@pytest.mark.skip(reason="options re-enabled in a later slice — no valid draft can carry options in slice 1")
+@pytest.mark.skip(
+    reason="options re-enabled in a later slice — no valid draft can carry options in slice 1"
+)
 def test_profile_options_round_trip_through_codec() -> None:
     """Verify frozen options round-trip through schema codec.
 

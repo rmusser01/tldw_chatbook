@@ -832,9 +832,16 @@ def test_unknown_provider_is_rejected_at_construction() -> None:
         _draft(provider_id="future_native")
 
 
-@pytest.mark.parametrize("provider_id", sorted(("openai", "elevenlabs", "kokoro", "chatterbox", "higgs", "alltalk")))
-@pytest.mark.parametrize("response_format", ["mp3", "opus", "aac", "flac", "wav", "pcm"])
-def test_legacy_providers_accept_catalog_formats(provider_id: str, response_format: str) -> None:
+@pytest.mark.parametrize(
+    "provider_id",
+    sorted(("openai", "elevenlabs", "kokoro", "chatterbox", "higgs", "alltalk")),
+)
+@pytest.mark.parametrize(
+    "response_format", ["mp3", "opus", "aac", "flac", "wav", "pcm"]
+)
+def test_legacy_providers_accept_catalog_formats(
+    provider_id: str, response_format: str
+) -> None:
     draft = _draft(provider_id=provider_id, response_format=response_format, speed=2.0)
     assert draft.provider_id == provider_id
     assert draft.response_format == response_format
@@ -842,7 +849,8 @@ def test_legacy_providers_accept_catalog_formats(provider_id: str, response_form
 
 def test_legacy_provider_rejects_format_outside_catalog_set() -> None:
     with pytest.raises(
-        ProfileValidationError, match=r"^TTS profile validation failed: response_format$"
+        ProfileValidationError,
+        match=r"^TTS profile validation failed: response_format$",
     ):
         _draft(provider_id="openai", response_format="ulaw_8000")
 
@@ -857,7 +865,10 @@ def test_legacy_provider_rejects_non_empty_options_this_slice() -> None:
 def test_provider_table_matches_legacy_catalogs() -> None:
     from tldw_chatbook.TTS import legacy_catalogs
 
-    assert set(profile_types_module.PROFILE_PROVIDER_FORMATS) == {"audio_cpp", *legacy_catalogs.LEGACY_MODELS}
+    assert set(profile_types_module.PROFILE_PROVIDER_FORMATS) == {
+        "audio_cpp",
+        *legacy_catalogs.LEGACY_MODELS,
+    }
     for provider_id in legacy_catalogs.LEGACY_MODELS:
         assert (
             profile_types_module.PROFILE_PROVIDER_FORMATS[provider_id]

@@ -377,7 +377,9 @@ def test_dump_voice_snapshot_is_deterministic_across_equal_calls() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="options re-enabled in a later slice — no valid draft can carry options in slice 1")
+@pytest.mark.skip(
+    reason="options re-enabled in a later slice — no valid draft can carry options in slice 1"
+)
 async def test_resolved_selection_carries_the_profiles_frozen_options() -> None:
     profile = _profile(
         provider_id="kokoro",

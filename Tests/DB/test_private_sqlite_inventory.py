@@ -573,7 +573,8 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # to run the in-place schema upgrade before immutable revalidation.
         # C39 is the lease orchestration's read-only schema-version peek used
         # to route a needed upgrade to the exclusive-lease path first.
-        f"C{number:02d}" for number in range(1, 40)
+        f"C{number:02d}"
+        for number in range(1, 40)
     ]
     assert [row["id"] for row in backup_rows] == [
         f"B{number:02d}" for number in range(1, 17)

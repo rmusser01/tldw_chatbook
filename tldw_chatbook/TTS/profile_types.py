@@ -480,13 +480,15 @@ class TTSProfileCollisionSnapshot:
     normalized_name_match: TTSGenerationProfile | None
 
     def __post_init__(self) -> None:
-        if self.profile_id_match is not None and type(
-            self.profile_id_match
-        ) is not TTSGenerationProfile:
+        if (
+            self.profile_id_match is not None
+            and type(self.profile_id_match) is not TTSGenerationProfile
+        ):
             raise ProfileValidationError("profiles")
-        if self.normalized_name_match is not None and type(
-            self.normalized_name_match
-        ) is not TTSGenerationProfile:
+        if (
+            self.normalized_name_match is not None
+            and type(self.normalized_name_match) is not TTSGenerationProfile
+        ):
             raise ProfileValidationError("profiles")
 
 

@@ -431,3 +431,49 @@ finding. When it moves, say why in the same breath, and cite the comparable sign
 Keep a mechanical arm in every round precisely so there is something to compare when the
 judgement number swings, and never report a delta without stating whether coverage
 changed underneath it.
+
+---
+
+## A backend fix proven by a unit test can still be dead code from the only real UI entry point (2026-08-04)
+
+**What happened (TASK-2450, voice-profiles slice 1).** Two review-and-test-passed fixes
+turned out to be unreachable from the app they shipped in, and only driving the real TUI
+against a real OpenAI account found either one.
+
+1. A slice fixed `_generate_legacy`'s provenance construction so a legacy-provider TTS
+   generation would carry a `TTSRequestedSelectionSnapshot`, making "Save result as
+   profile" eligible — reviewed, unit-tested, green. Live-clicking Generate in the real
+   Playground never made the Save button appear. The Playground pane is *always*
+   constructed with a non-`None` `studio_preferences` snapshot (`UI/STTS_Window.py`), so
+   every real click's request carries `studio_preferences != None` and the dispatcher
+   (`_generate_tts_worker`) always routes to `_generate_studio_effective`, never to
+   `_generate_legacy` — which is only reachable when `studio_preferences is None`, a state
+   the live UI can never produce. `_generate_studio_effective` had its own, separate,
+   untouched provenance construction that only fires for `provider_id == "audio_cpp"`.
+   The fixed function was correct and completely unreachable.
+2. In the same slice, the backend's assignment path (`TTSProfileService.set_assignment`,
+   the character resolver) was correctly extended to accept the new provider set, and a
+   profile classified `"unverified"` accordingly. The **client-side** Select widget that
+   is the only way to create an assignment (`personas_character_tts_widget.py`,
+   `_profile_changed`) still read `if option.availability != "available":
+   self._restore_selected_value()` — written when `"available"`/`"unavailable"` was the
+   whole vocabulary, never taught the new third state. Every attempt to assign a legacy
+   profile silently reverted with no error. The backend was correct; the one widget that
+   calls it was stale.
+
+Both were found by clicking the real button in a real running app, not by reading either
+function in isolation — a code reviewer reading `_generate_legacy`'s diff has no reason
+to go looking for a sibling function with the same job, and a reviewer of the assignment
+service has no reason to open an unrelated, untouched widget file three directories away.
+
+**What to do.** When a fix changes what one function accepts, ask a second question
+before calling it shippable: **is this the function the real UI actually calls on the
+path a user takes?** `grep` for the dispatcher/conditional that chooses between it and
+any sibling implementing the "same" behavior, and check what determines the choice at
+the actual call site — not what the test harness passes. Separately, `grep` for every
+manual string comparison against a status/enum field the change touches
+(`!= "available"`, `== "unavailable"`, etc.) outside the files the diff itself modified;
+a new state must be taught to every comparison, not just the ones in the changed files.
+Live-clicking the real affordance is the cheapest thing that reliably catches both
+shapes — a unit test that constructs the request/selection by hand cannot, because it
+never asks who else was supposed to construct it that way.

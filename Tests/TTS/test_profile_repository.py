@@ -1582,9 +1582,7 @@ async def test_create_snapshots_draft_before_queued_worker_runs(
 
         assert created.display_name == "Admission Create"
         assert created.model_id == "admitted-model"
-        assert (
-            canonical_json_options(created.options) == '{}'
-        )
+        assert canonical_json_options(created.options) == "{}"
 
 
 @pytest.mark.asyncio
@@ -1641,9 +1639,7 @@ async def test_update_snapshots_draft_before_queued_worker_runs(
 
         assert updated.display_name == "Admission Update"
         assert updated.model_id == "admitted-update-model"
-        assert canonical_json_options(updated.options) == (
-            '{}'
-        )
+        assert canonical_json_options(updated.options) == ("{}")
 
 
 @pytest.mark.asyncio

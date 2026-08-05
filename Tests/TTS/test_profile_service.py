@@ -4641,9 +4641,7 @@ async def test_portable_collision_matrix_is_explicit_and_never_mutates(
 ) -> None:
     repository = _FakeRepository()
     repository.collision_result = collisions
-    tts_service = _FakeTTSService(
-        _capability_snapshot(models=(_model("model-a"),))
-    )
+    tts_service = _FakeTTSService(_capability_snapshot(models=(_model("model-a"),)))
     service = TTSProfileService(
         repository,
         tts_service,
@@ -4670,9 +4668,7 @@ async def test_portable_commit_revalidates_available_selection_and_assigns_atomi
     None
 ):
     repository = _FakeRepository()
-    tts_service = _FakeTTSService(
-        _capability_snapshot(models=(_model("model-a"),))
-    )
+    tts_service = _FakeTTSService(_capability_snapshot(models=(_model("model-a"),)))
     service = TTSProfileService(repository, tts_service)
     observation = await service.observe_portable_profile(_portable_profile())
     plan = await service.inspect_portable_profile_import(observation)
@@ -4703,9 +4699,7 @@ async def test_portable_commit_revalidates_available_selection_and_assigns_atomi
 @pytest.mark.asyncio
 async def test_portable_commit_persists_for_repair_when_availability_changes() -> None:
     repository = _FakeRepository()
-    tts_service = _FakeTTSService(
-        _capability_snapshot(models=(_model("model-a"),))
-    )
+    tts_service = _FakeTTSService(_capability_snapshot(models=(_model("model-a"),)))
     service = TTSProfileService(repository, tts_service)
     observation = await service.observe_portable_profile(_portable_profile())
     plan = await service.inspect_portable_profile_import(observation)
@@ -4761,9 +4755,7 @@ async def test_reusing_available_profile_assigns_only_the_observed_profile_ident
     repository = _FakeRepository()
     existing = _profile(display_name="Imported voice")
     repository.collision_result = TTSProfileCollisionSnapshot(existing, existing)
-    tts_service = _FakeTTSService(
-        _capability_snapshot(models=(_model("model-a"),))
-    )
+    tts_service = _FakeTTSService(_capability_snapshot(models=(_model("model-a"),)))
     service = TTSProfileService(repository, tts_service)
     observation = await service.observe_portable_profile(_portable_profile())
     plan = await service.inspect_portable_profile_import(observation)

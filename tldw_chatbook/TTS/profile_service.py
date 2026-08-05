@@ -1426,9 +1426,7 @@ class TTSProfileService:
             choices: tuple[PortableProfileImportChoice, ...] = ("create",)
             copy_candidate = portable
         else:
-            choices = (
-                ("reuse", "copy") if reuse_profile is not None else ("copy",)
-            )
+            choices = ("reuse", "copy") if reuse_profile is not None else ("copy",)
             copy_candidate = await self._collision_free_copy_candidate(
                 portable,
                 replace_profile_id=id_match is not None,
