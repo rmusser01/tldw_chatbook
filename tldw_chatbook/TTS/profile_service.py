@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import islice
@@ -28,8 +29,8 @@ from tldw_chatbook.TTS.profile_errors import (
     ProfileValidationError,
 )
 from tldw_chatbook.TTS.profile_types import (
-    AUDIO_CPP_PROFILE_RESPONSE_FORMAT,
     AUDIO_CPP_PROFILE_SPEED,
+    PROFILE_PROVIDER_FORMATS,
     AssignedTTSProfileSnapshot,
     CharacterRef,
     CharacterTTSAssignment,
@@ -255,15 +256,18 @@ def _selection_is_profile_safe(
     speed: object,
     options: object,
 ) -> bool:
-    return (
-        type(provider_id) is str
-        and provider_id == _PROFILE_PROVIDER_ID
-        and type(response_format) is str
-        and response_format == AUDIO_CPP_PROFILE_RESPONSE_FORMAT
-        and type(speed) is float
-        and speed == AUDIO_CPP_PROFILE_SPEED
-        and _mapping_is_empty(options)
-    )
+    if type(provider_id) is not str or type(response_format) is not str:
+        return False
+    formats = PROFILE_PROVIDER_FORMATS.get(provider_id)
+    if formats is None or response_format not in formats:
+        return False
+    if type(speed) is not float or not math.isfinite(speed) or not 0.25 <= speed <= 4.0:
+        return False
+    if not _mapping_is_empty(options):
+        return False
+    if provider_id == _PROFILE_PROVIDER_ID:
+        return speed == AUDIO_CPP_PROFILE_SPEED
+    return True
 
 
 def _matches_exact_canonical_value(value: object, canonical: object) -> bool:
@@ -1291,6 +1295,15 @@ class TTSProfileService:
             raise ProfileServiceError("unsupported_profile")
 
         repository_generation = self._current_repository_generation()
+        if draft.provider_id != _PROFILE_PROVIDER_ID:
+            revision = self._current_configuration_revision()
+            self._require_repository_generation(repository_generation)
+            return PortableProfileAvailabilityObservation(
+                repository_generation=repository_generation,
+                configuration_revision=revision,
+                profile=portable,
+                availability="unverified",
+            )
         exact_voice_models = () if draft.voice_id is None else (draft.model_id,)
         failed = False
         snapshot = None
@@ -2264,6 +2277,8 @@ class TTSProfileService:
         self,
         draft: TTSProfileDraft,
     ) -> None:
+        if draft.provider_id != _PROFILE_PROVIDER_ID:
+            return
         exact_voice_models = () if draft.voice_id is None else (draft.model_id,)
         failed = False
         snapshot = None
@@ -2372,6 +2387,8 @@ class TTSProfileService:
             options,
         ):
             return "unavailable"
+        if provider_id != _PROFILE_PROVIDER_ID:
+            return "unverified"
         catalog = snapshot.catalog
         if (
             type(catalog) is not TTSProviderCatalog
