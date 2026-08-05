@@ -1,3 +1,6 @@
+import shutil
+import subprocess
+
 import pytest
 
 from tldw_chatbook.Tools.local_tool_impls import LocalToolError
@@ -282,3 +285,144 @@ def test_modify_requires_existing_utf8_target(tmp_path):
     with pytest.raises(LocalToolError, match="not valid UTF-8"):
         patch_files(MODIFY_DIFF, workspace_root=ws)
     assert (ws / "notes.txt").read_bytes() == b"\xff\xfe binary-ish"
+
+
+# --- Critical 1: pure-insertion hunks (@@ -N,0) insert AFTER line N ---------
+
+
+def test_pure_insertion_hunk_applies_after_line_n(tmp_path):
+    ws = _ws(tmp_path)
+    (ws / "f.txt").write_text("a\nb\nc\n")
+    insert_diff = """\
+--- a/f.txt
++++ b/f.txt
+@@ -2,0 +3,1 @@
++X
+"""
+    patch_files(insert_diff, workspace_root=ws)
+    assert (ws / "f.txt").read_text() == "a\nb\nX\nc\n"
+
+
+def test_pure_insertion_at_top(tmp_path):
+    ws = _ws(tmp_path)
+    (ws / "f.txt").write_text("a\nb\n")
+    top_diff = """\
+--- a/f.txt
++++ b/f.txt
+@@ -0,0 +1,1 @@
++X
+"""
+    patch_files(top_diff, workspace_root=ws)
+    assert (ws / "f.txt").read_text() == "X\na\nb\n"
+
+
+def test_gnu_u0_diff_applies_byte_exact(tmp_path):
+    diff_bin = shutil.which("diff")
+    if not diff_bin:
+        pytest.skip("diff(1) not available")
+    ws = _ws(tmp_path)
+    (ws / "a").mkdir()
+    (ws / "b").mkdir()
+    old = "one\ntwo\nthree\nfour\nfive\n"
+    new = "one\ntwo\ninserted\nthree\nCHANGED\nfive\n"
+    (ws / "a/f.txt").write_text(old)
+    (ws / "b/f.txt").write_text(new)
+    proc = subprocess.run(
+        [diff_bin, "-U0", "a/f.txt", "b/f.txt"],
+        cwd=ws, capture_output=True, text=True,
+    )
+    assert proc.returncode == 1  # files differ; diff(1) exits 1
+    assert "@@ -2,0 +3" in proc.stdout  # pure insertion hunk (`,1` optional)
+
+    (ws / "f.txt").write_text(old)
+    patch_files(proc.stdout, workspace_root=ws)
+    ours = (ws / "f.txt").read_bytes()
+    assert ours == new.encode()
+
+    patch_bin = shutil.which("patch")
+    if patch_bin:
+        (ws / "ref").mkdir()
+        (ws / "ref/f.txt").write_text(old)
+        # BSD patch can't parse BSD diff's header timestamps, so pass the
+        # target file explicitly; the hunks (what we cross-check) are the same.
+        subprocess.run(
+            [patch_bin, "-s", "f.txt"],
+            cwd=ws / "ref", input=proc.stdout, text=True, check=True,
+        )
+        assert (ws / "ref/f.txt").read_bytes() == ours
+
+
+# --- Important 2: real git diff output (inter-file preamble lines) ----------
+
+
+def _git(repo, *args, **kwargs):
+    return subprocess.run(
+        ["git", *args], cwd=repo, capture_output=True, text=True, **kwargs,
+    )
+
+
+def test_real_git_diff_multi_file_applies(tmp_path):
+    if not shutil.which("git"):
+        pytest.skip("git not available")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", check=True)
+    (repo / "one.txt").write_text("alpha\nbeta\ngamma\n")
+    (repo / "two.txt").write_text("red\ngreen\nblue\n")
+    _git(repo, "add", "-A", check=True)
+    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t",
+         "-c", "commit.gpgsign=false", "commit", "-qm", "init", check=True)
+    (repo / "one.txt").write_text("alpha\nBETA\ngamma\n")
+    (repo / "two.txt").write_text("red\ngreen\nblue\nviolet\n")
+    (repo / "added.txt").write_text("brand\nnew\n")
+    _git(repo, "add", "-A", check=True)
+    proc = _git(repo, "diff", "--cached", check=True)
+    assert "diff --git" in proc.stdout
+    assert "index " in proc.stdout
+    assert "new file mode" in proc.stdout
+
+    ws = _ws(tmp_path)
+    (ws / "one.txt").write_text("alpha\nbeta\ngamma\n")
+    (ws / "two.txt").write_text("red\ngreen\nblue\n")
+    result = patch_files(proc.stdout, workspace_root=ws)
+    assert "patched one.txt" in result
+    assert "patched two.txt" in result
+    assert "patched added.txt" in result
+    assert (ws / "one.txt").read_bytes() == (repo / "one.txt").read_bytes()
+    assert (ws / "two.txt").read_bytes() == (repo / "two.txt").read_bytes()
+    assert (ws / "added.txt").read_bytes() == (repo / "added.txt").read_bytes()
+
+
+def test_garbage_section_still_invalid_diff(tmp_path):
+    ws = _ws(tmp_path)
+    bad = "--- a/x.txt\n+++ b/x.txt\nthis is not a hunk\n"
+    with pytest.raises(LocalToolError, match="invalid_diff"):
+        patch_files(bad, workspace_root=ws)
+
+
+# --- Important 3: removing a line whose content starts with "-- " -----------
+
+
+def test_removal_of_dash_dash_content(tmp_path):
+    ws = _ws(tmp_path)
+    (ws / "q.sql").write_text("select 1;\n-- foo\nselect 2;\n")
+    sql_diff = """\
+--- a/q.sql
++++ b/q.sql
+@@ -1,3 +1,2 @@
+ select 1;
+--- foo
+ select 2;
+"""
+    patch_files(sql_diff, workspace_root=ws)
+    assert (ws / "q.sql").read_text() == "select 1;\nselect 2;\n"
+
+
+# --- Minor 4: BOM-prefixed diff ----------------------------------------------
+
+
+def test_bom_prefixed_diff(tmp_path):
+    ws = _ws(tmp_path)
+    (ws / "notes.txt").write_text("alpha\nbeta\ngamma\n")
+    patch_files("\ufeff" + MODIFY_DIFF, workspace_root=ws)
+    assert (ws / "notes.txt").read_text() == "alpha\nBETA\ngamma\n"
