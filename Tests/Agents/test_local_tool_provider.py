@@ -359,3 +359,92 @@ def test_pending_gate_for_accepts_prefixed_and_bare_names(tmp_path):
     assert bare is not None and prefixed is not None
     assert bare.llm_name == prefixed.llm_name == "fs_list"
     assert p.pending_gate_for("local:unknown", {}) is None
+
+
+# -- audit recording seam (record_decision) ------------------------------------
+#
+# MCP parity (mcp_tool_provider.py): `record_tool_decision` is called ONLY for
+# decisions that never executed -- "denied" (kill switch, deny state, no
+# callback, deny/unrecognized verdict) and "denied-timeout" (timeout verdict).
+# Successful executions are recorded service-side by execute_hub_tool, which
+# the local provider has no analogue for, so this seam records refusals only.
+
+
+def _recording_provider(tmp_path, **kwargs):
+    recorded = []
+    p = make_provider(
+        root=tmp_path,
+        record_decision=lambda hub, decision: recorded.append((hub, decision)),
+        **kwargs,
+    )
+    return p, recorded
+
+
+def test_deny_state_records_denied(tmp_path):
+    p, recorded = _recording_provider(tmp_path, state=DENY)
+    r = p.invoke("local:fs_list", {"path": "."})
+    assert not r.ok and r.error == LOCAL_DENY_REFUSAL
+    assert [(h.name, d) for h, d in recorded] == [("fs_list", "denied")]
+    assert recorded[0][0].server_key == "local:__local__"
+
+
+def test_kill_switch_records_denied(tmp_path):
+    p, recorded = _recording_provider(tmp_path, kill=True)
+    r = p.invoke("local:fs_list", {"path": "."})
+    assert not r.ok and r.error == LOCAL_KILL_SWITCH_REFUSAL
+    assert [(h.name, d) for h, d in recorded] == [("fs_list", "denied")]
+
+
+def test_timeout_stamp_records_denied_timeout(tmp_path):
+    p, recorded = _recording_provider(tmp_path, state=ASK)
+    p.apply_batch_decisions({"fs_list": "timeout"})
+    r = p.invoke("local:fs_list", {"path": "."})
+    assert not r.ok and r.error == LOCAL_TIMEOUT_REFUSAL
+    assert [(h.name, d) for h, d in recorded] == [("fs_list", "denied-timeout")]
+
+
+def test_ask_without_callback_records_denied_timeout(tmp_path):
+    # no_callback fails closed to the timeout refusal (pinned copy, spec §3.3),
+    # so the recorded decision matches the refusal the model actually saw.
+    p, recorded = _recording_provider(tmp_path, state=ASK)
+    r = p.invoke("local:fs_list", {"path": "."})
+    assert not r.ok and r.error == LOCAL_TIMEOUT_REFUSAL
+    assert [(h.name, d) for h, d in recorded] == [("fs_list", "denied-timeout")]
+
+
+def test_deny_stamp_records_denied(tmp_path):
+    p, recorded = _recording_provider(tmp_path, state=ASK)
+    p.apply_batch_decisions({"fs_list": "deny"})
+    r = p.invoke("local:fs_list", {"path": "."})
+    assert not r.ok and r.error == LOCAL_DENY_REFUSAL
+    assert [(h.name, d) for h, d in recorded] == [("fs_list", "denied")]
+
+
+def test_allow_execution_records_nothing(tmp_path):
+    (tmp_path / "a.txt").write_text("a")
+    p, recorded = _recording_provider(tmp_path)
+    assert p.invoke("local:fs_list", {"path": "."}).ok
+    assert recorded == []
+
+
+def test_unknown_tool_records_nothing(tmp_path):
+    p, recorded = _recording_provider(tmp_path)
+    r = p.invoke("local:nope", {})
+    assert not r.ok and "Unknown local tool" in r.error
+    assert recorded == []
+
+
+def test_record_decision_none_means_no_recording(tmp_path):
+    # Seam is optional; refusal paths must work unchanged without it.
+    p = make_provider(state=DENY, root=tmp_path)
+    r = p.invoke("local:fs_list", {"path": "."})
+    assert not r.ok and r.error == LOCAL_DENY_REFUSAL
+
+
+def test_record_decision_raise_does_not_break_invoke(tmp_path):
+    def boom(hub, decision):
+        raise RuntimeError("audit store down")
+
+    p = make_provider(state=DENY, root=tmp_path, record_decision=boom)
+    r = p.invoke("local:fs_list", {"path": "."})
+    assert not r.ok and r.error == LOCAL_DENY_REFUSAL
