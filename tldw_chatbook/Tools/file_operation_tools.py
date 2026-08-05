@@ -2,17 +2,57 @@
 File Operation Tools for LLM function calling.
 
 These tools allow LLMs to perform safe file operations with proper validation.
+
+Paths are confined to a workspace root — the tool's configured
+``workspace_root``, or the process cwd when none is configured (which is how
+``tool_executor.get_tool_executor()`` instantiates them) — via
+``Tools/local_tool_impls.resolve_workspace_path``, the same confinement core
+the fs_* agent tools use. This replaces the previous
+``validate_path(path, "file")`` / ``validate_path(path, "directory")`` calls,
+which confined to the usually-nonexistent ``<cwd>/file`` / ``<cwd>/directory``
+roots and therefore rejected virtually every path.
+
+The legacy return-dict shapes and ``{"error": ...}`` semantics are unchanged;
+only the path validation/confinement is delegated to the shared core. The
+fs_* cores' string renderings (line-numbered reads, flat name-only listings,
+overwrite-only writes) do not match these tools' structured dict outputs, so
+the I/O and rendering stay local — see Tests/Tools/test_file_operation_tools.py
+for the pinned contract.
 """
 
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Union
 from loguru import logger
 
 from . import Tool
-from ..Utils.path_validation import validate_path
+from .local_tool_impls import LocalToolError, resolve_workspace_path
 
 
-class ReadFileTool(Tool):
+class _WorkspaceFileTool(Tool):
+    """Base for the legacy file tools: shared workspace-root confinement."""
+
+    def __init__(
+        self, workspace_root: Optional[Union[str, Path]] = None
+    ) -> None:
+        """
+        Args:
+            workspace_root: Confinement root for all paths. Defaults to the
+                process cwd at execute time when not provided.
+        """
+        self._workspace_root = (
+            Path(workspace_root) if workspace_root is not None else None
+        )
+
+    def _resolve(self, path: str) -> Path:
+        """Resolve ``path`` confined to the workspace root.
+
+        Raises:
+            LocalToolError: If the path escapes the workspace root.
+        """
+        return resolve_workspace_path(path, self._workspace_root or Path.cwd())
+
+
+class ReadFileTool(_WorkspaceFileTool):
     """Tool for reading file contents."""
 
     @property
@@ -59,9 +99,8 @@ class ReadFileTool(Tool):
         encoding = kwargs.get("encoding", "utf-8")
 
         try:
-            # Validate the path
-            validated_path = validate_path(file_path, "file")
-            path = Path(validated_path)
+            # Validate the path (confined to the workspace root)
+            path = self._resolve(file_path)
 
             # Check if file exists
             if not path.exists():
@@ -91,6 +130,8 @@ class ReadFileTool(Tool):
                 "lines": len(content.splitlines()),
             }
 
+        except LocalToolError as e:
+            return {"file_path": file_path, "error": str(e)}
         except UnicodeDecodeError as e:
             return {
                 "file_path": file_path,
@@ -104,7 +145,7 @@ class ReadFileTool(Tool):
             return {"file_path": file_path, "error": f"Failed to read file: {str(e)}"}
 
 
-class ListDirectoryTool(Tool):
+class ListDirectoryTool(_WorkspaceFileTool):
     """Tool for listing directory contents."""
 
     @property
@@ -164,9 +205,8 @@ class ListDirectoryTool(Tool):
         max_depth = kwargs.get("max_depth", 2)
 
         try:
-            # Validate the path
-            validated_path = validate_path(directory_path, "directory")
-            path = Path(validated_path)
+            # Validate the path (confined to the workspace root)
+            path = self._resolve(directory_path)
 
             # Check if directory exists
             if not path.exists():
@@ -246,6 +286,8 @@ class ListDirectoryTool(Tool):
                 "entries": entries[:100],  # Limit to first 100 entries
             }
 
+        except LocalToolError as e:
+            return {"directory_path": directory_path, "error": str(e)}
         except PermissionError:
             return {
                 "directory_path": directory_path,
@@ -259,7 +301,7 @@ class ListDirectoryTool(Tool):
             }
 
 
-class WriteFileTool(Tool):
+class WriteFileTool(_WorkspaceFileTool):
     """Tool for writing content to files."""
 
     @property
@@ -330,9 +372,8 @@ class WriteFileTool(Tool):
         create_directories = kwargs.get("create_directories", False)
 
         try:
-            # Validate the path
-            validated_path = validate_path(file_path, "file")
-            path = Path(validated_path)
+            # Validate the path (confined to the workspace root)
+            path = self._resolve(file_path)
 
             # Check if we're overwriting an existing file
             file_exists = path.exists()
@@ -372,6 +413,8 @@ class WriteFileTool(Tool):
                 "lines_written": len(content.splitlines()),
             }
 
+        except LocalToolError as e:
+            return {"file_path": file_path, "error": str(e)}
         except PermissionError:
             return {"file_path": file_path, "error": "Permission denied to write file"}
         except Exception as e:
