@@ -110,7 +110,8 @@ class LocalToolProvider:
         ]
 
     def load_schema(self, tool_id: str) -> ToolSchema:
-        spec = self._specs[tool_id.split(":", 1)[1]]
+        name = tool_id.split(":", 1)[1] if ":" in tool_id else tool_id
+        spec = self._specs[name]
         return ToolSchema(
             id=tool_id, name=spec.name,
             description=spec.description, parameters=spec.parameters,
@@ -139,7 +140,13 @@ class LocalToolProvider:
 
     @contextmanager
     def stamp_scope(self) -> Iterator[None]:
-        """Snapshot/restore stamps around a nested sub-agent run."""
+        """Snapshot/restore stamps around a nested sub-agent run.
+
+        Clears on entry -- a deliberate divergence from a pure snapshot:
+        the child run starts stamp-less and re-checks permissions itself,
+        so a parent's verdict can never leak into nested invocations.
+        The parent's stamps are restored on exit, even on exception.
+        """
         saved = self._stamps
         self._stamps = {}
         try:
@@ -153,7 +160,13 @@ class LocalToolProvider:
         if spec is None:
             return None
         hub = self.hub_tool_for(name)
-        state = self._resolve_state(hub)
+        try:
+            state = self._resolve_state(hub)
+        except Exception as exc:  # noqa: BLE001 — fail closed to "let invoke handle it"
+            logger.warning(
+                f"LocalToolProvider: resolve_state failed for {name}: {exc}"
+            )
+            return None
         if state.state != "ask":
             return None
         # Finding I1 parity: a live session approval makes invoke() execute
@@ -177,26 +190,50 @@ class LocalToolProvider:
     # -- invocation -----------------------------------------------------
 
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
+        """Execute one tool call. Never raises across the boundary.
+
+        Fail-closed: only an explicit "allow" verdict executes; "deny" and
+        any unrecognized verdict refuse with LOCAL_DENY_REFUSAL (mirrors
+        MCPToolProvider._apply_verdict's fallthrough), "timeout"/
+        "no_callback" with LOCAL_TIMEOUT_REFUSAL.
+        """
         name = tool_id.split(":", 1)[1] if ":" in tool_id else tool_id
         spec = self._specs.get(name)
         if spec is None:
             return ToolResult(ok=False, error=f"Unknown local tool: {name}")
-        if self._kill_switch():
+        if self._kill_switch_engaged():
             return ToolResult(ok=False, error=LOCAL_KILL_SWITCH_REFUSAL)
-        verdict = self._verdict_for(name)
-        if verdict in ("deny",):
-            return ToolResult(ok=False, error=LOCAL_DENY_REFUSAL)
+        verdict = self._verdict_for(name, args)
+        if verdict == "allow":
+            try:
+                return ToolResult(ok=True, content=_fit_result(spec.handler(args)))
+            except Exception as exc:  # noqa: BLE001 — never raises across the boundary
+                return ToolResult(ok=False, error=(str(exc) or repr(exc))[:_MAX_ERROR_CHARS])
         if verdict in ("timeout", "no_callback"):
             return ToolResult(ok=False, error=LOCAL_TIMEOUT_REFUSAL)
-        try:
-            return ToolResult(ok=True, content=_fit_result(spec.handler(args)))
-        except Exception as exc:  # noqa: BLE001 — never raises across the boundary
-            return ToolResult(ok=False, error=str(exc)[:_MAX_ERROR_CHARS])
+        # "deny" and any unrecognized verdict fail closed the same way.
+        return ToolResult(ok=False, error=LOCAL_DENY_REFUSAL)
 
-    def _verdict_for(self, name: str) -> str:
-        """Resolve this call's gate decision: allow executes; anything else refuses."""
+    def _kill_switch_engaged(self) -> bool:
+        """Never-raise kill-switch read; a read failure fails closed (engaged)."""
+        try:
+            return bool(self._kill_switch())
+        except Exception as exc:  # noqa: BLE001 — invoke() must never raise
+            logger.warning(f"LocalToolProvider: kill_switch read failed: {exc}")
+            return True
+
+    def _verdict_for(self, name: str, args: dict) -> str:
+        """Resolve this call's gate decision: only "allow" executes.
+
+        Never raises: every injected callable is guarded, and a guard trip
+        resolves to a refusing verdict.
+        """
         hub = self.hub_tool_for(name)
-        state = self._resolve_state(hub)
+        try:
+            state = self._resolve_state(hub)
+        except Exception as exc:  # noqa: BLE001 — fail closed on a resolution failure
+            logger.warning(f"LocalToolProvider: resolve_state failed for {name}: {exc}")
+            return "deny"
         if state.state == "allow":
             return "allow"
         if state.state == "deny":
@@ -215,7 +252,16 @@ class LocalToolProvider:
         if self._is_session_approved_safe(hub):
             return "allow"
         if self._approval_callback is not None:
-            decision = self._approval_callback([self.pending_gate_for(name, {})]).get(name, "timeout")
+            gate = self.pending_gate_for(name, args)
+            if gate is None:
+                # state re-resolution failed or flipped mid-call; fail closed.
+                return "timeout"
+            try:
+                decisions = self._approval_callback([gate])
+            except Exception as exc:  # noqa: BLE001 — fail closed on a callback failure
+                logger.warning(f"LocalToolProvider: approval_callback failed for {name}: {exc}")
+                return "timeout"
+            decision = (decisions or {}).get(name, "timeout")
             if decision in ("approve_session", "always_allow"):
                 self._persist_approval_safe(hub, decision)
             return "allow" if decision in ("approve_once", "approve_session", "always_allow") else decision
