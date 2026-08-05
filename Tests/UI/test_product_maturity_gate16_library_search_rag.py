@@ -841,6 +841,104 @@ def test_answer_region_footer_states_pricing_unknown_never_a_dollar_figure(
     assert "1,240 tok" in text
 
 
+def test_answer_region_footer_renders_a_blank_model_gracefully_when_billed(
+    monkeypatch,
+) -> None:
+    """Review finding: a provider response whose payload omits its own
+    `"model"` key is a real, reachable upstream shape Task 2 already tests
+    (`test_a_missing_model_key_yields_an_empty_model_without_raising`) --
+    `provider="anthropic"`, `model=""`, but `usage` IS known (money was
+    spent). The footer must still render the cost/token facts, and the
+    blank model must be OMITTED rather than left as a dangling `" · "` with
+    nothing after it (the "anthropic ·  · 11,251 tok · pricing unknown"
+    defect this test pins against regressing). Exercised for BOTH the
+    known-cost and pricing-unknown shapes, since either could reintroduce
+    the double-middot artifact independently."""
+    import tldw_chatbook.Widgets.Library.library_search_rag_panel as panel_module
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        ANSWER_STATUS_READY,
+        LibraryRagAnswer,
+    )
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.LLM_Calls.pricing_catalog import CostBreakdown
+    from tldw_chatbook.Widgets.Library import library_rag_answer_children
+
+    usage = ProviderUsage(
+        uncached_input=1000, output=240, provider="anthropic", model=""
+    )
+
+    # Known-cost shape.
+    breakdown = CostBreakdown(
+        input_cost=0.003,
+        cache_read_cost=0.0,
+        cache_write_cost=0.0,
+        output_cost=0.0001,
+        total=0.0031,
+        as_of="2026-08-02",
+    )
+    monkeypatch.setattr(
+        panel_module, "get_pricing_catalog", lambda: _StubPricingCatalog(breakdown)
+    )
+    answer = LibraryRagAnswer(
+        status=ANSWER_STATUS_READY,
+        text="Expired credential caused the incident.",
+        citation_status="validated",
+        provider="anthropic",
+        model="",
+        usage=usage,
+    )
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        answer=answer,
+    )
+    region = library_rag_answer_children(state)[0]
+    region_children = _answer_region_children(region)
+    provenance_static = next(
+        child
+        for child in region_children
+        if child.id == "library-rag-answer-provenance"
+    )
+    text = str(provenance_static.renderable)
+    assert text == "anthropic · $0.0031 (1,240 tok)"
+    assert " ·  · " not in text
+    assert "$0.0031" in text
+    assert "1,240 tok" in text
+
+    # Pricing-unknown shape -- same blank model, no known rate.
+    monkeypatch.setattr(
+        panel_module, "get_pricing_catalog", lambda: _StubPricingCatalog(None)
+    )
+    unknown_pricing_answer = LibraryRagAnswer(
+        status=ANSWER_STATUS_READY,
+        text="Expired credential caused the incident.",
+        citation_status="validated",
+        provider="anthropic",
+        model="",
+        usage=usage,
+    )
+    unknown_pricing_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        answer=unknown_pricing_answer,
+    )
+    unknown_pricing_region = library_rag_answer_children(unknown_pricing_state)[0]
+    unknown_pricing_static = next(
+        child
+        for child in _answer_region_children(unknown_pricing_region)
+        if child.id == "library-rag-answer-provenance"
+    )
+    unknown_pricing_text = str(unknown_pricing_static.renderable)
+    assert unknown_pricing_text == "anthropic · 1,240 tok · pricing unknown"
+    assert " ·  · " not in unknown_pricing_text
+    assert "$" not in unknown_pricing_text
+    assert "1,240 tok" in unknown_pricing_text
+    assert "pricing unknown" in unknown_pricing_text
+
+
 def test_answer_region_footer_renders_no_usage_form_without_a_dollar_or_crashing(
     monkeypatch,
 ) -> None:

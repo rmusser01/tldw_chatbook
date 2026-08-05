@@ -149,10 +149,24 @@ def build_provenance_line(
       despite ``pricing_known``): ``"provider · model · <tokens> tok ·
       pricing unknown"``.
 
+    Fix-review (Library RAG Answer, PR-3 Task 3): ``model`` can legitimately
+    be ``""`` -- a real provider payload can omit its own ``"model"`` key
+    (upstream shape, not a caller bug) -- while ``usage`` is still known,
+    because the call was still billed. The header is built by joining only
+    the NON-EMPTY identifiers with `` · ``, so a blank ``model`` (or, in
+    principle, a blank ``provider``) is omitted entirely rather than left as
+    a dangling separator with nothing after it: ``"anthropic · 11,251 tok ·
+    pricing unknown"``, never ``"anthropic ·  · 11,251 tok · pricing
+    unknown"``. Every existing caller that always supplies both identifiers
+    sees byte-identical output to before this fix.
+
     Args:
         provider: Provider identifier (as already displayed elsewhere, not
-            re-normalized here).
-        model: Model identifier.
+            re-normalized here). May be ``""`` if a caller genuinely has
+            none, though every current caller always supplies one.
+        model: Model identifier, or ``""`` when the provider's response
+            carried no model name (a real, reachable upstream shape -- not
+            treated as "no usage yet"; see the fix-review note above).
         usage: The turn's normalized token usage, or ``None`` when nothing
             has been sent/received yet.
         cost: The turn's computed dollar cost, or ``None`` when pricing is
@@ -166,7 +180,7 @@ def build_provenance_line(
     Returns:
         The formatted one-line provenance string.
     """
-    header = f"{provider} · {model}"
+    header = " · ".join(part for part in (provider, model) if part)
     if usage is None:
         return header
 

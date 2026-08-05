@@ -450,23 +450,33 @@ def _answer_provenance_line(answer: LibraryRagAnswer) -> str | None:
     on the very next render rather than freezing whatever rate was live
     when the answer landed.
 
-    `None` (no footer at all) in two cases:
+    `None` (no footer at all) in exactly one case:
 
     * `answer.provider == ""` -- the no-evidence path, the ONLY path where
       no provider call was ever attempted (Task 2's own contract). A line
       naming an empty provider would be worse than no line.
-    * `answer.model == "" and answer.usage is None` -- the OTHER empty
-      shape, reachable when `generate_library_rag_answer`'s containment
-      `try` raises before `_invoke_chat` ever returns a response (a
-      bundle-build failure, or the provider call itself raising, e.g. a
-      realistic upstream 503): `provider` is still set (a plain function
-      parameter, always safe -- Task 2's fix-review comment), but nothing
-      else is known. `build_provenance_line`'s header is `"provider ·
-      model"` with no branch for a blank model, so calling it here would
-      print a dangling "anthropic · " naming nothing useful. Since neither
-      a model nor any usage is actually known in this shape, saying nothing
-      is more honest than that half-line -- a judgment call made entirely
-      in this renderer, without touching Task 1's or Task 2's contracts.
+
+    A second, narrower case is suppressed too:
+
+    * `answer.model == "" and answer.usage is None` -- an exception fired
+      before `generate_library_rag_answer`'s containment `try` ever reached
+      `_invoke_chat` (a bundle-build failure, or the provider call itself
+      raising, e.g. a realistic upstream 503): `provider` is still set (a
+      plain function parameter, always safe -- Task 2's fix-review comment),
+      but nothing else is known -- no model, no usage, nothing was ever
+      spent. There is nothing true to report about cost here, so this
+      renderer says nothing at all rather than a maximally minimal
+      provider-only line.
+
+    A blank `model` with real `usage` -- e.g. a provider payload that omits
+    its own `"model"` key (`test_a_missing_model_key_yields_an_empty_model_
+    without_raising`) -- is NOT suppressed: money was spent, so this footer
+    must still say so. `build_provenance_line` itself renders a blank
+    `model` gracefully (fix-review: Task 1's header now joins only the
+    non-empty identifiers, so a blank model is OMITTED, never left as a
+    dangling `" · "` with nothing after it) -- fixed at the shared-module
+    source rather than papered over here, since any future caller of that
+    function could hit the same upstream shape.
 
     Every other combination (model known, usage known, or both) renders --
     including a `failed` status whose usage survived a post-call

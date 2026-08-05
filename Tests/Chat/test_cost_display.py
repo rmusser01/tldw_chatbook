@@ -176,6 +176,58 @@ def test_provenance_line_large_token_count_uses_full_comma_grouping():
     assert "12.3k" not in line
 
 
+# --- fix-review: a blank model with known usage must not render a dangling --------
+# --- separator (Library RAG Answer PR-3 Task 3 review finding) --------------------
+
+
+def test_provenance_line_blank_model_with_known_cost_omits_the_model_segment():
+    """A real, reachable upstream shape (a provider response whose payload
+    carries no `"model"` key -- Library's own
+    `test_a_missing_model_key_yields_an_empty_model_without_raising`): usage
+    was still captured, so the call was still billed, and the line must
+    still report the cost. The blank `model` must be OMITTED, never left as
+    a dangling `" · "` between the provider and the rest of the line."""
+    usage = ProviderUsage(uncached_input=1000, output=240, provider="anthropic", model="")
+    line = build_provenance_line(
+        provider="anthropic",
+        model="",
+        usage=usage,
+        cost=Decimal("0.02"),
+        pricing_known=True,
+    )
+    assert line == "anthropic · $0.02 (1,240 tok)"
+    assert " ·  · " not in line
+
+
+def test_provenance_line_blank_model_pricing_unknown_omits_the_model_segment():
+    """Same blank-model upstream shape, but pricing is also unknown -- both
+    facts (tokens spent, pricing unresolved) must still surface, with the
+    model segment omitted rather than blank."""
+    usage = ProviderUsage(uncached_input=1000, output=240, provider="anthropic", model="")
+    line = build_provenance_line(
+        provider="anthropic",
+        model="",
+        usage=usage,
+        cost=None,
+        pricing_known=False,
+    )
+    assert line == "anthropic · 1,240 tok · pricing unknown"
+    assert " ·  · " not in line
+
+
+def test_provenance_line_blank_model_no_usage_yet_is_just_the_provider():
+    """The no-usage shape with a blank model degrades to the provider alone
+    -- not `"provider · "` with nothing after the separator."""
+    line = build_provenance_line(
+        provider="anthropic",
+        model="",
+        usage=None,
+        cost=None,
+        pricing_known=False,
+    )
+    assert line == "anthropic"
+
+
 # --- import isolation: this module must be Console-free ---------------------------
 
 
