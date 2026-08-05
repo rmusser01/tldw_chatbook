@@ -58,7 +58,7 @@ class LocalToolProvider:
 
     Args:
         workspace_root: Confinement root for all path-taking tools.
-        specs: Tool specs; defaults to the built-in set (fs_list, fs_read, fs_write).
+        specs: Tool specs; defaults to the built-in set (fs_list, fs_read, fs_write, fs_edit).
         resolve_state: (HubTool) -> EffectiveToolState, injected by the
             controller (owns permission-store access).
         kill_switch: () -> bool master off-switch.
@@ -339,7 +339,7 @@ class LocalToolProvider:
 
 
 def _default_specs(workspace_root: Path) -> list[LocalToolSpec]:
-    from tldw_chatbook.Tools.local_tool_impls import list_directory, read_file, write_file
+    from tldw_chatbook.Tools.local_tool_impls import edit_file, list_directory, read_file, write_file
 
     return [
         LocalToolSpec(
@@ -387,6 +387,28 @@ def _default_specs(workspace_root: Path) -> list[LocalToolSpec]:
                 "required": ["path", "content"],
             },
             handler=lambda args: write_file(args["path"], args["content"], workspace_root=workspace_root),
+            tags=("mutates",),
+        ),
+        LocalToolSpec(
+            name="fs_edit",
+            description="Replace an exact string in a file. Fails unless the match is unique, unless replace_all is true.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path, relative to the workspace root."},
+                    "old_string": {"type": "string", "description": "Exact string to replace; must occur exactly once unless replace_all is true."},
+                    "new_string": {"type": "string", "description": "Replacement string."},
+                    "replace_all": {"type": "boolean", "default": False, "description": "Replace every occurrence of old_string."},
+                },
+                "required": ["path", "old_string", "new_string"],
+            },
+            handler=lambda args: edit_file(
+                args["path"],
+                args["old_string"],
+                args["new_string"],
+                workspace_root=workspace_root,
+                replace_all=args.get("replace_all", False),
+            ),
             tags=("mutates",),
         ),
     ]

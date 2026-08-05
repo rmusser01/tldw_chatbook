@@ -27,7 +27,7 @@ def make_provider(state=ALLOW, kill=False, **kwargs):
 def test_catalog_lists_fs_list_with_local_ids(tmp_path):
     p = make_provider(root=tmp_path)
     entries = p.list_catalog()
-    assert [e.id for e in entries] == ["local:fs_list", "local:fs_read", "local:fs_write"]
+    assert [e.id for e in entries] == ["local:fs_list", "local:fs_read", "local:fs_write", "local:fs_edit"]
     assert entries[0].name == "fs_list" and entries[0].source == "local"
     schema = p.load_schema("local:fs_list")
     assert schema.parameters["required"] == ["path"]
@@ -51,6 +51,16 @@ def test_fs_write_spec_carries_mutates_tag(tmp_path):
     schema = p.load_schema("local:fs_write")
     assert sorted(schema.parameters["required"]) == ["content", "path"]
     assert p.hub_tool_for("fs_write").tags == ("mutates",)
+
+
+def test_fs_edit_spec_carries_mutates_tag(tmp_path):
+    p = make_provider(root=tmp_path)
+    schema = p.load_schema("local:fs_edit")
+    assert sorted(schema.parameters["required"]) == ["new_string", "old_string", "path"]
+    props = schema.parameters["properties"]
+    assert props["replace_all"]["type"] == "boolean"
+    assert props["replace_all"]["default"] is False
+    assert p.hub_tool_for("fs_edit").tags == ("mutates",)
 
 
 def test_invoke_happy_path(tmp_path):

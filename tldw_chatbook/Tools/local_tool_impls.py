@@ -147,3 +147,37 @@ def write_file(path: str, content: str, *, workspace_root: Path) -> str:
         raise LocalToolError(f"parent directory does not exist for: {path}")
     root.write_text(content, encoding="utf-8")
     return f"wrote {len(content)} characters to {path}"
+
+
+def edit_file(
+    path: str,
+    old_string: str,
+    new_string: str,
+    *,
+    workspace_root: Path,
+    replace_all: bool = False,
+) -> str:
+    """Replace exact ``old_string`` with ``new_string`` in ``path``.
+
+    Fails unless the match is unique (or ``replace_all=True``); ambiguity
+    errors include the match count so the model can self-correct. Exact
+    semantics per spec §2 (claude-code Edit parity).
+    """
+    if not old_string:
+        raise LocalToolError("old_string must not be empty")
+    root = resolve_workspace_path(path, workspace_root)
+    if not root.is_file():
+        raise LocalToolError(f"file not found: {path}")
+    content = root.read_text(encoding="utf-8")
+    count = content.count(old_string)
+    if count == 0:
+        raise LocalToolError(f"old_string not found in {path}")
+    if count > 1 and not replace_all:
+        raise LocalToolError(
+            f"old_string appears {count} times in {path}; "
+            "provide more context to make it unique, or set replace_all=true"
+        )
+    updated = content.replace(old_string, new_string)
+    root.write_text(updated, encoding="utf-8")
+    n = count if replace_all else 1
+    return f"made {n} replacement{'s' if n != 1 else ''} in {path}"

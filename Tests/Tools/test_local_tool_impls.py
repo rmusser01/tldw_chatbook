@@ -2,6 +2,7 @@ import pytest
 
 from tldw_chatbook.Tools.local_tool_impls import (
     LocalToolError,
+    edit_file,
     list_directory,
     read_file,
     resolve_workspace_path,
@@ -126,3 +127,33 @@ def test_fs_write_confined(tmp_path):
     ws = tmp_path / "ws"; ws.mkdir()
     with pytest.raises(LocalToolError, match="outside the workspace root"):
         write_file("../evil.txt", "x", workspace_root=ws)
+
+
+def test_fs_edit_unique_match(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "f.txt").write_text("alpha beta gamma")
+    out = edit_file("f.txt", "beta", "BETA", workspace_root=ws)
+    assert (ws / "f.txt").read_text() == "alpha BETA gamma"
+    assert "1 replacement" in out
+
+
+def test_fs_edit_requires_match(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "f.txt").write_text("alpha")
+    with pytest.raises(LocalToolError, match="not found"):
+        edit_file("f.txt", "zzz", "q", workspace_root=ws)
+
+
+def test_fs_edit_ambiguous_match_reports_count(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "f.txt").write_text("dup dup dup")
+    with pytest.raises(LocalToolError, match="3 times"):
+        edit_file("f.txt", "dup", "x", workspace_root=ws)
+
+
+def test_fs_edit_replace_all(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "f.txt").write_text("dup dup dup")
+    out = edit_file("f.txt", "dup", "x", workspace_root=ws, replace_all=True)
+    assert (ws / "f.txt").read_text() == "x x x"
+    assert "3 replacements" in out
