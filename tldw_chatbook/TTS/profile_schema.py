@@ -1,7 +1,10 @@
 """SQLite schema, validation, and persistence codecs for TTS profiles.
 
 Connections remain caller-owned.  The live opener configures and returns a
-connection; candidate validation owns and always closes its read-only connection.
+connection; candidate validation owns and always closes every connection it
+opens against its disposable snapshot copy -- a brief read-write reopen to
+run the same in-place version upgrade the live opener uses, followed by the
+immutable read-only handle used for the rest of validation.
 """
 
 from __future__ import annotations
@@ -551,7 +554,12 @@ def _validate_schema(
     *,
     check_deadline: Callable[[], None] | None = None,
 ) -> None:
-    """Validate every required structural and integrity invariant for v1."""
+    """Validate every required structural and integrity invariant.
+
+    The structural manifest is identical for v1 and v2 -- v2 has no DDL
+    change, so this same check guards both a not-yet-upgraded populated v1
+    store and an already-current v2 store.
+    """
 
     try:
         _run_with_deadline_progress(
@@ -737,6 +745,44 @@ def _run_migrations(connection: sqlite3.Connection, from_version: int) -> None:
 
 def _migrate_empty_store(connection: sqlite3.Connection) -> None:
     _run_migrations(connection, 0)
+
+
+def peek_profile_store_schema_version(path: Path) -> int | None:
+    """Read only the on-disk schema version, without validating or migrating.
+
+    A cheap, side-effect-free hint the repository's lease orchestration uses
+    to decide whether an already-existing store needs an exclusive-lease
+    upgrade (see :data:`CURRENT_PROFILE_SCHEMA_VERSION`) before it is safe to
+    open under a shared lease -- opening under shared is documented and
+    relied on elsewhere as read-only, and the in-place upgrade in
+    :func:`open_profile_store` is a write.
+
+    Returns ``None`` whenever the version cannot be determined this way --
+    missing file, unreadable, corrupt, or any other failure. Callers must
+    treat ``None`` as "no opinion" and fall back to the normal open flow,
+    which already handles every one of those cases correctly on its own.
+    """
+
+    if not isinstance(path, Path):
+        return None
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = connect_private_sqlite(
+            "tts.profile_store_version_peek",
+            path,
+            read_only=True,
+            isolation_level=None,
+        )
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        return version if type(version) is int else None
+    except Exception:
+        return None
+    finally:
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:
+                pass
 
 
 def open_profile_store(
@@ -1053,6 +1099,7 @@ def validate_profile_candidate(
     snapshot_path: str | None = None
     snapshot_directory: Path | None = None
     connection: sqlite3.Connection | None = None
+    upgrade_connection: sqlite3.Connection | None = None
     body_error: BaseException | None = None
     try:
         if check_deadline is not None:
@@ -1113,6 +1160,48 @@ def validate_profile_candidate(
 
         if check_deadline is not None:
             check_deadline()
+        upgrade_connection = connect_private_sqlite(
+            "tts.profile_candidate_upgrade",
+            snapshot_path,
+            must_exist=True,
+            isolation_level=None,
+        )
+        _configure_connection(upgrade_connection)
+        # Force the disposable snapshot out of WAL mode before touching it:
+        # switching away from WAL always checkpoints and removes any -wal/
+        # -shm sidecars, which keeps the private snapshot directory
+        # deterministically single-file no matter whether the upgrade below
+        # actually writes anything.
+        upgrade_journal_mode = upgrade_connection.execute(
+            "PRAGMA journal_mode = DELETE"
+        ).fetchone()[0]
+        if upgrade_journal_mode != "delete":
+            raise _repository_error("schema_corrupt")
+        candidate_version = upgrade_connection.execute(
+            "PRAGMA user_version"
+        ).fetchone()[0]
+        if type(candidate_version) is not int:
+            raise _repository_error("schema_corrupt")
+        if 0 < candidate_version < CURRENT_PROFILE_SCHEMA_VERSION:
+            # Mirror the live open flow's upgrade sequence exactly: validate
+            # the schema at its current (pre-upgrade) shape first -- a
+            # structurally corrupt v1 candidate must fail closed here,
+            # before any version-stamping write -- then migrate in place.
+            # The caller-supplied candidate at `resolved_path`/`source_fd`
+            # is never opened for write; only this disposable copy is.
+            _validate_schema(
+                upgrade_connection,
+                check_deadline=check_deadline,
+            )
+            _run_migrations(upgrade_connection, candidate_version)
+        # The upgrade step above (if it ran) is the only writer this
+        # disposable snapshot ever has; recompute its identity so the
+        # unchanged-checks below re-anchor to the post-upgrade bytes
+        # instead of misreading our own write as tampering.
+        snapshot_state = _source_identity(os.fstat(snapshot_fd))
+
+        if check_deadline is not None:
+            check_deadline()
         connection = connect_private_sqlite(
             "tts.profile_candidate",
             snapshot_path,
@@ -1154,6 +1243,8 @@ def validate_profile_candidate(
         body_error = error
 
     cleanup = _CleanupState(body_error)
+    if upgrade_connection is not None:
+        cleanup.attempt(upgrade_connection.close)
     if connection is not None:
         cleanup.attempt(connection.close)
     if snapshot_fd is not None:

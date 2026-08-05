@@ -568,8 +568,12 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # Extending this range is the deliberate step the inventory exists to
         # force -- a new connection site must be documented and
         # owner-registered, not merely written. C37 is the File Notes recovery
-        # replica, which stores exact private note bytes.
-        f"C{number:02d}" for number in range(1, 38)
+        # replica, which stores exact private note bytes. C38 is candidate
+        # validation's brief read-write reopen of its own disposable snapshot
+        # to run the in-place schema upgrade before immutable revalidation.
+        # C39 is the lease orchestration's read-only schema-version peek used
+        # to route a needed upgrade to the exclusive-lease path first.
+        f"C{number:02d}" for number in range(1, 40)
     ]
     assert [row["id"] for row in backup_rows] == [
         f"B{number:02d}" for number in range(1, 17)

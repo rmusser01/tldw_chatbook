@@ -29,6 +29,7 @@ from tldw_chatbook.DB.private_sqlite import (
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_schema import (
     ASSIGNED_PROFILE_JOIN_SELECT,
+    CURRENT_PROFILE_SCHEMA_VERSION,
     decode_assigned_snapshot,
     decode_assignment,
     decode_profile,
@@ -37,6 +38,7 @@ from tldw_chatbook.TTS.profile_schema import (
     encode_profile,
     encode_uuid,
     open_profile_store,
+    peek_profile_store_schema_version,
     validate_profile_candidate,
     validate_profile_store_rows,
 )
@@ -1081,6 +1083,37 @@ class TTSProfileRepository:
             raise _repository_error("stale")
         return ProfileStoreResult(generation=generation, value=None)
 
+    def _worker_upgrade_if_shared_unsafe(self, active_path: Path) -> None:
+        """Escalate to the exclusive lease first when a shared open would write.
+
+        :func:`open_profile_store` transparently upgrades an existing
+        populated store that is older than
+        :data:`~tldw_chatbook.TTS.profile_schema.CURRENT_PROFILE_SCHEMA_VERSION`.
+        That upgrade is a write, and every other store-mutating open in this
+        repository requires the exclusive lease
+        (:meth:`_worker_initialize_store`) -- a shared lease is documented
+        and relied on elsewhere as read-only.
+
+        This peeks the on-disk version first (best effort;
+        :func:`~tldw_chatbook.TTS.profile_schema.peek_profile_store_schema_version`
+        returning ``None`` means no opinion) and, only when it is confirmed
+        to sit strictly between zero and current, runs the upgrade under the
+        same exclusive-guarded path used for first-time initialization
+        before any shared open is attempted. A concurrent racer already
+        upgrading under its own exclusive lease is handled exactly like the
+        existing missing/schema_partial fallback below: fall through and let
+        the shared open simply wait for it.
+        """
+
+        version = peek_profile_store_schema_version(active_path)
+        if version is None or not (0 < version < CURRENT_PROFILE_SCHEMA_VERSION):
+            return
+        try:
+            self._worker_initialize_store(active_path)
+        except ProfileRepositoryError as error:
+            if error.code != "lock_timeout":
+                raise
+
     def _worker_open(self) -> None:
         """Acquire shared ownership and open the long-lived connection."""
 
@@ -1096,6 +1129,7 @@ class TTSProfileRepository:
                 self._database_path,
                 "operation_failed",
             )
+            self._worker_upgrade_if_shared_unsafe(active_path)
             try:
                 lease, connection = self._worker_open_existing(active_path)
             except ProfileRepositoryError as error:
@@ -2381,6 +2415,8 @@ class TTSProfileRepository:
             cleanup_error = error
         if cleanup_error is not None:
             raise cleanup_error
+
+        self._worker_upgrade_if_shared_unsafe(active_path)
 
         lease = ProfileStoreLease(
             active_path,

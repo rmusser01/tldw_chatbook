@@ -290,6 +290,22 @@ _SQLITE_OWNER_POLICIES = {
         _READ_ONLY_URI,
         "TTS candidate validation reads an owner-only immutable snapshot.",
     ),
+    "tts.profile_candidate_upgrade": SQLiteOwnerPolicy(
+        "tldw_chatbook/TTS/profile_schema",
+        _PRIVATE_FILE,
+        "TTS candidate validation briefly reopens its own disposable "
+        "pre-copied snapshot read-write to run the same in-place schema "
+        "upgrade the live open flow uses, before revalidating it through "
+        "the existing immutable read-only handle. The caller-supplied "
+        "candidate file itself is never opened for write.",
+    ),
+    "tts.profile_store_version_peek": SQLiteOwnerPolicy(
+        "tldw_chatbook/TTS/profile_schema",
+        _READ_ONLY_URI,
+        "TTS repository lease orchestration cheaply peeks the live store's "
+        "on-disk schema version before deciding whether an upgrade needs an "
+        "exclusive lease; never validates structure or migrates.",
+    ),
     "tts.profile_backup": SQLiteOwnerPolicy(
         "tldw_chatbook/TTS/profile_repository",
         _PRIVATE_FILE,
