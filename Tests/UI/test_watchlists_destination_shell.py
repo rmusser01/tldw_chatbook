@@ -1468,13 +1468,18 @@ def _running_run_row() -> dict[str, Any]:
 
 @pytest.mark.asyncio
 async def test_a_running_run_poll_cannot_resurrect_a_cleared_tree_scope():
-    """`RunsPane.run_poll` re-posts `RunSelected` once a second for 60 ticks.
+    """`RunsPane.run_poll` ticks once a second for 60 ticks.
 
     If a tree move clears only the screen's `selected_run` mirror and leaves
-    the pane's own copy standing, the very next poll tick re-posts the
+    the pane's own copy standing, the very next poll tick re-announces the
     pre-move run, `_select_entity` snaps `selected_scope` back to "all" and
     empties `_breadcrumb_labels` -- with no user action, about a second after
     the user navigated somewhere else.
+
+    The tick now posts `RunProgressTick` rather than `RunSelected` (Qodo, PR
+    #1348), whose handler never touches `_select_entity` at all -- so this
+    invariant is held by two things now, and the assertions below are
+    unchanged because they were always about the OUTCOME, not the message.
     """
     from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
         TreeScope,

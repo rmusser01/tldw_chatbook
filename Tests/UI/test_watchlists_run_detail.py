@@ -1,0 +1,1007 @@
+"""Selecting a run must populate Run detail, its Items and its Logs — TASK-2306.
+
+UAT finding F34: clicking a run row (and click+Enter) left "Run detail" reading
+"No run selected" forever, with the Items and Logs sub-regions unreachable.
+
+Two stacked defects, both proven here against the production screen:
+
+1. **Nothing repainted the detail block.** `RunsPane.selected_run` is
+   deliberately not `recompose=True` (a recompose would rebuild `#runs-table`
+   under the cursor the user just moved), and its watcher moved the row
+   highlight and armed the toolbar but never touched `#runs-detail-stats`. That
+   `Static` therefore kept whatever the *first* `compose()` wrote, which ran
+   before anything was selected.
+2. **Nothing ever produced the data.** `RunsPane.run_items` / `run_logs` had no
+   writer anywhere in the product -- only the pane's own unit test set them --
+   so the Items and Logs sub-regions were structurally empty in the running app
+   whatever was selected.
+
+Every assertion below reads the MOUNTED widgets, never the reactives: the
+reactives were not the thing that was broken.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+from rich.text import Text
+from textual.widgets import DataTable, Static
+
+from Tests.UI.full_app_destination_context import (
+    StaticWatchlistsScopeService,
+    active_destination_screen as _active_destination_screen,
+    full_app_destination_context as _visual_destination_harness,
+)
+from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
+
+# TWO runs, and every click targets the SECOND row -- the same discipline as
+# `test_watchlists_source_row_click_selects`: with one run, a default row-0
+# selection would stand in for the click and the assertions would pass over a
+# fully regressed selection path.
+RUNS: list[dict[str, Any]] = [
+    {
+        "id": "local:watchlist_run:1",
+        "run_id": 1,
+        "backend": "local",
+        "entity_kind": "watchlist_run",
+        "source_id": 1,
+        "source_title": "Summit Route",
+        "status": "completed",
+        "started_at": "2026-08-04T10:00:00+00:00",
+        "duration": "1.2s",
+        "found_count": 3,
+        "processed_count": 3,
+        "filtered_count": 0,
+        "error_count": 0,
+        "log_text": "fetched 3 items",
+    },
+    {
+        "id": "local:watchlist_run:2",
+        "run_id": 2,
+        "backend": "local",
+        "entity_kind": "watchlist_run",
+        "source_id": 2,
+        "source_title": "Darknet Diaries",
+        "status": "completed",
+        "started_at": "2026-08-04T11:00:00+00:00",
+        "duration": "4.8s",
+        "found_count": 7,
+        "processed_count": 5,
+        "filtered_count": 2,
+        "error_count": 0,
+        "log_text": "fetched 7 items",
+    },
+]
+
+# Run 2 produced items; run 1 produced none. Selecting run 1 after run 2 must
+# therefore EMPTY the table -- a stale-detail bug would leave run 2's rows
+# standing under run 1's name.
+RUN_ITEMS: dict[int, list[dict[str, Any]]] = {
+    1: [],
+    2: [
+        {
+            "id": "local:watchlist_item:10",
+            "item_id": 10,
+            "run_id": 2,
+            "title": "Ep. 141",
+            "status": "new",
+            "alert_count": 2,
+        },
+        {
+            "id": "local:watchlist_item:11",
+            "item_id": 11,
+            "run_id": 2,
+            "title": "Ep. 142",
+            "status": "new",
+            "alert_count": 0,
+        },
+    ],
+}
+
+# Row 0 sits one line below the header; the second row is at y-offset 2.
+FIRST_ROW_OFFSET = (4, 1)
+SECOND_ROW_OFFSET = (4, 2)
+
+
+def _install_item_source(screen) -> list[dict[str, Any]]:
+    """Answer the run-detail item query from `RUN_ITEMS`; record every call."""
+    calls: list[dict[str, Any]] = []
+
+    async def fake_list_items(**kwargs):
+        calls.append(kwargs)
+        return [dict(item) for item in RUN_ITEMS.get(int(kwargs.get("run_id") or 0), [])]
+
+    screen._controller.list_items = fake_list_items
+    return calls
+
+
+async def _runs_pane(pilot, host):
+    screen = _active_destination_screen(host)
+    screen.active_section = "runs"
+    await pilot.pause(0.3)
+    pane = screen.query_one("#watchlists-runs-pane", RunsPane)
+    pane.runs = [dict(run) for run in RUNS]
+    await pilot.pause(0.2)
+    return screen, pane
+
+
+async def _settle_until(pilot, predicate, tries: int = 80) -> bool:
+    for _ in range(tries):
+        await pilot.pause(0.05)
+        if predicate():
+            return True
+    return False
+
+
+def _stats_text(pane: RunsPane) -> str:
+    return str(pane.query_one("#runs-detail-stats", Static).renderable)
+
+
+def _logs_text(pane: RunsPane) -> str:
+    return str(pane.query_one("#runs-detail-logs", Static).renderable)
+
+
+@pytest.mark.asyncio
+async def test_clicking_a_run_row_fills_run_detail_items_and_logs():
+    """AC#1/AC#2 (mouse): the whole UAT gesture, against the real table."""
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        _install_item_source(screen)
+
+        assert "No run selected" in _stats_text(pane), (
+            "precondition: nothing is selected before the click"
+        )
+        table_before = pane.query_one("#runs-table", DataTable)
+
+        await pilot.click("#runs-table", offset=SECOND_ROW_OFFSET)
+        filled = await _settle_until(
+            pilot,
+            lambda: pane.query_one("#runs-detail-items", DataTable).row_count == 2,
+        )
+
+        assert pane.selected_run is not None
+        assert pane.selected_run["id"] == RUNS[1]["id"]
+        stats = _stats_text(pane)
+        assert "No run selected" not in stats, (
+            "F34: the detail block must stop saying 'No run selected' once a "
+            "run IS selected"
+        )
+        assert "Status: completed" in stats
+        assert "Found: 7" in stats, (
+            "the detail must describe the run that was clicked, not row 0"
+        )
+        assert filled, "the clicked run's items must reach #runs-detail-items"
+        assert "fetched 7 items" in _logs_text(pane)
+        assert pane.query_one("#runs-table", DataTable) is table_before, (
+            "the detail must be pushed in place: rebuilding the runs table "
+            "would discard the cursor the click just moved"
+        )
+
+
+@pytest.mark.asyncio
+async def test_keyboard_selection_fills_run_detail_items_and_logs():
+    """AC#1 (keyboard): the same, driven entirely from the cursor keys."""
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        _install_item_source(screen)
+
+        pane.query_one("#runs-table", DataTable).focus()
+        await pilot.pause(0.1)
+        await pilot.press("down")
+        filled = await _settle_until(
+            pilot,
+            lambda: pane.query_one("#runs-detail-items", DataTable).row_count == 2,
+        )
+
+        assert pane.selected_run is not None
+        assert pane.selected_run["id"] == RUNS[1]["id"]
+        assert "Found: 7" in _stats_text(pane)
+        assert filled, "keyboard selection must reach the detail region too"
+        assert "fetched 7 items" in _logs_text(pane)
+
+
+@pytest.mark.asyncio
+async def test_a_runs_items_never_outlive_the_run_they_belong_to():
+    """Selecting a run with no items must EMPTY the table, not keep the last."""
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        _install_item_source(screen)
+
+        await pilot.click("#runs-table", offset=SECOND_ROW_OFFSET)
+        assert await _settle_until(
+            pilot,
+            lambda: pane.query_one("#runs-detail-items", DataTable).row_count == 2,
+        ), "precondition: run 2's items are on screen"
+
+        await pilot.click("#runs-table", offset=FIRST_ROW_OFFSET)
+        emptied = await _settle_until(
+            pilot,
+            lambda: pane.query_one("#runs-detail-items", DataTable).row_count == 0,
+        )
+
+        assert pane.selected_run["id"] == RUNS[0]["id"]
+        assert emptied, (
+            "run 2's items must not be left standing under run 1's name"
+        )
+        assert "Found: 3" in _stats_text(pane)
+        assert "fetched 3 items" in _logs_text(pane)
+
+
+@pytest.mark.asyncio
+async def test_run_detail_survives_a_workbench_rebuild():
+    """A rebuilt `RunsPane` is re-seeded with the selection AND its detail."""
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        _install_item_source(screen)
+
+        await pilot.click("#runs-table", offset=SECOND_ROW_OFFSET)
+        assert await _settle_until(
+            pilot,
+            lambda: pane.query_one("#runs-detail-items", DataTable).row_count == 2,
+        ), "precondition: the detail is populated"
+
+        # `[` toggles a rail, which rebuilds the workbench and with it the pane.
+        await pilot.press("[")
+        rebuilt = await _settle_until(
+            pilot,
+            lambda: screen.query_one("#watchlists-runs-pane", RunsPane) is not pane,
+        )
+        assert rebuilt, "precondition: the pane really was reconstructed"
+        fresh = screen.query_one("#watchlists-runs-pane", RunsPane)
+
+        assert "Found: 7" in _stats_text(fresh)
+        assert fresh.query_one("#runs-detail-items", DataTable).row_count == 2, (
+            "a rebuilt pane seeded with a selection but no detail renders the "
+            "exact blank this task exists to remove"
+        )
+        assert "fetched 7 items" in _logs_text(fresh)
+
+
+@pytest.mark.asyncio
+async def test_run_detail_lands_when_the_push_happens_in_the_mount_window():
+    """TASK-2200's window: `_is_mounted` is False while the DOM is queryable.
+
+    `MessagePump._pre_process` sets `_is_mounted` in its `finally`, AFTER
+    dispatching both `Compose` and `Mount`, so a loader that finishes inside
+    `on_mount` (which the Watchlists run deep link does, on a cold database)
+    runs with `is_mounted` False and every widget already present. This
+    reconstructs that state rather than racing for it.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        _install_item_source(screen)
+
+        await pilot.click("#runs-table", offset=SECOND_ROW_OFFSET)
+        assert await _settle_until(
+            pilot,
+            lambda: pane.query_one("#runs-detail-items", DataTable).row_count == 2,
+        ), "precondition: the ordinary path fills the detail"
+
+        # Rewind the detail to what a pane looks like the instant before its
+        # loader answers, with the selection (which the deep link arms
+        # pre-mount) already standing.
+        pane.run_items = []
+        pane.run_logs = ""
+        await pilot.pause(0.1)
+        assert pane.query_one("#runs-detail-items", DataTable).row_count == 0, (
+            "precondition: rewound to an empty detail"
+        )
+        assert screen.is_attached, "precondition: the DOM is live throughout"
+
+        screen._is_mounted = False
+        pane._is_mounted = False
+        try:
+            await screen._load_run_detail(dict(RUNS[1]))
+            await pilot.pause(0.1)
+            rows_in_window = pane.query_one("#runs-detail-items", DataTable).row_count
+            logs_in_window = _logs_text(pane)
+        finally:
+            screen._is_mounted = True
+            pane._is_mounted = True
+
+        assert rows_in_window == 2, (
+            "an `is_mounted` guard on this push would drop the deep link's "
+            "detail on the floor with nothing to re-request it"
+        )
+        assert "fetched 7 items" in logs_in_window
+
+
+@pytest.mark.asyncio
+async def test_a_deep_linked_run_arrives_with_its_detail():
+    """The deep link cannot rely on `RunSelected` to trigger the detail load.
+
+    `RunsPane.watch_selected_run` posts that message only `if self.is_mounted`,
+    and `_load_runs` is started by `on_mount` -- inside the window where
+    `is_mounted` is still False (TASK-2200). So the loader has to ask for the
+    detail itself, or a deep-linked run lands selected with a blank detail.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        _install_item_source(screen)
+
+        async def fake_list_runs(**_kwargs):
+            return [dict(run) for run in RUNS]
+
+        screen._controller.list_runs = fake_list_runs
+        screen._pending_navigation_run_id = "local:watchlist_run:2"
+        screen._pending_navigation_run_backend = "local"
+
+        # THE WINDOW. `_load_runs` is started by `on_mount`, and a pane whose
+        # `_is_mounted` has not been flipped yet refuses to post `RunSelected`
+        # -- so the message path that serves a mouse click is simply absent
+        # here. Reconstructed rather than raced for, the same technique
+        # TASK-2200's own mount-window test uses.
+        pane._is_mounted = False
+        try:
+            await screen._load_runs()
+            await pilot.pause(0.1)
+        finally:
+            pane._is_mounted = True
+
+        live = screen.query_one("#watchlists-runs-pane", RunsPane)
+        assert live.selected_run is not None
+        assert live.selected_run["id"] == RUNS[1]["id"]
+        assert live.query_one("#runs-detail-items", DataTable).row_count == 2, (
+            "a deep-linked run must arrive with its Items, not a blank pane"
+        )
+        assert "fetched 7 items" in _logs_text(live)
+
+
+@pytest.mark.asyncio
+async def test_clearing_the_selection_off_the_runs_tab_drops_the_mirrored_detail():
+    """The screen's mirror is keyed to `selected_run` and must follow it.
+
+    `_apply_tree_scope`, the backend switch and `_delete_run` all clear
+    `selected_run` wherever the user happens to be. With the `RunsPane`
+    mounted, the pane's own `RunSelected(None)` reaches the loader and cleans
+    up; with it NOT mounted -- any other tab -- nothing does, and the next
+    visit to Runs would seed a fresh pane with no selection and the departed
+    run's items still in its table.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        _install_item_source(screen)
+
+        await pilot.click("#runs-table", offset=SECOND_ROW_OFFSET)
+        assert await _settle_until(
+            pilot,
+            lambda: pane.query_one("#runs-detail-items", DataTable).row_count == 2,
+        ), "precondition: the detail is populated"
+
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+        assert not screen.query("#watchlists-runs-pane"), (
+            "precondition: the runs pane is gone, so it cannot self-correct"
+        )
+        # What `watch_runtime_backend` and `_apply_tree_scope` do, from any tab.
+        screen.selected_run = None
+
+        screen.active_section = "runs"
+        await pilot.pause(0.4)
+
+        live = screen.query_one("#watchlists-runs-pane", RunsPane)
+        assert live.selected_run is None
+        assert live.query_one("#runs-detail-items", DataTable).row_count == 0, (
+            "a pane with nothing selected must not be seeded with the items of "
+            "the run that WAS selected"
+        )
+        assert "No run selected" in _stats_text(live)
+
+
+def test_a_run_with_no_log_says_so_rather_than_rendering_blank():
+    """An empty Logs box reads as "never ran"; the absence is said out loud."""
+    from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+        WatchlistsCollectionsScreen,
+    )
+
+    assert WatchlistsCollectionsScreen._run_log_text({"log_text": "hello"}) == "hello"
+    assert (
+        WatchlistsCollectionsScreen._run_log_text({"error_msg": "404 Not Found"})
+        == "404 Not Found"
+    )
+    assert (
+        WatchlistsCollectionsScreen._run_log_text({})
+        == "No log was recorded for this run."
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_item_titles_reach_the_table_inert():
+    """Item titles are remote content; `DataTable` markup-parses bare strings.
+
+    `default_cell_formatter` runs `Text.from_markup` over any `str` cell, so a
+    feed entry titled `[bold red]...[/]` would be interpreted rather than shown.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    hostile = "[bold red]Ep. 143[/] [link=file:///etc/passwd]x[/link]"
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+
+        pane.run_items = [{"title": hostile, "status": "new", "alert_count": 0}]
+        await pilot.pause(0.1)
+
+        table = pane.query_one("#runs-detail-items", DataTable)
+        assert table.row_count == 1
+        cell = table.get_cell_at((0, 0))
+        assert isinstance(cell, Text), (
+            "a bare `str` cell would be markup-parsed by DataTable"
+        )
+        assert cell.plain == hostile
+        assert cell.spans == [], "no markup may have been applied"
+
+
+# --- Review wave, Important 1 / 2 + Minor 2: the Items region says why ------
+#
+# An empty `#runs-detail-items` renders identically for four unrelated causes,
+# directly beneath a stats block that may say `Found: 20`. Each of these tests
+# drives ONE cause and asserts the note names THAT cause, so a single generic
+# "no items" string would fail all but one of them.
+
+
+def _note_text(pane: RunsPane) -> str:
+    return str(pane.query_one("#runs-detail-items-note", Static).renderable)
+
+
+async def _select_second_run(pilot, pane) -> None:
+    await pilot.click("#runs-table", offset=SECOND_ROW_OFFSET)
+    await _settle_until(pilot, lambda: pane.selected_run is not None)
+
+
+@pytest.mark.asyncio
+async def test_a_run_whose_items_a_later_check_reclaimed_says_so():
+    """The commonest blank, and the one that contradicts the counts above it.
+
+    `persist_subscription_item`'s `ON CONFLICT … run_id = excluded.run_id`
+    re-attributes unchanged items to the newest run, so after ANY re-check
+    every older run renders `Found: 7` over an empty table. The storage rule
+    stays as it is; the label is what this fixes.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+
+        async def no_rows(**_kwargs):
+            return []
+
+        screen._controller.list_items = no_rows
+
+        await _select_second_run(pilot, pane)
+        assert await _settle_until(pilot, lambda: bool(_note_text(pane)))
+
+        assert pane.query_one("#runs-detail-items", DataTable).row_count == 0
+        assert "Processed: 5" in _stats_text(pane), (
+            "precondition: the run persisted rows, so their absence IS "
+            "re-attribution and not filtering"
+        )
+        assert "re-claimed" in _note_text(pane), (
+            f"the note must name the cause; got {_note_text(pane)!r}"
+        )
+        assert pane.query_one("#runs-detail-items-note", Static).display is True
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_genuinely_found_nothing_is_not_blamed_on_a_later_check():
+    """The discriminating half: `Found: 0` + no rows is not re-attribution."""
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+
+        async def no_rows(**_kwargs):
+            return []
+
+        screen._controller.list_items = no_rows
+        empty_run = dict(RUNS[1])
+        empty_run["found_count"] = 0
+        empty_run["processed_count"] = 0
+        pane.runs = [dict(RUNS[0]), empty_run]
+        await pilot.pause(0.2)
+
+        await _select_second_run(pilot, pane)
+        assert await _settle_until(pilot, lambda: bool(_note_text(pane)))
+
+        note = _note_text(pane)
+        assert "produced no items" in note, f"got {note!r}"
+        assert "re-claimed" not in note, (
+            "a run that found nothing must not be told a later check took its "
+            "items"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_server_backend_run_says_items_are_not_listed():
+    """`WatchlistScopeService.list_items` refuses the server backend outright.
+
+    There is no query to fail, so the region must not draw the same blank a
+    local run with no items draws.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        calls = _install_item_source(screen)
+        server_run = dict(RUNS[1])
+        server_run["backend"] = "server"
+        pane.runs = [dict(RUNS[0]), server_run]
+        await pilot.pause(0.2)
+
+        await _select_second_run(pilot, pane)
+        assert await _settle_until(pilot, lambda: bool(_note_text(pane)))
+
+        assert "server-backend" in _note_text(pane), f"got {_note_text(pane)!r}"
+        assert calls == [], (
+            "a server run must not even attempt the local-only item query"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_failed_items_query_says_so_and_raises_a_toast():
+    """Review wave, Important 2.
+
+    `_load_run_detail` takes the "loaders may log at debug" exemption that
+    `test_watchlists_check_now_failure.py` documents, and that exemption is
+    paid for with a visible toast. Without one, a denied `items.list` policy
+    or a locked database renders byte-identically to "this run produced no
+    items".
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    toasts: list[tuple[str, dict]] = []
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        app.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
+
+        async def denied(**_kwargs):
+            raise PermissionError("watchlists.items.list.local is denied")
+
+        screen._controller.list_items = denied
+
+        await _select_second_run(pilot, pane)
+        assert await _settle_until(pilot, lambda: bool(_note_text(pane)))
+
+        assert "Could not load" in _note_text(pane), f"got {_note_text(pane)!r}"
+        assert toasts, "a failed background read must raise a toast, not just a log"
+        message, kwargs = toasts[-1]
+        assert "items" in message.lower()
+        assert kwargs.get("severity") == "error"
+        assert kwargs.get("markup") is False
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_items_table_says_how_many_it_is_showing():
+    """Review wave, Minor 2: `Found: 500` over exactly 200 rows, silently."""
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        limit = screen._RUN_ITEMS_LIMIT
+
+        async def a_full_page(**kwargs):
+            assert kwargs["limit"] == limit
+            return [
+                {"title": f"Item {index}", "status": "new", "alert_count": 0}
+                for index in range(limit)
+            ]
+
+        screen._controller.list_items = a_full_page
+        big_run = dict(RUNS[1])
+        big_run["found_count"] = 500
+        big_run["processed_count"] = 500
+        pane.runs = [dict(RUNS[0]), big_run]
+        await pilot.pause(0.2)
+
+        await _select_second_run(pilot, pane)
+        assert await _settle_until(pilot, lambda: bool(_note_text(pane)))
+
+        assert _note_text(pane) == f"Showing the first {limit} of 500 items."
+
+
+@pytest.mark.asyncio
+async def test_a_complete_items_table_carries_no_note():
+    """The note is hidden, not merely empty, when there is nothing to say."""
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        _install_item_source(screen)
+
+        await pilot.click("#runs-table", offset=SECOND_ROW_OFFSET)
+        assert await _settle_until(
+            pilot,
+            lambda: pane.query_one("#runs-detail-items", DataTable).row_count == 2,
+        )
+
+        assert _note_text(pane) == ""
+        assert pane.query_one("#runs-detail-items-note", Static).display is False
+
+
+@pytest.mark.asyncio
+async def test_the_items_note_does_not_outlive_the_run_it_describes():
+    """Selecting another run must not leave the previous run's excuse on screen."""
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+
+        async def no_rows(**_kwargs):
+            return []
+
+        screen._controller.list_items = no_rows
+        await _select_second_run(pilot, pane)
+        assert await _settle_until(pilot, lambda: "re-claimed" in _note_text(pane))
+
+        # Run 1 DOES still own a row, so its note must be absent entirely --
+        # not merely replaced by another excuse.
+        async def one_row(**_kwargs):
+            return [{"title": "Still mine", "status": "new", "alert_count": 0}]
+
+        screen._controller.list_items = one_row
+        await pilot.click("#runs-table", offset=FIRST_ROW_OFFSET)
+        assert await _settle_until(
+            pilot,
+            lambda: pane.query_one("#runs-detail-items", DataTable).row_count == 1,
+        )
+
+        assert pane.selected_run["id"] == RUNS[0]["id"]
+        assert _note_text(pane) == "", (
+            f"the previous run's excuse is still on screen: {_note_text(pane)!r}"
+        )
+        assert pane.query_one("#runs-detail-items-note", Static).display is False
+
+
+def test_every_empty_items_cause_has_its_own_words():
+    """Five roads to an empty table; five different things to say."""
+    from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+        WatchlistsCollectionsScreen as Screen,
+    )
+
+    notes = {
+        Screen._RUN_ITEMS_SERVER_NOTE,
+        Screen._RUN_ITEMS_FAILED_NOTE,
+        Screen._RUN_ITEMS_REATTRIBUTED_NOTE,
+        Screen._RUN_ITEMS_ALL_FILTERED_NOTE,
+        Screen._RUN_ITEMS_EMPTY_NOTE,
+    }
+    assert len(notes) == 5, "each cause must be distinguishable from the others"
+    assert not hasattr(Screen, "_RUN_ITEMS_UNIDENTIFIED_NOTE"), (
+        "the 'unidentified run' label was unreachable -- `normalize_watchlist_"
+        "run` reads `payload['id']` unsubscripted, so every run has a run_id "
+        "(re-review, m6)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_previous_runs_note_is_gone_before_the_loader_answers():
+    """The pane clears its own note on selection, not just when told to.
+
+    Same rationale as the `run_items`/`run_logs` clear beside it: between the
+    click and the query returning, the pane would otherwise show the PREVIOUS
+    run's excuse under the newly selected run's stats. Driven with a
+    deliberately slow query so the assertions land inside that window.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+
+        async def no_rows(**_kwargs):
+            return []
+
+        screen._controller.list_items = no_rows
+        await _select_second_run(pilot, pane)
+        assert await _settle_until(pilot, lambda: "re-claimed" in _note_text(pane)), (
+            "precondition: run 2 carries a note"
+        )
+
+        import asyncio
+
+        async def slow(**_kwargs):
+            await asyncio.sleep(5)
+            return []
+
+        screen._controller.list_items = slow
+
+        await pilot.click("#runs-table", offset=FIRST_ROW_OFFSET)
+        assert await _settle_until(
+            pilot, lambda: pane.selected_run["id"] == RUNS[0]["id"]
+        )
+        # THE WINDOW: the new selection has landed, the query has not returned.
+        in_window = _note_text(pane)
+
+        assert in_window == "", (
+            "run 2's excuse is showing under run 1's stats while run 1's own "
+            f"items are still loading: {in_window!r}"
+        )
+
+
+# --- Re-review, I1-b: the discriminator is `processed`, never `found` -------
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_filtered_everything_is_not_blamed_on_a_later_check():
+    """The re-review's measured scenario, at the UI.
+
+    A source with an exclude filter, checked ONCE: `found 5 · processed 0 ·
+    filtered 5`, zero rows. The first cut of this feature discriminated on
+    `found_count` and told the user "a later check re-claimed the items that
+    had not changed" — when there was no later check, and nothing had been
+    re-claimed. `Found` is what the FETCH saw; `Processed` is what the run
+    actually stored, and rows are the only thing this table can show.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+
+        async def no_rows(**_kwargs):
+            return []
+
+        screen._controller.list_items = no_rows
+        filtered_run = dict(RUNS[1])
+        filtered_run.update(
+            found_count=5, processed_count=0, filtered_count=5, error_count=0
+        )
+        pane.runs = [dict(RUNS[0]), filtered_run]
+        await pilot.pause(0.2)
+
+        await _select_second_run(pilot, pane)
+        assert await _settle_until(pilot, lambda: bool(_note_text(pane)))
+
+        note = _note_text(pane)
+        assert "excluded by a filter" in note, f"got {note!r}"
+        assert "re-claimed" not in note, (
+            "a run checked once cannot have had its items re-claimed by a "
+            "later check that does not exist"
+        )
+        assert "produced no items" not in note, (
+            "it DID find five; it stored none of them, which is a different "
+            "thing to say"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_full_page_of_everything_the_run_stored_is_not_called_truncated():
+    """The same bug in reverse (re-review, I1-b).
+
+    `found 500 · processed 200`, returning exactly 200 rows: every row the run
+    ever stored is on screen. Keying the truncation line off `found` claimed
+    300 more were hidden when the missing 300 were filtered out and never
+    stored at all.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        limit = screen._RUN_ITEMS_LIMIT
+
+        async def a_full_page(**_kwargs):
+            return [
+                {"title": f"Item {index}", "status": "new", "alert_count": 0}
+                for index in range(limit)
+            ]
+
+        screen._controller.list_items = a_full_page
+        run = dict(RUNS[1])
+        run.update(found_count=500, processed_count=limit, filtered_count=300)
+        pane.runs = [dict(RUNS[0]), run]
+        await pilot.pause(0.2)
+
+        await _select_second_run(pilot, pane)
+        assert await _settle_until(
+            pilot,
+            lambda: pane.query_one("#runs-detail-items", DataTable).row_count == limit,
+        )
+
+        assert _note_text(pane) == "", (
+            "nothing is hidden: the run stored exactly what is on screen — "
+            f"got {_note_text(pane)!r}"
+        )
+
+
+def test_the_note_reads_processed_not_found():
+    """The discriminator, pinned at the unit against both directions."""
+    from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+        WatchlistsCollectionsScreen as Screen,
+    )
+
+    filtered_out = {"found_count": 5, "processed_count": 0}
+    stored_then_lost = {"found_count": 5, "processed_count": 5}
+    never_found = {"found_count": 0, "processed_count": 0}
+
+    assert Screen._run_items_note(filtered_out, []) == (
+        Screen._RUN_ITEMS_ALL_FILTERED_NOTE
+    )
+    assert Screen._run_items_note(stored_then_lost, []) == (
+        Screen._RUN_ITEMS_REATTRIBUTED_NOTE
+    )
+    assert Screen._run_items_note(never_found, []) == Screen._RUN_ITEMS_EMPTY_NOTE
+
+
+# --- Qodo PR #1348: a poll tick is not a selection -------------------------
+
+
+def _running_run() -> dict[str, Any]:
+    run = dict(RUNS[1])
+    run.update(status="running", finished_at=None, processed_count=0, found_count=0)
+    return run
+
+
+@pytest.mark.asyncio
+async def test_a_poll_tick_on_an_unchanged_run_schedules_no_detail_load():
+    """`run_poll` fires once a second for up to a minute, with no user action.
+
+    It used to re-post `RunSelected`, which the screen cannot tell from a
+    click — so a selected running run ran a full `_load_run_detail`, worker
+    and item query included, every single second.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunProgressTick
+
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        running = _running_run()
+        pane.runs = [dict(RUNS[0]), running]
+        await pilot.pause(0.2)
+
+        item_calls = _install_item_source(screen)
+
+        async def unchanged(**_kwargs):
+            return dict(running)
+
+        screen._controller.get_run = unchanged
+
+        await pilot.click("#runs-table", offset=SECOND_ROW_OFFSET)
+        assert await _settle_until(pilot, lambda: pane.selected_run is not None)
+        # The click itself is a real selection and loads the detail once.
+        assert await _settle_until(pilot, lambda: len(item_calls) == 1)
+        after_click = len(item_calls)
+
+        for _ in range(3):
+            screen.post_message(RunProgressTick(running["id"]))
+            await pilot.pause(0.2)
+        await pilot.pause(0.3)
+
+        assert len(item_calls) == after_click, (
+            "a tick on a run that has not changed must not re-query its items "
+            f"({len(item_calls) - after_click} extra queries in three ticks)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_running_runs_visible_stats_still_follow_it_across_ticks():
+    """The other half: the throttle must not freeze a live run's detail.
+
+    A local run writes its stats, log and items in one go at the END, so the
+    moment a tick has to notice is the transition out of `running`.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunProgressTick
+
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        running = _running_run()
+        pane.runs = [dict(RUNS[0]), running]
+        await pilot.pause(0.2)
+
+        record = {"value": dict(running)}
+
+        async def current(**_kwargs):
+            return dict(record["value"])
+
+        async def three_items(**_kwargs):
+            return [
+                {"title": f"Fresh {n}", "status": "new", "alert_count": 0}
+                for n in range(3)
+            ]
+
+        screen._controller.get_run = current
+        screen._controller.list_items = three_items
+
+        await pilot.click("#runs-table", offset=SECOND_ROW_OFFSET)
+        assert await _settle_until(pilot, lambda: pane.selected_run is not None)
+        assert "Status: running" in _stats_text(pane), "precondition: it is live"
+
+        # The run finishes between one tick and the next.
+        record["value"] = dict(
+            running,
+            status="completed",
+            finished_at="2026-08-04T11:00:03+00:00",
+            duration="3.0s",
+            found_count=3,
+            processed_count=3,
+            log_text="fetched 3 items",
+        )
+        screen.post_message(RunProgressTick(running["id"]))
+        assert await _settle_until(
+            pilot, lambda: "Status: completed" in _stats_text(pane)
+        ), "the detail froze at its first paint instead of following the run"
+
+        stats = _stats_text(pane)
+        assert "Found: 3" in stats and "Processed: 3" in stats
+        assert "fetched 3 items" in _logs_text(pane)
+        assert pane.query_one("#runs-detail-items", DataTable).row_count == 3, (
+            "a run's items land when it completes; the tick is what notices"
+        )
+        # The row the user is looking at must agree with the detail below it.
+        row = pane.query_one("#runs-table", DataTable).get_cell(
+            running["id"], list(pane.query_one("#runs-table", DataTable).columns)[1]
+        )
+        assert str(row) == "completed"
+
+
+@pytest.mark.asyncio
+async def test_a_tick_for_a_run_the_user_has_left_does_nothing():
+    """The tick races the user; the selection guard is what settles it."""
+    from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunProgressTick
+
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        running = _running_run()
+        pane.runs = [dict(RUNS[0]), running]
+        await pilot.pause(0.2)
+        _install_item_source(screen)
+
+        reads: list[Any] = []
+
+        async def record_read(**kwargs):
+            reads.append(kwargs.get("run_id"))
+            return dict(running)
+
+        screen._controller.get_run = record_read
+
+        await pilot.click("#runs-table", offset=FIRST_ROW_OFFSET)
+        assert await _settle_until(
+            pilot, lambda: pane.selected_run["id"] == RUNS[0]["id"]
+        )
+
+        screen.post_message(RunProgressTick(running["id"]))
+        await pilot.pause(0.4)
+
+        assert reads == [], (
+            "a tick for a run the user has navigated away from must not even "
+            "read it"
+        )
+        assert pane.selected_run["id"] == RUNS[0]["id"]

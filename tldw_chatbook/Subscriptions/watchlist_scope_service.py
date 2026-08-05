@@ -219,6 +219,7 @@ class WatchlistScopeService:
         status: str | None = None,
         limit: int = 100,
         offset: int = 0,
+        run_id: Any = None,
     ) -> list[dict[str, Any]]:
         """List content items for watchlist sources.
 
@@ -229,6 +230,9 @@ class WatchlistScopeService:
                 ``ignored``, ``error``).
             limit: Maximum items to return.
             offset: Pagination offset.
+            run_id: Optional run whose items to return (TASK-2306). Routed as
+                ``items.list`` like every other item read: it narrows which
+                items come back, it does not read the run record.
 
         Returns:
             List of normalized watchlist item dicts.
@@ -243,7 +247,13 @@ class WatchlistScopeService:
             raise ValueError("Item listing is only supported for the local backend in this slice.")
         service = self._service_for_backend(backend)
         return await self._maybe_await(
-            service.list_items(source_id=source_id, status=status, limit=limit, offset=offset)
+            service.list_items(
+                source_id=source_id,
+                status=status,
+                limit=limit,
+                offset=offset,
+                run_id=run_id,
+            )
         )
 
     async def get_item_status(
