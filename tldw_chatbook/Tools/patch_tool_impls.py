@@ -12,6 +12,31 @@ The workspace wrapper (``patch_files``) is written fresh for tldw_chatbook:
 it enforces ADR-032 confinement via resolve_workspace_path and phase-2
 write discipline (encode-before-write, newline-preserving reads), and
 translates FilesystemPatchError into the shared LocalToolError.
+
+Deviations from reference (deliberate fixes; reference kept otherwise):
+
+1. Pure-insertion hunks (``@@ -N,0 +M,K @@``, N>0) apply AFTER line N per
+   unified-diff semantics (verified against GNU/BSD ``diff -U0`` +
+   ``patch``). The reference used ``max(0, old_start - 1)`` for all hunks,
+   inserting one line early with no context to catch it. Here,
+   ``old_count == 0`` uses ``hunk_start = old_start``; ``old_count > 0``
+   keeps ``old_start - 1``.
+2. Real multi-file ``git diff`` output parses: in the per-file hunk-section
+   loop, a line that is neither a hunk header nor a ``--- `` file header
+   ends the section once at least one hunk has been parsed (so
+   ``diff --git``/``index``/``new file mode`` preamble lines are skipped
+   by the outer loop). With no hunks parsed yet it still raises
+   ``invalid_diff``. The reference raised ``invalid_diff`` on any such
+   line, making real git diffs unparseable.
+3. ``_parse_hunk``'s body loop terminates when the header line counts are
+   satisfied (accepting only the ``\ No newline at end of file`` marker
+   afterwards), instead of only on ``@@ ``/``--- `` sentinels. The
+   reference misread a removal of content starting with ``-- `` (e.g. a
+   SQL comment) as a file-header sentinel. A ``--- `` line followed by a
+   ``+++ `` line is still treated as the next file's header pair, so
+   truncated hunks keep raising ``invalid_hunk_line_count``.
+4. A leading U+FEFF (BOM) is stripped from the diff text before parsing;
+   the reference rejected BOM-prefixed diffs as ``invalid_diff``.
 """
 
 from __future__ import annotations
@@ -86,7 +111,11 @@ def parse_unified_diff(
 ) -> tuple[PatchFile, ...]:
     """Parse bounded unified diff text into file-level patch plans."""
 
-    if not isinstance(diff_text, str) or not diff_text.strip():
+    if not isinstance(diff_text, str):
+        raise FilesystemPatchError("invalid_diff")
+    # DEVIATION 4: tolerate a BOM-prefixed diff instead of rejecting it.
+    diff_text = diff_text.removeprefix("\ufeff")
+    if not diff_text.strip():
         raise FilesystemPatchError("invalid_diff")
     if len(diff_text.encode("utf-8")) > max(1, int(max_bytes)):
         raise FilesystemPatchError("diff_too_large")
@@ -122,6 +151,13 @@ def parse_unified_diff(
         hunks: list[PatchHunk] = []
         while index < len(lines) and not lines[index].startswith("--- "):
             if not lines[index].startswith("@@ "):
+                # DEVIATION 2: end-of-section only once at least one hunk
+                # has been parsed — real `git diff` output carries
+                # `diff --git`/`index`/`new file mode` preamble lines
+                # between files, which the outer loop skips. With no hunks
+                # yet, the section is genuinely malformed.
+                if hunks:
+                    break
                 raise FilesystemPatchError("invalid_diff")
             hunk, index = _parse_hunk(lines, index)
             hunks.append(hunk)
@@ -149,7 +185,13 @@ def apply_patch_to_text(original: str, patch_file: PatchFile) -> str:
     cursor = 0
 
     for hunk in patch_file.hunks:
-        hunk_start = max(0, hunk.old_start - 1)
+        # DEVIATION 1: a zero-old-count hunk (@@ -N,0 +M,K @@) inserts
+        # AFTER line N, so its 0-based start is old_start, not old_start-1.
+        if hunk.old_count == 0:
+            hunk_start = hunk.old_start
+        else:
+            hunk_start = hunk.old_start - 1
+        hunk_start = max(0, hunk_start)
         if hunk_start < cursor or hunk_start > len(original_lines):
             raise FilesystemPatchError("patch_context_mismatch")
         output.extend(original_lines[cursor:hunk_start])
@@ -192,10 +234,16 @@ def _parse_hunk(lines: list[str], start_index: int) -> tuple[PatchHunk, int]:
     new_seen = 0
     index = start_index + 1
 
-    while index < len(lines) and not lines[index].startswith("@@ ") and not lines[index].startswith("--- "):
+    # DEVIATION 3: the body loop terminates when the header counts are
+    # satisfied (only the no-newline marker may follow), not on `@@ `/`--- `
+    # sentinels — a removal of content starting with `-- ` (e.g. a SQL
+    # comment) otherwise looks like a file header. A `--- ` line that begins
+    # a real `--- `/`+++ ` header pair still ends the body, so truncated
+    # hunks keep failing the count check below.
+    while index < len(lines):
         raw_line = lines[index]
-        index += 1
         if raw_line == _NO_NEWLINE_MARKER:
+            index += 1
             if not hunk_lines:
                 raise FilesystemPatchError("invalid_no_newline_marker")
             previous = hunk_lines[-1]
@@ -207,6 +255,17 @@ def _parse_hunk(lines: list[str], start_index: int) -> tuple[PatchHunk, int]:
                 has_trailing_newline=False,
             )
             continue
+        if old_seen == old_count and new_seen == new_count:
+            break
+        if raw_line.startswith("@@ "):
+            break  # truncated hunk; the count check below reports it
+        if (
+            raw_line.startswith("--- ")
+            and index + 1 < len(lines)
+            and lines[index + 1].startswith("+++ ")
+        ):
+            break  # next file's header pair; count check reports truncation
+        index += 1
         if not raw_line:
             raise FilesystemPatchError("invalid_hunk_line")
 
