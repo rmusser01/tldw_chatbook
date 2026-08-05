@@ -17,7 +17,7 @@ The spec's six migration rules, verbatim — all non-negotiable:
 1. **One region per change.** A change moves exactly one region or extracts exactly one controller. No batch moves.
 2. **Ids are preserved verbatim.** A region widget composes the same ids in the same nesting. If an id must change, that is its own change with its own review, never a passenger on an extraction.
 3. **Painted-geometry assertions before and after.** Every extraction carries a test asserting the moved region's controls are hit-testable — `screen.get_widget_at(*control.region.center)` resolves to the control — at 160x45 AND 235x52. Task 1 writes these against the CURRENT code, so they are proven to pass before anything moves.
-4. **CSS moves with its region** into `css/features/`, and the bundle is regenerated via `build_css.py`. The bundle is never hand-edited.
+4. **CSS moves with its region** into `tldw_chatbook/css/features/`, and the bundle is regenerated via `/private/tmp/tldw-venv/bin/python tldw_chatbook/css/build_css.py`. The bundle is never hand-edited.
 5. **Behaviour changes are forbidden in an extraction.** An extraction that also fixes a bug is two changes.
 6. **A characterisation test precedes any extraction whose behaviour is not already covered.**
 

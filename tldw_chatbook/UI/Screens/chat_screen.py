@@ -45,6 +45,27 @@ from .provider_model_resolution import (
     resolve_provider_model_options,
 )
 from .settings_config_models import SettingsCategoryId
+from ..Console_Modules.frame import (
+    CONSOLE_FRAME_BORDER,
+    CONSOLE_FRAME_COLOR,
+    CONSOLE_QUIET_FRAME_BORDER,
+    frame_console_region,
+)
+from ..Console_Modules.dictation import (
+    CONSOLE_DICTATION_MAX_BYTES,
+    CONSOLE_DICTATION_MAX_SECONDS,
+    CONSOLE_DICTATION_SAMPLE_RATE,
+    CONSOLE_DICTATION_SAMPLE_WIDTH,
+    ConsoleDictationController,
+    ConsoleDictationEvent,
+    ConsoleDictationLimitSignal,
+    ConsoleStreamingDictationSession,
+    _join_segments,
+    _VOICE_ACK_NOT_SENT,
+    _VOICE_ACK_SESSION_CHANGED,
+)
+from ..Console_Modules.left_rail import ConsoleLeftRail
+from ..Console_Modules.right_rail import ConsoleInspectorRail
 from ...Chat.chat_persistence_service import ChatPersistenceService
 from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import ConsoleChatController
@@ -281,7 +302,6 @@ from ...Chat.console_live_work import (
     ConsoleLiveWorkSourceReadinessState,
     ConsoleLiveWorkStatusCardState,
 )
-from ...Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPSE_RIGHT
 from ...Chat.console_expression_state import (
     EXPRESSION_IMAGE_STATES,
     resolve_console_expression_state,
@@ -392,7 +412,6 @@ from ...Widgets.Console import (
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.Console.console_image_viewer_modal import (
     AvatarViewRequested,
-    ClickableAvatarBox,
     ConsoleImageViewerModal,
 )
 from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
@@ -478,7 +497,6 @@ from ...Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
 )
 from ...Widgets.destination_rail import (
-    RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailSectionHeader,
 )
 from ...Widgets.Console.console_session_switcher_modal import (
@@ -525,29 +543,6 @@ if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 
 logger = logger.bind(module="ChatScreen")
-CONSOLE_DICTATION_MAX_SECONDS = 60.0
-#: `AudioRecordingService`'s own capture defaults, restated rather than
-#: imported: `tldw_chatbook.Audio` pulls in the transcription stack at module
-#: scope, and this module must stay importable without it (see
-#: `Tests/UI/test_console_dictation_streaming.py`'s subprocess import guard).
-CONSOLE_DICTATION_SAMPLE_RATE = 16_000
-CONSOLE_DICTATION_CHANNELS = 1
-CONSOLE_DICTATION_SAMPLE_WIDTH = 2
-#: Slack over the wall-clock cap so the bound is a *memory* backstop and never
-#: the thing that ends an ordinary capture: the 60 s timer below should always
-#: win first, and only a recorder that outruns its own clock (a wedged timer, a
-#: device delivering faster than real time) should ever reach this.
-CONSOLE_DICTATION_BUFFER_HEADROOM = 1.5
-#: The PCM bound handed to the recorder. Without it `AudioRecordingService`
-#: retains every chunk for the whole capture -- and so do its undrained
-#: `audio_queue` and `LazyLiveDictationService.audio_buffer`, at ~32 KB/s each.
-CONSOLE_DICTATION_MAX_BYTES = int(
-    CONSOLE_DICTATION_SAMPLE_RATE
-    * CONSOLE_DICTATION_CHANNELS
-    * CONSOLE_DICTATION_SAMPLE_WIDTH
-    * CONSOLE_DICTATION_MAX_SECONDS
-    * CONSOLE_DICTATION_BUFFER_HEADROOM
-)
 #: The Console's DEFAULT Library RAG source kinds, unchanged by RAG-44's
 #: editable toggles: this same tuple is the settings modal's default
 #: (`CONSOLE_RAG_DEFAULT_SOURCE_TYPES` -- one object, not a second copy),
@@ -568,9 +563,11 @@ CONSOLE_COMPACT_HEIGHT_ROWS = 35
 #: TASK-365: trailing affordance marking the clickable rail system-prompt line as
 #: interactive (matches the ▸ the rail uses for its other actionable controls).
 CONSOLE_RAIL_SYSTEM_EDIT_AFFORDANCE = "▸"
-CONSOLE_FRAME_COLOR = "#6f7782"
-CONSOLE_FRAME_BORDER = ("solid", CONSOLE_FRAME_COLOR)
-CONSOLE_QUIET_FRAME_BORDER = ("none", CONSOLE_FRAME_COLOR)
+# CONSOLE_FRAME_COLOR / CONSOLE_FRAME_BORDER / CONSOLE_QUIET_FRAME_BORDER now
+# live in `UI.Console_Modules.frame` (wave-1 console decomposition, task 2)
+# alongside `frame_console_region`, which is their only consumer that needs
+# them as a module-level default; imported above for the other call sites in
+# this file that still reference them directly.
 # TASK-359: the F6 rail stop focuses the collapse button inside an
 # INLINE-framed region — CSS :focus-within can never win against
 # widget.styles.border, so the pane-stop accent (matching the transcript/
@@ -694,77 +691,15 @@ CONSOLE_FOCUS_TARGETS_BY_PANE = {
 }
 
 
-class ConsoleDictationEvent(Message):
-    """Carry a `console_voice_input` event onto the Console screen's thread.
+#: `ConsoleDictationEvent`, `ConsoleDictationLimitSignal` and
+#: `ConsoleStreamingDictationSession` moved to `UI/Console_Modules/
+#: dictation.py` (wave-1 console decomposition, task 5), imported back
+#: above for the `@on(...)` decorators below and for the handful of
+#: tests that still construct them via `chat_screen_module.<name>`.
+#: `CONSOLE_HANDS_FREE_DEGRADED_MESSAGE` and `ConsoleHandsFreeSession`
+#: stayed: both belong to the hands-free loop, a sibling cluster this
+#: wave does not touch (see `dictation.py`'s module docstring).
 
-    The controller emits from whichever thread the recognizer happens to be on.
-    `post_message` is the only thread-safe route to the UI here: never
-    `call_from_thread`, which blocks its caller, and the caller is the audio
-    path.
-    """
-
-    def __init__(self, session: Any, event: Any) -> None:
-        """Wrap one controller event.
-
-        Args:
-            session: The session that emitted it, so the screen can drop
-                events from a session it has already discarded.
-            event: The `VoicePartial` / `VoiceSegmentTranscribing` /
-                `VoiceSpeechResumed` / `VoiceFinal` / `VoiceFailed` /
-                `VoiceStateChanged` / `VoiceProviderOverridden` instance.
-        """
-        super().__init__()
-        self.session = session
-        self.event = event
-
-
-class ConsoleDictationLimitSignal(Message):
-    """Carry a recorder PCM-bound signal onto the Console screen's thread.
-
-    `AudioRecordingService` invokes its `on_buffer_limit` callback from a
-    freshly spawned notification thread, so the same rule as
-    `ConsoleDictationEvent` applies: `post_message`, never `call_from_thread`
-    (which blocks its caller until the UI thread gets round to it).
-
-    Named to avoid `Message.handler_name`: Textual derives
-    `on_<snake_case_class_name>` from this class and dispatches both that and
-    its `_on_`-prefixed private twin. A `ConsoleDictationBufferLimit` would
-    therefore have been delivered straight into
-    `_on_console_dictation_buffer_limit` -- the recorder callback that *posts*
-    this message -- with the message itself as the `session` argument, i.e. an
-    unbounded message loop (8 GB of RSS in three minutes, measured).
-    """
-
-    def __init__(self, session: Any) -> None:
-        """Wrap one buffer-limit signal.
-
-        Args:
-            session: The session whose recorder hit the bound, so the screen
-                can drop a signal from a capture it has already torn down.
-        """
-        super().__init__()
-        self.session = session
-
-
-#: `VoiceCommand.name` -> the literal break text `ConsoleStreamingDictationSession`
-#: appends to `_segments` in its place. These two are the only command names
-#: this adapter acts on itself; the rest of `COMMAND_PHRASES` (`stop`, `send`,
-#: `discard`, `read-that-back`, `new-session`) end the capture and are Task
-#: 3's to route -- this adapter only keeps them out of `_segments` and counts
-#: them via `commands_consumed`.
-_INLINE_BREAK_COMMANDS: dict[str, str] = {
-    "new-paragraph": "\n\n",
-    "new-line": "\n",
-}
-
-
-#: Acknowledgements for the voice paths that decline to do what was asked.
-#: Each is used verbatim for both the toast and the spoken ack, so the two
-#: can never drift into telling the user two different things.
-_VOICE_ACK_SESSION_CHANGED = "Session changed — not sent."
-_VOICE_ACK_NOT_SENT = "Not sent."
-_VOICE_ACK_TOO_LATE_TO_DISCARD = "Too late to discard — text inserted."
-_VOICE_ACK_NOTHING_TO_INSERT = "Nothing to insert."
 
 #: Task 5 (VAD-degraded honesty carrier): shown once per hands-free ENTRY
 #: (not once per app run, unlike `VAD_UNAVAILABLE_MESSAGE` -- entering the
@@ -777,27 +712,6 @@ CONSOLE_HANDS_FREE_DEGRADED_MESSAGE = (
     "installed, so it cannot auto-send on a pause or hear a spoken barge-in. "
     "Use the mic button, \"Console, stop.\", or Esc/ctrl+shift+h to end a turn."
 )
-
-
-def _voice_command_chip_ack(name: str) -> str:
-    """Return the short chip acknowledgement for a recognized voice command.
-
-    A break command has no words to echo, so it acks with the pilcrow every
-    editor uses for one. Everything else acks with its own name, de-kebabed
-    (`read-that-back` -> "read that back") so the chip reads as the phrase the
-    user actually said. Derived rather than tabulated: a future command name
-    then gets a sensible ack without a second list to keep in step.
-
-    Args:
-        name: `VoiceCommand.name`, as `classify_segment` produced it.
-
-    Returns:
-        Chip-sized plain text. Never markup -- the chip writes through
-        `Content` -- and never empty, so an ack is always visible.
-    """
-    if name in _INLINE_BREAK_COMMANDS:
-        return "¶"
-    return name.replace("-", " ")
 
 
 @dataclass
@@ -856,361 +770,6 @@ class ConsoleHandsFreeSession:
     countdown_remaining: float = 0.0
     pending_session_id: str | None = None
     pending_existing_assistant_ids: frozenset[str] = frozenset()
-
-
-def _join_segments(segments: list[str]) -> str:
-    """Join transcript segments with single spaces, without padding breaks.
-
-    A plain `" ".join(segments)` would sandwich an inline `new-paragraph`/
-    `new-line` break entry between two spaces -- `"para. \\n\\n para"` --
-    which reads as a blank line with a stray leading and trailing space
-    rather than a clean paragraph break. A break entry is recognized as
-    exactly `"\\n"` or `"\\n\\n"` (the only values
-    `ConsoleStreamingDictationSession` ever appends for an inline command)
-    and is concatenated directly, trimming any trailing space the previous
-    segment left behind first.
-
-    Args:
-        segments: Finalized transcript text and inline-command break entries,
-            in the order the recognizer produced them.
-
-    Returns:
-        The joined transcript: dictated segments separated by single spaces,
-        breaks concatenated without surrounding padding.
-    """
-    out = ""
-    for segment in segments:
-        if segment in ("\n", "\n\n"):
-            out = out.rstrip(" ") + segment
-        elif out and not out.endswith((" ", "\n")):
-            out += " " + segment
-        else:
-            out += segment
-    return out
-
-
-class ConsoleStreamingDictationSession:
-    """Drive `ConsoleVoiceInputController` through the one-shot session port.
-
-    The Console screen owns dictation as three blocking calls -- `start()`,
-    `stop_and_transcribe()` and `discard()` -- each already run off the UI
-    thread by `asyncio.to_thread`, with the visible button transitions applied
-    around them. Keeping that port intact is what lets the streaming backend
-    replace the one-shot recorder without changing a single observable
-    transition:
-
-    ============================  ==================  =========================
-    Controller state              Button state        Applied by
-    ============================  ==================  =========================
-    ``preparing``                 ``starting``        before ``start()`` runs
-    ``listening``                 ``recording``       when ``start()`` returns
-    ``finishing``                 ``transcribing``    before ``stop_and_transcribe()``
-    ``idle``                      ``idle``            when it returns
-    ============================  ==================  =========================
-
-    `spawn` is therefore inline: this object is *already* on a worker thread,
-    and the controller's blocking halves must complete before the call it
-    stands behind returns.
-
-    Live events still flow the moment they happen -- partials and per-segment
-    finals go straight to `on_event` -- but the finals are accumulated here so
-    `stop_and_transcribe()` returns one transcript at the instant the
-    controller reaches `idle`. That preserves the shipping insertion contract:
-    the draft is written once, at the caret, and never mid-capture.
-
-    A finalized segment that matched the spoken-command grammar arrives as a
-    `VoiceCommand` instead of a `VoiceFinal` (see `classify_segment`). Two
-    command names -- `new-paragraph` and `new-line` -- are this adapter's to
-    act on: they become break entries in `_segments` (see `_join_segments`),
-    never dictated text. Every other command name ends the capture and is
-    Task 3's to route; this class only keeps it out of `_segments`, counts it
-    in `commands_consumed`, and forwards it to `on_event` unchanged, exactly
-    like any other event.
-    """
-
-    def __init__(
-        self,
-        *,
-        on_event: Callable[[Any, Any], None],
-        service_factory: Callable[..., Any] = default_service_factory,
-        max_buffer_bytes: int | None = CONSOLE_DICTATION_MAX_BYTES,
-    ) -> None:
-        """Build a session over a fresh controller.
-
-        Args:
-            on_event: Called with `(session, event)` for every controller
-                event, from whatever thread emitted it.
-            service_factory: Builds the dictation service; injected by tests.
-            max_buffer_bytes: Hard cap on the PCM the recorder retains for one
-                capture, passed through to the dictation service. `None`
-                leaves the recorder unbounded (the service default, which the
-                non-Console dictation callers still use).
-        """
-        self._on_event = on_event
-        self._lock = threading.Lock()
-        self._segments: list[str] = []
-        #: Finalized commands seen this capture -- inline (`new-paragraph`,
-        #: `new-line`) and capture-ending alike. Read by `stop_and_transcribe`
-        #: to tell a capture that was only ever spoken commands apart from a
-        #: genuinely silent one, since both join down to an empty (or
-        #: whitespace-only) transcript.
-        self.commands_consumed: int = 0
-        self._failure = ""
-        self._in_blocking_call = False
-        self._heard_recognizer_output = False
-        # Bumped by every `start()`. This session object is reused across
-        # captures (only a failure or an explicit cancel drops it -- see
-        # `_notify_console_dictation_error`/`_request_console_dictation_cancel`
-        # on the screen), so when `stop_and_transcribe()`'s join times out
-        # (point 3 below) the orphaned processing thread's tail flush is
-        # still bound to the SAME controller and the SAME `_handle_event`.
-        # `_handle_event` compares the generation the event's callback closure
-        # captured at wiring time (see `ConsoleVoiceInputController.start`'s
-        # `capture_generation` parameter) against this counter's CURRENT
-        # value and drops anything that no longer matches, before it can
-        # mutate `_segments`/`commands_consumed` or reach the screen.
-        self._capture_generation: int = 0
-        self._service_factory = service_factory
-        self._max_buffer_bytes = max_buffer_bytes
-        self._on_buffer_limit: Callable[[], None] | None = None
-        self._controller = ConsoleVoiceInputController(
-            emit=self._handle_event,
-            spawn=lambda thunk: thunk(),
-            # Not `service_factory` directly: the controller builds the service
-            # deep inside `start()`, long after the caller handed us its
-            # buffer-limit callback, so the bound has to be attached here.
-            service_factory=self._build_service,
-        )
-
-    def _build_service(self, **kwargs: Any) -> Any:
-        """Build the dictation service with this session's PCM bound attached.
-
-        Args:
-            **kwargs: Provider, model and language keywords chosen by the
-                controller. Passed through untouched.
-
-        Returns:
-            The dictation service the controller will drive.
-        """
-        if self._max_buffer_bytes is not None:
-            kwargs.setdefault("max_buffer_bytes", self._max_buffer_bytes)
-        if self._on_buffer_limit is not None:
-            kwargs.setdefault("on_buffer_limit", self._on_buffer_limit)
-        return self._service_factory(**kwargs)
-
-    def _handle_event(self, event: Any, generation: int | None = None) -> None:
-        """Record what the screen cannot see, then forward. Never raises.
-
-        A raise here would land in the recognizer's callback -- or, for a
-        `VoiceFailed`, inside the controller's own `_fail()`, whose raising-emit
-        handling exists precisely so a plumbing error cannot bury the real
-        cause. Neither is a place to propagate from.
-
-        Args:
-            event: The controller event being emitted.
-            generation: The capture generation `ConsoleVoiceInputController`
-                bound into this event's callback closure at wiring time (see
-                `start()`'s `capture_generation` parameter and `_run_begin()`
-                in `console_voice_input.py`). `None` for events that are
-                always emitted synchronously within the current capture's own
-                blocking call (state changes, advisory notices) and therefore
-                need no check. A mismatch against `self._capture_generation`
-                means an orphaned processing thread from a capture
-                `stop_and_transcribe()` already gave up joining (see its
-                docstring, point 3) has only now delivered its tail flush --
-                after a LATER capture reused this same session object and
-                bumped the generation. The event is dropped before it can
-                mutate `_segments`/`commands_consumed` or reach the screen;
-                this is what closes the race for all four variants a stale
-                delivery can take: command, final, partial, and failed.
-        """
-        try:
-            if generation is not None and generation != self._capture_generation:
-                logger.debug(
-                    "Dropping stale console dictation event (generation {}, "
-                    "current generation {})",
-                    generation,
-                    self._capture_generation,
-                )
-                return
-            forward = True
-            if isinstance(event, VoiceFinal):
-                text = event.text.strip()
-                with self._lock:
-                    # A final that strips to nothing still proves the
-                    # recognizer ran and produced output; only its text is
-                    # discarded. `stop_and_transcribe()` needs that distinction
-                    # to pick between the two silent-capture messages.
-                    self._heard_recognizer_output = True
-                    if text:
-                        self._segments.append(text)
-            elif isinstance(event, VoiceCommand):
-                # A command proves the recognizer ran, same as a `VoiceFinal`
-                # above. `_INLINE_BREAK_COMMANDS` is this adapter's own to
-                # act on -- its break text joins `_segments` in place of
-                # dictated text. Every other command name (the
-                # capture-ending ones `stop`/`send`/`discard`/
-                # `read-that-back`/`new-session`) is deliberately left out of
-                # `_segments` and just forwarded below, unchanged, for the
-                # screen to route in Task 3.
-                break_text = _INLINE_BREAK_COMMANDS.get(event.name)
-                with self._lock:
-                    self._heard_recognizer_output = True
-                    if break_text is not None:
-                        self._segments.append(break_text)
-                    self.commands_consumed += 1
-            elif isinstance(event, VoicePartial):
-                if event.text.strip():
-                    with self._lock:
-                        self._heard_recognizer_output = True
-            elif isinstance(event, VoiceFailed):
-                with self._lock:
-                    self._failure = (f"{event.reason} {event.remedy}").strip()
-                    # A blocking call is in flight, so it is about to raise
-                    # this failure and the screen's existing error path will
-                    # report it. Forwarding it as well would notify the user
-                    # about one failure twice. What does need forwarding is
-                    # the other kind: the recognizer dying mid-capture, with
-                    # nothing blocked on it to carry the news.
-                    forward = not self._in_blocking_call
-            if forward:
-                self._on_event(self, event)
-        except Exception:  # noqa: BLE001 - the audio path must never see this
-            logger.opt(exception=True).warning(
-                "Console dictation event could not be delivered"
-            )
-
-    def _take_failure(self) -> str:
-        with self._lock:
-            failure, self._failure = self._failure, ""
-        return failure
-
-    @contextmanager
-    def _blocking_call(self) -> Iterator[None]:
-        """Mark the window in which a failure will be raised, not forwarded."""
-        with self._lock:
-            self._in_blocking_call = True
-        try:
-            yield
-        finally:
-            with self._lock:
-                self._in_blocking_call = False
-
-    def start(self, *, on_buffer_limit: Callable[[], None] | None = None) -> None:
-        """Open the microphone, blocking until it is live or has failed.
-
-        Args:
-            on_buffer_limit: Invoked once, from a recorder notification thread,
-                if the capture reaches `max_buffer_bytes`. Wired through to
-                `AudioRecordingService`, which stops taking audio at the bound.
-                Streaming does *not* make the PCM go away: the recorder's own
-                `audio_buffer`, its undrained `audio_queue`, and
-                `LazyLiveDictationService.audio_buffer` all grow for the whole
-                capture at ~32 KB/s each, and the screen's wall-clock timer is
-                the only other thing bounding them.
-
-        Raises:
-            RuntimeError: The controller refused or could not start capture.
-        """
-        self._on_buffer_limit = on_buffer_limit
-        with self._lock:
-            self._segments.clear()
-            self.commands_consumed = 0
-            self._failure = ""
-            self._heard_recognizer_output = False
-            self._capture_generation += 1
-            generation = self._capture_generation
-        with self._blocking_call():
-            self._controller.start(capture_generation=generation)
-        failure = self._take_failure()
-        if failure:
-            raise RuntimeError(failure)
-        if self._controller.state != STATE_LISTENING:
-            # `start()` was ignored -- the controller was abandoned, or a
-            # previous capture never returned it to idle.
-            raise RuntimeError("Microphone dictation could not be started.")
-
-    def stop_and_transcribe(self) -> str:
-        """Close the microphone and return every segment finalized so far.
-
-        Blocks until the controller reaches `idle`, so the screen inserts
-        exactly once, with the whole transcript, at that moment.
-
-        Never returns an empty transcript for an ordinary capture, matching
-        the one-shot backend this replaced (`Audio/console_dictation.py`): it
-        raised rather than hand back nothing, and the screen's insertion has
-        no empty case for dictated text -- an empty transcript still pads to
-        a stray space at the caret, silently, and gets persisted to the
-        session draft. The one deliberate exception is a capture made of
-        nothing but spoken commands (`self.commands_consumed > 0` -- e.g.
-        "Console, new paragraph." alone, or "Console, stop." with nothing
-        dictated first): the segments still join down to `""` or pure
-        whitespace, but that is not a silent microphone, so this returns
-        `""` rather than raising it as one. The caller must treat that empty
-        return as "nothing to insert," not as the empty case above.
-
-        An empty transcript with no commands consumed has three genuinely
-        different causes, and this reports each as itself rather than
-        blaming the microphone for all three:
-
-        1. The recorder delivered no bytes -- a real capture or permission
-           problem. Keeps the one-shot backend's wording verbatim.
-        2. Bytes arrived but nothing was recognized -- also that backend's
-           wording, verbatim.
-        3. The service's processing thread was still transcribing when its
-           join expired, so audio was dropped unread. Nothing here is a
-           statement about the microphone, which worked fine.
-
-        The recorder's byte count comes from the service
-        (`CaptureOutcome.captured_bytes`), not from guessing at the transcript.
-        When a service does not report it -- test fakes, older services -- the
-        recognizer-output flag is the fallback, exactly as before.
-
-        Returns:
-            The accumulated segments, joined by `_join_segments` (so an
-            inline command's break lands unpadded). Empty only when the
-            capture consisted solely of spoken commands; an ordinary
-            dictated capture is never empty.
-
-        Raises:
-            RuntimeError: The controller failed while finishing, or the
-                capture was genuinely silent (`self.commands_consumed == 0`
-                and nothing was transcribed, or the transcription never
-                completed).
-        """
-        with self._blocking_call():
-            self._controller.stop()
-        failure = self._take_failure()
-        if failure:
-            raise RuntimeError(failure)
-        with self._lock:
-            transcript = _join_segments(self._segments)
-            heard = self._heard_recognizer_output
-            commands_consumed = self.commands_consumed
-        if transcript.strip():
-            return transcript
-        if commands_consumed > 0:
-            return ""
-        outcome = self._controller.last_capture_outcome
-        if not outcome.transcription_complete:
-            raise RuntimeError(
-                f"{TRANSCRIPTION_INCOMPLETE_REASON} {TRANSCRIPTION_INCOMPLETE_REMEDY}"
-            )
-        heard = heard or bool(outcome.captured_bytes)
-        raise RuntimeError(NO_SPEECH_MESSAGE if heard else NO_CAPTURE_MESSAGE)
-
-    def discard(self) -> None:
-        """Release the microphone without the blocking join.
-
-        Terminal teardown only (unmount, or a failure the screen has already
-        surfaced): `abandon()` is one-way for this instance, and the screen
-        drops the session on both of those paths.
-        """
-        self._controller.abandon()
-        with self._lock:
-            self._segments.clear()
-            self.commands_consumed = 0
-            self._failure = ""
 
 
 @dataclass(frozen=True)
@@ -2042,6 +1601,21 @@ class ChatScreen(BaseAppScreen):
         if not _is_empty_select_value(event.value):
             self._console_control_model = str(event.value)
         self._sync_console_control_bar()
+
+    @on(ConsoleLeftRail.SectionToggled)
+    def on_console_left_rail_section_toggled(
+        self, message: ConsoleLeftRail.SectionToggled
+    ) -> None:
+        """Handle a left-rail section toggle button press.
+
+        The rail catches its own toggle buttons and stops the underlying
+        ``Button.Pressed`` (see ``ConsoleLeftRail.on_button_pressed``) --
+        formerly this matched ``RAIL_SECTION_TOGGLE_PREFIX`` directly inside
+        this screen's own ``on_button_pressed`` if-chain. The actual open/
+        close decision, persistence, and Inspector-rail interaction stay
+        here unchanged: they reach beyond the rail's own DOM.
+        """
+        self._toggle_console_rail_section(message.section_id)
 
     @on(Button.Pressed, "#console-context-rail-collapse")
     def on_console_context_rail_collapse(self, event: Button.Pressed) -> None:
@@ -3340,39 +2914,31 @@ class ChatScreen(BaseAppScreen):
         # distinct session ids this screen instance has ever shown a
         # composer for, same tradeoff as the other per-session caches above.
         self._console_undo_histories: dict[str, ConsoleComposerUndoHistory] = {}
-        self._console_dictation_session: Any | None = None
-        self._console_dictation_state: Literal[
-            "idle", "starting", "recording", "transcribing"
-        ] = "idle"
-        self._console_dictation_timer: Any | None = None
-        #: 1 s ticker driving the chip's elapsed-time display while
-        #: `recording`. Started in `_start_console_dictation`; stopped on
-        #: every exit path (`_notify_console_dictation_error`,
-        #: `_request_console_dictation_stop`, `on_unmount`) -- distinct from
-        #: `_console_dictation_timer`, the 60 s wall-clock cutoff above.
-        self._console_dictation_elapsed_timer: Any | None = None
-        self._console_dictation_origin_session_id: str | None = None
-        #: Newest in-flight recognizer text. Chip-only by contract -- a partial
-        #: is superseded by the next one or by its segment's final, and must
-        #: never reach the draft.
-        self._console_dictation_partial = ""
-        #: Task 3: the single action a capture-ending `VoiceCommand` (`send`,
-        #: `new-session`, `read-that-back`) queued for AFTER the stop path
-        #: (`_stop_console_dictation`) finishes successfully -- never in the
-        #: same tick as the stop request, so it always runs on the capture's
-        #: own inserted transcript. A single field, not one bool per command:
-        #: the grammar is one capture-ending command per capture, so at most
-        #: one of these is ever pending at a time. `_notify_console_dictation_error`
-        #: clears it without acting -- a failed dictation must never ship the
-        #: message, open a new tab, or speak a reply.
-        self._console_pending_voice_action: str | None = None
-        #: A spoken "discard" that arrived too late to abort anything (the
-        #: capture was already `transcribing`). Toasted at once, but the
-        #: SPOKEN ack has to wait for `idle` -- `_speak_status` refuses to
-        #: talk over an open microphone -- so it is deferred to
-        #: `_stop_console_dictation`'s tail, where it replaces the ordinary
-        #: "Capture ended." rather than doubling up with it.
-        self._console_dictation_late_discard_ack = False
+        #: Dictation's own state and lifecycle moved to
+        #: `ConsoleDictationController` (wave-1 console decomposition,
+        #: task 5) -- this is wave 1's proof of the controller collaborator
+        #: kind. `self._console_dictation_*` / `self._console_pending_
+        #: voice_action` stay readable/writable via the properties defined
+        #: near `_console_composer_or_none`, so nothing outside this
+        #: cluster (the hands-free wiring, `on_button_pressed`, tests) had
+        #: to change. See `dictation.py`'s module docstring for the full
+        #: map of what moved and why.
+        self._dictation = ConsoleDictationController(
+            self,
+            app_instance=self.app_instance,
+            # Late-binding lambdas, not the bound methods directly: a
+            # bound method captured here would freeze the CURRENT
+            # `_console_composer_or_none`/`_ensure_console_chat_store`/
+            # `_speak_status`, invisible to a later `monkeypatch.setattr`
+            # on this screen instance. The lambda instead closes over
+            # `self` (this screen, whose identity never changes) and does
+            # the attribute lookup at CALL time, so a later instance-level
+            # patch is still picked up -- see `ConsoleDictationController.
+            # __init__`'s docstring, binding kind 3.
+            composer_accessor=lambda: self._console_composer_or_none(),
+            chat_store_accessor=lambda: self._ensure_console_chat_store(),
+            speak_status=lambda reason: self._speak_status(reason),
+        )
         #: The hands-free conversation loop's live session, or None when the
         #: loop is not running. See `ConsoleHandsFreeSession` and
         #: `_enter_console_hands_free_loop`/`_teardown_console_hands_free_loop`.
@@ -5621,82 +5187,91 @@ class ChatScreen(BaseAppScreen):
             return composers[0]
         return None
 
-    def _set_console_dictation_state(
-        self,
-        state: Literal["idle", "starting", "recording", "transcribing"],
-    ) -> None:
-        """Set the one-shot dictation state and refresh its visible control."""
-        self._console_dictation_state = state
-        composer = self._console_composer_or_none()
-        if composer is not None:
-            composer.sync_dictation_state(state)
+    # Dictation state moved to `ConsoleDictationController` (wave-1 console
+    # decomposition, task 5). These eight properties keep `self._console_
+    # dictation_*` / `self._console_pending_voice_action` readable AND
+    # writable exactly as before, for the handful of screen methods that
+    # are not part of the dictation cluster but still read this state
+    # (the hands-free wiring, `on_button_pressed`, `_sync_console_composer_
+    # action_state`) and for tests that poke it directly -- each proxies
+    # straight through to `self._dictation`, so none of those call sites
+    # needed to change.
+    @property
+    def _console_dictation_state(self) -> str:
+        return self._dictation._console_dictation_state
+
+    @_console_dictation_state.setter
+    def _console_dictation_state(self, value: str) -> None:
+        self._dictation._console_dictation_state = value
+
+    @property
+    def _console_dictation_session(self) -> Any:
+        return self._dictation._console_dictation_session
+
+    @_console_dictation_session.setter
+    def _console_dictation_session(self, value: Any) -> None:
+        self._dictation._console_dictation_session = value
+
+    @property
+    def _console_dictation_partial(self) -> str:
+        return self._dictation._console_dictation_partial
+
+    @_console_dictation_partial.setter
+    def _console_dictation_partial(self, value: str) -> None:
+        self._dictation._console_dictation_partial = value
+
+    @property
+    def _console_dictation_timer(self) -> Any:
+        return self._dictation._console_dictation_timer
+
+    @_console_dictation_timer.setter
+    def _console_dictation_timer(self, value: Any) -> None:
+        self._dictation._console_dictation_timer = value
+
+    @property
+    def _console_dictation_elapsed_timer(self) -> Any:
+        return self._dictation._console_dictation_elapsed_timer
+
+    @_console_dictation_elapsed_timer.setter
+    def _console_dictation_elapsed_timer(self, value: Any) -> None:
+        self._dictation._console_dictation_elapsed_timer = value
+
+    @property
+    def _console_dictation_origin_session_id(self) -> str | None:
+        return self._dictation._console_dictation_origin_session_id
+
+    @_console_dictation_origin_session_id.setter
+    def _console_dictation_origin_session_id(self, value: str | None) -> None:
+        self._dictation._console_dictation_origin_session_id = value
+
+    @property
+    def _console_pending_voice_action(self) -> str | None:
+        return self._dictation._console_pending_voice_action
+
+    @_console_pending_voice_action.setter
+    def _console_pending_voice_action(self, value: str | None) -> None:
+        self._dictation._console_pending_voice_action = value
+
+    @property
+    def _console_dictation_late_discard_ack(self) -> bool:
+        return self._dictation._console_dictation_late_discard_ack
+
+    @_console_dictation_late_discard_ack.setter
+    def _console_dictation_late_discard_ack(self, value: bool) -> None:
+        self._dictation._console_dictation_late_discard_ack = value
 
     def _sync_console_dictation_availability(self) -> None:
-        """Refresh the mic button's tooltip from a fresh availability probe.
+        """Refresh the mic button's dictation-availability tooltip.
 
-        Called once after mount, so the button's initial tooltip is accurate
-        without waiting for a first press, and again at the top of every
-        activation attempt (`_request_console_dictation_start`), so installing
-        the missing extra or plugging in a microphone mid-run is picked up
-        without a screen remount. `probe()` only calls
-        `importlib.util.find_spec`, so it is cheap and safe to call
-        repeatedly.
-
-        This is the cosmetic half only -- it never blocks starting dictation.
-        A real attempt still goes through `ConsoleVoiceInputController.start()`,
-        which re-probes on its own and fails visibly
-        (`_notify_console_dictation_error`) if unavailable. Gating here too
-        would double-report the same failure, and -- because a genuinely
-        Textual-`disabled` button can never be pressed again afterward
-        (Click is never delivered to a disabled widget, so pressing could
-        never recover it) -- this stays purely cosmetic by design; see
-        `ConsoleComposerBar.sync_dictation_state`.
-
-        A probe crash is swallowed and treated as available, so a bug in the
-        probe cannot brick the button in a permanently unavailable-looking
-        state with no way to recover.
+        One-line delegation (wave-1 console decomposition, task 5). Called
+        from `on_mount` (post-mount probe, twice: `call_after_refresh` and
+        a 0.15s retry) and from `ConsoleDictationController._request_
+        console_dictation_start` (re-probe on every activation attempt).
+        See `ConsoleDictationController._sync_console_dictation_
+        availability` for the real implementation.
         """
-        composer = self._console_composer_or_none()
-        if composer is None:
-            return
-        try:
-            availability = console_voice_input.probe()
-        except Exception:  # noqa: BLE001 - a probe crash must not disable the button
-            logger.opt(exception=True).warning(
-                "Console dictation availability probe crashed"
-            )
-            composer.set_dictation_availability(available=True)
-            return
-        # `remedy` alone is a complete, self-explanatory sentence for both
-        # kinds (it already opens by restating `reason` -- see CAPTURE_REMEDY
-        # / PROVIDER_REMEDY in console_voice_input.py); joining `reason` ahead
-        # of it here would stutter ("No ... installed. No ... installed.
-        # Install with: ..."). The `reason + remedy` join used for the
-        # VoiceFailed toast is a one-off event, not idle copy shown on every
-        # glance at the button, so it can afford the redundancy this can't.
-        composer.set_dictation_availability(
-            available=availability.ok,
-            tooltip="" if availability.ok else availability.remedy,
-        )
+        self._dictation._sync_console_dictation_availability()
 
-    def _cancel_console_dictation_timer(self) -> None:
-        timer = self._console_dictation_timer
-        self._console_dictation_timer = None
-        if timer is not None:
-            timer.stop()
-
-    def _cancel_console_dictation_elapsed_timer(self) -> None:
-        """Stop the chip's 1 s elapsed-time ticker if one is running."""
-        timer = self._console_dictation_elapsed_timer
-        self._console_dictation_elapsed_timer = None
-        if timer is not None:
-            timer.stop()
-
-    def _tick_console_dictation_elapsed(self) -> None:
-        """Advance the voice chip's elapsed-time display by one second."""
-        composer = self._console_composer_or_none()
-        if composer is not None:
-            composer.tick_voice_elapsed()
 
     def _speak_status(self, text: str) -> None:
         """Speak a status/ack/error via TTS when spoken feedback is on and idle.
@@ -5730,412 +5305,21 @@ class ChatScreen(BaseAppScreen):
 
         self.app_instance.post_message(TTSRequestEvent(text=text))
 
-    def _notify_console_dictation_error(self, exc: Exception) -> None:
-        """Return dictation to idle and show its actionable failure."""
-        self._cancel_console_dictation_timer()
-        self._cancel_console_dictation_elapsed_timer()
-        self._console_dictation_origin_session_id = None
-        self._console_dictation_session = None
-        self._console_dictation_partial = ""
-        # A spoken "send"/"new session"/"read that back" queued its action
-        # for after a successful stop -- this is every failure exit, so the
-        # queued action must be dropped here rather than surviving to fire
-        # on whatever capture succeeds next.
-        self._console_pending_voice_action = None
-        # Likewise a deferred late-discard ack: the failure reason below is
-        # the better thing to say, and two spoken acks for one capture is
-        # worse than either alone.
-        self._console_dictation_late_discard_ack = False
-        self._set_console_dictation_state("idle")
-        reason = f"Dictation failed: {exc}"
-        # Persist the failure: this branch's runtime log is admission-filtered
-        # to `tldw_chatbook.diagnostics.*`, so a toast the user reads was the
-        # ONLY record a dictation failure left anywhere -- four live-gate
-        # rounds were spent reconstructing failures from paraphrased toasts
-        # (2026-08-01). `exc_type` is the class name only; the message can
-        # carry user paths or audio filenames and is deliberately not
-        # persisted here (the loguru line below keeps it for a verbose run).
-        try:
-            persist_event(
-                "dictation",
-                "dictation_failed",
-                level=logging.ERROR,
-                exception_type=type(exc).__name__,
-            )
-        except Exception:  # noqa: BLE001 - diagnostics must never break dictation
-            logger.opt(exception=True).debug("Could not persist dictation failure")
-        logger.warning("Console dictation failed: {}", exc)
-        self.app_instance.notify(reason, severity="error")
-        self._speak_status(reason)
-
-    def _emit_console_dictation_event(self, session: Any, event: Any) -> None:
-        """Hand a controller event to the UI thread. Safe from any thread.
-
-        Args:
-            session: The dictation session that emitted the event.
-            event: The `console_voice_input` event instance.
-        """
-        try:
-            self.post_message(ConsoleDictationEvent(session, event))
-        except Exception:  # noqa: BLE001 - the audio path must never see this
-            logger.opt(exception=True).debug(
-                "Console dictation event could not be posted"
-            )
 
     @on(ConsoleDictationEvent)
     def _handle_console_dictation_event(self, message: ConsoleDictationEvent) -> None:
-        """Apply the streaming events the blocking session port cannot express.
+        """Apply a streaming dictation event posted from any thread.
 
-        Button state stays owned by `_start_console_dictation` /
-        `_stop_console_dictation`, which bracket the blocking calls: they are
-        the only places that can order an `idle` transition *after* the
-        transcript has been inserted. What only the event stream can deliver
-        is a partial (chip-only) and a failure that arrives mid-capture, with
-        no blocking call in flight to raise it.
+        One-line delegation (wave-1 console decomposition, task 5); the
+        `@on` decorator has to stay on this class for Textual's message
+        dispatch to find it. See `ConsoleDictationController._handle_
+        console_dictation_event` for the real implementation.
 
         Args:
             message: The posted controller event.
         """
-        if message.session is not self._console_dictation_session:
-            # A session the screen has already discarded; its events are stale.
-            return
-        event = message.event
-        if isinstance(event, VoicePartial):
-            # Only while the microphone is live. A successful capture keeps its
-            # session (only failures drop it), so the staleness check above
-            # cannot catch the partial the recognizer flushes as
-            # `stop_dictation()` joins -- that one drains after the state is
-            # already `idle` and would leave a ghost in the chip.
-            if self._console_dictation_state == "recording":
-                self._console_dictation_partial = event.text
-                composer = self._console_composer_or_none()
-                if composer is not None:
-                    composer.set_voice_partial(event.text)
-            return
-        if isinstance(event, VoiceSegmentTranscribing):
-            # The silence gate closed a segment and its (potentially
-            # seconds-long) transcription just started (`event.done` False)
-            # or just ended (`event.done` True) -- otherwise zero signal
-            # under the segment-at-silence architecture. Same staleness
-            # guard as `VoicePartial` just above: only while THIS capture is
-            # still actually recording. The indication reverts on whichever
-            # comes first: this event's own `done=True` (review finding M1 --
-            # a segment that transcribes to blank fires neither a final nor a
-            # command, so this is sometimes the ONLY revert signal a capture
-            # ever gets), `set_voice_partial` (called by both the
-            # `VoiceFinal` and `VoiceCommand` branches below), or any
-            # `sync_dictation_state` lifecycle transition.
-            if self._console_dictation_state == "recording":
-                composer = self._console_composer_or_none()
-                if composer is not None:
-                    composer.set_voice_segment_transcribing(not event.done)
-            return
-        if isinstance(event, VoiceSegmentNoFinal):
-            # Qodo review (task-5 follow-up): positive proof no `VoiceFinal`
-            # is coming for this segment -- fired right after this same
-            # segment's own `VoiceSegmentTranscribing(done=True)` above, on
-            # the blank/whitespace-only branch. Same `_console_dictation_
-            # state == "recording"` same-capture guard as `VoiceFinal` below
-            # (not a second source of truth): a stale signal from an already-
-            # ended capture must not touch a later turn's resume latch.
-            # Meaningless outside the hands-free loop -- see `HandsFree
-            # Controller.on_segment_no_final`'s docstring for why this must
-            # exist at all (a resume latch armed for a blank segment would
-            # otherwise never be consumed, and would incorrectly swallow the
-            # NEXT real segment's `VoiceFinal`/countdown).
-            if self._console_dictation_state == "recording" and self._console_hands_free is not None:
-                self._console_hands_free.controller.on_segment_no_final()
-            return
-        if isinstance(event, VoiceFinal):
-            # The segment is committed; the partial that previewed it is spent.
-            self._console_dictation_partial = ""
-            composer = self._console_composer_or_none()
-            if composer is not None:
-                composer.set_voice_partial("")
-            # Task 5: this is what arms the hands-free countdown -- same
-            # `_console_dictation_state == "recording"` same-capture guard
-            # as `VoicePartial` above (not a second source of truth): a
-            # final that drains after THIS capture already ended (e.g. the
-            # wall-clock/buffer limit beat the recognizer to it) must not
-            # arm a countdown for a turn that is no longer live.
-            if self._console_dictation_state == "recording" and self._console_hands_free is not None:
-                self._console_hands_free.controller.on_voice_final()
-            return
-        if isinstance(event, VoiceCommand):
-            # `new-paragraph`/`new-line` DO reach here too -- the adapter's
-            # `forward` default is True for every `VoiceCommand`, inline or
-            # capture-ending alike; `_INLINE_BREAK_COMMANDS` only keeps them
-            # out of `_segments` (Task 2), it does not stop them being
-            # forwarded. The `if`/`elif` chain below stays an explicit
-            # allowlist rather than a dict lookup or a trailing `else` --
-            # deliberately, so an inline name (or any future, not-yet-routed
-            # command name) falls through as a no-op instead of a future
-            # maintainer's catch-all accidentally acting on it.
-            #
-            # Review fix round 1 (Finding 1): a command draining after ITS
-            # OWN capture already returned to `idle` is NOT caught by the
-            # session-identity check above -- `_start_console_dictation`
-            # reuses `self._console_dictation_session` whenever it is still
-            # set, which it is after every ordinary successful stop (only a
-            # failure or an explicit cancel nulls it). A late command from
-            # capture 1 therefore carries the exact same session object as a
-            # live capture 2, and would otherwise queue an action (or fire
-            # stop/discard) against whichever capture is live NOW, not the
-            # one that actually spoke it. `transcribing` stays admitted
-            # alongside `recording`: a genuinely-current command that only
-            # finalizes once ITS OWN capture's stop-and-transcribe is
-            # already running (e.g. the wall timer beat the recognizer to
-            # it) is not stale, and must still reach `_stop_console_dictation`'s
-            # success tail.
-            if self._console_dictation_state not in ("recording", "transcribing"):
-                return
-            # The command is itself a finalized segment, so its own utterance
-            # ("console send") is the last thing sitting in the chip -- but
-            # clearing it to empty leaves an inline command with no feedback
-            # whatsoever, and the chip acknowledgement is the stated
-            # mitigation for the accepted staccato false-fire (a fired
-            # command has to be *visible* to be caught). Overwrite it with a
-            # short ack instead: the next partial replaces it, and the chip
-            # collapses at capture end. Written here, before dispatch below
-            # changes the dictation state out from under `set_voice_partial`'s
-            # own recording-only guard.
-            ack = _voice_command_chip_ack(event.name)
-            self._console_dictation_partial = ack
-            composer = self._console_composer_or_none()
-            if composer is not None:
-                composer.set_voice_partial(ack)
-            if event.name == "stop":
-                if self._console_hands_free is not None:
-                    # Hands-free's own exit: `on_exit_request()`'s `ExitLoop`
-                    # handler stops the capture itself (via `CloseCapture`)
-                    # AND tears the loop down -- a plain
-                    # `_request_console_dictation_stop()` here would only
-                    # do the first half, leaving the FSM believing it is
-                    # still running.
-                    self._console_hands_free.controller.on_exit_request()
-                else:
-                    self._request_console_dictation_stop()
-            elif event.name == "discard":
-                self._request_console_dictation_cancel()
-                # Task-5 review I3: `_request_console_dictation_cancel()`
-                # sets `_console_dictation_state` to `idle` SYNCHRONOUSLY
-                # (only the actual device release is async), so by the time
-                # `on_exit_request()` runs here `_console_hands_free_close_
-                # capture`'s own `== "recording"` guard is already False --
-                # a clean, single no-op close, not a second stop. Without
-                # this the FSM stayed `listening` believing the mic was
-                # still open while it was not, with nothing left to reopen
-                # or exit it.
-                if self._console_hands_free is not None:
-                    self._console_hands_free.controller.on_exit_request()
-            elif event.name == "hands-free":
-                # Task 5: unlike the capture-ending commands below, this one
-                # does NOT end the capture -- the still-open mic becomes the
-                # loop's first turn (`capture_live=True`), matching the key
-                # binding pressed mid-capture.
-                self._enter_console_hands_free_loop(capture_live=True)
-            elif event.name == "send" and self._console_hands_free is not None:
-                # Task-5 review I3: spoken "send" mid-loop must drive the
-                # SAME `RequestStopAndSend` semantics as a countdown expiry
-                # -- `awaiting_reply` is entered and the reply is actually
-                # spoken -- rather than the plain queue-and-stop below,
-                # which ended the capture without telling the controller:
-                # the FSM stayed `listening` (mic believed open, actually
-                # closed) while the reply streamed and the tap silently
-                # dropped every delta (`state != "awaiting_reply"`) -- the
-                # user asked hands-free to send, it sent, and the loop went
-                # quiet forever.
-                controller = self._console_hands_free.controller
-                if controller.state in ("listening", "countdown"):
-                    self._console_hands_free_force_immediate_send()
-                else:
-                    # Task-5 review round 2, D3: reachable only in
-                    # acoustic mode (the only mode with the mic open
-                    # mid-reply) -- `_console_hands_free_force_immediate_
-                    # send`'s own guard correctly refuses here (a send
-                    # cannot happen while a reply is already outstanding;
-                    # it would interleave two turns, which this FSM's
-                    # single-outstanding-reply model cannot represent),
-                    # but silently doing NOTHING -- not even ending the
-                    # capture -- was the actual defect: the chip acked a
-                    # command that then had no effect at all. End the
-                    # capture (whatever was said still lands in the
-                    # draft, same as `_request_console_dictation_stop`
-                    # does for every other non-discard capture-ender
-                    # here) and exit the loop cleanly -- the same honest
-                    # choice already made for discard/new-session/
-                    # read-that-back just below, for the identical reason
-                    # (no FSM input exists for "another send arrived
-                    # mid-reply").
-                    self._request_console_dictation_stop()
-                    controller.on_exit_request()
-            elif event.name in ("send", "new-session", "read-that-back"):
-                # Queued, not acted on immediately: `_stop_console_dictation`
-                # runs it once the capture's own transcript has actually
-                # landed (see `_console_pending_voice_action`'s docstring).
-                self._console_pending_voice_action = event.name
-                self._request_console_dictation_stop()
-                # Task-5 review I3: `new-session`/`read-that-back` neither
-                # continue nor reopen this turn (a new tab / reading back an
-                # already-completed reply are not new conversational turns
-                # for THIS loop) -- ending the loop cleanly here is the
-                # honest outcome, matching `discard`'s fix immediately
-                # above and for the identical reason (the capture just
-                # ended out from under the FSM with nothing telling it).
-                if self._console_hands_free is not None:
-                    self._console_hands_free.controller.on_exit_request()
-            return
-        if isinstance(event, VoiceSpeechResumed):
-            # Task 5: a mic-side fact (see the dataclass's own docstring),
-            # forwarded like `VoicePartial` -- generation-gated by the same
-            # staleness check at the top of this method, but otherwise
-            # meaningless outside the hands-free loop. Gated on the SAME
-            # `_console_dictation_state == "recording"` guard `VoicePartial`
-            # uses just above (not a second source of truth): a resume that
-            # drains after THIS capture already ended must not cancel a
-            # countdown or barge in on a reply belonging to a later turn.
-            if self._console_dictation_state != "recording":
-                return
-            if self._console_hands_free is not None:
-                self._console_hands_free.controller.on_speech_resumed()
-            return
-        if isinstance(event, VoiceModelPreparing):
-            # The speech model is loading, before the microphone opens. On a
-            # fresh machine that is a multi-gigabyte download, and the button
-            # sitting on "Mic…" with no explanation is indistinguishable from
-            # a hang. Only meaningful while the screen is still starting: a
-            # notice that drains late must not repaint a live capture's chip.
-            if self._console_dictation_state != "starting":
-                return
-            composer = self._console_composer_or_none()
-            if composer is not None:
-                # The composer *holds* this, so an unrelated control-bar
-                # refresh cannot wipe it mid-download.
-                composer.set_voice_preparing_message(f"◌ {event.message}")
-            # The chip is 42 cells and one row; the full explanation would be
-            # cut mid-sentence there, taking the duration warning with it. Send
-            # it somewhere with room, once.
-            if event.detail:
-                self.app_instance.notify(event.detail, severity="information")
-            return
-        if isinstance(event, VoiceModelWarmupFailed):
-            # Advisory, not fatal: the capture is going ahead. Making this
-            # fatal would mean one transient error permanently disables
-            # dictation, since the Console warms on every press.
-            self.app_instance.notify(
-                f"{event.reason} {event.remedy}".strip(), severity="warning"
-            )
-            return
-        if isinstance(event, VoiceFailed):
-            # Only ever a mid-capture failure: the session forwards a
-            # `VoiceFailed` exactly when no blocking call is in flight to
-            # raise it, so this cannot double-report a start/stop failure.
-            # Handling it here -- ahead of the `VoiceStateChanged(idle)` the
-            # controller emits next, which this method deliberately ignores --
-            # is what cancels the wall timer and clears the origin session
-            # before anything else can run.
-            reason = f"{event.reason} {event.remedy}".strip()
-            self._notify_console_dictation_error(RuntimeError(reason))
-            return
-        if isinstance(event, VoiceProviderOverridden):
-            # The controller (`ConsoleVoiceInputController._override_announced`)
-            # already latches this to once per controller instance, but a
-            # fresh controller is built on every new dictation session (e.g.
-            # after any failure discards the old one, or on a fresh screen
-            # mount -- ChatScreen itself is rebuilt on every Console
-            # navigation, never a persistent singleton). The user only needs
-            # telling once per app run, not once per capture, so the flag
-            # lives on `self.app_instance`, the one object that actually
-            # persists for the app's whole run.
-            if not getattr(
-                self.app_instance, "_console_dictation_override_notified", False
-            ):
-                self.app_instance._console_dictation_override_notified = True
-                # `event.configured` traces back to the user's own
-                # `transcription.default_provider` TOML setting -- unvalidated
-                # free text, not a value from a closed enum -- and
-                # `App.notify` defaults to `markup=True`, so a provider name
-                # containing `[...]` must be escaped or it is silently
-                # swallowed as (invalid) Rich markup instead of shown.
-                self.app_instance.notify(
-                    f"Configured dictation provider "
-                    f"'{escape_markup(event.configured)}' isn't available; "
-                    f"using '{escape_markup(event.effective)}' instead.",
-                    severity="warning",
-                )
-            return
-        if isinstance(event, VoiceDictationModelDefaulted):
-            # Same two-tier latch as `VoiceProviderOverridden` just above,
-            # for the same reason -- see `VoiceDictationModelDefaulted`'s own
-            # docstring. This is a deliberate latency policy, not a failure
-            # (unlike the provider case), so it stays "information" rather
-            # than "warning".
-            if not getattr(
-                self.app_instance,
-                "_console_dictation_model_default_notified",
-                False,
-            ):
-                self.app_instance._console_dictation_model_default_notified = True
-                # `event.effective` is `DICTATION_FAST_MODEL_DEFAULT`, a
-                # closed constant this code controls -- but `event.configured`
-                # traces back to the user's own `transcription.default_model`
-                # TOML setting, unvalidated free text, so both go through
-                # `escape_markup` for the same reason the provider notice
-                # above does.
-                self.app_instance.notify(
-                    f"Dictation uses the fast '{escape_markup(event.effective)}' "
-                    f"model for low latency (configured model: "
-                    f"'{escape_markup(event.configured)}') — set dictation.model "
-                    f"to change.",
-                    severity="information",
-                )
-            return
-        if isinstance(event, VoiceVadUnavailable):
-            # Same two-tier latch as `VoiceProviderOverridden` just above,
-            # and for the same reason: the controller's own
-            # `_vad_unavailable_announced` only covers this one controller
-            # instance, and a fresh one is built on every new dictation
-            # session. The user only needs telling once per app run. The
-            # controller already logged this (see
-            # `_maybe_report_vad_unavailable`), so only the toast lives here.
-            #
-            # Task 5 (VAD-degraded honesty): recorded for this screen's
-            # whole life, independent of the once-per-run toast latch above
-            # -- `_enter_console_hands_free_loop` reads this to warn, every
-            # time the loop starts in degraded mode, that its silence-based
-            # auto-send (`VoiceSpeechResumed`/mid-capture `VoiceFinal`
-            # never fire without webrtcvad -- see this event's own
-            # docstring) will not work; only a manual mic press, spoken
-            # "stop", or Esc/ctrl+shift+h will ever end a turn.
-            self._console_hands_free_vad_degraded = True
-            if not getattr(
-                self.app_instance, "_console_dictation_vad_unavailable_notified", False
-            ):
-                self.app_instance._console_dictation_vad_unavailable_notified = True
-                # Not spoken (`spoken_feedback` never applies here): the
-                # microphone is open by the time this fires, and speaking
-                # over an open mic is exactly what that setting exists to
-                # avoid everywhere else in this file.
-                self.app_instance.notify(VAD_UNAVAILABLE_MESSAGE, severity="warning")
-            return
+        self._dictation._handle_console_dictation_event(message)
 
-    def _on_console_dictation_buffer_limit(self, session: Any) -> None:
-        """Marshal a recorder-thread memory-limit signal onto the UI thread.
-
-        `post_message`, not `call_from_thread`: this runs on the recorder's
-        notification thread, and `call_from_thread` blocks its caller until the
-        UI thread services it -- the same rule `ConsoleDictationEvent` exists
-        to enforce for the recognizer's callbacks.
-
-        Args:
-            session: The dictation session whose recorder hit its PCM bound.
-        """
-        try:
-            self.post_message(ConsoleDictationLimitSignal(session))
-        except Exception:  # noqa: BLE001 - the audio path must never see this
-            logger.opt(exception=True).debug(
-                "Console dictation buffer limit could not be posted"
-            )
 
     @on(ConsoleDictationLimitSignal)
     def _handle_console_dictation_buffer_limit(
@@ -6143,76 +5327,16 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Stop the capture whose recorder ran out of its PCM budget.
 
+        One-line delegation (wave-1 console decomposition, task 5); the
+        `@on` decorator has to stay on this class for Textual's message
+        dispatch to find it. See `ConsoleDictationController._handle_
+        console_dictation_buffer_limit` for the real implementation.
+
         Args:
             message: The posted buffer-limit signal.
         """
-        if message.session is not self._console_dictation_session:
-            # A capture the screen has already torn down; its recorder's late
-            # signal must not stop whatever is recording now.
-            return
-        self._handle_console_dictation_limit()
+        self._dictation._handle_console_dictation_buffer_limit(message)
 
-    def _handle_console_dictation_limit(self) -> None:
-        """Stop and transcribe when the wall-clock or memory bound is reached."""
-        if self._console_dictation_state != "recording":
-            return
-        self.app_instance.notify(
-            "Dictation limit reached; transcribing the captured audio.",
-            severity="warning",
-        )
-        if self._console_hands_free is not None:
-            # `had_segments` must be read NOW, while the capture is still
-            # `recording` (the segments live on the session object that is
-            # about to be released).
-            had_segments = False
-            session = self._console_dictation_session
-            if session is not None:
-                with session._lock:
-                    had_segments = bool(session._segments)
-            if had_segments:
-                # WITH segments pending, `on_capture_ended` must fire
-                # synchronously, HERE, while still `recording` -- exactly
-                # like the original (pre-review) design: it emits
-                # `RequestStopAndSend`, which (via `_console_hands_free_
-                # request_stop_and_send`'s "recording" branch) drives the
-                # REAL stop-and-send itself, making the trailing, always-run
-                # `_request_console_dictation_stop()` call below a harmless
-                # no-op (state has already moved on to `transcribing`).
-                # Deferring this case the same way the empty case needs
-                # (see below) would let the trailing unconditional stop run
-                # FIRST and finish the capture on its own, ordinary
-                # (non-send) path -- by the time a deferred `on_capture_
-                # ended` then tried to retroactively queue a send,
-                # `_console_dictation_origin_session_id` would already be
-                # cleared to `None` and the draft could have moved on.
-                self._console_hands_free.controller.on_capture_ended(
-                    had_segments=True, limit_hit=True
-                )
-            else:
-                # Task-5 review B2: with NOTHING captured, `on_capture_
-                # ended` must NOT be delivered until the capture has
-                # actually reached `idle` (mic released). Delivering it
-                # synchronously here made an empty-capture `OpenCapture`
-                # reopen a same-tick no-op (`_console_hands_free_open_
-                # capture`'s own `state == "idle"` guard correctly refuses
-                # -- the mic is not free yet) while the FSM still recorded
-                # `capture_open = True` and burned the reopen-once ceiling
-                # regardless: permanently mic-dead, with no second
-                # `on_capture_ended` ever able to arrive to trigger the
-                # ceiling's own exit. See `_deliver_console_hands_free_
-                # capture_ended`, scheduled below instead of called
-                # directly -- unlike the had-segments branch above, there
-                # is no pending send whose session/draft state could go
-                # stale in the meantime, so deferring is safe here.
-                self.run_worker(
-                    self._deliver_console_hands_free_capture_ended(
-                        self._console_hands_free, False
-                    ),
-                    exclusive=False,
-                    group="console-hands-free-capture-ended",
-                    exit_on_error=False,
-                )
-        self._request_console_dictation_stop()
 
     #: Bound on how long `_deliver_console_hands_free_capture_ended` waits
     #: for a limit-triggered stop to actually reach `idle` before giving up
@@ -6266,64 +5390,6 @@ class ChatScreen(BaseAppScreen):
             had_segments=had_segments, limit_hit=True
         )
 
-    def _create_console_dictation_session(self) -> Any:
-        """Build a streaming dictation session bound to this screen.
-
-        Constructing the controller costs nothing: the optional speech stack is
-        only imported when `start()` actually reaches the service factory.
-        """
-        return ConsoleStreamingDictationSession(
-            on_event=self._emit_console_dictation_event,
-        )
-
-    async def _start_console_dictation(self) -> None:
-        """Open the microphone for the capture the user just asked for.
-
-        `session` is captured up front and re-checked after the await, exactly
-        as `_stop_console_dictation` does: this one await covers the speech-model
-        load (minutes on a fresh machine) *and* the capture opening, and two
-        different things can null the screen's session inside it -- a deliberate
-        cancel (`_request_console_dictation_cancel`) and a mid-capture
-        `VoiceFailed` draining through `_notify_console_dictation_error`. Both
-        have already told the user and cleaned up, so whichever side loses that
-        race must stay silent; announcing "recording" and arming the timers
-        afterwards would leave a ticking chip and a `Rec ●` button over a
-        capture that is already dead, and the next press would surface an
-        internal string ("Microphone dictation is not recording.").
-        """
-        session = (
-            self._console_dictation_session or self._create_console_dictation_session()
-        )
-        self._console_dictation_session = session
-        try:
-            await asyncio.to_thread(
-                session.start,
-                on_buffer_limit=partial(
-                    self._on_console_dictation_buffer_limit, session
-                ),
-            )
-        except Exception as exc:
-            if self._console_dictation_session is session:
-                self._notify_console_dictation_error(exc)
-            else:
-                logger.debug(
-                    "Console dictation start skipped; the attempt was cancelled"
-                )
-            return
-        if not self.is_mounted or self._console_dictation_session is not session:
-            # Cancelled, failed or unmounted while the model was loading: the
-            # capture may have opened a moment ago, so release it rather than
-            # leave a live microphone behind an idle button.
-            await asyncio.to_thread(session.discard)
-            return
-        self._set_console_dictation_state("recording")
-        self._console_dictation_timer = self.set_timer(
-            CONSOLE_DICTATION_MAX_SECONDS,
-            self._handle_console_dictation_limit,
-        )
-        self._console_dictation_elapsed_timer = self.set_interval(
-            1.0, self._tick_console_dictation_elapsed
-        )
 
     #: task-1683: the exact Impersonate text last inserted into the draft,
     #: so a second click REPLACES it instead of stacking drafts. Keyed by
@@ -7099,173 +6165,6 @@ class ChatScreen(BaseAppScreen):
         if not hasattr(self, "_console_impersonate_last"):
             self._console_impersonate_last = {}
         self._console_impersonate_last[session_id] = text
-
-    @staticmethod
-    def _dictation_insertion(
-        draft: str,
-        cursor: int,
-        transcript: str,
-    ) -> str:
-        """Return transcript text padded only where adjacent text needs spacing.
-
-        Trims only `" "` and `"\\t"` from the ends, not a full `.strip()`: the
-        recognizer never produces a leading/trailing newline on its own, so
-        an ordinary dictated transcript behaves identically either way -- but
-        an inline `new-paragraph`/`new-line` command at the very start or end
-        of a capture (`_join_segments`) does produce one, and a full strip
-        used to discard it silently, along with everything after it looking
-        like the command was never spoken.
-
-        For the same reason, the caret-context padding below never adds a
-        space next to a leading or trailing newline: the break is already
-        the separator the padding exists to provide.
-
-        Args:
-            draft: The composer's current text.
-            cursor: The insertion point, an offset into `draft`.
-            transcript: The capture's transcript, as returned by
-                `ConsoleStreamingDictationSession.stop_and_transcribe`.
-
-        Returns:
-            `transcript` trimmed of edge spaces/tabs (edge newlines kept),
-            padded with a single space on whichever side abuts non-space
-            text in `draft` and does not itself start or end with a newline.
-        """
-        cursor = max(0, min(cursor, len(draft)))
-        insertion = transcript.strip(" \t")
-        if not insertion.startswith("\n"):
-            if cursor and not draft[cursor - 1].isspace():
-                insertion = " " + insertion
-        if not insertion.endswith("\n"):
-            if cursor < len(draft) and not draft[cursor].isspace():
-                insertion += " "
-        return insertion
-
-    def _insert_console_dictation(
-        self,
-        *,
-        origin_session_id: str | None,
-        transcript: str,
-    ) -> None:
-        """Insert into the originating draft without sending a message."""
-        if not origin_session_id:
-            return
-        store = self._ensure_console_chat_store()
-        composer = self._console_composer_or_none()
-        if (
-            composer is not None
-            and store.active_session_id == origin_session_id
-            and self._console_visible_draft_session_id == origin_session_id
-        ):
-            insertion = self._dictation_insertion(
-                composer.draft_text(),
-                composer.cursor_index,
-                transcript,
-            )
-            composer.insert_text(insertion)
-            store.set_session_draft(origin_session_id, composer.draft_text())
-            return
-
-        try:
-            draft = store.session_draft(origin_session_id)
-            insertion = self._dictation_insertion(draft, len(draft), transcript)
-            store.set_session_draft(origin_session_id, draft + insertion)
-            # TASK-1281 review F5: this session's composer isn't the live
-            # one, so nothing records this mutation into its banked undo/
-            # redo history -- correct on its own (a background session's
-            # history must not be touched by a mutation its own composer
-            # never saw), but it leaves that banked history stale relative
-            # to the store draft it will be re-paired with on switch-in.
-            # Left alone, the banked top entry predates BOTH this dictated
-            # text and whatever was in the draft before it, so a single
-            # Ctrl+Z after switching back in would destroy both in one
-            # step (reproduced: history top = pre-"hello", store draft =
-            # "hello dictated words", one undo -> ""). Dropping the banked
-            # history instead makes the dictated text simply not undoable
-            # via history (consistent with "history records composer
-            # mutations, not store writes") rather than undoable in a way
-            # that silently corrupts the draft.
-            self._console_undo_histories.pop(origin_session_id, None)
-        except KeyError:
-            self.app_instance.notify(
-                "Dictation finished, but its original Console session is gone.",
-                severity="warning",
-            )
-
-    async def _stop_console_dictation(self, session: Any) -> None:
-        """Finish the capture this stop was requested for, and only that one.
-
-        The session is captured on the UI thread by
-        `_request_console_dictation_stop` rather than read here, and re-checked
-        after every await: a mid-capture `VoiceFailed` can drain at any point
-        in between, and it tears the capture down and tells the user itself.
-        Whichever side loses that race must stay silent, or one failure becomes
-        two toasts -- the second one either a duplicate or an internal string
-        ("Microphone dictation is not recording.") that means nothing to a user.
-
-        Args:
-            session: The dictation session that was live when the user (or the
-                wall timer) asked to stop.
-        """
-        origin_session_id = self._console_dictation_origin_session_id
-        if session is None:
-            self._notify_console_dictation_error(
-                RuntimeError("Microphone dictation is not recording.")
-            )
-            return
-        if self._console_dictation_session is not session:
-            logger.debug("Console dictation stop skipped; the capture was torn down")
-            return
-        try:
-            transcript = await asyncio.to_thread(session.stop_and_transcribe)
-        except Exception as exc:
-            await asyncio.to_thread(session.discard)
-            if self._console_dictation_session is session:
-                self._notify_console_dictation_error(exc)
-            return
-        if not self.is_mounted:
-            return
-        if self._console_dictation_session is not session:
-            return
-        # A command-only capture (Task 2's `commands_consumed` early-return
-        # in `stop_and_transcribe`) returns "" here rather than raising --
-        # that is not a silent-microphone failure, but it is also nothing to
-        # insert. `_dictation_insertion` would otherwise pad it to a stray
-        # space at the caret and persist that to the draft.
-        if transcript:
-            self._insert_console_dictation(
-                origin_session_id=origin_session_id,
-                transcript=transcript,
-            )
-        self._console_dictation_origin_session_id = None
-        self._console_dictation_partial = ""
-        self._set_console_dictation_state("idle")
-        late_discard, self._console_dictation_late_discard_ack = (
-            self._console_dictation_late_discard_ack,
-            False,
-        )
-        if not transcript:
-            # A command-only capture ("Console, new paragraph." alone, or
-            # "Console, stop." with nothing dictated first). Not an error --
-            # `stop_and_transcribe` returns "" for it deliberately -- but the
-            # user's break IS silently dropped here, and saying nothing at all
-            # is indistinguishable from a capture that did land.
-            self.app_instance.notify(
-                _VOICE_ACK_NOTHING_TO_INSERT, severity="information"
-            )
-        if late_discard:
-            # A spoken "discard" that arrived too late to abort anything. It
-            # explains the outcome better than "Capture ended." does, so it
-            # takes that slot rather than adding a second spoken ack.
-            self._speak_status(_VOICE_ACK_TOO_LATE_TO_DISCARD)
-        elif self._console_pending_voice_action is None:
-            # A plain stop -- no capture-ending command queued anything
-            # further. The command acks below speak in its place, so this
-            # and they never double up on the same capture.
-            self._speak_status(
-                "Capture ended." if transcript else _VOICE_ACK_NOTHING_TO_INSERT
-            )
-        await self._run_pending_console_voice_action(origin_session_id)
 
     async def _run_pending_console_voice_action(
         self, origin_session_id: str | None
@@ -8085,154 +6984,37 @@ class ChatScreen(BaseAppScreen):
         session.controller.on_sequencer_drained()
 
     def _request_console_dictation_stop(self) -> None:
-        if self._console_dictation_state != "recording":
-            return
-        # Read on the UI thread, atomically with the state change, so the
-        # worker finishes the capture the user stopped rather than whatever is
-        # in the field by the time it first ticks.
-        session = self._console_dictation_session
-        self._cancel_console_dictation_timer()
-        self._cancel_console_dictation_elapsed_timer()
-        self._set_console_dictation_state("transcribing")
-        self.run_worker(
-            self._stop_console_dictation(session),
-            exclusive=True,
-            group="console-dictation-stop",
-            exit_on_error=False,
-        )
+        """Stop the live capture and insert its transcript.
 
-    async def _discard_console_dictation_session(self, session: Any) -> None:
-        """Release a cancelled capture's microphone off the UI thread.
-
-        `discard()` is documented as non-blocking (`abandon()` never joins), but
-        it still reaches the audio backend to close the stream: measured at
-        1.51 s of frozen UI when called inline. Every other call site already
-        goes through `asyncio.to_thread`; this is the one that did not.
-
-        Args:
-            session: The session to abandon. Failures are logged, never raised
-                -- cancelling must not produce an error the user did not cause.
+        One-line delegation (wave-1 console decomposition, task 5). Called
+        from the mic button (`on_button_pressed`, `recording` state) and
+        from the hands-free wiring's own close-capture / force-send /
+        limit-hit paths. See `ConsoleDictationController._request_console_
+        dictation_stop` for the real implementation.
         """
-        try:
-            await asyncio.to_thread(session.discard)
-        except Exception:  # noqa: BLE001 - cancelling must never raise
-            logger.opt(exception=True).debug(
-                "Console dictation could not be cancelled cleanly"
-            )
-        # Spoken only now, not by the caller: the release above holds the
-        # microphone for up to ~1.5 s after the UI is already back at `idle`,
-        # and `_speak_status`'s state check cannot see that -- so acking from
-        # the caller talks straight into a still-open mic. Its check is still
-        # what refuses if the user has opened a NEW capture in the meantime.
-        self._speak_status("Discarded.")
+        self._dictation._request_console_dictation_stop()
+
 
     def _request_console_dictation_cancel(self) -> None:
-        """Abandon a capture that is `starting` or `recording`, without waiting.
+        """Abandon a `starting`/`recording` capture without inserting.
 
-        The `starting` phase now covers a speech-model load, which is a
-        multi-gigabyte download on a fresh machine. `abandon()` returns
-        immediately (it never joins), and the load itself is on a daemon
-        thread, so this returns the UI to idle at once and lets the process
-        exit even if the download is still running.
-
-        Dropping the session first is what makes `_start_console_dictation`'s
-        re-checks fire, so the cancelled attempt cannot also raise a failure
-        toast on its way out. The release itself is handed to a worker: the UI
-        is already back at idle by then, so nothing the user can see is waiting
-        on the audio backend letting go of the device.
-
-        Task 3: also the target for a spoken "Console, discard." mid-capture --
-        the body below has never depended on which of the two states it is
-        torn down from (both stop the same two timers and hand the same
-        session to the same worker), so `recording` needed no separate path,
-        only this guard admitting it. The manual mic button still never
-        reaches this method for `recording` (it routes there to
-        `_request_console_dictation_stop`, which inserts); only the spoken
-        command does.
-
-        Review fix round 1 (Finding 1): a spoken "discard" can also arrive
-        while `transcribing` -- the `VoiceCommand` branch admits that state
-        so a genuinely-current trailing command is not mistaken for a stale
-        one. This method cannot itself abort an in-flight stop-and-transcribe
-        (nothing here is cancelable at that point, so the guard below still
-        refuses), but the clear immediately below still applies regardless:
-        "Console, send." then "Console, discard." inside that same window
-        must drop the queued `send` even though the capture finishes normally.
+        One-line delegation (wave-1 console decomposition, task 5). Called
+        from the mic button (`on_button_pressed`, `starting` state). See
+        `ConsoleDictationController._request_console_dictation_cancel` for
+        the real implementation.
         """
-        # Unconditional, ahead of the guard below, for exactly that reason.
-        self._console_pending_voice_action = None
-        if self._console_dictation_state not in ("starting", "recording"):
-            if self._console_dictation_state == "transcribing":
-                # A spoken "discard" the guard above cannot honor: the capture
-                # is already being transcribed and will insert. Silently
-                # doing nothing here reads as the command having been missed,
-                # when in fact it was heard and refused -- and the user is
-                # about to watch text appear that they just asked to throw
-                # away. The spoken half waits for `idle` (see the field's
-                # docstring); the toast does not.
-                self._console_dictation_late_discard_ack = True
-                self.app_instance.notify(
-                    _VOICE_ACK_TOO_LATE_TO_DISCARD, severity="warning"
-                )
-            return
-        session = self._console_dictation_session
-        self._cancel_console_dictation_timer()
-        self._cancel_console_dictation_elapsed_timer()
-        self._console_dictation_session = None
-        self._console_dictation_origin_session_id = None
-        self._console_dictation_partial = ""
-        self._set_console_dictation_state("idle")
-        if session is not None:
-            # The worker speaks "Discarded." once the microphone is actually
-            # released; see `_discard_console_dictation_session`.
-            self.run_worker(
-                self._discard_console_dictation_session(session),
-                group="console-dictation-cancel",
-                exit_on_error=False,
-            )
-        self.app_instance.notify("Dictation cancelled.", severity="information")
-        if session is None:
-            # Nothing to release, so nothing to wait for.
-            self._speak_status("Discarded.")
+        self._dictation._request_console_dictation_cancel()
 
     def _request_console_dictation_start(self) -> None:
-        if self._console_dictation_state != "idle":
-            return
-        # Re-probe on every activation attempt (TASK-15): refreshes the mic
-        # tooltip so an extra installed or a microphone plugged in mid-run is
-        # reflected without a remount. Cosmetic only -- see
-        # `_sync_console_dictation_availability`'s docstring for why this
-        # never blocks the attempt below.
-        self._sync_console_dictation_availability()
-        store = self._ensure_console_chat_store()
-        self._console_dictation_origin_session_id = store.active_session_id
-        self._console_dictation_partial = ""
-        # Defensive (review fix round 1, Finding 1): the `VoiceCommand`
-        # branch's own state guard is what actually stops a stale command
-        # from queuing here, but a fresh capture starting with nothing
-        # pending is the correct state regardless of how one might have
-        # leaked in, so it is reset again on this end too.
-        self._console_pending_voice_action = None
-        self._console_dictation_late_discard_ack = False
-        self._set_console_dictation_state("starting")
-        # Unconditional -- not gated on the spoken-feedback toggle: a status
-        # ack or a "read that back" reply can be playing even with feedback
-        # off, and the single-slot TTS player only stops the PREVIOUS clip
-        # when a NEW one starts -- opening a microphone plays nothing, so it
-        # would never stop this on its own. Posted here, before the worker
-        # below ever reaches the recorder, so an in-flight clip cannot bleed
-        # into the recognizer and get transcribed into this capture's draft.
-        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
-            TTSPlaybackEvent,
-        )
+        """Open the microphone for a fresh one-shot dictation capture.
 
-        self.app_instance.post_message(TTSPlaybackEvent(action="stop"))
-        self.run_worker(
-            self._start_console_dictation(),
-            exclusive=True,
-            group="console-dictation-start",
-            exit_on_error=False,
-        )
+        One-line delegation (wave-1 console decomposition, task 5). Called
+        from the mic button (`on_button_pressed`, `idle` state) and from
+        the hands-free wiring's own open-capture path. See `ConsoleDictation
+        Controller._request_console_dictation_start` for the real
+        implementation.
+        """
+        self._dictation._request_console_dictation_start()
 
     def _capture_console_draft_switch_snapshot(self) -> None:
         """Record the composer state at the moment a session switch begins.
@@ -12468,7 +11250,12 @@ class ChatScreen(BaseAppScreen):
 
     def _sync_console_rail_visibility(self, rail_state: ConsoleRailState) -> None:
         """Apply Console rail visibility without recomposing the screen."""
-        self._sync_console_rail_sections(rail_state)
+        try:
+            left_rail = self.query_one("#console-left-rail", ConsoleLeftRail)
+        except (NoMatches, QueryError):
+            pass
+        else:
+            left_rail.sync_sections(rail_state)
         for selector, label, badge in (
             (
                 "#console-context-rail-handle",
@@ -12652,34 +11439,6 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_rail_visibility_if_changed(rail_state)
         return rail_state
 
-    def _sync_console_rail_sections(self, rail_state: ConsoleRailState) -> None:
-        """Apply left-rail section open flags to section bodies and headers.
-
-        Stored section preferences are scoped per workspace/conversation, so a
-        runtime scope switch (for example resuming a saved conversation after a
-        relaunch) can change the effective flags without a recompose.
-        """
-        for section_id in CONSOLE_RAIL_SECTION_IDS:
-            section_open = bool(getattr(rail_state, f"{section_id}_open", True))
-            self._apply_console_rail_section_open(section_id, section_open)
-
-    def _apply_console_rail_section_open(
-        self,
-        section_id: str,
-        section_open: bool,
-    ) -> None:
-        """Sync one section's body display and header glyph to an open state."""
-        try:
-            body = self.query_one(f"#console-rail-section-body-{section_id}")
-            header = self.query_one(
-                f"#console-rail-section-header-{section_id}",
-                DestinationRailSectionHeader,
-            )
-        except (NoMatches, QueryError):
-            return
-        body.styles.display = "block" if section_open else "none"
-        header.sync_open(section_open)
-
     def _toggle_console_rail_section(self, section_id: str) -> None:
         """Flip one left-rail section open state, then sync body and header."""
         if section_id not in CONSOLE_RAIL_SECTION_IDS:
@@ -12699,7 +11458,12 @@ class ChatScreen(BaseAppScreen):
             section_updates={section_id: next_open},
             notify_on_failure=False,
         )
-        self._apply_console_rail_section_open(section_id, next_open)
+        try:
+            left_rail = self.query_one("#console-left-rail", ConsoleLeftRail)
+        except (NoMatches, QueryError):
+            pass
+        else:
+            left_rail.apply_section_open(section_id, next_open)
         if section_id == "character" and next_open:
             # A collapsed body has `display: none`, so
             # `_character_avatar_available_cols()` measures 0 and
@@ -13738,12 +12502,6 @@ class ChatScreen(BaseAppScreen):
             classes=card_state.container_classes,
         )
 
-    def _render_console_live_work_status_card(
-        self, launch: ConsoleLiveWorkLaunch
-    ) -> ComposeResult:
-        """Render a reusable live-work status card for Console launch context."""
-        yield self._build_console_live_work_status_card(launch)
-
     def _console_library_rag_scope_label(self) -> str:
         """Return the readiness card's Library RAG source line (RAG-44).
 
@@ -14254,30 +13012,27 @@ class ChatScreen(BaseAppScreen):
         top: bool = True,
         variant: str = "solid",
     ) -> Any:
-        """Apply a visible Textual-native workbench frame."""
-        if variant == "quiet":
-            widget.add_class("console-frame-quiet")
-            widget.styles.border = CONSOLE_QUIET_FRAME_BORDER
-            return widget
-        widget.add_class("console-frame-solid")
-        widget.styles.border = (
-            CONSOLE_QUIET_FRAME_BORDER
-            if isinstance(widget, ConsoleComposerBar) and widget.collapsed
-            else CONSOLE_FRAME_BORDER
-        )
-        if not top:
-            widget.styles.border_top = ("none", CONSOLE_FRAME_COLOR)
-        return widget
+        """Apply a visible Textual-native workbench frame.
 
-    @staticmethod
-    def _staged_context_frame_variant(_state: ConsoleStagedContextState) -> str:
-        """Always use quiet framing; the rail frame is the single border source."""
-        return "quiet"
+        Delegates to `UI.Console_Modules.frame.frame_console_region` (wave-1
+        console decomposition, task 2). Kept as a thin shim so the
+        not-yet-extracted call sites in `compose_content` are untouched.
+        Task 6 (wave 1's close-out) checked this: 7 call sites remain
+        inside `compose_content` (the main-column block, wave 2's job), so
+        the shim stays rather than being force-removed. It is safe to
+        delete once every remaining call site imports
+        `frame_console_region` from `UI.Console_Modules.frame` directly —
+        expected during wave 2's main-column extraction, not before.
 
-    @staticmethod
-    def _workspace_context_frame_variant(_state: ConsoleWorkspaceContextState) -> str:
-        """Keep workspace context visually nested inside the framed left rail."""
-        return "quiet"
+        Args:
+            widget: The Console shell region widget to frame in place.
+            top: When False, suppresses the top border.
+            variant: ``"solid"`` or ``"quiet"`` framing.
+
+        Returns:
+            The same `widget`, mutated in place with frame styling applied.
+        """
+        return frame_console_region(widget, top=top, variant=variant)
 
     def _build_console_live_work_source_readiness_card(self) -> Container:
         """Build the mounted source-readiness card shown without a launch.
@@ -14337,10 +13092,6 @@ class ChatScreen(BaseAppScreen):
         container.styles.height = "auto"
         container.styles.min_height = 0
         return container
-
-    def _render_console_live_work_source_readiness(self) -> ComposeResult:
-        """Render Console source readiness when no live-work item is staged."""
-        yield self._build_console_live_work_source_readiness_card()
 
     @on(Button.Pressed, "#console-live-work-primary-action")
     def handle_console_live_work_primary_action(self, event: Button.Pressed) -> None:
@@ -14840,9 +13591,65 @@ class ChatScreen(BaseAppScreen):
                     left_handle.styles.display = "none"
                 yield self._frame_console_region(left_handle)
 
-                left_rail = Vertical(
-                    id="console-left-rail",
-                    classes="console-region destination-workbench-pane",
+                # The section-level values below are computed here, on the
+                # screen, exactly as they were computed inline before this
+                # extraction (wave-1 console decomposition, task 3) --
+                # session-settings resolution, the agent bridge, and
+                # character avatar rendering all stay screen-owned; only the
+                # already-computed results are handed to `ConsoleLeftRail`.
+                fleet_line = self._console_agent_fleet_summary_line()
+                settings_summary_state = self._build_console_settings_summary_state()
+                system_line_text, system_line_dim = (
+                    self._console_rail_system_line_state()
+                )
+                agent_status_line, agent_steps_text, agent_subagents_text = (
+                    self._console_agent_section_lines()
+                )
+                show_character_section = resolve_show_character_avatar(
+                    getattr(getattr(self, "app_instance", None), "app_config", {})
+                    or {}
+                )
+                # `character_avatar_widget_builder` hands `ConsoleLeftRail` a
+                # zero-arg callable, not a pre-built widget: the rail's own
+                # `compose()` calls it, so a future recompose always mounts a
+                # fresh avatar widget built from the CURRENT
+                # `self._active_character_avatar` rather than re-yielding a
+                # stale instance `_render_character_avatar_into_section` may
+                # already have removed from the DOM (final review finding 1).
+                # The lambda closes over `self` and reads
+                # `self._active_character_avatar` at CALL time, matching
+                # `ConsoleDictationController`'s late-binding constructor rule
+                # (see `dictation.py`'s module docstring) -- not a bound
+                # method or a snapshotted spec, which would freeze today's
+                # value instead.
+                character_avatar_widget_builder = None
+                character_avatar_name = ""
+                if show_character_section:
+                    character_avatar_widget_builder = (
+                        lambda: self._build_character_avatar_widget(
+                            self._active_character_avatar
+                        )
+                    )
+                    character_avatar_name = (
+                        self._active_character_avatar_name
+                        or "No character in this chat"
+                    )
+
+                left_rail = ConsoleLeftRail(
+                    rail_state=rail_state,
+                    workspace_context_state=workspace_context_state,
+                    settings_summary_state=settings_summary_state,
+                    system_line_text=system_line_text,
+                    system_line_dim=system_line_dim,
+                    fleet_line=fleet_line,
+                    agent_status_line=agent_status_line,
+                    agent_steps_text=agent_steps_text,
+                    agent_subagents_text=agent_subagents_text,
+                    agent_drilldown_active=bool(self._console_agent_drilldown_run_id),
+                    agent_full_log_available=self._console_agent_full_log_available(),
+                    show_character_section=show_character_section,
+                    character_avatar_widget_builder=character_avatar_widget_builder,
+                    character_avatar_name=character_avatar_name,
                 )
                 left_rail.can_focus = True
                 left_rail.styles.width = "3fr"
@@ -14851,395 +13658,7 @@ class ChatScreen(BaseAppScreen):
                 left_rail.styles.min_width = 24
                 if not rail_state.left_open:
                     left_rail.styles.display = "none"
-                with self._frame_console_region(left_rail):
-                    left_rail_header = Horizontal(classes="console-rail-header")
-                    left_rail_header.styles.height = 1
-                    left_rail_header.styles.min_height = 1
-                    left_rail_header.styles.max_height = 1
-                    with left_rail_header:
-                        # The "Context" (staged sources) section moved into
-                        # the Inspector rail (task-400); this title now only
-                        # names the rail itself.
-                        rail_label = Static(
-                            "Console context",
-                            id="console-context-rail-title",
-                            classes="console-rail-title",
-                        )
-                        rail_label.styles.width = "1fr"
-                        yield rail_label
-                        collapse_button = Button(
-                            GLYPH_COLLAPSE_LEFT,
-                            id="console-context-rail-collapse",
-                            classes="console-rail-collapse-button",
-                            compact=True,
-                        )
-                        collapse_button.tooltip = "Collapse Console context rail"
-                        collapse_button.styles.width = 3
-                        collapse_button.styles.min_width = 3
-                        collapse_button.styles.max_width = 3
-                        yield collapse_button
-
-                    # TASK-1140 (UAT F1, fix round 1): the fleet summary --
-                    # "N other agents running, M waiting for approval."
-                    # (parallel-agents spec §6, PA-T8) -- is pinned HERE, a
-                    # plain sibling of `left_rail_header` inside the
-                    # non-scrolling `left_rail` Vertical, deliberately
-                    # OUTSIDE `#console-left-rail-body` (the `VerticalScroll`
-                    # every section below shares). `#console-left-rail-body`
-                    # is CSS `height: 1fr` -- it only ever claims whatever
-                    # vertical space is left over after ITS non-scrolling
-                    # siblings (the header, this line) are laid out, so this
-                    # widget is painted unconditionally: independent of rail
-                    # scroll position, which sections are open/collapsed,
-                    # and how much step content the Agent section carries.
-                    # Round 1 (compose-order-only, fleet line first inside
-                    # the Agent section body) was insufficient -- Session
-                    # and Model are BOTH open by persisted default
-                    # (`ConsoleRailPreferences.session_open`/`model_open`)
-                    # and together already exceed the rail body's own
-                    # ~10-row visible budget in a 44-row terminal, so any
-                    # position inside that shared scrollable flow could
-                    # still land below the fold before a user ever touches
-                    # the Agent section's own content.
-                    #
-                    # Present but display:none when both counts are zero
-                    # (mirrors the recovery Static in the Model section),
-                    # so `_sync_console_agent_section`'s targeted update
-                    # never needs to mount/unmount it -- and the pinned slot
-                    # collapses to zero rows rather than leaving a blank
-                    # line (`height: auto` + `display: none` both cooperate
-                    # here: Textual excludes a `display: none` widget from
-                    # layout entirely).
-                    fleet_line = self._console_agent_fleet_summary_line()
-                    fleet_summary = Static(
-                        fleet_line,
-                        id="console-agent-fleet-summary",
-                        classes="console-agent-section-fleet-summary",
-                        markup=False,
-                    )
-                    fleet_summary.styles.height = "auto"
-                    fleet_summary.styles.display = "block" if fleet_line else "none"
-                    yield fleet_summary
-
-                    with VerticalScroll(
-                        id="console-left-rail-body",
-                        classes="console-left-rail-body",
-                    ):
-                        # Section 1: Session (workspace + conversations).
-                        yield DestinationRailSectionHeader(
-                            "Session",
-                            section_id="session",
-                            open=rail_state.session_open,
-                            id="console-rail-section-header-session",
-                        )
-                        session_body = Vertical(
-                            id="console-rail-section-body-session",
-                            classes="console-rail-section-body",
-                        )
-                        session_body.styles.height = "auto"
-                        if not rail_state.session_open:
-                            session_body.styles.display = "none"
-                        with session_body:
-                            workspace_context_tray = ConsoleWorkspaceContextTray(
-                                workspace_context_state,
-                                show_heading=False,
-                                id="console-workspace-context",
-                                classes="console-left-rail-section",
-                            )
-                            workspace_context_tray.styles.width = "100%"
-                            workspace_context_tray.styles.min_width = 0
-                            yield self._frame_console_region(
-                                workspace_context_tray,
-                                variant=self._workspace_context_frame_variant(
-                                    workspace_context_state
-                                ),
-                            )
-
-                        # Section 2: Model (provider/model readout lines plus a
-                        # Configure shortcut into the Console session settings).
-                        yield DestinationRailSectionHeader(
-                            "Model",
-                            section_id="model",
-                            open=rail_state.model_open,
-                            id="console-rail-section-header-model",
-                        )
-                        model_body = Vertical(
-                            id="console-rail-section-body-model",
-                            classes="console-rail-section-body",
-                        )
-                        model_body.styles.height = "auto"
-                        if not rail_state.model_open:
-                            model_body.styles.display = "none"
-                        with model_body:
-                            summary_state = self._build_console_settings_summary_state()
-                            provider_value = (
-                                _summary_row_value(summary_state.provider_row) or "—"
-                            )
-                            model_value = (
-                                _summary_row_value(summary_state.model_row) or "—"
-                            )
-                            temperature_match = re.search(
-                                r"T ([\d.]+)", summary_state.sampling_row or ""
-                            )
-                            temperature_value = (
-                                temperature_match.group(1) if temperature_match else "—"
-                            )
-                            max_tokens_match = re.search(
-                                r"max_tokens (\d+)", summary_state.sampling_row or ""
-                            )
-                            max_tokens_value = (
-                                max_tokens_match.group(1) if max_tokens_match else "—"
-                            )
-
-                            with Horizontal(
-                                id="console-model-section-provider",
-                                classes="console-model-section-line",
-                            ):
-                                yield Static(
-                                    "Provider",
-                                    classes="console-model-section-label",
-                                    markup=False,
-                                )
-                                yield Static(
-                                    provider_value,
-                                    classes="console-model-section-value",
-                                    markup=False,
-                                )
-                            with Horizontal(
-                                id="console-model-section-model",
-                                classes="console-model-section-line",
-                            ):
-                                yield Static(
-                                    "Model",
-                                    classes="console-model-section-label",
-                                    markup=False,
-                                )
-                                yield Static(
-                                    model_value,
-                                    classes="console-model-section-value",
-                                    markup=False,
-                                )
-                            with Horizontal(
-                                id="console-model-section-temperature",
-                                classes="console-model-section-line",
-                            ):
-                                yield Static(
-                                    "Temperature",
-                                    classes="console-model-section-label",
-                                    markup=False,
-                                )
-                                yield Static(
-                                    temperature_value,
-                                    classes="console-model-section-value",
-                                    markup=False,
-                                )
-                            with Horizontal(
-                                id="console-model-section-max-tokens",
-                                classes="console-model-section-line",
-                            ):
-                                yield Static(
-                                    "Max tokens",
-                                    classes="console-model-section-label",
-                                    markup=False,
-                                )
-                                yield Static(
-                                    max_tokens_value,
-                                    classes="console-model-section-value",
-                                    markup=False,
-                                )
-
-                            readiness = (summary_state.readiness_label or "").strip()
-                            recovery = Static(
-                                readiness or "",
-                                id="console-model-section-recovery",
-                                classes="console-model-section-recovery",
-                                markup=False,
-                            )
-                            recovery.styles.display = "none"
-                            yield recovery
-
-                            system_line_text, system_line_dim = (
-                                self._console_rail_system_line_state()
-                            )
-                            system_line = Static(
-                                system_line_text,
-                                id="console-rail-system-line",
-                                markup=False,
-                            )
-                            # Same one-row clipping hazard as the model line
-                            # above (task-186): nowrap + ellipsis so a long
-                            # system prompt truncates visibly instead of
-                            # word-wrapping onto a hidden second row.
-                            system_line.styles.text_wrap = "nowrap"
-                            system_line.styles.text_overflow = "ellipsis"
-                            system_line.set_class(
-                                system_line_dim, "console-rail-system-line-dim"
-                            )
-                            yield system_line
-                            configure = Button(
-                                "Configure",
-                                id="console-model-section-configure",
-                                classes="console-workspace-action",
-                                compact=True,
-                            )
-                            configure.tooltip = "Configure Console session settings"
-                            yield configure
-
-                        # Section 3: Agent (run inspector -- the watch-and-drill
-                        # surface for the live/most-recent agent run and its
-                        # historical sub-agent runs).
-                        yield DestinationRailSectionHeader(
-                            "Agent",
-                            section_id="agent",
-                            open=rail_state.agent_open,
-                            id="console-rail-section-header-agent",
-                        )
-                        agent_body = Vertical(
-                            id="console-rail-section-body-agent",
-                            classes="console-rail-section-body console-agent-section",
-                        )
-                        agent_body.styles.height = "auto"
-                        if not rail_state.agent_open:
-                            agent_body.styles.display = "none"
-                        with agent_body:
-                            # TASK-1140 (UAT F1, fix round 1): the fleet
-                            # summary Static used to mount HERE (first, per
-                            # round 1's compose-order-only fix). Round 1's
-                            # own harness proved that placement insufficient
-                            # once the reviewer ran it against Session/Model
-                            # left at their real PERSISTED DEFAULTS (both
-                            # open) rather than collapsed: those two
-                            # sections alone already exceed the rail's own
-                            # ~10-row visible budget in a 44-row terminal,
-                            # so ANY position inside the shared, scrollable
-                            # `#console-left-rail-body` -- including the top
-                            # of the Agent section -- can still land below
-                            # the fold. The widget now lives OUTSIDE that
-                            # scrollable flow entirely (see `left_rail_header`
-                            # below, a few hundred lines up in this same
-                            # compose method) so it is painted regardless of
-                            # scroll position, section open/collapsed state,
-                            # or step-content length. Not duplicated here --
-                            # two widgets sharing one id is invalid, and the
-                            # pinned copy already covers "does the Agent
-                            # section's own busy state show a fleet line".
-                            status_line, steps_text, subagents_text = (
-                                self._console_agent_section_lines()
-                            )
-                            yield Static(
-                                status_line,
-                                id="console-agent-section-status",
-                                classes="console-agent-section-line",
-                                markup=False,
-                            )
-                            yield Static(
-                                steps_text,
-                                id="console-agent-section-steps",
-                                classes="console-agent-section-steps",
-                                markup=False,
-                            )
-                            yield Static(
-                                subagents_text,
-                                id="console-agent-section-subagents",
-                                classes="console-agent-section-subagents",
-                                markup=False,
-                            )
-                            back_button = Button(
-                                "Back",
-                                id="console-agent-drilldown-back",
-                                classes="console-workspace-action console-agent-drilldown-back",
-                                compact=True,
-                            )
-                            back_button.tooltip = "Return to the live agent run view"
-                            if not self._console_agent_drilldown_run_id:
-                                back_button.styles.display = "none"
-                            yield back_button
-                            # TASK-870 (AC#6/#7): the full-run-log
-                            # affordance -- present only while a run log
-                            # actually exists for whatever run this section
-                            # is currently showing.
-                            full_log_button = Button(
-                                "View full log",
-                                id="console-agent-view-full-log",
-                                classes=(
-                                    "console-workspace-action "
-                                    "console-agent-view-full-log"
-                                ),
-                                compact=True,
-                            )
-                            full_log_button.tooltip = (
-                                "Open the full, untruncated run log for this "
-                                "run -- what the model actually saw, before "
-                                "the Console's display cap trimmed it."
-                            )
-                            if not self._console_agent_full_log_available():
-                                full_log_button.styles.display = "none"
-                            yield full_log_button
-
-                        # Section 4: Details (storage, sync, handoff plumbing).
-                        yield DestinationRailSectionHeader(
-                            "Details",
-                            section_id="details",
-                            open=rail_state.details_open,
-                            id="console-rail-section-header-details",
-                        )
-                        details_body = Vertical(
-                            id="console-rail-section-body-details",
-                            classes="console-rail-section-body",
-                        )
-                        details_body.styles.height = "auto"
-                        if not rail_state.details_open:
-                            details_body.styles.display = "none"
-                        with details_body:
-                            details_tray = ConsoleWorkspaceDetailsTray(
-                                workspace_context_state,
-                                id="console-workspace-details",
-                                classes="console-left-rail-section",
-                            )
-                            details_tray.styles.width = "100%"
-                            details_tray.styles.min_width = 0
-                            yield details_tray
-
-                        # Section 5: Character (avatar of the active character).
-                        if resolve_show_character_avatar(
-                            getattr(
-                                getattr(self, "app_instance", None), "app_config", {}
-                            )
-                            or {}
-                        ):
-                            yield DestinationRailSectionHeader(
-                                "Character",
-                                section_id="character",
-                                open=rail_state.character_open,
-                                id="console-rail-section-header-character",
-                            )
-                            character_body = Vertical(
-                                id="console-rail-section-body-character",
-                                classes="console-rail-section-body",
-                            )
-                            character_body.styles.height = "auto"
-                            if not rail_state.character_open:
-                                character_body.styles.display = "none"
-                            with character_body:
-                                avatar_holder = ClickableAvatarBox(
-                                    id="console-character-avatar"
-                                )
-                                # task-1661: Container defaults to
-                                # width/height 1fr, so the holder claimed the
-                                # entire rail section -- the portrait sat in
-                                # the corner of a tall empty box with the name
-                                # pushed to the bottom. Hug the image instead.
-                                avatar_holder.styles.width = "auto"
-                                avatar_holder.styles.height = "auto"
-                                with avatar_holder:
-                                    yield self._build_character_avatar_widget(
-                                        self._active_character_avatar
-                                    )
-                                yield Static(
-                                    self._active_character_avatar_name
-                                    or "No character in this chat",
-                                    id="console-character-name",
-                                )
+                yield self._frame_console_region(left_rail)
 
                 main_column = Vertical(id="console-main-column")
                 main_column.styles.width = "13fr"
@@ -15255,109 +13674,46 @@ class ChatScreen(BaseAppScreen):
                     with transcript_region:
                         yield self._ensure_console_session_surface()
 
-                right_rail = Vertical(
-                    id="console-right-rail",
-                    classes="console-region destination-workbench-pane",
+                # The live-work card is the one piece of this rail's content
+                # that reaches beyond rail-local state (self.app_instance,
+                # self._console_library_rag_query via
+                # _build_console_live_work_source_readiness_card) -- built
+                # here, on the screen, exactly as it was built inline before
+                # this extraction (wave-1 console decomposition, task 4).
+                # `live_work_card_builder` hands `ConsoleInspectorRail` a
+                # zero-arg callable, not a finished widget: the rail's own
+                # `compose()` calls it, so a future recompose always mounts a
+                # fresh card instead of re-yielding a stale instance
+                # `_apply_console_live_work_card_swap` may already have
+                # removed from the DOM (final review finding 1) -- the same
+                # builder shape `character_avatar_widget_builder` uses for
+                # `ConsoleLeftRail` above. The lambda closes over `self` and
+                # reads `self._pending_console_launch_context` at CALL time
+                # (matching `ConsoleDictationController`'s late-binding
+                # constructor rule -- see `dictation.py`'s module docstring),
+                # which is the same value `pending_launch` above was just
+                # resolved from and nothing mutates in between.
+                right_rail = ConsoleInspectorRail(
+                    staged_context_state=staged_context_state,
+                    retrieval_scope_state=retrieval_scope_state,
+                    inspector_state=inspector_state,
+                    settings_summary_state=self._build_console_settings_summary_state(),
+                    live_work_card_builder=(
+                        lambda: (
+                            self._build_console_live_work_status_card(
+                                self._pending_console_launch_context
+                            )
+                            if self._pending_console_launch_context
+                            else self._build_console_live_work_source_readiness_card()
+                        )
+                    ),
                 )
                 right_rail.can_focus = True
                 right_rail.styles.width = "4fr"
                 right_rail.styles.min_width = 34
                 if not rail_state.right_open:
                     right_rail.styles.display = "none"
-                with self._frame_console_region(right_rail):
-                    right_rail_header = Horizontal(classes="console-rail-header")
-                    right_rail_header.styles.height = 1
-                    right_rail_header.styles.min_height = 1
-                    right_rail_header.styles.max_height = 1
-                    with right_rail_header:
-                        rail_label = Static(
-                            "Inspector",
-                            id="console-inspector-rail-title",
-                            classes="console-rail-title",
-                        )
-                        rail_label.styles.width = "1fr"
-                        yield rail_label
-                        collapse_button = Button(
-                            GLYPH_COLLAPSE_RIGHT,
-                            id="console-inspector-rail-collapse",
-                            classes="console-rail-collapse-button",
-                            compact=True,
-                        )
-                        collapse_button.tooltip = "Collapse Inspector rail"
-                        collapse_button.styles.width = 3
-                        collapse_button.styles.min_width = 3
-                        collapse_button.styles.max_width = 3
-                        yield collapse_button
-                    with VerticalScroll(
-                        id="console-inspector-rail-body",
-                        classes="console-inspector-rail-body",
-                    ):
-                        # Context (staged sources) section -- moved here from
-                        # the left rail (task-400). Pinned to the TOP of the
-                        # Inspector body so it is visible without scrolling
-                        # and reads above the run inspector's Source
-                        # Readiness section (splitting the monolithic
-                        # ConsoleRunInspector at that boundary would have
-                        # meant reworking its TASK-259 in-place-update
-                        # fingerprinting for a placement change). Same pure
-                        # display-state seam as before: no DB reads on
-                        # compose/recompose.
-                        staged_context_tray = ConsoleStagedContextTray(
-                            staged_context_state,
-                            id="console-staged-context-tray",
-                            classes="console-inspector-context-section",
-                        )
-                        staged_context_tray.styles.width = "100%"
-                        staged_context_tray.styles.min_width = 0
-                        staged_context_tray.styles.height = "auto"
-                        staged_context_tray.styles.min_height = (
-                            3 if staged_context_state.is_empty else 4
-                        )
-                        staged_context_tray.styles.max_height = (
-                            6 if staged_context_state.is_empty else 10
-                        )
-                        yield self._frame_console_region(
-                            staged_context_tray,
-                            variant=self._staged_context_frame_variant(
-                                staged_context_state
-                            ),
-                        )
-                        # task-9: Retrieval scope row -- a sibling of the
-                        # Sources tray above (never a row inside it or
-                        # inside ConsoleRunInspector below: design spec
-                        # section 4 keeps the staged-vs-scope mechanism
-                        # boundary visible). Renders purely from session
-                        # state -- no DB reads on compose/recompose.
-                        retrieval_scope_row = ConsoleRetrievalScopeRow(
-                            retrieval_scope_state,
-                            id=CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
-                            classes="console-inspector-context-section",
-                        )
-                        retrieval_scope_row.styles.width = "100%"
-                        retrieval_scope_row.styles.min_width = 0
-                        retrieval_scope_row.styles.height = "auto"
-                        yield self._frame_console_region(
-                            retrieval_scope_row, variant="quiet"
-                        )
-                        with Vertical(id="console-run-inspector"):
-                            yield ConsoleRunInspector(
-                                inspector_state,
-                                id="console-run-inspector-state",
-                            )
-                            settings_summary = ConsoleSettingsSummary(
-                                self._build_console_settings_summary_state(),
-                                id="console-settings-summary",
-                                classes="console-inspector-session-settings console-settings-summary",
-                            )
-                            settings_summary.styles.width = "100%"
-                            settings_summary.styles.min_width = 0
-                            yield settings_summary
-                        if pending_launch:
-                            yield from self._render_console_live_work_status_card(
-                                pending_launch
-                            )
-                        else:
-                            yield from self._render_console_live_work_source_readiness()
+                yield self._frame_console_region(right_rail)
 
                 right_handle = ConsoleRailHandle(
                     label=rail_state.right_label,
@@ -15586,15 +13942,7 @@ class ChatScreen(BaseAppScreen):
             # screen that is being torn down.
             hands_free.tick_timer.stop()
         self._console_hands_free = None
-        self._cancel_console_dictation_timer()
-        self._cancel_console_dictation_elapsed_timer()
-        dictation_session = self._console_dictation_session
-        self._console_dictation_session = None
-        self._console_dictation_origin_session_id = None
-        self._console_dictation_partial = ""
-        self._console_dictation_state = "idle"
-        if dictation_session is not None:
-            await asyncio.to_thread(dictation_session.discard)
+        await self._dictation.teardown()
         self._console_original_attempt_previews.clear()
         controller = self._console_chat_controller
         if controller is not None:
@@ -22395,12 +20743,6 @@ class ChatScreen(BaseAppScreen):
         if button_id == "console-agent-view-full-log":
             event.stop()
             self._open_console_agent_run_log_viewer()
-            return
-        if button_id and button_id.startswith(RAIL_SECTION_TOGGLE_PREFIX):
-            event.stop()
-            self._toggle_console_rail_section(
-                button_id.removeprefix(RAIL_SECTION_TOGGLE_PREFIX)
-            )
             return
         if button_id == "console-new-chat-tab":
             event.stop()

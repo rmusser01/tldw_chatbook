@@ -27,6 +27,28 @@ worth doing on its own terms.
 | Distinct `self.*` names | 605 | 547 | 439 |
 | Largest method | `compose_content` 681 | `_render_provider_detail` 530 | `compose_content` 381 |
 
+> **Wave 1 update (2026-08-04, `refactor/console-decomposition-wave1`):** the
+> `chat_screen.py` row above (20,338 / 567) was recorded before this and
+> other work landed on `dev`. Measured directly against this wave's actual
+> starting point — `origin/dev` at merge-base `265dbd687`, itself already
+> grown to **22,896 lines / 620 methods** since the numbers above were
+> written (unrelated concurrent work on other screens/features, not this
+> wave) — the file now stands at **21,232 lines / 621 `ChatScreen` methods**
+> after extracting the left rail, inspector rail, and dictation controller
+> into `UI/Console_Modules/` (2,651 lines across `frame.py`, `left_rail.py`,
+> `right_rail.py`, `dictation.py`). That is a real **1,664-line reduction**
+> against the wave's true starting point (22,896 → 21,232); the method
+> count is roughly flat (620 → 621) because each extracted cluster left
+> thin one-line delegations or `@property` proxies behind on `ChatScreen`
+> (see "Migration safety" note in each task's report). Method counts were
+> measured with `ast` — `FunctionDef`/`AsyncFunctionDef` nodes directly in
+> the class body, not a text search. See "Decomposition targets" below,
+> where the extracted rows are now marked done. The file is still large on
+> purpose: success here is ownership moving, not a line-count target (see
+> "Order and delivery" below) — the main column, the workspace/session/
+> message/agent/character/image controllers, the composer-orchestration
+> controller, and `on_key` are all wave 2.
+
 Two facts shape everything below.
 
 **The state surface is small.** Nineteen to thirty-three instance attributes across
@@ -97,7 +119,7 @@ A region widget is a compound `Widget` that:
   existing subclasses) for not orphaning mouse capture across its own teardown;
 - posts messages upward for anything the screen must coordinate, rather than being
   called downward;
-- owns the CSS for its own subtree in `css/features/`.
+- owns the CSS for its own subtree in `tldw_chatbook/css/features/`.
 
 The screen keeps layout, cross-region coordination, and the Textual lifecycle.
 
@@ -164,12 +186,12 @@ of their own. That is the gap.
 
 | Cluster | Lines / methods | Kind |
 |---|---|---|
-| rail + inspector | 958 / 42 | region widgets (left, context, inspector rails) |
-| composer | 377 / 18 | controller — the region widget already exists (`ConsoleComposerBar` at `#console-native-composer`); the screen-side lines are orchestration (undo/redo, history navigation, action-state sync), not rendering |
+| rail + inspector | 958 / 42 | region widgets (left, context, inspector rails) — **(wave 1, done)**: `ConsoleLeftRail` (task 3) and `ConsoleInspectorRail` (task 4), in `UI/Console_Modules/left_rail.py` / `right_rail.py`. The DOM turned out to name two rails, not three — the spec's "context" rail is the left rail's own `console-context-rail-*` id family, not a separate region; see `right_rail.py`'s module docstring |
+| composer | 377 / 18 | controller — the region widget already exists (`ConsoleComposerBar` at `#console-native-composer`); the screen-side lines are orchestration (undo/redo, history navigation, action-state sync), not rendering — wave 2 |
 | workspace | 1,382 / 40 | controller |
 | session | 916 / 31 | controller |
 | message | 1,027 / 23 | controller |
-| dictation | 742 / 20 | controller |
+| dictation | 742 / 20 | controller — **(wave 1, done)**: `ConsoleDictationController` (task 5), in `UI/Console_Modules/dictation.py` |
 | agent | 612 / 15 | controller + a region widget for its rail section |
 | character | 708 / 14 | controller + a region widget for its rail section |
 | image / attachment | 1,031 / 27 | controller |
@@ -219,8 +241,8 @@ Rules, all non-negotiable:
    **and** 235x52. Where such a test already exists for the region, it must pass
    unchanged; where none exists, it is written *before* the move, against the current
    code, so it is proven to pass before it is relied upon.
-4. **CSS moves with its region**, into `css/features/`, and the bundle is regenerated via
-   `build_css.py`. The bundle is never hand-edited.
+4. **CSS moves with its region**, into `tldw_chatbook/css/features/`, and the bundle is regenerated via
+   `/private/tmp/tldw-venv/bin/python tldw_chatbook/css/build_css.py`. The bundle is never hand-edited.
 5. **Behaviour changes are forbidden in an extraction.** An extraction that also fixes a
    bug is two changes; do the fix separately, before or after, so a regression has one
    candidate cause.
