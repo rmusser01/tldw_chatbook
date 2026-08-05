@@ -245,3 +245,90 @@ def test_realtime_package_import_does_not_pull_in_websockets():
         f"tldw_chatbook.LLM_Calls baseline ({baseline_seconds:.3f}s) -- "
         "check for a heavy/websockets import at package level"
     )
+
+
+# ---------------------------------------------------------------------------
+# Optional-dependency guard for the transport (PR #1350 review, Q2)
+# ---------------------------------------------------------------------------
+
+
+def test_transport_module_imports_without_websockets_at_module_scope():
+    """`websockets` is the `realtime` extra's dependency, so importing the
+    transport must not require it -- the failure belongs at USE time, with
+    a message naming the extra."""
+    import subprocess
+    import sys
+
+    probe = (
+        "import sys\n"
+        "import tldw_chatbook.LLM_Calls.realtime.transport as t\n"
+        "assert 'websockets' not in sys.modules, "
+        "'transport imported websockets at module scope'\n"
+        "print('ok')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.asyncio
+async def test_connect_without_the_extra_names_the_extra(monkeypatch):
+    """A baseline install that reaches this code deserves "install the
+    realtime extra", not a raw ImportError naming a package the user has
+    never heard of."""
+    from tldw_chatbook.LLM_Calls.realtime import transport as transport_module
+
+    def _missing(*_args, **_kwargs):
+        raise ImportError("No module named 'websockets'")
+
+    monkeypatch.setattr(transport_module, "require_dependency", _missing)
+
+    with pytest.raises(ImportError) as excinfo:
+        await transport_module.WsTransport().connect("ws://example.invalid", {})
+
+    assert "realtime" in str(excinfo.value)
+    assert "pip install" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_connect_below_the_version_floor_names_the_floor(monkeypatch):
+    """websockets 12/13's legacy client takes `extra_headers`, so our call
+    dies with a bare "unexpected keyword argument" that reads as an app
+    bug. Name the floor instead."""
+    from tldw_chatbook.LLM_Calls.realtime import transport as transport_module
+
+    class _AncientWebsockets:
+        @staticmethod
+        async def connect(_url, **kwargs):
+            raise TypeError(
+                "connect() got an unexpected keyword argument 'additional_headers'"
+            )
+
+    monkeypatch.setattr(
+        transport_module, "require_dependency", lambda *a, **k: _AncientWebsockets
+    )
+
+    with pytest.raises(ImportError) as excinfo:
+        await transport_module.WsTransport().connect("ws://example.invalid", {})
+
+    assert ">=14.0" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_connect_does_not_swallow_unrelated_type_errors(monkeypatch):
+    """Only the signature mismatch is translated; anything else is a real
+    bug and must keep its own traceback."""
+    from tldw_chatbook.LLM_Calls.realtime import transport as transport_module
+
+    class _BrokenWebsockets:
+        @staticmethod
+        async def connect(_url, **kwargs):
+            raise TypeError("something else entirely")
+
+    monkeypatch.setattr(
+        transport_module, "require_dependency", lambda *a, **k: _BrokenWebsockets
+    )
+
+    with pytest.raises(TypeError, match="something else entirely"):
+        await transport_module.WsTransport().connect("ws://example.invalid", {})

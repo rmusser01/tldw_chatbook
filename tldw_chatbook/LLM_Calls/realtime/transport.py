@@ -5,9 +5,22 @@ wire-protocol knowledge -- just connect/send/receive/close over a raw
 WebSocket. Provider-specific sessions (e.g. `openai_session.OpenAIRealtimeSession`)
 build their wire protocol on top of `WsTransport`.
 
-`websockets` is imported at module level here (not lazily) because this
-module itself is only ever imported by a provider session module, which is
-already the lazy-import boundary documented in
+`websockets` is an OPTIONAL dependency (the `realtime` extra) and is
+resolved through `Utils/optional_deps.py` at USE time, never imported at
+module scope. Two reasons, and the second is why the module-scope import
+that used to live here was wrong even though nothing crashed:
+
+  * Repo policy: optional dependencies go through that one accessor, so
+    availability is cached and reported in one place rather than being
+    rediscovered by every importer's own try/except (PR #1350 review, Q2).
+  * A baseline install that reaches this module -- e.g. a user who enabled
+    the realtime engine in config without installing the extra -- deserves
+    "install the realtime extra", not an `ImportError` traceback naming a
+    package they have never heard of. Failing at use time is what lets the
+    caller turn that into the loop's ordinary loud fallback.
+
+This module is still only imported by a provider session module, which is
+itself the lazy-import boundary documented in
 `LLM_Calls/realtime/__init__.py` -- `import tldw_chatbook.LLM_Calls.realtime`
 alone never reaches this file.
 """
@@ -16,20 +29,54 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import websockets
 from loguru import logger
 
-# Imported from its defining module rather than the top-level package: the
-# `realtime` extra's floor is `websockets>=14.0` (the release where the
-# asyncio client -- and with it `connect(additional_headers=...)`, used
-# below -- became what the top-level `connect` resolves to; 12/13's legacy
-# client takes `extra_headers` and raises TypeError on ours). This module
-# path is where `ClientConnection` actually lives across that whole
-# supported range, so the annotation resolves at the floor and not only on
-# newer releases that also re-export it at package level.
-from websockets.asyncio.client import ClientConnection
+from ...Utils.optional_deps import require_dependency
+
+if TYPE_CHECKING:  # pragma: no cover - typing only, never imported at runtime
+    # Annotated from its DEFINING module rather than the top-level package:
+    # the `realtime` extra's floor is `websockets>=14.0` (the release where
+    # the asyncio client -- and with it `connect(additional_headers=...)`,
+    # used below -- became what the top-level `connect` resolves to; 12/13's
+    # legacy client takes `extra_headers` and raises TypeError on ours).
+    # This module path is where `ClientConnection` lives across that whole
+    # supported range.
+    from websockets.asyncio.client import ClientConnection
+
+#: Message shown when the extra is missing, naming the extra rather than
+#: the package: `pip install websockets` alone would leave the audio
+#: backends missing and fail one layer further in.
+_MISSING_WEBSOCKETS = (
+    "The realtime voice engine needs the 'realtime' extra. Install it with: "
+    'pip install "tldw_chatbook[realtime]"'
+)
+
+#: Shown when websockets is installed but predates the asyncio client's
+#: `additional_headers` (i.e. below the extra's declared floor). Named
+#: explicitly because the raw failure is a bare TypeError about a keyword
+#: argument, which reads as an app bug rather than a stale install.
+_WEBSOCKETS_TOO_OLD = (
+    "The installed 'websockets' is older than the realtime engine's floor "
+    "(>=14.0): its connect() does not accept additional_headers. Upgrade "
+    'with: pip install --upgrade "tldw_chatbook[realtime]"'
+)
+
+
+def _websockets():
+    """Return the `websockets` module, or raise a message worth reading.
+
+    Returns:
+        The imported `websockets` module.
+
+    Raises:
+        ImportError: When the `realtime` extra is not installed.
+    """
+    try:
+        return require_dependency("websockets", "realtime")
+    except ImportError as exc:
+        raise ImportError(_MISSING_WEBSOCKETS) from exc
 
 
 class WsTransport:
@@ -61,7 +108,17 @@ class WsTransport:
                 connect or complete the opening handshake (connection
                 refused, DNS failure, handshake rejection, etc.).
         """
-        self._ws = await websockets.connect(url, additional_headers=headers)
+        websockets = _websockets()
+        try:
+            self._ws = await websockets.connect(url, additional_headers=headers)
+        except TypeError as exc:
+            # Precisely the below-floor signature mismatch: the legacy
+            # client takes `extra_headers`, so it rejects this call with a
+            # bare "unexpected keyword argument" that names nothing a user
+            # could act on.
+            if "additional_headers" in str(exc):
+                raise ImportError(_WEBSOCKETS_TOO_OLD) from exc
+            raise
         self._closed = False
 
     async def send_json(self, obj: dict[str, Any]) -> None:
@@ -104,6 +161,11 @@ class WsTransport:
         """
         if self._ws is None:
             raise RuntimeError("WsTransport.recv_loop called before connect()")
+        # Resolved once, into a local: this loop can only run after
+        # `connect()` succeeded, so the module is necessarily importable
+        # here, and looking it up inside the `except` clause would re-enter
+        # the dependency accessor on every raised exception.
+        connection_closed = _websockets().exceptions.ConnectionClosed
         try:
             async for raw in self._ws:
                 try:
@@ -115,7 +177,7 @@ class WsTransport:
                     )
                     continue
                 on_event(event)
-        except websockets.exceptions.ConnectionClosed:
+        except connection_closed:
             # Both clean (1000/1001) and abnormal closes resolve to a
             # returned reason string, per this method's contract -- never
             # an exception out of a plain "the peer hung up" condition.
