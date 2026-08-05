@@ -145,7 +145,7 @@ async def test_the_inspector_follows_the_same_three_states():
         )
         # task-1347: the hint container existing is not evidence it says
         # anything -- assert the actual guidance sentence, which names the
-        # two controls (New, then New Source) that get a brand-new profile
+        # two controls (New, then New source) that get a brand-new profile
         # unstuck.
         hint_text = str(
             inspector.query_one("#inspector-first-run-hint").renderable

@@ -318,12 +318,24 @@ class WatchlistTree(Vertical):
             classes="watchlist-tree-actions",
         )
         yield Horizontal(
+            # TASK-2303 AC#1. This button ASSIGNS a source that already
+            # exists; it does not make one. Labelled "Add source" it was one
+            # of three near-synonyms on the same screen ("Add source",
+            # "Create source", "New Source") covering two different
+            # operations, and the 2026-08-04 UAT read it as a third way to
+            # create a feed. The vocabulary is split by verb now: NEW brings
+            # a source into existence, ADD files one that already does, and
+            # the tooltip names the other operation so a user who wanted it
+            # is not left guessing.
             action(
-                "Add source",
+                "Add existing",
                 "wl-tree-add-source",
                 allowed=on_watchlist,
                 blocked_copy=self._NEEDS_WATCHLIST,
-                ready_copy="Add an existing source to the selected watchlist.",
+                ready_copy=(
+                    "Add a source you already have to the selected watchlist. "
+                    "To make a new one, use New source under Sources."
+                ),
             ),
             action(
                 "Remove",

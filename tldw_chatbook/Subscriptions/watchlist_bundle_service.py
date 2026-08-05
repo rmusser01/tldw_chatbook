@@ -260,6 +260,31 @@ class WatchlistBundleService:
         ).fetchall()
         return [row[0] for row in rows]
 
+    def list_watchlists_for_source(self, subscription_id: int) -> list[int]:
+        """Watchlist ids a source belongs to.
+
+        The mirror of :meth:`list_sources`, added so the source-first assign
+        flow can ask "which watchlists is this source NOT in" with ONE query
+        instead of calling ``list_sources`` once per watchlist -- the same
+        one-query-regardless-of-size reasoning ``list_source_rows`` records
+        for the other direction.
+
+        Args:
+            subscription_id: id of the subscription to look up. An id that
+                does not exist, and one belonging to no watchlist, both
+                yield an empty list -- the two cases are not distinguished.
+
+        Returns:
+            Watchlist ids ordered by when the source was added to each, then
+            by watchlist id.
+        """
+        rows = self._db.conn.execute(
+            "SELECT watchlist_id FROM watchlist_sources "
+            "WHERE subscription_id = ? ORDER BY added_at, watchlist_id",
+            (subscription_id,),
+        ).fetchall()
+        return [row[0] for row in rows]
+
     def list_source_rows(self, watchlist_id: int) -> list[dict[str, Any]]:
         """Sources in a watchlist, with the fields a tree row needs.
 

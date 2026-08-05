@@ -33,7 +33,7 @@ from ...Subscriptions.noise_defaults import (
 from ...Utils.input_validation import sanitize_string
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .overview_pane import OverviewPane
-from .watchlist_tree import TreeScope
+from .watchlist_tree import AddSourceToWatchlistRequested, TreeScope
 
 
 class PreviewRequested(Message):
@@ -70,6 +70,26 @@ class ResumeSourceRequested(Message):
 
 class StageInConsoleRequested(Message):
     """Posted when the user requests staging the selected entity in Console."""
+
+    def __init__(self, entity: dict[str, Any] | None) -> None:
+        self.entity = entity
+        super().__init__()
+
+
+class AssignSourceToWatchlistRequested(Message):
+    """Posted when the user files the selected SOURCE into a watchlist.
+
+    TASK-2303 AC#2. The watchlist->source direction of this write already
+    existed (`AddSourceToWatchlistRequested`, posted by the rail with a
+    watchlist in scope). It was the only one, so a user looking at the
+    source they wanted to file had to first find and select its intended
+    watchlist in the rail, then pick the source back out of a list -- the
+    reason the 2026-08-04 UAT called assignment undiscoverable.
+
+    Carries the source entity, matching every other Inspector message here;
+    the screen resolves it to a subscription id and offers the watchlists it
+    is not already in.
+    """
 
     def __init__(self, entity: dict[str, Any] | None) -> None:
         self.entity = entity
@@ -214,6 +234,17 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
     #: exist. The value is the same one the Overview region keys off, so the
     #: two regions cannot disagree.
     profile_state = reactive(OverviewPane.LOADING, recompose=True)
+    #: Why membership writes cannot run right now, or None (review wave, I1).
+    #: Screen-seeded like the four reactives above, and for the same reason:
+    #: the Inspector is handed a selection, not the backend behind it. It is
+    #: the SAME string `WatchlistTree.write_disabled_reason` carries
+    #: (`_tree_write_disabled_reason`), so the rail and this pane cannot
+    #: disagree about whether a write is possible -- which is precisely what
+    #: they did when `Add existing` shipped here ungated: the rail one
+    #: control away was greyed out explaining that the server backend has no
+    #: wire path for membership edits, while this button wrote a local
+    #: `watchlist_sources` row and reported success.
+    write_disabled_reason = reactive[str | None](None, recompose=True)
 
     #: TASK-1362 (spec §2). The source types whose checks run through
     #: `URLMonitor.check_url` -- the only ones that extract text from HTML and
@@ -437,9 +468,13 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
                     id="inspector-empty-state",
                 )
                 yield Static(
+                    # TASK-2303 AC#4: both names are labels that really are
+                    # on screen -- the rail's `New` and the Sources pane's
+                    # `New source`. Pinned by
+                    # `test_watchlists_source_vocabulary.py`.
                     "Sources, runs, items and rules show their actions here "
                     "once they exist. Start with New in the rail, then "
-                    "New Source under Sources.",
+                    "New source under Sources.",
                     id="inspector-first-run-hint",
                 )
                 return
@@ -502,6 +537,30 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
                             "normal schedule."
                         ),
                     )
+                # TASK-2303 AC#2. Rendered only with a real entity behind it:
+                # a scope-only "browsing this source" level carries no
+                # subscription id, so an enabled button here would post a
+                # message the screen could only drop -- the dead-affordance
+                # shape the watchlist branch below documents.
+                #
+                # Review wave, M6: gated on `write_disabled_reason` too, from
+                # the same reactive and with the same tooltip string as the
+                # watchlist-side twin below. Both are one write; rendering
+                # one greyed out and the other live two rows apart is the
+                # drift this wave exists to remove, and the screen handler's
+                # refusal alone cannot show through to the button.
+                if deepest.entity is not None:
+                    blocked = self.write_disabled_reason
+                    yield Button(
+                        "Add to watchlist",
+                        id="inspector-add-to-watchlist-button",
+                        disabled=blocked is not None,
+                        tooltip=blocked
+                        or (
+                            "Put this source into a watchlist. The source "
+                            "itself is not changed or copied."
+                        ),
+                    )
                 yield Button("Stage in Console", id="inspector-stage-console-button")
                 yield Button("Delete", id="inspector-delete-button", variant="error")
             elif deepest.kind == "run":
@@ -538,6 +597,35 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
                 # "Add source" and "Rename" here; those have no message
                 # types at all yet and stay out of scope entirely, same as
                 # before.
+                #
+                # TASK-2303: "Add source" is no longer one of them. The write
+                # has had a message and a screen handler since task-895
+                # (`AddSourceToWatchlistRequested`, posted by the rail), so
+                # this is an ENABLED button on a real path, not a placeholder
+                # -- and it puts the assign verb next to the watchlist the
+                # user has actually selected, which is the discoverability
+                # half of AC#2.
+                #
+                # Review wave, I1: gated on `write_disabled_reason`, the same
+                # string and the same condition the rail's copy of this verb
+                # uses. Rendered DISABLED rather than omitted, matching the
+                # two buttons below and the rail itself -- the action exists,
+                # it is the backend that cannot service it, and the tooltip
+                # says which.
+                if deepest.target_scope is not None and (
+                    deepest.target_scope.watchlist_id is not None
+                ):
+                    blocked = self.write_disabled_reason
+                    yield Button(
+                        "Add existing",
+                        id="inspector-add-existing-source-button",
+                        disabled=blocked is not None,
+                        tooltip=blocked
+                        or (
+                            "Add a source you already have to this watchlist. "
+                            "To make a new one, use New source under Sources."
+                        ),
+                    )
                 yield Button(
                     "Check now",
                     id="inspector-check-now-button",
@@ -694,6 +782,14 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
             self.post_message(CheckNowRequested(entity))
         elif button_id == "inspector-resume-button":
             self.post_message(ResumeSourceRequested(entity))
+        elif button_id == "inspector-add-to-watchlist-button":
+            self.post_message(AssignSourceToWatchlistRequested(entity))
+        elif button_id == "inspector-add-existing-source-button":
+            # The watchlist-first direction. The id comes off the level the
+            # button was rendered for, not off `selected_entity` -- this
+            # branch is reached precisely when the deepest level is a
+            # scope-only watchlist, which has no entity at all.
+            self._post_add_existing_source()
         elif button_id == "inspector-stage-console-button":
             self.post_message(StageInConsoleRequested(entity))
         elif button_id == "inspector-delete-button":
@@ -709,6 +805,30 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
         elif button_id == "inspector-save-selectors-button":
             self._post_noise_selectors_save(entity)
         event.stop()
+
+    def _post_add_existing_source(self) -> None:
+        """Ask the screen to file an existing source into the scoped watchlist.
+
+        TASK-2303. Re-derives the deepest level rather than closing over
+        `compose()`'s value: `compose()` may have run against a scope that
+        has since moved, and this is the same re-derive the breadcrumb
+        branch above already does for exactly that reason. Posts the message
+        the rail's own `Add existing` posts, so both entry points land in
+        one screen handler and cannot drift apart.
+        """
+        if self.write_disabled_reason is not None:
+            # Belt and braces to the `disabled=` above (review wave, I1): a
+            # backend switch that lands between compose and the press leaves
+            # an enabled button for one frame, and this method is one
+            # `post_message` away from a durable write.
+            return
+        levels = self._resolve_levels()
+        if not levels:
+            return
+        target = levels[-1].target_scope
+        if target is None or target.watchlist_id is None:
+            return
+        self.post_message(AddSourceToWatchlistRequested(int(target.watchlist_id)))
 
     def _post_noise_selectors_save(self, entity: dict[str, Any] | None) -> None:
         """Read the field and ask the screen to persist it (TASK-1362).

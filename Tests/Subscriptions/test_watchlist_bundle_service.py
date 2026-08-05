@@ -239,3 +239,46 @@ def test_list_unassigned_source_rows_uses_a_single_query(service, db, monkeypatc
     monkeypatch.setattr(type(db), "conn", property(lambda self: counting))
     service.list_unassigned_source_rows()
     assert counting.execute_count == 1
+
+
+def test_list_watchlists_for_source_is_the_mirror_of_list_sources(service, db):
+    """Review wave, M5: one query for "which watchlists is this in".
+
+    The source-first assign flow used to answer this by calling
+    `list_sources` once per watchlist. This is the same answer, and it has to
+    agree with `list_sources` exactly -- a candidate list built from a
+    disagreeing membership set would offer a watchlist the source is already
+    in, or hide one it is not.
+    """
+    left = service.create("Left")
+    right = service.create("Right")
+    service.create("Neither")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
+    other_id = db.add_subscription(
+        name="HN", type="rss", source="https://b.example/f"
+    )
+
+    service.add_source(left["id"], source_id)
+    service.add_source(right["id"], source_id)
+    service.add_source(right["id"], other_id)
+
+    assert sorted(service.list_watchlists_for_source(source_id)) == sorted(
+        [left["id"], right["id"]]
+    )
+    assert service.list_watchlists_for_source(other_id) == [right["id"]]
+    # Agrees with the other direction, watchlist by watchlist.
+    for watchlist in service.list_watchlists():
+        expected = source_id in service.list_sources(watchlist["id"])
+        assert (
+            watchlist["id"] in service.list_watchlists_for_source(source_id)
+        ) is expected
+
+
+def test_list_watchlists_for_source_is_empty_for_an_unassigned_source(service, db):
+    source_id = db.add_subscription(
+        name="Loose", type="rss", source="https://c.example/f"
+    )
+    assert service.list_watchlists_for_source(source_id) == []
+    assert service.list_watchlists_for_source(9999) == []
