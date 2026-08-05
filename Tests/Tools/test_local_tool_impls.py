@@ -208,3 +208,29 @@ def test_fs_glob_cannot_escape_workspace_via_dotdot(tmp_path):
     (ws / "inner.py").write_text("x")
     out = glob_files("../*.py", workspace_root=ws)
     assert "outside.py" not in out
+
+
+def test_fs_grep_skips_symlinks_escaping_workspace(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    import os
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret hit\n")
+    os.symlink(outside, ws / "link.txt")          # escapes the root -> skipped
+    inside = ws / "inside.txt"
+    inside.write_text("real hit\n")
+    os.symlink(inside, ws / "inner_link.txt")     # stays inside root -> still read
+    out = grep_files("hit", workspace_root=ws)
+    assert "secret" not in out
+    assert not any(line.startswith("link.txt:") for line in out.splitlines())
+    assert "inner_link.txt:1:real hit" in out
+
+
+def test_fs_glob_lists_symlinked_files_by_name(tmp_path):
+    # Listing a symlink's name is not a confinement violation (no content
+    # read); pin current behavior so only grep changes.
+    ws = tmp_path / "ws"; ws.mkdir()
+    import os
+    outside = tmp_path / "outside.txt"
+    outside.write_text("x")
+    os.symlink(outside, ws / "link.txt")
+    assert "link.txt" in glob_files("*.txt", workspace_root=ws)

@@ -239,6 +239,8 @@ def grep_files(
     for p in sorted(root.rglob("*")):
         if not p.is_file() or p.stat().st_size > _MAX_GREP_FILE_BYTES:
             continue
+        if not p.resolve().is_relative_to(root):
+            continue  # symlink escaping the root — never read outside content
         try:
             text = p.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
