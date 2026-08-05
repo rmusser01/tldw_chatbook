@@ -3536,7 +3536,7 @@ ConsoleCitationSourcesModal {
     color: $ds-text-muted;
 }
 
-/* Console's rendered frame color (#6f7782) — see chat_screen.CONSOLE_FRAME_COLOR. */
+/* Console's rendered frame color (#6f7782) — see Console_Modules.frame.CONSOLE_FRAME_COLOR. */
 .console-setup-modal-card {
     layer: console-setup-card;
     /* TASK-389: 62 gave 56 content cells (−2 border −4 padding); the honest

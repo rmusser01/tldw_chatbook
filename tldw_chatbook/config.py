@@ -5198,9 +5198,27 @@ def get_api_key(api_name: str) -> Optional[str]:
         settings = load_settings()
         api_settings_key = f"api_settings.{api_name_lower}"
 
-        if api_settings_key in settings:
-            api_settings = settings[api_settings_key]
+        # `load_settings()` returns a NESTED dict -- `{"api_settings":
+        # {"openai": {...}}}` -- so the flat dotted membership test this
+        # used to do (`api_settings_key in settings`) was False for every
+        # real config, making this whole branch dead code. Consequence,
+        # found at the realtime engine's live gate: a key entered through
+        # the Settings screen (which writes exactly here, the correct
+        # modern location) was invisible to every caller of this function,
+        # and the realtime pre-connect check refused with "no OpenAI API
+        # key is configured" against a config that had one. Same root
+        # cause as TASK-229's `get_cli_setting` fix, one accessor over.
+        #
+        # The flat lookup is kept as a fallback: it costs one dict miss,
+        # and some settings shapes elsewhere may yet be flattened.
+        api_settings = None
+        nested_api_settings = settings.get("api_settings")
+        if isinstance(nested_api_settings, dict):
+            api_settings = nested_api_settings.get(api_name_lower)
+        if not isinstance(api_settings, dict):
+            api_settings = settings.get(api_settings_key)
 
+        if isinstance(api_settings, dict):
             # Check environment variable first if specified
             if "api_key_env_var" in api_settings:
                 env_var = api_settings["api_key_env_var"]

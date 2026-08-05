@@ -294,6 +294,12 @@ def test_source_row_cells_render_the_normalizer_status_summary():
 # list: they are background reads whose failure is already visible as an empty
 # region plus a "Failed to load ..." toast, and promoting them would make an
 # offline session log a wall of warnings.
+#
+# That exemption has a price, and TASK-2306's `_load_run_detail` shipped
+# taking the exemption without paying it (review wave, Important 2): it logged
+# at debug and showed nothing, so a denied `items.list` policy rendered
+# byte-identically to "this run produced no items". `LOADERS_THAT_MUST_NOTIFY`
+# below turns the price into a contract, so the next loader cannot do the same.
 USER_INITIATED_MUTATIONS = (
     "_start_tree_write",
     "_run_tree_write",
@@ -323,6 +329,137 @@ def _method_source(module_source: str, name: str) -> str:
     rest = module_source[match.end():]
     end = re.search(rf"^{indent}(?:async )?def |^{indent}@", rest, re.M)
     return rest[: end.start()] if end else rest
+
+
+#: The other half of the exemption above, as a RULE rather than a list
+#: (re-review, m5): a background read may log its failure at `debug` ONLY
+#: because the user sees a toast instead. The loaders are therefore discovered
+#: structurally -- every `_load*` method on the screen -- and each `except`
+#: handler guarding an AWAITED read must notify in that SAME handler. A list
+#: would have to be remembered; this cannot be forgotten.
+#:
+#: Why "awaited", and not simply "any handler that logs at debug": the rule
+#: the comment above states is about *background reads*, and running the broad
+#: form over the real screen showed exactly why the distinction matters --
+#: it also catches two things that are not background reads at all:
+#:
+#:  * `_load_notifications`' trailing handler, which guards a synchronous
+#:    widget push (`pane.notifications = ...`), not a fetch. Every sibling
+#:    loader wraps that same push in a bare `except Exception: pass`; a toast
+#:    per failed repaint is not what the exemption is buying. Its real fetch
+#:    handler IS covered, and stays covered -- which a method-level exemption
+#:    would have silently stopped doing.
+#:  * `_load_source_rows_for_tree` (:1535), which is SYNCHRONOUS: the tree
+#:    calls it during `compose()`. It swallows into `debug` with no toast, so
+#:    an expanded watchlist can render no sources with nothing said. That is a
+#:    real gap, it PRE-DATES this batch, and it is deliberately not fixed here
+#:    -- see the follow-up note in `task-2306`. It is named here so the next
+#:    reader finds it rather than having to rediscover it.
+
+
+def _screen_source() -> str:
+    from pathlib import Path
+
+    return (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "UI"
+        / "Screens"
+        / "watchlists_collections_screen.py"
+    ).read_text(encoding="utf-8")
+
+
+def _own_nodes(node):
+    """Every node inside `node`, stopping at any nested function boundary."""
+    import ast
+
+    stack = list(ast.iter_child_nodes(node))
+    while stack:
+        child = stack.pop()
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        yield child
+        stack.extend(ast.iter_child_nodes(child))
+
+
+def _calls_named(node, name: str):
+    """Calls to `name(...)` or `<anything>.name(...)` inside `node`."""
+    import ast
+
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        func = child.func
+        if isinstance(func, ast.Name) and func.id == name:
+            yield child
+        elif isinstance(func, ast.Attribute) and func.attr == name:
+            yield child
+
+
+def _awaited_read_handlers():
+    """(method, handler) for every `_load*` handler guarding an awaited read."""
+    import ast
+
+    tree = ast.parse(_screen_source())
+    for func in ast.walk(tree):
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not func.name.startswith("_load"):
+            continue
+        for node in _own_nodes(func):
+            if not isinstance(node, ast.Try):
+                continue
+            guards_await = any(
+                isinstance(inner, ast.Await)
+                for statement in node.body
+                for inner in ast.walk(statement)
+            )
+            if not guards_await:
+                continue
+            for handler in node.handlers:
+                yield func.name, handler
+
+
+def test_the_loader_contract_actually_finds_loaders():
+    """Guard the guard: a scan that matched nothing would pass vacuously."""
+    found = {name for name, _ in _awaited_read_handlers()}
+    assert len(found) >= 5, f"the structural scan found only {sorted(found)}"
+    assert "_load_run_detail" in found, (
+        "the loader this contract was written for is not being scanned"
+    )
+
+
+def test_background_loaders_pay_for_their_debug_exemption_with_a_toast():
+    """Review wave I2 / re-review m5 -- the exemption's price, enforced.
+
+    A loader that swallows into `debug` with no toast is invisible twice over:
+    the region it fills draws exactly as it would for an empty result, and the
+    only trace goes to a log the user will never open.
+
+    The notify must live in the SAME handler as the failure, not merely
+    somewhere in the method: a loader that notifies on SUCCESS would otherwise
+    satisfy a whole-body substring check while telling the user nothing when
+    it fails.
+    """
+    silent = []
+    for method_name, handler in _awaited_read_handlers():
+        logs_at_debug = any(True for _ in _calls_named(handler, "debug"))
+        if not logs_at_debug:
+            continue
+        notifies = [
+            call
+            for call in _calls_named(handler, "notify")
+            if any(keyword.arg == "severity" for keyword in call.keywords)
+        ]
+        if not notifies:
+            silent.append(method_name)
+
+    assert not silent, (
+        f"{sorted(set(silent))} handle their own failure, log it at debug, and "
+        "tell the user nothing. Background reads are exempt from the "
+        "log-at-warning rule ONLY because their failure surfaces as a toast; "
+        "without one the failure renders identically to an empty result."
+    )
 
 
 @pytest.mark.parametrize("method_name", USER_INITIATED_MUTATIONS)

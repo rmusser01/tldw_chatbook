@@ -13,6 +13,7 @@ from tldw_chatbook.Notifications import (
 from tldw_chatbook.Subscriptions import LocalWatchlistsService
 from tldw_chatbook.Subscriptions.watchlist_content_alert_service import WatchlistContentAlertService
 from tldw_chatbook.Subscriptions.watchlist_filter_service import WatchlistFilterService
+from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 
 
 @pytest.mark.asyncio
@@ -82,6 +83,12 @@ async def test_local_watchlists_service_exposes_sync_home_run_snapshot(tmp_path)
     assert snapshot[0]["source_id"] == failed_source["source_id"]
     assert snapshot[1]["status"] == "queued"
     assert snapshot[1]["source_title"] == "Queued Feed"
+    # `title` is the key Home's active-work rail reads FIRST (see
+    # `HomeActiveWorkAdapter._local_watchlist_run_items`). Only the
+    # Home-specific normalizer set it before TASK-2305 folded the three run
+    # reads into one, so it is pinned here rather than left to the rail's
+    # `source_title` fallback to cover for it.
+    assert snapshot[0]["title"] == "Failed Feed"
 
 
 @pytest.mark.asyncio
@@ -1314,3 +1321,217 @@ async def test_get_item_status_reads_one_row_and_refuses_a_missing_one(tmp_path)
         await service.get_item_status("local:watchlist_item:1")
     with pytest.raises(KeyError):
         await service.get_item_status(item_id + 10_000)
+
+
+@pytest.mark.asyncio
+async def test_list_items_can_be_scoped_to_one_run_with_alert_counts(tmp_path):
+    """TASK-2306: the Runs tab's Items sub-region asks for ONE run's items.
+
+    `subscription_items.run_id` (and its index) have existed since the column
+    was added, and nothing had ever queried them -- so the only item read the
+    product offered was "every item of this source", which cannot answer "what
+    did this run find". The `alert_count` in the same result is the Alerts
+    column's only possible source; without it that column rendered `0` over
+    every item however many content-alert rules had fired.
+    """
+    executed: list[str] = []
+
+    async def fake_run_executor(subscription):
+        # One new item per run: run 2 must not be able to inherit run 1's.
+        index = len(executed)
+        executed.append(f"run-{index}")
+        return {
+            "items": [
+                {
+                    "url": f"https://example.com/ai-post-{index}",
+                    "title": f"AI news {index}",
+                    "content_hash": f"hash-{index}",
+                }
+            ],
+            "stats": {},
+        }
+
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(
+        db_factory=lambda: db, run_executor=fake_run_executor
+    )
+    source = await service.create_source(
+        {"name": "Feed", "url": "https://example.com/feed.xml", "source_type": "rss"}
+    )
+    db.add_filter(
+        name="AI alert",
+        conditions={"type": "keyword", "pattern": "AI"},
+        action="notify",
+        action_params={"severity": "warning"},
+        subscription_id=source["source_id"],
+    )
+
+    first = await service.launch_run(source_id=source["source_id"])
+    await service.execute_run(first["run_id"])
+    second = await service.launch_run(source_id=source["source_id"])
+    await service.execute_run(second["run_id"])
+
+    first_items = await service.list_items(run_id=first["run_id"], status=None)
+    second_items = await service.list_items(run_id=second["run_id"], status=None)
+    every_item = await service.list_items(status=None)
+
+    assert [item["title"] for item in first_items] == ["AI news 0"]
+    assert [item["title"] for item in second_items] == ["AI news 1"]
+    assert len(every_item) == 2, "an unfiltered read must still see both runs"
+    assert first_items[0]["run_id"] == first["run_id"]
+    assert first_items[0]["alert_count"] == 1, (
+        "the item matched one content-alert rule, so the Alerts column has a 1 "
+        "to show"
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_items_reports_zero_alerts_for_an_unmatched_item(tmp_path):
+    """The discriminating half of `alert_count`: no rules matched means 0."""
+
+    async def fake_run_executor(subscription):
+        return {
+            "items": [
+                {
+                    "url": "https://example.com/quiet",
+                    "title": "Quiet post",
+                    "content_hash": "hash-quiet",
+                }
+            ],
+            "stats": {},
+        }
+
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(
+        db_factory=lambda: db, run_executor=fake_run_executor
+    )
+    source = await service.create_source(
+        {"name": "Feed", "url": "https://example.com/feed.xml", "source_type": "rss"}
+    )
+    launched = await service.launch_run(source_id=source["source_id"])
+    await service.execute_run(launched["run_id"])
+
+    items = await service.list_items(run_id=launched["run_id"], status=None)
+
+    assert len(items) == 1
+    assert items[0]["alert_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_real_check_produces_a_run_that_names_its_source_and_counts(
+    tmp_path,
+):
+    """TASK-2305 AC#1/AC#2/AC#3, against a stub feed and the real pipeline.
+
+    UAT: a check that demonstrably harvested ~30 items produced a Runs row
+    reading `Untitled · completed · Found 0 · Processed 0 · Filtered 0 ·
+    Errors 0 · Duration -`. Both halves are asserted here on the record the
+    Runs pane actually reads -- `list_runs`' output -- not on the nested
+    `stats` blob that was never the problem.
+    """
+
+    async def fake_run_executor(subscription):
+        return {
+            "items": [
+                {
+                    "url": f"https://example.com/post-{index}",
+                    "title": f"Post {index}",
+                    "content_hash": f"hash-{index}",
+                }
+                for index in range(30)
+            ],
+            "stats": {},
+        }
+
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(
+        db_factory=lambda: db, run_executor=fake_run_executor
+    )
+    source = await service.create_source(
+        {
+            "name": "Hacker News",
+            "url": "https://hnrss.org/frontpage",
+            "source_type": "rss",
+        }
+    )
+    # One filter excluding a single post, so Processed and Filtered are
+    # distinguishable from Found and from each other.
+    db.add_filter(
+        name="exclude one",
+        conditions={"type": "keyword", "pattern": "Post 7"},
+        action="exclude",
+        subscription_id=source["source_id"],
+    )
+    bundles = WatchlistBundleService(db)
+    watchlist = bundles.create("Morning read")
+    bundles.add_source(watchlist["id"], source["source_id"])
+
+    launched = await service.launch_run(source_id=source["source_id"])
+    await service.execute_run(launched["run_id"])
+
+    listed = await service.list_runs()
+    run = listed[0]
+
+    assert run["source_title"] == "Hacker News", (
+        "F32: a run row must name its source, not read 'Untitled'"
+    )
+    assert run["watchlist_names"] == ["Morning read"]
+    assert run["found_count"] == 30, (
+        "F33: the ~30-item check must show ~30 found"
+    )
+    assert run["processed_count"] == 29
+    assert run["filtered_count"] == 1
+    assert run["error_count"] == 0
+    assert run["duration"] is not None and run["duration"] != "-", (
+        "a finished run knows how long it took"
+    )
+    # The same record, read one at a time, must agree with the list.
+    fetched = await service.get_run(launched["run_id"])
+    assert fetched["source_title"] == "Hacker News"
+    assert fetched["found_count"] == 30
+
+
+@pytest.mark.asyncio
+async def test_a_failed_run_reports_one_error_and_no_found_items(tmp_path):
+    """The discriminating half: zeros must be REAL zeros, not missing keys."""
+
+    async def exploding_executor(subscription):
+        raise RuntimeError("feed unreachable")
+
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(
+        db_factory=lambda: db, run_executor=exploding_executor
+    )
+    source = await service.create_source(
+        {"name": "Broken", "url": "https://example.com/x.xml", "source_type": "rss"}
+    )
+    launched = await service.launch_run(source_id=source["source_id"])
+    await service.execute_run(launched["run_id"])
+
+    run = (await service.list_runs())[0]
+
+    assert run["status"] == "failed"
+    assert run["source_title"] == "Broken"
+    assert run["watchlist_names"] == []
+    assert run["found_count"] == 0
+    assert run["processed_count"] == 0
+    assert run["filtered_count"] == 0
+    assert run["error_count"] == 1, (
+        "a failed run reporting zero errors is the flattering answer"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_queued_run_has_no_duration_yet(tmp_path):
+    """A run that has not finished reports no duration rather than a fake one."""
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    source = await service.create_source(
+        {"name": "Feed", "url": "https://example.com/feed.xml", "source_type": "rss"}
+    )
+
+    launched = await service.launch_run(source_id=source["source_id"])
+
+    assert launched["status"] == "queued"
+    assert launched["duration"] is None
+    assert launched["source_title"] == "Feed"

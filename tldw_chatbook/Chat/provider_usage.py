@@ -150,9 +150,20 @@ class ProviderUsage:
         common = {"provider": provider, "model": model, "partial": partial}
         # OpenAI Responses API: has input_tokens like Anthropic — the
         # input_tokens_details key disambiguates, so check it FIRST.
-        if isinstance(payload.get("input_tokens_details"), Mapping):
+        #
+        # The Realtime API spells the same block `input_token_details`
+        # (SINGULAR "token"), live-confirmed on `response.done`. Without
+        # this alias its payload fell through to the Anthropic-native
+        # branch below, which reads no details at all — so every cached
+        # token in a realtime session was priced as uncached input, and a
+        # realtime session is nearly all cached input by construction (the
+        # whole conversation is resent as context on every turn).
+        input_details = payload.get("input_tokens_details")
+        if not isinstance(input_details, Mapping):
+            input_details = payload.get("input_token_details")
+        if isinstance(input_details, Mapping):
             total_input = _as_count(payload.get("input_tokens"))
-            cached = _as_count(payload["input_tokens_details"].get("cached_tokens"))
+            cached = _as_count(input_details.get("cached_tokens"))
             return cls(
                 uncached_input=max(total_input - cached, 0),
                 cache_read=cached,

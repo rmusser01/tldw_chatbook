@@ -235,7 +235,7 @@ def _install_streaming_session(monkeypatch, service: FakeDictationService) -> li
         return session
 
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen,
+        chat_screen_module.ConsoleDictationController,
         "_create_console_dictation_session",
         factory,
     )
@@ -1664,7 +1664,7 @@ async def test_a_torn_down_captures_buffer_limit_cannot_stop_the_next_one(
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Rec ●")
 
-        console._on_console_dictation_buffer_limit(object())
+        console._dictation._on_console_dictation_buffer_limit(object())
         for _ in range(5):
             await pilot.pause(0.01)
 
@@ -1710,7 +1710,7 @@ async def test_cancelling_releases_the_microphone_off_the_ui_thread(monkeypatch)
     """
     session = _GatedDiscardSession()
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen,
+        chat_screen_module.ConsoleDictationController,
         "_create_console_dictation_session",
         lambda self: session,
     )

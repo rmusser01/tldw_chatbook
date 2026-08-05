@@ -202,3 +202,240 @@ def test_normalize_server_watchlist_source_never_reports_paused() -> None:
     )
 
     assert source["paused"] is False
+
+
+# --- TASK-2305: run accounting is lifted out of the nested `stats` blob ----
+
+
+def _run(**payload):
+    from tldw_chatbook.Subscriptions.watchlist_normalizers import (
+        normalize_watchlist_run,
+    )
+
+    base = {"id": 4, "source_id": 2, "job_id": 2, "status": "completed"}
+    base.update(payload)
+    return normalize_watchlist_run("local", base)
+
+
+def test_run_counters_come_from_the_names_the_pipeline_actually_writes():
+    """The whole of F33 in one assertion.
+
+    The `stats` blob below is exactly what `execute_run` writes -- and only
+    what it writes (re-review, m7): `items_found`, `items_ingested`,
+    `new_items_found` and `response_time_ms`. There is deliberately no
+    `items_filtered` key; the pipeline records none, so `filtered_count` is
+    derived here (see `_run_accounting`). The Runs pane reads
+    `found_count`/`processed_count`/`filtered_count` off the run's top level,
+    nothing bridged the two, and every run displayed four zeros.
+    """
+    run = _run(
+        stats={
+            "items_found": 30,
+            "items_ingested": 28,
+            "new_items_found": 28,
+            "response_time_ms": 412,
+        }
+    )
+
+    assert run["found_count"] == 30
+    assert run["processed_count"] == 28
+    assert run["filtered_count"] == 2
+    assert run["error_count"] == 0
+    # The nested blob is still carried verbatim for the consumers that read it.
+    assert run["stats"]["items_found"] == 30
+
+
+def test_a_run_recorded_before_the_filtered_count_existed_derives_it():
+    """No row this pipeline writes carries `items_filtered` -- it is derived.
+
+    Kept as its own case because the arithmetic (not merely the absence) is
+    the contract: everything found and not ingested was dropped by a filter.
+    """
+    run = _run(stats={"items_found": 10, "items_ingested": 4})
+
+    assert run["filtered_count"] == 6
+
+
+def test_a_malformed_stats_blob_never_reports_negative_filtering():
+    run = _run(stats={"items_found": 2, "items_ingested": 9})
+
+    assert run["filtered_count"] == 0
+
+
+def test_a_failed_run_with_no_error_counter_reports_one_error():
+    run = _run(status="failed", error_msg="feed unreachable", stats={})
+
+    assert run["error_count"] == 1
+    assert run["found_count"] == 0
+
+
+def test_a_url_family_runs_error_count_comes_from_its_dispositions():
+    """`dispositions` is the per-URL truth for the url/url_list/sitemap arms."""
+    run = _run(
+        status="completed",
+        stats={
+            "items_found": 3,
+            "items_ingested": 3,
+            "dispositions": {"changed": 3, "error": 2},
+        },
+    )
+
+    assert run["error_count"] == 2
+
+
+def test_duration_is_measured_between_the_runs_own_timestamps():
+    run = _run(
+        started_at="2026-08-04T10:00:00+00:00",
+        finished_at="2026-08-04T10:00:04.800000+00:00",
+        stats={},
+    )
+
+    assert run["duration"] == "4.8s"
+
+
+@pytest.mark.parametrize(
+    "finished,expected",
+    [
+        ("2026-08-04T10:00:00.820000+00:00", "820ms"),
+        ("2026-08-04T10:02:03+00:00", "2m 3s"),
+        ("2026-08-04T11:04:00+00:00", "1h 4m"),
+    ],
+)
+def test_duration_scales_its_units(finished, expected):
+    run = _run(
+        started_at="2026-08-04T10:00:00+00:00", finished_at=finished, stats={}
+    )
+
+    assert run["duration"] == expected
+
+
+def test_an_unfinished_run_reports_no_duration():
+    """`-` is honest for a queued or running row; an elapsed time is not."""
+    run = _run(status="running", started_at="2026-08-04T10:00:00+00:00", stats={})
+
+    assert run["duration"] is None
+
+
+def test_duration_falls_back_to_the_recorded_response_time():
+    """A payload missing a timestamp still has the pipeline's own measurement."""
+    run = _run(status="completed", stats={"response_time_ms": 1500})
+
+    assert run["duration"] == "1.5s"
+
+
+def test_watchlist_names_split_on_the_unit_separator_not_a_comma():
+    """Watchlist names are user-typed; a comma in one must not split it."""
+    from tldw_chatbook.Subscriptions.watchlist_normalizers import (
+        WATCHLIST_NAME_SEPARATOR,
+    )
+
+    run = _run(
+        source_title="Hacker News",
+        watchlist_names=f"Morning read{WATCHLIST_NAME_SEPARATOR}Security, daily",
+        stats={},
+    )
+
+    assert run["source_title"] == "Hacker News"
+    assert run["watchlist_names"] == ["Morning read", "Security, daily"]
+
+
+def test_a_server_run_carries_no_source_name_rather_than_a_wrong_one():
+    from tldw_chatbook.Subscriptions.watchlist_normalizers import (
+        normalize_watchlist_run,
+    )
+
+    run = normalize_watchlist_run(
+        "server", {"id": 8, "job_id": 3, "status": "completed", "stats": {}}
+    )
+
+    assert run["source_title"] is None
+    assert run["watchlist_names"] == []
+
+
+def test_watchlist_names_come_back_in_a_stable_order():
+    """Review wave, Minor 1: SQLite's `group_concat` order is ARBITRARY.
+
+    The run query's `ORDER BY` subquery is a de-facto workaround, not a
+    contract, and `RunsPane._run_identity` prints only `names[0] +N` — so an
+    arbitrary order would name a different watchlist on successive reads of
+    the same unchanged run, in the one place a run is identified at all.
+    """
+    from tldw_chatbook.Subscriptions.watchlist_normalizers import (
+        WATCHLIST_NAME_SEPARATOR,
+    )
+
+    scrambled = _run(
+        watchlist_names=WATCHLIST_NAME_SEPARATOR.join(["Ops", "Morning read", "Sec"]),
+        stats={},
+    )
+    # The list-input branch had no order either, and is normalised the same way.
+    from_list = _run(watchlist_names=["Ops", "Morning read", "Sec"], stats={})
+
+    assert scrambled["watchlist_names"] == ["Morning read", "Ops", "Sec"]
+    assert from_list["watchlist_names"] == ["Morning read", "Ops", "Sec"]
+
+
+# --- Qodo PR #1348: a malformed stats blob must not take the table down ----
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["inf", "-inf", "Infinity", "nan", "1e400", "-1e400", "", "  ", "abc", "12abc"],
+)
+def test_a_malformed_stat_string_is_skipped_not_raised(value):
+    """`int(float("inf"))` raises OverflowError, `int(float("nan"))` ValueError.
+
+    Both used to escape `_run_stat`'s `except ValueError` (the first entirely,
+    the second only by luck of ordering) and propagate out of
+    `normalize_watchlist_run` — so ONE bad counter in a server's `stats` blob
+    took the whole Runs table down instead of degrading to a zero.
+    """
+    run = _run(stats={"items_found": value, "items_ingested": 3})
+
+    assert run["found_count"] == 0, "a value it cannot read is not a count"
+    assert run["processed_count"] == 3, "the readable counter beside it survives"
+
+
+def test_a_non_finite_float_stat_is_skipped_too():
+    """Same hazard arriving as a real float rather than a string."""
+    run = _run(stats={"items_found": float("inf"), "items_ingested": 2})
+
+    assert run["found_count"] == 0
+    assert run["processed_count"] == 2
+
+
+def test_a_huge_integer_string_stays_exact():
+    """Integer strings parse as integers, not via a float that cannot hold them."""
+    huge = 10**30
+    run = _run(stats={"items_found": str(huge), "items_ingested": 0})
+
+    assert run["found_count"] == huge, (
+        "round-tripping through float() would silently lose precision"
+    )
+
+
+def test_a_malformed_response_time_does_not_break_the_duration():
+    """The same parse feeds `duration`'s fallback."""
+    run = _run(status="completed", stats={"response_time_ms": "inf"})
+
+    assert run["duration"] is None
+
+
+def test_a_run_with_a_hostile_stats_blob_still_normalizes():
+    """The whole point: normalization returns a record rather than raising."""
+    run = _run(
+        status="completed",
+        stats={
+            "items_found": "1e400",
+            "items_ingested": "nan",
+            "items_filtered": float("-inf"),
+            "error_count": "inf",
+            "response_time_ms": "not a number",
+        },
+    )
+
+    assert run["found_count"] == 0
+    assert run["processed_count"] == 0
+    assert run["filtered_count"] == 0
+    assert run["error_count"] == 0
+    assert run["duration"] is None

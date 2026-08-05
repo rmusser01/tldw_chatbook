@@ -161,7 +161,13 @@ from ..Watchlists_Modules.rules_pane import (
     RulesPane,
     SaveRuleRequested,
 )
-from ..Watchlists_Modules.runs_pane import CancelRunRequested, RerunRunRequested, RunsPane, RunSelected
+from ..Watchlists_Modules.runs_pane import (
+    CancelRunRequested,
+    RerunRunRequested,
+    RunProgressTick,
+    RunSelected,
+    RunsPane,
+)
 from ..Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
 from ..Watchlists_Modules.sources_pane import (
     CreateFormDraftChanged,
@@ -493,6 +499,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._pending_navigation_run_id: str | None = None
         self._pending_navigation_run_backend: str | None = None
         self._loaded_runs: list[dict[str, Any]] = []
+        # TASK-2306: the selected run's Items and Logs, mirrored here for the
+        # same reason `_loaded_runs` is -- `_build_detail_pane` constructs a
+        # brand new `RunsPane` on every workbench rebuild, and a pane seeded
+        # with a `selected_run` but no detail renders the exact blank the
+        # user was told is a bug.
+        self._run_detail_items: list[dict[str, Any]] = []
+        self._run_detail_logs: str = ""
+        self._run_detail_items_note: str = ""
         self._loaded_notifications: list[dict[str, Any]] = []
         # Mirrors what's currently loaded for Sources/Items/Rules the same way
         # `_loaded_runs`/`_loaded_notifications` already do (Finding 2, fix
@@ -1899,6 +1913,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             runs_pane = RunsPane(id="watchlists-runs-pane")
             runs_pane.runs = self._loaded_runs
             runs_pane.selected_run = self.selected_run
+            # After `selected_run`, never before: setting the selection clears
+            # the pane's detail (a run's items must never outlive the run they
+            # belong to -- see `RunsPane.watch_selected_run`).
+            runs_pane.run_items = self._run_detail_items
+            runs_pane.run_logs = self._run_detail_logs
+            runs_pane.run_items_note = self._run_detail_items_note
             children.append(runs_pane)
         elif self.active_section == "items":
             # Seed the last-loaded rows (Finding 2, fix round 2) — see the
@@ -3592,7 +3612,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             (
                 "#watchlists-runs-pane",
                 RunsPane,
-                {"runs": self._loaded_runs, "selected_run": self.selected_run},
+                # Insertion order is load-bearing: `selected_run` clears the
+                # pane's detail, so the detail must be re-pushed after it (see
+                # `_build_detail_pane`'s identical ordering note).
+                {
+                    "runs": self._loaded_runs,
+                    "selected_run": self.selected_run,
+                    "run_items": self._run_detail_items,
+                    "run_logs": self._run_detail_logs,
+                    "run_items_note": self._run_detail_items_note,
+                },
             ),
             (
                 "#watchlists-notifications-pane",
@@ -3734,6 +3763,327 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         event.stop()
         self.selected_run = event.run
         self._select_entity(event.run)
+        # TASK-2306. Nothing in the product had ever written
+        # `RunsPane.run_items` / `run_logs` -- only the pane's own unit test
+        # did -- so the Items and Logs sub-regions of the Runs tab were
+        # structurally empty in the running app no matter what was selected.
+        self.run_worker(
+            self._load_run_detail(event.run),
+            exclusive=True,
+            group="wc_run_detail",
+        )
+
+    @on(RunProgressTick)
+    def handle_run_progress_tick(self, event: RunProgressTick) -> None:
+        """A running run may have moved on -- check, cheaply (Qodo #1348)."""
+        event.stop()
+        self.run_worker(
+            self._refresh_running_run(event.run_id),
+            exclusive=True,
+            group="wc_run_tick",
+        )
+
+    #: The fields of a run that a tick can find changed. Everything else on a
+    #: run record is fixed at launch, so a fingerprint over these is what
+    #: decides whether a tick does any work at all.
+    _RUN_PROGRESS_FIELDS = (
+        "status",
+        "finished_at",
+        "found_count",
+        "processed_count",
+        "filtered_count",
+        "error_count",
+        "log_text",
+        "error_msg",
+    )
+
+    @classmethod
+    def _run_progress_fingerprint(cls, run: Mapping[str, Any]) -> tuple[str, ...]:
+        """The volatile part of a run record, as a comparable tuple."""
+        return tuple(str(run.get(field) or "") for field in cls._RUN_PROGRESS_FIELDS)
+
+    async def _refresh_running_run(self, run_id: Any) -> None:
+        """Re-read one running run and repaint only if it actually changed.
+
+        Qodo, PR #1348. `run_poll` used to re-post `RunSelected` every second,
+        and `handle_run_selected` cannot tell a tick from a click -- so a
+        selected running run scheduled a full `_load_run_detail` (worker plus
+        item query) once a second, with no user action, for up to a minute.
+
+        The shape chosen here is (a): a distinct tick message whose handler
+        refreshes what a run can actually change. That matters because the
+        naive alternative -- skipping on an unchanged id -- would freeze the
+        detail at its first paint, and during a LOCAL run the first paint is
+        exactly the useless one: `execute_run` writes `stats_json`,
+        `finished_at` and `log_text` in `record_run_result` and upserts the
+        items in one go at the END, so a run polled while running has nothing
+        to show until it finishes. The tick's real job is to notice that
+        moment. Until it arrives the fingerprint is unchanged and this costs
+        one cheap read and nothing else -- no item query, no repaint.
+
+        Args:
+            run_id: The namespaced id the poll is watching.
+        """
+        selected = self.selected_run
+        if selected is None or str(selected.get("id") or "") != str(run_id):
+            # The user moved on between the tick being posted and this worker
+            # starting. Nothing to refresh, and nothing to resurrect.
+            return
+        try:
+            record = await self._controller.get_run(
+                runtime_backend=self.runtime_backend,
+                run_id=run_id,
+            )
+        except Exception as exc:
+            # Deliberately silent: this fires once a second on a timer the
+            # user did not press, so a toast per tick would be its own defect.
+            # The run row keeps its last known state, which is honest.
+            logger.opt(exception=True).debug(
+                f"Failed to re-read running watchlist run {run_id!r}: "
+                f"{type(exc).__name__}"
+            )
+            return
+        if not isinstance(record, Mapping) or not record:
+            return
+        if self._run_progress_fingerprint(record) == self._run_progress_fingerprint(
+            selected
+        ):
+            return
+
+        record = dict(record)
+        for index, candidate in enumerate(self._loaded_runs):
+            if str(candidate.get("id") or "") == str(run_id):
+                self._loaded_runs[index] = record
+                break
+        self.selected_run = record
+        if self._dom_is_live:
+            try:
+                self.query_one(
+                    "#watchlists-runs-pane", RunsPane
+                ).apply_run_progress(record)
+            except Exception:
+                pass
+        # Only now is a full detail load worth its cost: the run reached a new
+        # state, which for a local run is when its items land.
+        await self._load_run_detail(record)
+
+    async def _load_run_detail(self, run: dict[str, Any] | None) -> None:
+        """Fill the selected run's Items and Logs sub-regions.
+
+        The log text is already on the run record (`normalize_watchlist_run`
+        carries `log_text`), so only the items need a query.
+
+        Every road out of here that yields no rows also names ITSELF (review
+        wave, Important 1). An empty items table renders identically whether a
+        later check re-claimed this run's rows, the run genuinely found
+        nothing, the backend cannot list items at all, or the query failed --
+        and it sits directly beneath a stats block that may well say
+        `Found: 3`. The note is what tells those four apart. Storage semantics
+        (`persist_subscription_item`'s `run_id = excluded.run_id`) stay out of
+        scope; the label does not.
+
+        Args:
+            run: The newly selected run, or `None` when the selection was
+                cleared.
+        """
+        if run is None:
+            self._run_detail_items = []
+            self._run_detail_logs = ""
+            self._run_detail_items_note = ""
+            self._push_run_detail_to_live_pane(None)
+            return
+
+        items: list[dict[str, Any]] = []
+        note = ""
+        # `normalize_watchlist_run` reads `payload["id"]` unsubscripted, so
+        # every run that reaches this screen HAS a `run_id` -- there is no
+        # user-facing "unidentified run" state, and the label this branch used
+        # to carry was dead (re-review, m6). The guard itself stays and is not
+        # a label: `list_items(run_id=None)` drops the predicate and returns
+        # EVERY item, which would attribute the whole database to one run. It
+        # is an invariant backstop, so it falls through to the ordinary
+        # count-derived note rather than inventing a state of its own.
+        run_id = run.get("run_id")
+        backend = str(run.get("backend") or self.runtime_backend)
+        if backend != "local":
+            # `WatchlistScopeService.list_items` refuses the server backend
+            # outright, so there is no query here to fail -- say so, rather
+            # than drawing the same blank a local run with no items draws.
+            note = self._RUN_ITEMS_SERVER_NOTE
+        elif run_id is None:
+            note = self._run_items_note(run, [])
+        else:
+            try:
+                rows = await self._controller.list_items(
+                    runtime_backend="local",
+                    run_id=run_id,
+                    status=None,
+                    limit=self._RUN_ITEMS_LIMIT,
+                )
+            except Exception as exc:
+                # Review wave, Important 2. The "loaders may log at debug"
+                # exemption (`test_watchlists_check_now_failure.py`) is paid
+                # for by a visible toast, and every sibling loader on this
+                # screen pays it. Without one, a denied `items.list` policy or
+                # a database locked by a concurrent write rendered
+                # byte-identically to "this run produced no items".
+                #
+                # Type only in the message: an exception's text can carry a
+                # remote URL or a local path, and `opt(exception=True)`
+                # already delivers the full traceback to the sink.
+                logger.opt(exception=True).debug(
+                    "Failed to load the items of watchlist run "
+                    f"{run.get('id')!r}: {type(exc).__name__}"
+                )
+                notify = getattr(self.app_instance, "notify", None)
+                if callable(notify):
+                    notify(
+                        "Failed to load this run's items.",
+                        severity="error",
+                        markup=False,
+                    )
+                note = self._RUN_ITEMS_FAILED_NOTE
+            else:
+                items = [dict(item) for item in rows]
+                note = self._run_items_note(run, items)
+
+        self._run_detail_items = items
+        self._run_detail_logs = self._run_log_text(run)
+        self._run_detail_items_note = note
+        self._push_run_detail_to_live_pane(run)
+
+    #: How many of a run's items the detail region lists. A run can produce
+    #: more (the `sitemap`/`url_list` arms fan out per URL), so the page size
+    #: gets said out loud rather than silently truncating a table sitting
+    #: under a `Found:` count that disagrees with it -- review wave, Minor 2.
+    _RUN_ITEMS_LIMIT = 200
+    _RUN_ITEMS_SERVER_NOTE = "Items are not listed for server-backend runs."
+    _RUN_ITEMS_FAILED_NOTE = "Could not load this run's items."
+    _RUN_ITEMS_REATTRIBUTED_NOTE = (
+        "No item rows are still attributed to this run — a later check "
+        "re-claimed the items that had not changed."
+    )
+    _RUN_ITEMS_ALL_FILTERED_NOTE = (
+        "Every item this run found was excluded by a filter, so it stored "
+        "none."
+    )
+    _RUN_ITEMS_EMPTY_NOTE = "This run produced no items."
+
+    @classmethod
+    def _run_items_note(
+        cls, run: Mapping[str, Any], items: Sequence[Mapping[str, Any]]
+    ) -> str:
+        """What to say about a successful item query's result.
+
+        **`processed_count`, never `found_count`** (re-review, I1-b). `Found`
+        is the tally the FETCH reported; `Processed` is how many rows the run
+        actually persisted, and rows are the only thing this table can ever
+        show. Discriminating on `Found` mistook filtering for
+        re-attribution: a source with an exclude filter, checked ONCE
+        (`found 5 · processed 0 · filtered 5`), was told "a later check
+        re-claimed the items that had not changed" when no later check
+        existed. The truncation line had the same bug in reverse — a run of
+        `found 500 · processed 200` returning exactly 200 rows claimed 300
+        were hidden when every row it ever stored was on screen.
+
+        Args:
+            run: The run whose items were queried.
+            items: The rows that came back.
+
+        Returns:
+            The note, or `""` when the table speaks for itself.
+        """
+        found = cls._run_count(run, "found_count")
+        processed = cls._run_count(run, "processed_count")
+        if not items:
+            if processed > 0:
+                # It stored rows and none are left: something took them, and
+                # `persist_subscription_item`'s `run_id = excluded.run_id` is
+                # the only thing that does.
+                return cls._RUN_ITEMS_REATTRIBUTED_NOTE
+            if found > 0:
+                # It fetched, kept nothing, and therefore stored nothing.
+                # Empty is the CORRECT render here -- the note exists to stop
+                # the user reading it as breakage, and to point at the filter
+                # that caused it.
+                return cls._RUN_ITEMS_ALL_FILTERED_NOTE
+            return cls._RUN_ITEMS_EMPTY_NOTE
+        if len(items) >= cls._RUN_ITEMS_LIMIT and processed > len(items):
+            return f"Showing the first {len(items)} of {processed} items."
+        return ""
+
+    @staticmethod
+    def _run_count(run: Mapping[str, Any], key: str) -> int:
+        """One of a run's accounting counters as an int, 0 if unreadable."""
+        value = run.get(key) or 0
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    def _push_run_detail_to_live_pane(self, run: Mapping[str, Any] | None) -> None:
+        """Push the mirrored run detail into the mounted `RunsPane`.
+
+        `_dom_is_live`, not `is_mounted` (TASK-2200's mount-window lesson):
+        the run deep link arms a selection before mount and `_load_runs`
+        answers it inside `on_mount`, so this can genuinely be reached while
+        `is_mounted` is still False and the whole subtree is queryable.
+
+        Args:
+            run: The run the mirrored detail belongs to, or `None` when the
+                selection was cleared. A selection that moved on while the
+                query was in flight discards the result rather than
+                attributing one run's items to another.
+        """
+        if not self._dom_is_live:
+            return
+        try:
+            runs_pane = self.query_one("#watchlists-runs-pane", RunsPane)
+        except Exception:
+            return
+        current = runs_pane.selected_run
+        if run is None:
+            if current is not None:
+                return
+        elif current is None or str(current.get("id")) != str(run.get("id")):
+            return
+        runs_pane.run_items = self._run_detail_items
+        runs_pane.run_logs = self._run_detail_logs
+        runs_pane.run_items_note = self._run_detail_items_note
+
+    def watch_selected_run(self, run: dict[str, Any] | None) -> None:
+        """Drop the mirrored run detail the moment the selection moves.
+
+        TASK-2306. `_run_detail_items`/`_run_detail_logs` describe ONE run, and
+        three paths clear `selected_run` without going near the loader
+        (`_apply_tree_scope`, the backend switch, `_delete_run` -- the last two
+        then call `_reseed_live_detail_pane`, which would otherwise re-push the
+        departed run's items into the pane that had just correctly cleared
+        them). One watcher on the field the mirror is keyed to owns the
+        invariant, rather than three call sites remembering it.
+
+        Args:
+            run: The newly selected run, or `None`.
+        """
+        self._run_detail_items = []
+        self._run_detail_logs = ""
+        self._run_detail_items_note = ""
+
+    @staticmethod
+    def _run_log_text(run: Mapping[str, Any]) -> str:
+        """What the Logs sub-region shows for `run`.
+
+        A run that recorded no log at all is not the same as one whose log is
+        empty, and "" renders identically to "never ran" -- so the absence is
+        said out loud instead of being drawn as a blank box.
+        """
+        log_text = run.get("log_text")
+        if log_text:
+            return str(log_text)
+        error_msg = run.get("error_msg")
+        if error_msg:
+            return str(error_msg)
+        return "No log was recorded for this run."
 
     @on(CreateSourceRequested)
     def handle_create_source_requested(self, event: CreateSourceRequested) -> None:
@@ -4273,6 +4623,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         runs_pane.selected_run = requested_run
                 except Exception:
                     pass
+            if had_pending_target and requested_run is not None:
+                # TASK-2306. The deep link cannot rely on `RunSelected` to
+                # trigger the detail load the way a click does: the pane only
+                # posts that message `if self.is_mounted`, and this loader is
+                # started by `on_mount` -- inside the window where
+                # `is_mounted` is still False (TASK-2200). Awaited in this
+                # worker rather than started as another so the ordering is
+                # the same one the assertions can observe.
+                await self._load_run_detail(requested_run)
         except Exception:
             logger.opt(exception=True).debug("Failed to load watchlist runs.")
             if callable(notify):

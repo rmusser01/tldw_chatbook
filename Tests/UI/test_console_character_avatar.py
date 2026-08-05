@@ -647,9 +647,15 @@ async def test_avatar_holder_hugs_its_content():
     """
     import inspect
 
-    from tldw_chatbook.UI.Screens import chat_screen
+    # wave-1 console decomposition, task 3: the Character section's
+    # `compose()` code (including the avatar holder) moved out of
+    # `ChatScreen.compose_content` onto `ConsoleLeftRail`. Retargeted per
+    # the screen-decomposition design's testing rule -- the source-location
+    # assertion moves with the code, the width/height assertions stay
+    # byte-for-byte.
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
 
-    src = inspect.getsource(chat_screen.ChatScreen.compose_content)
+    src = inspect.getsource(ConsoleLeftRail.compose)
     holder = src.split("avatar_holder = ClickableAvatarBox", 1)[1][:900]
     assert 'avatar_holder.styles.width = "auto"' in holder
     assert 'avatar_holder.styles.height = "auto"' in holder
@@ -708,6 +714,7 @@ def test_expanding_the_character_section_reallows_a_rail_width_avatar():
     defect task-1661 fixed for a different trigger. Toggling the section
     open must invalidate the scope guard so the next sync re-measures.
     """
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen, character_avatar_box
 
     # The sizing half of the trap, in isolation: a hidden body measures 0.
@@ -718,7 +725,28 @@ def test_expanding_the_character_section_reallows_a_rail_width_avatar():
     screen._last_console_avatar_scope = (7, "idle")
     applied: list[tuple[str, bool]] = []
     screen._set_console_rail_preference = lambda **kw: applied.append(("pref", True))
-    screen._apply_console_rail_section_open = lambda sid, o: applied.append((sid, o))
+
+    # wave-1 console decomposition, task 3: section-open DOM sync moved onto
+    # `ConsoleLeftRail` (`apply_section_open`), so `_toggle_console_rail_
+    # section` now reaches it via `self.query_one("#console-left-rail",
+    # ConsoleLeftRail)` instead of calling a same-class private method.
+    # Retargeted per the screen-decomposition design's testing rule: a test
+    # that reaches into a moved private method gets its plumbing retargeted,
+    # the assertion stays byte-for-byte.
+    class _FakeLeftRail:
+        def apply_section_open(self, section_id, section_open):
+            applied.append((section_id, section_open))
+
+    def _fake_query_one(selector, expect_type=None):
+        # Final review finding 5: a wildcard fake here would still pass even
+        # if `_toggle_console_rail_section` queried the wrong id or type --
+        # assert the selector/type match the real rail's before handing back
+        # the fake, so this test still fails if that call site regresses.
+        assert selector == "#console-left-rail", selector
+        assert expect_type is ConsoleLeftRail, expect_type
+        return _FakeLeftRail()
+
+    screen.query_one = _fake_query_one
     screen._current_console_rail_state = lambda: type(
         "S", (), {"character_open": False}
     )()

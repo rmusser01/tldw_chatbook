@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+from datetime import datetime
 from typing import Any, Mapping
 
 
@@ -47,6 +49,233 @@ def _json_mapping(value: Any) -> dict[str, Any]:
             return {}
         return dict(parsed) if isinstance(parsed, Mapping) else {}
     return {}
+
+
+#: Separator the run query's `group_concat` uses to pack a source's watchlist
+#: names into one column. ASCII UNIT SEPARATOR rather than a comma: watchlist
+#: names are user-typed and a comma in one would otherwise split it into two
+#: watchlists that do not exist.
+WATCHLIST_NAME_SEPARATOR = "\x1f"
+
+
+def _coerce_watchlist_names(value: Any) -> list[str]:
+    """The watchlists a run's source belongs to, as a list.
+
+    Sorted HERE, not in SQL (review wave, Minor 1). SQLite documents
+    `group_concat`'s element order as arbitrary; the `ORDER BY` subquery the
+    run query uses is a widely-relied-on workaround, not a contract, and the
+    guaranteed form (`group_concat(x, sep ORDER BY x)`) needs SQLite >= 3.44
+    while this project's `requires-python = ">=3.11"` admits older runtimes.
+    It matters because `RunsPane._run_identity` prints only `names[0] +N`: an
+    arbitrary order would name a different watchlist on successive reads of
+    the same unchanged run, in the one place a run is identified at all.
+    Sorting the parsed list is guaranteed, free, and normalises the
+    list-input branch, which had no order either.
+
+    Args:
+        value: A list, a `WATCHLIST_NAME_SEPARATOR`-joined string (what the
+            run query returns), or `None`.
+
+    Returns:
+        Names in a stable (sorted) order, blanks dropped.
+    """
+    if value in (None, ""):
+        return []
+    if isinstance(value, (list, tuple)):
+        names = [str(name).strip() for name in value if str(name).strip()]
+    else:
+        names = [
+            part.strip()
+            for part in str(value).split(WATCHLIST_NAME_SEPARATOR)
+            if part.strip()
+        ]
+    return sorted(names)
+
+
+#: Run statuses that mean the run did not succeed. Mirrors
+#: `WatchlistsCollectionsScreen._FAILED_RUN_STATUSES`; used only to give a run
+#: that recorded no error counter an honest 1 rather than a flattering 0.
+_FAILED_RUN_STATUSES = frozenset({"failed", "error", "errored"})
+
+
+def _run_stat(stats: Mapping[str, Any], *keys: str) -> int | None:
+    """The first of `keys` present in `stats` as an int, or `None`.
+
+    Several aliases per counter because two backends write these: the local
+    check pipeline records `items_found`/`items_ingested`, while a server
+    run's `stats` blob is the server's own shape.
+
+    A malformed value is skipped, never raised (Qodo, PR #1348). A server's
+    `stats` blob is not guaranteed well-formed, and the old parse was
+    `int(float(text))` guarded by `ValueError` alone -- so `"inf"`, `"nan"` and
+    `"1e400"` all reached `int()`, which raises `OverflowError`/`ValueError`
+    out through `normalize_watchlist_run` and takes the whole Runs table down
+    rather than one counter. Integer strings are parsed as integers FIRST, so
+    an arbitrarily large one stays exact instead of round-tripping through a
+    float that cannot hold it.
+
+    Args:
+        stats: A run's `stats` mapping.
+        *keys: Candidate keys, most authoritative first.
+
+    Returns:
+        The value as an int, or `None` when no key held a usable number.
+    """
+    for key in keys:
+        value = stats.get(key)
+        if isinstance(value, bool) or value is None:
+            continue
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            # A non-finite float reaches `int()` the same way a non-finite
+            # string does, and raises the same way.
+            if not math.isfinite(value):
+                continue
+            return int(value)
+        if isinstance(value, str):
+            text = value.strip()
+            try:
+                return int(text)
+            except ValueError:
+                pass
+            try:
+                parsed = float(text)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(parsed):
+                continue
+            try:
+                return int(parsed)
+            except (OverflowError, ValueError):
+                continue
+    return None
+
+
+def _run_accounting(
+    stats: Mapping[str, Any], *, status: str, error_msg: Any
+) -> dict[str, int]:
+    """The four per-run counters the Runs pane displays.
+
+    Args:
+        stats: The run's persisted `stats` blob.
+        status: The run's status, so a failed run with no error counter still
+            reports one error rather than a flattering zero.
+        error_msg: The run's own error text, same reason.
+
+    Returns:
+        `found_count`, `processed_count`, `filtered_count`, `error_count`.
+    """
+    found = _run_stat(stats, "items_found", "found_count", "found") or 0
+    processed = (
+        _run_stat(stats, "items_ingested", "processed_count", "new_items_found") or 0
+    )
+    filtered = _run_stat(stats, "items_filtered", "filtered_count")
+    if filtered is None:
+        # The local answer, always: the check pipeline records no filtered
+        # counter (review wave, Minor 3 -- it could never differ from this),
+        # so everything found and not ingested was dropped by a filter. The
+        # two keys above are read for a server blob that does carry one.
+        # Never negative -- a stats blob whose `items_ingested` exceeds its
+        # `items_found` is malformed, not evidence of negative filtering.
+        filtered = max(found - processed, 0)
+    errors = _run_stat(stats, "error_count", "items_errored")
+    if errors is None:
+        dispositions = stats.get("dispositions")
+        if isinstance(dispositions, Mapping):
+            errors = _run_stat(dispositions, "error") or 0
+        elif error_msg or status.strip().lower() in _FAILED_RUN_STATUSES:
+            errors = 1
+        else:
+            errors = 0
+    return {
+        "found_count": found,
+        "processed_count": processed,
+        "filtered_count": filtered,
+        "error_count": errors,
+    }
+
+
+def _parse_run_timestamp(value: Any) -> datetime | None:
+    """An ISO-8601 run timestamp as a `datetime`, or `None` if unreadable."""
+    if not value:
+        return None
+    text = str(value).strip()
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _run_duration_text(started_at: Any, finished_at: Any, stats: Mapping[str, Any]) -> str | None:
+    """How long a run took, as a short human string, or `None`.
+
+    `None` (rendered `-` by the pane) is the honest answer for a run that has
+    not finished: an elapsed time for a `running` row would be a number that
+    changes every time the table is repainted and never for a row already on
+    screen.
+
+    Args:
+        started_at: The run's `started_at`.
+        finished_at: The run's `finished_at`.
+        stats: Its stats blob, whose `response_time_ms` is the fallback when
+            the two timestamps cannot be read (a server payload that omits
+            one, or a pre-existing row with a malformed value).
+
+    Returns:
+        e.g. `"820ms"`, `"4.8s"`, `"2m 3s"`, `"1h 4m"`, or `None`.
+    """
+    start = _parse_run_timestamp(started_at)
+    end = _parse_run_timestamp(finished_at)
+    seconds: float | None = None
+    if start is not None and end is not None:
+        if (start.tzinfo is None) == (end.tzinfo is None):
+            elapsed = (end - start).total_seconds()
+            if elapsed >= 0:
+                seconds = elapsed
+    if seconds is None:
+        elapsed_ms = _run_stat(stats, "response_time_ms")
+        if elapsed_ms is not None and elapsed_ms >= 0:
+            seconds = elapsed_ms / 1000
+    if seconds is None:
+        return None
+    if seconds < 1:
+        return f"{int(round(seconds * 1000))}ms"
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    if seconds < 3600:
+        return f"{int(seconds // 60)}m {int(seconds % 60)}s"
+    return f"{int(seconds // 3600)}h {int((seconds % 3600) // 60)}m"
+
+
+def _alert_match_count(value: Any) -> int:
+    """How many content-alert rules an item matched.
+
+    `subscription_items.alert_matches` is a JSON list written by
+    `WatchlistContentAlertService.evaluate` (or `None` when nothing matched),
+    but the column comes back as raw text, so it is decoded here rather than
+    at each display site.
+
+    Args:
+        value: The stored `alert_matches` column, already-decoded list, or
+            `None`.
+
+    Returns:
+        The number of matches, or 0 for anything unparseable.
+    """
+    if value in (None, ""):
+        return 0
+    if isinstance(value, (list, tuple)):
+        return len(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return 0
+        return len(parsed) if isinstance(parsed, (list, tuple)) else 0
+    return 0
 
 
 def _local_source_settings(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -218,6 +447,9 @@ def normalize_watchlist_run(
     if source_id is None and source == "local":
         source_id = job_id
     stats = dict(payload.get("stats") or {})
+    status = payload.get("status") or "unknown"
+    error_msg = payload.get("error_msg")
+    counts = _run_accounting(stats, status=str(status), error_msg=error_msg)
     normalized = {
         "id": build_watchlist_item_id(source, "watchlist_run", run_id),
         "backend": source,
@@ -225,11 +457,28 @@ def normalize_watchlist_run(
         "run_id": run_id,
         "job_id": job_id,
         "source_id": source_id,
-        "status": payload.get("status") or "unknown",
+        "status": status,
         "started_at": payload.get("started_at"),
         "finished_at": payload.get("finished_at"),
+        # TASK-2305. The Runs pane has always read `found_count` and friends
+        # off the run's own top level, and no normalizer had ever written
+        # them: the numbers the check pipeline records live nested under
+        # `stats` as `items_found`/`items_ingested`. Every
+        # run therefore displayed `Found 0 · Processed 0 · Filtered 0 ·
+        # Errors 0` however much it had actually harvested, which reads as if
+        # checks do nothing. Lifted here, once, rather than teaching each
+        # display site the nesting.
+        **counts,
+        "duration": _run_duration_text(
+            payload.get("started_at"), payload.get("finished_at"), stats
+        ),
+        # The source's own name, resolved by the query that reads the run
+        # (see `LocalWatchlistsService._RUN_SELECT`); absent for a server run,
+        # whose API carries no source name.
+        "source_title": payload.get("source_title") or None,
+        "watchlist_names": _coerce_watchlist_names(payload.get("watchlist_names")),
         "stats": stats,
-        "error_msg": payload.get("error_msg"),
+        "error_msg": error_msg,
         "filter_tallies": payload.get("filter_tallies"),
         "log_text": payload.get("log_text"),
         "log_path": payload.get("log_path"),
@@ -311,6 +560,13 @@ def normalize_watchlist_item(source: str, row: Mapping[str, Any]) -> dict[str, A
         "title": row.get("title") or "Untitled item",
         "url": row.get("url") or row.get("canonical_url"),
         "status": row.get("status") or "new",
+        # TASK-2306: which run produced this item, and how many content-alert
+        # rules it matched. Both columns are already on the row (`SELECT i.*`)
+        # and both are what the Runs tab's Items sub-region displays -- its
+        # "Alerts" column had no source at all before this, so it rendered
+        # `0` over every item however many alerts had fired.
+        "run_id": row.get("run_id"),
+        "alert_count": _alert_match_count(row.get("alert_matches")),
         "author": row.get("author"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),

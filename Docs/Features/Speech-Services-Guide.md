@@ -598,6 +598,145 @@ for the two keys above (edit `config.toml` directly), and speaking replies
 outside the loop (the existing per-message Speak affordance and
 `spoken_feedback` toggle are unrelated and unaffected).
 
+### Realtime engine
+
+An optional low-latency engine for the same hands-free loop above: instead
+of the pipeline (record → silence-gate → transcribe → LLM → sentence-by-
+sentence TTS), it holds one live connection to a provider's realtime speech
+API. Audio streams both directions continuously, the server detects your
+turns, and replies begin in well under a second instead of the pipeline's
+~4 s pause-to-send budget — same loop, a different engine underneath.
+Entry and exit are unchanged and **engine-transparent**: **`Ctrl+Shift+H`**
+starts and ends the loop exactly as described above regardless of which
+engine is running. The chip names the engine while it runs — `realtime ·
+connecting…`, `realtime · listening`, `realtime · thinking…`, `realtime ·
+speaking`, and `realtime · reconnecting…` — so it is always visible which
+engine you are actually talking to.
+
+**Off by default, and only OpenAI Realtime today.** Enabling it is an
+explicit opt-in (`realtime.enabled`, never inferred from an API key merely
+being present); OpenAI's Realtime API is the only supported provider in
+this release.
+
+**Honest UX difference: spoken commands do not exist inside realtime
+mode.** Realtime mode runs no client-side speech-to-text at all — the
+provider's model does the hearing directly from the raw audio stream — so
+none of the "Console, …" spoken commands described above, including
+"Console, stop.", can be heard or classified while it is active. **Exits
+are key/mouse only**: `Ctrl+Shift+H`, Esc, or the mic button.
+
+**Privacy: microphone audio streams continuously, not just after a
+pause.** This is the sharpest difference from the pipeline engine above,
+which only sends audio once a pause is detected. In realtime mode, once
+the session is live, microphone audio streams to the provider
+continuously for the *entire* session — every word, immediately, for as
+long as the loop is running — subject only to barge-in gating (in the
+default speaker-safe mode, outbound audio is muted client-side while a
+reply is playing; see "Barge-in" below). This is not "listens after you
+pause": it is a continuously open microphone stream to a third-party
+provider for the whole live session.
+
+**Cost: billed per connected minute, not per message.** Realtime sessions
+are billed by the provider for however long the session stays connected,
+not per message or per token the way the pipeline engine's STT/LLM/TTS
+calls are. An idle session left connected keeps costing money even if
+nobody is talking. The **idle timeout** below (`realtime.idle_timeout_
+minutes`, default 5) protects against this: no activity — no turn sent
+and no reply finishing — for that many minutes ends the loop
+automatically with a toast naming the reason. It never fires while a
+reply is actively being spoken, so a long answer is never cut off by the
+cost guard.
+
+**Turn detection: how the provider decides you have finished speaking.**
+Two modes, `realtime.turn_detection`:
+
+- **`semantic_vad`** (default) — the model decides from *what you said*
+  whether your turn is over. This is the default because the alternative's
+  provider defaults are aggressive: server VAD ends a turn after **200 ms**
+  of quiet at a fixed energy threshold, so in an ordinary room a
+  mid-sentence pause, a keystroke (barge-in here *is* a keypress, right
+  next to a live microphone), or a cough can each end your turn. Each
+  fragment is then transcribed on its own, and a speech model handed half a
+  syllable of keyboard noise reports words you never said. If your
+  transcripts show random or invented words rather than your question, this
+  is the setting to check first.
+- **`server_vad`** — silence-gated, and tunable. Choose it when you want
+  direct control of the gate: `realtime.vad_threshold` (0–1, how loud
+  counts as speech) and `realtime.vad_silence_ms` (how long a pause ends
+  the turn; raise it if your speech is being cut off mid-thought). Both are
+  optional — leave them unset to use the provider's own values. Both apply
+  to `server_vad` **only**: the API rejects them outright under
+  `semantic_vad`, so the app drops them in that mode rather than sending a
+  request that would fail.
+
+All three are editable in **Settings → Speech & TTS → Realtime engine**,
+where the two numbers are disabled unless server VAD is selected.
+
+**Barge-in.** The same two modes as the pipeline engine, controlled by the
+same `dictation.acoustic_barge_in` key: by default (speaker-safe) outbound
+microphone audio is gated client-side while a reply plays, and any
+keypress cuts the reply and reopens the mic; with acoustic barge-in
+enabled, the microphone stays open the whole time and speaking over a
+reply cuts it, with the same no-echo-cancellation / headphones warning as
+the pipeline engine.
+
+**Reconnect and failure.** An unexpected connection drop gets **one**
+automatic reconnect attempt (a fresh connection, reseeded from the visible
+conversation, with a toast confirming "reconnected"). A second failure in
+the same loop entry exits loudly with the reason — there is no silent
+retry loop and no silent death. **Connect failures fall back loudly, and
+only to a genuinely usable pipeline:** if the realtime engine can't
+connect at all and the pipeline engine is usable (STT installed, VAD not
+degraded), hands-free enters the pipeline loop instead, with a toast
+naming the realtime failure so the switch is never silent. If the
+pipeline isn't usable either, both reasons are toasted and the loop does
+not open — you are never dropped into a dead capture.
+
+**Continuity.** Voice turns land in the Console transcript as ordinary
+messages, same as the pipeline engine. Entering the loop seeds the
+realtime session from the conversation's existing history (and reseeds it
+on reconnect) so context carries over both ways.
+
+**Configuration:**
+
+Install the extra first — it carries the WebSocket transport plus the
+audio capture/playback backends the realtime engine needs, none of which
+come with a plain install:
+
+```bash
+pip install -e ".[realtime]"        # from a checkout
+pip install "tldw_chatbook[realtime]"   # from a release
+```
+
+```toml
+[realtime]
+enabled = true                # off by default; explicit opt-in only
+provider = "openai"           # the only supported value today
+# model = "gpt-realtime"      # optional override; OpenAI's current default
+# voice = "marin"             # optional; unset uses the provider's default voice
+idle_timeout_minutes = 5      # cost guard -- ends an unattended session
+turn_detection = "semantic_vad"  # or "server_vad"; see "Turn detection" above
+# vad_threshold = 0.6         # server_vad only; unset = provider default
+# vad_silence_ms = 700        # server_vad only; unset = provider default (200 ms)
+
+[dictation]
+# "auto" uses realtime iff realtime.enabled, "pipeline" forces the engine
+# above without deleting the [realtime] block, "realtime" forces realtime
+# (a loud, refused toast if it isn't actually enabled -- never a silent
+# downgrade back to the pipeline).
+handsfree_engine = "auto"
+```
+
+All of the above is also editable from **Settings → Speech & TTS →
+Realtime engine**: the enable switch, provider (OpenAI only), model,
+voice, idle timeout, and hands-free engine override all live there, and
+Save persists them the same way the rest of that screen's fields do.
+
+**Out of scope (for now).** Other realtime providers (Gemini Live is a
+named follow-up behind the same protocol seam), tool/agent calls inside a
+realtime session, WebRTC transport, a per-session voice picker, and
+feeding the Console cost chip from realtime usage.
+
 ## Voice Commands
 
 ### Built-in Commands
