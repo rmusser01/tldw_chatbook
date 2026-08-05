@@ -2496,7 +2496,18 @@ async def test_turn_commit_records_a_pending_transcript_status(monkeypatch):
 async def test_an_empty_transcript_records_why_the_row_is_empty(monkeypatch):
     """The strand case: the provider transcribed the turn and it held no
     words. Before the field, the row sat empty forever with nothing saying
-    whether the user was silent or the pipeline broke."""
+    whether the user was silent or the pipeline broke.
+
+    task-2391: the row's CONTENT becomes the explanation, not just its
+    metadata -- the store defers persistence for a content-less row, and
+    the DB layer refuses to create a message with neither text nor an
+    image at all (`CharactersRAGDB.add_message`), so a metadata-only
+    "empty" row could never durably exist. Writing a short placeholder as
+    real content flushes the same deferred-create path a real transcript
+    already uses (`update_message_content`), so this row persists like
+    any other -- see `Tests/Chat/test_console_chat_store.py` and
+    `Tests/UI/test_console_resume_active_path.py` for the persistence and
+    restart-survival proofs (this harness has no durable DB backing)."""
     _patch_realtime_config(monkeypatch)
     app = _build_test_app()
     rig = _install_realtime_fakes(app)
@@ -2516,8 +2527,73 @@ async def test_an_empty_transcript_records_why_the_row_is_empty(monkeypatch):
         )
 
         user = _messages(console)[0]
-        assert user.content == ""
+        assert user.content == chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
         assert user.metadata.engine == "realtime"
+
+
+@pytest.mark.asyncio
+async def test_a_second_empty_transcript_does_not_double_mark_the_row(monkeypatch):
+    """An empty payload landing twice for the same commit (a duplicate
+    provider event, or a race) must not re-write the placeholder or bounce
+    the status -- `_console_realtime_row_has_text` already reports True
+    once the placeholder is written, same guard as the late-final case."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        session.fire_turn_committed()
+        await _wait_for(lambda: len(_messages(console)) == 1, pilot)
+        session.fire_input_transcript("")
+        await _wait_for(
+            lambda: _messages(console)[0].content
+            == chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+            pilot,
+        )
+        session.fire_input_transcript("   ")
+        await pilot.pause()
+        await pilot.pause()
+
+        user = _messages(console)[0]
+        assert user.content == chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
+        assert user.metadata.transcript_status == "empty"
+
+
+@pytest.mark.asyncio
+async def test_seed_excludes_a_row_whose_transcript_came_back_empty(monkeypatch):
+    """task-2391 AC3: `transcript_status` needs a real consumer. The reseed
+    builder is it -- an "empty" row's content is now the placeholder text,
+    not something the user said, and must never be replayed into a
+    reconnected session's context as if it were."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        store.append_message(
+            session_id,
+            role=ConsoleMessageRole.USER,
+            content=chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+            metadata=MessageMetadata(engine="realtime", transcript_status="empty"),
+        )
+        store.append_message(
+            session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="a real reply",
+        )
+
+        await _enter_live_realtime(console, pilot, rig)
+
+        items, _instructions = rig.session.seeds[0]
+        assert items == [("assistant", "a real reply")]
 
 
 @pytest.mark.asyncio

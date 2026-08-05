@@ -3069,6 +3069,45 @@ def test_set_message_metadata_on_an_unpersisted_row_rides_the_later_create():
     assert '"transcript_status": "final"' in persistence.created[-1]["metadata_json"]
 
 
+def test_an_empty_transcript_placeholder_persists_through_the_deferred_create():
+    """task-2391: a committed voice turn whose transcript comes back with no
+    words must still survive a restart. The store defers persistence for a
+    content-less row (same guard proven above), and the DB layer refuses to
+    create a message with neither text nor an image at all
+    (`CharactersRAGDB.add_message`) -- so a metadata-only "empty" record can
+    never durably exist. Writing a short, honest placeholder as the row's
+    real content -- through the SAME `update_message_content` call the
+    "final" transcript case uses above -- flushes the deferred create, and
+    a follow-up metadata-only patch (mirroring the "final" case's own
+    two-step order: content write, then status write) marks it "empty"."""
+    from tldw_chatbook.Chat.message_metadata import MessageMetadata
+
+    placeholder = "(no speech detected)"
+    persistence = RecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="",
+        persist=True,
+        metadata=MessageMetadata(engine="realtime", transcript_status="pending"),
+    )
+    assert persistence.created == [], "an empty row has nothing to persist yet"
+
+    store.update_message_content(message.id, placeholder)
+    assert persistence.created[-1]["content"] == placeholder, (
+        "the row must be durably created once its emptiness is final, not "
+        "left stranded in memory"
+    )
+
+    store.set_message_metadata(
+        message.id,
+        MessageMetadata(engine="realtime", transcript_status="empty"),
+    )
+    assert '"transcript_status": "empty"' in persistence.updated[-1]["metadata_json"]
+
+
 def test_set_message_metadata_flushes_locally_and_leaves_the_version_alone():
     """Same local-only contract as the usage flush, against a REAL
     persistence/DB pair: metadata is this device's own observation, so the

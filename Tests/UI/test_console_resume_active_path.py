@@ -747,6 +747,53 @@ def test_resume_restores_metadata_from_metadata_json():
         db.close_connection()
 
 
+def test_resume_restores_an_empty_transcript_row_and_its_explanation():
+    """task-2391: a committed voice turn whose transcript came back with no
+    words must still be there -- and still explained -- after a restart.
+    Unlike the `pending`/`final` case above, this row was never real user
+    words in the first place; its content is the placeholder task-2391
+    writes so the row can be durably created at all (the DB layer refuses a
+    message with neither text nor an image, so a metadata-only "empty"
+    record could never survive to be resumed)."""
+    from tldw_chatbook.UI.Screens.chat_screen import (
+        CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+    )
+
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        service = ChatConversationService(db)
+        conversation_id = service.create_conversation(
+            id="meta-conv-2",
+            title="Empty transcript",
+            scope_type="global",
+            state="in-progress",
+        )
+        db.add_message(
+            {
+                "id": "m-meta-empty",
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "role": "user",
+                "content": CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+                "timestamp": "2026-01-01T00:00:00.000000+00:00",
+                "metadata_json": (
+                    '{"engine": "realtime", "provider": "openai",'
+                    ' "model": "gpt-4o-transcribe", "interrupted": false,'
+                    ' "transcript_status": "empty"}'
+                ),
+            }
+        )
+
+        store, session = _resume_into_store(db, conversation_id)
+
+        (user,) = store.messages_for_session(session.id)
+        assert user.content == CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
+        assert user.metadata is not None
+        assert user.metadata.transcript_status == "empty"
+    finally:
+        db.close_connection()
+
+
 def test_resume_tolerates_null_and_garbage_metadata_json():
     # Legacy rows (NULL) and corrupt JSON load with metadata=None, never raise.
     db = CharactersRAGDB(":memory:", "test_client")
