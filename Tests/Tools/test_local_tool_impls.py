@@ -3,6 +3,8 @@ import pytest
 from tldw_chatbook.Tools.local_tool_impls import (
     LocalToolError,
     edit_file,
+    glob_files,
+    grep_files,
     list_directory,
     read_file,
     resolve_workspace_path,
@@ -135,3 +137,52 @@ def test_fs_edit_replace_all(tmp_path):
     out = edit_file("f.txt", "dup", "x", workspace_root=ws, replace_all=True)
     assert (ws / "f.txt").read_text() == "x x x"
     assert "3 replacements" in out
+
+
+def test_fs_glob_matches_and_sorts_by_mtime(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    import os, time
+    old = ws / "old.py"; old.write_text("x")
+    new = ws / "new.py"; new.write_text("x")
+    (ws / "skip.txt").write_text("x")
+    past = time.time() - 100
+    os.utime(old, (past, past))
+    out = glob_files("*.py", workspace_root=ws)
+    assert out.splitlines() == ["new.py", "old.py"]  # newest first
+
+
+def test_fs_glob_recursive_and_cap(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "sub").mkdir()
+    (ws / "sub" / "deep.py").write_text("x")
+    assert "sub/deep.py" in glob_files("**/*.py", workspace_root=ws)
+
+
+def test_fs_grep_line_numbers(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "a.py").write_text("def foo():\n    return 1\n")
+    out = grep_files("def foo", workspace_root=ws)
+    assert "a.py:1:def foo():" in out
+
+
+def test_fs_grep_files_with_matches_and_count(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "a.py").write_text("hit\nhit\n")
+    (ws / "b.py").write_text("hit\n")
+    assert set(grep_files("hit", workspace_root=ws, mode="files").splitlines()) == {"a.py", "b.py"}
+    assert "a.py:2" in grep_files("hit", workspace_root=ws, mode="count")
+
+
+def test_fs_grep_caps_output(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "big.py").write_text("hit\n" * 500)
+    out = grep_files("hit", workspace_root=ws, max_results=10)
+    assert "more, truncated" in out
+
+
+def test_fs_glob_cannot_escape_workspace_via_dotdot(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (tmp_path / "outside.py").write_text("x")
+    (ws / "inner.py").write_text("x")
+    out = glob_files("../*.py", workspace_root=ws)
+    assert "outside.py" not in out
