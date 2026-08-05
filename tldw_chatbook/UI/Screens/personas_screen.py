@@ -7949,20 +7949,26 @@ class PersonasScreen(BaseAppScreen):
                 "Character already existed; selected it. "
                 "Re-importing does not update an existing character."
             )
+        # Reachable only when the observed profile is genuinely "unavailable"
+        # (task-2450 amendment): an "unverified" legacy-provider profile now
+        # auto-applies instead of landing here, so this copy never needs to
+        # hedge -- it can and must say "unavailable" plainly rather than the
+        # vaguer "not currently available", which used to also cover the
+        # unverified case and describe it inaccurately.
         voice_copy = {
             "applied": " The imported voice profile applied successfully.",
             "saved_for_repair": (
                 " The voice profile was saved for repair but was not assigned "
-                "because it is not currently available."
+                "because it is unavailable."
             ),
             "preserved": (
-                " The imported voice is not currently available; the existing "
-                "voice assignment was preserved."
+                " The imported voice is unavailable; the existing voice "
+                "assignment was preserved."
             ),
             "unassigned_unavailable": (
-                " The imported voice matches an existing profile that is not "
-                "currently available; the character remains unassigned. Repair "
-                "the profile in the voice profile library."
+                " The imported voice matches an existing profile that is "
+                "unavailable; the character remains unassigned. Repair the "
+                "profile in the voice profile library."
             ),
             "cancelled": " The voice profile was not changed.",
             "failed": (

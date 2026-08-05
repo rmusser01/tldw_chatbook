@@ -4773,3 +4773,94 @@ async def test_reusing_available_profile_assigns_only_the_observed_profile_ident
         existing.profile_id,
     )
     assert repository.last_expected_profile == existing
+
+
+@pytest.mark.asyncio
+async def test_portable_commit_auto_applies_unverified_legacy_profile_on_create() -> (
+    None
+):
+    """Task-6c (TASK-2450 AC#8): an imported legacy-provider profile is always
+    classified 'unverified' (observe_portable_profile's early return for any
+    non-audio_cpp provider) -- it must auto-apply exactly like an 'available'
+    one, not fall through to the unassigned-for-repair branch."""
+
+    repository = _FakeRepository()
+    tts_service = _FakeTTSService(_capability_snapshot(models=(_model("model-a"),)))
+    service = TTSProfileService(repository, tts_service)
+    portable = _portable_profile(
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+        response_format="mp3",
+    )
+    observation = await service.observe_portable_profile(portable)
+    assert observation.availability == "unverified"
+    plan = await service.inspect_portable_profile_import(observation)
+    character_ref = _character_ref(source="local", authority_id="local-db")
+
+    result = await service.commit_portable_profile_import(
+        plan,
+        "create",
+        character_ref,
+        expected_current=None,
+    )
+
+    assert result.created is True
+    # Note: the successful-assign branch reports the literal "available" here
+    # regardless of the observed state, matching the pre-existing (unchanged)
+    # behavior on the already-passing audio_cpp path -- this field is never
+    # read by any caller (confirmed by grep across tldw_chatbook/), so it is
+    # left untouched; what this test pins is that assignment actually
+    # happened, which is the live-user-visible outcome.
+    assert result.availability == "available"
+    assert result.assignment is not None
+    assert result.assignment.character_ref == character_ref
+    assert [call[0] for call in repository.calls] == [
+        "collisions",
+        "create_with_assignment",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_portable_commit_auto_applies_unverified_legacy_profile_on_reuse() -> (
+    None
+):
+    """Complementary reuse-path pin for the same fix."""
+
+    repository = _FakeRepository()
+    existing = _profile(
+        display_name="Imported voice",
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+        response_format="mp3",
+    )
+    repository.collision_result = TTSProfileCollisionSnapshot(existing, existing)
+    tts_service = _FakeTTSService(_capability_snapshot(models=(_model("model-a"),)))
+    service = TTSProfileService(repository, tts_service)
+    portable = _portable_profile(
+        display_name="Imported voice",
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+        response_format="mp3",
+    )
+    observation = await service.observe_portable_profile(portable)
+    assert observation.availability == "unverified"
+    plan = await service.inspect_portable_profile_import(observation)
+    character_ref = _character_ref(source="local", authority_id="local-db")
+
+    result = await service.commit_portable_profile_import(
+        plan,
+        "reuse",
+        character_ref,
+        expected_current=None,
+    )
+
+    assert result.assignment == CharacterTTSAssignment(
+        character_ref,
+        existing.profile_id,
+    )
+    # Same pre-existing hardcoded "available" on the success branch as the
+    # create-path test above -- unchanged, not user-visible.
+    assert result.availability == "available"

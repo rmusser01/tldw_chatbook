@@ -1490,7 +1490,7 @@ class TTSProfileService:
             if profile is None:
                 raise ProfileValidationError("choice")
             loaded = LoadedTTSProfile(expected_generation, profile)
-            if current.availability != "available":
+            if current.availability == "unavailable":
                 return PortableProfileImportResult(
                     created=False,
                     availability=current.availability,
@@ -1519,7 +1519,7 @@ class TTSProfileService:
                 expected_generation=expected_generation,
                 verify=True,
             )
-        if current.availability == "available":
+        if current.availability != "unavailable":
             snapshot = await self._create_profile_with_assignment(
                 candidate,
                 canonical_ref,

@@ -3072,6 +3072,121 @@ class TestImportExport:
             and severity == "information"
             for message, severity in notifications
         )
+        # Task-6c (TASK-2450 AC#9): this copy is only ever reached for a
+        # genuinely unavailable profile now (an unverified one auto-applies
+        # instead) -- it must say so plainly, not the vaguer "not currently
+        # available" that used to also (inaccurately) describe "unverified".
+        assert any(
+            "unavailable" in message.casefold() for message, _severity in notifications
+        )
+
+    async def test_unverified_imported_voice_auto_applies_with_honest_copy(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        tmp_path,
+    ):
+        """Task-6c (TASK-2450 AC#8/#9): a legacy-provider imported profile is
+        always observed as 'unverified' (never 'available') -- it must
+        auto-apply, and the resulting toast must read as a success, never
+        mention 'unavailable', and never launder the state as verified
+        either (it simply reports the ordinary 'applied' outcome, matching
+        the honesty convention Gap 2 established: the Voice Profiles
+        library and Roleplay status line are where 'Unverified' is shown,
+        not a one-shot import toast)."""
+
+        profile = _character_tts_profile(1)
+        portable = _portable_tts_profile(profile)
+        observation = PortableProfileAvailabilityObservation(
+            7,
+            3,
+            portable,
+            "unverified",
+        )
+        plan = PortableProfileImportPlan(
+            observation,
+            ("create",),
+            None,
+            portable,
+        )
+        character_ref = CharacterRef(
+            source="local",
+            authority_id="local-test-authority",
+            character_id="1",
+        )
+        commit_calls: list[tuple[object, ...]] = []
+
+        class _Service:
+            async def observe_portable_profile(self, _profile):
+                return observation
+
+            async def inspect_portable_profile_import(self, _observation):
+                return plan
+
+            async def get_assigned_profile(self, _character_ref):
+                return LoadedCharacterTTSAssignment(7, None)
+
+            async def commit_portable_profile_import(
+                self,
+                candidate_plan,
+                choice,
+                candidate_ref,
+                *,
+                expected_current,
+            ):
+                commit_calls.append(
+                    (candidate_plan, choice, candidate_ref, expected_current)
+                )
+                return PortableProfileImportResult(
+                    created=True,
+                    availability="unverified",
+                    loaded=LoadedTTSProfile(7, profile),
+                    assignment=CharacterTTSAssignment(
+                        candidate_ref, profile.profile_id
+                    ),
+                )
+
+        source = tmp_path / "unverified.json"
+        source.write_bytes(b"one immutable character card")
+        monkeypatch.setattr(
+            character_handler_module,
+            "inspect_character_card_tts_attachment",
+            lambda _bytes: CharacterCardTTSInspection(portable),
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "import_character_card_with_outcome",
+            lambda _bytes: CharacterCardImportOutcome(1, True, portable, None),
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            monkeypatch.setattr(screen, "_queue_character_tts_refresh", lambda: None)
+            monkeypatch.setattr(
+                screen,
+                "_character_tts_profile_service",
+                AsyncMock(return_value=_Service()),
+            )
+            monkeypatch.setattr(
+                screen,
+                "_local_character_ref_for_import",
+                AsyncMock(return_value=character_ref),
+            )
+
+            await screen._import_character_from_path(str(source))
+
+        assert commit_calls == [(plan, "create", character_ref, None)]
+        assert any(
+            "applied successfully" in message.casefold() and severity == "information"
+            for message, severity in notifications
+        )
+        assert all(
+            "unavailable" not in message.casefold()
+            for message, _severity in notifications
+        )
 
     async def test_unavailable_reused_voice_reports_new_character_is_unassigned(
         self,
@@ -3164,7 +3279,13 @@ class TestImportExport:
             if "voice" in message.casefold()
         ]
         assert any("remains unassigned" in message for message in matching)
-        assert all("existing voice assignment was preserved" not in message for message in matching)
+        assert all(
+            "existing voice assignment was preserved" not in message
+            for message in matching
+        )
+        # Task-6c (TASK-2450 AC#9): same honesty pin as the saved-for-repair
+        # case -- only reachable for a genuinely unavailable profile now.
+        assert any("unavailable" in message for message in matching)
 
     async def test_profile_commit_failure_keeps_character_and_hides_sensitive_detail(
         self,
