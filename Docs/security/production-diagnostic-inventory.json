@@ -832,7 +832,7 @@
     },
     {
       "call_count": 12,
-      "diagnostic_digest": "4e3f8b684af292111f59",
+      "diagnostic_digest": "8b296e0406f7a3d5e5af",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/realtime/openai_session.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -2092,7 +2092,7 @@
     },
     {
       "call_count": 195,
-      "diagnostic_digest": "8642dc7a52ecd2bda8ab",
+      "diagnostic_digest": "c091f14f2731e361ae75",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/chat_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
