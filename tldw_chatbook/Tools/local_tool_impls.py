@@ -149,7 +149,15 @@ def write_file(path: str, content: str, *, workspace_root: Path) -> str:
     root = resolve_workspace_path(path, workspace_root)
     if not root.parent.is_dir():
         raise LocalToolError(f"parent directory does not exist for: {path}")
-    root.write_text(content, encoding="utf-8")
+    try:
+        data = content.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise LocalToolError(
+            f"content is not UTF-8 encodable (lone surrogate?): {exc}"
+        ) from exc
+    # encode BEFORE opening for write — a failed encode must never
+    # truncate an existing file
+    root.write_bytes(data)
     return f"wrote {len(content)} characters to {path}"
 
 
@@ -166,15 +174,25 @@ def edit_file(
     Fails unless the match is unique (or ``replace_all=True``); ambiguity
     errors include the match count so the model can self-correct. Exact
     semantics per spec §2 (claude-code Edit parity). Reads and writes with
-    ``newline=""`` so CRLF files are not silently converted to LF.
+    ``newline=""`` so CRLF files are not silently converted to LF. The
+    result is encoded BEFORE the file is opened for writing, so an
+    unencodable ``new_string`` (e.g. a lone surrogate from tool-call JSON)
+    fails without truncating the file.
     """
     if not old_string:
         raise LocalToolError("old_string must not be empty")
+    if old_string == new_string:
+        raise LocalToolError("old_string and new_string are identical")
     root = resolve_workspace_path(path, workspace_root)
     if not root.is_file():
         raise LocalToolError(f"file not found: {path}")
-    with open(root, encoding="utf-8", newline="") as fh:
-        content = fh.read()
+    try:
+        with open(root, encoding="utf-8", newline="") as fh:
+            content = fh.read()
+    except UnicodeDecodeError as exc:
+        raise LocalToolError(
+            f"'{path}' is not valid UTF-8; fs_edit only edits text files"
+        ) from exc
     count = content.count(old_string)
     if count == 0:
         raise LocalToolError(f"old_string not found in {path}")
@@ -184,7 +202,13 @@ def edit_file(
             "provide more context to make it unique, or set replace_all=true"
         )
     updated = content.replace(old_string, new_string)
-    root.write_text(updated, encoding="utf-8", newline="")
+    try:
+        data = updated.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise LocalToolError(
+            f"new_string is not UTF-8 encodable (lone surrogate?): {exc}"
+        ) from exc
+    root.write_bytes(data)
     n = count if replace_all else 1
     return f"made {n} replacement{'s' if n != 1 else ''} in {path}"
 
