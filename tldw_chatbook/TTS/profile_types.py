@@ -60,6 +60,19 @@ _T = TypeVar("_T")
 AUDIO_CPP_PROFILE_RESPONSE_FORMAT = "wav"
 AUDIO_CPP_PROFILE_SPEED = 1.0
 
+PROFILE_PROVIDER_FORMATS: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "audio_cpp": (AUDIO_CPP_PROFILE_RESPONSE_FORMAT,),
+        "openai": ("mp3", "opus", "aac", "flac", "wav", "pcm"),
+        "elevenlabs": ("mp3", "opus", "aac", "flac", "wav", "pcm"),
+        "kokoro": ("mp3", "opus", "aac", "flac", "wav", "pcm"),
+        "chatterbox": ("mp3", "opus", "aac", "flac", "wav", "pcm"),
+        "higgs": ("mp3", "opus", "aac", "flac", "wav", "pcm"),
+        "alltalk": ("mp3", "opus", "aac", "flac", "wav", "pcm"),
+    }
+)
+PROFILE_PROVIDER_IDS: frozenset[str] = frozenset(PROFILE_PROVIDER_FORMATS)
+
 
 class ProfileRepositoryState(StrEnum):
     """The public lifecycle states of a generation-profile repository."""
@@ -244,18 +257,23 @@ def canonical_json_options(options: JsonOptions) -> str:
         raise ProfileValidationError("options") from None
 
 
-def _validate_audio_cpp(
+def _validate_provider_contract(
     provider_id: str,
     response_format: str,
     speed: float,
     options: FrozenJsonOptions,
 ) -> None:
-    if provider_id == "audio_cpp" and (
-        response_format != AUDIO_CPP_PROFILE_RESPONSE_FORMAT
-        or speed != AUDIO_CPP_PROFILE_SPEED
-        or bool(options)
-    ):
-        raise ProfileValidationError("audio_cpp")
+    formats = PROFILE_PROVIDER_FORMATS.get(provider_id)
+    if formats is None:
+        raise ProfileValidationError("provider_id")
+    if response_format not in formats:
+        raise ProfileValidationError("response_format")
+    if provider_id == "audio_cpp":
+        if speed != AUDIO_CPP_PROFILE_SPEED or bool(options):
+            raise ProfileValidationError("audio_cpp")
+        return
+    if bool(options):
+        raise ProfileValidationError("options")
 
 
 def _validate_revision(value: object) -> int:
@@ -308,7 +326,7 @@ class TTSProfileDraft:
         response_format = _validate_response_format(self.response_format)
         speed = _validate_speed(self.speed)
         options = _freeze_options(self.options)
-        _validate_audio_cpp(provider_id, response_format, speed, options)
+        _validate_provider_contract(provider_id, response_format, speed, options)
         object.__setattr__(self, "display_name", display_name)
         object.__setattr__(self, "provider_id", provider_id)
         object.__setattr__(self, "model_id", model_id)
@@ -358,7 +376,7 @@ class TTSGenerationProfile:
         response_format = _validate_response_format(self.response_format)
         speed = _validate_speed(self.speed)
         options = _freeze_options(self.options)
-        _validate_audio_cpp(provider_id, response_format, speed, options)
+        _validate_provider_contract(provider_id, response_format, speed, options)
         revision = _validate_revision(self.revision)
         created_at = _validate_utc_timestamp(self.created_at, "created_at")
         updated_at = _validate_utc_timestamp(self.updated_at, "updated_at")

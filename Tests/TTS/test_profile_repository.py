@@ -175,12 +175,7 @@ def _draft(
         speed=speed,
         options=cast(
             Any,
-            {
-                "nested": {"items": [True, 2, 3.5, None]},
-                "locale": "日本語",
-            }
-            if options is None
-            else options,
+            options if options is not None else {},
         ),
     )
 
@@ -1877,10 +1872,11 @@ async def test_create_generates_uuid4_or_retains_exact_caller_uuid_and_round_tri
     generated_draft = _draft("  Ｎａｒｒａｔｏｒ 音声  ")
     caller_draft = _draft(
         "Caller Profile",
+        provider_id="audio_cpp",
         model_id="model/exact/2",
         voice_id=None,
-        response_format="ogg",
-        speed=0.75,
+        response_format="wav",
+        speed=1.0,
         options={"seed": 7, "labels": ["声", False]},
     )
     generated_factory = _SequenceCallable(iter((GENERATED_ID,)))
@@ -2455,14 +2451,16 @@ async def test_update_uses_optimistic_revision_and_preserves_winner_exactly(
         editor_b = editor_b_result.value
         winner_draft = _draft(
             "Shared Updated",
+            provider_id="audio_cpp",
             model_id="winner-model",
             voice_id=None,
-            response_format="flac",
-            speed=2.0,
+            response_format="wav",
+            speed=1.0,
             options={"winner": {"exact": [1, "声"]}},
         )
         loser_draft = _draft(
             "Loser Value",
+            provider_id="audio_cpp",
             model_id="loser-model",
             options={"must": "not persist"},
         )

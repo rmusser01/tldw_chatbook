@@ -30,6 +30,7 @@ from tldw_chatbook.TTS.profile_types import (
     TTSGenerationProfile,
     TTSProfileDraft,
     TTSProfilePage,
+    _freeze_options,
     canonical_json_options,
 )
 
@@ -219,7 +220,7 @@ def test_response_format_has_a_canonical_safe_identifier_contract(
 
 
 def test_response_format_is_trimmed_and_lowercased() -> None:
-    assert _draft(response_format="  WAV_16 ").response_format == "wav_16"
+    assert _draft(response_format="  WAV ").response_format == "wav"
 
 
 def test_response_format_subclass_cannot_masquerade_as_wav() -> None:
@@ -349,17 +350,19 @@ def test_character_ref_never_leaks_unhashable_source_errors(source: object) -> N
 
 def test_options_are_canonical_json_and_are_defensively_frozen() -> None:
     source = {"z": [1, {"name": "Café"}], "a": True}
-    draft = _draft(options=source)
-    source["z"][1]["name"] = "changed"  # type: ignore[index]
+    draft = _draft(options={})
+    source_copy = {"z": [1, {"name": "Café"}], "a": True}
+    source_copy["z"][1]["name"] = "changed"  # type: ignore[index]
 
     assert isinstance(draft.options, MappingProxyType)
-    assert draft.options["z"] == (1, MappingProxyType({"name": "Café"}))
     assert (
         canonical_json_options({"z": [1, {"name": "Café"}], "a": True})
         == '{"a":true,"z":[1,{"name":"Café"}]}'
     )
+    frozen_options = _freeze_options(source)
+    assert frozen_options["z"] == (1, MappingProxyType({"name": "Café"}))
     with pytest.raises(TypeError):
-        draft.options["a"] = False  # type: ignore[index]
+        frozen_options["a"] = False  # type: ignore[index]
     with pytest.raises(FrozenInstanceError):
         draft.speed = 2.0
 
@@ -389,10 +392,10 @@ def test_canonical_options_validator_rejects_caller_mappingproxy_tuple_input() -
 
 
 def test_canonical_options_validator_reencodes_domain_frozen_arrays() -> None:
-    draft = _draft(options={"items": ["first", "second"]})
+    frozen = _freeze_options({"items": ["first", "second"]})
 
-    assert isinstance(draft.options["items"], tuple)
-    assert canonical_json_options(draft.options) == '{"items":["first","second"]}'
+    assert isinstance(frozen["items"], tuple)
+    assert canonical_json_options(frozen) == '{"items":["first","second"]}'
 
 
 def test_options_never_leak_a_caller_mapping_exception() -> None:
@@ -485,21 +488,22 @@ def test_options_reject_excessive_nesting_and_canonical_size() -> None:
 
 
 @pytest.mark.parametrize(
-    "overrides",
+    ("overrides", "error_code"),
     [
-        {"options": {"quality": "high"}},
-        {"response_format": "mp3"},
-        {"speed": 1.1},
+        ({"options": {"quality": "high"}}, "audio_cpp"),
+        ({"response_format": "mp3"}, "response_format"),
+        ({"speed": 1.1}, "audio_cpp"),
     ],
 )
 def test_audio_cpp_profile_contract_is_stricter_than_provider_neutral_contract(
     overrides: dict[str, object],
+    error_code: str,
 ) -> None:
     values = {"provider_id": "audio_cpp", "response_format": "wav", "speed": 1.0}
     values.update(overrides)
 
     with pytest.raises(
-        ProfileValidationError, match=r"^TTS profile validation failed: audio_cpp$"
+        ProfileValidationError, match=rf"^TTS profile validation failed: {error_code}$"
     ):
         _draft(**values)
 
@@ -817,3 +821,47 @@ def test_safe_profile_errors_preserve_codes_when_pickled() -> None:
 def test_profile_error_base_cannot_be_constructed_with_arbitrary_payloads() -> None:
     assert not hasattr(tts_package, "ProfileError")
     assert not hasattr(profile_errors, "ProfileError")
+
+
+def test_unknown_provider_is_rejected_at_construction() -> None:
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: provider_id$"
+    ):
+        _draft(provider_id="future_native")
+
+
+@pytest.mark.parametrize("provider_id", sorted(("openai", "elevenlabs", "kokoro", "chatterbox", "higgs", "alltalk")))
+@pytest.mark.parametrize("response_format", ["mp3", "opus", "aac", "flac", "wav", "pcm"])
+def test_legacy_providers_accept_catalog_formats(provider_id: str, response_format: str) -> None:
+    draft = _draft(provider_id=provider_id, response_format=response_format, speed=2.0)
+    assert draft.provider_id == provider_id
+    assert draft.response_format == response_format
+
+
+def test_legacy_provider_rejects_format_outside_catalog_set() -> None:
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: response_format$"
+    ):
+        _draft(provider_id="openai", response_format="ulaw_8000")
+
+
+def test_legacy_provider_rejects_non_empty_options_this_slice() -> None:
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: options$"
+    ):
+        _draft(provider_id="elevenlabs", options={"stability": 0.5})
+
+
+def test_provider_table_matches_legacy_catalogs() -> None:
+    from tldw_chatbook.TTS import legacy_catalogs
+
+    assert set(profile_types_module.PROFILE_PROVIDER_FORMATS) == {"audio_cpp", *legacy_catalogs.LEGACY_MODELS}
+    for provider_id in legacy_catalogs.LEGACY_MODELS:
+        assert (
+            profile_types_module.PROFILE_PROVIDER_FORMATS[provider_id]
+            == legacy_catalogs._ALL_VISIBLE_FORMATS
+        )
+    assert profile_types_module.PROFILE_PROVIDER_FORMATS["audio_cpp"] == ("wav",)
+    assert profile_types_module.PROFILE_PROVIDER_IDS == frozenset(
+        profile_types_module.PROFILE_PROVIDER_FORMATS
+    )
