@@ -16,6 +16,9 @@
 - `LocalToolProvider` seams: `resolve_state`, `kill_switch`, `approval_callback` (None = fail closed with `LOCAL_TIMEOUT_REFUSAL` — misleading copy for external clients that can never approve; Task 1 adds an override), `record_decision`.
 - Operator grant path (re-plan §3.1 fact 2): Console "Always allow" persists allow+definition_hash under `local:__local__`; explicit tool-level allow is never risk-floored — that's how an operator enables external use.
 - FastMCP tool names must match `[a-zA-Z0-9_-]{1,64}` — `fs_read` etc. are fine.
+- **FastMCP derives input schemas from Python type annotations, NOT arbitrary JSON** — `provider.load_schema().parameters` cannot be fed to `@mcp.tool()` for dynamic tools. Decision (plan review): register each local tool with a generic `arguments: dict` signature; handler-side validation is fail-safe because `invoke()` never raises and handler exceptions become error `ToolResult`s. Error returns follow the server.py convention: `{"error": str}` dicts (`server.py:187`, `:209`).
+- **The `mcp` package is NOT installed in the repo venv** (`MCP_AVAILABLE` is False there; no test in `Tests/MCP/` ever instantiates `TldwMCPServer`). Decision (plan review): registration logic lives in a pure, FastMCP-free builder — `_local_agent_tool_registrations(provider) -> list of (name, description, parameters, async handler)` — fully testable without the `mcp` package; the thin FastMCP binding layer is covered by `pytest.mark.skipif(not MCP_AVAILABLE)` tests only. Do NOT install the `mcp` extra into the venv for this phase.
+- Permission store canonical path (pinned by plan review): `get_user_data_dir() / "mcp_permissions.json"` — this is where Console "Always allow" grants actually land (`app.py:4544` builds the local store at `get_user_data_dir() / "local_mcp_store.json"`; `unified_control_plane_service.py:2429` derives the permissions file next to it). Any other path silently breaks the operator-grant path.
 - `LocalToolProvider` `invoke()` is sync; FastMCP tools are async — call the sync invoke directly (it's a worker-thread-safe pure function; the server has no approval round-trip to block on).
 - Run tests with `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest` from the worktree. MCP server tests live in `Tests/MCP/` — follow their fixtures/marking (the `mcp` package may be optional; check how existing server tests handle MCP_AVAILABLE).
 
@@ -75,11 +78,11 @@ def build_server_local_provider(
 ## Task 2: `[mcp] expose_local_tools` config
 
 **Files:**
-- Modify: `tldw_chatbook/config.py` (mcp section coercion + template — find the `[mcp]` section's existing handling; follow the console pattern from Task 4 of phase 1)
+- Modify: `tldw_chatbook/config.py` — NOTE (plan review): the `[mcp]` template section is at config.py:3307 followed by a `[mcp.tools]` sub-table at :3327, so the commented template line MUST go above :3327 or it lands in the wrong TOML table. There is NO typed coercion block for `[mcp]` yet — add one (a new small block, following the `[console]` pattern at config.py:786), not an extension of an existing one.
 - Test: the mcp config test file (find with `grep -rln "\[mcp\]\|get_cli_setting(\"mcp\"" Tests/ | head`)
 
 - [ ] **Step 1: Failing test** — default False; `"yes"` → True.
-- [ ] **Step 2: Implement** (bool coercion + commented template line: `# expose_local_tools = false   # expose workspace-local agent tools (fs_*/git_*/web_*) to external MCP clients; permission-gated, writes effectively denied until granted`).
+- [ ] **Step 2: Implement** (bool coercion in a new `[mcp]` coercion block + commented template line above the `[mcp.tools]` sub-table: `# expose_local_tools = false   # expose workspace-local agent tools (fs_*/git_*/web_*) to external MCP clients; permission-gated, writes effectively denied until granted`).
 - [ ] **Step 3:** tests pass
 - [ ] **Step 4:** `git commit -m "feat: [mcp] expose_local_tools config flag"`
 
@@ -91,13 +94,15 @@ def build_server_local_provider(
 - Modify: `tldw_chatbook/MCP/server.py`
 - Test: `Tests/MCP/test_local_server_tools.py` (extend)
 
-- [ ] **Step 1: Failing tests**
-  - With the flag on and a temp permission store granting `fs_read`: the server has a registered `fs_read` tool whose invocation returns file contents (call the registered function directly — follow how existing Tests/MCP server tests invoke tools).
-  - `fs_write` (default ask) → the EXTERNAL_NO_CALLBACK_REFUSAL text.
-  - Deny state on `fs_glob` → `LOCAL_DENY_REFUSAL`; kill switch → `LOCAL_KILL_SWITCH_REFUSAL`.
-  - Flag off (default) → no `fs_*`/`git_*`/`web_*` tools registered (existing tools unaffected).
-  - `todo_write` is NOT in the registered set even when the provider would offer it (the composition must not pass a todo_store; assert its absence).
-- [ ] **Step 2: Implement** — in `TldwMCPServer.__init__` (or a `_register_local_agent_tools()` called from it): when `[mcp] expose_local_tools` is true, build the permission store (canonical path per the verified facts), `build_server_local_provider`, then for each `list_catalog()` entry register an async FastMCP tool named after the entry, with the provider's `load_schema` description/parameters, whose body calls `provider.invoke(tool_id, args)` and returns `result.content` or raises/returns the error string per FastMCP conventions (check how existing tools in server.py return errors — follow that convention). Workspace root: `[console] workspace_root` or cwd, same rule as the Console.
+- [ ] **Step 1: Failing tests** (against the PURE builder — no `mcp` package needed):
+  - With a temp permission store granting `fs_read`: `_local_agent_tool_registrations(provider)` includes an `fs_read` entry whose handler returns file contents.
+  - `fs_write` (default ask) → handler returns `{"error": EXTERNAL_NO_CALLBACK_REFUSAL}` per the server.py error-dict convention.
+  - Deny state on `fs_glob` → `{"error": LOCAL_DENY_REFUSAL}`; kill switch → `{"error": LOCAL_KILL_SWITCH_REFUSAL}`.
+  - `todo_write` is NOT among the registrations (the composition passes no todo_store; assert absence).
+  - Skip-if-unavailable binding test (`pytest.mark.skipif(not MCP_AVAILABLE)`): with the flag on, `TldwMCPServer._register_local_agent_tools()` registers the same names on FastMCP; with the flag off (default), no `fs_*`/`git_*`/`web_*` tools are registered and existing tools are unaffected.
+- [ ] **Step 2: Implement** — two layers:
+  1. In `MCP/local_server_tools.py`: `_local_agent_tool_registrations(provider) -> list[LocalToolRegistration]` where each registration is `(name, description, parameters, handler)`; `handler(arguments: dict)` (async or sync — pick per the binding layer's needs) calls `provider.invoke(tool_id, arguments)` and returns `result.content` on ok or `{"error": result.error}` on failure. The provider's `load_schema` supplies description/parameters (kept for future SDK versions / introspection, even though the FastMCP layer can't consume the JSON schema directly today).
+  2. In `MCP/server.py`: `_register_local_agent_tools()` called from `__init__` (NOT inside `_register_tools` — keeps the AST-walking `_extract_registered_entries` catalog unaffected). When `[mcp] expose_local_tools` is true: build `MCPPermissionStore(get_user_data_dir() / "mcp_permissions.json")`, `build_server_local_provider(workspace_root)` (root = `[console] workspace_root` or cwd, same rule as Console), then for each registration bind a FastMCP tool with a generic `arguments: dict` signature that delegates to the handler. When the flag is false (default), the method is a no-op.
 - [ ] **Step 3:** tests pass; `pytest Tests/MCP/ -q` for regressions
 - [ ] **Step 4:** `git commit -m "feat: expose local agent tools through MCP server (permission-gated)"`
 
