@@ -1150,14 +1150,16 @@ def _compose_run_registry_and_allowed(
     Called once per ``run_reply`` invocation (never cached across runs --
     the per-run freshness doctrine: a skill approved/edited/revoked since
     the last run must take effect on the very next one). Registers
-    ``BuiltinToolProvider`` first, then (only when there is at least one
-    non-colliding eligible entry) a ``SkillToolProvider`` snapshot, then
-    (P5-T6, only when there is at least one non-colliding eligible entry)
-    an already-composed MCP provider -- shadowing order: builtins beat
-    skills beat MCP, matching the allow-list's own
-    ``builtins ∪ skills ∪ mcp`` ordering. For a temporary session
-    (``ephemeral=True``) neither the skill nor the MCP provider is
-    registered at all, and the allow-list is builtins-only.
+    ``BuiltinToolProvider`` first, then the already-composed local
+    provider, then (only when there is at least one non-colliding eligible
+    entry) a ``SkillToolProvider`` snapshot, then (P5-T6, only when there
+    is at least one non-colliding eligible entry) an already-composed MCP
+    provider -- shadowing order: builtins beat local beat skills beat MCP,
+    matching the allow-list's own ``builtins ∪ local ∪ skills ∪ mcp``
+    ordering. Local registers BEFORE skills/MCP (first-registrant-wins)
+    so a malicious MCP server or skill can never shadow the fs_* names.
+    For a temporary session (``ephemeral=True``) neither the skill nor
+    the MCP provider is registered at all.
 
     Args:
         context: A fresh ``get_context(mode="local")`` payload.
@@ -1200,16 +1202,16 @@ def _compose_run_registry_and_allowed(
             ``__init__``). ``None`` (the default) means no diff capture.
         local_provider: This run's already-composed local tool provider
             (``LocalToolProvider``), or ``None`` when local tools are
-            disabled this run. ACCEPTED but NOT yet registered -- see the
-            registration site below.
+            disabled this run.
 
     Returns:
         ``(registry, allowed_tools, builtin_names)`` -- the per-run
-        registry, its full allow-list (builtins + eligible skills +
-        eligible MCP tools + spawn), and just the builtin names (needed
+        registry, its full allow-list (builtins + local + eligible skills
+        + eligible MCP tools + spawn), and just the builtin names (needed
         separately by ``_BridgeSkillRunner`` to intersect a skill's own
-        declared ``allowed_tools`` against -- never against skill names,
-        so a skill's sub-agent can never call another skill).
+        declared ``allowed_tools`` against -- never against skill OR local
+        names, so a skill's sub-agent can never call another skill and
+        skills never narrow/grant local tools).
     """
     registry = ToolCatalogRegistry(ephemeral=ephemeral)
     builtin_provider = BuiltinToolProvider(
@@ -1220,6 +1222,10 @@ def _compose_run_registry_and_allowed(
     )
     registry.register_provider(builtin_provider)
     builtin_names = tuple(entry.name for entry in builtin_provider.list_catalog())
+    local_names: tuple[str, ...] = ()
+    if local_provider is not None:
+        registry.register_provider(local_provider)
+        local_names = tuple(e.name for e in local_provider.list_catalog())
     eligible = _non_colliding_skill_entries(context, builtin_names)
     # Defense in depth, NOT the guarantee: a temporary session refuses every
     # skill and MCP call at `ToolCatalogRegistry.invoke_by_name` regardless
@@ -1230,9 +1236,11 @@ def _compose_run_registry_and_allowed(
     if eligible and not ephemeral:
         registry.register_provider(SkillToolProvider(eligible))
     skill_names = () if ephemeral else tuple(str(item["name"]) for item in eligible)
-    allowed_tools = tuple(builtin_names) + skill_names
+    allowed_tools = tuple(builtin_names) + local_names + skill_names
     if mcp_provider is not None and not ephemeral:
-        collision_names = set(builtin_names) | set(skill_names) | RUNTIME_TOOL_NAMES
+        collision_names = (
+            set(builtin_names) | set(local_names) | set(skill_names) | RUNTIME_TOOL_NAMES
+        )
         # Single partition call (finding 8, substrate review): the two
         # public wrappers (`_non_colliding_mcp_names`, `shadowed_mcp_names`)
         # each independently call `_partition_mcp_catalog_by_collision`,
@@ -1250,13 +1258,6 @@ def _compose_run_registry_and_allowed(
                 _CollisionFilteredMCPProvider(mcp_provider, frozenset(mcp_names))
             )
             allowed_tools += mcp_names
-    # local_provider is ACCEPTED here (threaded from run_reply, which the
-    # controller already passes) but deliberately NOT registered yet --
-    # collision filtering + registration of the local catalog is the next
-    # task's (bridge registration) scope. Until then the provider only
-    # participates through the combined review hook, which is inert for
-    # tools the model cannot name.
-    _ = local_provider
     allowed_tools += (SPAWN_TOOL_NAME,)
     return registry, allowed_tools, builtin_names
 
@@ -1417,9 +1418,10 @@ class ConsoleAgentBridge:
         local_provider: Any | None = None,
     ) -> tuple[str, RunOutcome]:
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
-        # MCP, and by task-545/T6 for a per-run builtin_gate): rebuilt FRESH
-        # for this run whenever there is a skills service, an already-
-        # composed MCP provider, OR a builtin_gate for this run (never
+        # MCP, by task-545/T6 for a per-run builtin_gate, and extended again
+        # for local tools): rebuilt FRESH for this run whenever there is a
+        # skills service, an already-composed MCP or local provider, OR a
+        # builtin_gate for this run (never
         # cached across runs, and never the shared self._registry/
         # self._allowed_tools built at construction) -- so a skill or MCP
         # tool approved/edited/revoked since the last run always takes
@@ -1436,8 +1438,9 @@ class ConsoleAgentBridge:
         # gate the run's review hook never stamps -- see
         # `_compose_run_registry_and_allowed`'s own docstring for the
         # desync this would cause. None of skills service, MCP provider,
-        # or builtin_gate: the shipped shared registry/allow-list is used
-        # unchanged -- the no-skills, no-MCP, no-gate path stays
+        # local provider, or builtin_gate: the shipped shared
+        # registry/allow-list is used unchanged -- the no-skills, no-MCP,
+        # no-local-tools, no-gate path stays
         # byte-identical to before this task (existing callers that never
         # pass `builtin_gate` see no behavior change at all).
         registry = self._registry
@@ -1874,7 +1877,8 @@ class ConsoleAgentBridge:
         # `_stamps`. Compose whichever exist rather than leaving the gate's
         # state unguarded (it was, before this task, and unlike MCP it has
         # no per-call approval fallback to degrade to: a lost stamp fails
-        # closed outright).
+        # closed outright). ADR-032 adds the local provider's stamp state
+        # to the same composition.
         _scopes = [
             scope
             for scope in (
@@ -1883,6 +1887,9 @@ class ConsoleAgentBridge:
                 else None,
                 getattr(builtin_gate, "stamp_scope", None)
                 if builtin_gate is not None
+                else None,
+                getattr(local_provider, "stamp_scope", None)
+                if local_provider is not None
                 else None,
             )
             if scope is not None
