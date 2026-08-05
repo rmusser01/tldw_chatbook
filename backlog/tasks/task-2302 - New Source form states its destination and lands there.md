@@ -208,3 +208,46 @@ Read back out of the live profile database:
   parametrized), `Tests/Watchlists/test_watchlists_sources_pane.py` and
   `Tests/UI/test_watchlists_destination_shell.py` (noise tests choose the
   page type the field lives on).
+
+### Review wave (whole-branch adversarial review: 3 Important, 5 Minor)
+
+Two of the review's five mutations SURVIVED, both in the hand-reconstructed
+code and both in one corner -- *the set of watchlists changes while a create
+form is alive*. Tests now enter it: deleting the destination watchlist under
+an open form (without `_resolved_destination`'s fallback the next recompose
+raises `InvalidSelectValueError` out of `compose()`, taking the form AND the
+table down), and creating one mid-session (without the `watchlist_choices`
+push it never becomes selectable). Both mutation-red now.
+
+**The width measurement in this task's first pass was wrong, and it was
+wrong in shipped code.** The geometry tests ran through a harness that loads
+no stylesheet: 53/78 columns there, **93/168** under the production
+stylesheet. So TASK-1362's 91-column figure was RIGHT, and the comment
+declaring it wrong is corrected. The shorter label and help copy are kept on
+their own merits -- half the columns, cannot truncate at any supported size,
+and the displaced syntax detail sits in a tooltip that has no width budget --
+not on the width argument.
+
+**F11/F12 is therefore unresolved, and is recorded as such rather than
+claimed.** At 235x52 production CSS gives a 164-column budget for the old
+83-character help string; it could not have truncated in that layout. What
+the UAT saw is not explained by this fix -- a narrower terminal, a different
+region layout, or an older build. The shipped copy is safe either way.
+
+The whole test file moved to the production-CSS harness (not just the
+geometry half, so no future test in it can pick the wrong one), and the label
+assertions now check what the CSS comment actually claims -- `width: auto`
+keeping the label narrower than the control it names, which the old harness
+could not express because there the label WAS the row.
+
+Also from the review: the degraded-destination toast is `warning` with "The
+watchlist you chose could not be used." appended (M3), and
+`test_the_destination_offers_nothing_when_membership_cannot_be_written` now
+opens the form under the server backend instead of asserting on two screen
+helpers.
+
+Verification: **11** review-wave mutations, all RED, zero survivors, restores
+md5-verified; gate wave 1 **178 passed**, wave 2 **259 passed**,
+poisoned-order **50 passed**, `--collect-only` **8788 collected**. Live
+re-check on a fresh profile: delete-under-open-form degrades to
+`Unassigned (no watchlist)` with the draft and the table intact.

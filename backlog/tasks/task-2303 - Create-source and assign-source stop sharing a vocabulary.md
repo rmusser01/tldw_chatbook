@@ -187,3 +187,43 @@ Reading|Loose Feed
 * Tests: new `Tests/UI/test_watchlists_source_vocabulary.py`;
   `Tests/UI/test_destination_visual_parity_correction.py` (the renamed
   literals, plus both new action labels added to its intact-label checks).
+
+### Review wave (whole-branch adversarial review: I1, M2, M5)
+
+**I1 -- the watchlist-side `Add existing` this task added had no backend
+gate.** On the Server backend it opened a picker full of LOCAL sources the
+screen was not showing and wrote a `watchlist_sources` row with a success
+toast -- one control away from the rail's copy of the same verb, greyed out
+explaining that the server API carries no membership fields. The source-side
+twin guarded this from the start; this one did not.
+
+Gated at three layers, because a backend switch can land between any two:
+`InspectorPane.write_disabled_reason` (a new screen-seeded reactive carrying
+the SAME string the rail is handed, seeded in `_build_inspector_pane` and
+pushed in `watch_runtime_backend`) renders the button disabled with that
+reason; `_post_add_existing_source` refuses to post; and
+`handle_add_source_to_watchlist_requested` -- the single point every poster
+of that message reaches -- refuses and says why. The source-side handler
+gained the identical check, so both directions are now refused by ONE
+condition rather than two that can drift apart.
+
+**M2** -- `WatchlistPickerDialog` claimed "This source already belongs to
+every watchlist" on a profile with zero watchlists. It now takes
+`total_watchlists` and distinguishes the two causes of an empty candidate
+list.
+
+**M5** -- the source-first candidate query was N+1 (`list_sources` per
+watchlist). New `WatchlistBundleService.list_watchlists_for_source` answers
+it in one query, and its unit test asserts it agrees with `list_sources`
+watchlist by watchlist -- a disagreeing membership set would offer a
+watchlist the source is already in.
+
+**M1/M4** -- the duplicated parity-suite comment (which still described the
+dropped ellipsis) and the stale `New Source` narration are corrected,
+including the one that reached a user in an assertion message. Comments that
+quote the old labels as history are deliberately left.
+
+Verification: 11 review-wave mutations across both tasks, all RED, zero
+survivors. Live on a fresh profile, Server backend, watchlist in scope:
+pressing the Inspector's `Add existing` opened **0** pickers and wrote **0**
+membership rows, with the rail's reason painted beside it.

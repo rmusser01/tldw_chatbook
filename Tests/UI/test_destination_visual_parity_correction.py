@@ -3344,11 +3344,10 @@ async def test_watchlists_tree_action_labels_fit_the_rail_intact():
 
         rail = screen.query_one("#wl-region-left_rail")
         # TASK-2303 renamed the membership verb: "Add source" read as a
-        # third way to CREATE one. "Add existing…" is the label now, and its
-        # ellipsis is part of what has to survive the rail's width.
-        # TASK-2303 renamed the membership verb: "Add source" read as a
         # third way to CREATE one. "Add existing" is the label now, and it is
-        # the longest thing in the rail's action rows.
+        # the longest thing in the rail's action rows. It carries no ellipsis
+        # on purpose -- `_assert_label_intact_on_screen` reads any `…` in a
+        # composited row as clipping and cannot tell a literal one apart.
         for label in ("New", "Rename", "Delete", "Add existing", "Remove"):
             _assert_label_intact_on_screen(
                 rail, label, context=f"tree action {label!r}"

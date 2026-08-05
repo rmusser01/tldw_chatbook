@@ -2313,6 +2313,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # value is the same one the Overview region keys off, so the rail's
         # first-run text and the region's can never disagree.
         inspector.profile_state = self._watchlists_profile_state()
+        # Review wave, I1: the same seeding rationale again, for the same
+        # value the rail is handed in `_build_tree_pane`. The Inspector's
+        # `Add existing` is the watchlist-side twin of the rail's, so the two
+        # must be enabled and disabled by one condition, not two.
+        inspector.write_disabled_reason = self._tree_write_disabled_reason()
         children.append(inspector)
         return Vertical(
             *children,
@@ -3153,6 +3158,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self, event: AddSourceToWatchlistRequested
     ) -> None:
         event.stop()
+        # Review wave, I1. Two widgets post this now -- the rail, which has
+        # been rendered disabled on a blocked backend since task-895, and the
+        # Inspector's `Add existing`, which shipped ungated and wrote local
+        # membership rows on the server backend. Both are gated at their own
+        # render, but the refusal belongs HERE as well: this handler is the
+        # single point every present and future poster of this message
+        # reaches, and it is one call away from a durable write. Notified,
+        # not silent, because either poster is a real button on screen.
+        blocked = self._tree_write_disabled_reason()
+        if blocked is not None:
+            self._notify_watchlists(blocked, severity="warning", markup=False)
+            return
         watchlist_id = event.watchlist_id
         self._start_tree_write(lambda: self._add_source_to_watchlist_flow(watchlist_id))
 
@@ -3209,6 +3226,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         entity = event.entity
         if entity is None:
             return
+        # Review wave, I1: the same backend gate the watchlist-side twin now
+        # carries, so both directions of one write are refused by one
+        # condition rather than by two that can drift.
+        blocked = self._tree_write_disabled_reason()
+        if blocked is not None:
+            self._notify_watchlists(blocked, severity="warning", markup=False)
+            return
         if (
             str(entity.get("backend") or "") != "local"
             or str(entity.get("entity_kind") or "") != "subscription"
@@ -3251,15 +3275,25 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if service is None:
             self._notify_watchlists(WC_SERVICE_UNAVAILABLE_COPY, severity="error")
             return
-        watchlists = service.list_watchlists()
+        # One membership query, not one per watchlist (review wave, M5) --
+        # matching `_add_source_to_watchlist_flow`'s single `list_sources`
+        # call in the other direction.
+        already_in = {
+            int(watchlist_id)
+            for watchlist_id in service.list_watchlists_for_source(source_id)
+        }
+        all_watchlists = service.list_watchlists()
         candidates = [
             watchlist
-            for watchlist in watchlists
-            if source_id
-            not in {int(member) for member in service.list_sources(int(watchlist["id"]))}
+            for watchlist in all_watchlists
+            if int(watchlist["id"]) not in already_in
         ]
         chosen = await self.app.push_screen_wait(
-            WatchlistPickerDialog(source_name, candidates)
+            # `total_watchlists` distinguishes "this source is in all of
+            # them" from "there are none" (review wave, M2).
+            WatchlistPickerDialog(
+                source_name, candidates, total_watchlists=len(all_watchlists)
+            )
         )
         if chosen is None:
             return
@@ -3732,6 +3766,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.query_one("#wl-tree", WatchlistTree).write_disabled_reason = (
                 self._tree_write_disabled_reason()
             )
+        except NoMatches:
+            pass
+        # Review wave, I1: and into the Inspector, which carries the same
+        # verb. Pushed from here rather than left to the next rebuild for
+        # exactly the reason the tree push above documents -- nothing
+        # recomposes the screen on a backend switch any more (TASK-2200), so
+        # without this the Inspector's `Add existing` sits enabled over a
+        # backend that cannot service it.
+        try:
+            self.query_one(
+                "#watchlists-entity-inspector", InspectorPane
+            ).write_disabled_reason = self._tree_write_disabled_reason()
         except NoMatches:
             pass
         self.selected_source = None
@@ -4281,9 +4327,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 payload=payload,
             )
             destination = self._file_created_source(created, watchlist_id)
+            # Review wave, M3. The statement is true either way -- that IS
+            # where the source is -- but a destination the user chose and did
+            # not get is news, not routine. `warning` on the degraded branch
+            # keeps the "the toast cannot lie" property and adds the one bit
+            # it was missing: that something did not go to plan.
+            degraded = watchlist_id is not None and destination == "Unassigned"
             # markup=False: the destination is a user-typed watchlist name.
             self._notify_watchlists(
-                f"Source created in {destination}.", markup=False
+                f"Source created in {destination}."
+                + (
+                    " The watchlist you chose could not be used."
+                    if degraded
+                    else ""
+                ),
+                severity="warning" if degraded else "information",
+                markup=False,
             )
         except Exception:
             logger.opt(exception=True).warning("Failed to create source.")

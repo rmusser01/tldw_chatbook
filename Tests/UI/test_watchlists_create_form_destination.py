@@ -22,7 +22,10 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Button, Input, Select, Static, TextArea
 
-from Tests.UI.test_destination_shells import DestinationHarness
+from Tests.UI.full_app_destination_context import (
+    active_destination_screen as _production_screen,
+    full_app_destination_context as _production_host,
+)
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
@@ -33,15 +36,39 @@ pytestmark = pytest.mark.unit
 #: parity work covers and the size that actually constrains this form.
 SIZES = [(160, 42), (235, 52)]
 
+# The PRODUCTION-CSS harness throughout (whole-branch review, I2).
+#
+# The first version of this file used `DestinationHarness`, which mounts the
+# production screen inside a bare `App` with NO stylesheet. That is harmless
+# for "where did the source land", which is a database question -- and
+# actively misleading for anything about width. Measured, same screen, same
+# size: the Sources pane is 53 columns there and **93** under the production
+# stylesheet at 160x42 (78 vs **168** at 235x52), the `Type` label reports
+# the whole row rather than `width: auto`'s few columns, and the destination
+# Select satisfies "laid out" at `w=1 h=0`. The noise field's truncation
+# budget was measured in that harness and the resulting number written into
+# a shipped code comment, where it was wrong by roughly 2x.
+#
+# One harness for the whole file rather than two, so no future test can pick
+# the wrong one: it is the same context `test_watchlists_source_create_form.py`
+# and `test_destination_visual_parity_correction.py` already use.
+
 
 def _seed_watchlists(app, *names: str) -> dict[str, int]:
     bundle = app.watchlist_bundle_service
     return {name: int(bundle.create(name)["id"]) for name in names}
 
 
-async def _mounted(host, pilot):
+async def _mounted_with_css(host, pilot):
+    """The same wait, against the production-CSS context.
+
+    `FullAppDestinationContext` keeps the destination screen as an attribute
+    rather than leaving it on top of the stack, so the screen is read from
+    there instead of `screen_stack[-1]` (which a pushed modal would also
+    satisfy).
+    """
     await pilot.pause(0.3)
-    screen = host.screen_stack[-1]
+    screen = _production_screen(host)
     for _ in range(60):
         await pilot.pause()
         if screen._tree_watchlists:
@@ -63,7 +90,14 @@ def _form_is_settled(pane: SourcesPane) -> bool:
     if not controls:
         return False
     control = controls.first()
-    return control.region.width > 0 and control.value is not Select.NULL
+    return (
+        control.region.width > 0
+        # HEIGHT too (review wave): in a stylesheet-less harness this control
+        # satisfies `width > 0` at `w=1 h=0` -- present, sized, and painting
+        # nothing. "Laid out" has to mean both dimensions.
+        and control.region.height > 0
+        and control.value is not Select.NULL
+    )
 
 
 async def _open_create_form(host, pilot, screen) -> SourcesPane:
@@ -133,9 +167,9 @@ async def test_the_form_shows_the_active_scope_as_its_destination():
     """AC#1, and the UAT's exact setup: a watchlist is selected in the rail."""
     app = _build_test_app()
     ids = _seed_watchlists(app, "AI Research News")
-    host = DestinationHarness(app, "watchlists_collections")
+    host = _production_host(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
-        screen = await _mounted(host, pilot)
+        screen = await _mounted_with_css(host, pilot)
         screen._apply_tree_scope(
             TreeScope(kind="watchlist", watchlist_id=ids["AI Research News"])
         )
@@ -158,9 +192,9 @@ async def test_the_form_shows_unassigned_when_no_watchlist_is_in_scope():
     """AC#1's other half: Unassigned is a destination, stated, not a silence."""
     app = _build_test_app()
     _seed_watchlists(app, "Reading")
-    host = DestinationHarness(app, "watchlists_collections")
+    host = _production_host(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
-        screen = await _mounted(host, pilot)
+        screen = await _mounted_with_css(host, pilot)
         screen._apply_tree_scope(TreeScope(kind="all"))
         await pilot.pause(0.2)
 
@@ -172,24 +206,44 @@ async def test_the_form_shows_unassigned_when_no_watchlist_is_in_scope():
         assert any(str(label) == "Reading" for label, _value in options)
 
 
+@pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
-async def test_the_destination_control_carries_a_visible_label():
-    """AC#1: a bare Select is what the UAT could not read on the Type row."""
-    app = _build_test_app()
-    _seed_watchlists(app, "Reading")
-    host = DestinationHarness(app, "watchlists_collections")
-    async with host.run_test(size=(180, 50)) as pilot:
-        screen = await _mounted(host, pilot)
+async def test_the_destination_control_carries_a_visible_label(size):
+    """AC#1: a bare Select is what the UAT could not read on the Type row.
+
+    Production CSS (review wave, I2): the label's `width: auto` and the row's
+    `height: 1` are both stylesheet rules, so a stylesheet-less harness
+    cannot tell a label that fits from one claiming the whole row.
+    """
+    host = _production_host(_build_test_app(), "watchlists_collections")
+    _seed_watchlists(host.app, "Reading")
+    async with host.run_test(size=size) as pilot:
+        screen = await _mounted_with_css(host, pilot)
         pane = await _open_create_form(host, pilot, screen)
 
         row = pane.query_one(".sources-create-destination-row")
         labels = [
-            str(child.renderable)
+            child
             for child in row.query(Static)
-            if child.id != "label"
+            if child.id != "label" and "Watchlist" in str(child.renderable)
         ]
-        assert any("Watchlist" in label for label in labels), (
-            f"the destination row paints no label of its own: {labels}"
+        assert labels, (
+            "the destination row paints no label of its own: "
+            f"{[str(c.renderable) for c in row.query(Static)]}"
+        )
+        label = labels[0]
+        select = pane.query_one("#sources-create-watchlist", Select)
+        assert label.region.width < select.region.width, (
+            f"the label claims {label.region.width} columns beside a "
+            f"{select.region.width}-column control -- `width: auto` is not "
+            "winning, and the control it names gets pushed off the row"
+        )
+        assert label.region.right <= pane.region.right
+        strips = screen._compositor.render_strips()
+        painted = "".join(seg.text for seg in strips[label.region.y])
+        assert "Watchlist" in painted, (
+            f"the Watchlist label never reaches the screen at {size}: "
+            f"{painted.strip()!r}"
         )
 
 
@@ -203,9 +257,9 @@ async def test_a_source_created_under_a_watchlist_scope_joins_that_watchlist():
     ids = _seed_watchlists(app, "AI Research News")
     watchlist_id = ids["AI Research News"]
     notices: list[str] = []
-    host = DestinationHarness(app, "watchlists_collections")
+    host = _production_host(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
-        screen = await _mounted(host, pilot)
+        screen = await _mounted_with_css(host, pilot)
         screen._notify_watchlists = (
             lambda message, severity="information", **kwargs: notices.append(message)
         )
@@ -249,9 +303,9 @@ async def test_choosing_unassigned_really_leaves_the_source_unassigned():
     ids = _seed_watchlists(app, "AI Research News")
     watchlist_id = ids["AI Research News"]
     notices: list[str] = []
-    host = DestinationHarness(app, "watchlists_collections")
+    host = _production_host(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
-        screen = await _mounted(host, pilot)
+        screen = await _mounted_with_css(host, pilot)
         screen._notify_watchlists = (
             lambda message, severity="information", **kwargs: notices.append(message)
         )
@@ -292,9 +346,9 @@ async def test_changing_the_destination_survives_a_workbench_rebuild():
     """
     app = _build_test_app()
     ids = _seed_watchlists(app, "AI Research News", "Reading")
-    host = DestinationHarness(app, "watchlists_collections")
+    host = _production_host(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
-        screen = await _mounted(host, pilot)
+        screen = await _mounted_with_css(host, pilot)
         screen._apply_tree_scope(
             TreeScope(kind="watchlist", watchlist_id=ids["AI Research News"])
         )
@@ -326,9 +380,9 @@ async def test_a_new_form_re_reads_the_scope_rather_than_the_last_submission():
     """Opening the form again aims it at where the user is NOW."""
     app = _build_test_app()
     ids = _seed_watchlists(app, "AI Research News", "Reading")
-    host = DestinationHarness(app, "watchlists_collections")
+    host = _production_host(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
-        screen = await _mounted(host, pilot)
+        screen = await _mounted_with_css(host, pilot)
         screen._apply_tree_scope(
             TreeScope(kind="watchlist", watchlist_id=ids["AI Research News"])
         )
@@ -353,10 +407,9 @@ async def test_a_new_form_re_reads_the_scope_rather_than_the_last_submission():
 @pytest.mark.asyncio
 async def test_the_type_select_carries_a_visible_label(size):
     """AC#3. The UAT read a bare "RSS ▼" with nothing naming the field."""
-    app = _build_test_app()
-    host = DestinationHarness(app, "watchlists_collections")
+    host = _production_host(_build_test_app(), "watchlists_collections")
     async with host.run_test(size=size) as pilot:
-        screen = await _mounted(host, pilot)
+        screen = await _mounted_with_css(host, pilot)
         pane = await _open_create_form(host, pilot, screen)
 
         select = pane.query_one("#sources-create-type", Select)
@@ -374,6 +427,14 @@ async def test_the_type_select_carries_a_visible_label(size):
         assert label.region.width > 0 and label.region.height > 0
         assert label.region.right <= pane.region.right
         assert label.region.y <= select.region.y < label.region.bottom
+        # The CSS comment claims `width: auto` is what stops this label
+        # claiming the row and pushing the Select it names off the pane's
+        # right edge. Only a stylesheet-loading harness can check that
+        # (review wave, I2): without CSS the label IS the whole row.
+        assert label.region.width < select.region.width, (
+            f"the Type label claims {label.region.width} columns beside a "
+            f"{select.region.width}-column Select"
+        )
         strips = screen._compositor.render_strips()
         painted = "".join(
             seg.text for seg in strips[label.region.y + label.region.height // 2]
@@ -388,9 +449,9 @@ async def test_the_ignore_selectors_block_is_absent_for_feed_types():
     """AC#4. CSS selectors cannot affect an RSS feed, so the form does not
     prefill four rows of them over one."""
     app = _build_test_app()
-    host = DestinationHarness(app, "watchlists_collections")
+    host = _production_host(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
-        screen = await _mounted(host, pilot)
+        screen = await _mounted_with_css(host, pilot)
         pane = await _open_create_form(host, pilot, screen)
 
         assert (
@@ -406,9 +467,9 @@ async def test_the_ignore_selectors_block_returns_for_a_page_type():
     """AC#4's other half: gated, not deleted. A page type is reachable from
     this form at all only because TASK-2302 added one."""
     app = _build_test_app()
-    host = DestinationHarness(app, "watchlists_collections")
+    host = _production_host(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
-        screen = await _mounted(host, pilot)
+        screen = await _mounted_with_css(host, pilot)
         pane = await _open_create_form(host, pilot, screen)
 
         pane = await _choose_page_type(pilot, screen)
@@ -427,9 +488,9 @@ async def test_a_feed_source_is_not_created_with_selectors_it_cannot_use():
     file the shipped default against every RSS source ever created here.
     """
     app = _build_test_app()
-    host = DestinationHarness(app, "watchlists_collections")
+    host = _production_host(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
-        screen = await _mounted(host, pilot)
+        screen = await _mounted_with_css(host, pilot)
         pane = await _open_create_form(host, pilot, screen)
 
         await _submit(pane, screen, pilot, "Plain Feed", "https://plain.test/rss")
@@ -453,10 +514,9 @@ async def test_the_noise_help_text_fits_the_field_it_is_painted_on(size):
     235x52 -- Textual's border-label renderer truncates silently, so the copy
     is measured against the field's REAL width rather than assumed to fit.
     """
-    app = _build_test_app()
-    host = DestinationHarness(app, "watchlists_collections")
+    host = _production_host(_build_test_app(), "watchlists_collections")
     async with host.run_test(size=size) as pilot:
-        screen = await _mounted(host, pilot)
+        screen = await _mounted_with_css(host, pilot)
         await _open_create_form(host, pilot, screen)
         pane = await _choose_page_type(pilot, screen)
         field = pane.query_one("#sources-create-ignore-selectors", TextArea)
@@ -493,12 +553,17 @@ async def test_the_noise_help_text_fits_the_field_it_is_painted_on(size):
 @pytest.mark.asyncio
 async def test_the_destination_offers_nothing_when_membership_cannot_be_written():
     """The server backend has no wire path for membership, so the form must
-    not offer a destination it would then silently drop."""
+    not offer a destination it would then silently drop.
+
+    Review wave: this used to assert on two screen helpers only, which is one
+    indirection away from its own claim. It now OPENS the form under that
+    backend and reads the mounted control's options.
+    """
     app = _build_test_app()
     _seed_watchlists(app, "Reading")
-    host = DestinationHarness(app, "watchlists_collections")
+    host = _production_host(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
-        screen = await _mounted(host, pilot)
+        screen = await _mounted_with_css(host, pilot)
         screen.runtime_backend = "server"
         await pilot.pause(0.3)
 
@@ -506,3 +571,174 @@ async def test_the_destination_offers_nothing_when_membership_cannot_be_written(
         assert screen._scope_default_destination() == (
             SourcesPane.UNASSIGNED_DESTINATION
         )
+
+        pane = await _open_create_form(host, pilot, screen)
+        assert [value for _label, value in pane._destination_options()] == [
+            SourcesPane.UNASSIGNED_DESTINATION
+        ], "the form offered a watchlist the backend cannot write membership for"
+        assert "Unassigned" in _destination_label(pane)
+
+
+@pytest.mark.asyncio
+async def test_a_destination_that_vanished_before_submit_is_reported_as_news():
+    """Review wave, M3, driven through the real FK.
+
+    `watchlist_sources` carries a FOREIGN KEY on both columns and
+    `SubscriptionsDB` sets `PRAGMA foreign_keys = ON`, so deleting the chosen
+    watchlist between form-open and submit makes `add_source` raise and the
+    source lands in Unassigned. That is true and it is also NOT what the user
+    asked for, so it cannot arrive at the same severity as a create that went
+    to plan.
+    """
+    app = _build_test_app()
+    ids = _seed_watchlists(app, "Doomed")
+    notices: list[tuple[str, str]] = []
+    host = _production_host(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _mounted_with_css(host, pilot)
+        screen._notify_watchlists = (
+            lambda message, severity="information", **kwargs: notices.append(
+                (message, severity)
+            )
+        )
+        screen._apply_tree_scope(
+            TreeScope(kind="watchlist", watchlist_id=ids["Doomed"])
+        )
+        await pilot.pause(0.2)
+        pane = await _open_create_form(host, pilot, screen)
+        assert _destination_label(pane) == "Doomed"
+
+        # Gone from under the form, without touching the form.
+        app.watchlist_bundle_service.delete(ids["Doomed"])
+
+        await _submit(pane, screen, pilot, "Orphan", "https://orphan.test/rss")
+        for _ in range(200):
+            await pilot.pause(0.02)
+            if notices:
+                break
+
+        assert notices, "the create produced no confirmation at all"
+        message, severity = notices[-1]
+        assert "Unassigned" in message, (
+            f"the toast must name where the source really is: {message!r}"
+        )
+        assert severity == "warning", (
+            "a destination the user chose and did not get is news, not "
+            f"routine; got severity {severity!r}"
+        )
+        assert [
+            row["name"]
+            for row in app.watchlist_bundle_service.list_unassigned_source_rows()
+        ] == ["Orphan"]
+
+
+# --- the watchlist set changes while a form is alive -------------------------
+
+
+@pytest.mark.asyncio
+async def test_deleting_the_destination_watchlist_under_an_open_form_degrades():
+    """Review wave, I3(a). `_resolved_destination`'s stale-draft fallback.
+
+    `Select` with `allow_blank=False` raises `InvalidSelectValueError` on a
+    value it has no option for, and that raise comes out of `compose()` --
+    which takes the whole pane down: no create form, no sources table. The
+    sequence is reachable without leaving the screen: aim the form at a
+    watchlist, delete it in the rail, then let anything recompose the pane.
+    """
+    app = _build_test_app()
+    ids = _seed_watchlists(app, "Doomed", "Survivor")
+    host = _production_host(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _mounted_with_css(host, pilot)
+        screen._apply_tree_scope(
+            TreeScope(kind="watchlist", watchlist_id=ids["Doomed"])
+        )
+        await pilot.pause(0.2)
+        pane = await _open_create_form(host, pilot, screen)
+        pane.query_one("#sources-create-name", Input).value = "Half typed"
+        await pilot.pause(0.2)
+        assert _destination_label(pane) == "Doomed"
+
+        # The delete, then the push that tells the live pane about it.
+        app.watchlist_bundle_service.delete(ids["Doomed"])
+        screen._load_tree_data()
+        for _ in range(200):
+            await pilot.pause(0.02)
+            if ids["Doomed"] not in {
+                int(w["id"]) for w in screen._tree_watchlists
+            }:
+                break
+
+        # Any recompose of the pane -- here the Filters toggle, a real button.
+        pane.query_one("#sources-filter-toggle", Button).press()
+        for _ in range(200):
+            await pilot.pause(0.02)
+            live = screen.query(SourcesPane)
+            if live and _form_is_settled(live.first()):
+                break
+
+        live_pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        assert live_pane.query("#sources-table"), (
+            "the pane failed to rebuild after its destination watchlist was "
+            "deleted -- compose() raised"
+        )
+        assert "Unassigned" in _destination_label(live_pane), (
+            "a form aimed at a deleted watchlist must fall back to Unassigned;"
+            f" it shows {_destination_label(live_pane)!r}"
+        )
+        assert (
+            live_pane.query_one("#sources-create-name", Input).value == "Half typed"
+        ), "the degrade must not cost the user the rest of their draft"
+
+
+@pytest.mark.asyncio
+async def test_a_watchlist_created_mid_session_reaches_the_next_form():
+    """Review wave, I3(b). The `watchlist_choices` push.
+
+    This is the ONLY thing that makes a watchlist created after the pane was
+    built selectable without a full screen rebuild. Asserted at the shipped
+    limit, not an aspirational one: a form left open ACROSS the creation is
+    documented as missing it (rebuilding the Select would cost a half-typed
+    draft), so the assertion is that the next OPEN offers it -- and that the
+    open form is left alone in the meantime.
+    """
+    app = _build_test_app()
+    _seed_watchlists(app, "Reading")
+    host = _production_host(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _mounted_with_css(host, pilot)
+        pane = await _open_create_form(host, pilot, screen)
+        assert [str(label) for label, _v in pane._destination_options()] == [
+            "Unassigned (no watchlist)",
+            "Reading",
+        ]
+
+        created = app.watchlist_bundle_service.create("Later")
+        screen._load_tree_data()
+        for _ in range(200):
+            await pilot.pause(0.02)
+            if int(created["id"]) in {
+                int(w["id"]) for w in screen._tree_watchlists
+            }:
+                break
+        await pilot.pause(0.2)
+
+        # The live pane knows, without having been rebuilt...
+        live_pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        assert [str(w["name"]) for w in live_pane.watchlist_choices] == [
+            "Later",
+            "Reading",
+        ], (
+            "the new watchlist never reached the mounted pane, so no reopen "
+            "of the form can offer it"
+        )
+
+        # ...and the next open of the form offers it.
+        live_pane.query_one("#sources-create-cancel", Button).press()
+        await pilot.pause(0.2)
+        reopened = await _open_create_form(host, pilot, screen)
+        assert [str(label) for label, _v in reopened._destination_options()] == [
+            "Unassigned (no watchlist)",
+            "Later",
+            "Reading",
+        ]

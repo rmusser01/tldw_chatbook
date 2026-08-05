@@ -27,13 +27,19 @@ from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import DestinationHarness
 from Tests.UI.app_factory import _build_test_app
-from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
+from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
+    AssignSourceToWatchlistRequested,
+    InspectorPane,
+)
 from tldw_chatbook.UI.Watchlists_Modules.opml_dialogs import (
     WatchlistPickerDialog,
     WatchlistSourcePickerDialog,
 )
 from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane
-from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
+from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+    AddSourceToWatchlistRequested,
+    TreeScope,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -214,6 +220,25 @@ async def test_a_selected_source_can_be_filed_from_its_inspector():
             source_id
         ], "the source never joined the watchlist the user picked"
 
+        # And the picker does not offer a watchlist it is already in (review
+        # wave, M5: this is the single-query `list_watchlists_for_source`
+        # replacing a per-watchlist fan-out -- the answer has to be the same).
+        screen.query_one("#inspector-add-to-watchlist-button", Button).press()
+        for _ in range(200):
+            await pilot.pause(0.02)
+            if isinstance(host.screen_stack[-1], WatchlistPickerDialog):
+                break
+        reopened = host.screen_stack[-1]
+        assert isinstance(reopened, WatchlistPickerDialog)
+        assert [int(row["id"]) for row in reopened.candidates] == [], (
+            "the picker offered a watchlist the source already belongs to: "
+            f"{reopened.candidates}"
+        )
+        assert reopened.total_watchlists == 1, (
+            "the dialog cannot tell 'in all of them' from 'there are none' "
+            "without this"
+        )
+
 
 @pytest.mark.asyncio
 async def test_the_watchlist_inspector_opens_the_source_picker():
@@ -241,9 +266,108 @@ async def test_the_watchlist_inspector_opens_the_source_picker():
                 break
         dialog = host.screen_stack[-1]
         assert isinstance(dialog, WatchlistSourcePickerDialog), (
-            "the Inspector's Add existing… never opened the source picker"
+            "the Inspector's Add existing never opened the source picker"
         )
         assert dialog.watchlist_name == "Reading"
+
+
+@pytest.mark.asyncio
+async def test_neither_assign_path_writes_on_a_backend_that_cannot_take_it():
+    """Review wave, I1. The rail has refused this since task-895; the two
+    Inspector actions this branch added did not.
+
+    On the Server backend there is no wire path for watchlist membership, so
+    the rail's `Add existing` renders disabled with that reason painted
+    beneath it. The Inspector's copy of the same verb shipped ungated: it
+    opened a picker full of LOCAL sources the screen was not showing, wrote a
+    local `watchlist_sources` row and reported success -- one control away
+    from a button explaining that the write is impossible.
+
+    Asserted in both directions and at both layers, the render AND the
+    handler, because a backend switch can land between the two.
+    """
+    app = _build_test_app()
+    watchlist_id, source_id = _seed(app)
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _mounted(host, pilot)
+        notices: list[str] = []
+        screen._notify_watchlists = (
+            lambda message, severity="information", **kwargs: notices.append(message)
+        )
+        screen.runtime_backend = "server"
+        await pilot.pause(0.3)
+        screen._apply_tree_scope(
+            TreeScope(kind="watchlist", watchlist_id=watchlist_id)
+        )
+        await pilot.pause(0.3)
+
+        rail = screen.query_one("#wl-tree-add-source", Button)
+        inspector = screen.query_one("#inspector-add-existing-source-button", Button)
+        assert rail.disabled, "precondition: the rail refuses this backend"
+        assert inspector.disabled, (
+            "the Inspector's Add existing is enabled on a backend whose rail "
+            "copy of the same verb is disabled"
+        )
+        assert str(inspector.tooltip) == str(rail.tooltip), (
+            "the two controls must give the same reason; got "
+            f"{inspector.tooltip!r} vs {rail.tooltip!r}"
+        )
+
+        # Survives a workbench rebuild: the push that armed this happens on
+        # the backend switch, and a `[`/`]` toggle builds a brand new
+        # Inspector that has to be seeded from the same value.
+        screen.refresh(recompose=True)
+        for _ in range(200):
+            await pilot.pause(0.02)
+            if screen.query("#inspector-add-existing-source-button"):
+                break
+        assert screen.query_one(
+            "#inspector-add-existing-source-button", Button
+        ).disabled, "a rebuilt Inspector forgot the backend cannot take this write"
+
+        # The pane refuses to POST, not merely to paint: a backend switch can
+        # land between compose and the press.
+        pane = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        posted: list[object] = []
+        # try/finally, not a bare patch-then-assert: a failing assertion in
+        # between would leave this widget's `post_message` replaced by a
+        # lambda, and Textual's message pump then hangs the whole run on
+        # teardown instead of reporting the failure.
+        try:
+            pane.post_message = lambda message: posted.append(message)
+            pane._post_add_existing_source()
+        finally:
+            del pane.post_message
+        assert not posted, (
+            "the Inspector posted a membership request on a blocked backend"
+        )
+
+        # The handler refuses too. A disabled button is a render; the message
+        # it posts is one call away from a durable write.
+        screen.post_message(AddSourceToWatchlistRequested(watchlist_id))
+        screen.post_message(
+            AssignSourceToWatchlistRequested(
+                {
+                    "backend": "local",
+                    "entity_kind": "subscription",
+                    "source_id": source_id,
+                    "name": "Loose Feed",
+                }
+            )
+        )
+        await pilot.pause(0.5)
+
+        assert app.watchlist_bundle_service.list_sources(watchlist_id) == [], (
+            "a membership row was written on a backend that cannot carry one"
+        )
+        assert not isinstance(
+            host.screen_stack[-1],
+            (WatchlistPickerDialog, WatchlistSourcePickerDialog),
+        ), "a picker opened on a backend that cannot service the write"
+        assert len(notices) >= 2, (
+            f"both refusals must explain themselves; got {notices}"
+        )
 
 
 @pytest.mark.asyncio
@@ -323,6 +447,46 @@ async def test_both_pickers_state_what_a_row_does_and_that_nothing_is_created():
                 f"{name} does not say that nothing is created: {text!r}"
             )
             assert subject in text
+            host.pop_screen()
+            await pilot.pause(0.1)
+
+
+@pytest.mark.asyncio
+async def test_the_watchlist_picker_does_not_claim_membership_that_cannot_exist():
+    """Review wave, M2. An empty candidate list has two causes.
+
+    "This source already belongs to every watchlist" is simply false on a
+    profile that has none -- which is the profile a first-run user reaches
+    this dialog on, since the source-side entry point does not require one.
+    """
+    app = _build_test_app()
+    _seed(app)
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _mounted(host, pilot)
+        for dialog, must_say, must_not_say in (
+            (
+                WatchlistPickerDialog("Loose Feed", [], total_watchlists=0),
+                "no watchlists yet",
+                "already belongs",
+            ),
+            (
+                WatchlistPickerDialog("Loose Feed", [], total_watchlists=2),
+                "already belongs",
+                "no watchlists yet",
+            ),
+        ):
+            host.push_screen(dialog)
+            await pilot.pause(0.2)
+            text = str(
+                host.screen_stack[-1]
+                .query_one("#watchlist-pick-empty", Static)
+                .renderable
+            ).lower()
+            assert must_say in text, f"expected {must_say!r} in {text!r}"
+            assert must_not_say not in text, (
+                f"{must_not_say!r} is not true here: {text!r}"
+            )
             host.pop_screen()
             await pilot.pause(0.1)
 

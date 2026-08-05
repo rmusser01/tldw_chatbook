@@ -17668,7 +17668,7 @@ WatchlistPickerDialog {
  *    sized these controls, so `Input`'s Textual default (`width: 100%`) and
  *    `_conversations.tcss`'s bare global `Select { width: 100%; }` each
  *    claimed the FULL strip: measured at 160x42 the four of them stacked to
- *    x=31,122,213,304 in a pane 93 columns wide, putting `New Source` at
+ *    x=31,122,213,304 in a pane 93 columns wide, putting `New source` at
  *    x=395 -- 300 columns off the right edge of a 160-column terminal. The
  *    explicit widths below are what keeps every control on screen.
  *
@@ -17870,7 +17870,7 @@ WatchlistPickerDialog {
  * where a centred pair would float away from the fields it belongs to. And
  * the dialog's `height: 3` would put the pair a row past the bottom of a
  * 16-row Sources pane at 160x42; one row is also what every other button on
- * this screen uses (`New Source`, `Preview`, `Import OPML`, the tree's
+ * this screen uses (`New source`, `Preview`, `Import OPML`, the tree's
  * `New`), so the pair reads as part of the screen rather than a modal
  * dropped into it.
  */

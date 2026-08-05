@@ -234,6 +234,17 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
     #: exist. The value is the same one the Overview region keys off, so the
     #: two regions cannot disagree.
     profile_state = reactive(OverviewPane.LOADING, recompose=True)
+    #: Why membership writes cannot run right now, or None (review wave, I1).
+    #: Screen-seeded like the four reactives above, and for the same reason:
+    #: the Inspector is handed a selection, not the backend behind it. It is
+    #: the SAME string `WatchlistTree.write_disabled_reason` carries
+    #: (`_tree_write_disabled_reason`), so the rail and this pane cannot
+    #: disagree about whether a write is possible -- which is precisely what
+    #: they did when `Add existing` shipped here ungated: the rail one
+    #: control away was greyed out explaining that the server backend has no
+    #: wire path for membership edits, while this button wrote a local
+    #: `watchlist_sources` row and reported success.
+    write_disabled_reason = reactive[str | None](None, recompose=True)
 
     #: TASK-1362 (spec §2). The source types whose checks run through
     #: `URLMonitor.check_url` -- the only ones that extract text from HTML and
@@ -584,13 +595,23 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
                 # -- and it puts the assign verb next to the watchlist the
                 # user has actually selected, which is the discoverability
                 # half of AC#2.
+                #
+                # Review wave, I1: gated on `write_disabled_reason`, the same
+                # string and the same condition the rail's copy of this verb
+                # uses. Rendered DISABLED rather than omitted, matching the
+                # two buttons below and the rail itself -- the action exists,
+                # it is the backend that cannot service it, and the tooltip
+                # says which.
                 if deepest.target_scope is not None and (
                     deepest.target_scope.watchlist_id is not None
                 ):
+                    blocked = self.write_disabled_reason
                     yield Button(
                         "Add existing",
                         id="inspector-add-existing-source-button",
-                        tooltip=(
+                        disabled=blocked is not None,
+                        tooltip=blocked
+                        or (
                             "Add a source you already have to this watchlist. "
                             "To make a new one, use New source under Sources."
                         ),
@@ -785,6 +806,12 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
         the rail's own `Add existing` posts, so both entry points land in
         one screen handler and cannot drift apart.
         """
+        if self.write_disabled_reason is not None:
+            # Belt and braces to the `disabled=` above (review wave, I1): a
+            # backend switch that lands between compose and the press leaves
+            # an enabled button for one frame, and this method is one
+            # `post_message` away from a durable write.
+            return
         levels = self._resolve_levels()
         if not levels:
             return

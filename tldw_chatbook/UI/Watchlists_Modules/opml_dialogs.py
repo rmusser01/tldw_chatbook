@@ -337,17 +337,30 @@ class WatchlistPickerDialog(ModalScreen[int | None]):
         candidates: Watchlist rows (`id`/`name`) the source is not already
             in. An empty sequence renders an explained empty state with the
             confirming affordance absent rather than dead.
+        total_watchlists: How many watchlists exist at all. Needed because an
+            empty `candidates` has TWO causes with opposite remedies (review
+            wave, M2), and the dialog cannot tell them apart from the empty
+            list alone. Defaults to the length of `candidates`, so a caller
+            that does not pass it gets the "none exist" reading for an empty
+            list -- the safer of the two, since it never claims membership
+            that is not there.
     """
 
     # Escape dismisses, exactly as Cancel does (TASK-1300).
     BINDINGS = [("escape", "cancel", "Cancel")]
 
     def __init__(
-        self, source_name: str, candidates: Sequence[Mapping[str, Any]]
+        self,
+        source_name: str,
+        candidates: Sequence[Mapping[str, Any]],
+        total_watchlists: int | None = None,
     ) -> None:
         super().__init__()
         self.source_name = source_name
         self.candidates = list(candidates)
+        self.total_watchlists = (
+            len(self.candidates) if total_watchlists is None else int(total_watchlists)
+        )
 
     def compose(self) -> ComposeResult:
         with Vertical(id="watchlist-pick-dialog", classes="opml-dialog"):
@@ -374,9 +387,18 @@ class WatchlistPickerDialog(ModalScreen[int | None]):
                             compact=True,
                         )
             else:
+                # Two empty states, not one sentence stretched across both
+                # (review wave, M2). "Already belongs to every watchlist" is
+                # simply false on a profile that has none -- which is exactly
+                # the profile a first-run user reaches this dialog on.
                 yield Static(
-                    "This source already belongs to every watchlist. "
-                    "Use New in the rail to make another one.",
+                    (
+                        "This source already belongs to every watchlist. "
+                        "Use New in the rail to make another one."
+                        if self.total_watchlists
+                        else "There are no watchlists yet. Use New in the "
+                        "rail to make one, then add this source to it."
+                    ),
                     id="watchlist-pick-empty",
                 )
             with Horizontal(classes="dialog-buttons"):

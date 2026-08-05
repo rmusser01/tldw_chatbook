@@ -208,22 +208,26 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     #: `change_threshold`'s role, since it is the other half of "why did/did
     #: not a change fire" and has no live UI of its own to explain it in.
     #:
-    #: TASK-2302 (F11/F12) re-measured the budget those two strings were
-    #: written against and found it wrong. The 91-column figure recorded here
-    #: was taken with the right rail out of the way; with the shell as it
-    #: ships, the field is **53** columns at 160x42 and **78** at 235x52
-    #: (measured through the production stylesheet by
-    #: `test_the_noise_help_text_fits_the_field_it_is_painted_on`, which
-    #: reads the mounted field's own width rather than trusting a number in
-    #: a comment). Textual's border-label renderer truncates silently at
-    #: width - 4, so the old 65-character label and 83-character help copy
-    #: were both cut -- the UAT read "…changes always report;
-    #: change_threshold" and filed it.
+    #: TASK-2302 (F11/F12) SHORTENED both strings, and the first version of
+    #: this comment justified that with a re-measurement that was itself
+    #: wrong -- it read 53/78 columns off a test harness that loads no
+    #: stylesheet at all. Corrected by the whole-branch review, which
+    #: measured through the production stylesheet: TASK-1362's figure above
+    #: is RIGHT. The field is **93** columns at 160x42 and **168** at
+    #: 235x52, so the previous 65-character label and 83-character help copy
+    #: both fit that layout with room to spare, and the truncation the UAT
+    #: filed ("…changes always report; change_threshold") is NOT explained by
+    #: this layout -- see the task-2302 notes; it is unresolved, and may be a
+    #: narrower terminal or an older build.
     #:
-    #: Both strings now fit the NARROWEST supported size, and the syntax
-    #: detail the shortening displaced moves to the tooltip, which has no
-    #: width budget at all -- the same trade the Inspector's copy of this
-    #: field already documents for its own, even shorter label.
+    #: The shorter strings are kept anyway, on their own merits rather than
+    #: on a width argument: they say the same thing in half the columns, they
+    #: cannot truncate at any size this app supports, and the syntax detail
+    #: they displaced moves to the tooltip, which has no width budget at all
+    #: -- the same trade the Inspector's copy of this field documents for its
+    #: own, even shorter label. `test_the_noise_help_text_fits_the_field_it_
+    #: is_painted_on` now measures through the production stylesheet, so the
+    #: numbers here are checkable rather than asserted.
     _IGNORE_SELECTORS_LABEL = "Ignore elements (CSS selectors, one per line)"
     _IGNORE_SELECTORS_HELP = "Silence noise; change_threshold limits volume."
     _IGNORE_SELECTORS_TOOLTIP = (
@@ -298,7 +302,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             # (layout/_panes.tcss) while a bordered Input/Select is three
             # rows, so without this the whole strip painted as its own top
             # border and nothing else -- no search box, no filters, no
-            # `New Source` -- and a new user had no way to add a source at
+            # `New source` -- and a new user had no way to add a source at
             # all. Widths are pinned alongside it in features/_watchlists.tcss
             # (they have to be in the bundle to beat the global
             # `Select { width: 100% }` in features/_conversations.tcss).
@@ -816,7 +820,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         TASK-1035. `show_create_form` is `reactive(..., recompose=True)`, and
         `Widget.recompose` removes and remounts *every* child of this pane.
         Textual does not move focus when the focused widget is removed that
-        way, so pressing `New Source` — a `Button` inside this very pane —
+        way, so pressing `New source` — a `Button` inside this very pane —
         destroyed the widget holding focus and left `Screen.focused` at
         `None`. The form then opened with nothing focused anywhere on the
         screen: typing went to the void, and `Tab` restarted at the head of
@@ -877,7 +881,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         #     field now wins over the stale intent, so an unrelated
         #     recompose landing in that window cannot yank them back to it.
         #   * First open, before the burst's own `.focus()` has run:
-        #     `screen.focused` is still the `New Source` button, which is
+        #     `screen.focused` is still the `New source` button, which is
         #     not one of `_CREATE_FORM_FIELD_IDS`, so
         #     `_focused_create_field_id()` is `None` and
         #     `_pending_create_focus` (armed to field 0 by

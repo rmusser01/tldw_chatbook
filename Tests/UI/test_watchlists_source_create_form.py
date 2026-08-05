@@ -123,7 +123,7 @@ async def _settled_sources_pane(screen, pilot, timeout: float = 5.0) -> SourcesP
 
 
 async def _open_sources_create_form(pilot, host):
-    """Open the form exactly as a user does: click through `New Source`."""
+    """Open the form exactly as a user does: click through `New source`."""
     screen = _active_destination_screen(host)
     screen.active_section = "sources"
     await _wait_for_selector(
@@ -186,7 +186,7 @@ async def test_create_form_focuses_its_first_field_when_it_opens(size):
         assert focused is not None, (
             "the create form opened with nothing focused anywhere on the "
             "screen: the recompose that mounts the form destroyed the "
-            "`New Source` Button that held focus, and nothing took its place"
+            "`New source` Button that held focus, and nothing took its place"
         )
         assert focused.id == "sources-create-name", (
             f"expected the Name field to be focused on open, got {focused.id!r}"
