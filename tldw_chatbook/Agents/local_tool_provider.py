@@ -59,7 +59,7 @@ class LocalToolProvider:
     Args:
         workspace_root: Confinement root for all path-taking tools.
         specs: Tool specs; defaults to the built-in set (fs_list, fs_read,
-            fs_write, fs_edit, fs_glob, fs_grep).
+            fs_write, fs_edit, fs_glob, fs_grep, web_fetch, web_search).
         resolve_state: (HubTool) -> EffectiveToolState, injected by the
             controller (owns permission-store access).
         kill_switch: () -> bool master off-switch.
@@ -345,6 +345,15 @@ def _default_specs(workspace_root: Path) -> list[LocalToolSpec]:
         read_file,
         write_file,
     )
+    from tldw_chatbook.Tools.web_tool_impls import (
+        FETCH_MAX_BYTES,
+        SEARCH_DEFAULT_ENGINE,
+        SEARCH_DEFAULT_RESULT_COUNT,
+        SEARCH_ENGINES,
+        SEARCH_MAX_RESULT_COUNT,
+        web_fetch,
+        web_search,
+    )
 
     return [
         LocalToolSpec(
@@ -453,5 +462,40 @@ def _default_specs(workspace_root: Path) -> list[LocalToolSpec]:
                 max_results=args.get("max_results", MAX_GREP_RESULTS),
             ),
             tags=(),
+        ),
+        LocalToolSpec(
+            name="web_fetch",
+            description="Fetch a web page and return its extracted text. SSRF-guarded (public http(s) only), redirect-capped, byte-capped, cached.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "Public http(s) URL to fetch."},
+                    "max_bytes": {"type": "integer", "description": "Maximum response bytes to read (default 1 MiB; hard cap 5 MiB)."},
+                },
+                "required": ["url"],
+            },
+            handler=lambda args: web_fetch(args["url"], max_bytes=args.get("max_bytes", FETCH_MAX_BYTES)),
+            # network-classed: default ask comes from the permission store's
+            # global default; read-only, so no risk tags.
+            tags=(),
+        ),
+        LocalToolSpec(
+            name="web_search",
+            description="Search the web and return formatted results (title, URL, snippet), size-bounded per result and in total.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The search query."},
+                    "search_engine": {"type": "string", "enum": list(SEARCH_ENGINES), "default": SEARCH_DEFAULT_ENGINE, "description": "Search engine to use."},
+                    "result_count": {"type": "integer", "default": SEARCH_DEFAULT_RESULT_COUNT, "minimum": 1, "maximum": SEARCH_MAX_RESULT_COUNT, "description": "Number of results to return."},
+                },
+                "required": ["query"],
+            },
+            handler=lambda args: web_search(
+                args["query"],
+                search_engine=args.get("search_engine", SEARCH_DEFAULT_ENGINE),
+                result_count=args.get("result_count", SEARCH_DEFAULT_RESULT_COUNT),
+            ),
+            tags=(),  # network-classed, read-only: no risk tags
         ),
     ]

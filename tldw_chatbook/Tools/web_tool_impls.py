@@ -22,6 +22,7 @@ import time
 from urllib.parse import urljoin, urlsplit
 
 import httpx
+from loguru import logger
 
 from .local_tool_impls import LocalToolError
 
@@ -289,3 +290,99 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
         text += f"\n\n[... truncated: response exceeded max_bytes={max_bytes} ...]"
     _fetch_cache[url] = (time.monotonic() + FETCH_CACHE_TTL_SECONDS, text)
     return text
+
+
+# ---------------------------------------------------------------------------
+# web_search
+# ---------------------------------------------------------------------------
+
+SEARCH_DEFAULT_ENGINE = "duckduckgo"
+SEARCH_ENGINES = ("google", "bing", "duckduckgo", "brave", "kagi", "tavily", "searx")
+SEARCH_DEFAULT_RESULT_COUNT = 5
+SEARCH_MAX_RESULT_COUNT = 10
+SEARCH_RESULT_MAX_CHARS = 4 * 1024      # per-result bound (re-plan spec §2.2)
+SEARCH_TOTAL_MAX_CHARS = 24 * 1024      # total cap, under the provider's 32 KiB fit
+
+
+def web_search(
+    query: str,
+    *,
+    search_engine: str = SEARCH_DEFAULT_ENGINE,
+    result_count: int = SEARCH_DEFAULT_RESULT_COUNT,
+) -> str:
+    """Run a web search and return bounded, formatted results as text.
+
+    Delegates to ``Web_Scraping.WebSearch_APIs.perform_websearch`` with the
+    legacy ``Tools/web_search_tool.py`` config-default wiring (country US,
+    English in/out, moderate safesearch, no advanced filters). Each result
+    block is bounded to SEARCH_RESULT_MAX_CHARS and the whole output to
+    SEARCH_TOTAL_MAX_CHARS, so the provider's 32 KiB result fitting never
+    triggers on search output. Backend failures return an error string
+    rather than raising (legacy tool contract); only invalid arguments
+    raise LocalToolError.
+
+    Raises:
+        LocalToolError: if ``query`` is empty.
+    """
+    if not isinstance(query, str) or not query.strip():
+        raise LocalToolError("[invalid-args] query must be a non-empty string")
+    query = query.strip()
+    engine = (search_engine or SEARCH_DEFAULT_ENGINE).strip().lower()
+    try:
+        count = int(result_count)
+    except (TypeError, ValueError):
+        count = SEARCH_DEFAULT_RESULT_COUNT
+    if count < 1 or count > SEARCH_MAX_RESULT_COUNT:
+        count = SEARCH_DEFAULT_RESULT_COUNT
+
+    # Local import: WebSearch_APIs pulls the config/metrics stack; keep this
+    # module cheap to import and let tests monkeypatch the source attribute.
+    from ..Web_Scraping.WebSearch_APIs import perform_websearch
+
+    try:
+        results = perform_websearch(
+            search_engine=engine,
+            search_query=query,
+            content_country="US",
+            search_lang="en",
+            output_lang="en",
+            result_count=count,
+            date_range=None,
+            safesearch="moderate",
+            site_blacklist=None,
+            exactTerms=None,
+            excludeTerms=None,
+            filter=None,
+            geolocation=None,
+            search_result_language=None,
+            sort_results_by=None,
+        )
+    except Exception as exc:  # noqa: BLE001 — backend failure is a result string, not an exception
+        logger.warning(f"web_search backend failure via {engine!r}: {exc}")
+        return f"[search-failed] web search via {engine!r} failed: {exc}"
+
+    if not isinstance(results, dict) or not isinstance(results.get("results"), list):
+        return (
+            f"No results found or unexpected response format from {engine!r} "
+            f"(raw: {str(results)[:500]})"
+        )
+    items = [item if isinstance(item, dict) else {} for item in results["results"][:count]]
+    if not items:
+        return f"No results found for {query!r} via {engine!r}."
+
+    blocks: list[str] = []
+    total = 0
+    for i, item in enumerate(items, 1):
+        block = (
+            f"{i}. {item.get('title') or 'No title'}\n"
+            f"   URL: {item.get('url') or ''}\n"
+            f"   {item.get('snippet') or 'No description available'}"
+        )
+        if len(block) > SEARCH_RESULT_MAX_CHARS:
+            block = block[:SEARCH_RESULT_MAX_CHARS] + "… [truncated]"
+        if total + len(block) > SEARCH_TOTAL_MAX_CHARS:
+            blocks.append("… [further results omitted: total size cap reached]")
+            break
+        blocks.append(block)
+        total += len(block)
+    return "\n\n".join(blocks)

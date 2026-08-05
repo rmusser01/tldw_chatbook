@@ -5,9 +5,9 @@ emits a ```tool_call fence for fs_list; the run must flow fence -> registry
 -> fs_list core -> result appended back into the model's next turn.
 
 Phase 2 adds: the find_tools/load_tools disclosure path past
-DIRECT_DISCLOSE_THRESHOLD (padded to 9 entries — 6 local + 2 builtin = 8 is
-still direct-disclosed), the 8-entry direct-disclosure boundary, and the
-allow-state e2e (zero approval round trips).
+DIRECT_DISCLOSE_THRESHOLD (the phase-3a default catalog — 8 local + 2
+builtin = 10 entries — crosses it on its own), the 8-entry direct-disclosure
+boundary, and the allow-state e2e (zero approval round trips).
 
 Harness pattern mirrors test_agent_service.py (ScriptedChat + real
 AgentRunsDB, no network); provider/review-hook wiring mirrors
@@ -31,7 +31,6 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_DENY_REFUSAL,
     LOCAL_SERVER_KEY,
     LocalToolProvider,
-    LocalToolSpec,
     _default_specs,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
@@ -79,13 +78,18 @@ def workspace(tmp_path):
 
 
 def make_service(db, workspace, replies, approvals, approval_calls, *,
-                 state=None, extra_specs=()):
+                 state=None, extra_specs=(), specs=None):
     """Assemble the run exactly as the bridge does: registry with builtins +
     the local provider, the build_local_review_hook batch hook, and the
-    provider's stamp_scope as review_state_scope."""
+    provider's stamp_scope as review_state_scope.
+
+    ``specs`` replaces the default local spec set (used to keep the composed
+    catalog at/under the direct-disclosure threshold for approval-flow
+    tests); ``extra_specs`` appends to whichever base set is in use."""
+    base = list(specs) if specs is not None else _default_specs(workspace)
     provider = LocalToolProvider(
         workspace_root=workspace,
-        specs=_default_specs(workspace) + list(extra_specs),
+        specs=base + list(extra_specs),
         resolve_state=lambda hub: state
         or EffectiveToolState(state="ask", origin="global_default"),
     )
@@ -123,6 +127,9 @@ def test_fs_list_fence_flow_executes_after_approve_once(db, workspace):
         [fence("fs_list", {"path": "."}), "The workspace has notes.txt."],
         {"fs_list": "approve_once"},
         approval_calls,
+        # Approval-flow test, not a disclosure test: keep the catalog at the
+        # 8-entry direct-disclosure boundary so fs_list is directly callable.
+        specs=fs_only_specs(workspace),
     )
 
     _run_id, outcome = service.run_turn(
@@ -172,6 +179,7 @@ def test_fs_list_fence_flow_denied_still_completes(db, workspace):
         [fence("fs_list", {"path": "."}), "I could not list the files."],
         {"fs_list": "deny"},
         approval_calls,
+        specs=fs_only_specs(workspace),  # see above: direct disclosure wanted
     )
 
     _run_id, outcome = service.run_turn(
@@ -210,45 +218,45 @@ def test_fs_list_fence_flow_denied_still_completes(db, workspace):
 
 # --- Phase 2: disclosure threshold + allow-state coverage -------------------
 
-LOCAL_TOOL_NAMES = {"fs_list", "fs_read", "fs_write", "fs_edit", "fs_glob", "fs_grep"}
+FS_TOOL_NAMES = {"fs_list", "fs_read", "fs_write", "fs_edit", "fs_glob", "fs_grep"}
+LOCAL_TOOL_NAMES = FS_TOOL_NAMES | {"web_fetch", "web_search"}  # phase-3a default set
 BUILTIN_TOOL_NAMES = {"calculator", "get_current_datetime"}
 
-# One inert spec that pads the composed catalog from 8 entries (6 local +
-# 2 builtin — still direct-disclosed at <= DIRECT_DISCLOSE_THRESHOLD) to 9,
-# genuinely crossing into find/load disclosure. Never called by the script.
-PADDING_SPEC = LocalToolSpec(
-    name="fs_noop_pad",
-    description="No-op padding tool for disclosure-threshold tests.",
-    parameters={"type": "object", "properties": {}},
-    handler=lambda args: "noop",
-)
+
+def fs_only_specs(workspace):
+    """The 6 fs_* specs: 6 local + 2 builtin = 8 entries, exactly at the
+    direct-disclosure threshold."""
+    return [s for s in _default_specs(workspace) if s.name in FS_TOOL_NAMES]
 
 
-def production_registry(workspace, extra_specs=()):
+def production_registry(workspace, extra_specs=(), specs=None):
+    base = list(specs) if specs is not None else _default_specs(workspace)
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
     registry.register_provider(
         LocalToolProvider(
             workspace_root=workspace,
-            specs=_default_specs(workspace) + list(extra_specs),
+            specs=base + list(extra_specs),
         )
     )
     return registry
 
 
 def test_direct_disclosure_boundary_at_eight_entries(workspace):
-    """6 local + 2 builtin = 8 entries is still direct-disclosed; 9 flips to
-    find/load. Documents the boundary via the runtime's own API
-    (initial_disclosure, the same call AgentService.run_turn makes)."""
-    registry = production_registry(workspace)
+    """6 fs_* local + 2 builtin = 8 entries is still direct-disclosed; the
+    full default catalog (8 local + 2 builtin = 10) crosses into find/load.
+    Documents the boundary via the runtime's own API (initial_disclosure,
+    the same call AgentService.run_turn makes)."""
+    registry = production_registry(workspace, specs=fs_only_specs(workspace))
     assert len(registry.list_catalog()) == DIRECT_DISCLOSE_THRESHOLD == 8
     schemas, offer_find_load = initial_disclosure(registry, RunBudget())
     assert offer_find_load is False
-    assert {s.name for s in schemas} == LOCAL_TOOL_NAMES | BUILTIN_TOOL_NAMES
+    assert {s.name for s in schemas} == FS_TOOL_NAMES | BUILTIN_TOOL_NAMES
 
-    padded = production_registry(workspace, extra_specs=[PADDING_SPEC])
-    assert len(padded.list_catalog()) == DIRECT_DISCLOSE_THRESHOLD + 1
-    schemas, offer_find_load = initial_disclosure(padded, RunBudget())
+    full = production_registry(workspace)
+    assert len(full.list_catalog()) == DIRECT_DISCLOSE_THRESHOLD + 2
+    assert {e.name for e in full.list_catalog()} == LOCAL_TOOL_NAMES | BUILTIN_TOOL_NAMES
+    schemas, offer_find_load = initial_disclosure(full, RunBudget())
     assert offer_find_load is True
     assert schemas == []
 
@@ -272,9 +280,9 @@ def test_find_load_path_executes_fs_edit_after_approve_once(db, workspace):
         {"fs_edit": "approve_once"},
         approval_calls,
         # The fence loop dispatches find_tools/load_tools by name even when
-        # they aren't offered; the padding is what makes the offer real
-        # (the boundary test above pins the offering).
-        extra_specs=[PADDING_SPEC],
+        # they aren't offered; the phase-3a default catalog (10 entries)
+        # crosses the threshold on its own, making the offer real (the
+        # boundary test above pins the offering).
     )
     config = AgentConfig(
         model="test-model",
@@ -333,6 +341,7 @@ def test_allow_state_executes_without_approval_round_trip(db, workspace):
         {},  # no scripted approvals: any round trip would fail loudly here
         approval_calls,
         state=EffectiveToolState(state="allow", origin="tool_override"),
+        specs=fs_only_specs(workspace),  # direct disclosure (see above)
     )
     config = AgentConfig(
         model="test-model",

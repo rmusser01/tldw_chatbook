@@ -24,12 +24,12 @@ def make_provider(state=ALLOW, kill=False, **kwargs):
     )
 
 
-def test_catalog_lists_fs_list_with_local_ids(tmp_path):
+def test_catalog_lists_default_specs_with_local_ids(tmp_path):
     p = make_provider(root=tmp_path)
     entries = p.list_catalog()
     assert [e.id for e in entries] == [
         "local:fs_list", "local:fs_read", "local:fs_write", "local:fs_edit",
-        "local:fs_glob", "local:fs_grep",
+        "local:fs_glob", "local:fs_grep", "local:web_fetch", "local:web_search",
     ]
     assert entries[0].name == "fs_list" and entries[0].source == "local"
     schema = p.load_schema("local:fs_list")
@@ -448,3 +448,100 @@ def test_record_decision_raise_does_not_break_invoke(tmp_path):
     p = make_provider(state=DENY, root=tmp_path, record_decision=boom)
     r = p.invoke("local:fs_list", {"path": "."})
     assert not r.ok and r.error == LOCAL_DENY_REFUSAL
+
+
+# -- web_fetch / web_search specs (phase 3a) ------------------------------------
+
+
+def test_web_fetch_spec_schema(tmp_path):
+    p = make_provider(root=tmp_path)
+    schema = p.load_schema("local:web_fetch")
+    assert schema.parameters["required"] == ["url"]
+    props = schema.parameters["properties"]
+    assert props["url"]["type"] == "string"
+    assert props["max_bytes"]["type"] == "integer"
+    assert "max_bytes" not in schema.parameters["required"]
+    # network-classed: default ask comes from the global permission default,
+    # so no risk tags.
+    assert p.hub_tool_for("web_fetch").tags == ()
+
+
+def test_web_search_spec_schema(tmp_path):
+    p = make_provider(root=tmp_path)
+    schema = p.load_schema("local:web_search")
+    assert schema.parameters["required"] == ["query"]
+    props = schema.parameters["properties"]
+    assert props["query"]["type"] == "string"
+    assert "duckduckgo" in props["search_engine"]["enum"]
+    assert props["result_count"]["type"] == "integer"
+    assert p.hub_tool_for("web_search").tags == ()
+
+
+def _fake_search_payload(count, snippet_len=50):
+    return {
+        "results": [
+            {
+                "title": f"Result {i}",
+                "url": f"https://example.com/{i}",
+                "snippet": f"snippet {i} " + ("x" * snippet_len),
+            }
+            for i in range(1, count + 1)
+        ]
+    }
+
+
+def test_web_search_handler_wires_legacy_defaults_and_bounds_results(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_perform_websearch(**kwargs):
+        seen.update(kwargs)
+        return _fake_search_payload(count=3, snippet_len=10_000)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Web_Scraping.WebSearch_APIs.perform_websearch",
+        fake_perform_websearch,
+    )
+    p = make_provider(root=tmp_path)
+    r = p.invoke("local:web_search", {"query": "python"})
+    assert r.ok
+    # legacy Tools/web_search_tool.py config-default wiring, passed through
+    assert seen["search_engine"] == "duckduckgo"
+    assert seen["search_query"] == "python"
+    assert seen["content_country"] == "US"
+    assert seen["search_lang"] == "en"
+    assert seen["output_lang"] == "en"
+    assert seen["result_count"] == 5
+    assert seen["safesearch"] == "moderate"
+    # each result block bounded to ~4 KiB
+    blocks = [b for b in r.content.split("\n\n") if b.strip()]
+    assert len(blocks) == 3
+    for block in blocks:
+        assert len(block) <= 4 * 1024 + len("… [truncated]")
+    assert "… [truncated]" in r.content
+
+
+def test_web_search_handler_enforces_total_cap(tmp_path, monkeypatch):
+    # 10 results x ~4 KiB each would exceed the total cap without bounding.
+    monkeypatch.setattr(
+        "tldw_chatbook.Web_Scraping.WebSearch_APIs.perform_websearch",
+        lambda **kwargs: _fake_search_payload(count=10, snippet_len=10_000),
+    )
+    p = make_provider(root=tmp_path)
+    r = p.invoke("local:web_search", {"query": "python", "result_count": 10})
+    assert r.ok
+    assert "omitted" in r.content
+    assert len(r.content.encode("utf-8")) < 32 * 1024  # provider fit never triggers
+
+
+def test_web_search_backend_error_becomes_result_string(tmp_path, monkeypatch):
+    def boom(**kwargs):
+        raise RuntimeError("backend exploded")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Web_Scraping.WebSearch_APIs.perform_websearch", boom
+    )
+    p = make_provider(root=tmp_path)
+    r = p.invoke("local:web_search", {"query": "python"})
+    # legacy contract: backend failure is a result string, not an exception.
+    assert r.ok
+    assert "backend exploded" in r.content
