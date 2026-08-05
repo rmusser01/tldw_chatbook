@@ -32,6 +32,11 @@ from Tests.UI.test_destination_shells import (
     _visible_text,
     _wait_for_selector,
 )
+from Tests.UI.test_library_shell import (
+    LibraryHarness,
+    _active_library_screen,
+    _wait_for_library_shell,
+)
 
 
 async def _wait_for_library_shell_ready(screen, pilot, *, timeout: float = 2.0) -> None:
@@ -913,6 +918,67 @@ async def test_library_search_rag_empty_sources_has_mode_local_blocked_status() 
         # Import media canvas row (the Import/Export row/mode it used to
         # target is retired); the canvas-switch behavior itself is covered
         # by test_library_shell.py.
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_cold_boot_recovery_banner_agrees_with_real_source_counts() -> (
+    None
+):
+    """(task-2075 D5) `default_tab = "search"` boots straight onto this
+    canvas via ``apply_navigation_context`` BEFORE the screen's first
+    ``compose()`` -- so ``_library_selected_row_id`` is already
+    ``LIBRARY_ROW_BROWSE_SEARCH`` on the very first paint, with no earlier
+    compose to self-heal from (the navigate-away-and-back path already
+    worked; this is the path that didn't).
+
+    ``compose()`` always renders from the zero-count defaults every fresh
+    screen starts with (``_local_source_counts`` is not populated until the
+    first snapshot lands), so the first paint shows the "No Library sources
+    yet" recovery banner regardless of what the DB actually holds. The real
+    local-source snapshot then arrives through
+    ``_apply_local_source_snapshot``'s in-place branch -- taken precisely
+    because the row is already Search -- which previously called only
+    ``_sync_library_rag_scope_toggle_and_run_gate_widgets`` (toggle counts/
+    Run gate only, by design) and never told the recovery block real counts
+    had landed: the false banner stuck beside populated, enabled toggles
+    (critique defect D5). This asserts it clears once the real snapshot
+    settles.
+    """
+    app = _build_test_app()
+    _seed_library_sources(app)
+    screen = LibraryScreen(app)
+    assert screen.is_mounted is False
+    screen.apply_navigation_context({"mode": "search"})
+
+    host = LibraryHarness(app, screen=screen)
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_library_screen(host)
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH, (
+            "the cold-boot arrangement must select Search before the first "
+            "compose -- otherwise this is the already-self-healing "
+            "navigate-back path, not the cold-boot one"
+        )
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+        scope_container = screen.query_one("#library-rag-source-scope")
+        assert not scope_container.has_class("has-recovery"), (
+            "the cold-boot 'No Library sources yet' banner never cleared "
+            "once the real local-source snapshot landed with real counts"
+        )
+        assert not screen.query("#library-rag-scope-recovery"), (
+            "the false gate line is still mounted beside populated scope "
+            "toggles"
+        )
+        visible_text = _visible_text(screen)
+        assert "No Library sources yet" not in visible_text
+        # The headline contradiction the UAT observed: real counts on the
+        # toggles beside the (now-cleared) gate copy.
+        notes_toggle = screen.query_one(
+            "#library-rag-scope-toggle-notes", Button
+        )
+        assert "(1)" in str(notes_toggle.label)
+        assert notes_toggle.disabled is False
 
 
 @pytest.mark.asyncio

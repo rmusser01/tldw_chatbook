@@ -13321,6 +13321,166 @@ async def test_library_search_rag_canvas_survives_ingest_done_count_growth(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_library_rag_source_snapshot_timeout_then_real_snapshot_clears_recovery():
+    """(task-2075 D5 fix) `_apply_source_snapshot_timeout`'s all-zeros
+    payload is only reachable while `_library_loaded` is still False (Task
+    5 fix-review finding) -- i.e. it can only ever be the FIRST
+    `_apply_local_source_snapshot` call for a screen instance, fired
+    through the SAME in-place branch a cold boot uses (the row is already
+    Search). This chains that failsafe firing first -- honestly showing
+    recovery given nothing has been fetched yet -- with the real snapshot
+    the docstring's own rationale describes it racing ("avoid leaving
+    Library in an indefinite loading state") landing moments later with
+    the actual counts, and proves the fix clears the banner on THAT second
+    application too -- not only on a cold boot where the failsafe never
+    fires at all.
+
+    The real snapshot worker is neutralized so both producers are driven
+    by hand in the documented order, rather than racing a live fetch.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=[{"title": "Research Note", "id": "note-1"}])
+    screen = LibraryScreen(app)
+    # Mirrors `default_tab = "search"`'s cold-boot flow: the row is Search
+    # before the first compose, which is what routes both producers below
+    # through `_apply_local_source_snapshot`'s in-place branch.
+    assert screen.is_mounted is False
+    screen.apply_navigation_context({"mode": "search"})
+    screen._refresh_local_source_snapshot = lambda: None
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        assert screen._library_loaded is False, (
+            "precondition (real reachability): the timeout payload is only "
+            "ever applied before the first real snapshot lands"
+        )
+
+        # Producer 1: the failsafe fires first.
+        screen._apply_source_snapshot_timeout()
+        await pilot.pause()
+
+        assert screen._library_loaded is True
+        scope_container = screen.query_one("#library-rag-source-scope")
+        assert scope_container.has_class("has-recovery"), (
+            "the timeout producer's all-zeros snapshot did not render the "
+            "recovery banner"
+        )
+        gate_line = screen.query_one("#library-rag-scope-recovery", Static)
+        assert (
+            str(gate_line.renderable)
+            == "No Library sources yet — import media or create notes, then search."
+        )
+
+        # Producer 2: the real snapshot the failsafe was racing against
+        # resolves moments later, with the actual (non-zero) counts.
+        screen._apply_local_source_snapshot(
+            {
+                "notes": ({"title": "Research Note", "id": "note-1"},),
+                "media": (),
+                "conversations": (),
+            },
+            {"notes": 1, "media": 0, "conversations": 0},
+            {"notes": True, "media": True, "conversations": True},
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert not scope_container.has_class("has-recovery"), (
+            "the real snapshot landing after the timeout's fallback never "
+            "cleared the recovery banner"
+        )
+        assert not screen.query("#library-rag-scope-recovery")
+        notes_toggle = screen.query_one("#library-rag-scope-toggle-notes", Button)
+        assert "(1)" in str(notes_toggle.label)
+
+
+@pytest.mark.asyncio
+async def test_library_rag_scope_recovery_steady_state_snapshot_causes_no_churn():
+    """(task-2075 D5 fix-review) Once the change-gated recovery mirror has
+    synced once for a given ``library_rag_scope_shows_recovery`` value, a
+    REPEAT in-place snapshot reporting the SAME value must be a pure no-op
+    -- no further remove/mount of the scope region's recovery block --
+    preserving RAG-27's no-eject guarantee (2075 AC2) for the steady-state
+    case the fix's change-gating exists to keep cheap.
+
+    The FIRST snapshot below is expected to reconcile the DOM once (the
+    cache starts unset, so it always settles against whatever ``compose()``
+    rendered) -- the identity/spy baseline is captured AFTER that settles,
+    and only the SECOND (repeat) apply is asserted to cause zero further
+    churn. The spy on ``_mirror_library_rag_scope_recovery`` is the direct,
+    mechanism-level proof (it does not exist at all pre-fix); the widget
+    identity check is the domain-meaningful one (nothing was torn down and
+    rebuilt).
+    """
+    app = _build_test_app()
+    # Genuinely empty: both snapshots below report zero sources, so
+    # `library_rag_scope_shows_recovery` never flips away from True across
+    # the two applies -- the steady-state case this test targets.
+    _seed_conversations(app, [])
+    screen = LibraryScreen(app)
+    assert screen.is_mounted is False
+    screen.apply_navigation_context({"mode": "search"})
+    screen._refresh_local_source_snapshot = lambda: None  # neutralize the real worker
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+
+        zero_records = {"notes": (), "media": (), "conversations": ()}
+        zero_counts = {"notes": 0, "media": 0, "conversations": 0}
+        zero_known = {"notes": True, "media": True, "conversations": True}
+
+        screen._apply_local_source_snapshot(zero_records, zero_counts, zero_known)
+        # Let the first-ever mirror worker (always reconciles once,
+        # regardless of whether the value actually changed vs. compose)
+        # finish before capturing the baseline identity.
+        for _ in range(75):
+            await pilot.pause(0.02)
+            if screen.query("#library-rag-scope-recovery"):
+                break
+        else:
+            raise AssertionError(
+                "the recovery banner never mounted for a genuinely empty "
+                "library on the first snapshot"
+            )
+
+        recovery_line = screen.query_one("#library-rag-scope-recovery", Static)
+        recovery_button = screen.query_one("#library-rag-open-import-export", Button)
+        scope_container = screen.query_one("#library-rag-source-scope")
+        assert scope_container.has_class("has-recovery")
+
+        # Spy (not replace) so a genuinely-scheduled mirror would still run
+        # -- this proves the repeat call below schedules nothing, on top of
+        # the widget-identity proof that nothing was mounted/removed.
+        screen._mirror_library_rag_scope_recovery = Mock(
+            wraps=screen._mirror_library_rag_scope_recovery
+        )
+
+        screen._apply_local_source_snapshot(zero_records, zero_counts, zero_known)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._mirror_library_rag_scope_recovery.call_count == 0, (
+            "a repeat snapshot reporting the SAME recovery state scheduled "
+            "another mirror worker -- the change-gate should have skipped it"
+        )
+        assert (
+            screen.query_one("#library-rag-scope-recovery", Static) is recovery_line
+        ), (
+            "the repeat steady-state snapshot rebuilt the recovery line -- "
+            "the change-gated mirror should have been a no-op"
+        )
+        assert (
+            screen.query_one("#library-rag-open-import-export", Button)
+            is recovery_button
+        ), (
+            "the repeat steady-state snapshot rebuilt the Import media "
+            "button -- the change-gated mirror should have been a no-op"
+        )
+
+
+@pytest.mark.asyncio
 async def test_typing_fences_off_in_flight_preflight_for_previous_path(tmp_path):
     """(task-2015 review) During the 0.8s debounce window an in-flight
     worker for the PREVIOUS path could still apply -- generation equality

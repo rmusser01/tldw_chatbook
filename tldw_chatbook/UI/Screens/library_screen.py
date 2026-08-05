@@ -1271,6 +1271,17 @@ class LibraryScreen(BaseAppScreen):
         # starts, and the next then rebuilds from state that is by then
         # settled.
         self._library_rag_panel_refresh_lock = asyncio.Lock()
+        # (task-2075 D5) Cache of the last `library_rag_scope_shows_recovery`
+        # result actually mirrored into the DOM, read by
+        # `_sync_library_rag_scope_toggle_and_run_gate_widgets` to change-gate
+        # the recovery-block mirror it schedules. `None` until the first
+        # in-place snapshot sync runs -- deliberately distinct from both
+        # `True`/`False` so that first call always reconciles the DOM
+        # against whatever `compose()` actually rendered (cheap: at most an
+        # empty remove + empty mount when nothing needs to change), while
+        # every later snapshot with an unchanged value takes the no-op path
+        # RAG-27 requires.
+        self._library_rag_scope_recovery_visible: bool | None = None
         self._library_collections_loaded = False
         self._library_collections_records = ()
         self._library_collections_selected_id = ""
@@ -17401,14 +17412,35 @@ class LibraryScreen(BaseAppScreen):
         interleave with anything and needs no coordination.
 
         Trade-off: the query region's quiet-line/blocked-callout/recovery
-        block (`library_rag_query_status_children`) and the scope
-        container's `has-recovery` class are NOT refreshed here (both
-        require remove/mount or would visually desync from an unrefreshed
-        callout) -- an ingest-driven scope change that flips the run gate's
-        *reason* text (as opposed to just enabled/disabled) stays stale
-        until the next full refresh. Accepted narrowly for this
-        snapshot-driven path only; every other caller above still runs the
-        full `_refresh_search_rag_panel_state_widgets` and is unaffected.
+        block (`library_rag_query_status_children`) is NOT refreshed here
+        (it requires remove/mount and would visually desync from an
+        unrefreshed callout) -- an ingest-driven scope change that flips
+        the run gate's *reason* text (as opposed to just enabled/disabled)
+        stays stale until the next full refresh. Accepted narrowly for
+        this snapshot-driven path only; every other caller above still
+        runs the full `_refresh_search_rag_panel_state_widgets` and is
+        unaffected.
+
+        (task-2075 D5) The *scope* region's own recovery block --
+        `#library-rag-source-scope`'s `has-recovery` class plus its
+        `library_rag_scope_recovery_children` -- gets different treatment:
+        it IS kept honest here, but change-gated rather than refreshed on
+        every call. A cold boot lands on this canvas before the first
+        compose (`_library_selected_row_id` is already
+        `LIBRARY_ROW_BROWSE_SEARCH`), so `compose()` renders the recovery
+        banner from the zero-count defaults every fresh screen starts
+        with; the very next snapshot -- real counts, taken by this
+        in-place branch precisely because the row is already Search --
+        previously never told that banner counts had arrived, leaving a
+        stale "No Library sources yet" beside populated, enabled toggles.
+        Comparing `library_rag_scope_shows_recovery(...)` against
+        `self._library_rag_scope_recovery_visible` (cached, `None` until
+        the first call) means steady-state snapshots -- the overwhelming
+        common case, and RAG-27's whole point -- see no change and take
+        the same no-op, no-yield path as everything else in this method;
+        only an actual flip schedules `_mirror_library_rag_scope_recovery`
+        as a worker (see that method for why a worker rather than an
+        inline remove/mount here).
         """
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH or not self.query(
             "#library-search-rag-panel"
@@ -17444,6 +17476,106 @@ class LibraryScreen(BaseAppScreen):
             )
         except (NoMatches, QueryError):
             pass
+
+        shows_recovery = library_rag_scope_shows_recovery(panel_state.scope)
+        if shows_recovery != self._library_rag_scope_recovery_visible:
+            # Updated eagerly (before the worker even starts) so a burst of
+            # snapshots landing faster than the worker can run only ever
+            # schedules one mirror per actual flip -- a repeat call with the
+            # SAME new value during that window already matches the cache
+            # and takes the branch above instead.
+            self._library_rag_scope_recovery_visible = shows_recovery
+            self.run_worker(
+                self._mirror_library_rag_scope_recovery(),
+                exclusive=True,
+                group="library_rag_scope_recovery_mirror",
+            )
+
+    async def _mirror_library_rag_scope_recovery(self) -> None:
+        """Remove/mount the scope region's recovery block for a snapshot-
+        driven change in `library_rag_scope_shows_recovery`.
+
+        Scheduled via `run_worker(..., exclusive=True, group=...)` from
+        `_sync_library_rag_scope_toggle_and_run_gate_widgets` rather than
+        run inline, because that caller is itself synchronous (RAG-27's
+        no-`await` constraint) and has no coroutine of its own in which to
+        `await widget.remove()` / `await container.mount(...)`.
+
+        Takes `_library_rag_panel_refresh_lock` -- the SAME lock
+        `_refresh_search_rag_panel_state_widgets` holds for its own
+        remove/mount of this exact block -- rather than firing the
+        remove/mount unawaited from the sync method above. Both approaches
+        keep the sync method itself yield-free, but only the lock actually
+        prevents the hazard the lock was introduced for (PR-3 Task 4): an
+        unawaited `Widget.remove()`/`mount()` still schedules its real
+        DOM work for a later message-pump tick regardless of whether the
+        caller awaits it, so a full refresh already mid-sequence (between
+        its own `await remove()` and `await mount()`, inside the lock)
+        could have this method's un-coordinated remove/mount of the SAME
+        fixed ids (`#library-rag-scope-recovery`,
+        `#library-rag-open-import-export`) land in the gap -- `mount()`
+        validates ids against currently-attached children synchronously,
+        so that collision raises `DuplicateIds`, not just a visual
+        glitch. Routing through the lock instead means this method simply
+        waits its turn.
+
+        The panel state is (re)built fresh here, inside the lock -- not
+        passed in from the scheduling call -- for the same reason
+        `_refresh_search_rag_panel_state_widgets` does that: by the time
+        this worker actually runs (after any in-flight full refresh
+        releases the lock), a newer snapshot may already be current.
+        Being `exclusive=True` in its own group means a fast run of scope
+        flips only ever mirrors the LAST one -- consistent with rendering
+        whatever is true when this actually executes rather than
+        whatever was true when it was scheduled.
+        """
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH or not self.query(
+            "#library-search-rag-panel"
+        ):
+            return
+        async with self._library_rag_panel_refresh_lock:
+            if (
+                self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH
+                or not self.query("#library-search-rag-panel")
+            ):
+                return
+            try:
+                scope_container = self.query_one("#library-rag-source-scope", Vertical)
+            except (NoMatches, QueryError):
+                return
+            panel_state = self._library_rag_panel_state()
+            await self._apply_library_rag_scope_recovery_block(
+                scope_container, panel_state
+            )
+            # Re-cache from the freshly-rebuilt state (not the value that
+            # triggered scheduling): if a newer snapshot superseded this one
+            # before the worker's turn came up, the cache must reflect what
+            # actually got mirrored, not what was true a moment earlier.
+            self._library_rag_scope_recovery_visible = library_rag_scope_shows_recovery(
+                panel_state.scope
+            )
+
+    async def _apply_library_rag_scope_recovery_block(
+        self,
+        scope_container: Vertical,
+        panel_state: LibraryRagPanelState,
+    ) -> None:
+        """Remove/mount `#library-rag-source-scope`'s recovery children.
+
+        Shared by `_refresh_search_rag_panel_state_widgets` (the full
+        refresh every OTHER panel caller awaits directly) and
+        `_mirror_library_rag_scope_recovery` (the change-gated snapshot
+        path above) so the two can never render this block differently.
+        """
+        scope_container.set_class(
+            library_rag_scope_shows_recovery(panel_state.scope), "has-recovery"
+        )
+        scope_recovery_widgets = list(self.query("#library-rag-scope-recovery"))
+        import_buttons = list(self.query("#library-rag-open-import-export"))
+        for widget in (*scope_recovery_widgets, *import_buttons):
+            await widget.remove()
+        for child in library_rag_scope_recovery_children(panel_state):
+            await scope_container.mount(child)
 
     async def _refresh_search_rag_panel_state_widgets(
         self,
@@ -17497,18 +17629,22 @@ class LibraryScreen(BaseAppScreen):
             await self._refresh_library_rag_query_status_widgets(panel_state)
 
             scope_container = self.query_one("#library-rag-source-scope", Vertical)
-            scope_container.set_class(
-                library_rag_scope_shows_recovery(panel_state.scope), "has-recovery"
-            )
             self.query_one("#library-rag-scope-summary", Static).update(
                 self._library_rag_scope_summary(panel_state)
             )
-            scope_recovery_widgets = list(self.query("#library-rag-scope-recovery"))
-            import_buttons = list(self.query("#library-rag-open-import-export"))
-            for widget in (*scope_recovery_widgets, *import_buttons):
-                await widget.remove()
-            for child in library_rag_scope_recovery_children(panel_state):
-                await scope_container.mount(child)
+            await self._apply_library_rag_scope_recovery_block(
+                scope_container, panel_state
+            )
+            # Keep the snapshot-driven mirror's change-gate (task-2075 D5)
+            # accurate after a full refresh too: this path renders the
+            # recovery block unconditionally, so without this the cache
+            # could go stale relative to what is now actually on screen --
+            # never wrong (the mirror always re-derives its target from a
+            # fresh `panel_state`, not from the cache), just a possible
+            # redundant reconciliation on the next in-place snapshot.
+            self._library_rag_scope_recovery_visible = library_rag_scope_shows_recovery(
+                panel_state.scope
+            )
 
             # Deliberately ABOVE the `include_results_and_history` gate: the
             # answer region is at most a handful of `Static`s (the same cost
