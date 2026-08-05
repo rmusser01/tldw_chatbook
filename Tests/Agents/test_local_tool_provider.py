@@ -632,3 +632,132 @@ def test_web_search_non_string_engine_falls_back_to_default(tmp_path, monkeypatc
     r = p.invoke("local:web_search", {"query": "python", "search_engine": 123})
     assert r.ok  # no AttributeError on .strip(); coerced like result_count
     assert seen["search_engine"] == "duckduckgo"
+
+
+# -- todo_write (phase-3a Task 4: session-scoped todos) -----------------------
+#
+# The provider is per-run and context-free per call, so todo state flows in at
+# composition: a live list (the ConsoleChatSession's own ``todos``) plus an
+# optional change callback. No store -> no todo_write spec at all.
+
+
+def test_todo_write_spec_absent_without_todo_store(tmp_path):
+    p = make_provider(root=tmp_path)  # todo_store defaults to None
+    assert "local:todo_write" not in [e.id for e in p.list_catalog()]
+    r = p.invoke("local:todo_write", {"todos": []})
+    assert not r.ok
+    assert r.error == "Unknown local tool: todo_write"
+
+
+def test_todo_write_spec_carries_mutates_tag(tmp_path):
+    p = make_provider(root=tmp_path, todo_store=[])
+    entry = next(e for e in p.list_catalog() if e.id == "local:todo_write")
+    assert entry.name == "todo_write" and entry.source == "local"
+    schema = p.load_schema("local:todo_write")
+    assert schema.parameters["required"] == ["todos"]
+    item_props = schema.parameters["properties"]["todos"]["items"]["properties"]
+    assert item_props["status"]["enum"] == ["pending", "in_progress", "completed"]
+    assert p.hub_tool_for("todo_write").tags == ("mutates",)
+
+
+def test_todo_write_replaces_store_contents_in_place(tmp_path):
+    store = [{"content": "old", "status": "pending"}]
+    p = make_provider(root=tmp_path, todo_store=store)
+    r = p.invoke(
+        "local:todo_write",
+        {"todos": [
+            {"content": "write tests", "status": "completed"},
+            {"content": "implement", "status": "in_progress", "activeForm": "implementing"},
+            {"content": "commit", "status": "pending"},
+        ]},
+    )
+    assert r.ok
+    assert r.content == "3 todos (1 in progress)"
+    assert store == [
+        {"content": "write tests", "status": "completed"},
+        {"content": "implement", "status": "in_progress", "activeForm": "implementing"},
+        {"content": "commit", "status": "pending"},
+    ]
+
+
+def test_todo_write_accepts_empty_list(tmp_path):
+    store = [{"content": "a", "status": "pending"}]
+    p = make_provider(root=tmp_path, todo_store=store)
+    r = p.invoke("local:todo_write", {"todos": []})
+    assert r.ok
+    assert r.content == "0 todos (0 in progress)"
+    assert store == []
+
+
+def test_todo_write_calls_on_todo_change_with_the_live_store(tmp_path):
+    store = []
+    seen = []
+    p = make_provider(
+        root=tmp_path, todo_store=store, on_todo_change=lambda todos: seen.append(todos)
+    )
+    r = p.invoke("local:todo_write", {"todos": [{"content": "a", "status": "pending"}]})
+    assert r.ok
+    assert len(seen) == 1
+    assert seen[0] is store  # the live list itself, not a copy
+
+
+def test_todo_write_on_todo_change_failure_does_not_break_invoke(tmp_path):
+    store = []
+
+    def boom(todos):
+        raise RuntimeError("ui down")
+
+    p = make_provider(root=tmp_path, todo_store=store, on_todo_change=boom)
+    r = p.invoke("local:todo_write", {"todos": [{"content": "a", "status": "pending"}]})
+    assert r.ok  # callback raise is swallowed (never-raise seam)
+    assert store == [{"content": "a", "status": "pending"}]
+
+
+def test_todo_write_rejects_non_list_payload(tmp_path):
+    store = [{"content": "keep", "status": "pending"}]
+    p = make_provider(root=tmp_path, todo_store=store)
+    r = p.invoke("local:todo_write", {"todos": "nope"})
+    assert not r.ok
+    assert "list" in r.error
+    assert store == [{"content": "keep", "status": "pending"}]  # untouched
+
+
+def test_todo_write_rejects_missing_content(tmp_path):
+    store = [{"content": "keep", "status": "pending"}]
+    p = make_provider(root=tmp_path, todo_store=store)
+    r = p.invoke("local:todo_write", {"todos": [{"status": "pending"}]})
+    assert not r.ok
+    assert "content" in r.error
+    assert store == [{"content": "keep", "status": "pending"}]
+
+
+def test_todo_write_rejects_blank_content(tmp_path):
+    p = make_provider(root=tmp_path, todo_store=[])
+    r = p.invoke("local:todo_write", {"todos": [{"content": "  ", "status": "pending"}]})
+    assert not r.ok
+    assert "content" in r.error
+
+
+def test_todo_write_rejects_invalid_status(tmp_path):
+    p = make_provider(root=tmp_path, todo_store=[])
+    r = p.invoke(
+        "local:todo_write", {"todos": [{"content": "a", "status": "doing"}]}
+    )
+    assert not r.ok
+    assert "status" in r.error
+    assert "in_progress" in r.error  # names the valid values
+
+
+def test_todo_write_rejects_multiple_in_progress(tmp_path):
+    store = []
+    p = make_provider(root=tmp_path, todo_store=store)
+    r = p.invoke(
+        "local:todo_write",
+        {"todos": [
+            {"content": "a", "status": "in_progress"},
+            {"content": "b", "status": "in_progress"},
+        ]},
+    )
+    assert not r.ok
+    assert "in_progress" in r.error
+    assert store == []  # untouched

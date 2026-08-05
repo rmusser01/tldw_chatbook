@@ -1024,6 +1024,7 @@ class ConsoleChatController:
 
     def _compose_local_provider(
         self,
+        session_id: str | None = None,
     ) -> tuple[
         LocalToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None
     ]:
@@ -1058,6 +1059,16 @@ class ConsoleChatController:
         uses (``initiator="agent"``), recording local refusals as
         "denied"/"denied-timeout" under the ``local:__local__`` server
         key.
+
+        Todo wiring (phase-3a Task 4): when ``session_id`` resolves to a
+        live session, the provider is handed THAT session's own ``todos``
+        list (replaced in place by ``todo_write``) plus an
+        ``on_todo_change`` that renders the updated list into the
+        transcript via ``ConsoleAgentBridge.append_todo_marker`` -- the
+        same in-memory, worker-thread, persist-free path the agent step
+        markers use. Without a session (or without a bridge), the
+        provider stays context-free and no ``todo_write`` spec is
+        registered.
 
         Returns:
             ``(provider, review_tool_calls)`` when eligible -- a
@@ -1123,8 +1134,31 @@ class ConsoleChatController:
             ),
             persist_approval=_persist_approval,
             record_decision=_record_decision,
+            **self._todo_wiring(session_id),
         )
         return provider, build_local_review_hook(provider, self.request_mcp_approvals)
+
+    def _todo_wiring(self, session_id: str | None) -> dict:
+        """The todo_store/on_todo_change kwargs for ``_compose_local_provider``.
+
+        Empty dict (no todo capability) when there is no session context,
+        the session is unknown, or there is no bridge to render through.
+        """
+        if session_id is None:
+            return {}
+        bridge = self._agent_bridge
+        if bridge is None:
+            return {}
+        session = next(
+            (s for s in self.store.sessions() if s.id == session_id), None
+        )
+        if session is None:
+            return {}
+
+        def _on_todo_change(todos: list) -> None:
+            bridge.append_todo_marker(session_id, todos)
+
+        return {"todo_store": session.todos, "on_todo_change": _on_todo_change}
 
     def resolve_pending_approval(self, decisions: dict[str, str]) -> None:
         """UI THREAD: apply the user's batch decision, releasing the waiting worker thread.
@@ -2227,7 +2261,7 @@ class ConsoleChatController:
         # Local tools (ADR-032): same per-run composition point. Both
         # hooks see every batch; each gates only what its provider owns,
         # so the combined hook is a collision-free merge.
-        local_provider, local_review_hook = self._compose_local_provider()
+        local_provider, local_review_hook = self._compose_local_provider(session_id)
         review_hooks = [
             hook
             for hook in (mcp_review_hook, local_review_hook)

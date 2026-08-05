@@ -152,6 +152,33 @@ def format_agent_step_marker(
     return None
 
 
+def format_todo_marker(todos: list[dict]) -> str:
+    """Return the transcript TOOL marker text for one todo_write state change.
+
+    Rendering counterpart to ``format_agent_step_marker`` for the session-
+    scoped todo list (phase-3a Task 4): one line per item with a status
+    glyph, using ``activeForm`` as the label for the in-progress item when
+    present. Kept raw (no escaping) for the same reason as step markers --
+    both transcript consumers render markup-off (see its docstring). Live
+    only: todos are session-lifetime and never persisted, so there is no
+    resume re-derivation path for these markers.
+    """
+    if not todos:
+        return "☰ Todos cleared"
+    glyphs = {"completed": "[x]", "in_progress": "[~]", "pending": "[ ]"}
+    in_progress = 0
+    lines = []
+    for item in todos:
+        status = str(item.get("status") or "pending")
+        if status == "in_progress":
+            in_progress += 1
+        label = item.get("activeForm") if status == "in_progress" else None
+        label = label or str(item.get("content") or "")
+        lines.append(f"  {glyphs.get(status, '[ ]')} {label}")
+    header = f"☰ Todos ({in_progress} in progress):"
+    return "\n".join([header, *lines])
+
+
 def inject_resume_agent_markers(
     messages: list[ConsoleChatMessage],
     marker_blocks: list[list[ConsoleChatMessage]],
@@ -1175,6 +1202,18 @@ class ConsoleAgentBridge:
                     )
             blocks.append(block)
         return blocks
+
+    def append_todo_marker(self, session_id: str, todos: list[dict]) -> None:
+        """Surface a todo_write state change in the transcript.
+
+        Public seam for the controller's ``on_todo_change`` wiring: the
+        local-tool handler fires it from the same agent worker thread the
+        step markers are appended on, so it reuses ``_append_marker``
+        directly (in-memory store append, ``persist=False``) -- no
+        ``call_from_thread`` marshalling, exactly like the live step-marker
+        path. Session-lifetime only; nothing is re-derived on resume.
+        """
+        self._append_marker(session_id, format_todo_marker(todos))
 
     # -- internals ------------------------------------------------------
 

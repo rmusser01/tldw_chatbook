@@ -11,6 +11,7 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     ConsoleAgentBridge,
     compose_agent_system_prompt,
     format_agent_step_marker,
+    format_todo_marker,
     inject_resume_agent_markers,
     _compose_run_allowed_tools,
     _compose_run_registry_and_allowed,
@@ -555,6 +556,40 @@ def test_format_agent_step_marker_matches_each_live_marker_shape():
         is None
     )
     assert format_agent_step_marker(STEP_MODEL, summary="The answer is 42.") is None
+
+
+def test_format_todo_marker_renders_statuses_and_active_form():
+    text = format_todo_marker(
+        [
+            {"content": "write tests", "status": "completed"},
+            {"content": "implement", "status": "in_progress", "activeForm": "implementing"},
+            {"content": "commit", "status": "pending"},
+        ]
+    )
+    assert text == (
+        "☰ Todos (1 in progress):\n"
+        "  [x] write tests\n"
+        "  [~] implementing\n"
+        "  [ ] commit"
+    )
+
+
+def test_format_todo_marker_empty_list_reads_as_cleared():
+    assert format_todo_marker([]) == "☰ Todos cleared"
+
+
+def test_append_todo_marker_appends_tool_message_to_store(tmp_path):
+    bridge, _db, store, session, _aid = _bridge(tmp_path, [])
+    bridge.append_todo_marker(
+        session.id, [{"content": "ship it", "status": "in_progress"}]
+    )
+    tool_messages = [
+        m for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert [m.content for m in tool_messages] == [
+        "☰ Todos (1 in progress):\n  [~] ship it"
+    ]
 
 
 def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(

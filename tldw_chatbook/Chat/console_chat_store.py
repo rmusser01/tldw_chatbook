@@ -132,6 +132,11 @@ class ConsoleChatSession:
     draft: str = ""
     updated_at: str = field(default_factory=_utc_now_iso)
     pending_attachments: list[PendingAttachment] = field(default_factory=list)
+    #: Session-lifetime todo list for the local ``todo_write`` agent tool
+    #: (items: ``{content, status, activeForm}``, status in
+    #: ``pending|in_progress|completed``). Never persisted -- a resumed
+    #: session starts with an empty list.
+    todos: list[dict] = field(default_factory=list)
 
 
 class ConsoleChatStore:
