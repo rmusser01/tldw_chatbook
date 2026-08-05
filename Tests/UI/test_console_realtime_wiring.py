@@ -1925,6 +1925,91 @@ async def test_transport_drop_reconnects_once_and_reseeds(monkeypatch):
         ), notifications
 
 
+# ---------------------------------------------------------------------------
+# task-2360: reconnect must buffer, not drop, mic audio -- the tap's
+# entry-time first-words guarantee extended across a mid-loop RECONNECT.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconnect_buffers_mic_audio_and_flushes_to_the_new_session(monkeypatch):
+    """Speech captured during the RECONNECTING window (old session gone,
+    new one not yet ready) must not be dropped -- the SAME tap (never
+    rebuilt across a reconnect) re-buffers it and flushes it, in order,
+    to the new session the moment it goes ready, mirroring the entry-time
+    first-words guarantee (`test_first_words_buffer_until_ready_then_
+    flush_in_order`)."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+        recorder = rig.recorder  # the tap survives the reconnect unchanged
+
+        session.fire_closed("connection lost")
+        await _wait_for(lambda: len(rig.sessions) == 2, pilot)
+        assert console._console_realtime.controller.state == "reconnecting"
+
+        # The old session is gone and the new one has not connected yet --
+        # exactly the window where frames used to be silently dropped.
+        recorder.push(b"during-reconnect-1")
+        recorder.push(b"during-reconnect-2")
+        assert rig.sessions[0].audio_frames == []
+        assert rig.sessions[1].audio_frames == []
+
+        await _wait_for(lambda: rig.sessions[1].connected, pilot)
+        rig.sessions[1].fire_ready()
+        await _wait_for(
+            lambda: console._console_realtime.controller.state == "live", pilot
+        )
+
+        assert rig.sessions[1].audio_frames == [
+            b"during-reconnect-1",
+            b"during-reconnect-2",
+        ]
+
+        # Streaming resumes live afterward, unaffected by the buffering.
+        recorder.push(b"after-reconnect")
+        assert rig.sessions[1].audio_frames[-1] == b"after-reconnect"
+
+
+@pytest.mark.asyncio
+async def test_failed_reconnect_never_forwards_the_buffered_audio(monkeypatch):
+    """The other direction: when the reconnect ITSELF fails (the same
+    give-up exit `test_auth_failure_during_reconnect_gives_up_instead_of_
+    hanging` pins), any audio buffered during that doomed reconnect window
+    must never reach the failed session -- and the loop's ordinary
+    teardown (which already stops, and thereby discards, the tap's buffer
+    -- see `Tests/Audio/test_realtime_mic_tap.py::
+    test_stop_after_begin_buffering_discards_the_rebuffered_frames`) is
+    all that is needed; no separate discard path exists."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+        recorder = rig.recorder
+
+        session.fire_closed("connection lost")
+        await _wait_for(lambda: len(rig.sessions) == 2, pilot)
+        assert console._console_realtime.controller.state == "reconnecting"
+
+        recorder.push(b"buffered-during-doomed-reconnect")
+
+        await _wait_for(lambda: rig.sessions[1].connected, pilot)
+        rig.sessions[1].fire_closed(_INVALID_KEY_REASON)  # the reconnect itself fails
+        await _wait_for(lambda: console._console_realtime is None, pilot)
+        await _wait_for(lambda: recorder.stop_calls == 1, pilot)
+
+        assert rig.sessions[1].audio_frames == []
+
+
 @pytest.mark.asyncio
 async def test_idle_timeout_exits_with_a_reasoned_toast(monkeypatch):
     _patch_realtime_config(monkeypatch, idle_timeout_seconds=120.0)

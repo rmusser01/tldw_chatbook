@@ -8749,7 +8749,33 @@ class ChatScreen(BaseAppScreen):
         the way the first connect did. Incrementing the attempt inside
         `_start_console_realtime_connect` is what retires the dead
         session's callbacks.
+
+        `tap.begin_buffering()` runs FIRST, before anything else here
+        (task-2360): the mic tap is never rebuilt across a reconnect (it
+        is the SAME device stream for the whole loop entry), so without
+        this, speech captured in the window between here and the new
+        session's `on_ready` would either reach nobody (`session.session`
+        is momentarily None below) or reach a session that has not
+        finished its handshake yet (`session.session` is reassigned to
+        the new, not-yet-connected provider session inside `_connect_
+        console_realtime`, well before it calls `connect()` -- a real
+        session's `append_audio` silently drops anything sent before that
+        completes). Buffering at the tap, rather than depending on either
+        of those downstream behaviors, mirrors the ENTRY-time first-words
+        guarantee exactly: `_on_console_realtime_ready`'s existing `tap.
+        mark_ready()` call (unconditionally run for both a first connect
+        and every reconnect) is what releases it, in order, once the new
+        session is actually ready -- no other change needed there.
         """
+        tap = session.tap
+        if tap is not None:
+            try:
+                tap.begin_buffering()
+            except Exception:  # noqa: BLE001
+                logger.opt(exception=True).debug(
+                    "Console realtime: could not re-arm the mic tap buffer "
+                    "for reconnect"
+                )
         provider_session, session.session = session.session, None
         session.ready = False
         self._persist_console_realtime_event(
