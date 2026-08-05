@@ -621,12 +621,14 @@ def _compose_run_registry_and_allowed(
     Called once per ``run_reply`` invocation (never cached across runs --
     the per-run freshness doctrine: a skill approved/edited/revoked since
     the last run must take effect on the very next one). Registers
-    ``BuiltinToolProvider`` first, then (only when there is at least one
-    non-colliding eligible entry) a ``SkillToolProvider`` snapshot, then
-    (P5-T6, only when there is at least one non-colliding eligible entry)
-    an already-composed MCP provider -- shadowing order: builtins beat
-    skills beat MCP, matching the allow-list's own
-    ``builtins ∪ skills ∪ mcp`` ordering.
+    ``BuiltinToolProvider`` first, then the already-composed local
+    provider, then (only when there is at least one non-colliding eligible
+    entry) a ``SkillToolProvider`` snapshot, then (P5-T6, only when there
+    is at least one non-colliding eligible entry) an already-composed MCP
+    provider -- shadowing order: builtins beat local beat skills beat MCP,
+    matching the allow-list's own ``builtins ∪ local ∪ skills ∪ mcp``
+    ordering. Local registers BEFORE skills/MCP (first-registrant-wins)
+    so a malicious MCP server or skill can never shadow the fs_* names.
 
     Args:
         context: A fresh ``get_context(mode="local")`` payload.
@@ -637,26 +639,30 @@ def _compose_run_registry_and_allowed(
             switch on, or composition yielded nothing).
         local_provider: This run's already-composed local tool provider
             (``LocalToolProvider``), or ``None`` when local tools are
-            disabled this run. ACCEPTED but NOT yet registered -- see the
-            registration site below.
+            disabled this run.
 
     Returns:
         ``(registry, allowed_tools, builtin_names)`` -- the per-run
-        registry, its full allow-list (builtins + eligible skills +
-        eligible MCP tools + spawn), and just the builtin names (needed
+        registry, its full allow-list (builtins + local + eligible skills
+        + eligible MCP tools + spawn), and just the builtin names (needed
         separately by ``_BridgeSkillRunner`` to intersect a skill's own
-        declared ``allowed_tools`` against -- never against skill names,
-        so a skill's sub-agent can never call another skill).
+        declared ``allowed_tools`` against -- never against skill OR local
+        names, so a skill's sub-agent can never call another skill and
+        skills never narrow/grant local tools).
     """
     registry = ToolCatalogRegistry()
     builtin_provider = BuiltinToolProvider()
     registry.register_provider(builtin_provider)
     builtin_names = tuple(entry.name for entry in builtin_provider.list_catalog())
+    local_names: tuple[str, ...] = ()
+    if local_provider is not None:
+        registry.register_provider(local_provider)
+        local_names = tuple(e.name for e in local_provider.list_catalog())
     eligible = _non_colliding_skill_entries(context, builtin_names)
     if eligible:
         registry.register_provider(SkillToolProvider(eligible))
     skill_names = tuple(str(item["name"]) for item in eligible)
-    allowed_tools = tuple(builtin_names) + skill_names
+    allowed_tools = tuple(builtin_names) + local_names + skill_names
     if mcp_provider is not None:
         collision_names = set(builtin_names) | set(skill_names) | RUNTIME_TOOL_NAMES
         mcp_names = _non_colliding_mcp_names(mcp_provider, collision_names)
@@ -665,15 +671,34 @@ def _compose_run_registry_and_allowed(
                 _CollisionFilteredMCPProvider(mcp_provider, frozenset(mcp_names))
             )
             allowed_tools += mcp_names
-    # local_provider is ACCEPTED here (threaded from run_reply, which the
-    # controller already passes) but deliberately NOT registered yet --
-    # collision filtering + registration of the local catalog is the next
-    # task's (bridge registration) scope. Until then the provider only
-    # participates through the combined review hook, which is inert for
-    # tools the model cannot name.
-    _ = local_provider
     allowed_tools += (SPAWN_TOOL_NAME,)
     return registry, allowed_tools, builtin_names
+
+
+def _combined_review_state_scope(*providers: Any | None):
+    """Compose every provider's stamp_scope into one review_state_scope.
+
+    None providers and providers without stamp_scope (test doubles) are
+    skipped; returns None when nothing contributes, preserving the
+    pre-existing AgentService default.
+    """
+    import contextlib
+
+    scopes = [
+        p.stamp_scope for p in providers
+        if p is not None and getattr(p, "stamp_scope", None) is not None
+    ]
+    if not scopes:
+        return None
+
+    @contextlib.contextmanager
+    def combined():
+        with contextlib.ExitStack() as stack:
+            for scope in scopes:
+                stack.enter_context(scope())
+            yield
+
+    return combined
 
 
 class _BridgeSkillRunner:
@@ -798,8 +823,9 @@ class ConsoleAgentBridge:
         local_provider: Any | None = None,
     ) -> RunOutcome:
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
-        # MCP): rebuilt FRESH for this run whenever there is a skills
-        # service OR an already-composed MCP provider for this run (never
+        # MCP, extended again for local tools): rebuilt FRESH for this run
+        # whenever there is a skills service OR an already-composed MCP or
+        # local provider for this run (never
         # cached across runs, and never the shared self._registry/
         # self._allowed_tools built at construction) -- so a skill or MCP
         # tool approved/edited/revoked since the last run always takes
@@ -809,9 +835,9 @@ class ConsoleAgentBridge:
         # is dispatched onto asyncio.to_thread) -- see MCPToolProvider's
         # own module docstring for why `compose_catalog()`'s async I/O can
         # never run from inside this worker-thread method. Neither a
-        # skills service nor an MCP provider: the shipped shared
-        # registry/allow-list is used unchanged -- the no-skills, no-MCP
-        # path stays byte-identical to before this task.
+        # skills service nor an MCP/local provider: the shipped shared
+        # registry/allow-list is used unchanged -- the no-skills, no-MCP,
+        # no-local-tools path stays byte-identical to before this task.
         registry = self._registry
         allowed_tools = self._allowed_tools
         skill_runner = None
@@ -929,23 +955,17 @@ class ConsoleAgentBridge:
                 subagents=tuple(subagents),
             )
 
-        # C1 (probe-verified security regression): thread the composed MCP
-        # provider's stamp_scope() through as AgentService's generic
-        # review_state_scope seam whenever one was composed for this run --
-        # see AgentService.__init__'s own comment and
-        # MCPToolProvider.stamp_scope's docstring for the exact adversarial
-        # interleave this protects against (a spawned child's own turn(s)
-        # clobbering the parent turn's already-decided MCP approval stamps).
-        # getattr(..., None) rather than a bare attribute access: mcp_provider
-        # is typed Any (a ToolProvider-shaped double in tests may not define
-        # stamp_scope at all, and MUST NOT be forced to); production always
-        # hands in a real, fully-composed MCPToolProvider here, which always
-        # has it.
-        review_state_scope = (
-            getattr(mcp_provider, "stamp_scope", None)
-            if mcp_provider is not None
-            else None
-        )
+        # C1 (probe-verified security regression): thread BOTH providers'
+        # stamp_scope()s, composed into one, through as AgentService's
+        # generic review_state_scope seam -- see AgentService.__init__'s
+        # own comment and MCPToolProvider.stamp_scope's docstring for the
+        # exact adversarial interleave this protects against (a spawned
+        # child's own turn(s) clobbering the parent turn's already-decided
+        # approval stamps). _combined_review_state_scope skips None
+        # providers and providers without stamp_scope (test doubles), and
+        # returns None when neither contributes, preserving the
+        # pre-existing AgentService default (contextlib.nullcontext).
+        review_state_scope = _combined_review_state_scope(mcp_provider, local_provider)
         service = AgentService(
             self._db,
             registry,
