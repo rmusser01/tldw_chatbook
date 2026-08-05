@@ -59,7 +59,8 @@ class LocalToolProvider:
     Args:
         workspace_root: Confinement root for all path-taking tools.
         specs: Tool specs; defaults to the built-in set (fs_list, fs_read,
-            fs_write, fs_edit, fs_patch, fs_glob, fs_grep, web_fetch,
+            fs_write, fs_edit, fs_patch, fs_glob, fs_grep, git_status,
+            git_diff, git_log, git_blame, git_branches, web_fetch,
             web_search).
         resolve_state: (HubTool) -> EffectiveToolState, injected by the
             controller (owns permission-store access).
@@ -487,6 +488,14 @@ def _default_specs(
     todo_store: list | None = None,
     on_todo_change: Callable[[list], None] | None = None,
 ) -> list[LocalToolSpec]:
+    from tldw_chatbook.Tools.git_tool_impls import (
+        GIT_LOG_DEFAULT_COUNT,
+        git_blame,
+        git_branches,
+        git_diff,
+        git_log,
+        git_status,
+    )
     from tldw_chatbook.Tools.local_tool_impls import (
         MAX_GLOB_RESULTS,
         MAX_GREP_RESULTS,
@@ -643,6 +652,117 @@ def _default_specs(
                 mode=args.get("mode", "content"),
                 max_results=args.get("max_results", MAX_GREP_RESULTS),
             ),
+            tags=(),
+        ),
+        # git_* (phase 3b-ii): read-only over a fixed, allowlisted argv
+        # surface, so ADR-033 deliberately applies NO risk tags (no `process`
+        # tag) to this set -- the tripwire test lives in
+        # Tests/Agents/test_local_tool_provider.py::test_git_specs_carry_no_risk_tags.
+        LocalToolSpec(
+            name="git_status",
+            description=(
+                "Show the workspace repository's status: current branch plus "
+                "staged/unstaged/untracked/conflicted entries. Read-only; "
+                "cannot modify the repository."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path inside the repository, relative to the workspace root (default: the workspace root)."},
+                },
+            },
+            handler=lambda args: git_status(
+                workspace_root, path=args.get("path", ".")
+            ),
+            tags=(),
+        ),
+        LocalToolSpec(
+            name="git_diff",
+            description=(
+                "Show changes in the workspace repository as a unified diff. "
+                "Modes: default is the unstaged worktree diff; staged=true "
+                "diffs the index against HEAD; commit_range (e.g. "
+                "\"HEAD~1..HEAD\") diffs against or between commits "
+                "(combines with staged); stat=true returns a compact "
+                "--stat summary instead of the patch. Read-only; "
+                "cannot modify the repository."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "staged": {"type": "boolean", "default": False, "description": "Diff the staged index against HEAD instead of the unstaged worktree."},
+                    "commit_range": {"type": "string", "description": "Commit range to diff (e.g. \"HEAD~1..HEAD\"); combines with staged."},
+                    "path": {"type": "string", "description": "Limit the diff to one path, relative to the workspace root."},
+                    "stat": {"type": "boolean", "default": False, "description": "Return a --stat summary (files changed, insertions, deletions) instead of the full patch."},
+                },
+            },
+            handler=lambda args: git_diff(
+                workspace_root,
+                staged=args.get("staged", False),
+                commit_range=args.get("commit_range"),
+                path=args.get("path"),
+                stat=args.get("stat", False),
+            ),
+            tags=(),
+        ),
+        LocalToolSpec(
+            name="git_log",
+            description=(
+                "Show the workspace repository's commit history, newest "
+                "first (short hash, date, author, subject). Read-only; "
+                "cannot modify the repository."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "count": {"type": "integer", "default": GIT_LOG_DEFAULT_COUNT, "description": "Maximum number of commits to return (default 20, capped at 100)."},
+                    "path": {"type": "string", "description": "Limit history to commits touching this path, relative to the workspace root."},
+                },
+            },
+            handler=lambda args: git_log(
+                workspace_root,
+                count=args.get("count", GIT_LOG_DEFAULT_COUNT),
+                path=args.get("path"),
+            ),
+            tags=(),
+        ),
+        LocalToolSpec(
+            name="git_blame",
+            description=(
+                "Show per-line authorship (blame) for a file in the "
+                "workspace repository, optionally restricted to a 1-based "
+                "inclusive line range. Read-only; cannot modify the "
+                "repository."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path, relative to the workspace root."},
+                    "start_line": {"type": "integer", "description": "First line to blame (1-based; default: file start)."},
+                    "end_line": {"type": "integer", "description": "Last line to blame (1-based, inclusive; range capped at 500 lines)."},
+                },
+                "required": ["path"],
+            },
+            handler=lambda args: git_blame(
+                workspace_root,
+                args["path"],
+                start_line=args.get("start_line"),
+                end_line=args.get("end_line"),
+            ),
+            tags=(),
+        ),
+        LocalToolSpec(
+            name="git_branches",
+            description=(
+                "List the workspace repository's branches (current branch "
+                "marked with *), with commit and upstream info. Read-only; "
+                "cannot modify the repository."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {},
+            },
+            handler=lambda args: git_branches(workspace_root),
             tags=(),
         ),
         LocalToolSpec(

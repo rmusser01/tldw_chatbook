@@ -229,7 +229,11 @@ def test_fs_list_fence_flow_denied_still_completes(db, workspace):
 # so fs_only_specs stays at exactly the 8-entry disclosure boundary. Do NOT add
 # newer fs_* tools here — update LOCAL_TOOL_NAMES below instead.
 FS_TOOL_NAMES = {"fs_list", "fs_read", "fs_write", "fs_edit", "fs_glob", "fs_grep"}
-LOCAL_TOOL_NAMES = FS_TOOL_NAMES | {"fs_patch", "web_fetch", "web_search"}  # phase-3b-i default set
+# phase-3b-ii: read-only git tools (no risk tags per ADR-033).
+GIT_TOOL_NAMES = {"git_status", "git_diff", "git_log", "git_blame", "git_branches"}
+LOCAL_TOOL_NAMES = (
+    FS_TOOL_NAMES | {"fs_patch", "web_fetch", "web_search"} | GIT_TOOL_NAMES
+)  # phase-3b-ii default set (14 local tools)
 BUILTIN_TOOL_NAMES = {"calculator", "get_current_datetime"}
 
 
@@ -255,7 +259,7 @@ def production_registry(workspace, extra_specs=(), specs=None):
 def test_direct_disclosure_boundary_at_eight_entries(workspace):
     """6 fs_* local (fs_patch deliberately excluded to stay at the boundary)
     + 2 builtin = 8 entries is still direct-disclosed; the full default
-    catalog (9 local + 2 builtin = 11) crosses into find/load. Documents the
+    catalog (14 local + 2 builtin = 16) crosses into find/load. Documents the
     boundary via the runtime's own API (initial_disclosure, the same call
     AgentService.run_turn makes)."""
     registry = production_registry(workspace, specs=fs_only_specs(workspace))
@@ -265,7 +269,7 @@ def test_direct_disclosure_boundary_at_eight_entries(workspace):
     assert {s.name for s in schemas} == FS_TOOL_NAMES | BUILTIN_TOOL_NAMES
 
     full = production_registry(workspace)
-    assert len(full.list_catalog()) == DIRECT_DISCLOSE_THRESHOLD + 3
+    assert len(full.list_catalog()) == DIRECT_DISCLOSE_THRESHOLD + 8
     assert {e.name for e in full.list_catalog()} == LOCAL_TOOL_NAMES | BUILTIN_TOOL_NAMES
     schemas, offer_find_load = initial_disclosure(full, RunBudget())
     assert offer_find_load is True
@@ -568,3 +572,98 @@ def test_todo_write_mutates_session_list_after_approve_once(db, workspace):
     assert pending.server_key == LOCAL_SERVER_KEY
     assert pending.llm_name == "todo_write"
     assert pending.reason == "risk_floored"
+
+
+# --- Phase 3b-ii: git tool reachable over the find/load path -----------------
+
+
+def test_find_load_path_executes_git_log_after_approve_once(db, workspace):
+    """find_tools("git") -> load_tools("local:git_log") -> git_log call:
+    a phase-3b-ii git tool stays discoverable past the disclosure threshold
+    (the padded default catalog is now 16 entries) and executes behind ONE
+    approval round trip.
+
+    Git is cut at the handler seam (dataclasses.replace on the frozen
+    LocalToolSpec), not by running a real repo in the harness — the web_fetch
+    e2e precedent: Tests/Agents/test_local_tool_provider.py and
+    Tests/Tools/test_git_tool_impls.py cover the real git behavior; this test
+    covers the discovery + gating flow."""
+    logged = []
+
+    def fake_log(args):
+        logged.append(dict(args))
+        return "abc1234 2026-08-01 Test User: initial commit"
+
+    specs = [
+        dataclasses.replace(s, handler=fake_log) if s.name == "git_log" else s
+        for s in _default_specs(workspace)
+    ]
+    approval_calls = []
+    service, chat = make_service(
+        db,
+        workspace,
+        [
+            fence("find_tools", {"query": "git"}),
+            fence("load_tools", {"ids": ["local:git_log"]}),
+            fence("git_log", {"count": 5}),
+            "The repo has one commit.",
+        ],
+        {"git_log": "approve_once"},
+        approval_calls,
+        specs=specs,
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=("git_log",),
+        # find + load + log + final: past the 8-step default (precedent:
+        # max_steps=16 in the fs_edit find/load test above).
+        budget=RunBudget(max_steps=16, max_model_turns=8),
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "show the recent commits"}],
+        config=config,
+        api_endpoint="llama_cpp",
+        should_cancel=lambda: False,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert outcome.final_text == "The repo has one commit."
+    assert len(chat.calls) == 4  # find + load + log + final
+
+    # The scripted discovery sequence ran in order.
+    called = [s.tool_name for s in outcome.steps if s.kind == "tool_call"]
+    assert called == ["find_tools", "load_tools", "git_log"]
+
+    # find_tools surfaced the catalog id the model then loaded.
+    second_payload = chat.calls[1]["messages_payload"]
+    assert any(
+        m["role"] == "user"
+        and m["content"].startswith("Tool result for find_tools: ")
+        and "local:git_log" in m["content"]
+        for m in second_payload
+    )
+
+    # The stubbed handler ran with the model's args — no real git touched.
+    assert logged == [{"count": 5}]
+
+    # The log result went back to the model for the final turn.
+    final_payload = chat.calls[3]["messages_payload"]
+    assert any(
+        m["role"] == "user"
+        and m["content"].startswith("Tool result for git_log: ")
+        and "initial commit" in m["content"]
+        for m in final_payload
+    )
+
+    # Exactly ONE approval round trip: the git_log gate. find_tools and
+    # load_tools are runtime tools the local provider doesn't gate.
+    assert len(approval_calls) == 1
+    assert len(approval_calls[0]) == 1
+    pending = approval_calls[0][0]
+    assert isinstance(pending, MCPPendingCall)
+    assert pending.server_key == LOCAL_SERVER_KEY
+    assert pending.llm_name == "git_log"
+    assert pending.arguments == {"count": 5}
