@@ -554,8 +554,10 @@ def _default_specs(
                 "@@ hunks); a/ and b/ header prefixes are optional. Creates and "
                 "modifies are supported; deletes and renames are NOT. Paths are "
                 "relative to the workspace root; a create target's parent "
-                "directory must already exist. Pass dry_run=true to validate "
-                "and preview which files would be patched without writing. "
+                "directory must already exist. Files apply sequentially; a "
+                "failure on a later file may leave earlier files patched. Pass "
+                "dry_run=true to validate and preview which files would be "
+                "patched without writing. "
                 "Prefer fs_edit for single exact-string replacements."
             ),
             parameters={
