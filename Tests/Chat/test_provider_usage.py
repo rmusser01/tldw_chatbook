@@ -73,6 +73,28 @@ def test_openai_responses_payload_detected_before_anthropic_shape():
     assert usage.output == 90
 
 
+def test_realtime_singular_input_token_details_alias_maps_cached():
+    # The Realtime API spells this block `input_token_details` (SINGULAR
+    # "token"), unlike the Responses API's plural `input_tokens_details`
+    # above -- live-confirmed on `response.done`, see openai_session.py's
+    # ground-truth header. Before this alias, every cached token in a
+    # realtime session was billed as uncached input (V4 final review F9).
+    # Previously this branch's only mutation-covering test lived in
+    # Tests/UI/test_console_realtime_wiring.py, reached only through the
+    # whole Console wiring harness (M9 (e)); this test targets it directly.
+    payload = {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "input_token_details": {"cached_tokens": 80},
+    }
+    usage = ProviderUsage.from_provider_payload(
+        payload, provider="openai", model="gpt-realtime"
+    )
+    assert usage.uncached_input == 20
+    assert usage.cache_read == 80
+    assert usage.output == 20
+
+
 def test_unrecognized_payload_returns_none():
     assert (
         ProviderUsage.from_provider_payload(
