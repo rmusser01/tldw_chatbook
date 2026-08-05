@@ -297,6 +297,31 @@ def test_ask_without_stamp_or_callback_fails_closed(tmp_path):
     assert not r.ok and r.error == LOCAL_TIMEOUT_REFUSAL
 
 
+# -- no_callback_refusal override (phase 4: external MCP serving) ------------
+
+
+def test_no_callback_refusal_override_replaces_timeout_copy(tmp_path):
+    # External MCP clients can never approve, so the composition injects an
+    # external-appropriate refusal instead of the Console's timeout copy.
+    p = make_provider(state=ASK, root=tmp_path, no_callback_refusal="custom")
+    r = p.invoke("local:fs_list", {"path": "."})
+    assert not r.ok and r.error == "custom"
+
+
+def test_no_callback_refusal_default_remains_pinned(tmp_path):
+    r = make_provider(state=ASK, root=tmp_path).invoke("local:fs_list", {"path": "."})
+    assert not r.ok and r.error == LOCAL_TIMEOUT_REFUSAL
+
+
+def test_timeout_verdict_keeps_pinned_copy_even_with_override(tmp_path):
+    # Only the "no_callback" verdict maps to the override; a real "timeout"
+    # verdict ALWAYS keeps the pinned LOCAL_TIMEOUT_REFUSAL.
+    p = make_provider(state=ASK, root=tmp_path, no_callback_refusal="custom")
+    p.apply_batch_decisions({"fs_list": "timeout"})
+    r = p.invoke("local:fs_list", {"path": "."})
+    assert not r.ok and r.error == LOCAL_TIMEOUT_REFUSAL
+
+
 def test_ask_with_approve_once_stamp_executes(tmp_path):
     (tmp_path / "a.txt").write_text("a")
     p = make_provider(state=ASK, root=tmp_path)
