@@ -14,7 +14,8 @@ from tldw_chatbook.Tools.web_tool_impls import (
 )
 
 
-def test_accepts_public_https():
+def test_accepts_public_https(monkeypatch):
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 443))])
     assert validate_outbound_url("https://example.com/page") == "https://example.com/page"
 
 

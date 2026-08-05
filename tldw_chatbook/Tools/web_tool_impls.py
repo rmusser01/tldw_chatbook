@@ -26,7 +26,6 @@ import httpx
 from .local_tool_impls import LocalToolError
 
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
-_DNS_CACHE_TTL_SECONDS = 300.0
 
 
 def _is_public_ip(ip_str: str) -> bool:
