@@ -143,6 +143,26 @@ class TestWriteFileDiffCapture:
         assert result["new_content"] == content
 
     @pytest.mark.asyncio
+    async def test_append_combined_size_over_cap_skips_capture(self, tool, _sandbox_only_roots):
+        """Append mode materializes new_content as old + appended, so the
+        combined size (not just the appended chunk) must stay within the cap."""
+        target = _sandbox_only_roots / "append_big.txt"
+        old_text = "o" * (DIFF_CAPTURE_MAX_BYTES - 10)
+        target.write_text(old_text, encoding="utf-8")
+        chunk = "c" * 2000  # under the cap alone, over it combined
+
+        result = await tool.execute(
+            file_path="append_big.txt", content=chunk, mode="append"
+        )
+
+        assert "error" not in result
+        assert result["action"] == "appended to"
+        assert "old_content" not in result
+        assert "new_content" not in result
+        # The append itself still happened.
+        assert target.read_text(encoding="utf-8") == old_text + chunk
+
+    @pytest.mark.asyncio
     async def test_error_results_have_no_diff_content(self, tool):
         result = await tool.execute(content="no path given")
         assert result == {"error": "No file path provided"}
@@ -150,7 +170,7 @@ class TestWriteFileDiffCapture:
         assert "new_content" not in result
 
 
-class _AllowAllGate:
+class AllowAllGate:
     """Provider gate stub that permits every tool."""
 
     def check(self, tool):
@@ -166,7 +186,7 @@ class TestBuiltinProviderStripsDiffContents:
     """
 
     def test_invoke_strips_diff_content_keys(self, _sandbox_only_roots):
-        provider = BuiltinToolProvider(gate=_AllowAllGate())
+        provider = BuiltinToolProvider(gate=AllowAllGate())
         provider._tools["write_file"] = WriteFileTool()
 
         result = provider.invoke(
@@ -183,7 +203,7 @@ class TestBuiltinProviderStripsDiffContents:
         assert "created" in result.content
 
     def test_invoke_leaves_plain_results_untouched(self, _sandbox_only_roots):
-        provider = BuiltinToolProvider(gate=_AllowAllGate())
+        provider = BuiltinToolProvider(gate=AllowAllGate())
         provider._tools["write_file"] = WriteFileTool()
 
         result = provider.invoke(

@@ -649,10 +649,18 @@ class WriteFileTool(Tool):
             else:
                 old_content = ""
 
-            if old_content is not None and (
-                len(content.encode(encoding)) > DIFF_CAPTURE_MAX_BYTES
-            ):
-                old_content = None
+            if old_content is not None:
+                new_size = len(content.encode(encoding))
+                # Append mode materializes new_content as old + appended, so
+                # the combined size is what must stay within the capture cap
+                # (otherwise a single captured field can reach ~2x the cap).
+                capped_size = (
+                    len(old_content.encode(encoding)) + new_size
+                    if mode == "append"
+                    else new_size
+                )
+                if capped_size > DIFF_CAPTURE_MAX_BYTES:
+                    old_content = None
 
             # Create parent directories if requested
             if create_directories and not path.parent.exists():

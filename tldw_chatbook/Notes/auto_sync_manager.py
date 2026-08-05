@@ -198,7 +198,10 @@ class AutoSyncManager:
         try:
             self.on_files_changed(changed_count)
         except Exception as e:
-            logger.error(f"Error in on_files_changed callback: {e}")
+            logger.error(
+                f"Error in on_files_changed callback "
+                f"(changed_count={changed_count}, is_running={self.is_running}): {e}"
+            )
 
     async def _sync_loop(self):
         """Main sync loop that runs periodically."""

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import time
+from collections.abc import Callable
 
 import pytest
 from textual.app import App
@@ -21,11 +22,22 @@ from tldw_chatbook.Widgets.tool_message_widgets import (
 )
 
 
-async def wait_for_condition(predicate, timeout: float = 5.0, interval: float = 0.02):
-    """Poll `predicate` until it is true or `timeout` seconds elapse.
+async def wait_for_condition(
+    predicate: Callable[[], bool], timeout: float = 5.0, interval: float = 0.02
+) -> bool:
+    """Poll ``predicate`` until it is true or ``timeout`` seconds elapse.
 
-    Returns the predicate's final value. Used instead of a fixed number of
-    pilot.pause() calls, which is timing-dependent and flaky.
+    Used instead of a fixed number of ``pilot.pause()`` calls, which is
+    timing-dependent and flaky.
+
+    Args:
+        predicate: Zero-argument callable returning True when the awaited
+            condition holds.
+        timeout: Maximum seconds to poll before giving up.
+        interval: Seconds between polls.
+
+    Returns:
+        True if the predicate became true before the deadline, False otherwise.
     """
     deadline = time.monotonic() + timeout
     while True:
