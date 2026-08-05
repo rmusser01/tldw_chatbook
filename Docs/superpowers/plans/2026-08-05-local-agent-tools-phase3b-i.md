@@ -67,7 +67,11 @@ def test_delete_and_rename_refused(tmp_path): ...  # "delete_not_supported" / "r
 def test_malformed_diff(tmp_path): ...      # "invalid_diff"
 def test_limits(tmp_path): ...              # max_bytes / max_files / max_hunks exceeded -> reason codes
 def test_confinement(tmp_path): ...         # diff targeting ../evil.txt -> LocalToolError, nothing written
+def test_confinement_symlink_escape(tmp_path): ...  # symlink inside ws pointing outside; wrapper's per-file resolve_workspace_path refuses, nothing written (the ../ case exercises the parser's invalid_patch_path; THIS one exercises the wrapper's confinement duty)
 def test_crlf_preserved(tmp_path): ...      # CRLF file stays CRLF byte-exact outside the edited line
+def test_no_newline_marker(tmp_path): ...   # file lacking trailing newline patched with \ No newline marker; byte-exact result; also invalid_no_newline_marker path
+def test_hunk_line_count_validation(tmp_path): ...  # hunk body not matching header counts -> "invalid_hunk_line_count" (distinct from "invalid_diff")
+def test_header_metadata_and_paths_with_spaces(tmp_path): ...  # tab-separated timestamps and space-separated timestamp suffixes stripped; "my file.txt" paths preserved
 def test_multi_file_atomicity_note(tmp_path): ...  # documents behavior: per-file sequential apply; a failing LATER file leaves earlier files patched (see Step 3 note)
 ```
 
@@ -92,7 +96,7 @@ def patch_files(diff_text: str, *, workspace_root: Path, dry_run: bool = False) 
     """
 ```
 
-   Wrapper rules: translate `FilesystemPatchError` to `LocalToolError` keeping the reason code in the message (`fs_patch failed [patch_context_mismatch]: <file>`); read modify-targets with `open(newline="")` + non-UTF-8 wrap; write with encode-before-write (`write_bytes`), wrapping UnicodeEncodeError; create-target parent must exist (fs_write parity).
+   Wrapper rules: translate `FilesystemPatchError` to `LocalToolError` keeping the reason code in the message (`fs_patch failed [patch_context_mismatch]: <file>`); read modify-targets with `open(newline="")` + non-UTF-8 wrap; write with encode-before-write (`write_bytes`), wrapping UnicodeEncodeError; create-target parent must exist (fs_write parity); **create targets apply against an empty string** (`apply_patch_to_text("", patch_file)` — `_detect_output_newline` falls back to `"\n"` and `hunk_start` clamps to 0 for `@@ -0,0 +1,N @@`).
 
 - [ ] **Step 4:** tests pass
 - [ ] **Step 5:** `git commit -m "feat: fs_patch core (ported unified-diff parser/applier + workspace wrapper)"`
