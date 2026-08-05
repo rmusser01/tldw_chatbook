@@ -243,6 +243,9 @@ from ...Chat.console_voice_input import (
     realtime_idle_timeout_seconds,
     realtime_model,
     realtime_provider,
+    realtime_turn_detection,
+    realtime_vad_silence_ms,
+    realtime_vad_threshold,
     realtime_voice,
     resolve_handsfree_engine,
 )
@@ -8098,6 +8101,13 @@ class ChatScreen(BaseAppScreen):
             input_sample_rate=CONSOLE_REALTIME_SAMPLE_RATE,
             output_sample_rate=CONSOLE_REALTIME_SAMPLE_RATE,
             instructions=self._console_realtime_instructions(),
+            turn_detection=realtime_turn_detection(),
+            vad_threshold=realtime_vad_threshold(),
+            vad_silence_ms=realtime_vad_silence_ms(),
+            # Read per attempt, not captured at loop entry: a reconnect
+            # that reverted to the provider's defaults would bring back
+            # the fragmenting these settings exist to stop, halfway
+            # through a conversation, with nothing to show for it.
         )
         callbacks = self._build_console_realtime_callbacks(session, attempt)
         try:

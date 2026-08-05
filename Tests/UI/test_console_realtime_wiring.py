@@ -534,6 +534,42 @@ async def test_connect_ready_live_chip_sequence(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_turn_detection_settings_reach_the_session_on_connect_and_reconnect(
+    monkeypatch,
+):
+    """Gate round 5: the turn-detection knobs are the fix for speech being
+    chopped into fragments, so they have to reach the provider on EVERY
+    connect -- a reconnect that silently reverted to the default would
+    bring the symptom back mid-conversation."""
+    _patch_realtime_config(monkeypatch)
+    monkeypatch.setattr(
+        chat_screen_module, "realtime_turn_detection", lambda: "server_vad"
+    )
+    monkeypatch.setattr(chat_screen_module, "realtime_vad_threshold", lambda: 0.6)
+    monkeypatch.setattr(chat_screen_module, "realtime_vad_silence_ms", lambda: 700)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        first = rig.sessions[0].config
+        assert first.turn_detection == "server_vad"
+        assert first.vad_threshold == 0.6
+        assert first.vad_silence_ms == 700
+
+        session.fire_closed("connection lost")
+        await _wait_for(lambda: len(rig.sessions) == 2, pilot)
+
+        second = rig.sessions[1].config
+        assert second.turn_detection == "server_vad"
+        assert second.vad_threshold == 0.6
+        assert second.vad_silence_ms == 700
+
+
+@pytest.mark.asyncio
 async def test_seed_sends_recent_turns_and_the_system_prompt_as_instructions(
     monkeypatch,
 ):
