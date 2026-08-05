@@ -373,3 +373,69 @@ def test_watchlist_names_come_back_in_a_stable_order():
 
     assert scrambled["watchlist_names"] == ["Morning read", "Ops", "Sec"]
     assert from_list["watchlist_names"] == ["Morning read", "Ops", "Sec"]
+
+
+# --- Qodo PR #1348: a malformed stats blob must not take the table down ----
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["inf", "-inf", "Infinity", "nan", "1e400", "-1e400", "", "  ", "abc", "12abc"],
+)
+def test_a_malformed_stat_string_is_skipped_not_raised(value):
+    """`int(float("inf"))` raises OverflowError, `int(float("nan"))` ValueError.
+
+    Both used to escape `_run_stat`'s `except ValueError` (the first entirely,
+    the second only by luck of ordering) and propagate out of
+    `normalize_watchlist_run` — so ONE bad counter in a server's `stats` blob
+    took the whole Runs table down instead of degrading to a zero.
+    """
+    run = _run(stats={"items_found": value, "items_ingested": 3})
+
+    assert run["found_count"] == 0, "a value it cannot read is not a count"
+    assert run["processed_count"] == 3, "the readable counter beside it survives"
+
+
+def test_a_non_finite_float_stat_is_skipped_too():
+    """Same hazard arriving as a real float rather than a string."""
+    run = _run(stats={"items_found": float("inf"), "items_ingested": 2})
+
+    assert run["found_count"] == 0
+    assert run["processed_count"] == 2
+
+
+def test_a_huge_integer_string_stays_exact():
+    """Integer strings parse as integers, not via a float that cannot hold them."""
+    huge = 10**30
+    run = _run(stats={"items_found": str(huge), "items_ingested": 0})
+
+    assert run["found_count"] == huge, (
+        "round-tripping through float() would silently lose precision"
+    )
+
+
+def test_a_malformed_response_time_does_not_break_the_duration():
+    """The same parse feeds `duration`'s fallback."""
+    run = _run(status="completed", stats={"response_time_ms": "inf"})
+
+    assert run["duration"] is None
+
+
+def test_a_run_with_a_hostile_stats_blob_still_normalizes():
+    """The whole point: normalization returns a record rather than raising."""
+    run = _run(
+        status="completed",
+        stats={
+            "items_found": "1e400",
+            "items_ingested": "nan",
+            "items_filtered": float("-inf"),
+            "error_count": "inf",
+            "response_time_ms": "not a number",
+        },
+    )
+
+    assert run["found_count"] == 0
+    assert run["processed_count"] == 0
+    assert run["filtered_count"] == 0
+    assert run["error_count"] == 0
+    assert run["duration"] is None

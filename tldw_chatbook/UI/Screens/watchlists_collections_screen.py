@@ -161,7 +161,13 @@ from ..Watchlists_Modules.rules_pane import (
     RulesPane,
     SaveRuleRequested,
 )
-from ..Watchlists_Modules.runs_pane import CancelRunRequested, RerunRunRequested, RunsPane, RunSelected
+from ..Watchlists_Modules.runs_pane import (
+    CancelRunRequested,
+    RerunRunRequested,
+    RunProgressTick,
+    RunSelected,
+    RunsPane,
+)
 from ..Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
 from ..Watchlists_Modules.sources_pane import (
     CreateFormDraftChanged,
@@ -3766,6 +3772,100 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             exclusive=True,
             group="wc_run_detail",
         )
+
+    @on(RunProgressTick)
+    def handle_run_progress_tick(self, event: RunProgressTick) -> None:
+        """A running run may have moved on -- check, cheaply (Qodo #1348)."""
+        event.stop()
+        self.run_worker(
+            self._refresh_running_run(event.run_id),
+            exclusive=True,
+            group="wc_run_tick",
+        )
+
+    #: The fields of a run that a tick can find changed. Everything else on a
+    #: run record is fixed at launch, so a fingerprint over these is what
+    #: decides whether a tick does any work at all.
+    _RUN_PROGRESS_FIELDS = (
+        "status",
+        "finished_at",
+        "found_count",
+        "processed_count",
+        "filtered_count",
+        "error_count",
+        "log_text",
+        "error_msg",
+    )
+
+    @classmethod
+    def _run_progress_fingerprint(cls, run: Mapping[str, Any]) -> tuple[str, ...]:
+        """The volatile part of a run record, as a comparable tuple."""
+        return tuple(str(run.get(field) or "") for field in cls._RUN_PROGRESS_FIELDS)
+
+    async def _refresh_running_run(self, run_id: Any) -> None:
+        """Re-read one running run and repaint only if it actually changed.
+
+        Qodo, PR #1348. `run_poll` used to re-post `RunSelected` every second,
+        and `handle_run_selected` cannot tell a tick from a click -- so a
+        selected running run scheduled a full `_load_run_detail` (worker plus
+        item query) once a second, with no user action, for up to a minute.
+
+        The shape chosen here is (a): a distinct tick message whose handler
+        refreshes what a run can actually change. That matters because the
+        naive alternative -- skipping on an unchanged id -- would freeze the
+        detail at its first paint, and during a LOCAL run the first paint is
+        exactly the useless one: `execute_run` writes `stats_json`,
+        `finished_at` and `log_text` in `record_run_result` and upserts the
+        items in one go at the END, so a run polled while running has nothing
+        to show until it finishes. The tick's real job is to notice that
+        moment. Until it arrives the fingerprint is unchanged and this costs
+        one cheap read and nothing else -- no item query, no repaint.
+
+        Args:
+            run_id: The namespaced id the poll is watching.
+        """
+        selected = self.selected_run
+        if selected is None or str(selected.get("id") or "") != str(run_id):
+            # The user moved on between the tick being posted and this worker
+            # starting. Nothing to refresh, and nothing to resurrect.
+            return
+        try:
+            record = await self._controller.get_run(
+                runtime_backend=self.runtime_backend,
+                run_id=run_id,
+            )
+        except Exception as exc:
+            # Deliberately silent: this fires once a second on a timer the
+            # user did not press, so a toast per tick would be its own defect.
+            # The run row keeps its last known state, which is honest.
+            logger.opt(exception=True).debug(
+                f"Failed to re-read running watchlist run {run_id!r}: "
+                f"{type(exc).__name__}"
+            )
+            return
+        if not isinstance(record, Mapping) or not record:
+            return
+        if self._run_progress_fingerprint(record) == self._run_progress_fingerprint(
+            selected
+        ):
+            return
+
+        record = dict(record)
+        for index, candidate in enumerate(self._loaded_runs):
+            if str(candidate.get("id") or "") == str(run_id):
+                self._loaded_runs[index] = record
+                break
+        self.selected_run = record
+        if self._dom_is_live:
+            try:
+                self.query_one(
+                    "#watchlists-runs-pane", RunsPane
+                ).apply_run_progress(record)
+            except Exception:
+                pass
+        # Only now is a full detail load worth its cost: the run reached a new
+        # state, which for a local run is when its items land.
+        await self._load_run_detail(record)
 
     async def _load_run_detail(self, run: dict[str, Any] | None) -> None:
         """Fill the selected run's Items and Logs sub-regions.

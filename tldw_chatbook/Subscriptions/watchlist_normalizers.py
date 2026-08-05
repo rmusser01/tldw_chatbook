@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import datetime
 from typing import Any, Mapping
 
@@ -104,6 +105,15 @@ def _run_stat(stats: Mapping[str, Any], *keys: str) -> int | None:
     check pipeline records `items_found`/`items_ingested`, while a server
     run's `stats` blob is the server's own shape.
 
+    A malformed value is skipped, never raised (Qodo, PR #1348). A server's
+    `stats` blob is not guaranteed well-formed, and the old parse was
+    `int(float(text))` guarded by `ValueError` alone -- so `"inf"`, `"nan"` and
+    `"1e400"` all reached `int()`, which raises `OverflowError`/`ValueError`
+    out through `normalize_watchlist_run` and takes the whole Runs table down
+    rather than one counter. Integer strings are parsed as integers FIRST, so
+    an arbitrarily large one stays exact instead of round-tripping through a
+    float that cannot hold it.
+
     Args:
         stats: A run's `stats` mapping.
         *keys: Candidate keys, most authoritative first.
@@ -115,12 +125,29 @@ def _run_stat(stats: Mapping[str, Any], *keys: str) -> int | None:
         value = stats.get(key)
         if isinstance(value, bool) or value is None:
             continue
-        if isinstance(value, (int, float)):
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            # A non-finite float reaches `int()` the same way a non-finite
+            # string does, and raises the same way.
+            if not math.isfinite(value):
+                continue
             return int(value)
         if isinstance(value, str):
+            text = value.strip()
             try:
-                return int(float(value.strip()))
+                return int(text)
             except ValueError:
+                pass
+            try:
+                parsed = float(text)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(parsed):
+                continue
+            try:
+                return int(parsed)
+            except (OverflowError, ValueError):
                 continue
     return None
 

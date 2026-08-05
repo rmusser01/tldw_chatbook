@@ -33,6 +33,23 @@ class CancelRunRequested(Message):
         super().__init__()
 
 
+class RunProgressTick(Message):
+    """Posted once a second by `RunsPane.run_poll` while a run is running.
+
+    Distinct from `RunSelected` (Qodo, PR #1348). The poll used to re-post
+    `RunSelected` on every tick, and the screen's handler cannot tell a tick
+    from a click -- so a selected running run scheduled a full run-detail
+    load, worker and item query included, every second with no user action.
+    `RunSelected` now means "the user picked a different run"; this means
+    "the run you are looking at may have moved on", and its handler refreshes
+    only what actually changed.
+    """
+
+    def __init__(self, run_id: Any) -> None:
+        self.run_id = run_id
+        super().__init__()
+
+
 class RerunRunRequested(Message):
     """Posted when the user requests re-running a source/job."""
 
@@ -329,7 +346,12 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
             self._start_run_poll(run)
 
     def watch_run_items(self, items: list[dict[str, Any]]) -> None:
-        """Repopulate `#runs-detail-items` in place (task-2306)."""
+        """Repopulate `#runs-detail-items` in place (task-2306).
+
+        Args:
+            items: The selected run's item rows, newest first. An empty list
+                clears the table; `run_items_note` is what explains why.
+        """
         try:
             table = self.query_one("#runs-detail-items", DataTable)
         except Exception:
@@ -348,6 +370,10 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
 
         Hidden rather than left as an empty line when there is nothing to say,
         so the note never puts a blank gap between the table and `Logs`.
+
+        Args:
+            note: Why the table looks the way it does, or `""` when the rows
+                speak for themselves (which hides the widget).
         """
         try:
             widget = self.query_one("#runs-detail-items-note", Static)
@@ -360,7 +386,12 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
             return
 
     def watch_run_logs(self, logs: str) -> None:
-        """Repaint `#runs-detail-logs` in place (task-2306)."""
+        """Repaint `#runs-detail-logs` in place (task-2306).
+
+        Args:
+            logs: The selected run's log text, rendered inert -- a failed run
+                quotes the remote error verbatim.
+        """
         try:
             self.query_one("#runs-detail-logs", Static).update(Text(str(logs)))
         except Exception:
@@ -439,7 +470,17 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
 
     @work(exclusive=True)
     async def run_poll(self, run: dict[str, Any]) -> None:
-        """Poll the selected run while it is running."""
+        """Poll the selected run while it is running.
+
+        Posts `RunProgressTick`, not `RunSelected` (Qodo, PR #1348): a tick is
+        not a selection, and the screen's `RunSelected` handler schedules a
+        full detail load. The tick's own handler re-reads the run record and
+        does nothing further unless it actually changed.
+
+        Args:
+            run: The run to watch. The poll stops as soon as the selection
+                moves off it or it leaves the `running` state.
+        """
         worker = get_current_worker()
         run_id = run.get("id")
         for _ in range(60):
@@ -451,4 +492,47 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
                 return
             if str(current.get("status", "")).lower() != "running":
                 return
-            self.post_message(RunSelected(current))
+            self.post_message(RunProgressTick(run_id))
+
+    def apply_run_progress(self, run: dict[str, Any]) -> None:
+        """Fold a re-read run record into the table and the detail stats.
+
+        The targeted half of the tick (Qodo, PR #1348). Deliberately does NOT
+        assign the `selected_run` reactive normally: this is the SAME run
+        progressing, not a new selection, and `watch_selected_run` would post
+        `RunSelected`, wipe the detail and restart the poll. `set_reactive`
+        updates the value with the watcher suppressed, and the two things that
+        genuinely change -- the row's cells and the stats block -- are
+        repainted directly.
+
+        Args:
+            run: The freshly-read record for a run already in `runs`.
+        """
+        key = str(run.get("id") or "")
+        for index, candidate in enumerate(self.runs):
+            if str(candidate.get("id") or "") == key:
+                # Mutating the list rather than reassigning the reactive: a
+                # reassignment recomposes the pane, which rebuilds the table
+                # the user's cursor is sitting in.
+                self.runs[index] = run
+                break
+        self._refresh_run_row(run)
+        selected = self.selected_run
+        if selected is not None and str(selected.get("id") or "") == key:
+            self.set_reactive(RunsPane.selected_run, run)
+            self._update_detail_stats(run)
+
+    def _refresh_run_row(self, run: dict[str, Any]) -> None:
+        """Repaint one run's row cells in place, keeping its highlight."""
+        key = str(run.get("id") or "")
+        try:
+            table = self.query_one("#runs-table", DataTable)
+            column_keys = list(table.columns.keys())
+        except Exception:
+            return
+        cells = self._run_row_cells(run, key == self._highlighted_run_key)
+        for column_key, value in zip(column_keys, cells):
+            try:
+                table.update_cell(key, column_key, value, update_width=False)
+            except Exception:
+                pass

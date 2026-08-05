@@ -851,3 +851,157 @@ def test_the_note_reads_processed_not_found():
         Screen._RUN_ITEMS_REATTRIBUTED_NOTE
     )
     assert Screen._run_items_note(never_found, []) == Screen._RUN_ITEMS_EMPTY_NOTE
+
+
+# --- Qodo PR #1348: a poll tick is not a selection -------------------------
+
+
+def _running_run() -> dict[str, Any]:
+    run = dict(RUNS[1])
+    run.update(status="running", finished_at=None, processed_count=0, found_count=0)
+    return run
+
+
+@pytest.mark.asyncio
+async def test_a_poll_tick_on_an_unchanged_run_schedules_no_detail_load():
+    """`run_poll` fires once a second for up to a minute, with no user action.
+
+    It used to re-post `RunSelected`, which the screen cannot tell from a
+    click — so a selected running run ran a full `_load_run_detail`, worker
+    and item query included, every single second.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunProgressTick
+
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        running = _running_run()
+        pane.runs = [dict(RUNS[0]), running]
+        await pilot.pause(0.2)
+
+        item_calls = _install_item_source(screen)
+
+        async def unchanged(**_kwargs):
+            return dict(running)
+
+        screen._controller.get_run = unchanged
+
+        await pilot.click("#runs-table", offset=SECOND_ROW_OFFSET)
+        assert await _settle_until(pilot, lambda: pane.selected_run is not None)
+        # The click itself is a real selection and loads the detail once.
+        assert await _settle_until(pilot, lambda: len(item_calls) == 1)
+        after_click = len(item_calls)
+
+        for _ in range(3):
+            screen.post_message(RunProgressTick(running["id"]))
+            await pilot.pause(0.2)
+        await pilot.pause(0.3)
+
+        assert len(item_calls) == after_click, (
+            "a tick on a run that has not changed must not re-query its items "
+            f"({len(item_calls) - after_click} extra queries in three ticks)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_running_runs_visible_stats_still_follow_it_across_ticks():
+    """The other half: the throttle must not freeze a live run's detail.
+
+    A local run writes its stats, log and items in one go at the END, so the
+    moment a tick has to notice is the transition out of `running`.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunProgressTick
+
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        running = _running_run()
+        pane.runs = [dict(RUNS[0]), running]
+        await pilot.pause(0.2)
+
+        record = {"value": dict(running)}
+
+        async def current(**_kwargs):
+            return dict(record["value"])
+
+        async def three_items(**_kwargs):
+            return [
+                {"title": f"Fresh {n}", "status": "new", "alert_count": 0}
+                for n in range(3)
+            ]
+
+        screen._controller.get_run = current
+        screen._controller.list_items = three_items
+
+        await pilot.click("#runs-table", offset=SECOND_ROW_OFFSET)
+        assert await _settle_until(pilot, lambda: pane.selected_run is not None)
+        assert "Status: running" in _stats_text(pane), "precondition: it is live"
+
+        # The run finishes between one tick and the next.
+        record["value"] = dict(
+            running,
+            status="completed",
+            finished_at="2026-08-04T11:00:03+00:00",
+            duration="3.0s",
+            found_count=3,
+            processed_count=3,
+            log_text="fetched 3 items",
+        )
+        screen.post_message(RunProgressTick(running["id"]))
+        assert await _settle_until(
+            pilot, lambda: "Status: completed" in _stats_text(pane)
+        ), "the detail froze at its first paint instead of following the run"
+
+        stats = _stats_text(pane)
+        assert "Found: 3" in stats and "Processed: 3" in stats
+        assert "fetched 3 items" in _logs_text(pane)
+        assert pane.query_one("#runs-detail-items", DataTable).row_count == 3, (
+            "a run's items land when it completes; the tick is what notices"
+        )
+        # The row the user is looking at must agree with the detail below it.
+        row = pane.query_one("#runs-table", DataTable).get_cell(
+            running["id"], list(pane.query_one("#runs-table", DataTable).columns)[1]
+        )
+        assert str(row) == "completed"
+
+
+@pytest.mark.asyncio
+async def test_a_tick_for_a_run_the_user_has_left_does_nothing():
+    """The tick races the user; the selection guard is what settles it."""
+    from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunProgressTick
+
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        running = _running_run()
+        pane.runs = [dict(RUNS[0]), running]
+        await pilot.pause(0.2)
+        _install_item_source(screen)
+
+        reads: list[Any] = []
+
+        async def record_read(**kwargs):
+            reads.append(kwargs.get("run_id"))
+            return dict(running)
+
+        screen._controller.get_run = record_read
+
+        await pilot.click("#runs-table", offset=FIRST_ROW_OFFSET)
+        assert await _settle_until(
+            pilot, lambda: pane.selected_run["id"] == RUNS[0]["id"]
+        )
+
+        screen.post_message(RunProgressTick(running["id"]))
+        await pilot.pause(0.4)
+
+        assert reads == [], (
+            "a tick for a run the user has navigated away from must not even "
+            "read it"
+        )
+        assert pane.selected_run["id"] == RUNS[0]["id"]
