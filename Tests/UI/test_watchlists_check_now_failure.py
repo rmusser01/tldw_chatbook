@@ -294,6 +294,12 @@ def test_source_row_cells_render_the_normalizer_status_summary():
 # list: they are background reads whose failure is already visible as an empty
 # region plus a "Failed to load ..." toast, and promoting them would make an
 # offline session log a wall of warnings.
+#
+# That exemption has a price, and TASK-2306's `_load_run_detail` shipped
+# taking the exemption without paying it (review wave, Important 2): it logged
+# at debug and showed nothing, so a denied `items.list` policy rendered
+# byte-identically to "this run produced no items". `LOADERS_THAT_MUST_NOTIFY`
+# below turns the price into a contract, so the next loader cannot do the same.
 USER_INITIATED_MUTATIONS = (
     "_start_tree_write",
     "_run_tree_write",
@@ -323,6 +329,45 @@ def _method_source(module_source: str, name: str) -> str:
     rest = module_source[match.end():]
     end = re.search(rf"^{indent}(?:async )?def |^{indent}@", rest, re.M)
     return rest[: end.start()] if end else rest
+
+
+#: The other half of the exemption above: a background loader may log its
+#: failure at `debug` ONLY because the user sees a toast instead. Every entry
+#: here must both handle failure and notify.
+LOADERS_THAT_MUST_NOTIFY = (
+    "_load_sources",
+    "_load_runs",
+    "_load_items",
+    "_load_run_detail",
+)
+
+
+@pytest.mark.parametrize("method_name", LOADERS_THAT_MUST_NOTIFY)
+def test_background_loaders_pay_for_their_debug_exemption_with_a_toast(method_name):
+    """Review wave, Important 2 -- the exemption's stated price, enforced.
+
+    A loader that swallows into `debug` with no toast is invisible twice over:
+    the region it fills draws exactly as it would for an empty result, and the
+    only trace goes to a log the user will never open.
+    """
+    from pathlib import Path
+
+    screen_source = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "UI"
+        / "Screens"
+        / "watchlists_collections_screen.py"
+    ).read_text(encoding="utf-8")
+
+    body = _method_source(screen_source, method_name)
+    assert "except" in body, f"{method_name} does not handle failure at all"
+    assert "notify(" in body and 'severity="error"' in body, (
+        f"{method_name} handles its own failure but tells the user nothing. "
+        "Background loaders are exempt from the log-at-warning rule ONLY "
+        "because their failure surfaces as a toast; without one the failure "
+        "renders identically to an empty result."
+    )
 
 
 @pytest.mark.parametrize("method_name", USER_INITIATED_MUTATIONS)

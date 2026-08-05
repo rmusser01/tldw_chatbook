@@ -453,3 +453,286 @@ async def test_run_item_titles_reach_the_table_inert():
         )
         assert cell.plain == hostile
         assert cell.spans == [], "no markup may have been applied"
+
+
+# --- Review wave, Important 1 / 2 + Minor 2: the Items region says why ------
+#
+# An empty `#runs-detail-items` renders identically for four unrelated causes,
+# directly beneath a stats block that may say `Found: 20`. Each of these tests
+# drives ONE cause and asserts the note names THAT cause, so a single generic
+# "no items" string would fail all but one of them.
+
+
+def _note_text(pane: RunsPane) -> str:
+    return str(pane.query_one("#runs-detail-items-note", Static).renderable)
+
+
+async def _select_second_run(pilot, pane) -> None:
+    await pilot.click("#runs-table", offset=SECOND_ROW_OFFSET)
+    await _settle_until(pilot, lambda: pane.selected_run is not None)
+
+
+@pytest.mark.asyncio
+async def test_a_run_whose_items_a_later_check_reclaimed_says_so():
+    """The commonest blank, and the one that contradicts the counts above it.
+
+    `persist_subscription_item`'s `ON CONFLICT … run_id = excluded.run_id`
+    re-attributes unchanged items to the newest run, so after ANY re-check
+    every older run renders `Found: 7` over an empty table. The storage rule
+    stays as it is; the label is what this fixes.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+
+        async def no_rows(**_kwargs):
+            return []
+
+        screen._controller.list_items = no_rows
+
+        await _select_second_run(pilot, pane)
+        assert await _settle_until(pilot, lambda: bool(_note_text(pane)))
+
+        assert pane.query_one("#runs-detail-items", DataTable).row_count == 0
+        assert "Found: 7" in _stats_text(pane), "precondition: the counts claim 7"
+        assert "re-claimed" in _note_text(pane), (
+            f"the note must name the cause; got {_note_text(pane)!r}"
+        )
+        assert pane.query_one("#runs-detail-items-note", Static).display is True
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_genuinely_found_nothing_is_not_blamed_on_a_later_check():
+    """The discriminating half: `Found: 0` + no rows is not re-attribution."""
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+
+        async def no_rows(**_kwargs):
+            return []
+
+        screen._controller.list_items = no_rows
+        empty_run = dict(RUNS[1])
+        empty_run["found_count"] = 0
+        pane.runs = [dict(RUNS[0]), empty_run]
+        await pilot.pause(0.2)
+
+        await _select_second_run(pilot, pane)
+        assert await _settle_until(pilot, lambda: bool(_note_text(pane)))
+
+        note = _note_text(pane)
+        assert "produced no items" in note, f"got {note!r}"
+        assert "re-claimed" not in note, (
+            "a run that found nothing must not be told a later check took its "
+            "items"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_server_backend_run_says_items_are_not_listed():
+    """`WatchlistScopeService.list_items` refuses the server backend outright.
+
+    There is no query to fail, so the region must not draw the same blank a
+    local run with no items draws.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        calls = _install_item_source(screen)
+        server_run = dict(RUNS[1])
+        server_run["backend"] = "server"
+        pane.runs = [dict(RUNS[0]), server_run]
+        await pilot.pause(0.2)
+
+        await _select_second_run(pilot, pane)
+        assert await _settle_until(pilot, lambda: bool(_note_text(pane)))
+
+        assert "server-backend" in _note_text(pane), f"got {_note_text(pane)!r}"
+        assert calls == [], (
+            "a server run must not even attempt the local-only item query"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_failed_items_query_says_so_and_raises_a_toast():
+    """Review wave, Important 2.
+
+    `_load_run_detail` takes the "loaders may log at debug" exemption that
+    `test_watchlists_check_now_failure.py` documents, and that exemption is
+    paid for with a visible toast. Without one, a denied `items.list` policy
+    or a locked database renders byte-identically to "this run produced no
+    items".
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    toasts: list[tuple[str, dict]] = []
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        app.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
+
+        async def denied(**_kwargs):
+            raise PermissionError("watchlists.items.list.local is denied")
+
+        screen._controller.list_items = denied
+
+        await _select_second_run(pilot, pane)
+        assert await _settle_until(pilot, lambda: bool(_note_text(pane)))
+
+        assert "Could not load" in _note_text(pane), f"got {_note_text(pane)!r}"
+        assert toasts, "a failed background read must raise a toast, not just a log"
+        message, kwargs = toasts[-1]
+        assert "items" in message.lower()
+        assert kwargs.get("severity") == "error"
+        assert kwargs.get("markup") is False
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_items_table_says_how_many_it_is_showing():
+    """Review wave, Minor 2: `Found: 500` over exactly 200 rows, silently."""
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        limit = screen._RUN_ITEMS_LIMIT
+
+        async def a_full_page(**kwargs):
+            assert kwargs["limit"] == limit
+            return [
+                {"title": f"Item {index}", "status": "new", "alert_count": 0}
+                for index in range(limit)
+            ]
+
+        screen._controller.list_items = a_full_page
+        big_run = dict(RUNS[1])
+        big_run["found_count"] = 500
+        pane.runs = [dict(RUNS[0]), big_run]
+        await pilot.pause(0.2)
+
+        await _select_second_run(pilot, pane)
+        assert await _settle_until(pilot, lambda: bool(_note_text(pane)))
+
+        assert _note_text(pane) == f"Showing the first {limit} of 500 items."
+
+
+@pytest.mark.asyncio
+async def test_a_complete_items_table_carries_no_note():
+    """The note is hidden, not merely empty, when there is nothing to say."""
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        _install_item_source(screen)
+
+        await pilot.click("#runs-table", offset=SECOND_ROW_OFFSET)
+        assert await _settle_until(
+            pilot,
+            lambda: pane.query_one("#runs-detail-items", DataTable).row_count == 2,
+        )
+
+        assert _note_text(pane) == ""
+        assert pane.query_one("#runs-detail-items-note", Static).display is False
+
+
+@pytest.mark.asyncio
+async def test_the_items_note_does_not_outlive_the_run_it_describes():
+    """Selecting another run must not leave the previous run's excuse on screen."""
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+
+        async def no_rows(**_kwargs):
+            return []
+
+        screen._controller.list_items = no_rows
+        await _select_second_run(pilot, pane)
+        assert await _settle_until(pilot, lambda: "re-claimed" in _note_text(pane))
+
+        # Run 1 DOES still own a row, so its note must be absent entirely --
+        # not merely replaced by another excuse.
+        async def one_row(**_kwargs):
+            return [{"title": "Still mine", "status": "new", "alert_count": 0}]
+
+        screen._controller.list_items = one_row
+        await pilot.click("#runs-table", offset=FIRST_ROW_OFFSET)
+        assert await _settle_until(
+            pilot,
+            lambda: pane.query_one("#runs-detail-items", DataTable).row_count == 1,
+        )
+
+        assert pane.selected_run["id"] == RUNS[0]["id"]
+        assert _note_text(pane) == "", (
+            f"the previous run's excuse is still on screen: {_note_text(pane)!r}"
+        )
+        assert pane.query_one("#runs-detail-items-note", Static).display is False
+
+
+def test_the_note_for_an_unidentifiable_run_names_that_cause():
+    """The fourth road to an empty table, at the unit."""
+    from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+        WatchlistsCollectionsScreen,
+    )
+
+    notes = {
+        WatchlistsCollectionsScreen._RUN_ITEMS_SERVER_NOTE,
+        WatchlistsCollectionsScreen._RUN_ITEMS_FAILED_NOTE,
+        WatchlistsCollectionsScreen._RUN_ITEMS_UNIDENTIFIED_NOTE,
+        WatchlistsCollectionsScreen._RUN_ITEMS_REATTRIBUTED_NOTE,
+        WatchlistsCollectionsScreen._RUN_ITEMS_EMPTY_NOTE,
+    }
+    assert len(notes) == 5, "each cause must be distinguishable from the others"
+
+
+@pytest.mark.asyncio
+async def test_the_previous_runs_note_is_gone_before_the_loader_answers():
+    """The pane clears its own note on selection, not just when told to.
+
+    Same rationale as the `run_items`/`run_logs` clear beside it: between the
+    click and the query returning, the pane would otherwise show the PREVIOUS
+    run's excuse under the newly selected run's stats. Driven with a
+    deliberately slow query so the assertions land inside that window.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+
+        async def no_rows(**_kwargs):
+            return []
+
+        screen._controller.list_items = no_rows
+        await _select_second_run(pilot, pane)
+        assert await _settle_until(pilot, lambda: "re-claimed" in _note_text(pane)), (
+            "precondition: run 2 carries a note"
+        )
+
+        import asyncio
+
+        async def slow(**_kwargs):
+            await asyncio.sleep(5)
+            return []
+
+        screen._controller.list_items = slow
+
+        await pilot.click("#runs-table", offset=FIRST_ROW_OFFSET)
+        assert await _settle_until(
+            pilot, lambda: pane.selected_run["id"] == RUNS[0]["id"]
+        )
+        # THE WINDOW: the new selection has landed, the query has not returned.
+        in_window = _note_text(pane)
+
+        assert in_window == "", (
+            "run 2's excuse is showing under run 1's stats while run 1's own "
+            f"items are still loading: {in_window!r}"
+        )

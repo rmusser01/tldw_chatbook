@@ -60,22 +60,35 @@ WATCHLIST_NAME_SEPARATOR = "\x1f"
 def _coerce_watchlist_names(value: Any) -> list[str]:
     """The watchlists a run's source belongs to, as a list.
 
+    Sorted HERE, not in SQL (review wave, Minor 1). SQLite documents
+    `group_concat`'s element order as arbitrary; the `ORDER BY` subquery the
+    run query uses is a widely-relied-on workaround, not a contract, and the
+    guaranteed form (`group_concat(x, sep ORDER BY x)`) needs SQLite >= 3.44
+    while this project's `requires-python = ">=3.11"` admits older runtimes.
+    It matters because `RunsPane._run_identity` prints only `names[0] +N`: an
+    arbitrary order would name a different watchlist on successive reads of
+    the same unchanged run, in the one place a run is identified at all.
+    Sorting the parsed list is guaranteed, free, and normalises the
+    list-input branch, which had no order either.
+
     Args:
         value: A list, a `WATCHLIST_NAME_SEPARATOR`-joined string (what the
             run query returns), or `None`.
 
     Returns:
-        Names in query order, blanks dropped.
+        Names in a stable (sorted) order, blanks dropped.
     """
     if value in (None, ""):
         return []
     if isinstance(value, (list, tuple)):
-        return [str(name).strip() for name in value if str(name).strip()]
-    return [
-        part.strip()
-        for part in str(value).split(WATCHLIST_NAME_SEPARATOR)
-        if part.strip()
-    ]
+        names = [str(name).strip() for name in value if str(name).strip()]
+    else:
+        names = [
+            part.strip()
+            for part in str(value).split(WATCHLIST_NAME_SEPARATOR)
+            if part.strip()
+        ]
+    return sorted(names)
 
 
 #: Run statuses that mean the run did not succeed. Mirrors
@@ -88,8 +101,8 @@ def _run_stat(stats: Mapping[str, Any], *keys: str) -> int | None:
     """The first of `keys` present in `stats` as an int, or `None`.
 
     Several aliases per counter because two backends write these: the local
-    check pipeline records `items_found`/`items_ingested`/`items_filtered`,
-    while a server run's `stats` blob is the server's own shape.
+    check pipeline records `items_found`/`items_ingested`, while a server
+    run's `stats` blob is the server's own shape.
 
     Args:
         stats: A run's `stats` mapping.
@@ -132,11 +145,12 @@ def _run_accounting(
     )
     filtered = _run_stat(stats, "items_filtered", "filtered_count")
     if filtered is None:
-        # Derived for runs recorded before the pipeline wrote the count (and
-        # for any backend that does not): everything found and not ingested
-        # was dropped by a filter. Never negative -- a stats blob whose
-        # `items_ingested` exceeds `items_found` is malformed, not evidence of
-        # negative filtering.
+        # The local answer, always: the check pipeline records no filtered
+        # counter (review wave, Minor 3 -- it could never differ from this),
+        # so everything found and not ingested was dropped by a filter. The
+        # two keys above are read for a server blob that does carry one.
+        # Never negative -- a stats blob whose `items_ingested` exceeds its
+        # `items_found` is malformed, not evidence of negative filtering.
         filtered = max(found - processed, 0)
     errors = _run_stat(stats, "error_count", "items_errored")
     if errors is None:
@@ -422,7 +436,7 @@ def normalize_watchlist_run(
         # TASK-2305. The Runs pane has always read `found_count` and friends
         # off the run's own top level, and no normalizer had ever written
         # them: the numbers the check pipeline records live nested under
-        # `stats` as `items_found`/`items_ingested`/`items_filtered`. Every
+        # `stats` as `items_found`/`items_ingested`. Every
         # run therefore displayed `Found 0 · Processed 0 · Filtered 0 ·
         # Errors 0` however much it had actually harvested, which reads as if
         # checks do nothing. Lifted here, once, rather than teaching each

@@ -59,6 +59,16 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
     #: `_update_selection_highlight` already uses for the table itself.
     run_items = reactive[list[dict[str, Any]]]([])
     run_logs = reactive("")
+    #: Why the Items table looks the way it does, whenever the rows alone
+    #: would mislead (review wave, Important 1 / Minor 2). An empty items
+    #: table is produced by four unrelated situations -- a run whose item rows
+    #: a later check re-claimed, a genuinely empty check, a server-backend run
+    #: whose items cannot be listed at all, and a failed query -- and all four
+    #: render identically, directly beneath a stats block that may well say
+    #: `Found: 3`. A truncated table is the same self-contradiction in
+    #: reverse. The screen names the situation; this pane only shows what it
+    #: was told.
+    run_items_note = reactive("")
     runtime_backend = reactive("local")
 
     # Plain attribute, not a reactive: mirrors SourcesPane's
@@ -105,6 +115,13 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
             for item in self.run_items:
                 items_table.add_row(*self._run_item_row_cells(item))
             yield items_table
+            note = Static(
+                Text(self.run_items_note),
+                id="runs-detail-items-note",
+                classes="runs-detail-note",
+            )
+            note.display = bool(self.run_items_note)
+            yield note
             yield Static("Logs", classes="pane-title")
             yield Static(Text(self.run_logs), id="runs-detail-logs")
 
@@ -160,7 +177,10 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
             +2"`, `"Hacker News"`, or `"Untitled"` for a run whose source can
             no longer be resolved.
         """
-        source = str(run.get("source_title") or run.get("job_name") or "").strip()
+        # No `job_name` fallback: no normalizer emits that key (review wave,
+        # Minor 4), and an unreachable fallback reads as "some backend
+        # supplies this" to the next person here.
+        source = str(run.get("source_title") or "").strip()
         if not source:
             source = "Untitled"
         names = [str(name).strip() for name in (run.get("watchlist_names") or []) if str(name).strip()]
@@ -177,7 +197,7 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         # lists EVERY watchlist it belongs to -- the row abbreviates for width,
         # the detail block has no such constraint and is where the full answer
         # belongs.
-        identity = f"Source: {run.get('source_title') or run.get('job_name') or 'Untitled'}\n"
+        identity = f"Source: {run.get('source_title') or 'Untitled'}\n"
         watchlists = [
             str(name).strip()
             for name in (run.get("watchlist_names") or [])
@@ -304,6 +324,7 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         # `WatchlistsCollectionsScreen._load_run_detail`.
         self.run_items = []
         self.run_logs = ""
+        self.run_items_note = ""
         if run and str(run.get("status", "")).lower() == "running":
             self._start_run_poll(run)
 
@@ -321,6 +342,22 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
                 table.add_row(*self._run_item_row_cells(item))
         except Exception:
             pass
+
+    def watch_run_items_note(self, note: str) -> None:
+        """Repaint the Items empty/truncation note in place (review wave, I1).
+
+        Hidden rather than left as an empty line when there is nothing to say,
+        so the note never puts a blank gap between the table and `Logs`.
+        """
+        try:
+            widget = self.query_one("#runs-detail-items-note", Static)
+        except Exception:
+            return
+        try:
+            widget.update(Text(str(note)))
+            widget.display = bool(note)
+        except Exception:
+            return
 
     def watch_run_logs(self, logs: str) -> None:
         """Repaint `#runs-detail-logs` in place (task-2306)."""

@@ -500,6 +500,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # user was told is a bug.
         self._run_detail_items: list[dict[str, Any]] = []
         self._run_detail_logs: str = ""
+        self._run_detail_items_note: str = ""
         self._loaded_notifications: list[dict[str, Any]] = []
         # Mirrors what's currently loaded for Sources/Items/Rules the same way
         # `_loaded_runs`/`_loaded_notifications` already do (Finding 2, fix
@@ -1911,6 +1912,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # belong to -- see `RunsPane.watch_selected_run`).
             runs_pane.run_items = self._run_detail_items
             runs_pane.run_logs = self._run_detail_logs
+            runs_pane.run_items_note = self._run_detail_items_note
             children.append(runs_pane)
         elif self.active_section == "items":
             # Seed the last-loaded rows (Finding 2, fix round 2) — see the
@@ -3612,6 +3614,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     "selected_run": self.selected_run,
                     "run_items": self._run_detail_items,
                     "run_logs": self._run_detail_logs,
+                    "run_items_note": self._run_detail_items_note,
                 },
             ),
             (
@@ -3768,11 +3771,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """Fill the selected run's Items and Logs sub-regions.
 
         The log text is already on the run record (`normalize_watchlist_run`
-        carries `log_text`), so only the items need a query. Items are a
-        local-backend read -- `WatchlistScopeService.list_items` refuses the
-        server backend outright -- so a server run gets its log and stats and
-        an honest empty item list rather than a "Failed to load" toast for a
-        route that does not exist.
+        carries `log_text`), so only the items need a query.
+
+        Every road out of here that yields no rows also names ITSELF (review
+        wave, Important 1). An empty items table renders identically whether a
+        later check re-claimed this run's rows, the run genuinely found
+        nothing, the backend cannot list items at all, or the query failed --
+        and it sits directly beneath a stats block that may well say
+        `Found: 3`. The note is what tells those four apart. Storage semantics
+        (`persist_subscription_item`'s `run_id = excluded.run_id`) stay out of
+        scope; the label does not.
 
         Args:
             run: The newly selected run, or `None` when the selection was
@@ -3781,31 +3789,107 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if run is None:
             self._run_detail_items = []
             self._run_detail_logs = ""
+            self._run_detail_items_note = ""
             self._push_run_detail_to_live_pane(None)
             return
 
         items: list[dict[str, Any]] = []
+        note = ""
         run_id = run.get("run_id")
-        if run_id is not None and str(run.get("backend") or self.runtime_backend) == "local":
+        backend = str(run.get("backend") or self.runtime_backend)
+        if run_id is None:
+            note = self._RUN_ITEMS_UNIDENTIFIED_NOTE
+        elif backend != "local":
+            # `WatchlistScopeService.list_items` refuses the server backend
+            # outright, so there is no query here to fail -- say so, rather
+            # than drawing the same blank a local run with no items draws.
+            note = self._RUN_ITEMS_SERVER_NOTE
+        else:
             try:
-                items = [
-                    dict(item)
-                    for item in await self._controller.list_items(
-                        runtime_backend="local",
-                        run_id=run_id,
-                        status=None,
-                        limit=200,
-                    )
-                ]
-            except Exception:
+                rows = await self._controller.list_items(
+                    runtime_backend="local",
+                    run_id=run_id,
+                    status=None,
+                    limit=self._RUN_ITEMS_LIMIT,
+                )
+            except Exception as exc:
+                # Review wave, Important 2. The "loaders may log at debug"
+                # exemption (`test_watchlists_check_now_failure.py`) is paid
+                # for by a visible toast, and every sibling loader on this
+                # screen pays it. Without one, a denied `items.list` policy or
+                # a database locked by a concurrent write rendered
+                # byte-identically to "this run produced no items".
+                #
+                # Type only in the message: an exception's text can carry a
+                # remote URL or a local path, and `opt(exception=True)`
+                # already delivers the full traceback to the sink.
                 logger.opt(exception=True).debug(
                     "Failed to load the items of watchlist run "
-                    f"{run.get('id')!r}."
+                    f"{run.get('id')!r}: {type(exc).__name__}"
                 )
+                notify = getattr(self.app_instance, "notify", None)
+                if callable(notify):
+                    notify(
+                        "Failed to load this run's items.",
+                        severity="error",
+                        markup=False,
+                    )
+                note = self._RUN_ITEMS_FAILED_NOTE
+            else:
+                items = [dict(item) for item in rows]
+                note = self._run_items_note(run, items)
 
         self._run_detail_items = items
         self._run_detail_logs = self._run_log_text(run)
+        self._run_detail_items_note = note
         self._push_run_detail_to_live_pane(run)
+
+    #: How many of a run's items the detail region lists. A run can produce
+    #: more (the `sitemap`/`url_list` arms fan out per URL), so the page size
+    #: gets said out loud rather than silently truncating a table sitting
+    #: under a `Found:` count that disagrees with it -- review wave, Minor 2.
+    _RUN_ITEMS_LIMIT = 200
+    _RUN_ITEMS_SERVER_NOTE = "Items are not listed for server-backend runs."
+    _RUN_ITEMS_FAILED_NOTE = "Could not load this run's items."
+    _RUN_ITEMS_UNIDENTIFIED_NOTE = (
+        "This run has no identifier, so its items cannot be looked up."
+    )
+    _RUN_ITEMS_REATTRIBUTED_NOTE = (
+        "No item rows are still attributed to this run — a later check "
+        "re-claimed the items that had not changed."
+    )
+    _RUN_ITEMS_EMPTY_NOTE = "This run produced no items."
+
+    @classmethod
+    def _run_items_note(
+        cls, run: Mapping[str, Any], items: Sequence[Mapping[str, Any]]
+    ) -> str:
+        """What to say about a successful item query's result.
+
+        Args:
+            run: The run whose items were queried.
+            items: The rows that came back.
+
+        Returns:
+            The note, or `""` when the table speaks for itself.
+        """
+        found = run.get("found_count") or 0
+        try:
+            found = int(found)
+        except (TypeError, ValueError):
+            found = 0
+        if not items:
+            # The discriminating pair: a run that found nothing is not the
+            # same as a run whose rows a later check took over, and only the
+            # second contradicts the counts printed above it.
+            return (
+                cls._RUN_ITEMS_REATTRIBUTED_NOTE
+                if found > 0
+                else cls._RUN_ITEMS_EMPTY_NOTE
+            )
+        if len(items) >= cls._RUN_ITEMS_LIMIT and found > len(items):
+            return f"Showing the first {len(items)} of {found} items."
+        return ""
 
     def _push_run_detail_to_live_pane(self, run: Mapping[str, Any] | None) -> None:
         """Push the mirrored run detail into the mounted `RunsPane`.
@@ -3835,6 +3919,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         runs_pane.run_items = self._run_detail_items
         runs_pane.run_logs = self._run_detail_logs
+        runs_pane.run_items_note = self._run_detail_items_note
 
     def watch_selected_run(self, run: dict[str, Any] | None) -> None:
         """Drop the mirrored run detail the moment the selection moves.
@@ -3852,6 +3937,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         self._run_detail_items = []
         self._run_detail_logs = ""
+        self._run_detail_items_note = ""
 
     @staticmethod
     def _run_log_text(run: Mapping[str, Any]) -> str:

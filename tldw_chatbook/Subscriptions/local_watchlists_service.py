@@ -659,12 +659,18 @@ class LocalWatchlistsService:
             )
             stats["items_ingested"] = len(kept_items)
             stats["new_items_found"] = len(kept_items)
-            # TASK-2305: how many items this run's own filters excluded. The
-            # Runs pane has a Filtered column and the number was only ever
-            # derivable (found minus ingested) -- recorded here, where the
-            # exclusion actually happens, so the run says what it did rather
-            # than leaving every reader to infer it.
-            stats["items_filtered"] = max(len(raw_items) - len(kept_items), 0)
+            # No separate `items_filtered` here (review wave, Minor 3). It was
+            # written for one round and removed: `items_found` above is the
+            # ONLY writer of that key in the whole package, so on every row
+            # this pipeline can produce the recorded value is exactly
+            # `items_found - items_ingested`, which is what
+            # `_run_accounting` derives. The recorded form was justified by an
+            # injected `run_executor` reporting a feed's total rather than
+            # what it handed over -- but the only production injection point
+            # is `WatchlistPreviewService`, which previews and records no run.
+            # Rather than keep a key that cannot differ (and a test pinning a
+            # shape nothing emits), the derivation is the single answer until
+            # an executor actually diverges.
 
             self._upsert_subscription_items(db, source_id, int(run_id), kept_items)
             # task-1394 fix wave (review Finding #1): a `url_list`/`sitemap`

@@ -343,3 +343,26 @@ def test_a_server_run_carries_no_source_name_rather_than_a_wrong_one():
 
     assert run["source_title"] is None
     assert run["watchlist_names"] == []
+
+
+def test_watchlist_names_come_back_in_a_stable_order():
+    """Review wave, Minor 1: SQLite's `group_concat` order is ARBITRARY.
+
+    The run query's `ORDER BY` subquery is a de-facto workaround, not a
+    contract, and `RunsPane._run_identity` prints only `names[0] +N` — so an
+    arbitrary order would name a different watchlist on successive reads of
+    the same unchanged run, in the one place a run is identified at all.
+    """
+    from tldw_chatbook.Subscriptions.watchlist_normalizers import (
+        WATCHLIST_NAME_SEPARATOR,
+    )
+
+    scrambled = _run(
+        watchlist_names=WATCHLIST_NAME_SEPARATOR.join(["Ops", "Morning read", "Sec"]),
+        stats={},
+    )
+    # The list-input branch had no order either, and is normalised the same way.
+    from_list = _run(watchlist_names=["Ops", "Morning read", "Sec"], stats={})
+
+    assert scrambled["watchlist_names"] == ["Morning read", "Ops", "Sec"]
+    assert from_list["watchlist_names"] == ["Morning read", "Ops", "Sec"]
