@@ -13,11 +13,21 @@ Scope: literal double-quoted classes="..." only; f-strings and
 add_class(variable) are out of scope by design. Single-quoted
 classes='...' is also out of scope by construction (the regex only
 matches double quotes) but is a non-issue in practice: grepped
-2026-08-04, zero occurrences across all four scoped paths. `#token` id
+2026-08-04, zero occurrences across all scoped paths. `#token` id
 rules count as styled (console-staged-context-empty). There is no
 style-free `is-*` convention here (test_master_shell_design_system_
 contract.py's REQUIRED_STATE_CLASSES, lines 20-35, pins those as
 styled).
+
+Scope addition 2026-08-04: `UI/Console_Modules/` (frame.py, left_rail.py,
+right_rail.py, dictation.py) added to SCOPES -- the decomposed Console
+rails were composing classes (including console-agent-section, already
+registered below) with zero guardrail coverage. Widening surfaced no new
+unstyled tokens: every class composed there is either bundle-styled
+(.class rule) or covered by a same-named #id rule on the same widget
+(e.g. #console-left-rail-body, #console-model-section-recovery,
+#console-inspector-rail-body) -- no new KNOWN_UNSTYLED entries were
+needed.
 
 Correction to the original scout note: it is NOT true that no scoped
 unstyled token is a query-selector marker. Verified 2026-08-04 by
@@ -43,6 +53,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = ROOT / "tldw_chatbook"
 SCOPES = [
     PACKAGE / "UI" / "MCP_Modules",
+    PACKAGE / "UI" / "Console_Modules",
     PACKAGE / "Widgets" / "Console",
     PACKAGE / "UI" / "Screens" / "chat_screen.py",
     PACKAGE / "UI" / "Screens" / "library_screen.py",
