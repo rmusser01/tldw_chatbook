@@ -169,6 +169,12 @@ click-driven. Global navigation keys live in the [guide index](../index.md).
   only the title and age; they still open on click.
 - **Notes cap at 2,000,000 characters** — longer content is rejected
   rather than truncated.
+- **"Use in Console" now actually delivers the note.** It used to stage
+  the note so it displayed as attached while sending nothing to the
+  model — that's fixed: your next send now carries a real excerpt of the
+  note body, not just its title.
 
 —
-*Verified against dev @ bd05a692a — 2026-07-31*
+*Verified against c2cbb8081 — 2026-08-04 (PR-T1: "Use in Console"
+delivering the note's real content on send is covered by capture
+round-trip tests, task-2374).*

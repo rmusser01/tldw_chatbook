@@ -82,6 +82,17 @@ Library is empty, the scope block takes over entirely: "No Library sources
 yet — import media or create notes, then search." with an **"Open Import
 media"** button ([Import & export](import-and-export.md)).
 
+Toggling a source off takes effect immediately on the evidence rows
+already on screen — it does not wait for the next run. That source's rows
+disappear, any selection sitting on one of them is cleared, and staging
+it (`u` or **Use in Console**) is refused with the disabled reason as a
+toast. Toggling it back on restores those rows in place, with no re-run
+and no "Searching…". One honest caveat: while source counts are still
+loading (right after landing on this canvas, or after a count lookup
+fails) filtering is suspended, so rows are never wrongly hidden before
+real counts arrive — the toggle strip and the run gate read the same
+either way.
+
 ### The generated answer
 
 RAG Answer mode doesn't stop at retrieval. Once results land, a second
@@ -260,6 +271,10 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
   turning Media off) updates "Scope: …" to name what's still in scope and
   what's off — it's a live summary of the ✓/○ toggles below it, not a fixed
   label.
+- **A source toggle also filters the rows you're already looking at.** It
+  is not just a setting for the next run — turning a source off hides its
+  rows now, drops any selection on one of them, and refuses to stage it;
+  turning it back on brings the rows back without re-running the query.
 - **Workspaces and Collections can't be searched yet.** They exist as
   source types, but retrieval doesn't reach them, so no toggle appears for
   either.
@@ -280,8 +295,11 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
   unavailable."
 
 —
-*Verified against dev @ 8807ea1e4 — 2026-08-03 (task-2150 live smoke with a
-real provider: abstention on an unsupported query and a grounded, cited
-answer with per-source honesty both observed live; match bands, coverage
-notes, scope summary, quiet no-match, and the mode-aware heading all
-confirmed on the same pass).*
+*Verified against c2cbb8081 — 2026-08-04 (PR-T1 live check S1-S6, plus
+task-2150 live smoke with a real provider: abstention on an unsupported
+query and a grounded, cited answer with per-source honesty both observed
+live; match bands, coverage notes, scope summary, quiet no-match, and the
+mode-aware heading all confirmed on an earlier pass. PR-T1 adds: a source
+toggle hides/restores rows in the current snapshot with no re-run,
+refuses staging a hidden row, and restored rows survive a Console round
+trip even while source counts are still loading).*
