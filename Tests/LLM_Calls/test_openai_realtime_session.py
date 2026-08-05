@@ -849,17 +849,32 @@ async def test_cancel_response_noops_when_no_response_active(fake_server):
         fake_server,
         [("expect_none", None)],
     )
-    # The return value reports WHICH branch ran, so a caller can log
-    # "there was nothing to cancel" instead of guessing; asserted here so
-    # the guard cannot be neutered while the wire assertion stays green.
+    # Nothing active AND no item ever tracked: nothing to cancel and
+    # nothing to truncate, so this stays the true no-op. The return value
+    # reports WHICH branch ran, so a caller can log "there was nothing to
+    # cancel" instead of guessing; asserted here so the guard cannot be
+    # neutered while the wire assertion stays green.
     assert session.cancel_response(500) is False
     await scripted.wait_done()
 
 
-async def test_cancel_response_noops_after_response_already_done(fake_server):
-    """F8: cancelling after the tracked response has already completed
-    must also no-op -- live-confirmed a stale cancel produces TWO error
-    events (one for response.cancel, one for the resulting truncate)."""
+async def test_barge_in_after_response_done_still_truncates(fake_server):
+    """A barge-in during the PLAYBACK DRAIN must still truncate.
+
+    The wiring deliberately keeps the loop in `speaking` after
+    `response.done` while the sink plays the buffered tail out (that is
+    what stops the model hearing itself) -- so the most common barge-in of
+    all, the user cutting off a reply they can still hear, arrives with
+    `_response_active` already False. Skipping the truncate there leaves
+    the provider believing the user heard the whole answer, which is the
+    exact thing `played_ms` exists to prevent.
+
+    Only `response.cancel` is skipped. This module's earlier note claimed
+    the truncate would error too; a dedicated live probe (2026-08-04)
+    disproved it -- truncating a just-completed item returns
+    `conversation.item.truncated`, matching what `cancel_response`'s own
+    docstring always said about a "just-completed-but-still-playing item".
+    """
     session, scripted = await _connect_and_handshake(
         fake_server,
         [
@@ -872,13 +887,21 @@ async def test_cancel_response_noops_after_response_already_done(fake_server):
                 },
             ),
             ("send", {"type": "response.done", "response": {"status": "completed"}}),
+            (
+                "expect",
+                lambda e: (
+                    e.get("type") == "conversation.item.truncate"
+                    and e.get("item_id") == "item-1"
+                    and e.get("audio_end_ms") == 500
+                ),
+            ),
             ("expect_none", None),
         ],
     )
     # Let the client fully process response.done (and flip _response_active
-    # to False) before attempting the stale cancel.
+    # to False) before the drain-window barge-in.
     await asyncio.sleep(0.1)
-    assert session.cancel_response(500) is False
+    assert session.cancel_response(500) is True
     await scripted.wait_done()
 
 

@@ -273,39 +273,58 @@ class OpenAIRealtimeSession:
     def cancel_response(self, played_ms: int) -> bool:
         """Cancel the assistant's in-progress response (barge-in).
 
-        No-ops (logged, not raised) if no response is currently active --
-        live-confirmed: sending `response.cancel` for a response that has
-        already ended produces an `error` event from the provider, and a
-        stale/duplicate cancel would produce two of them. When a response
-        is active, sends `response.cancel`, then, if an assistant item id
-        has been tracked (from a prior `response.output_item.added`),
-        `conversation.item.truncate` for that item so the provider's
-        record matches what the user actually heard. The tracked item id
-        is never cleared by a completed response (see `_on_response_done`),
-        so truncating a just-completed-but-still-playing item is still the
-        normal, successful barge-in case.
+        Two independent messages, gated independently:
+
+        * `response.cancel` is sent ONLY while a response is genuinely
+          active (F8) -- live-confirmed, cancelling a response that has
+          already ended produces an `error` event from the provider.
+        * `conversation.item.truncate` is sent whenever an assistant item
+          id is known, ACTIVE OR NOT. The tracked item id is deliberately
+          never cleared by a completed response (see `_on_response_done`),
+          because a just-completed-but-still-playing item is the normal
+          barge-in case: audio outlives generation by whatever is still
+          buffered, and the wiring holds the loop in `speaking` for
+          exactly that window. Gating the truncate on `_response_active`
+          too meant the most common barge-in of all -- the user cutting
+          off a reply they can still hear -- told the provider nothing at
+          all, leaving its history claiming the user heard the whole
+          answer. That is precisely what `played_ms` exists to prevent
+          (PR #1350 review, Q1).
+
+          An earlier note in this module claimed the truncate would error
+          for a completed response. A dedicated live probe (2026-08-04)
+          disproved it: `conversation.item.truncate` against a completed
+          item returns `conversation.item.truncated`, no error.
 
         Args:
             played_ms: Milliseconds of the current response's audio that
                 have already been played to the user.
 
         Returns:
-            True when a cancel was actually enqueued, False for the
-            no-active-response no-op. Reported so a caller can record
-            WHICH branch a barge-in took: "the user barged and the
-            provider was told" and "the user barged into a response that
-            had already ended" are different events, and from outside
+            True when ANYTHING was enqueued (a cancel, a truncate, or
+            both), False only for the true no-op: no active response AND
+            no assistant item ever tracked, so there is nothing to cancel
+            and nothing to truncate. Reported so a caller can record which
+            branch a barge-in took -- "the provider was told" and "there
+            was nothing to tell it" are different events, and from outside
             this class they are otherwise indistinguishable (a live-gate
             incident was spent guessing which had happened).
         """
-        if not self._response_active:
+        item_id = self._current_assistant_item_id
+        if not self._response_active and item_id is None:
             logger.debug(
-                "OpenAIRealtimeSession.cancel_response: no active response, "
-                f"skipping: op=cancel_response played_ms={played_ms}"
+                "OpenAIRealtimeSession.cancel_response: nothing to cancel or "
+                f"truncate: op=cancel_response played_ms={played_ms}"
             )
             return False
-        self._enqueue({"type": "response.cancel"})
-        item_id = self._current_assistant_item_id
+        if self._response_active:
+            self._enqueue({"type": "response.cancel"})
+        else:
+            logger.debug(
+                "OpenAIRealtimeSession.cancel_response: response already "
+                "ended; truncating the still-playing item only: "
+                f"op=cancel_response played_ms={played_ms}"
+            )
         if item_id is not None:
             self._enqueue(
                 {
