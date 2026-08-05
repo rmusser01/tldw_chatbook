@@ -1578,13 +1578,17 @@ class LibraryRagPanelState:
                 the box (or a separate rail search box) without re-running.
             mode: Search mode, either `rag` or `search`.
             results: Retrieval result rows or mappings. Filtered against
-                `selected_source_types` before use (D4/task-5): a row whose
-                provenance canonicalizes to a source type NOT in the
-                current scope is dropped from the returned state's
-                `results`/`selected_result`/`can_use_console`, so a scope
-                toggle flipped off after retrieval already landed hides
-                that source's rows in this exact snapshot rather than only
-                affecting the next run.
+                `scope.selected_source_types` before use whenever
+                `selected_source_types` is not `None` (D4/task-5): a row
+                whose provenance canonicalizes to a source type NOT in the
+                current (count-intersected) scope is dropped from the
+                returned state's `results`/`selected_result`/
+                `can_use_console`, so a scope toggle flipped off -- or a
+                source's local count dropping to zero -- after retrieval
+                already landed hides that source's rows in this exact
+                snapshot rather than only affecting the next run.
+                `selected_source_types=None` (every call site that
+                predates this fix) skips the filter entirely.
             selected_result_id: Result ID selected for inspector/Console handoff.
             retrieval_status: Explicit retrieval status override.
             recovery_copy: Explicit retrieval recovery copy from a service outcome.
@@ -1656,33 +1660,39 @@ class LibraryRagPanelState:
         # (`scope_source_type == ""`) is never hidden -- see
         # `LibraryRagResultRow.scope_source_type`.
         #
-        # Filters against the CALLER's raw `selected_source_types` --
-        # the DELIBERATE selection -- not `scope.selected_source_types`,
-        # which additionally intersects with per-type availability
-        # (count > 0, `LibraryRagScopeState.from_source_counts`). Using
-        # the availability-intersected version would ALSO hide a row
-        # whenever its source currently counts zero items, even when the
-        # user never touched that toggle: a real retrieval seam can never
-        # produce a row for a source with nothing in it, but several
-        # pre-existing display-only tests feed canned multi-source rows
-        # through a zero-count source anyway (there's nothing to search,
-        # so nothing was seeded) -- this filter must not invent a new,
-        # narrower defect for that case. `None` (every call site that
-        # predates this fix) filters nothing, exactly like before.
-        deliberately_selected_source_types = (
-            None
-            if selected_source_types is None
-            else frozenset(
-                _clean_text(source_type).lower()
-                for source_type in selected_source_types
-            )
-        )
+        # Hybrid basis (review round 2, I1): `selected_source_types is
+        # None` is the "no explicit scope was ever supplied" sentinel --
+        # every call site that predates this fix, and every gate16 fixture
+        # that never exercises scope deselection -- so that case skips
+        # filtering entirely, preserving prior behavior byte-for-byte
+        # (`scope.selected_source_types` itself is NEVER `None`, so this
+        # escape hatch has to key off the raw argument's None-ness, not
+        # `scope`'s already-resolved tuple). The only caller that ever
+        # passes a non-`None` value is the real screen
+        # (`_library_rag_panel_state`), and for that case this filters
+        # against `scope.selected_source_types` -- the count-intersected
+        # local computed above, NOT the raw argument. An earlier draft
+        # filtered against the raw argument directly (ignoring
+        # availability) to avoid hiding rows under a test fixture with an
+        # unrealistic zero-count source; that reopens D4's exact symptom
+        # for a real, reachable case: land Notes evidence, delete the
+        # backing note elsewhere in Library (count -> 0 via
+        # `_refresh_local_source_snapshot`), return to Search without
+        # re-querying -- the toggle strip's OWN marker
+        # (`scope.selected_source_types`-driven) already reads "○ Notes
+        # (0)", so evidence must follow that same count-intersected
+        # signal or the toggle-vs-evidence lie just gets a different
+        # trigger (count drift instead of a toggle press). The
+        # unrealistic-fixture problem this traded away is fixed at its
+        # actual source instead: the fixtures now seed non-zero counts for
+        # every source their canned rows reference (see
+        # `Tests/UI/test_library_shell.py`).
         result_rows = tuple(
             row
             for row in result_rows
             if not row.scope_source_type
-            or deliberately_selected_source_types is None
-            or row.scope_source_type in deliberately_selected_source_types
+            or selected_source_types is None
+            or row.scope_source_type in scope.selected_source_types
         )
         coverage_note = library_rag_coverage_note(diagnostics, result_rows)
         normalized_selected_result_id = _clean_text(selected_result_id)

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from tldw_chatbook.Library import library_local_rag_search_service as _semantic_module
+from tldw_chatbook.Library import library_rag_state as _rag_state_module
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_EMPTY_STATE_SELECTOR,
     LIBRARY_RAG_NO_SOURCES_GATE_COPY,
@@ -1341,3 +1343,72 @@ class TestLibraryRagEmptyStateQuietCopy:
         assert first_line.startswith("No evidence matched 'word")
         assert first_line.endswith("…'.")
         assert len(first_line) < len(long_query)
+
+
+# --- I2 (review round 2): canonicalization-map parity guard -----------------
+#
+# Three source-type canonicalization maps overlap almost entirely and were
+# hand-synced by comments only, with no test tying them together:
+#   - `_OPEN_SOURCE_TYPE_MAP` (library_rag_state.py) -- Library-canvas
+#     "Open" dispatch keys.
+#   - `_SCOPE_SOURCE_TYPE_MAP` (library_rag_state.py) -- D4/task-5's
+#     already-landed-row scope filter (`LibraryRagPanelState.from_values`).
+#   - `_SEMANTIC_SOURCE_TYPE_MAP` (library_local_rag_search_service.py) --
+#     the retrieval-time analogue of the same filter, applied to rag mode's
+#     semantic leg before rows land.
+#
+# A shared-base-dict refactor was considered and rejected in favor of this
+# test: `_SEMANTIC_SOURCE_TYPE_MAP` lives in a different module, already
+# imports FROM `library_rag_state` (no circularity blocker), but deriving
+# it from a shared base would touch a heavily-commented, already-reviewed
+# production file (`_SEMANTICALLY_COVERABLE_SOURCE_TYPES` is directly
+# derived from `_SEMANTIC_SOURCE_TYPE_MAP.values()`) purely to add a drift
+# guard -- a test achieves the identical goal (a future edit that breaks
+# the documented relationship fails loudly, here) with zero production
+# risk and zero behavior change. Smaller change, same protection.
+
+
+def test_scope_source_type_map_is_a_superset_of_the_semantic_source_type_map() -> None:
+    """`_SCOPE_SOURCE_TYPE_MAP` must agree with `_SEMANTIC_SOURCE_TYPE_MAP`
+    on every key the semantic map defines -- the semantic map is
+    deliberately NARROWER (it omits prompts/workspaces/collections, which
+    have no semantic-index seam at all, per its own module comment), never
+    disagreeing on a shared key."""
+    scope_map = _rag_state_module._SCOPE_SOURCE_TYPE_MAP
+    semantic_map = _semantic_module._SEMANTIC_SOURCE_TYPE_MAP
+
+    for raw_source_type, canonical in semantic_map.items():
+        assert raw_source_type in scope_map, (
+            f"_SCOPE_SOURCE_TYPE_MAP is missing {raw_source_type!r}, which "
+            "_SEMANTIC_SOURCE_TYPE_MAP defines."
+        )
+        assert scope_map[raw_source_type] == canonical, (
+            f"_SCOPE_SOURCE_TYPE_MAP[{raw_source_type!r}] == "
+            f"{scope_map[raw_source_type]!r} but "
+            f"_SEMANTIC_SOURCE_TYPE_MAP[{raw_source_type!r}] == {canonical!r}."
+        )
+
+
+def test_scope_source_type_map_matches_open_source_type_map_except_prompt() -> None:
+    """`_SCOPE_SOURCE_TYPE_MAP` and `_OPEN_SOURCE_TYPE_MAP` agree on every
+    shared key EXCEPT "prompt": `_OPEN_SOURCE_TYPE_MAP` deliberately keeps
+    it singular (`_open_library_item_by_id`'s dispatch key), while
+    `_SCOPE_SOURCE_TYPE_MAP` canonicalizes it to the plural "prompts"
+    scope-toggle key -- the one documented, intentional divergence. This
+    asserts that ACTUAL delta rather than forcing false identity between
+    the two maps."""
+    scope_map = _rag_state_module._SCOPE_SOURCE_TYPE_MAP
+    open_map = _rag_state_module._OPEN_SOURCE_TYPE_MAP
+
+    shared_keys = set(open_map) & set(scope_map)
+    assert "prompt" in shared_keys, (
+        "Expected both maps to define 'prompt' -- the documented divergence "
+        "this test pins no longer applies if either map dropped it."
+    )
+    for raw_source_type in shared_keys - {"prompt"}:
+        assert open_map[raw_source_type] == scope_map[raw_source_type], (
+            "_OPEN_SOURCE_TYPE_MAP and _SCOPE_SOURCE_TYPE_MAP disagree on "
+            f"{raw_source_type!r} outside the documented 'prompt' divergence."
+        )
+    assert open_map["prompt"] == "prompt"  # _open_library_item_by_id's dispatch key
+    assert scope_map["prompt"] == "prompts"  # the plural scope-toggle key

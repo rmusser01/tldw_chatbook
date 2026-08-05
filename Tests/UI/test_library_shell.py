@@ -1905,7 +1905,19 @@ async def test_library_shell_rail_search_submit_renders_every_result_row():
     some ancestor in the chain is actually scrollable.
     """
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
+    # Review round 2 (I1): seed a real note and media item -- the canned
+    # service below returns note-1/media-1 rows regardless of scope, but
+    # `from_values`'s D4 scope filter now checks the count-intersected
+    # `scope.selected_source_types`, which needs Notes/Media to actually
+    # have >0 items or their toggles (and evidence) would read as
+    # unavailable even though nothing was deselected. Arrangement only --
+    # every assertion below is unchanged.
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Tides research note", "id": "note-1"}],
+        media=[{"title": "Ocean survey transcript", "id": "media-1"}],
+    )
     service = _StaticLibraryRagSearchService(
         {
             "results": [
@@ -2063,7 +2075,17 @@ async def test_library_shell_rail_search_submit_renders_every_result_row_post_mo
     instead of a fresh ``compose()`` picking up already-set state.
     """
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
+    # Review round 2 (I1): see the sibling
+    # `test_library_shell_rail_search_submit_renders_every_result_row`'s
+    # comment -- Notes/Media need a real, non-zero count for the D4 scope
+    # filter (now checked against `scope.selected_source_types`) to keep
+    # showing these canned note-1/media-1 rows. Arrangement only.
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Tides research note", "id": "note-1"}],
+        media=[{"title": "Ocean survey transcript", "id": "media-1"}],
+    )
     service = _GatedLibraryRagSearchService(
         {
             "results": [
@@ -2142,7 +2164,17 @@ async def test_library_shell_search_run_button_renders_every_result_row():
     ``_refresh_library_rag_results_widgets`` DOM-mutation path.
     """
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
+    # Review round 2 (I1): see
+    # `test_library_shell_rail_search_submit_renders_every_result_row`'s
+    # comment -- Notes/Media need a real, non-zero count for the D4 scope
+    # filter (now checked against `scope.selected_source_types`) to keep
+    # showing these canned note-1/media-1 rows. Arrangement only.
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Tides research note", "id": "note-1"}],
+        media=[{"title": "Ocean survey transcript", "id": "media-1"}],
+    )
     service = _StaticLibraryRagSearchService(
         {
             "results": [
@@ -4321,6 +4353,71 @@ def test_library_rag_panel_state_scope_filter_empties_results_and_coverage_note(
     assert state.retrieval_status == "empty"
     assert state.coverage_note == ""
     assert state.use_in_console_action.enabled is False
+
+
+def test_library_rag_panel_state_scope_hides_a_row_whose_source_count_drops_to_zero():
+    """D4/I1 (review round 2): a source's LOCAL COUNT can drop to zero
+    without the user ever touching its toggle -- e.g. the note backing an
+    already-landed row gets deleted elsewhere in Library
+    (`_refresh_local_source_snapshot` recounts it to zero), and the Search
+    canvas is revisited without re-querying. The Sources toggle strip's
+    own marker is already count-intersected
+    (`LibraryRagScopeState.from_source_counts`) and would read "○ Notes
+    (0)" in that state -- the evidence list must follow that SAME signal,
+    or the toggle-vs-evidence lie D4 exists to close just gets a
+    different trigger (count drift instead of a toggle press). Filtering
+    against the caller's raw, pre-availability `selected_source_types`
+    (an earlier draft of this fix) would have left the stale Notes row
+    visible here, since `selected_source_types` itself never changes
+    below -- only `source_counts["notes"]` does.
+    """
+    raw_results = [
+        {
+            "document_title": "Note Evidence",
+            "snippet": "note snippet",
+            "source_id": "note-1",
+            "provenance": {"source_type": "note"},
+        },
+        {
+            "document_title": "Media Evidence",
+            "snippet": "media snippet",
+            "source_id": "media-1",
+            "provenance": {"source_type": "media"},
+        },
+    ]
+    selected = ("notes", "media")  # the user's deliberate selection: unchanged below
+
+    landed_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1, "media": 1},
+        query="evidence",
+        mode="search",
+        results=raw_results,
+        retrieval_status="ready",
+        selected_result_id="note-1",
+        selected_source_types=selected,
+    )
+    assert [row.title for row in landed_state.results] == [
+        "Note Evidence",
+        "Media Evidence",
+    ]
+    assert landed_state.selected_result is not None
+    assert landed_state.use_in_console_action.enabled is True
+
+    # The note backing "note-1" is deleted elsewhere in Library --
+    # `source_counts["notes"]` drops to zero. `selected_source_types` is
+    # the exact same tuple as above: the user never touched the toggle.
+    after_delete_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 0, "media": 1},
+        query="evidence",
+        mode="search",
+        results=raw_results,
+        retrieval_status="ready",
+        selected_result_id="note-1",
+        selected_source_types=selected,
+    )
+    assert [row.title for row in after_delete_state.results] == ["Media Evidence"]
+    assert after_delete_state.selected_result is None
+    assert after_delete_state.use_in_console_action.enabled is False
 
 
 @pytest.mark.asyncio
