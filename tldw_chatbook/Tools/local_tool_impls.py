@@ -1,0 +1,58 @@
+"""Sync core implementations for workspace-local agent tools.
+
+Plain functions, no async, no Textual, no event loop — callable from the
+agent runtime's worker thread via Agents/local_tool_provider.py. Every
+failure raises LocalToolError; the provider converts those (and any other
+exception) into ToolResult error strings — nothing raises across the
+provider boundary.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from tldw_chatbook.Utils.path_validation import validate_path
+
+MAX_LIST_ENTRIES = 200
+
+
+class LocalToolError(ValueError):
+    """Model-actionable failure from a local tool (path, not-found, …)."""
+
+
+def resolve_workspace_path(path: str, workspace_root: Path) -> Path:
+    """Resolve ``path`` against ``workspace_root``, confined to it.
+
+    Hidden components (``.github/``) are allowed under the root; anything
+    resolving outside it is refused. Raises LocalToolError.
+    """
+    try:
+        return validate_path(path, workspace_root, allow_hidden=True)
+    except ValueError as exc:
+        raise LocalToolError(
+            f"Path '{path}' is outside the workspace root ({workspace_root})"
+        ) from exc
+
+
+def list_directory(
+    path: str, *, workspace_root: Path, max_entries: int = MAX_LIST_ENTRIES
+) -> str:
+    """One-level listing of ``path``: ``name/`` for dirs, ``name`` for files.
+
+    Directories sort before files, each group case-insensitively by name.
+    Output is capped at ``max_entries`` with a trailing truncation notice.
+    Raises LocalToolError when ``path`` is not an existing directory.
+    """
+    root = resolve_workspace_path(path, workspace_root)
+    if not root.is_dir():
+        raise LocalToolError(f"not a directory: {path}")
+    entries = sorted(
+        root.iterdir(), key=lambda p: (p.is_file(), p.name.lower())
+    )
+    lines = [
+        f"{p.name}/" if p.is_dir() else p.name for p in entries[:max_entries]
+    ]
+    remaining = len(entries) - max_entries
+    if remaining > 0:
+        lines.append(f"… ({remaining} more entries, truncated)")
+    return "\n".join(lines)
