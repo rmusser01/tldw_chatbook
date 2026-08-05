@@ -647,6 +647,31 @@ automatically with a toast naming the reason. It never fires while a
 reply is actively being spoken, so a long answer is never cut off by the
 cost guard.
 
+**Turn detection: how the provider decides you have finished speaking.**
+Two modes, `realtime.turn_detection`:
+
+- **`semantic_vad`** (default) — the model decides from *what you said*
+  whether your turn is over. This is the default because the alternative's
+  provider defaults are aggressive: server VAD ends a turn after **200 ms**
+  of quiet at a fixed energy threshold, so in an ordinary room a
+  mid-sentence pause, a keystroke (barge-in here *is* a keypress, right
+  next to a live microphone), or a cough can each end your turn. Each
+  fragment is then transcribed on its own, and a speech model handed half a
+  syllable of keyboard noise reports words you never said. If your
+  transcripts show random or invented words rather than your question, this
+  is the setting to check first.
+- **`server_vad`** — silence-gated, and tunable. Choose it when you want
+  direct control of the gate: `realtime.vad_threshold` (0–1, how loud
+  counts as speech) and `realtime.vad_silence_ms` (how long a pause ends
+  the turn; raise it if your speech is being cut off mid-thought). Both are
+  optional — leave them unset to use the provider's own values. Both apply
+  to `server_vad` **only**: the API rejects them outright under
+  `semantic_vad`, so the app drops them in that mode rather than sending a
+  request that would fail.
+
+All three are editable in **Settings → Speech & TTS → Realtime engine**,
+where the two numbers are disabled unless server VAD is selected.
+
 **Barge-in.** The same two modes as the pipeline engine, controlled by the
 same `dictation.acoustic_barge_in` key: by default (speaker-safe) outbound
 microphone audio is gated client-side while a reply plays, and any
@@ -690,6 +715,9 @@ provider = "openai"           # the only supported value today
 # model = "gpt-realtime"      # optional override; OpenAI's current default
 # voice = "marin"             # optional; unset uses the provider's default voice
 idle_timeout_minutes = 5      # cost guard -- ends an unattended session
+turn_detection = "semantic_vad"  # or "server_vad"; see "Turn detection" above
+# vad_threshold = 0.6         # server_vad only; unset = provider default
+# vad_silence_ms = 700        # server_vad only; unset = provider default (200 ms)
 
 [dictation]
 # "auto" uses realtime iff realtime.enabled, "pipeline" forces the engine

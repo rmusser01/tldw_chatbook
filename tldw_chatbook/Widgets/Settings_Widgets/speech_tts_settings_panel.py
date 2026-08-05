@@ -36,6 +36,9 @@ from tldw_chatbook.Chat.console_voice_input import (
     realtime_enabled as _read_realtime_enabled,
     realtime_model as _read_realtime_model,
     realtime_provider as _read_realtime_provider,
+    realtime_turn_detection as _read_realtime_turn_detection,
+    realtime_vad_silence_ms as _read_realtime_vad_silence_ms,
+    realtime_vad_threshold as _read_realtime_vad_threshold,
     realtime_voice as _read_realtime_voice,
 )
 from tldw_chatbook.config import get_cli_setting, save_settings_to_cli_config
@@ -135,6 +138,10 @@ def _realtime_provider_options(configured: str) -> list[tuple[str, str]]:
     if not value or any(value == option for _label, option in _REALTIME_PROVIDER_OPTIONS):
         return list(_REALTIME_PROVIDER_OPTIONS)
     return [*_REALTIME_PROVIDER_OPTIONS, (f"{value} (not supported)", value)]
+_REALTIME_TURN_DETECTION_OPTIONS = [
+    ("Semantic (model decides when you finished)", "semantic_vad"),
+    ("Server VAD (silence-gated)", "server_vad"),
+]
 _REALTIME_HANDSFREE_ENGINE_OPTIONS = [
     ("Auto (realtime when enabled)", "auto"),
     ("Pipeline (record / transcribe / reply / speak)", "pipeline"),
@@ -161,8 +168,11 @@ class _RealtimeSettingsDraft:
     voice: str
     idle_timeout_minutes: str
     handsfree_engine: str
+    turn_detection: str
+    vad_threshold: str
+    vad_silence_ms: str
 
-    def snapshot(self) -> tuple[bool, str, str, str, str, str]:
+    def snapshot(self) -> tuple[bool, str, str, str, str, str, str, str, str]:
         return (
             self.enabled,
             self.provider,
@@ -170,6 +180,9 @@ class _RealtimeSettingsDraft:
             self.voice,
             self.idle_timeout_minutes,
             self.handsfree_engine,
+            self.turn_detection,
+            self.vad_threshold,
+            self.vad_silence_ms,
         )
 
 
@@ -197,7 +210,22 @@ def _read_realtime_settings_draft() -> _RealtimeSettingsDraft:
             )
         ),
         handsfree_engine=_read_handsfree_engine(),
+        turn_detection=_read_realtime_turn_detection(),
+        # Empty string means "unset" all the way through: the readers
+        # return None for an unset knob, and Save deletes the key rather
+        # than writing a number the user never chose.
+        vad_threshold=_format_optional_number(_read_realtime_vad_threshold()),
+        vad_silence_ms=_format_optional_number(_read_realtime_vad_silence_ms()),
     )
+
+
+def _format_optional_number(value: float | int | None) -> str:
+    """Render an optional numeric setting for an Input, blank when unset."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
 
 
 class _CredentialEditorModal(ModalScreen[str | None]):
@@ -1345,6 +1373,55 @@ class SpeechTTSSettingsPanel(Vertical):
                 error=self._error("realtime", "idle_timeout_minutes"),
             )
             yield self._row(
+                "Turn detection",
+                Select(
+                    _REALTIME_TURN_DETECTION_OPTIONS,
+                    value=draft.turn_detection,
+                    id="settings-speech-realtime-turn-detection",
+                    allow_blank=False,
+                    compact=True,
+                    classes="settings-compact-select settings-speech-draft-field",
+                ),
+                classes="settings-select-row",
+                error=self._error("realtime", "turn_detection"),
+            )
+            yield Static(
+                "Semantic turn detection ends your turn from what you said, "
+                "not from how long you paused. Server VAD is silence-gated: "
+                "in a room with keyboard clatter or background noise it can "
+                "end a turn mid-sentence, and the fragments transcribe as "
+                "words you never said. Pick server VAD only if you want the "
+                "two numbers below.",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            yield self._row(
+                "VAD threshold (0-1, server VAD only)",
+                Input(
+                    value=draft.vad_threshold,
+                    id="settings-speech-realtime-vad-threshold",
+                    placeholder="Provider default",
+                    disabled=draft.turn_detection != "server_vad",
+                    classes=(
+                        "settings-compact-input settings-speech-draft-field"
+                    ),
+                ),
+                error=self._error("realtime", "vad_threshold"),
+            )
+            yield self._row(
+                "End-of-turn silence (ms, server VAD only)",
+                Input(
+                    value=draft.vad_silence_ms,
+                    id="settings-speech-realtime-vad-silence-ms",
+                    placeholder="Provider default",
+                    disabled=draft.turn_detection != "server_vad",
+                    classes=(
+                        "settings-compact-input settings-speech-draft-field"
+                    ),
+                ),
+                error=self._error("realtime", "vad_silence_ms"),
+            )
+            yield self._row(
                 "Hands-free engine",
                 Select(
                     _REALTIME_HANDSFREE_ENGINE_OPTIONS,
@@ -1739,6 +1816,22 @@ class SpeechTTSSettingsPanel(Vertical):
         self._realtime_draft.idle_timeout_minutes = idle_widget.value
         if isinstance(engine_widget.value, str):
             self._realtime_draft.handsfree_engine = engine_widget.value
+        try:
+            mode_widget = self.query_one(
+                "#settings-speech-realtime-turn-detection", Select
+            )
+            threshold_widget = self.query_one(
+                "#settings-speech-realtime-vad-threshold", Input
+            )
+            silence_widget = self.query_one(
+                "#settings-speech-realtime-vad-silence-ms", Input
+            )
+        except QueryError:
+            return
+        if isinstance(mode_widget.value, str):
+            self._realtime_draft.turn_detection = mode_widget.value
+        self._realtime_draft.vad_threshold = threshold_widget.value
+        self._realtime_draft.vad_silence_ms = silence_widget.value
 
     def has_unsaved_changes(self) -> bool:
         """Return whether any non-secret global value differs from its baseline."""
@@ -1975,18 +2068,101 @@ class SpeechTTSSettingsPanel(Vertical):
             "provider": self._realtime_draft.provider,
             "model": model,
             "idle_timeout_minutes": idle_minutes,
+            "turn_detection": self._realtime_draft.turn_detection,
         }
-        delete_keys: dict[str, tuple[str, ...]] = {}
+        removed: list[str] = []
         voice = self._realtime_draft.voice.strip()
         if voice:
             realtime_section["voice"] = voice
         else:
-            delete_keys["realtime"] = ("voice",)
+            removed.append("voice")
+
+        # The provider REJECTS these under semantic turn detection
+        # (`unknown_parameter`, live-confirmed), so semantic mode deletes
+        # them outright rather than leaving stale numbers in config for a
+        # later reader to hand over.
+        if self._realtime_draft.turn_detection == "server_vad":
+            threshold = self._validated_optional_number(
+                self._realtime_draft.vad_threshold,
+                field="vad_threshold",
+                message="VAD threshold must be a number between 0 and 1.",
+                cast=float,
+                low=0.0,
+                high=1.0,
+            )
+            silence = self._validated_optional_number(
+                self._realtime_draft.vad_silence_ms,
+                field="vad_silence_ms",
+                message="End-of-turn silence must be a positive whole "
+                "number of milliseconds.",
+                cast=int,
+                low=1,
+                high=None,
+            )
+            if threshold is None:
+                removed.append("vad_threshold")
+            else:
+                realtime_section["vad_threshold"] = threshold
+            if silence is None:
+                removed.append("vad_silence_ms")
+            else:
+                realtime_section["vad_silence_ms"] = silence
+        else:
+            removed.extend(("vad_threshold", "vad_silence_ms"))
+        delete_keys: dict[str, tuple[str, ...]] = (
+            {"realtime": tuple(removed)} if removed else {}
+        )
         dictation_section = {"handsfree_engine": self._realtime_draft.handsfree_engine}
         return _RealtimeSavePayload(
             section_values={"realtime": realtime_section, "dictation": dictation_section},
             delete_keys=delete_keys,
         )
+
+    @staticmethod
+    def _validated_optional_number(
+        raw: str,
+        *,
+        field: str,
+        message: str,
+        cast: Any,
+        low: float,
+        high: float | None,
+    ) -> Any:
+        """Validate one optional numeric knob; blank means "unset".
+
+        Raises the same `GlobalSpeechTTSValidationError` the rest of this
+        panel uses, so a bad value refuses the WHOLE Save with an inline
+        error rather than being silently dropped -- a silently dropped
+        threshold reads to the user as "the setting does nothing".
+        """
+        text = (raw or "").strip()
+        if not text:
+            return None
+        try:
+            value = cast(text)
+        except (TypeError, ValueError):
+            raise GlobalSpeechTTSValidationError("realtime", field, message)
+        if value < low or (high is not None and value > high):
+            raise GlobalSpeechTTSValidationError("realtime", field, message)
+        return value
+
+    @on(Select.Changed, "#settings-speech-realtime-turn-detection")
+    def handle_realtime_turn_detection_changed(self, event: Select.Changed) -> None:
+        """Enable the server_vad-only numbers only in server_vad mode.
+
+        Disabled rather than hidden: the values stay visible, so a user
+        who switches modes can see what they had configured instead of
+        wondering where it went.
+        """
+        server_vad = event.value == "server_vad"
+        for widget_id in (
+            "#settings-speech-realtime-vad-threshold",
+            "#settings-speech-realtime-vad-silence-ms",
+        ):
+            try:
+                self.query_one(widget_id, Input).disabled = not server_vad
+            except QueryError:
+                continue
 
     @staticmethod
     def _persist_realtime_draft(payload: _RealtimeSavePayload) -> bool:

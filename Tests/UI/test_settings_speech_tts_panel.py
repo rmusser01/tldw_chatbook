@@ -2039,6 +2039,85 @@ async def test_realtime_block_renders_with_config_defaults() -> None:
 
 
 @pytest.mark.asyncio
+async def test_realtime_turn_detection_fields_render_and_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gate round 5: turn detection is the knob that stops speech being
+    chopped into fragments, so it belongs in Settings and not only in a
+    TOML file. The server_vad-only numbers are disabled while semantic
+    mode is selected -- the provider REJECTS them there outright."""
+    calls: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "save_settings_to_cli_config",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or True,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+    async with app.run_test(size=(150, 60)) as pilot:
+        await _settle(pilot)
+        mode = app.query_one("#settings-speech-realtime-turn-detection", Select)
+        threshold = app.query_one("#settings-speech-realtime-vad-threshold", Input)
+        silence = app.query_one("#settings-speech-realtime-vad-silence-ms", Input)
+
+        assert mode.value == "semantic_vad"
+        assert threshold.disabled is True
+        assert silence.disabled is True
+
+        mode.value = "server_vad"
+        await pilot.pause()
+        assert threshold.disabled is False
+        assert silence.disabled is False
+
+        threshold.value = "0.6"
+        silence.value = "700"
+        await pilot.pause()
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        (section_values,), _kwargs = calls[0]
+        assert section_values["realtime"]["turn_detection"] == "server_vad"
+        assert section_values["realtime"]["vad_threshold"] == 0.6
+        assert section_values["realtime"]["vad_silence_ms"] == 700
+
+
+@pytest.mark.asyncio
+async def test_realtime_semantic_mode_deletes_the_server_vad_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Switching back to semantic must not leave stale server_vad numbers
+    in config for a later reader to hand the provider."""
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module, "_read_realtime_turn_detection", lambda: "server_vad"
+    )
+    calls: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "save_settings_to_cli_config",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or True,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+    async with app.run_test(size=(150, 60)) as pilot:
+        await _settle(pilot)
+        app.query_one(
+            "#settings-speech-realtime-turn-detection", Select
+        ).value = "semantic_vad"
+        await pilot.pause()
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        (section_values,), kwargs = calls[0]
+        assert section_values["realtime"]["turn_detection"] == "semantic_vad"
+        assert "vad_threshold" not in section_values["realtime"]
+        assert "vad_silence_ms" not in section_values["realtime"]
+        assert set(kwargs["delete_keys"]["realtime"]) >= {
+            "vad_threshold",
+            "vad_silence_ms",
+        }
+
+
+@pytest.mark.asyncio
 async def test_realtime_unsupported_configured_provider_is_not_silently_rewritten(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2171,10 +2250,13 @@ async def test_realtime_toggle_and_save_writes_exact_keys_through_shared_helper(
                 "model": "gpt-realtime-mini",
                 "voice": "marin",
                 "idle_timeout_minutes": 8,
+                "turn_detection": "semantic_vad",
             },
             "dictation": {"handsfree_engine": "realtime"},
         }
-        assert kwargs["delete_keys"] == {}
+        assert kwargs["delete_keys"] == {
+            "realtime": ("vad_threshold", "vad_silence_ms")
+        }
         assert "Saved" in str(
             app.query_one("#settings-speech-save-result", Static).renderable
         )
@@ -2203,7 +2285,12 @@ async def test_realtime_blank_voice_deletes_key_instead_of_empty_string(
         assert len(calls) == 1
         (section_values,), kwargs = calls[0]
         assert "voice" not in section_values["realtime"]
-        assert kwargs["delete_keys"] == {"realtime": ("voice",)}
+        # Semantic turn detection (the default) also deletes the two
+        # server_vad-only knobs: the provider rejects them in that mode,
+        # so leaving them in config would arm a future rejection.
+        assert kwargs["delete_keys"] == {
+            "realtime": ("voice", "vad_threshold", "vad_silence_ms")
+        }
 
 
 @pytest.mark.asyncio
