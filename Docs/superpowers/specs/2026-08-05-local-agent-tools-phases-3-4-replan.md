@@ -19,7 +19,8 @@ All tools register as `LocalToolSpec`s in `Agents/local_tool_provider.py` under 
 Port tldw_server's `web_fetch_module.py` + `web_tool_base.py` + `web_rate_limit.py` + `web_cache.py` (~900 lines) into `Tools/web_tool_impls.py`, adapted to the sync-core shape:
 
 - Keep: redirect cap (5), 30 s timeout, byte caps (1 MB default / 5 MB hard max) with explicit `truncated` flags, per-domain rate limiting, response caching, structured error reasons.
-- Keep especially: the SSRF/egress guard (`Web_Scraping.outbound_policy` equivalent) — a scratch fetcher without it is a SSRF hole. If `outbound_policy` doesn't port cleanly, implement its checks (scheme allowlist, private/loopback IP refusal, redirect re-validation) directly.
+- **SSRF guard (verified gap):** chatbook's `Web_Scraping/` has NO `outbound_policy` module, and tldw_server's `outbound_policy.py` pulls a dependency chain (`Security.egress`, `filters.RobotsFilter`, `core.config`, `Metrics`) that makes wholesale porting unattractive. Plan: write a focused guard directly (~100 lines, stdlib `ipaddress`/`socket`) — scheme allowlist (http/https only), DNS-resolve and refuse private/loopback/link-local/reserved IPs, re-validate on EVERY redirect hop — using tldw_server's implementation as the requirements checklist. This is the primary plan, not a fallback.
+- Cache decision (binding): in-memory TTL cache only, no disk cache (YAGNI; revisit if profiling says otherwise).
 - Replace: tldw_server internals with chatbook equivalents; HTML→text via `trafilatura` as the original spec decided.
 - Result discipline: byte-fitted per ADR-030; `truncated` flag semantics folded into the text result.
 
@@ -42,6 +43,7 @@ Port tldw_server's `git_module.py` (~2,100 lines) into `Tools/git_tool_impls.py`
 - Read-only only. Subprocess `git` with a subcommand allowlist, 30 s timeout, 1 MB output cap, workspace-root confinement (repo discovery confined to the workspace root; bare `git -C <root>`).
 - These are the first model-invocable tools that spawn a process — the ADR-033 boundary: fixed argv arrays (no shell interpolation), allowlisted subcommands/flags, cwd confined, timeouts, output caps. **Risk tags (binding):** `git_*` tools carry NO risk tag today — the existing `process` tag in `HIGH_RISK_TAGS` (`MCP/permission_store.py:69`, already `{"mutates", "process"}`) is deliberately not applied to this read-only allowlisted set; the rationale (why read-only git doesn't floor to ask while still being process-spawning) is documented in ADR-033. The `process` tag WOULD apply if the allowlist ever expands past read-only subcommands.
 - Note for planning: `git_module.py` is async (asyncio subprocess throughout) — the port requires an async→sync adaptation to the sync-core shape, as with web_fetch.
+- `git` binary dependency: tools require `git` on PATH — add an availability check returning a graceful tool result ("git is not available on this system") rather than raising; tests skip when git is missing.
 - tldw_server's only local deps (`tool_observability`, and the `app.services.mcp_hub_workspace_root_resolver` service module) are thin — inline/shim them; verify the resolver shims cleanly against chatbook's `[console] workspace_root` config during planning.
 
 ### 2.6 `web_research` — subagent/skill, NOT a tool
@@ -53,6 +55,8 @@ Port tldw_server's `git_module.py` (~2,100 lines) into `Tools/git_tool_impls.py`
 ### 3.1 MCP server exposure (as originally specced, expanded set)
 
 Expose the full local tool set (fs_* + web_* + todo_write + git_* + fs_patch) through `MCP/server.py` backed by the same core modules, giving external MCP clients parity. Adopt from tldw_server: structured error reasons in tool results, and the domain-grouped catalog presentation. Naming stays `fs_*`/`git_*` snake_case (ADR-032); tldw_server's dotted convention is noted as the alternative and rejected for consistency with the chatbook registry.
+
+**External-caller permission policy (binding, user decision):** no special-casing. Exposed tools resolve through the same permission store under `local:__local__` exactly as Console calls do. Because external MCP calls carry no Console approval callback, an `ask` state fails closed to the pinned refusal — so mutates-tagged tools are effectively unusable externally until an operator sets them to `allow` in the store (via the MCP workbench UI). This is the desired posture: external writes are impossible by default and deliberately grantable, with no second permission system.
 
 ### 3.2 Shell — adopt the virtual-CLI model (design only)
 
@@ -78,12 +82,15 @@ Expose the full local tool set (fs_* + web_* + todo_write + git_* + fs_patch) th
 
 ## 5. Phasing and task breakdown
 
-- **Phase 3a:** web_fetch port + web_search migration + todo_write (research cluster)
-- **Phase 3b:** fs_patch + git tools (workspace cluster, needs ADR-033 first)
+- **Phase 3a:** web_fetch port + web_search migration + todo_write (research cluster). Includes a one-line discovery-UX addition: `compose_agent_system_prompt` gains a hint that more tools are findable via `find_tools`/`load_tools` (at ~15 catalog tools, direct disclosure is gone and the model must be told discovery exists).
+- **Phase 3b-i:** fs_patch (small, self-contained port) — its own plan.
+- **Phase 3b-ii:** git tools (~2,100 async lines → sync; needs ADR-033 first) — its own plan. The fs_patch/git split is deliberate: very different sizes and risk profiles.
 - **Phase 3c:** web-research skill
 - **Phase 4:** MCP exposure + ADR-033 shell/permission design sections
 
 Each phase gets its own plan + backlog task, per the established pipeline.
+
+**Attribution hygiene (binding):** tldw_server is GPL-3.0-only, chatbook AGPLv3+ — same author, and the GPLv3→AGPLv3 combination is permitted (§13), so this is legal; but every ported file carries a header comment naming the source repo, source file path, and the exact tldw_server commit SHA it was ported from, so provenance is clear and future syncs are possible.
 
 ## 6. Explicit non-goals (updated)
 
