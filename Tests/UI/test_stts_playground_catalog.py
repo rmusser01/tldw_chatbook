@@ -306,7 +306,7 @@ def test_legacy_provider_preset_adopts_as_unverified_without_catalog(
     preset = TTSPlaygroundSelectionPreset(
         provider_id=provider_id,
         model_id="profile/model",
-        voice_id=None,
+        voice_id="profile/voice",
         response_format=PROFILE_PROVIDER_FORMATS[provider_id][0],
         speed=1.0,
         options={},
@@ -328,7 +328,7 @@ def test_legacy_provider_preset_already_unavailable_is_not_upgraded_to_unverifie
     preset = TTSPlaygroundSelectionPreset(
         provider_id="openai",
         model_id="profile/model",
-        voice_id=None,
+        voice_id="profile/voice",
         response_format="mp3",
         speed=1.0,
         options={},

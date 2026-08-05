@@ -155,7 +155,7 @@ def test_portable_profile_value_accepts_legacy_provider_selection() -> None:
             display_name="Legacy voice",
             provider_id="openai",
             model_id="tts-1",
-            voice_id=None,
+            voice_id="alloy",
             response_format="mp3",
             speed=1.0,
             options={},
@@ -179,7 +179,7 @@ def test_portable_profile_value_rejects_hostile_provider() -> None:
             display_name="Hostile voice",
             provider_id="openai",
             model_id="tts-1",
-            voice_id=None,
+            voice_id="alloy",
             response_format="mp3",
             speed=1.0,
             options={},
@@ -246,14 +246,49 @@ def test_malformed_known_payload_is_rejected_without_echoing_values(
     assert "secret" not in repr(result)
 
 
+@pytest.mark.parametrize(
+    "provider_id",
+    sorted(("openai", "elevenlabs", "kokoro", "chatterbox", "higgs", "alltalk")),
+)
+def test_null_voice_legacy_attachment_decodes_invalid(provider_id: str) -> None:
+    """A voiceless legacy card must never yield an assignable profile.
+
+    Task 6c auto-assigns whatever this decodes as VALID, so a null voice must
+    be refused here rather than becoming an assigned, unspeakable profile.
+    """
+
+    portability = _portability_module()
+    payload = _valid_payload(
+        provider_id=provider_id,
+        response_format="mp3",
+        voice_id=None,
+    )
+
+    result = portability.decode_portable_profile(payload)
+
+    assert result.status == "invalid"
+    assert result.profile is None
+    assert result.warning_code == "invalid_attachment"
+
+
+def test_null_voice_audio_cpp_attachment_still_decodes_valid() -> None:
+    portability = _portability_module()
+
+    result = portability.decode_portable_profile(_valid_payload(voice_id=None))
+
+    assert result.status == "valid"
+    assert result.profile is not None
+    assert result.profile.draft.voice_id is None
+
+
 def test_size_and_depth_are_checked_before_skipping_an_unknown_provider() -> None:
     portability = _portability_module()
     oversized = _valid_payload(
-        provider_id="openai",
+        provider_id="future_tts",
         options={"blob": "x" * (16 * 1024)},
     )
     too_deep = _valid_payload(
-        provider_id="openai",
+        provider_id="future_tts",
         options={"a": {"b": {"c": {"d": {}}}}},
     )
 

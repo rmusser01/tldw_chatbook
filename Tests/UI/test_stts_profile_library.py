@@ -1539,6 +1539,81 @@ async def test_save_result_blank_name_uses_name_specific_not_saved_copy() -> Non
         )
 
 
+@pytest.mark.asyncio
+async def test_profile_editor_refuses_a_cleared_voice_for_a_legacy_provider() -> None:
+    """Clearing "Exact voice" on a legacy profile must not save silently.
+
+    Legacy providers cannot speak without an exact voice, so the profile
+    domain refuses the shape; the modal must surface its existing validation
+    copy and keep the dialog open rather than dismissing with a draft.
+    """
+
+    legacy = replace(
+        _profile(0),
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+        response_format="mp3",
+    )
+    loaded = LoadedTTSProfile(repository_generation=11, profile=legacy)
+    modal = profile_library_module.TTSProfileEditorModal(
+        loaded,
+        assignment_count=1,
+        mode="edit",
+    )
+    results: list[TTSProfileDraft | None] = []
+
+    class _ModalHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("host")
+
+    app = _ModalHost()
+    async with app.run_test(size=(100, 36)) as pilot:
+        app.push_screen(modal, results.append)
+        await pilot.pause()
+
+        voice_input = modal.query_one("#stts-profile-editor-voice", Input)
+        assert voice_input.placeholder == "Required"
+        voice_input.value = ""
+        await pilot.click("#stts-profile-editor-save")
+        await pilot.pause()
+
+        assert results == []
+        assert modal.is_running
+        assert str(modal.query_one("#stts-profile-editor-error", Static).render()) == (
+            "Review the profile name, model, and voice. Exact values were not saved."
+        )
+
+
+@pytest.mark.asyncio
+async def test_profile_editor_still_accepts_a_cleared_voice_for_audio_cpp() -> None:
+    loaded = LoadedTTSProfile(repository_generation=11, profile=_profile(0))
+    modal = profile_library_module.TTSProfileEditorModal(
+        loaded,
+        assignment_count=1,
+        mode="edit",
+    )
+    results: list[TTSProfileDraft | None] = []
+
+    class _ModalHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("host")
+
+    app = _ModalHost()
+    async with app.run_test(size=(100, 36)) as pilot:
+        app.push_screen(modal, results.append)
+        await pilot.pause()
+
+        voice_input = modal.query_one("#stts-profile-editor-voice", Input)
+        assert voice_input.placeholder == "Server default"
+        voice_input.value = ""
+        await pilot.click("#stts-profile-editor-save")
+        await _wait_until(pilot, lambda: len(results) == 1)
+
+    assert results[0] is not None
+    assert results[0].voice_id is None
+
+
 @pytest.mark.parametrize("mode", ["edit", "duplicate"])
 @pytest.mark.asyncio
 async def test_profile_editor_modal_controls_fit_at_80x24(mode: str) -> None:

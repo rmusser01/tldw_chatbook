@@ -72,6 +72,22 @@ PROFILE_PROVIDER_FORMATS: Mapping[str, tuple[str, ...]] = MappingProxyType(
     }
 )
 PROFILE_PROVIDER_IDS: frozenset[str] = frozenset(PROFILE_PROVIDER_FORMATS)
+#: Whether a provider's profile must name an exact voice.
+#:
+#: audio.cpp genuinely supports a server-default voice: `_PROVIDER_FALLBACKS`
+#: in `TTS/effective_settings.py` marks it `server_default_voice=True` and its
+#: catalog carries `omit_voice_uses_server_default`. The six legacy-bridge
+#: providers do not: `effective_settings._resolve_voice` refuses their
+#: `server_default` voice mode and `request_admission._legacy_request` raises
+#: "Legacy TTS providers require an exact voice". A voiceless legacy profile
+#: would therefore construct and assign but fail every speak attempt, so the
+#: profile domain refuses to hold that shape at all.
+PROFILE_PROVIDER_REQUIRES_EXACT_VOICE: Mapping[str, bool] = MappingProxyType(
+    {
+        provider_id: provider_id != "audio_cpp"
+        for provider_id in PROFILE_PROVIDER_FORMATS
+    }
+)
 
 
 class ProfileRepositoryState(StrEnum):
@@ -259,6 +275,7 @@ def canonical_json_options(options: JsonOptions) -> str:
 
 def _validate_provider_contract(
     provider_id: str,
+    voice_id: str | None,
     response_format: str,
     speed: float,
     options: FrozenJsonOptions,
@@ -268,6 +285,8 @@ def _validate_provider_contract(
         raise ProfileValidationError("provider_id")
     if response_format not in formats:
         raise ProfileValidationError("response_format")
+    if voice_id is None and PROFILE_PROVIDER_REQUIRES_EXACT_VOICE[provider_id]:
+        raise ProfileValidationError("voice_id")
     if provider_id == "audio_cpp":
         if speed != AUDIO_CPP_PROFILE_SPEED or bool(options):
             raise ProfileValidationError("audio_cpp")
@@ -326,7 +345,9 @@ class TTSProfileDraft:
         response_format = _validate_response_format(self.response_format)
         speed = _validate_speed(self.speed)
         options = _freeze_options(self.options)
-        _validate_provider_contract(provider_id, response_format, speed, options)
+        _validate_provider_contract(
+            provider_id, voice_id, response_format, speed, options
+        )
         object.__setattr__(self, "display_name", display_name)
         object.__setattr__(self, "provider_id", provider_id)
         object.__setattr__(self, "model_id", model_id)
@@ -376,7 +397,9 @@ class TTSGenerationProfile:
         response_format = _validate_response_format(self.response_format)
         speed = _validate_speed(self.speed)
         options = _freeze_options(self.options)
-        _validate_provider_contract(provider_id, response_format, speed, options)
+        _validate_provider_contract(
+            provider_id, voice_id, response_format, speed, options
+        )
         revision = _validate_revision(self.revision)
         created_at = _validate_utc_timestamp(self.created_at, "created_at")
         updated_at = _validate_utc_timestamp(self.updated_at, "updated_at")

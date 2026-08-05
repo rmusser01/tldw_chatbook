@@ -13,6 +13,7 @@ from tldw_chatbook.TTS.profile_types import (
     AUDIO_CPP_PROFILE_SPEED,
     PROFILE_PROVIDER_FORMATS,
     PROFILE_PROVIDER_IDS,
+    PROFILE_PROVIDER_REQUIRES_EXACT_VOICE,
 )
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 
@@ -62,9 +63,11 @@ class TTSRequestedSelectionSnapshot:
 
     Covers all seven providers the profile system recognizes (`audio_cpp`
     plus the six legacy-bridge providers), not native-only: `audio_cpp`
-    keeps its exact WAV / speed-1.0 contract; legacy providers accept any
-    format in their catalog set and any speed in [0.25, 4.0], matching
-    `profile_types.PROFILE_PROVIDER_FORMATS` and
+    keeps its exact WAV / speed-1.0 contract and its server-default voice;
+    legacy providers accept any format in their catalog set and any speed in
+    [0.25, 4.0] but must name an exact voice, matching
+    `profile_types.PROFILE_PROVIDER_FORMATS`,
+    `profile_types.PROFILE_PROVIDER_REQUIRES_EXACT_VOICE`, and
     `profile_service._selection_is_profile_safe`.
     """
 
@@ -82,6 +85,11 @@ class TTSRequestedSelectionSnapshot:
             raise ValueError("Requested selection requires a recognized provider")
         _require_exact_identifier("model_id", self.model_id)
         _require_exact_identifier("voice_id", self.voice_id, nullable=True)
+        if (
+            self.voice_id is None
+            and PROFILE_PROVIDER_REQUIRES_EXACT_VOICE[self.provider_id]
+        ):
+            raise ValueError("Requested selection requires an exact voice")
         _require_exact_identifier("response_format", self.response_format)
         if self.response_format not in PROFILE_PROVIDER_FORMATS[self.provider_id]:
             raise ValueError(

@@ -56,7 +56,9 @@ def _profile(**overrides: object) -> TTSGenerationProfile:
         "normalized_name": "profile",
         "provider_id": "openai",
         "model_id": "tts-1",
-        "voice_id": None,
+        # Legacy providers require an exact voice (`_validate_provider_contract`),
+        # so the shared persisted fixture cannot default to a server default.
+        "voice_id": "alloy",
         "response_format": "mp3",
         "speed": 1.0,
         "options": {},
@@ -157,7 +159,14 @@ def test_exact_model_and_voice_identifiers_remain_opaque() -> None:
 
     assert draft.model_id == " model/v1 "
     assert draft.voice_id == " M1 "
-    assert _draft(voice_id=None).voice_id is None
+    assert (
+        _draft(
+            provider_id="audio_cpp",
+            response_format="wav",
+            voice_id=None,
+        ).voice_id
+        is None
+    )
 
 
 def test_model_and_voice_subclasses_never_leak_overridable_text_behavior() -> None:
@@ -860,6 +869,53 @@ def test_legacy_provider_rejects_non_empty_options_this_slice() -> None:
         ProfileValidationError, match=r"^TTS profile validation failed: options$"
     ):
         _draft(provider_id="elevenlabs", options={"stability": 0.5})
+
+
+@pytest.mark.parametrize(
+    "provider_id",
+    sorted(("openai", "elevenlabs", "kokoro", "chatterbox", "higgs", "alltalk")),
+)
+def test_legacy_provider_draft_requires_an_exact_voice(provider_id: str) -> None:
+    """A legacy profile without a voice cannot speak, so it cannot exist.
+
+    `effective_settings._resolve_voice` and `request_admission._legacy_request`
+    both hard-require an exact voice for these six providers, so a null-voice
+    profile would construct, assign, and then fail every speak attempt.
+    """
+
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: voice_id$"
+    ):
+        _draft(provider_id=provider_id, voice_id=None)
+
+
+def test_legacy_persisted_profile_requires_an_exact_voice() -> None:
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: voice_id$"
+    ):
+        _profile(provider_id="elevenlabs", voice_id=None)
+
+
+def test_audio_cpp_still_accepts_a_server_default_voice() -> None:
+    draft = _draft(provider_id="audio_cpp", response_format="wav", voice_id=None)
+    profile = _profile(
+        provider_id="audio_cpp",
+        response_format="wav",
+        voice_id=None,
+    )
+
+    assert draft.voice_id is None
+    assert profile.voice_id is None
+
+
+def test_provider_contract_records_which_providers_require_an_exact_voice() -> None:
+    table = profile_types_module.PROFILE_PROVIDER_REQUIRES_EXACT_VOICE
+
+    assert set(table) == set(profile_types_module.PROFILE_PROVIDER_FORMATS)
+    assert table["audio_cpp"] is False
+    assert all(table[provider_id] is True for provider_id in set(table) - {"audio_cpp"})
+    with pytest.raises(TypeError):
+        table["audio_cpp"] = True  # type: ignore[index]
 
 
 def test_provider_table_matches_legacy_catalogs() -> None:

@@ -1146,6 +1146,7 @@ def test_profile_wrappers_reject_forged_mutable_options_safely(
     forged = _forged_profile(
         _profile(
             provider_id="openai",
+            voice_id="alloy",
             response_format="flac",
             speed=1.5,
         ),
@@ -1296,6 +1297,7 @@ async def test_list_profiles_rejects_forged_mutable_profile_safely() -> None:
             _forged_profile(
                 _profile(
                     provider_id="openai",
+                    voice_id="alloy",
                     response_format="flac",
                     speed=1.5,
                 ),
@@ -1459,11 +1461,12 @@ async def test_availability_applies_exact_allowlist_before_capability_lookup() -
         model_id="legacy-model",
         voice_id="legacy-voice",
     )
-    legacy_without_voice = _profile(
+    legacy_other_format = _profile(
         profile_id=UUID(int=4),
         display_name="Legacy format",
         provider_id="openai",
         model_id="legacy-format",
+        voice_id="legacy-voice",
         response_format="mp3",
     )
     legacy_custom_speed = _profile(
@@ -1471,6 +1474,7 @@ async def test_availability_applies_exact_allowlist_before_capability_lookup() -
         display_name="Legacy speed",
         provider_id="openai",
         model_id="legacy-speed",
+        voice_id="legacy-voice",
         speed=1.25,
     )
     voice_result = TTSVoiceDiscoveryResult(
@@ -1493,7 +1497,7 @@ async def test_availability_applies_exact_allowlist_before_capability_lookup() -
             supported,
             default_voice,
             legacy_with_voice,
-            legacy_without_voice,
+            legacy_other_format,
             legacy_custom_speed,
         ),
         total=5,
@@ -1706,6 +1710,7 @@ async def test_availability_all_legacy_page_skips_native_capability_call() -> No
         display_name="ElevenLabs voice",
         provider_id="elevenlabs",
         model_id="eleven_multilingual_v2",
+        voice_id="rachel",
         response_format="mp3",
     )
     tts_service = _FakeTTSService()
