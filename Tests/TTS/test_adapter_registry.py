@@ -25,6 +25,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRegistryClosedError,
     UnknownTTSProviderError,
 )
+from tldw_chatbook.TTS.legacy_bridge import LEGACY_PROVIDER_IDS, legacy_provider_specs
 
 
 @pytest.mark.asyncio
@@ -1030,3 +1031,25 @@ async def test_reconfigure_is_rejected_after_shutdown_begins() -> None:
 
     await lease.release()
     await close
+
+
+@pytest.mark.asyncio
+async def test_registry_serves_configuration_revision_for_legacy_providers() -> None:
+    """Characterize the REAL adapter registry, not a test fake.
+
+    Slice 1's ``create_from_artifact`` legacy acceptance path (Task 2c) rests
+    on the assumption that every legacy provider registered through
+    ``legacy_provider_specs`` exposes a ``configuration_revision``. This pins
+    that assumption against the production registry construction rather than
+    ``FakeAdapterFactory``.
+    """
+    registry = TTSAdapterRegistry(
+        specs=legacy_provider_specs({}),
+        aliases={},
+    )
+
+    for provider_id in LEGACY_PROVIDER_IDS:
+        revision = registry.configuration_revision(provider_id)
+        assert type(revision) is int and revision >= 0
+
+    await registry.close()

@@ -10,10 +10,16 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderCatalog,
     TTSProviderDescriptor,
 )
+from tldw_chatbook.TTS.profile_service import TTSPlaygroundSelectionPreset
+from tldw_chatbook.TTS.profile_types import (
+    PROFILE_PROVIDER_FORMATS,
+    PROFILE_PROVIDER_IDS,
+)
 from tldw_chatbook.UI.stts_playground_catalog import (
     SERVER_DEFAULT_VOICE_ID,
     CatalogRequestToken,
     controls_from_catalog,
+    profile_availability_from_catalog,
     provider_options,
     voice_id_for_request,
 )
@@ -281,3 +287,52 @@ def test_catalog_request_token_matches_every_revision_dimension() -> None:
         changed = dict(current)
         changed[field] = replacement_value
         assert token.matches(**changed) is False
+
+
+@pytest.mark.parametrize(
+    "provider_id",
+    sorted(PROFILE_PROVIDER_IDS - {"audio_cpp"}),
+)
+def test_legacy_provider_preset_adopts_as_unverified_without_catalog(
+    provider_id: str,
+) -> None:
+    """A legitimate legacy-provider preset must not be forced 'unavailable'.
+
+    Before this behavior, ``profile_availability_from_catalog`` pinned every
+    non-audio.cpp preset to "unavailable" regardless of provider validity,
+    which made a freshly adopted OpenAI/ElevenLabs/etc. profile look broken
+    in the Playground the instant it was selected (no catalog fetched yet).
+    """
+    preset = TTSPlaygroundSelectionPreset(
+        provider_id=provider_id,
+        model_id="profile/model",
+        voice_id=None,
+        response_format=PROFILE_PROVIDER_FORMATS[provider_id][0],
+        speed=1.0,
+        options={},
+        availability="available",
+    )
+
+    assert profile_availability_from_catalog(preset, None) == "unverified"
+
+
+def test_legacy_provider_preset_already_unavailable_is_not_upgraded_to_unverified() -> (
+    None
+):
+    """A legacy preset already known "unavailable" must stay "unavailable".
+
+    Guards the ordering between the early availability short-circuit and the
+    new legacy-provider branch: the new branch must never run once the
+    preset's own availability is already "unavailable".
+    """
+    preset = TTSPlaygroundSelectionPreset(
+        provider_id="openai",
+        model_id="profile/model",
+        voice_id=None,
+        response_format="mp3",
+        speed=1.0,
+        options={},
+        availability="unavailable",
+    )
+
+    assert profile_availability_from_catalog(preset, None) == "unavailable"

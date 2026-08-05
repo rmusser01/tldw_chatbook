@@ -18,6 +18,7 @@ from tldw_chatbook.TTS.profile_service import (
 from tldw_chatbook.TTS.profile_types import (
     AUDIO_CPP_PROFILE_RESPONSE_FORMAT,
     AUDIO_CPP_PROFILE_SPEED,
+    PROFILE_PROVIDER_IDS,
 )
 
 AUDIO_CPP_PROVIDER_ID = "audio_cpp"
@@ -308,9 +309,12 @@ def profile_availability_from_catalog(
     """Conservatively revalidate exact profile fields against one catalog."""
     if preset.availability == "unavailable":
         return "unavailable"
+    if preset.provider_id != AUDIO_CPP_PROVIDER_ID:
+        if preset.provider_id in PROFILE_PROVIDER_IDS and not bool(preset.options):
+            return "unverified"
+        return "unavailable"
     if (
-        preset.provider_id != AUDIO_CPP_PROVIDER_ID
-        or preset.response_format != AUDIO_CPP_PROFILE_RESPONSE_FORMAT
+        preset.response_format != AUDIO_CPP_PROFILE_RESPONSE_FORMAT
         or preset.speed != AUDIO_CPP_PROFILE_SPEED
         or bool(preset.options)
     ):
