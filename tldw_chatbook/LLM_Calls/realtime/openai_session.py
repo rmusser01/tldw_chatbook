@@ -769,10 +769,19 @@ class OpenAIRealtimeSession:
 
     def _on_input_transcript_completed(self, event: dict) -> None:
         """Handle `conversation.item.input_audio_transcription.completed`:
-        fire `on_input_transcript` with the user's spoken-input transcript.
+        fire `on_input_transcript` with the user's spoken-input transcript,
+        and -- when present -- `on_transcription_usage` with the event's own
+        `usage` field.
+
+        `usage` here (task-2363, T2-F12) is independent of `response.done`'s
+        usage: live-confirmed `{"type": "duration", "seconds": N}`, the
+        transcribed input audio's length, not a token count (see this
+        module's header, USAGE section). Not every arrival of this event
+        carries `usage`, so the second dispatch is conditional.
 
         Args:
-            event: The decoded event; `event["transcript"]` is the text.
+            event: The decoded event; `event["transcript"]` is the text,
+                `event.get("usage")` is the optional duration-usage payload.
 
         Returns:
             None.
@@ -782,6 +791,13 @@ class OpenAIRealtimeSession:
             event.get("transcript", ""),
             op="on_input_transcript",
         )
+        usage = event.get("usage")
+        if usage is not None:
+            self._safe_invoke(
+                self._callbacks.on_transcription_usage,
+                usage,
+                op="on_transcription_usage",
+            )
 
     def _on_speech_started(self, _event: dict) -> None:
         """Handle `input_audio_buffer.speech_started`: fire

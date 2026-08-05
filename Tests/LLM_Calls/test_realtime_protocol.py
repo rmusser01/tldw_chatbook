@@ -77,6 +77,7 @@ def test_callbacks_all_none_by_default():
     assert callbacks.on_output_transcript_delta is None
     assert callbacks.on_speech_started is None
     assert callbacks.on_usage is None
+    assert callbacks.on_transcription_usage is None
     assert callbacks.on_error is None
     assert callbacks.on_closed is None
 
@@ -107,6 +108,7 @@ def test_callbacks_accepts_all_fields_at_construction():
         on_output_transcript_delta=lambda t: calls.append(("output", t)),
         on_speech_started=lambda: calls.append("speech"),
         on_usage=lambda u: calls.append(("usage", u)),
+        on_transcription_usage=lambda u: calls.append(("transcription_usage", u)),
         on_error=lambda e: calls.append(("error", e)),
         on_closed=lambda reason: calls.append(("closed", reason)),
     )
@@ -120,6 +122,7 @@ def test_callbacks_accepts_all_fields_at_construction():
     callbacks.on_output_transcript_delta("hi")
     callbacks.on_speech_started()
     callbacks.on_usage({"tokens": 1})
+    callbacks.on_transcription_usage({"type": "duration", "seconds": 2})
     callbacks.on_error(RuntimeError("boom"))
     callbacks.on_closed("done")
     assert calls == [
@@ -133,7 +136,8 @@ def test_callbacks_accepts_all_fields_at_construction():
         ("output", "hi"),
         "speech",
         ("usage", {"tokens": 1}),
-        ("error", calls[10][1]),
+        ("transcription_usage", {"type": "duration", "seconds": 2}),
+        ("error", calls[11][1]),
         ("closed", "done"),
     ]
 

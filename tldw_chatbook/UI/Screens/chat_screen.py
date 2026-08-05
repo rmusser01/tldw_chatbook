@@ -811,6 +811,14 @@ class ConsoleHandsFreeSession:
 #: instead of failing later as an opaque connection error.
 CONSOLE_REALTIME_SUPPORTED_PROVIDER = "openai"
 
+#: The realtime session's hardcoded input-transcription model (mirrors
+#: `LLM_Calls/realtime/openai_session.py`'s private `_TRANSCRIPTION_MODEL`
+#: -- duplicated here as a literal, not imported, since that constant is an
+#: internal implementation detail of the session module and this wiring
+#: only needs it for one usage-attribution string). Live-confirmed accepted
+#: (see that module's ground-truth header).
+CONSOLE_REALTIME_TRANSCRIPTION_MODEL = "whisper-1"
+
 #: Wall-clock ceiling on the provider handshake. A realtime connect that
 #: never completes is indistinguishable from a hang to the user, and the
 #: mic is already open by then (see `_enter_console_realtime_loop`), so it
@@ -7721,6 +7729,9 @@ class ChatScreen(BaseAppScreen):
             on_first_audio=_route(self._on_console_realtime_first_audio),
             on_reply_done=_route(self._on_console_realtime_reply_done),
             on_usage=_route(self._on_console_realtime_usage),
+            on_transcription_usage=_route(
+                self._on_console_realtime_transcription_usage
+            ),
             on_speech_started=_route(self._on_console_realtime_speech_started),
             on_error=_route(self._on_console_realtime_error),
             on_closed=_route(self._on_console_realtime_closed),
@@ -8216,6 +8227,69 @@ class ChatScreen(BaseAppScreen):
         except Exception:  # noqa: BLE001 - cost display is never worth a crash
             logger.opt(exception=True).debug(
                 "Console realtime: could not attach usage to the reply"
+            )
+
+    def _on_console_realtime_transcription_usage(
+        self, session: ConsoleRealtimeSession, payload: dict
+    ) -> None:
+        """`on_transcription_usage`: attach the USER turn's spoken-audio
+        duration -- distinct from `_on_console_realtime_usage` (the
+        ASSISTANT reply's token usage, from `response.done`).
+
+        `payload` is `{"type": "duration", "seconds": N}` (live-confirmed,
+        see `openai_session.py`'s ground-truth header) -- a duration, not a
+        token count, so it is captured on `ProviderUsage.transcription_
+        seconds` rather than any of the token buckets. Attached to
+        `user_row_id` (this transcript's own row), never `last_reply_row_
+        id` (the assistant's): confusing the two would bill the user's
+        spoken-audio duration onto the assistant's reply.
+
+        `pricing_catalog.py`'s cost math does not read `transcription_
+        seconds` -- capturing it here does not make it billable; wiring a
+        cost display for it is a separate follow-up task (task-2363's own
+        AC treats cost-chip integration as explicitly out of scope).
+
+        Mirrors `_on_console_realtime_input_transcript`'s late-arrival
+        guard: a duration payload landing after `user_row_id` has already
+        moved to the NEXT turn (and that turn's own duration usage, if any,
+        already landed) must not clobber it -- dropped instead, loudly
+        enough to diagnose.
+        """
+        if not isinstance(payload, dict) or payload.get("type") != "duration":
+            return
+        try:
+            seconds = float(payload.get("seconds"))
+        except (TypeError, ValueError):
+            return
+        row_id = session.user_row_id
+        if row_id is None:
+            return
+        store = self._ensure_console_chat_store()
+        try:
+            existing = store.get_message(row_id).usage
+        except Exception:  # noqa: BLE001 - an unreadable row is a dropped one
+            logger.opt(exception=True).warning(
+                "Console realtime: could not read the transcription-usage row: "
+                f"op=realtime_transcription_usage row_id={row_id}"
+            )
+            return
+        if existing is not None:
+            logger.warning(
+                "Console realtime: dropping a late transcription usage; its "
+                "row already holds another turn's usage: "
+                f"op=realtime_transcription_usage row_id={row_id}"
+            )
+            return
+        usage = ProviderUsage(
+            transcription_seconds=seconds,
+            provider=CONSOLE_REALTIME_SUPPORTED_PROVIDER,
+            model=CONSOLE_REALTIME_TRANSCRIPTION_MODEL,
+        )
+        try:
+            store.set_message_usage(row_id, usage)
+        except Exception:  # noqa: BLE001 - cost display is never worth a crash
+            logger.opt(exception=True).debug(
+                "Console realtime: could not attach transcription usage"
             )
 
     def _append_console_realtime_row(

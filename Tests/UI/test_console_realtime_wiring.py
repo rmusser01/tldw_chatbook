@@ -167,6 +167,9 @@ class FakeRealtimeSession:
     def fire_usage(self, payload: dict) -> None:
         self._fire("on_usage", payload)
 
+    def fire_transcription_usage(self, payload: dict) -> None:
+        self._fire("on_transcription_usage", payload)
+
     def fire_closed(self, reason: str = "connection lost") -> None:
         self._fire("on_closed", reason)
 
@@ -919,6 +922,120 @@ async def test_realtime_usage_records_cached_input_tokens(monkeypatch):
         assert usage.cache_read == 80
         assert usage.uncached_input == 20
         assert usage.output == 20
+
+
+@pytest.mark.asyncio
+async def test_realtime_usage_records_the_audio_token_split(monkeypatch):
+    """task-2363: realtime `response.done` usage splits BOTH input and
+    output tokens into text/audio -- live-confirmed, see openai_session.py's
+    ground-truth header USAGE section. Previously folded into the plain
+    uncached/output buckets with no distinct audio count at all."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+        store = console._ensure_console_chat_store()
+
+        session.fire_turn_committed()
+        session.fire_reply_started("item-1")
+        session.fire_output_transcript_delta("Hi.")
+        await _wait_for(
+            lambda: console._console_realtime.assistant_row_id is not None, pilot
+        )
+        row_id = console._console_realtime.assistant_row_id
+        session.fire_usage(
+            {
+                "total_tokens": 151,
+                "input_tokens": 33,
+                "output_tokens": 118,
+                "input_token_details": {
+                    "text_tokens": 15,
+                    "audio_tokens": 18,
+                    "image_tokens": 0,
+                    "cached_tokens": 0,
+                    "cached_tokens_details": {
+                        "text_tokens": 0,
+                        "audio_tokens": 0,
+                        "image_tokens": 0,
+                    },
+                },
+                "output_token_details": {"text_tokens": 28, "audio_tokens": 90},
+            }
+        )
+        await _wait_for(lambda: store.get_message(row_id).usage is not None, pilot)
+
+        usage = store.get_message(row_id).usage
+        assert usage.uncached_input == 33
+        assert usage.output == 118
+        assert usage.audio_input == 18
+        assert usage.audio_output == 90
+
+
+@pytest.mark.asyncio
+async def test_transcription_usage_attaches_duration_to_the_user_row(monkeypatch):
+    """task-2363 / T2-F12: the input-audio transcription's OWN `usage`
+    field (`{"type": "duration", "seconds": N}`) is about the USER's spoken
+    turn, not the assistant's reply -- it must land on `user_row_id`, not
+    `last_reply_row_id` (the target `on_usage` uses)."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+        store = console._ensure_console_chat_store()
+
+        session.fire_turn_committed()
+        await _wait_for(
+            lambda: console._console_realtime.user_row_id is not None, pilot
+        )
+        row_id = console._console_realtime.user_row_id
+        session.fire_transcription_usage({"type": "duration", "seconds": 2})
+        await _wait_for(lambda: store.get_message(row_id).usage is not None, pilot)
+
+        usage = store.get_message(row_id).usage
+        assert usage.transcription_seconds == 2.0
+
+
+@pytest.mark.asyncio
+async def test_a_late_transcription_usage_never_overwrites_the_next_turn(monkeypatch):
+    """Mirrors `test_a_late_input_transcript_never_overwrites_the_next_turn`
+    for usage: a duration payload that lands after the NEXT turn committed
+    (and already got its own usage) must not clobber it."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+        store = console._ensure_console_chat_store()
+
+        session.fire_turn_committed()
+        await _wait_for(lambda: len(_messages(console)) == 1, pilot)
+        first_row_id = console._console_realtime.user_row_id
+        session.fire_turn_committed()
+        await _wait_for(lambda: len(_messages(console)) == 2, pilot)
+        second_row_id = console._console_realtime.user_row_id
+
+        session.fire_transcription_usage({"type": "duration", "seconds": 3})
+        await _wait_for(
+            lambda: store.get_message(second_row_id).usage is not None, pilot
+        )
+        # Turn one's duration usage finally arrives -- far too late.
+        session.fire_transcription_usage({"type": "duration", "seconds": 1})
+        await pilot.pause()
+        await pilot.pause()
+
+        assert store.get_message(second_row_id).usage.transcription_seconds == 3.0
+        assert store.get_message(first_row_id).usage is None
 
 
 @pytest.mark.asyncio

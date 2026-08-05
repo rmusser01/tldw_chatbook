@@ -398,6 +398,67 @@ async def test_transcripts_route_to_both_callbacks(fake_server):
     assert output_deltas == ["hi "]
 
 
+async def test_input_transcript_completed_with_usage_fires_on_transcription_usage(
+    fake_server,
+):
+    """task-2363 / T2-F12: `conversation.item.input_audio_transcription.
+    completed` carries its OWN `usage` field (`{"type": "duration",
+    "seconds": N}`, live-confirmed -- see this module's header, USAGE
+    section), entirely independent of `response.done`'s token usage. It
+    previously reached nowhere at all -- `_on_input_transcript_completed`
+    only ever read `transcript`."""
+    usage_calls: list[dict] = []
+    callbacks = RealtimeCallbacks(
+        on_transcription_usage=lambda u: usage_calls.append(u),
+    )
+    _, scripted = await _connect_and_handshake(
+        fake_server,
+        [
+            (
+                "send",
+                {
+                    "type": "conversation.item.input_audio_transcription.completed",
+                    "transcript": "hello there",
+                    "usage": {"type": "duration", "seconds": 2},
+                },
+            ),
+        ],
+        callbacks=callbacks,
+    )
+    await scripted.wait_done()
+    await asyncio.sleep(0.05)
+
+    assert usage_calls == [{"type": "duration", "seconds": 2}]
+
+
+async def test_input_transcript_completed_without_usage_does_not_fire_transcription_usage(
+    fake_server,
+):
+    """The event does not always carry `usage` -- must not fire the
+    callback with None/garbage when it's simply absent."""
+    usage_calls: list[dict] = []
+    callbacks = RealtimeCallbacks(
+        on_transcription_usage=lambda u: usage_calls.append(u),
+    )
+    _, scripted = await _connect_and_handshake(
+        fake_server,
+        [
+            (
+                "send",
+                {
+                    "type": "conversation.item.input_audio_transcription.completed",
+                    "transcript": "hello there",
+                },
+            ),
+        ],
+        callbacks=callbacks,
+    )
+    await scripted.wait_done()
+    await asyncio.sleep(0.05)
+
+    assert usage_calls == []
+
+
 async def test_speech_started_fires_during_active_response(fake_server):
     speech_calls = {"n": 0}
     callbacks = RealtimeCallbacks(
