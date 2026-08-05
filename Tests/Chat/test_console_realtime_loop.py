@@ -604,6 +604,87 @@ def test_keypress_barges_in_identically_in_acoustic_mode():
 
 
 # ---------------------------------------------------------------------------
+# task-2361: on_speech_started while `live` refreshes the idle-ceiling
+# anchor, in EITHER barge-in mode, so a user who starts speaking just
+# before the deadline (speech_started, no commit yet) is never cut off
+# mid-utterance by the cost guard (V4 final review M3).
+# ---------------------------------------------------------------------------
+
+
+def test_speech_started_while_live_refreshes_idle_anchor_both_modes():
+    """Direction 1: a speaker is a speaker regardless of barge-in policy.
+    Default mode's on_speech_started used to early-return the instant it
+    saw `acoustic_barge_in is False` -- correct for barge-in (there is
+    nothing to interrupt while `live`), but that same early return also
+    skipped the idle-anchor refresh, so a user who started an utterance
+    just before the ceiling could still be ejected mid-sentence with
+    "idle for N minutes" the moment tick() next ran, because on_turn_
+    committed (the only other activity signal) had not fired yet. Fixed
+    by refreshing the anchor whenever on_speech_started arrives while
+    `live`, BEFORE the mode gate that governs barge-in only."""
+    for acoustic in (False, True):
+        c, ev = _make(acoustic=acoustic, idle=10.0)
+        c.enter()
+        c.on_session_ready()
+        c.tick(now=0.0)  # anchors last_activity at 0.0
+        c.tick(now=9.9)  # just under the deadline
+        assert c.state == "live", f"acoustic={acoustic}"
+
+        c.on_speech_started()  # user starts talking right before the ceiling
+        # No reply is outstanding while `live`, so this must never barge in
+        # (barge-in semantics are unchanged by this fix).
+        assert c.state == "live", f"acoustic={acoustic}"
+
+        ev.clear()
+        # Without the refresh this elapses 19.8s from the t=0.0 anchor,
+        # comfortably past the 10s ceiling, and would fire idle-timeout.
+        c.tick(now=19.8)
+        assert c.state == "live", f"acoustic={acoustic}"
+        assert not any(isinstance(e, ExitLoop) for e in ev), f"acoustic={acoustic}"
+
+
+def test_genuinely_silent_session_still_exits_at_idle_ceiling():
+    """Direction 2: the refresh must not defeat the ceiling outright -- a
+    session that never sees on_speech_started at all (genuinely silent,
+    or abandoned) still exits once the deadline elapses, exactly as
+    before this fix."""
+    c, ev = _make(idle=10.0)
+    c.enter()
+    c.on_session_ready()
+    c.tick(now=0.0)  # anchors last_activity at 0.0
+
+    ev.clear()
+    c.tick(now=10.0)  # elapsed 10 >= 10, no activity of any kind in between
+    assert c.state == "idle"
+    assert any(
+        isinstance(e, ExitLoop) and e.reason == "idle-timeout" for e in ev
+    )
+
+
+def test_speech_started_does_not_refresh_anchor_outside_live():
+    """The refresh is scoped to `live` only -- on_speech_started arriving
+    while `thinking`/`speaking` (acoustic mode; the only mode where the
+    mic is hot there) must not touch `_last_activity` directly. That case
+    is already handled by the existing barge-in path
+    (`_barge_in_if_reply_outstanding`, which marks the anchor pending as
+    part of returning to `live` -- see `test_barge_in_mid_reply_
+    refreshes_activity_so_idle_ceiling_does_not_fire_immediately`), so
+    this test only pins that the new `live`-scoped refresh does not
+    double up or otherwise change that already-covered path's outcome."""
+    c, ev = _make(acoustic=True, idle=10.0)
+    c.enter()
+    c.on_session_ready()
+    c.on_turn_committed(now=0.0)
+    c.on_first_audio()
+    assert c.state == "speaking"
+
+    ev.clear()
+    c.on_speech_started()  # acoustic-mode barge-in, unrelated to this fix
+    assert any(isinstance(e, SilenceSpeech) for e in ev)
+    assert c.state == "live"
+
+
+# ---------------------------------------------------------------------------
 # Import lightness. Runs in fresh subprocesses -- importing anything else in
 # this module (or an earlier-collected test) may already have pulled the
 # heavy modules into `sys.modules`, which would make an in-process check
