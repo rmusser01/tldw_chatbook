@@ -33,6 +33,36 @@ MODEL = "gpt-realtime"
 REALTIME_URL = f"wss://api.openai.com/v1/realtime?model={MODEL}"
 
 
+def _safe_error_detail(event: dict) -> str:
+    """Summarize an error event WITHOUT printing the payload.
+
+    OpenAI's error payloads echo the submitted credential -- its
+    invalid-key message is literally `Incorrect API key provided:
+    sk-proj-…`, which is why production sanitizes before logging
+    (`ChatScreen._sanitize_console_realtime_failure`). A probe's stdout
+    lands in terminal scrollback and agent transcripts, so dumping
+    `json.dumps(event)` here published the key to both (PR #1350 review,
+    Q3).
+
+    Same shape as production: the type/code/param, plus only the leading
+    clause of the message -- providers put the human summary before the
+    first colon and the offending value after it.
+
+    Args:
+        event: The decoded `error` event.
+
+    Returns:
+        A single-line, credential-free summary.
+    """
+    err = event.get("error") or {}
+    message = str(err.get("message", ""))
+    lead = message.splitlines()[0].split(":", 1)[0].strip() if message else ""
+    return (
+        f"type={err.get('type')!r} code={err.get('code')!r} "
+        f"param={err.get('param')!r} message_lead={lead!r}"
+    )
+
+
 def _read_api_key() -> str:
     """Read the OpenAI API key from `API_KEY_PATH`.
 
@@ -97,7 +127,7 @@ async def _run_probe() -> None:
             event_type = event.get("type")
             print(f"<< {event_type}")
             if event.get("error") or event_type == "error":
-                print(f"   error detail: {json.dumps(event, indent=2)}")
+                print(f"   error detail: {_safe_error_detail(event)}")
 
             if event_type == "session.updated" and not sent_text_turn:
                 sent_text_turn = True

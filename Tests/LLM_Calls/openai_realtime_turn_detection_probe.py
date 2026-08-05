@@ -113,10 +113,17 @@ async def _probe_one(ws, label: str, turn_detection: dict | None) -> None:
             return
         if kind == "error":
             err = event.get("error", {})
+            # Never the whole message: an AUTH error here would echo the
+            # submitted key back, and this stdout lands in scrollback and
+            # transcripts (PR #1350 review, Q3). `param` carries the
+            # schema answer this probe exists for; the message's leading
+            # clause carries the rest.
+            message = str(err.get("message", ""))
+            lead = message.splitlines()[0].split(":", 1)[0].strip() if message else ""
             print(f"  REJECTED  {label}")
             print(
                 f"      code={err.get('code')!r} param={err.get('param')!r} "
-                f"message={err.get('message')!r}"
+                f"message_lead={lead!r}"
             )
             return
 
