@@ -1025,11 +1025,21 @@ class ConsoleTranscript(VerticalScroll):
         total_height = self.virtual_size.height
         if total_height <= high_mark:
             return
-        prune_ids, _estimated_height = self._compute_prunable_prefix(
+        prune_ids, estimated_height = self._compute_prunable_prefix(
             total_height, low_mark
         )
         if not prune_ids:
+            if total_height > high_mark:
+                logger.debug(
+                    "Console transcript over high watermark "
+                    f"({total_height} > {high_mark}) but no prunable prefix: "
+                    "a protected or non-message row is blocking the walk"
+                )
             return
+        logger.debug(
+            f"Pruning {len(prune_ids)} console transcript messages "
+            f"(estimated height {estimated_height})"
+        )
         following = self._is_following_tail()
         anchor_y = self.scroll_y
         self._pruned_message_ids.update(prune_ids)
