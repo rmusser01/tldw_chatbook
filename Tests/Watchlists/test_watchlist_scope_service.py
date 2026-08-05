@@ -191,3 +191,54 @@ async def test_save_alert_rule_none_id_treated_as_create_and_stripped():
     local_service.create_alert_rule.assert_awaited_once_with(name="Rule from None", condition="sometimes")
     local_service.update_alert_rule.assert_not_awaited()
     assert result == {"id": 9, "name": "Rule from None"}
+
+
+@pytest.mark.asyncio
+async def test_mark_all_read_forwards_scope_kwargs_to_local_service():
+    scope_service, local_service, _ = make_scope_service()
+    local_service.mark_all_read = AsyncMock(return_value=[1, 2, 3])
+
+    result = await scope_service.mark_all_read(
+        runtime_backend=WatchlistBackend.LOCAL,
+        watchlist_id=3,
+        unassigned_only=True,
+    )
+
+    local_service.mark_all_read.assert_awaited_once_with(
+        source_id=None, watchlist_id=3, unassigned_only=True
+    )
+    assert result == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_mark_all_read_server_backend_rejected():
+    scope_service, local_service, _ = make_scope_service()
+    with pytest.raises(ValueError, match="Item status updates are only supported for the local backend"):
+        await scope_service.mark_all_read(runtime_backend=WatchlistBackend.SERVER)
+    local_service.mark_all_read.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_restore_items_new_forwards_denamespaced_ids_to_local_service():
+    scope_service, local_service, _ = make_scope_service()
+    local_service.restore_items_new = AsyncMock(return_value=2)
+
+    result = await scope_service.restore_items_new(
+        runtime_backend=WatchlistBackend.LOCAL,
+        item_ids=["local:watchlist_item:1", 2],
+    )
+
+    # `_source_id_from_item_id` strips the display namespace, exactly as
+    # `update_item` already does for its single item id; bare ids pass through.
+    local_service.restore_items_new.assert_awaited_once_with(item_ids=["1", 2])
+    assert result == 2
+
+
+@pytest.mark.asyncio
+async def test_restore_items_new_server_backend_rejected():
+    scope_service, local_service, _ = make_scope_service()
+    with pytest.raises(ValueError, match="Item status updates are only supported for the local backend"):
+        await scope_service.restore_items_new(
+            runtime_backend=WatchlistBackend.SERVER, item_ids=[1]
+        )
+    local_service.restore_items_new.assert_not_awaited()

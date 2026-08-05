@@ -2007,6 +2007,75 @@ class SubscriptionsDB(BaseDB):
 
             return cursor.rowcount > 0
 
+    def mark_all_read(
+        self,
+        subscription_id: Optional[int] = None,
+        watchlist_id: Optional[int] = None,
+        unassigned_only: bool = False,
+    ) -> List[int]:
+        """Mark every ``new`` item in scope ``reviewed``; return the affected ids.
+
+        One transactional UPDATE. Only ``new`` rows are touched —
+        ``reviewed``/``ingested``/``ignored``/``error`` all record deliberate
+        user actions and are never rewritten here (same rule
+        `persist_subscription_item`'s upsert follows, `item_persist.py:132-136`).
+        The returned ids are the undo batch for
+        `WatchlistsCollectionsScreen.action_undo_mark_all_read`.
+
+        Args:
+            subscription_id: Restrict to one source's items, or `None` for all.
+            watchlist_id: Restrict to items of the sources in one watchlist
+                (same sub-select `get_new_items` uses).
+            unassigned_only: Restrict to items of sources belonging to no
+                watchlist (same NOT EXISTS shape `get_new_items` uses).
+
+        Returns:
+            The ids of the rows moved to ``reviewed``.
+        """
+        predicates = ["status = 'new'"]
+        params: List[Any] = []
+        if subscription_id is not None:
+            predicates.append("subscription_id = ?")
+            params.append(subscription_id)
+        if watchlist_id is not None:
+            predicates.append(
+                "subscription_id IN (SELECT subscription_id FROM watchlist_sources WHERE watchlist_id = ?)"
+            )
+            params.append(watchlist_id)
+        if unassigned_only:
+            predicates.append(
+                "NOT EXISTS (SELECT 1 FROM watchlist_sources ws WHERE ws.subscription_id = subscription_items.subscription_id)"
+            )
+        with self.transaction() as conn:
+            rows = conn.execute(
+                f"UPDATE subscription_items SET status = 'reviewed' WHERE {' AND '.join(predicates)} RETURNING id",
+                tuple(params),
+            ).fetchall()
+        return [row[0] for row in rows]
+
+    def restore_items_new(self, item_ids: List[int]) -> int:
+        """Move the given ids back to ``new`` — but only ones still ``reviewed``.
+
+        The undo half of `mark_all_read`. The ``status = 'reviewed'`` guard
+        means an item the user has since ingested or ignored is not yanked
+        back to unread.
+
+        Args:
+            item_ids: The undo batch `mark_all_read` returned.
+
+        Returns:
+            How many rows were actually restored.
+        """
+        if not item_ids:
+            return 0
+        placeholders = ", ".join("?" for _ in item_ids)
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                f"UPDATE subscription_items SET status = 'new' WHERE id IN ({placeholders}) AND status = 'reviewed'",
+                tuple(item_ids),
+            )
+            return cursor.rowcount
+
     # --- Briefings (spec #2 phase 1) ---
 
     def set_item_briefing_queued(self, item_id: int, queued: bool) -> None:

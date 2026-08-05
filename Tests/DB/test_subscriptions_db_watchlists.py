@@ -723,3 +723,79 @@ def test_get_source_item_counts(db_with_memberships):
     counts = db.get_source_item_counts()
     assert counts[in_watchlist] == {"total": 3, "unread": 2}
     assert counts[unassigned] == {"total": 2, "unread": 2}
+
+
+# --- TASK-2511: bulk mark-all-read + undo restore -----------------------------
+
+
+def _item_id(db, url):
+    row = db.conn.execute(
+        "SELECT id FROM subscription_items WHERE url = ?", (url,)
+    ).fetchone()
+    assert row is not None, f"fixture item missing: {url}"
+    return row[0]
+
+
+def test_mark_all_read_returns_ids_and_only_touches_new(db_with_memberships):
+    db, _watchlist_id, _in_watchlist, _unassigned = db_with_memberships
+    reviewed_id = _item_id(db, "https://in.example/2")
+    ingested_id = _item_id(db, "https://loose.example/1")
+    db.mark_item_status(ingested_id, "ingested")
+    new_ids = {
+        _item_id(db, "https://in.example/0"),
+        _item_id(db, "https://in.example/1"),
+        _item_id(db, "https://loose.example/0"),
+    }
+
+    ids = db.mark_all_read()  # scope: all
+
+    assert set(ids) == new_ids
+    assert all(db.get_item_status(item_id) == "reviewed" for item_id in ids)
+    assert db.get_item_status(reviewed_id) == "reviewed"   # untouched
+    assert db.get_item_status(ingested_id) == "ingested"   # untouched
+
+
+def test_mark_all_read_scoped_to_watchlist(db_with_memberships):
+    db, watchlist_id, _in_watchlist, _unassigned = db_with_memberships
+    expected = {
+        _item_id(db, "https://in.example/0"),
+        _item_id(db, "https://in.example/1"),
+    }
+
+    ids = db.mark_all_read(watchlist_id=watchlist_id)
+
+    assert set(ids) == expected
+    # Sources outside the watchlist keep their unread items.
+    assert db.get_item_status(_item_id(db, "https://loose.example/0")) == "new"
+    assert db.get_item_status(_item_id(db, "https://loose.example/1")) == "new"
+
+
+def test_mark_all_read_scoped_to_unassigned(db_with_memberships):
+    db, _watchlist_id, _in_watchlist, _unassigned = db_with_memberships
+    expected = {
+        _item_id(db, "https://loose.example/0"),
+        _item_id(db, "https://loose.example/1"),
+    }
+
+    ids = db.mark_all_read(unassigned_only=True)
+
+    assert set(ids) == expected
+    # The in-watchlist source keeps its unread items.
+    assert db.get_item_status(_item_id(db, "https://in.example/0")) == "new"
+    assert db.get_item_status(_item_id(db, "https://in.example/1")) == "new"
+
+
+def test_restore_items_new_only_restores_reviewed(db_with_memberships):
+    db, _watchlist_id, _in_watchlist, _unassigned = db_with_memberships
+    marked_read = _item_id(db, "https://in.example/0")
+    ingested = _item_id(db, "https://in.example/1")
+    db.mark_all_read()  # in.example/0 is now reviewed
+    db.mark_item_status(ingested, "ingested")  # this one moved past reviewed
+
+    n = db.restore_items_new([marked_read, ingested])
+
+    assert n == 1
+    assert db.get_item_status(marked_read) == "new"
+    assert db.get_item_status(ingested) == "ingested"
+    # An empty undo batch is a no-op, not an error.
+    assert db.restore_items_new([]) == 0

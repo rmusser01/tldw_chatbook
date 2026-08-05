@@ -574,6 +574,62 @@ class LocalWatchlistsService:
             "status": normalized_status,
         }
 
+    async def mark_all_read(
+        self,
+        *,
+        source_id: Any = None,
+        watchlist_id: Any = None,
+        unassigned_only: bool = False,
+    ) -> list[int]:
+        """Mark every ``new`` item in scope ``reviewed``; return the affected ids.
+
+        The bulk half of the reader's mark-all-read affordance (TASK-2511).
+        Thin delegate to `SubscriptionsDB.mark_all_read`, with the same
+        ``int(...) if ... is not None else None`` id normalization
+        `list_items` applies to its scope arguments. The returned ids are the
+        undo batch the screen hands to `restore_items_new` on `u`.
+
+        Args:
+            source_id: Restrict to one source, or `None` for all.
+            watchlist_id: Restrict to items of the sources in one watchlist,
+                or `None` for every watchlist's.
+            unassigned_only: Restrict to items of sources belonging to no
+                watchlist.
+
+        Returns:
+            The local row ids moved to ``reviewed``.
+        """
+        return self._db().mark_all_read(
+            subscription_id=int(source_id) if source_id is not None else None,
+            watchlist_id=int(watchlist_id) if watchlist_id is not None else None,
+            unassigned_only=bool(unassigned_only),
+        )
+
+    async def restore_items_new(self, *, item_ids: list[Any]) -> int:
+        """Move the given ids back to ``new`` — the undo half of `mark_all_read`.
+
+        Only rows still ``reviewed`` are restored (`SubscriptionsDB`
+        enforces that guard), so an item the user has since ingested or
+        ignored is not yanked back to unread.
+
+        Args:
+            item_ids: Local row ids (bare, not namespaced) — the batch
+                `mark_all_read` returned.
+
+        Returns:
+            How many rows were actually restored.
+
+        Raises:
+            ValueError: If any id is not an integer id.
+        """
+        row_ids: list[int] = []
+        for item_id in item_ids or []:
+            try:
+                row_ids.append(int(item_id))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
+        return self._db().restore_items_new(row_ids)
+
     async def delete_source(self, source_id: Any) -> dict[str, Any]:
         success = self._db().delete_subscription(int(source_id))
         return {
