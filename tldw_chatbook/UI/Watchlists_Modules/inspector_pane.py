@@ -542,11 +542,21 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
                 # subscription id, so an enabled button here would post a
                 # message the screen could only drop -- the dead-affordance
                 # shape the watchlist branch below documents.
+                #
+                # Review wave, M6: gated on `write_disabled_reason` too, from
+                # the same reactive and with the same tooltip string as the
+                # watchlist-side twin below. Both are one write; rendering
+                # one greyed out and the other live two rows apart is the
+                # drift this wave exists to remove, and the screen handler's
+                # refusal alone cannot show through to the button.
                 if deepest.entity is not None:
+                    blocked = self.write_disabled_reason
                     yield Button(
                         "Add to watchlist",
                         id="inspector-add-to-watchlist-button",
-                        tooltip=(
+                        disabled=blocked is not None,
+                        tooltip=blocked
+                        or (
                             "Put this source into a watchlist. The source "
                             "itself is not changed or copied."
                         ),

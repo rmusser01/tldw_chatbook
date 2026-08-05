@@ -371,12 +371,104 @@ async def test_neither_assign_path_writes_on_a_backend_that_cannot_take_it():
 
 
 @pytest.mark.asyncio
+async def test_both_inspector_assign_buttons_read_the_same_backend_gate():
+    """Review wave, M6. One write, one condition, one tooltip.
+
+    The watchlist-side button was gated first; the source-side one was left
+    refused at the HANDLER only, so on the Server backend it rendered live
+    two rows below a greyed-out twin -- the drift this wave exists to remove,
+    reintroduced by fixing only half of it.
+
+    Both states are asserted in one run so neither can be satisfied by a
+    button that is simply always disabled (or always enabled).
+    """
+    app = _build_test_app()
+    watchlist_id, source_id = _seed(app)
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _mounted(host, pilot)
+        screen._apply_tree_scope(
+            TreeScope(kind="watchlist", watchlist_id=watchlist_id)
+        )
+        screen.selected_entity = {
+            "backend": "local",
+            "entity_kind": "subscription",
+            "source_id": source_id,
+            "name": "Loose Feed",
+        }
+        await pilot.pause(0.3)
+
+        # Local: the source-side button is live, with its own copy.
+        source_side = screen.query_one(
+            "#inspector-add-to-watchlist-button", Button
+        )
+        assert not source_side.disabled, (
+            "the source-side assign action is disabled on a backend that can "
+            "service it"
+        )
+        assert "watchlist" in str(source_side.tooltip).lower()
+
+        # Server: the same reactive, the same reason, on both directions.
+        screen.runtime_backend = "server"
+        await pilot.pause(0.3)
+        screen.selected_entity = {
+            "backend": "local",
+            "entity_kind": "subscription",
+            "source_id": source_id,
+            "name": "Loose Feed",
+        }
+        await pilot.pause(0.3)
+
+        source_side = screen.query_one(
+            "#inspector-add-to-watchlist-button", Button
+        )
+        rail = screen.query_one("#wl-tree-add-source", Button)
+        assert source_side.disabled, (
+            "the source-side assign action is enabled on a backend whose "
+            "rail copy of the same write is greyed out"
+        )
+        assert str(source_side.tooltip) == str(rail.tooltip), (
+            "both directions must give the SAME reason; got "
+            f"{source_side.tooltip!r} vs {rail.tooltip!r}"
+        )
+
+        # Belt and braces stays: the handler still refuses a message posted
+        # around the disabled render.
+        notices: list[str] = []
+        screen._notify_watchlists = (
+            lambda message, severity="information", **kwargs: notices.append(message)
+        )
+        screen.post_message(
+            AssignSourceToWatchlistRequested(
+                {
+                    "backend": "local",
+                    "entity_kind": "subscription",
+                    "source_id": source_id,
+                    "name": "Loose Feed",
+                }
+            )
+        )
+        await pilot.pause(0.4)
+        assert app.watchlist_bundle_service.list_sources(watchlist_id) == []
+        assert notices, "the handler refusal must still explain itself"
+
+
+@pytest.mark.asyncio
 async def test_the_inspector_offers_no_assign_action_for_a_server_source():
     """AC#2's guard: membership rows key on a LOCAL subscription id.
 
-    The button still renders (the Inspector cannot know the backend refuses
-    it until the press is dispatched), but the press must not write, and it
-    must say so rather than failing silently.
+    Distinct from the backend gate next door, and the reason both exist. The
+    RUNTIME backend here is `local`, so `write_disabled_reason` is None and
+    the button is correctly ENABLED; what is refused is an ENTITY whose own
+    `backend` is `server` -- a property of the selection, not of the screen,
+    which no render-time gate can see. So this one is caught at the handler,
+    and it must say so rather than failing silently.
+
+    Review wave, M6: the previous docstring justified the enabled button with
+    "the Inspector cannot know the backend refuses it until the press is
+    dispatched", which stopped being true for the RUNTIME backend the moment
+    `write_disabled_reason` reached this pane. It is still true for the
+    entity, which is what this test is actually about.
     """
     app = _build_test_app()
     watchlist_id, _source_id = _seed(app)
