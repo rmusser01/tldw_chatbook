@@ -9,6 +9,7 @@ import pytest
 
 from tldw_chatbook.Chat.console_agent_bridge import (
     CONSOLE_AGENT_OPERATING_PROMPT,
+    FIND_LOAD_DISCOVERY_HINT,
     ConsoleAgentBridge,
     compose_agent_system_prompt,
     format_agent_step_marker,
@@ -231,6 +232,21 @@ def test_compose_prepends_session_prompt_then_agent_prompt():
     assert composed.startswith("You are Ada.")
     assert CONSOLE_AGENT_OPERATING_PROMPT in composed
     assert compose_agent_system_prompt("") == CONSOLE_AGENT_OPERATING_PROMPT
+
+
+def test_compose_appends_discovery_hint_only_when_find_load_offered():
+    # Default (direct disclosure): no hint — find/load is not the live mode.
+    assert FIND_LOAD_DISCOVERY_HINT not in compose_agent_system_prompt("You are Ada.")
+    assert FIND_LOAD_DISCOVERY_HINT not in compose_agent_system_prompt("")
+    # Past the threshold the caller flags find/load mode: the hint is
+    # appended after the operating prompt, session prompt still first.
+    composed = compose_agent_system_prompt("You are Ada.", offer_find_load=True)
+    assert composed.startswith("You are Ada.")
+    assert CONSOLE_AGENT_OPERATING_PROMPT in composed
+    assert composed.endswith(FIND_LOAD_DISCOVERY_HINT)
+    blank = compose_agent_system_prompt("", offer_find_load=True)
+    assert blank.startswith(CONSOLE_AGENT_OPERATING_PROMPT)
+    assert blank.endswith(FIND_LOAD_DISCOVERY_HINT)
 
 
 def test_no_tool_message_streams_final_answer_like_today(tmp_path):

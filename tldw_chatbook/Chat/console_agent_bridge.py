@@ -30,6 +30,7 @@ from loguru import logger
 from tldw_chatbook.Agents.agent_models import (
     AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
+    DIRECT_DISCLOSE_THRESHOLD,
     FIND_TOOLS_NAME,
     LOAD_TOOLS_NAME,
     RunBudget,
@@ -173,6 +174,16 @@ CONSOLE_RUN_BUDGET = RunBudget(
 
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
 
+# Phase-3a Task 5: one-line pointer to the find/load discovery path, appended
+# to the composed system prompt ONLY when this run's catalog crosses
+# DIRECT_DISCLOSE_THRESHOLD (i.e. initial_disclosure would offer find/load) --
+# under direct disclosure every schema is already in the prompt and the hint
+# would point at tools that are, in fact, shown.
+FIND_LOAD_DISCOVERY_HINT = (
+    "Additional tools (file, web, git, and more) are available but not shown; "
+    "use find_tools to search the catalog and load_tools to load their "
+    "schemas before calling them."
+)
 
 def _combine_state_scopes(scopes: list) -> "Any | None":
     """Combine per-turn state scopes into the one ``review_state_scope`` seam.
@@ -211,18 +222,25 @@ def _combine_state_scopes(scopes: list) -> "Any | None":
     return _combined
 
 
-def compose_agent_system_prompt(session_prompt: str) -> str:
+def compose_agent_system_prompt(session_prompt: str, *, offer_find_load: bool = False) -> str:
     """Compose the primary system prompt: session prompt first, agent prompt appended.
 
     Args:
         session_prompt: The Console session's own system prompt, if any.
+        offer_find_load: True when this run's registry catalog crosses
+            ``DIRECT_DISCLOSE_THRESHOLD`` (the caller knows the registry;
+            compose does not), appending ``FIND_LOAD_DISCOVERY_HINT`` after
+            the operating prompt.
 
     Returns:
         ``session_prompt`` followed by the (registry-resolved) console agent
         operating prompt (blank-line separated), or just the operating
-        prompt when ``session_prompt`` is blank.
+        prompt when ``session_prompt`` is blank; plus the discovery hint
+        when ``offer_find_load`` is set.
     """
     operating = get_internal_prompt("agents.console_agent_operating")
+    if offer_find_load:
+        operating = f"{operating}\n\n{FIND_LOAD_DISCOVERY_HINT}"
     base = (session_prompt or "").strip()
     if not base:
         return operating
@@ -1807,7 +1825,15 @@ class ConsoleAgentBridge:
         )
         config = AgentConfig(
             model=model,
-            system_prompt=compose_agent_system_prompt(session_system_prompt),
+            system_prompt=compose_agent_system_prompt(
+                session_system_prompt,
+                # Same condition initial_disclosure applies inside
+                # AgentService.run_turn: past the threshold, find/load is
+                # the live disclosure mode and the hint points at it.
+                offer_find_load=(
+                    len(registry.list_catalog()) > DIRECT_DISCLOSE_THRESHOLD
+                ),
+            ),
             allowed_tools=allowed_tools,
             budget=CONSOLE_RUN_BUDGET,
             native_tools=native_tools,

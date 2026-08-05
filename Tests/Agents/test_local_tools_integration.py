@@ -16,6 +16,7 @@ _combined_review_state_scope (registry with the local provider,
 review_tool_calls=hook, review_state_scope=provider.stamp_scope).
 """
 
+import dataclasses
 import json
 
 import pytest
@@ -78,15 +79,21 @@ def workspace(tmp_path):
 
 
 def make_service(db, workspace, replies, approvals, approval_calls, *,
-                 state=None, extra_specs=(), specs=None):
+                 state=None, extra_specs=(), specs=None, todo_store=None):
     """Assemble the run exactly as the bridge does: registry with builtins +
     the local provider, the build_local_review_hook batch hook, and the
     provider's stamp_scope as review_state_scope.
 
     ``specs`` replaces the default local spec set (used to keep the composed
     catalog at/under the direct-disclosure threshold for approval-flow
-    tests); ``extra_specs`` appends to whichever base set is in use."""
-    base = list(specs) if specs is not None else _default_specs(workspace)
+    tests); ``extra_specs`` appends to whichever base set is in use.
+    ``todo_store`` wires a live session todo list into the default spec set
+    (todo_write is only registered when a store is handed in)."""
+    base = (
+        list(specs)
+        if specs is not None
+        else _default_specs(workspace, todo_store=todo_store)
+    )
     provider = LocalToolProvider(
         workspace_root=workspace,
         specs=base + list(extra_specs),
@@ -377,3 +384,183 @@ def test_allow_state_executes_without_approval_round_trip(db, workspace):
         and "hello" in m["content"]
         for m in second_payload
     )
+
+
+# --- Phase 3a Task 5: research-tool + todo e2e over the find/load path -----
+
+
+def test_find_load_path_executes_web_fetch_after_approve_once(db, workspace):
+    """find_tools("fetch") -> load_tools("local:web_fetch") -> web_fetch call:
+    the discovered tool executes behind ONE approval round trip.
+
+    The network is cut at the handler seam (dataclasses.replace on the
+    frozen LocalToolSpec), not the httpx layer: Tests/Tools/test_web_tool_
+    impls.py already covers web_fetch's real transport/DNS behavior; this
+    test covers the discovery + gating flow."""
+    fetched = []
+
+    def fake_fetch(args):
+        fetched.append(dict(args))
+        return "Example Domain body text"
+
+    specs = [
+        dataclasses.replace(s, handler=fake_fetch) if s.name == "web_fetch" else s
+        for s in _default_specs(workspace)
+    ]
+    approval_calls = []
+    service, chat = make_service(
+        db,
+        workspace,
+        [
+            fence("find_tools", {"query": "fetch"}),
+            fence("load_tools", {"ids": ["local:web_fetch"]}),
+            fence("web_fetch", {"url": "http://example.com/"}),
+            "Fetched the page.",
+        ],
+        {"web_fetch": "approve_once"},
+        approval_calls,
+        specs=specs,
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=("web_fetch",),
+        # find + load + fetch + final: past the 8-step default (precedent:
+        # max_steps=16 in the fs_edit find/load test above).
+        budget=RunBudget(max_steps=16, max_model_turns=8),
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "fetch http://example.com/"}],
+        config=config,
+        api_endpoint="llama_cpp",
+        should_cancel=lambda: False,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert outcome.final_text == "Fetched the page."
+    assert len(chat.calls) == 4  # find + load + fetch + final
+
+    # The scripted discovery sequence ran in order.
+    called = [s.tool_name for s in outcome.steps if s.kind == "tool_call"]
+    assert called == ["find_tools", "load_tools", "web_fetch"]
+
+    # find_tools surfaced the catalog id the model then loaded.
+    second_payload = chat.calls[1]["messages_payload"]
+    assert any(
+        m["role"] == "user"
+        and m["content"].startswith("Tool result for find_tools: ")
+        and "local:web_fetch" in m["content"]
+        for m in second_payload
+    )
+
+    # The stubbed handler ran with the model's URL — no network touched.
+    assert fetched == [{"url": "http://example.com/"}]
+
+    # The fetch result went back to the model for the final turn.
+    final_payload = chat.calls[3]["messages_payload"]
+    assert any(
+        m["role"] == "user"
+        and m["content"].startswith("Tool result for web_fetch: ")
+        and "Example Domain body text" in m["content"]
+        for m in final_payload
+    )
+
+    # Exactly ONE approval round trip: the web_fetch gate. find_tools and
+    # load_tools are runtime tools the local provider doesn't gate.
+    assert len(approval_calls) == 1
+    assert len(approval_calls[0]) == 1
+    pending = approval_calls[0][0]
+    assert isinstance(pending, MCPPendingCall)
+    assert pending.server_key == LOCAL_SERVER_KEY
+    assert pending.llm_name == "web_fetch"
+    assert pending.arguments == {"url": "http://example.com/"}
+
+
+def test_todo_write_mutates_session_list_after_approve_once(db, workspace):
+    """find_tools("todo") -> load_tools("local:todo_write") -> todo_write:
+    the discovered tool replaces the injected session todo list in place,
+    behind ONE approval round trip. (With a store wired, the default catalog
+    is 11 entries — past the threshold — so todo_write must be discovered
+    via find/load before the fence call is permitted to execute.)
+
+    resolve_state is constructed deliberately as what
+    MCP.permission_store.resolve_effective_state returns for todo_write
+    (tags=("mutates",), which intersects HIGH_RISK_TAGS) under an INHERITED
+    allow (origin="global_default"): the high-risk floor downgrades it to
+    ``ask`` with ``risk_floored=True``. An explicit tool_override allow is
+    never floored and would skip the gate entirely — that path is already
+    pinned by test_allow_state_executes_without_approval_round_trip."""
+    todos = []
+    new_todos = [
+        {
+            "content": "Write the report",
+            "status": "in_progress",
+            "activeForm": "Writing the report",
+        },
+        {"content": "Review the report", "status": "pending"},
+    ]
+    approval_calls = []
+    service, chat = make_service(
+        db,
+        workspace,
+        [
+            fence("find_tools", {"query": "todo"}),
+            fence("load_tools", {"ids": ["local:todo_write"]}),
+            fence("todo_write", {"todos": new_todos}),
+            "Todos updated.",
+        ],
+        {"todo_write": "approve_once"},
+        approval_calls,
+        state=EffectiveToolState(
+            state="ask", origin="global_default", risk_floored=True
+        ),
+        todo_store=todos,
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=("todo_write",),
+        # find + load + write + final: past the 8-step default (precedent:
+        # max_steps=16 in the fs_edit find/load test above).
+        budget=RunBudget(max_steps=16, max_model_turns=8),
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "track these tasks"}],
+        config=config,
+        api_endpoint="llama_cpp",
+        should_cancel=lambda: False,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert outcome.final_text == "Todos updated."
+    assert len(chat.calls) == 4  # find + load + write + final
+
+    # The scripted discovery sequence ran in order.
+    called = [s.tool_name for s in outcome.steps if s.kind == "tool_call"]
+    assert called == ["find_tools", "load_tools", "todo_write"]
+
+    # The session list was replaced with the validated items.
+    assert todos == new_todos
+
+    # The tool step's result is the confirmation line, not an error.
+    tool_results = [s for s in outcome.steps if s.kind == "tool_result"]
+    assert [s.tool_name for s in tool_results] == [
+        "find_tools",
+        "load_tools",
+        "todo_write",
+    ]
+    assert tool_results[-1].result == "2 todos (1 in progress)"
+
+    # Exactly ONE approval round trip, gated on the local server key with
+    # the risk floor as the stated reason.
+    assert len(approval_calls) == 1
+    assert len(approval_calls[0]) == 1
+    pending = approval_calls[0][0]
+    assert isinstance(pending, MCPPendingCall)
+    assert pending.server_key == LOCAL_SERVER_KEY
+    assert pending.llm_name == "todo_write"
+    assert pending.reason == "risk_floored"
