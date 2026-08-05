@@ -62,6 +62,42 @@ Also live-confirmed: a *partial* `session.update` sent mid-session (only
 `{"type": "realtime", "instructions": "..."}`, no `audio` block -- the
 shape `send_seed` sends) is accepted and returns `session.updated`, so it
 does not need to repeat the full audio schema every time.
+
+TURN DETECTION ground truth (2026-08-04,
+`Tests/LLM_Calls/openai_realtime_turn_detection_probe.py`, live key, same
+GA endpoint). The server's OWN default, echoed on `session.created`:
+
+    {"type": "server_vad", "threshold": 0.5, "prefix_padding_ms": 300,
+     "silence_duration_ms": 200, "create_response": true,
+     "interrupt_response": true, "idle_timeout_ms": null}
+
+Note `silence_duration_ms: 200` -- two tenths of a second of quiet ends a
+turn. That is the mechanism behind gate round 5's "it transcribes random
+words": an ordinary mid-sentence pause (or a keystroke, or a cough) closes
+the turn, and the transcription model is handed a fragment to hallucinate
+from. Sent blocks and their verbatim verdicts:
+
+  ACCEPTED  {"type": "server_vad"}
+      -> echoed with the server's defaults filled in (above)
+  ACCEPTED  {"type": "server_vad", "threshold": 0.6,
+             "prefix_padding_ms": 300, "silence_duration_ms": 700}
+      -> echoed back verbatim (threshold 0.6, silence 700)
+  ACCEPTED  {"type": "semantic_vad"}
+      -> echoed as {"type": "semantic_vad", "eagerness": "auto",
+                    "create_response": true, "interrupt_response": true}
+  ACCEPTED  {"type": "semantic_vad", "eagerness": "low"|"auto"|"high"}
+      -> echoed back verbatim; `eagerness` IS in the accepted schema and
+         defaults to "auto"
+  REJECTED  {"type": "semantic_vad", "threshold": 0.6}
+      -> code='unknown_parameter'
+         param='session.audio.input.turn_detection.threshold'
+         message="Unknown parameter:
+                  'session.audio.input.turn_detection.threshold'."
+
+So the two modes take DISJOINT fields, and mixing them is not a
+best-effort degradation -- an `unknown_parameter` fails the entire
+`session.update`. `_build_turn_detection` drops the server_vad knobs in
+semantic mode for exactly that reason.
 """
 
 from __future__ import annotations
@@ -358,7 +394,7 @@ class OpenAIRealtimeSession:
                         "rate": self._config.input_sample_rate,
                     },
                     "transcription": {"model": _TRANSCRIPTION_MODEL},
-                    "turn_detection": {"type": "server_vad"},
+                    "turn_detection": self._build_turn_detection(),
                 },
                 "output": output,
             },
@@ -366,6 +402,31 @@ class OpenAIRealtimeSession:
         if self._config.instructions is not None:
             session["instructions"] = self._config.instructions
         return {"type": "session.update", "session": session}
+
+    def _build_turn_detection(self) -> dict:
+        """Build the `turn_detection` block for `session.audio.input`.
+
+        The two modes take DISJOINT fields, live-confirmed: `semantic_vad`
+        rejects `threshold` with `unknown_parameter` (and an
+        `unknown_parameter` fails the WHOLE `session.update`, taking the
+        conversation with it), so a threshold configured while semantic
+        mode is selected is dropped here rather than forwarded.
+
+        An unset knob is OMITTED rather than defaulted: the provider fills
+        its own value and echoes it back, so restating today's number here
+        would silently freeze it.
+
+        Returns:
+            The `turn_detection` block to send.
+        """
+        block: dict[str, Any] = {"type": self._config.turn_detection}
+        if self._config.turn_detection != "server_vad":
+            return block
+        if self._config.vad_threshold is not None:
+            block["threshold"] = self._config.vad_threshold
+        if self._config.vad_silence_ms is not None:
+            block["silence_duration_ms"] = self._config.vad_silence_ms
+        return block
 
     @staticmethod
     def _build_conversation_item(role: str, text: str) -> dict:

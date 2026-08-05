@@ -33,6 +33,21 @@ class RealtimeSessionConfig:
         output_sample_rate: Sample rate in Hz of audio delivered to
             `RealtimeCallbacks.on_audio_delta`.
         instructions: Optional system/instructions text for the session.
+        turn_detection: How the provider should decide a user turn has
+            ended -- `"semantic_vad"` (from the content of the speech) or
+            `"server_vad"` (from an energy gate). Defaults to
+            `"server_vad"`, the PROVIDER's own default, so this transport
+            layer keeps describing the provider rather than editorializing;
+            the app's product default is chosen one level up, by
+            `Chat/console_voice_input.realtime_turn_detection()`.
+        vad_threshold: Energy threshold (0-1) for `server_vad`, or None to
+            let the provider choose.
+        vad_silence_ms: End-of-turn silence window in milliseconds for
+            `server_vad`, or None to let the provider choose.
+
+    `vad_threshold`/`vad_silence_ms` apply to `server_vad` ONLY and are
+    dropped in semantic mode: the live GA endpoint rejects them there with
+    `unknown_parameter`, which fails the entire `session.update`.
     """
 
     api_key: str
@@ -41,6 +56,9 @@ class RealtimeSessionConfig:
     input_sample_rate: int = 24000
     output_sample_rate: int = 24000
     instructions: str | None = None
+    turn_detection: str = "server_vad"
+    vad_threshold: float | None = None
+    vad_silence_ms: int | None = None
 
 
 @dataclass

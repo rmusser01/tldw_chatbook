@@ -203,7 +203,13 @@ def _make_is_session_update(
             and output_cfg.get("format", {}).get("type") == "audio/pcm"
             and output_cfg.get("format", {}).get("rate") == output_rate
             and input_cfg.get("transcription") is not None
-            and input_cfg.get("turn_detection", {}).get("type") == "server_vad"
+            # Either live-accepted mode -- this is the GENERIC handshake
+            # matcher, and turn detection became configurable in gate
+            # round 5. Still asserted (a missing or garbage block fails);
+            # the exact block per mode is pinned by the turn-detection
+            # tests at the bottom of this module.
+            and input_cfg.get("turn_detection", {}).get("type")
+            in {"server_vad", "semantic_vad"}
         )
 
     return _predicate
@@ -228,7 +234,9 @@ def _config(**overrides) -> RealtimeSessionConfig:
     return RealtimeSessionConfig(**defaults)
 
 
-async def _connect_and_handshake(fake_server, extra_script, callbacks=None, config=None):
+async def _connect_and_handshake(
+    fake_server, extra_script, callbacks=None, config=None, handshake_predicate=None
+):
     """Start a fake server, connect a session, and run the standard
     `session.update` -> `session.updated` handshake.
 
@@ -246,7 +254,7 @@ async def _connect_and_handshake(fake_server, extra_script, callbacks=None, conf
     start, track = fake_server
     callbacks = callbacks if callbacks is not None else RealtimeCallbacks()
     script = [
-        ("expect", _is_session_update),
+        ("expect", handshake_predicate or _is_session_update),
         ("send", {"type": "session.updated"}),
         *extra_script,
     ]
@@ -965,3 +973,123 @@ def test_safe_invoke_isolates_exceptions_from_on_error_itself_and_as_reporter():
 
     session._callbacks.on_ready = _raise_on_ready
     session._safe_invoke(session._callbacks.on_ready, op="on_ready")
+
+
+# ---------------------------------------------------------------------------
+# Turn detection (gate round 5)
+#
+# Shapes established by the live probe FIRST
+# (`openai_realtime_turn_detection_probe.py`, run against the GA endpoint
+# with the repo key) -- see this module's ground-truth header. The two
+# modes take DISJOINT fields: `semantic_vad` + `threshold` is rejected
+# `unknown_parameter`, so sending the server_vad knobs in semantic mode
+# would take down the whole handshake.
+# ---------------------------------------------------------------------------
+
+
+def _turn_detection_of(event: dict) -> dict:
+    return (
+        event.get("session", {})
+        .get("audio", {})
+        .get("input", {})
+        .get("turn_detection", {})
+    )
+
+
+async def test_semantic_vad_sends_the_bare_semantic_block(fake_server):
+    seen: list[dict] = []
+
+    def _capture(event: dict) -> bool:
+        seen.append(_turn_detection_of(event))
+        return _is_session_update(event)
+
+    session, scripted = await _connect_and_handshake(
+        fake_server,
+        [],
+        config=_config(turn_detection="semantic_vad"),
+        handshake_predicate=_capture,
+    )
+    await scripted.wait_done()
+    assert seen[0] == {"type": "semantic_vad"}
+
+
+async def test_semantic_vad_never_carries_the_server_vad_knobs(fake_server):
+    """Live-rejected (`unknown_parameter`): a threshold configured while
+    semantic mode is selected must be DROPPED, not forwarded."""
+    seen: list[dict] = []
+
+    def _capture(event: dict) -> bool:
+        seen.append(_turn_detection_of(event))
+        return _is_session_update(event)
+
+    session, scripted = await _connect_and_handshake(
+        fake_server,
+        [],
+        config=_config(
+            turn_detection="semantic_vad", vad_threshold=0.6, vad_silence_ms=700
+        ),
+        handshake_predicate=_capture,
+    )
+    await scripted.wait_done()
+    assert seen[0] == {"type": "semantic_vad"}
+
+
+async def test_server_vad_sends_only_the_knobs_that_are_set(fake_server):
+    seen: list[dict] = []
+
+    def _capture(event: dict) -> bool:
+        seen.append(_turn_detection_of(event))
+        return _is_session_update(event)
+
+    session, scripted = await _connect_and_handshake(
+        fake_server,
+        [],
+        config=_config(turn_detection="server_vad", vad_silence_ms=700),
+        handshake_predicate=_capture,
+    )
+    await scripted.wait_done()
+    # `threshold` is absent, not defaulted: an unset knob is the
+    # provider's to choose.
+    assert seen[0] == {"type": "server_vad", "silence_duration_ms": 700}
+
+
+async def test_server_vad_carries_both_knobs_when_both_are_set(fake_server):
+    seen: list[dict] = []
+
+    def _capture(event: dict) -> bool:
+        seen.append(_turn_detection_of(event))
+        return _is_session_update(event)
+
+    session, scripted = await _connect_and_handshake(
+        fake_server,
+        [],
+        config=_config(
+            turn_detection="server_vad", vad_threshold=0.6, vad_silence_ms=700
+        ),
+        handshake_predicate=_capture,
+    )
+    await scripted.wait_done()
+    assert seen[0] == {
+        "type": "server_vad",
+        "threshold": 0.6,
+        "silence_duration_ms": 700,
+    }
+
+
+async def test_default_config_sends_the_providers_own_mode(fake_server):
+    """The session layer describes the provider, it does not editorialize:
+    an unconfigured `RealtimeSessionConfig` sends `server_vad`, which IS
+    the provider's default. The app's product default (`semantic_vad`) is
+    chosen one level up, by `console_voice_input.realtime_turn_detection()`
+    -- pinned here so the two cannot be confused for each other."""
+    seen: list[dict] = []
+
+    def _capture(event: dict) -> bool:
+        seen.append(_turn_detection_of(event))
+        return _is_session_update(event)
+
+    session, scripted = await _connect_and_handshake(
+        fake_server, [], handshake_predicate=_capture
+    )
+    await scripted.wait_done()
+    assert seen[0] == {"type": "server_vad"}
