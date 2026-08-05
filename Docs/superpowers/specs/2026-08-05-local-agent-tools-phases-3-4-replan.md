@@ -40,8 +40,9 @@ Port tldw_server's `filesystem_diff.py` (~290 lines, self-contained unified-diff
 Port tldw_server's `git_module.py` (~2,100 lines) into `Tools/git_tool_impls.py`, as `git_status`, `git_diff`, `git_log`, `git_blame`, `git_branches` (snake_case per ADR-032; `git_conflicts_*` deferred unless trivially included):
 
 - Read-only only. Subprocess `git` with a subcommand allowlist, 30 s timeout, 1 MB output cap, workspace-root confinement (repo discovery confined to the workspace root; bare `git -C <root>`).
-- These are the first model-invocable tools that spawn a process — the ADR-033 boundary: fixed argv arrays (no shell interpolation), allowlisted subcommands/flags, cwd confined, timeouts, output caps. Risk tag: none (read-only), but a new `process` tag applies per the permission store's HIGH_RISK_TAGS if flags ever expand — document why read-only git doesn't floor to ask while still being process-spawning.
-- tldw_server's only local deps (`tool_observability`, workspace-root resolver) are thin — inline/shim them.
+- These are the first model-invocable tools that spawn a process — the ADR-033 boundary: fixed argv arrays (no shell interpolation), allowlisted subcommands/flags, cwd confined, timeouts, output caps. **Risk tags (binding):** `git_*` tools carry NO risk tag today — the existing `process` tag in `HIGH_RISK_TAGS` (`MCP/permission_store.py:69`, already `{"mutates", "process"}`) is deliberately not applied to this read-only allowlisted set; the rationale (why read-only git doesn't floor to ask while still being process-spawning) is documented in ADR-033. The `process` tag WOULD apply if the allowlist ever expands past read-only subcommands.
+- Note for planning: `git_module.py` is async (asyncio subprocess throughout) — the port requires an async→sync adaptation to the sync-core shape, as with web_fetch.
+- tldw_server's only local deps (`tool_observability`, and the `app.services.mcp_hub_workspace_root_resolver` service module) are thin — inline/shim them; verify the resolver shims cleanly against chatbook's `[console] workspace_root` config during planning.
 
 ### 2.6 `web_research` — subagent/skill, NOT a tool
 
@@ -51,7 +52,7 @@ Port tldw_server's `git_module.py` (~2,100 lines) into `Tools/git_tool_impls.py`
 
 ### 3.1 MCP server exposure (as originally specced, expanded set)
 
-Expose the full local tool set (fs_* + web_* + todo_write + git_* + fs_patch) through `MCP/server.py` backed by the same cores, giving external MCP clients parity. Adopt from tldw_server: structured error reasons in tool results, and the domain-grouped catalog presentation. Naming stays `fs_*`/`git_*` snake_case (ADR-032); tldw_server's dotted convention is noted as the alternative and rejected for consistency with the chatbook registry.
+Expose the full local tool set (fs_* + web_* + todo_write + git_* + fs_patch) through `MCP/server.py` backed by the same core modules, giving external MCP clients parity. Adopt from tldw_server: structured error reasons in tool results, and the domain-grouped catalog presentation. Naming stays `fs_*`/`git_*` snake_case (ADR-032); tldw_server's dotted convention is noted as the alternative and rejected for consistency with the chatbook registry.
 
 ### 3.2 Shell — adopt the virtual-CLI model (design only)
 
@@ -73,6 +74,7 @@ Expose the full local tool set (fs_* + web_* + todo_write + git_* + fs_patch) th
 - web_fetch: SSRF guard tests (loopback/private IP, file:// scheme, redirect-to-private).
 - Skill: web-research skill smoke test through the skill resolver.
 - Hypothesis where it pays (patch parsing).
+- Disclosure: the re-plan grows the catalog to ~15 tools (9 + 5 git + fs_patch), well past `DIRECT_DISCLOSE_THRESHOLD = 8` and `RunBudget.max_active_tools = 8`. This is the designed progressive-disclosure path; phase-3 plans must extend the phase-2 find/load integration test to confirm every new tool stays reachable through `find_tools`/`load_tools`.
 
 ## 5. Phasing and task breakdown
 
