@@ -27,7 +27,10 @@ def make_provider(state=ALLOW, kill=False, **kwargs):
 def test_catalog_lists_fs_list_with_local_ids(tmp_path):
     p = make_provider(root=tmp_path)
     entries = p.list_catalog()
-    assert [e.id for e in entries] == ["local:fs_list", "local:fs_read", "local:fs_write", "local:fs_edit"]
+    assert [e.id for e in entries] == [
+        "local:fs_list", "local:fs_read", "local:fs_write", "local:fs_edit",
+        "local:fs_glob", "local:fs_grep",
+    ]
     assert entries[0].name == "fs_list" and entries[0].source == "local"
     schema = p.load_schema("local:fs_list")
     assert schema.parameters["required"] == ["path"]
@@ -61,6 +64,25 @@ def test_fs_edit_spec_carries_mutates_tag(tmp_path):
     assert props["replace_all"]["type"] == "boolean"
     assert props["replace_all"]["default"] is False
     assert p.hub_tool_for("fs_edit").tags == ("mutates",)
+
+
+def test_fs_glob_spec_read_only(tmp_path):
+    p = make_provider(root=tmp_path)
+    schema = p.load_schema("local:fs_glob")
+    assert schema.parameters["required"] == ["pattern"]
+    assert "max_results" in schema.parameters["properties"]
+    assert p.hub_tool_for("fs_glob").tags == ()  # read-only: no risk tags
+
+
+def test_fs_grep_spec_read_only_with_mode_enum(tmp_path):
+    p = make_provider(root=tmp_path)
+    schema = p.load_schema("local:fs_grep")
+    assert schema.parameters["required"] == ["pattern"]
+    props = schema.parameters["properties"]
+    assert props["mode"]["enum"] == ["content", "files", "count"]
+    assert props["mode"]["default"] == "content"
+    assert "max_results" in props
+    assert p.hub_tool_for("fs_grep").tags == ()  # read-only: no risk tags
 
 
 def test_invoke_happy_path(tmp_path):

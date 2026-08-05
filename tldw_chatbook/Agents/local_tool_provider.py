@@ -339,7 +339,16 @@ class LocalToolProvider:
 
 
 def _default_specs(workspace_root: Path) -> list[LocalToolSpec]:
-    from tldw_chatbook.Tools.local_tool_impls import edit_file, list_directory, read_file, write_file
+    from tldw_chatbook.Tools.local_tool_impls import (
+        MAX_GLOB_RESULTS,
+        MAX_GREP_RESULTS,
+        edit_file,
+        glob_files,
+        grep_files,
+        list_directory,
+        read_file,
+        write_file,
+    )
 
     return [
         LocalToolSpec(
@@ -410,5 +419,43 @@ def _default_specs(workspace_root: Path) -> list[LocalToolSpec]:
                 replace_all=args.get("replace_all", False),
             ),
             tags=("mutates",),
+        ),
+        LocalToolSpec(
+            name="fs_glob",
+            description="Match files under the workspace with a glob pattern, newest-mtime first, workspace-relative paths.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Glob pattern relative to the workspace root (e.g. \"**/*.py\"). Hidden dirs under the root are searched."},
+                    "max_results": {"type": "integer", "description": "Maximum number of paths to return (default 100)."},
+                },
+                "required": ["pattern"],
+            },
+            handler=lambda args: glob_files(
+                args["pattern"],
+                workspace_root=workspace_root,
+                max_results=args.get("max_results", MAX_GLOB_RESULTS),
+            ),
+            tags=(),
+        ),
+        LocalToolSpec(
+            name="fs_grep",
+            description="Regex search under the workspace: matching lines (default), file names, or per-file match counts.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Regular expression to search for."},
+                    "mode": {"type": "string", "enum": ["content", "files", "count"], "default": "content", "description": "\"content\": relpath:lineno:line; \"files\": matching paths only; \"count\": relpath:match_count."},
+                    "max_results": {"type": "integer", "description": "Maximum number of result lines to return (default 100)."},
+                },
+                "required": ["pattern"],
+            },
+            handler=lambda args: grep_files(
+                args["pattern"],
+                workspace_root=workspace_root,
+                mode=args.get("mode", "content"),
+                max_results=args.get("max_results", MAX_GREP_RESULTS),
+            ),
+            tags=(),
         ),
     ]

@@ -30,9 +30,12 @@ def test_edit_replaces_exactly_one_occurrence(tmp_path, prefix, needle, suffix, 
     content = prefix + needle + suffix
     if content.count(needle) != 1:
         return  # only unique-match inputs are in scope for this property
-    (ws / "f.txt").write_text(content)
+    # newline="" both sides: universal-newline mode would silently turn \r
+    # into \n and break the exact-replacement round trip.
+    (ws / "f.txt").write_text(content, newline="")
     edit_file("f.txt", needle, replacement, workspace_root=ws)
-    assert (ws / "f.txt").read_text() == prefix + replacement + suffix
+    with open(ws / "f.txt", encoding="utf-8", newline="") as fh:
+        assert fh.read() == prefix + replacement + suffix
 
 
 @given(path=st.text(min_size=1))
