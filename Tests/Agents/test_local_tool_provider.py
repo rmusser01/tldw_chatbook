@@ -29,7 +29,8 @@ def test_catalog_lists_default_specs_with_local_ids(tmp_path):
     entries = p.list_catalog()
     assert [e.id for e in entries] == [
         "local:fs_list", "local:fs_read", "local:fs_write", "local:fs_edit",
-        "local:fs_glob", "local:fs_grep", "local:web_fetch", "local:web_search",
+        "local:fs_patch", "local:fs_glob", "local:fs_grep",
+        "local:web_fetch", "local:web_search",
     ]
     assert entries[0].name == "fs_list" and entries[0].source == "local"
     schema = p.load_schema("local:fs_list")
@@ -64,6 +65,55 @@ def test_fs_edit_spec_carries_mutates_tag(tmp_path):
     assert props["replace_all"]["type"] == "boolean"
     assert props["replace_all"]["default"] is False
     assert p.hub_tool_for("fs_edit").tags == ("mutates",)
+
+
+# -- fs_patch (phase 3b-i: unified-diff apply) ---------------------------------
+
+_CREATE_DIFF = """\
+--- /dev/null
++++ b/notes/new.txt
+@@ -0,0 +1,2 @@
++hello
++world
+"""
+
+
+def test_fs_patch_spec_carries_mutates_tag(tmp_path):
+    p = make_provider(root=tmp_path)
+    schema = p.load_schema("local:fs_patch")
+    assert schema.parameters["required"] == ["diff"]
+    props = schema.parameters["properties"]
+    assert props["diff"]["type"] == "string"
+    assert props["dry_run"]["type"] == "boolean"
+    assert props["dry_run"]["default"] is False
+    assert "dry_run" not in schema.parameters["required"]
+    assert p.hub_tool_for("fs_patch").tags == ("mutates",)
+
+
+def test_fs_patch_description_teaches_the_diff_format(tmp_path):
+    # Models hallucinate diff formats; the description must pin the contract.
+    desc = make_provider(root=tmp_path).load_schema("local:fs_patch").description
+    assert "unified diff" in desc
+    assert "dry_run" in desc
+
+
+def test_fs_patch_handler_create_diff_lands_the_file(tmp_path):
+    (tmp_path / "notes").mkdir()  # fs_write parity: parent must already exist
+    p = make_provider(root=tmp_path)
+    r = p.invoke("local:fs_patch", {"diff": _CREATE_DIFF})
+    assert r.ok
+    assert "patched notes/new.txt" in r.content
+    assert (tmp_path / "notes" / "new.txt").read_text() == "hello\nworld\n"
+
+
+def test_fs_patch_handler_dry_run_writes_nothing(tmp_path):
+    (tmp_path / "notes").mkdir()
+    p = make_provider(root=tmp_path)
+    r = p.invoke("local:fs_patch", {"diff": _CREATE_DIFF, "dry_run": True})
+    assert r.ok
+    assert "would patch notes/new.txt" in r.content
+    assert not (tmp_path / "notes" / "new.txt").exists()
+
 
 
 def test_fs_glob_spec_read_only(tmp_path):
