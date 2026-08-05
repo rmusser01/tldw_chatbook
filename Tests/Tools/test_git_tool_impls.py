@@ -41,6 +41,7 @@ def tmp_git_repo(tmp_path: Path) -> Path:
     repo.mkdir()
     _git(repo, "init")
     _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "commit.gpgsign", "false")
     _git(repo, "config", "user.name", "Test User")
     (repo / "file.txt").write_text("hello\n", encoding="utf-8")
     _git(repo, "add", ".")
