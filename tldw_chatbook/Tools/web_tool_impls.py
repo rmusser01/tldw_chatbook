@@ -327,8 +327,21 @@ SEARCH_DEFAULT_ENGINE = "duckduckgo"
 SEARCH_ENGINES = ("google", "bing", "duckduckgo", "brave", "kagi", "tavily", "searx")
 SEARCH_DEFAULT_RESULT_COUNT = 5
 SEARCH_MAX_RESULT_COUNT = 10
-SEARCH_RESULT_MAX_CHARS = 4 * 1024      # per-result bound (re-plan spec §2.2)
-SEARCH_TOTAL_MAX_CHARS = 24 * 1024      # total cap, under the provider's 32 KiB fit
+# Byte budgets (re-plan spec §2.2), matching the provider's byte-based
+# 32 KiB result fitting: per-result bound and a total cap comfortably under
+# it, so provider fitting never triggers even for multibyte (CJK) content.
+SEARCH_RESULT_MAX_BYTES = 4 * 1024
+SEARCH_TOTAL_MAX_BYTES = 24 * 1024
+
+_TRUNCATED_MARKER = "… [truncated]"
+
+
+def _truncate_to_bytes(text: str, max_bytes: int) -> str:
+    """Cap ``text`` at ``max_bytes`` of UTF-8, never splitting a codepoint."""
+    raw = text.encode("utf-8")
+    if len(raw) <= max_bytes:
+        return text
+    return raw[:max_bytes].decode("utf-8", errors="ignore") + _TRUNCATED_MARKER
 
 
 def web_search(
@@ -342,11 +355,11 @@ def web_search(
     Delegates to ``Web_Scraping.WebSearch_APIs.perform_websearch`` with the
     legacy ``Tools/web_search_tool.py`` config-default wiring (country US,
     English in/out, moderate safesearch, no advanced filters). Each result
-    block is bounded to SEARCH_RESULT_MAX_CHARS and the whole output to
-    SEARCH_TOTAL_MAX_CHARS, so the provider's 32 KiB result fitting never
-    triggers on search output. Backend failures return an error string
-    rather than raising (legacy tool contract); only invalid arguments
-    raise LocalToolError.
+    block is bounded to SEARCH_RESULT_MAX_BYTES and the whole output to
+    SEARCH_TOTAL_MAX_BYTES (both UTF-8 byte budgets), so the provider's
+    32 KiB byte fitting never triggers on search output. Backend failures
+    and error envelopes return an error string rather than raising (legacy
+    tool contract); only invalid arguments raise LocalToolError.
 
     Raises:
         LocalToolError: if ``query`` is empty.
@@ -354,7 +367,11 @@ def web_search(
     if not isinstance(query, str) or not query.strip():
         raise LocalToolError("[invalid-args] query must be a non-empty string")
     query = query.strip()
-    engine = (search_engine or SEARCH_DEFAULT_ENGINE).strip().lower()
+    # Coerced like result_count below: garbage input degrades to the default.
+    if isinstance(search_engine, str) and search_engine.strip():
+        engine = search_engine.strip().lower()
+    else:
+        engine = SEARCH_DEFAULT_ENGINE
     try:
         count = int(result_count)
     except (TypeError, ValueError):
@@ -388,7 +405,16 @@ def web_search(
         logger.warning(f"web_search backend failure via {engine!r}: {exc}")
         return f"[search-failed] web search via {engine!r} failed: {exc}"
 
-    if not isinstance(results, dict) or not isinstance(results.get("results"), list):
+    if not isinstance(results, dict):
+        return (
+            f"No results found or unexpected response format from {engine!r} "
+            f"(raw: {str(results)[:500]})"
+        )
+    # A well-formed envelope can still carry a failure: surface THAT reason.
+    reason = results.get("processing_error") or results.get("error")
+    if reason:
+        return f"[search-failed] web search via {engine!r} reported an error: {reason}"
+    if not isinstance(results.get("results"), list):
         return (
             f"No results found or unexpected response format from {engine!r} "
             f"(raw: {str(results)[:500]})"
@@ -398,18 +424,21 @@ def web_search(
         return f"No results found for {query!r} via {engine!r}."
 
     blocks: list[str] = []
-    total = 0
+    total_bytes = 0
     for i, item in enumerate(items, 1):
+        # Real standardized shape (process_web_search_results): body text is
+        # top-level "content"; "snippet" lives under metadata. Accept both.
+        snippet = item.get("snippet") or item.get("content") or "No description available"
         block = (
             f"{i}. {item.get('title') or 'No title'}\n"
             f"   URL: {item.get('url') or ''}\n"
-            f"   {item.get('snippet') or 'No description available'}"
+            f"   {snippet}"
         )
-        if len(block) > SEARCH_RESULT_MAX_CHARS:
-            block = block[:SEARCH_RESULT_MAX_CHARS] + "… [truncated]"
-        if total + len(block) > SEARCH_TOTAL_MAX_CHARS:
+        block = _truncate_to_bytes(block, SEARCH_RESULT_MAX_BYTES)
+        block_bytes = len(block.encode("utf-8"))
+        if total_bytes + block_bytes > SEARCH_TOTAL_MAX_BYTES:
             blocks.append("… [further results omitted: total size cap reached]")
             break
         blocks.append(block)
-        total += len(block)
+        total_bytes += block_bytes
     return "\n\n".join(blocks)
