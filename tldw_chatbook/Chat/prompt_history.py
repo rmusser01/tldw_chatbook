@@ -58,6 +58,9 @@ class PromptHistory:
         self._entries: list[HistoryEntry] = []
         self._current: str | None = None
         self._loaded: bool = False
+        # Serializes append() so a whole-file cap rewrite can never
+        # interleave with another append from a concurrent send.
+        self._append_lock = asyncio.Lock()
 
     @property
     def size(self) -> int:
@@ -70,7 +73,12 @@ class PromptHistory:
         return self._current or ""
 
     def stash_draft(self, text: str) -> None:
-        """Stash in-progress text so history recall never loses it."""
+        """Stash in-progress text so history recall never loses it.
+
+        Args:
+            text: The current in-progress draft to preserve as the live
+                (index 0) pseudo-entry.
+        """
         self._current = text
 
     def clear_draft(self) -> None:
@@ -134,6 +142,22 @@ class PromptHistory:
         self._loaded = True
 
     async def append(self, text: str) -> bool:
+        """Append a prompt to the history (serialized, fire-and-forget friendly).
+
+        Concurrent appends are serialized with an internal lock so a
+        whole-file cap rewrite can never interleave with another append.
+
+        Args:
+            text: The prompt text to record.
+
+        Returns:
+            True when the entry was recorded, False on write failure or when
+            the entry was skipped (empty text or consecutive duplicate).
+        """
+        async with self._append_lock:
+            return await self._append_impl(text)
+
+    async def _append_impl(self, text: str) -> bool:
         """Append a prompt to the history (fire-and-forget friendly).
 
         Consecutive duplicates are skipped. The in-memory entry is added

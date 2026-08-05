@@ -10,6 +10,7 @@ Covers:
 - Most-recent-wins prefix completion for ghost text.
 """
 
+import asyncio
 import json
 
 import pytest
@@ -143,6 +144,19 @@ class TestMaxEntriesCap:
         assert (await history.get_entry(-1))["input"] == "new"
         lines = history.path.read_text(encoding="utf-8").splitlines()
         assert len(lines) == 1
+
+    async def test_concurrent_appends_are_serialized(self, tmp_path):
+        """Racing appends (e.g. composer + controller sharing one instance)
+        cannot interleave a cap rewrite with another append — every entry
+        lands exactly once, in order."""
+        path = tmp_path / "prompt_history.jsonl"
+        history = PromptHistory(path, max_entries=5)
+        await asyncio.gather(*(history.append(f"prompt {index}") for index in range(8)))
+
+        inputs = [entry["input"] for entry in history._entries]
+        assert inputs == [f"prompt {index}" for index in range(3, 8)]
+        lines = path.read_text(encoding="utf-8").splitlines()
+        assert [json.loads(line)["input"] for line in lines] == inputs
 
 
 class TestWriteFailureRollback:

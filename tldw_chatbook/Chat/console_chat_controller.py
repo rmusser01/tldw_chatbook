@@ -15,6 +15,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Protocol
 from uuid import uuid4
 
+from loguru import logger
+
 from tldw_chatbook.Chat.attachment_core import (
     image_url_part,
     max_history_images,
@@ -75,7 +77,6 @@ from tldw_chatbook.Chat.console_skill_resolver import (
     resolve_skill_command,
 )
 from tldw_chatbook.Chat.prompt_history import PromptHistory
-from loguru import logger
 
 from tldw_chatbook.Agents.builtin_tool_gate import build_builtin_gate
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
