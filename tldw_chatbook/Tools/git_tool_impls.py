@@ -59,6 +59,7 @@ import os
 import queue
 import re
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -147,6 +148,8 @@ def _validate_argv(argv: list[str]) -> None:
     if not argv or argv[0] != "git":
         raise LocalToolError("git runner only executes git commands")
     subcommand = _extract_subcommand_and_validate_globals(argv)
+    if subcommand is None:
+        raise LocalToolError("git requires a subcommand (e.g. status, diff, log)")
     if subcommand not in _ALLOWED_GIT_SUBCOMMANDS:
         raise LocalToolError(f"git subcommand is not allowlisted: {subcommand}")
 
@@ -181,6 +184,14 @@ def run_git(
     process is killed when the cap is exceeded (never fully buffered) and a
     truncation marker is appended. Timeout kills the process and raises.
 
+    NOTE: validation stops at the subcommand. Everything AFTER the
+    subcommand is caller-constructed and NOT validated at this layer — e.g.
+    ``["git", "diff", "--output=/tmp/pwn"]`` passes ``_validate_argv``.
+    Callers (the tool cores below) must therefore build argv only from
+    fixed literals plus values they have validated themselves (see the
+    ``commit_range`` leading-dash/regex checks in :func:`git_diff`) and
+    must never splice raw model-controlled strings into flag positions.
+
     Raises:
         LocalToolError: argv validation failure, git unavailable, or timeout.
     """
@@ -196,6 +207,11 @@ def run_git(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=_git_environment(),
+        # Own process group so the timeout/cap kills can reap grandchildren
+        # too (a bare process.kill() leaves e.g. a textconv child alive —
+        # and a live grandchild holding the pipe write end would stall the
+        # truncation fast-path until the full timeout).
+        start_new_session=os.name == "posix",
     )
 
     results: dict[str, tuple[bytes, bool]] = {}
@@ -250,6 +266,13 @@ def run_git(
 
 
 def _kill_process(process: subprocess.Popen) -> None:
+    """Kill the whole process group on POSIX; fall back to the direct child."""
+    if os.name == "posix":
+        # process was started with start_new_session=True, so its pid is
+        # the group id: SIGKILL the group to reap grandchildren as well.
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(process.pid, signal.SIGKILL)
+        return
     with contextlib.suppress(ProcessLookupError):
         process.kill()
 
@@ -319,7 +342,11 @@ def _stderr_gist(result: GitCommandResult) -> str:
 
 def _run_git_checked(argv: list[str], *, subcommand: str) -> GitCommandResult:
     result = run_git(argv)
-    if result.returncode != 0:
+    # A truncated result means the output cap fired and WE killed git
+    # (SIGKILL -> returncode -9): that is not a git failure. Deliver the
+    # bounded partial output (run_git already appended the truncation
+    # marker) — that is the whole point of the bounded-read design.
+    if result.returncode != 0 and not result.truncated:
         raise LocalToolError(f"git {subcommand} failed: {_stderr_gist(result)}")
     return result
 
@@ -585,10 +612,19 @@ def git_diff(
     (regex-validated before entering argv) and ``stat`` modes; the
     reference's third ``working_tree`` scope is omitted.
     """
-    if commit_range is not None and not _COMMIT_RANGE_PATTERN.match(commit_range):
-        raise LocalToolError(
-            f"invalid commit_range {commit_range!r}: only [A-Za-z0-9._/~^-] allowed"
-        )
+    if commit_range is not None:
+        # Leading-dash values are FLAGS, not refnames (git refnames cannot
+        # begin with a dash). The regex alone allows "--textconv" et al.,
+        # and because the range lands LAST in argv, git's
+        # last-occurrence-wins would re-enable textconv/ext-diff over the
+        # machine-safe --no-textconv/--no-ext-diff already present —
+        # verified as a command-execution escape via a hostile repo's
+        # .gitattributes diff driver. Refuse outright.
+        if commit_range.startswith("-") or not _COMMIT_RANGE_PATTERN.match(commit_range):
+            raise LocalToolError(
+                f"invalid commit_range {commit_range!r}: "
+                "must be a ref/range matching [A-Za-z0-9._/~^-] and not start with '-'"
+            )
     repo_root = _prepare_for_path(workspace_root, path)
     argv = [
         "git",

@@ -316,3 +316,87 @@ def test_path_filter_confined(tmp_git_repo: Path) -> None:
         git_log(tmp_git_repo, path="../x")
     with pytest.raises(LocalToolError, match="outside"):
         git_blame(tmp_git_repo, "../x")
+
+
+# --- review fixes: flag smuggling, truncation delivery, process-group kill ---
+
+
+def test_git_diff_commit_range_flag_smuggling_refused(tmp_git_repo: Path) -> None:
+    # Leading-dash values are flags, not refnames: git's last-occurrence-wins
+    # would let "--textconv" override the --no-textconv already in argv.
+    with pytest.raises(LocalToolError, match="commit_range"):
+        git_diff(tmp_git_repo, commit_range="--textconv")
+    with pytest.raises(LocalToolError, match="commit_range"):
+        git_diff(tmp_git_repo, commit_range="--output=/tmp/x")
+    with pytest.raises(LocalToolError, match="commit_range"):
+        git_diff(tmp_git_repo, commit_range="-c")
+
+
+def test_git_diff_textconv_hostile_repo_not_executed(tmp_git_repo: Path) -> None:
+    # Hostile repo: .gitattributes routes *.txt through a textconv that
+    # writes a marker file. The smuggled --textconv must be refused, and a
+    # plain diff must be protected by the --no-textconv already in argv.
+    marker = tmp_git_repo / "MARKER"
+    (tmp_git_repo / ".gitattributes").write_text("*.txt diff=pwn\n", encoding="utf-8")
+    _git(tmp_git_repo, "config", "diff.pwn.textconv", f"touch {marker}; cat")
+    (tmp_git_repo / "file.txt").write_text("changed\n", encoding="utf-8")
+
+    with pytest.raises(LocalToolError, match="commit_range"):
+        git_diff(tmp_git_repo, commit_range="--textconv")
+    git_diff(tmp_git_repo)
+    assert not marker.exists()
+
+
+def test_git_diff_truncated_returns_partial_output(tmp_git_repo: Path) -> None:
+    # A >1 MB diff trips the output cap: git is killed by US, so the bounded
+    # partial output (with truncation marker) must be delivered, not a
+    # bogus LocalToolError built from the killed process's returncode.
+    big = "".join(f"line {i}\n" for i in range(120_000))  # ~1.4 MB
+    _commit_file(tmp_git_repo, "big.txt", big, "add big")
+    (tmp_git_repo / "big.txt").write_text(big.replace("line", "LINE"), encoding="utf-8")
+
+    out = git_diff(tmp_git_repo)
+    assert "diff --git" in out
+    assert out.rstrip().endswith("...[output truncated]")
+
+
+def test_run_git_kills_process_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A fake git that spawns a long-lived child: the timeout kill must reap
+    # the whole process group, not just the direct child.
+    import os
+    import time
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    pid_file = tmp_path / "child.pid"
+    fake_git = bin_dir / "git"
+    fake_git.write_text(f"#!/bin/sh\nsleep 60 &\necho $! > {pid_file}\nwait\n", encoding="utf-8")
+    fake_git.chmod(0o755)
+
+    monkeypatch.setattr(git_tool_impls.shutil, "which", lambda _name: str(fake_git))
+    real_env = git_tool_impls._git_environment
+
+    def env_with_fake_path() -> dict:
+        env = real_env()
+        env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '/usr/bin:/bin')}"
+        return env
+
+    monkeypatch.setattr(git_tool_impls, "_git_environment", env_with_fake_path)
+
+    with pytest.raises(LocalToolError, match="timed out"):
+        run_git(["git", "status"], timeout=1.0)
+
+    child_pid = int(pid_file.read_text(encoding="utf-8").strip())
+    for _ in range(50):
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail(f"grandchild process {child_pid} survived the timeout kill")
+
+
+def test_run_git_bare_argv_requires_subcommand() -> None:
+    with pytest.raises(LocalToolError, match="requires a subcommand"):
+        run_git(["git"])
