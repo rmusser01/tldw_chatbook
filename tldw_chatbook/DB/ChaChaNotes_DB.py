@@ -162,7 +162,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 30  # Adds local-only messages.usage_json (cost ticker PR1).
+    _CURRENT_SCHEMA_VERSION = 31  # Adds local-only messages.metadata_json (task-2364).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2547,6 +2547,18 @@ ALTER TABLE messages ADD COLUMN usage_json TEXT DEFAULT NULL;
 """
 
     # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v30_to_v31_message_metadata.sql.
+    # NOTE: no trigger DDL. ``metadata_json`` is LOCAL-ONLY (task-2364:
+    # engine provenance, interrupted flag, transcript status) and must never
+    # reach sync_log, so the messages_sync_* triggers are left untouched and
+    # the column is never added to their payloads -- byte-for-byte the same
+    # reasoning as ``usage_json`` above. The schema-version bump is done
+    # separately in the runner (not embedded here) with a rowcount check.
+    _MIGRATE_V30_TO_V31_SQL = """
+ALTER TABLE messages ADD COLUMN metadata_json TEXT DEFAULT NULL;
+"""
+
+    # Keep this runner SQL aligned with
     # tldw_chatbook/DB/migrations/chachanotes_v18_to_v19_message_attachments.sql.
     _MIGRATE_V18_TO_V19_SQL = """
 CREATE TABLE IF NOT EXISTS message_attachments(
@@ -4339,6 +4351,79 @@ UPDATE db_schema_version
                 f"Unexpected error migrating from V29 to V30 for '{self._SCHEMA_NAME}': {e}"
             ) from e
 
+    def _migrate_from_v30_to_v31(self, conn: sqlite3.Connection) -> None:
+        """Migrate schema V30->V31: add the local-only ``metadata_json``
+        column to ``messages`` (task-2364: engine provenance, interrupted
+        flag, transcript status). No sync triggers change -- the column is
+        never synced (see the v29->v30 usage_json precedent)."""
+        if self._get_db_version(conn) != 30:
+            raise SchemaError(
+                f"[{self._SCHEMA_NAME} V30→V31] Migration requires schema version 30"
+            )
+        logger.info(
+            f"Migrating schema from V30 to V31 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
+        try:
+            # The .sql file is the plain, unguarded ALTER (see its header
+            # note); THIS runner owns the idempotence guard. `ALTER TABLE ...
+            # ADD COLUMN` is not conditional in SQLite, so a database that
+            # already carries `metadata_json` at v30 -- a partially-applied
+            # migration, or a row added by a concurrent build of this branch
+            # -- would abort the whole upgrade with "duplicate column name".
+            # Skipping just the DDL (never the version bump) lands such a
+            # database at v31 exactly like a clean one.
+            existing_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(messages)").fetchall()
+            }
+            if "metadata_json" in existing_columns:
+                logger.info(
+                    f"[{self._SCHEMA_NAME} V30→V31] messages.metadata_json already present; "
+                    "skipping the ALTER and applying the version bump only."
+                )
+            else:
+                conn.executescript(self._MIGRATE_V30_TO_V31_SQL)
+                logger.debug(
+                    f"[{self._SCHEMA_NAME} V30→V31] Migration script executed."
+                )
+
+            version_cursor = conn.execute(
+                """
+                UPDATE db_schema_version
+                   SET version = 31
+                 WHERE schema_name = ?
+                   AND version = 30
+                """,
+                (self._SCHEMA_NAME,),
+            )
+            if version_cursor.rowcount != 1:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V30→V31] Migration version update was not applied"
+                )
+
+            final_version = self._get_db_version(conn)
+            if final_version != 31:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V30→V31] Migration version check failed. Expected 31, got: {final_version}"
+                )
+
+            logger.info(
+                f"[{self._SCHEMA_NAME} V30→V31] Migration completed successfully for DB: {self.db_path_str}."
+            )
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V30→V31] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V30 to V31 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V30→V31] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V30 to V31 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -4499,6 +4584,7 @@ UPDATE db_schema_version
                     27: self._migrate_from_v27_to_v28,
                     28: self._migrate_from_v28_to_v29,
                     29: self._migrate_from_v29_to_v30,
+                    30: self._migrate_from_v30_to_v31,
                 }
 
                 if current_db_version == 0:
@@ -7042,7 +7128,7 @@ UPDATE db_schema_version
             "m.image_data, m.image_mime_type, m.timestamp, m.ranking, m.last_modified, "
             "m.version, m.client_id, m.deleted, m.feedback, m.role, "
             "m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants, "
-            "m.usage_json "
+            "m.usage_json, m.metadata_json "
             "FROM messages m "
             "JOIN conversations c ON m.conversation_id = c.id "
             "WHERE m.conversation_id = ? AND m.deleted = 0 "
@@ -7089,7 +7175,7 @@ UPDATE db_schema_version
                    m.image_data, m.image_mime_type, m.timestamp, m.ranking, m.last_modified,
                    m.version, m.client_id, m.deleted, m.feedback, m.role,
                    m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants,
-                   m.usage_json
+                   m.usage_json, m.metadata_json
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
             WHERE m.conversation_id = ?
@@ -7123,7 +7209,7 @@ UPDATE db_schema_version
                    m.image_data, m.image_mime_type, m.timestamp, m.ranking, m.last_modified,
                    m.version, m.client_id, m.deleted, m.feedback, m.role,
                    m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants,
-                   m.usage_json
+                   m.usage_json, m.metadata_json
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
             WHERE m.conversation_id = ?
@@ -7928,8 +8014,8 @@ UPDATE db_schema_version
                 INSERT INTO messages (id, conversation_id, parent_message_id, sender, content,
                                       image_data, image_mime_type,
                                       timestamp, ranking, last_modified, client_id, version, deleted, role,
-                                      usage_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
+                                      usage_json, metadata_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?)
                 """
         params = (
             msg_id,
@@ -7945,6 +8031,7 @@ UPDATE db_schema_version
             client_id,
             role,
             msg_data.get("usage_json"),
+            msg_data.get("metadata_json"),
         )
         try:
             with self.transaction():
@@ -7997,7 +8084,7 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database errors.
         """
-        query = "SELECT id, conversation_id, parent_message_id, sender, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted, feedback, usage_json FROM messages WHERE id = ? AND deleted = 0"
+        query = "SELECT id, conversation_id, parent_message_id, sender, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted, feedback, usage_json, metadata_json FROM messages WHERE id = ? AND deleted = 0"
         try:
             cursor = self.execute_query(query, (message_id,))
             row = cursor.fetchone()
@@ -8401,7 +8488,7 @@ UPDATE db_schema_version
                    {image_col}, m.image_mime_type, m.timestamp, m.ranking,
                    m.last_modified, m.version, m.client_id, m.deleted, m.feedback, m.role,
                    m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants,
-                   m.usage_json
+                   m.usage_json, m.metadata_json
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
             WHERE m.conversation_id = ?
@@ -8545,6 +8632,7 @@ UPDATE db_schema_version
             "image_mime_type",
             "feedback",
             "usage_json",
+            "metadata_json",
         ]
 
         # Special handling for clearing image
@@ -8717,6 +8805,61 @@ UPDATE db_schema_version
             )
             raise CharactersRAGDBError(
                 f"Database error writing local usage: {e}"
+            ) from e
+
+    def update_message_metadata_local(self, message_id: str, metadata_json: str) -> bool:
+        """Write a message's local-only ``metadata_json`` WITHOUT bumping sync metadata.
+
+        The exact counterpart of ``update_message_usage_local`` above, and
+        for the same reason: ``metadata_json`` (task-2364 -- engine
+        provenance, the interrupted flag, transcript status) records what
+        THIS device observed while producing the row. It is excluded from
+        every sync payload, so routing a metadata-only write through the
+        general-purpose ``update_message`` would bump
+        ``version``/``last_modified``, trip the ``messages_sync_update``
+        trigger's ``WHEN`` clause on those columns alone, and enqueue a
+        ``sync_log`` row whose payload can never carry the column that
+        actually changed -- cross-device churn plus a spurious
+        optimistic-lock bump. This writes ONLY the one column, leaving
+        ``version``, ``last_modified`` and ``client_id`` untouched.
+
+        Bypassing optimistic locking is safe for the same narrow reason it
+        is safe for usage: a local-only column, written by a single writer
+        per device, with no cross-device conflict for locking to catch.
+
+        Args:
+            message_id: The UUID of the message to update.
+            metadata_json: The ``MessageMetadata.to_json()`` payload to
+                store.
+
+        Returns:
+            True if a non-deleted row with this id was found and updated;
+            False if no such row exists (already deleted, or unknown id).
+
+        Raises:
+            CharactersRAGDBError: For database integrity or other database
+                errors while performing the write.
+        """
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute(
+                    "UPDATE messages SET metadata_json = ? WHERE id = ? AND deleted = 0",
+                    (metadata_json, message_id),
+                )
+                return cursor.rowcount > 0
+        except sqlite3.IntegrityError as e:
+            logger.opt(exception=True).error(
+                f"SQLite integrity error writing local metadata for message ID {message_id}: {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Database integrity error writing local metadata: {e}"
+            ) from e
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(
+                f"Database error writing local metadata for message ID {message_id}: {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Database error writing local metadata: {e}"
             ) from e
 
     def soft_delete_message(

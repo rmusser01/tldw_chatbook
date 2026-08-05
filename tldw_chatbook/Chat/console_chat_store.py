@@ -39,6 +39,7 @@ from tldw_chatbook.Chat.console_speech import (
     ConsoleSpeechSnapshotRejectionCode,
     TTSMessageSpeechSnapshot,
 )
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
@@ -100,6 +101,7 @@ class ConsoleChatPersistence(Protocol):
         attachments: Sequence[Mapping[str, Any]] | None = None,
         citation_write: SealedCitationWrite | None = None,
         usage_json: str | None = None,
+        metadata_json: str | None = None,
     ) -> str:
         """Create a persisted message and return its ID.
 
@@ -116,6 +118,11 @@ class ConsoleChatPersistence(Protocol):
         message's normalized provider-usage JSON. Optional: narrow test
         fakes may omit this parameter entirely -- the store only passes it
         to adapters that declare it (see ``_persistence_accepts_kwarg``).
+
+        ``metadata_json`` (task-2364), when present, is the message's
+        structured metadata JSON (engine provenance, interrupted flag,
+        transcript status). Same optionality and same declare-to-receive
+        rule as ``usage_json``.
         """
 
     def update_message_content(
@@ -131,6 +138,7 @@ class ConsoleChatPersistence(Protocol):
         update_feedback: bool = False,
         attachments: Sequence[Mapping[str, Any]] | None = None,
         usage_json: str | None = None,
+        metadata_json: str | None = None,
     ) -> bool:
         """Update persisted message content.
 
@@ -145,6 +153,9 @@ class ConsoleChatPersistence(Protocol):
         adapters that declare it, and only when usage is actually known,
         so a content-only update never clobbers an existing value with
         ``None``.
+
+        ``metadata_json`` (task-2364) follows the identical contract for
+        the structured metadata column.
         """
 
     def update_message_usage(self, *, message_id: str, usage_json: str) -> bool:
@@ -167,6 +178,18 @@ class ConsoleChatPersistence(Protocol):
         to the ordinary content-carrying update path when it is not
         present, so narrow test fakes written before this method existed
         keep working unchanged.
+        """
+
+    def update_message_metadata(self, *, message_id: str, metadata_json: str) -> bool:
+        """Persist structured metadata as a version-neutral, local-only write.
+
+        The task-2364 sibling of ``update_message_usage`` above, with the
+        identical contract: metadata-only flush against an already-persisted
+        row, no ``version``/``last_modified`` bump (the
+        ``messages_sync_update`` trigger watches those, and no sync payload
+        can ever carry ``metadata_json``), and entirely optional -- the
+        store probes for it and falls back to the content-carrying update
+        path when an adapter does not provide it.
         """
 
     def get_message_version(self, message_id: str) -> int | None:
@@ -1082,8 +1105,15 @@ class ConsoleChatStore:
         defer_terminal_persistence: bool = False,
         tool_output_full: str | None = None,
         change_review_run_id: str | None = None,
+        metadata: "MessageMetadata | None" = None,
     ) -> ConsoleChatMessage:
-        """Append a message; scalar image kwargs become a one-item tuple."""
+        """Append a message; scalar image kwargs become a one-item tuple.
+
+        ``metadata`` (task-2364) records structured facts about the turn
+        (engine provenance, interrupted, transcript status) at creation
+        time, so a row that knows its own provenance writes it with the
+        create instead of chasing it with a second update.
+        """
         self._session_or_raise(session_id)
         effective = tuple(attachments)
         if not effective and image_data is not None:
@@ -1134,6 +1164,7 @@ class ConsoleChatStore:
             status=self._initial_status(role=role, content=content),
             tool_output_full=tool_output_full,
             change_review_run_id=change_review_run_id,
+            metadata=metadata,
         )
         self._set_message_attachments(message, effective)
         if attachment_label and effective and not effective[0].display_name:
@@ -2073,6 +2104,37 @@ class ConsoleChatStore:
         message.usage = usage
         if message.status not in {"pending", "streaming"}:
             self._persist_usage_only(message)
+        return self._snapshot(message)
+
+    def set_message_metadata(
+        self, message_id: str, metadata: MessageMetadata
+    ) -> ConsoleChatMessage:
+        """Record structured facts about a turn, flushing when it is durable.
+
+        Unlike usage -- which arrives once, at the end -- metadata is
+        revised in place while a turn runs: a realtime user row is created
+        ``pending`` at turn-commit and becomes ``final``/``empty``/``failed``
+        when its transcript resolves, and a reply is marked ``interrupted``
+        after the fact. So this always overwrites (the caller composes the
+        whole record; there is no partial merge to get wrong) and persists
+        immediately WHEN there is a durable row to write to.
+
+        A row with no persisted id yet is left alone on purpose: an empty
+        realtime user row is not written at all until its transcript lands
+        (``_persist_new_message_or_defer``), and the create that eventually
+        happens carries this metadata with it -- one write, not two.
+
+        Args:
+            message_id: Native (in-memory) message id.
+            metadata: The complete metadata record for the message.
+
+        Returns:
+            An independent snapshot of the updated message.
+        """
+        message = self._message_or_raise(message_id)
+        message.metadata = metadata
+        if message.persisted_message_id is not None:
+            self._persist_metadata_only(message)
         return self._snapshot(message)
 
     def mark_message_complete(self, message_id: str) -> ConsoleChatMessage:
@@ -3022,6 +3084,17 @@ class ConsoleChatStore:
             self.persistence.create_message, "usage_json"
         ):
             create_kwargs["usage_json"] = message.usage.to_json()
+        # Structured message metadata (task-2364): same declare-to-receive
+        # rule, and an all-default instance is treated as "nothing to
+        # record" rather than written as a row of noise.
+        if (
+            message.metadata is not None
+            and not message.metadata.is_empty
+            and self._persistence_accepts_kwarg(
+                self.persistence.create_message, "metadata_json"
+            )
+        ):
+            create_kwargs["metadata_json"] = message.metadata.to_json()
         if citation_write is not None:
             create_kwargs["citation_write"] = citation_write
         if terminal_persistence:
@@ -3144,6 +3217,39 @@ class ConsoleChatStore:
             return
         self._persist_existing_message(message)
 
+    def _persist_metadata_only(self, message: ConsoleChatMessage) -> None:
+        """Flush a persisted message's metadata without a version bump.
+
+        The metadata twin of ``_persist_usage_only``, and local-only for
+        the same reason: ``metadata_json`` never rides a sync payload, so
+        routing this through the content path would bump
+        ``version``/``last_modified`` on a write whose content did not
+        change, trip the ``messages_sync_update`` trigger's ``WHEN`` clause
+        and enqueue a ``sync_log`` row that cannot carry the column that
+        changed.
+
+        Prefers the adapter's ``update_message_metadata`` (probed the same
+        hasattr+callable way as its usage sibling) and falls back to the
+        content-carrying path for narrow fakes that predate it.
+        """
+        if self.persistence is None:
+            return
+        if message.persisted_message_id is None or message.metadata is None:
+            self._persist_existing_message(message)
+            return
+        metadata_writer = getattr(self.persistence, "update_message_metadata", None)
+        if callable(metadata_writer):
+            metadata_writer(
+                message_id=message.persisted_message_id,
+                metadata_json=message.metadata.to_json(),
+            )
+            # Sync v2 never transmits metadata_json either, and this row's
+            # content was already enqueued by whichever write persisted it
+            # -- re-enqueueing identical content here would be the same
+            # profitless churn the local-only write exists to avoid.
+            return
+        self._persist_existing_message(message)
+
     def _persist_existing_message(
         self,
         message: ConsoleChatMessage,
@@ -3183,6 +3289,17 @@ class ConsoleChatStore:
             self.persistence.update_message_content, "usage_json"
         ):
             update_kwargs["usage_json"] = message.usage.to_json()
+        # Structured message metadata (task-2364): omitted entirely, never
+        # sent as ``None``, so a content-only update cannot NULL a value
+        # already on the row.
+        if (
+            message.metadata is not None
+            and not message.metadata.is_empty
+            and self._persistence_accepts_kwarg(
+                self.persistence.update_message_content, "metadata_json"
+            )
+        ):
+            update_kwargs["metadata_json"] = message.metadata.to_json()
         self.persistence.update_message_content(**update_kwargs)
         self._enqueue_sync_v2_message_if_ready(message)
 

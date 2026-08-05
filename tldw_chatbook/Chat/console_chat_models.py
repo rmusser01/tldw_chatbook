@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, Mapping
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.message_metadata import MessageMetadata
     from tldw_chatbook.Chat.provider_usage import ProviderUsage
 
 
@@ -443,6 +444,13 @@ class ConsoleChatMessage:
     # Normalized token usage for THIS generation (None for user rows, legacy
     # rows, and providers that reported nothing). Persisted as usage_json.
     usage: "ProviderUsage | None" = None
+    # TASK-2364: structured facts ABOUT the turn -- engine provenance, the
+    # interrupted flag, and a voice row's transcript status. None for rows
+    # that predate the field and for every turn with nothing to record.
+    # Persisted as the local-only metadata_json column; the point of the
+    # field is that machine consumers (reseed, exports, summaries) read it
+    # instead of string-matching UI copy in ``content``.
+    metadata: "MessageMetadata | None" = None
 
 
 @dataclass(frozen=True)
