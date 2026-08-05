@@ -71,6 +71,10 @@ class LocalToolProvider:
             "approve_session"/"always_allow" verdicts (session grant write /
             permission-store "allow" with definition_hash); None means the
             decision executes this turn but is not persisted.
+        record_decision: (HubTool, decision) -> None audit hook for refusals
+            (MCP parity: "denied" / "denied-timeout" only -- MCP records
+            successful executions service-side via execute_hub_tool, which
+            has no local analogue); None means no recording.
     """
 
     def __init__(
@@ -83,6 +87,7 @@ class LocalToolProvider:
         approval_callback: Callable[[list[MCPPendingCall]], dict[str, str]] | None = None,
         is_session_approved: Callable[[HubTool], bool] | None = None,
         persist_approval: Callable[[HubTool, str], None] | None = None,
+        record_decision: Callable[[HubTool, str], None] | None = None,
     ) -> None:
         self._root = workspace_root
         self._specs = {s.name: s for s in (specs if specs is not None else _default_specs(workspace_root))}
@@ -91,6 +96,7 @@ class LocalToolProvider:
         self._approval_callback = approval_callback
         self._is_session_approved = is_session_approved
         self._persist_approval = persist_approval
+        self._record_decision = record_decision
         self._stamps: dict[str, str] = {}
 
     # -- catalog ------------------------------------------------------
@@ -200,12 +206,20 @@ class LocalToolProvider:
         any unrecognized verdict refuse with LOCAL_DENY_REFUSAL (mirrors
         MCPToolProvider._apply_verdict's fallthrough), "timeout"/
         "no_callback" with LOCAL_TIMEOUT_REFUSAL.
+
+        Audit (MCP parity): refusals are recorded via the optional
+        ``record_decision`` seam -- "denied" for kill-switch/deny outcomes,
+        "denied-timeout" for timeout/no_callback (matching the refusal copy
+        the model actually saw). Successful executions record nothing:
+        MCPToolProvider records those service-side via execute_hub_tool,
+        which has no local analogue.
         """
         name = tool_id.split(":", 1)[1] if ":" in tool_id else tool_id
         spec = self._specs.get(name)
         if spec is None:
             return ToolResult(ok=False, error=f"Unknown local tool: {name}")
         if self._kill_switch_engaged():
+            self._record_decision_safe(self.hub_tool_for(name), "denied")
             return ToolResult(ok=False, error=LOCAL_KILL_SWITCH_REFUSAL)
         verdict = self._verdict_for(name, args)
         if verdict == "allow":
@@ -214,8 +228,10 @@ class LocalToolProvider:
             except Exception as exc:  # noqa: BLE001 — never raises across the boundary
                 return ToolResult(ok=False, error=(str(exc) or repr(exc))[:_MAX_ERROR_CHARS])
         if verdict in ("timeout", "no_callback"):
+            self._record_decision_safe(self.hub_tool_for(name), "denied-timeout")
             return ToolResult(ok=False, error=LOCAL_TIMEOUT_REFUSAL)
         # "deny" and any unrecognized verdict fail closed the same way.
+        self._record_decision_safe(self.hub_tool_for(name), "denied")
         return ToolResult(ok=False, error=LOCAL_DENY_REFUSAL)
 
     def _kill_switch_engaged(self) -> bool:
@@ -303,6 +319,17 @@ class LocalToolProvider:
         except Exception as exc:  # noqa: BLE001 — persistence failure must not block execution
             logger.warning(
                 f"LocalToolProvider: persist_approval ({decision}) failed for {hub.name}: {exc}"
+            )
+
+    def _record_decision_safe(self, hub: HubTool, decision: str) -> None:
+        """Never-raise audit side effect; a failure must not break invoke()."""
+        if self._record_decision is None:
+            return
+        try:
+            self._record_decision(hub, decision)
+        except Exception as exc:  # noqa: BLE001 — best-effort audit trail only
+            logger.warning(
+                f"LocalToolProvider: record_decision ({decision}) failed for {hub.name}: {exc}"
             )
 
 
