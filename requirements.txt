@@ -18,7 +18,8 @@ chardet
 toml
 tomli
 rich
-textual>=8.0.0,<9
+textual==8.2.8
+textual-diff-view==0.1.5
 psutil
 requests
 pillow
