@@ -107,7 +107,7 @@ class OverviewPane(RecomposeCaptureGuard, Vertical):
         if self.watchlist_count:
             return (
                 "Your watchlists have no sources yet. Open Sources above and "
-                "press New Source to add a feed, or Import OPML to bring a set "
+                "press New source to add a feed, or Import OPML to bring a set "
                 "of feeds over from another reader.\n\n"
                 "Runs, items, rules and notifications fill in once a source "
                 "has been checked."
@@ -116,7 +116,7 @@ class OverviewPane(RecomposeCaptureGuard, Vertical):
             "A watchlist is a folder of feeds. Watchlists checks them on a "
             "schedule and collects whatever is new.\n\n"
             "1. Press New in the rail on the left to create a watchlist.\n"
-            "2. Open Sources above and press New Source to add a feed to it, "
+            "2. Open Sources above and press New source to add a feed to it, "
             "or Import OPML to bring a set of feeds over from another reader."
             "\n\n"
             "Runs, items, rules and notifications fill in once a source has "
@@ -131,7 +131,11 @@ class OverviewPane(RecomposeCaptureGuard, Vertical):
         # spent saying nothing. On an empty profile the cards and the table
         # are replaced -- not merely blanked -- by copy that names the two
         # controls that actually do something (`New` in the rail,
-        # `New Source` under Sources). Every populated state is untouched.
+        # `New source` under Sources). Every populated state is untouched.
+        # TASK-2303 AC#4: those two names are checked against the rendered
+        # labels by `test_watchlists_source_vocabulary.py`, because guidance
+        # naming a control that does not exist is the defect this copy was
+        # written to remove, one rename later.
         state = self.profile_state(self.data)
         if state == self.LOADING:
             # TASK-1020. Neither the cards nor the first-run copy: both would

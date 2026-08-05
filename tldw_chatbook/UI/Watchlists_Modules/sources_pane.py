@@ -253,7 +253,20 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     allow_blank=False,
                     compact=True,
                 )
-                yield Button("New Source", id="sources-new-button", variant="primary")
+                # TASK-2303 AC#1: `New source`, not `New Source`, and never
+                # `Add`. NEW is the create verb across this screen; ADD is
+                # membership (the rail's `Add existing…`, the Inspector's
+                # `Add to watchlist…`). The two must not be near-synonyms.
+                yield Button(
+                    "New source",
+                    id="sources-new-button",
+                    variant="primary",
+                    tooltip=(
+                        "Create a source that does not exist yet. To put a "
+                        "source you already have into a watchlist, use "
+                        "Add existing in the rail."
+                    ),
+                )
                 yield Button("Filters", id="sources-filter-toggle", variant="default")
             if self.show_filter_editor:
                 with Horizontal(id="sources-filter-editor", classes="destination-filter-strip"):

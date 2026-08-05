@@ -87,6 +87,7 @@ from ..Subscription_Modules.notifications_inbox_controller import (
     NotificationsInboxController,
 )
 from ..Watchlists_Modules.inspector_pane import (
+    AssignSourceToWatchlistRequested,
     BreadcrumbScopeSelected,
     CheckNowRequested,
     DeleteRequested,
@@ -149,6 +150,7 @@ from ..Watchlists_Modules.opml_dialogs import (
     OpmlExportDialog,
     OpmlImportDialog,
     WatchlistNameDialog,
+    WatchlistPickerDialog,
     WatchlistSourcePickerDialog,
 )
 from ..Watchlists_Modules.overview_pane import OverviewPane
@@ -1729,11 +1731,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     id="wc-empty-state",
                 ),
                 Horizontal(
+                    # TASK-2303 AC#1: the same create verb the Sources pane
+                    # uses. This button and that one open the same form, so
+                    # they carry the same label; "Create source" beside the
+                    # rail's old "Add source" was two verbs for two
+                    # operations that read as one.
                     Button(
-                        "Create source",
+                        "New source",
                         id="wc-empty-create-source",
                         variant="primary",
-                        tooltip="Add a new Watchlists source.",
+                        tooltip="Create a Watchlists source that does not exist yet.",
                     ),
                     Button(
                         "Import OPML",
@@ -3125,6 +3132,100 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._notify_watchlists(
             f'Added "{escape_markup(source_name)}" to '
             f'"{escape_markup(self._watchlist_display_name(watchlist_id))}".'
+        )
+        self._load_tree_data()
+
+    @on(AssignSourceToWatchlistRequested)
+    def handle_assign_source_to_watchlist_requested(
+        self, event: AssignSourceToWatchlistRequested
+    ) -> None:
+        """Dispatch the Inspector's `Add to watchlist` press (TASK-2303).
+
+        Refuses anything that is not a LOCAL `subscription`, for the reason
+        `handle_resume_source_requested` spells out: membership rows key on
+        a raw local subscription id, so a server entity carrying a numeric
+        `source_id` would file a completely unrelated local source. Unlike
+        that handler this one DOES notify -- the press is a real user gesture
+        on a button that is on screen, and a silent refusal is the
+        dead-affordance shape this task exists to remove.
+        """
+        event.stop()
+        entity = event.entity
+        if entity is None:
+            return
+        if (
+            str(entity.get("backend") or "") != "local"
+            or str(entity.get("entity_kind") or "") != "subscription"
+        ):
+            self._notify_watchlists(
+                "Only local sources can be added to a watchlist.",
+                severity="warning",
+            )
+            return
+        source_id = entity.get("source_id")
+        if source_id is None:
+            self._notify_watchlists(
+                "That source has no local id to file.", severity="error"
+            )
+            return
+        source_name = str(
+            entity.get("name")
+            or entity.get("source_title")
+            or entity.get("title")
+            or f"Source {source_id}"
+        )
+        self._start_tree_write(
+            lambda: self._assign_source_to_watchlist_flow(
+                int(source_id), source_name
+            )
+        )
+
+    async def _assign_source_to_watchlist_flow(
+        self, source_id: int, source_name: str
+    ) -> None:
+        """The source-first half of membership editing (TASK-2303 AC#2).
+
+        Mirrors `_add_source_to_watchlist_flow` exactly, in the other
+        direction: candidates are the watchlists this source is NOT already
+        in, the write is the same idempotent `add_source`, and the toast
+        names both ends so it is clear a membership row was added and
+        nothing was created.
+        """
+        service = self._watchlist_bundle_service()
+        if service is None:
+            self._notify_watchlists(WC_SERVICE_UNAVAILABLE_COPY, severity="error")
+            return
+        watchlists = service.list_watchlists()
+        candidates = [
+            watchlist
+            for watchlist in watchlists
+            if source_id
+            not in {int(member) for member in service.list_sources(int(watchlist["id"]))}
+        ]
+        chosen = await self.app.push_screen_wait(
+            WatchlistPickerDialog(source_name, candidates)
+        )
+        if chosen is None:
+            return
+        service.add_source(int(chosen), source_id)
+        # Named off `candidates`, not `_tree_watchlists`: that mirror is
+        # refreshed by `_load_tree_data` below, so reading it here could name
+        # a watchlist by whatever it was called at the last reload.
+        watchlist_name = next(
+            (
+                str(watchlist.get("name"))
+                for watchlist in candidates
+                if int(watchlist.get("id", -1)) == int(chosen)
+            ),
+            f"Watchlist {chosen}",
+        )
+        # markup=False: both halves are user-authored free text (a watchlist
+        # name typed here, a source name that can come straight out of a
+        # remote feed's own <title>), so neither may be interpreted as Rich
+        # markup on its way to a toast.
+        self._notify_watchlists(
+            f'Added "{source_name}" to "{watchlist_name}".',
+            markup=False,
         )
         self._load_tree_data()
 
