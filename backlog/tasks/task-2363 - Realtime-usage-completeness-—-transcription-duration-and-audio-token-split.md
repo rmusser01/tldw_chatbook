@@ -56,7 +56,7 @@ by construction, not by a separate guard.
   `audio_tokens` off both `input_token_details` and the new `output_token_
   details`, live-confirmed via three `--audio` probe runs (task-2362) to
   split BOTH input and output into `text_tokens`/`audio_tokens`.
-- **Cost-chip integration (AC #3)**: NOT wired -- filed as TASK-2365
+- **Cost-chip integration (AC #3)**: NOT wired -- filed as TASK-2390
   ("Realtime: cost-chip integration for audio-token and transcription-
   duration usage"), per this task's own scope note that cost-chip wiring is
   explicitly out of scope. `pricing_catalog.py`'s per-mtok model cannot
