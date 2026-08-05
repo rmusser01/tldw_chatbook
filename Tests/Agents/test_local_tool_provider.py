@@ -298,3 +298,12 @@ def test_empty_exception_message_becomes_nonempty_error(tmp_path):
     )
     r = p.invoke("local:boom", {})
     assert not r.ok and r.error and "ValueError" in r.error
+
+
+def test_pending_gate_for_accepts_prefixed_and_bare_names(tmp_path):
+    p = make_provider(state=ASK, root=tmp_path)
+    bare = p.pending_gate_for("fs_list", {"path": "."})
+    prefixed = p.pending_gate_for("local:fs_list", {"path": "."})
+    assert bare is not None and prefixed is not None
+    assert bare.llm_name == prefixed.llm_name == "fs_list"
+    assert p.pending_gate_for("local:unknown", {}) is None

@@ -67,6 +67,46 @@ def test_combined_hook_empty_list_is_noop():
     assert hook([ToolCall(name="fs_list", args={"path": "."})]) == {}
 
 
+def test_combined_hook_clears_later_providers_when_earlier_hook_raises(tmp_path):
+    """I3 across providers: a raising hook must not strand a LATER provider's
+    stale prior-turn stamp for the fail-open runtime to hand to invoke()."""
+    p1, p2 = provider(ASK, tmp_path), provider(ASK, tmp_path)
+    p1.apply_batch_decisions({"fs_list": "approve_once"})  # stale, prior turn
+    p2.apply_batch_decisions({"fs_list": "approve_once"})  # stale, prior turn
+
+    def raising_approvals(pending):
+        raise RuntimeError("mid-shutdown")
+
+    hook = build_combined_review_hook([
+        build_local_review_hook(p1, raising_approvals),
+        build_local_review_hook(p2, raising_approvals),
+    ])
+    with pytest.raises(RuntimeError):
+        hook([ToolCall(name="fs_list", args={"path": "."})])
+    # the exception propagates to run_agent_loop's fail-open handling, but
+    # BOTH providers' stamps were cleared first -- no stale stamp survives.
+    assert p1._stamps == {}
+    assert p2._stamps == {}
+
+
+def test_combined_hook_runs_remaining_hooks_after_a_raise(tmp_path):
+    """A raise in one hook must not skip the remaining hooks entirely: hook 2
+    still completes its own clear + round trip with this turn's decisions."""
+    p1, p2 = provider(ASK, tmp_path), provider(ASK, tmp_path)
+
+    def raising_approvals(pending):
+        raise RuntimeError("mid-shutdown")
+
+    hook = build_combined_review_hook([
+        build_local_review_hook(p1, raising_approvals),
+        build_local_review_hook(p2, lambda pending: {"fs_list": "deny"}),
+    ])
+    with pytest.raises(RuntimeError):
+        hook([ToolCall(name="fs_list", args={"path": "."})])
+    assert p1._stamps == {}  # cleared at entry, round trip raised
+    assert p2._stamps == {"fs_list": "deny"}  # fresh THIS-turn decision
+
+
 # -- _compose_local_provider -------------------------------------------------
 
 
