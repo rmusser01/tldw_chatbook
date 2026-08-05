@@ -3227,6 +3227,16 @@ class ConsoleChatController:
         "denied"/"denied-timeout" under the ``local:__local__`` server
         key.
 
+        Todo wiring (phase-3a Task 4): when ``session_id`` resolves to a
+        live session, the provider is handed THAT session's own ``todos``
+        list (replaced in place by ``todo_write``) plus an
+        ``on_todo_change`` that renders the updated list into the
+        transcript via ``ConsoleAgentBridge.append_todo_marker`` -- the
+        same in-memory, worker-thread, persist-free path the agent step
+        markers use. Without a session (or without a bridge), the
+        provider stays context-free and no ``todo_write`` spec is
+        registered.
+
         Args:
             session_id: THIS run's owning session id, bound into the
                 approval bridge exactly as ``_compose_mcp_provider`` and
@@ -3306,12 +3316,34 @@ class ConsoleChatController:
             ),
             persist_approval=_persist_approval,
             record_decision=_record_decision,
+            **self._todo_wiring(session_id),
         )
         return provider, build_local_review_hook(provider, bound_request_approvals)
 
-    def resolve_pending_approval(
-        self, decisions: dict[str, str], *, round_id: str | None = None
-    ) -> None:
+    def _todo_wiring(self, session_id: str | None) -> dict:
+        """The todo_store/on_todo_change kwargs for ``_compose_local_provider``.
+
+        Empty dict (no todo capability) when there is no session context,
+        the session is unknown, or there is no bridge to render through.
+        """
+        if session_id is None:
+            return {}
+        bridge = self._agent_bridge
+        if bridge is None:
+            return {}
+        session = next(
+            (s for s in self.store.sessions() if s.id == session_id), None
+        )
+        if session is None:
+            return {}
+
+        def _on_todo_change(todos: list) -> None:
+            bridge.append_todo_marker(session_id, todos)
+
+        return {"todo_store": session.todos, "on_todo_change": _on_todo_change}
+
+    def resolve_pending_approval(self, decisions: dict[str, str]) -> None:
+>>>>>>> 19668fb4a (feat: todo_write session todos with transcript rendering)
         """UI THREAD: apply the user's batch decision, releasing the waiting worker thread.
 
         Called by ``ChatScreen``'s ``ChatApprovalCard.ApprovalDecided``

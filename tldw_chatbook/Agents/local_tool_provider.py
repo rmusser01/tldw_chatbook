@@ -76,6 +76,14 @@ class LocalToolProvider:
             (MCP parity: "denied" / "denied-timeout" only -- MCP records
             successful executions service-side via execute_hub_tool, which
             has no local analogue); None means no recording.
+        todo_store: Optional live list the ``todo_write`` tool replaces in
+            place (the Console session's own ``todos`` list). When None, the
+            ``todo_write`` spec is NOT registered: the provider is per-run
+            and context-free per call, so todo state only exists when the
+            composition hands one in -- no store, no todo capability.
+        on_todo_change: (list) -> None hook fired after each successful
+            ``todo_write`` (e.g. transcript rendering); guarded never-raise
+            like the provider's other seams.
     """
 
     def __init__(
@@ -89,9 +97,22 @@ class LocalToolProvider:
         is_session_approved: Callable[[HubTool], bool] | None = None,
         persist_approval: Callable[[HubTool, str], None] | None = None,
         record_decision: Callable[[HubTool, str], None] | None = None,
+        todo_store: list | None = None,
+        on_todo_change: Callable[[list], None] | None = None,
     ) -> None:
         self._root = workspace_root
-        self._specs = {s.name: s for s in (specs if specs is not None else _default_specs(workspace_root))}
+        self._specs = {
+            s.name: s
+            for s in (
+                specs
+                if specs is not None
+                else _default_specs(
+                    workspace_root,
+                    todo_store=todo_store,
+                    on_todo_change=on_todo_change,
+                )
+            )
+        }
         self._resolve_state = resolve_state or (lambda hub: EffectiveToolState(state="ask", origin="global_default"))
         self._kill_switch = kill_switch
         self._approval_callback = approval_callback
@@ -366,7 +387,78 @@ class LocalToolProvider:
             )
 
 
-def _default_specs(workspace_root: Path) -> list[LocalToolSpec]:
+_TODO_STATUSES = ("pending", "in_progress", "completed")
+
+
+def _validate_todos(raw: object) -> list[dict]:
+    """Validate the todo_write payload; returns defensive copies of the items.
+
+    Raises LocalToolError (a ValueError) with a model-actionable message on
+    any shape violation; ``invoke()`` converts it into a ToolResult error, so
+    nothing raises across the provider boundary. Validation happens BEFORE
+    the store is touched, so a rejected write leaves the todos unchanged.
+    """
+    from tldw_chatbook.Tools.local_tool_impls import LocalToolError
+
+    if not isinstance(raw, list):
+        raise LocalToolError(
+            "todos must be a list of {content, status, activeForm} items "
+            f"(got {type(raw).__name__})"
+        )
+    items: list[dict] = []
+    in_progress = 0
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise LocalToolError(
+                f"todos[{index}] must be an object with content/status/activeForm"
+            )
+        content = item.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise LocalToolError(
+                f"todos[{index}].content must be a non-empty string"
+            )
+        status = item.get("status")
+        if status not in _TODO_STATUSES:
+            raise LocalToolError(
+                f"todos[{index}].status must be one of "
+                f"{'|'.join(_TODO_STATUSES)} (got {status!r})"
+            )
+        if status == "in_progress":
+            in_progress += 1
+        items.append(dict(item))
+    if in_progress > 1:
+        raise LocalToolError(
+            "at most one todo may be in_progress; mark the others pending "
+            "or completed"
+        )
+    return items
+
+
+def _make_todo_write_handler(
+    store: list, on_todo_change: Callable[[list], None] | None
+) -> Callable[[dict], str]:
+    """Build the todo_write handler bound to one live session todo list."""
+
+    def _handler(args: dict) -> str:
+        items = _validate_todos(args.get("todos"))
+        store[:] = items  # replace in place: the session keeps its own list
+        if on_todo_change is not None:
+            try:
+                on_todo_change(store)
+            except Exception as exc:  # noqa: BLE001 — never-raise seam, like the provider's others
+                logger.warning(f"LocalToolProvider: on_todo_change failed: {exc}")
+        in_progress = sum(1 for item in items if item["status"] == "in_progress")
+        return f"{len(items)} todos ({in_progress} in progress)"
+
+    return _handler
+
+
+def _default_specs(
+    workspace_root: Path,
+    *,
+    todo_store: list | None = None,
+    on_todo_change: Callable[[list], None] | None = None,
+) -> list[LocalToolSpec]:
     from tldw_chatbook.Tools.local_tool_impls import (
         MAX_GLOB_RESULTS,
         MAX_GREP_RESULTS,
@@ -387,7 +479,7 @@ def _default_specs(workspace_root: Path) -> list[LocalToolSpec]:
         web_search,
     )
 
-    return [
+    specs = [
         LocalToolSpec(
             name="fs_list",
             description="List a directory's entries (dirs first, then files), relative to the workspace root.",
@@ -531,3 +623,36 @@ def _default_specs(workspace_root: Path) -> list[LocalToolSpec]:
             tags=(),  # network-classed, read-only: no risk tags
         ),
     ]
+    if todo_store is not None:
+        # Session-scoped todo list (claude-code TodoWrite shape). Only
+        # registered when the composition handed in a live store -- the
+        # provider is context-free per call, so without a store there is
+        # no todo capability at all.
+        specs.append(
+            LocalToolSpec(
+                name="todo_write",
+                description="Replace the session's todo list. Each item needs a non-empty content and a status (pending|in_progress|completed); at most one item may be in_progress.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "todos": {
+                            "type": "array",
+                            "description": "The full replacement todo list.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "content": {"type": "string", "description": "The task description."},
+                                    "status": {"type": "string", "enum": list(_TODO_STATUSES)},
+                                    "activeForm": {"type": "string", "description": "Present-tense label shown while in_progress."},
+                                },
+                                "required": ["content", "status"],
+                            },
+                        },
+                    },
+                    "required": ["todos"],
+                },
+                handler=_make_todo_write_handler(todo_store, on_todo_change),
+                tags=("mutates",),
+            )
+        )
+    return specs

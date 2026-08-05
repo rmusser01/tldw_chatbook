@@ -12,6 +12,7 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     ConsoleAgentBridge,
     compose_agent_system_prompt,
     format_agent_step_marker,
+    format_todo_marker,
     inject_resume_agent_markers,
     _BridgeSkillRunner,
     _compose_run_allowed_tools,
@@ -917,6 +918,38 @@ def test_step_truncation_cuts_on_newline_and_tab_boundaries():
     text = "### Heading\n\nsome body text that keeps going well past the limit here"
     out = _truncate_step_text(text, limit=15)
     assert out.split("\u2026", 1)[0] == "### Heading"  # cut at the newline, not "so"
+def test_format_todo_marker_renders_statuses_and_active_form():
+    text = format_todo_marker(
+        [
+            {"content": "write tests", "status": "completed"},
+            {"content": "implement", "status": "in_progress", "activeForm": "implementing"},
+            {"content": "commit", "status": "pending"},
+        ]
+    )
+    assert text == (
+        "☰ Todos (1 in progress):\n"
+        "  [x] write tests\n"
+        "  [~] implementing\n"
+        "  [ ] commit"
+    )
+
+
+def test_format_todo_marker_empty_list_reads_as_cleared():
+    assert format_todo_marker([]) == "☰ Todos cleared"
+
+
+def test_append_todo_marker_appends_tool_message_to_store(tmp_path):
+    bridge, _db, store, session, _aid = _bridge(tmp_path, [])
+    bridge.append_todo_marker(
+        session.id, [{"content": "ship it", "status": "in_progress"}]
+    )
+    tool_messages = [
+        m for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert [m.content for m in tool_messages] == [
+        "☰ Todos (1 in progress):\n  [~] ship it"
+    ]
 
 
 def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(

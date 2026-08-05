@@ -356,3 +356,84 @@ def test_compose_local_provider_recording_failure_does_not_break_invoke(
 
     r = local_provider.invoke("local:fs_list", {"path": "."})
     assert not r.ok  # refusal still returned; the raise was swallowed
+
+
+
+# -- todo_write session wiring (phase-3a Task 4) --------------------------------
+
+
+def test_compose_local_provider_without_session_registers_no_todo_spec(
+    monkeypatch, tmp_path
+):
+    """No session context -> provider stays context-free: no todo_write."""
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(tmp_path)),
+    )
+    controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
+
+    local_provider, _hook = controller._compose_local_provider()
+
+    r = local_provider.invoke("local:todo_write", {"todos": []})
+    assert not r.ok
+    assert r.error == "Unknown local tool: todo_write"
+
+
+def test_compose_local_provider_wires_the_sessions_own_todo_list(
+    monkeypatch, tmp_path
+):
+    """The composed provider mutates the session's live ``todos`` list in
+    place and surfaces the change through the bridge's todo marker seam."""
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(tmp_path)),
+    )
+    service = _FakeService(state=ALLOW)
+    controller = _bare_controller(SimpleNamespace(unified_mcp_service=service))
+    controller.store = ConsoleChatStore()
+    session = controller.store.create_session(workspace_id="ws")
+    markers = []
+    controller._agent_bridge = SimpleNamespace(
+        append_todo_marker=lambda session_id, todos: markers.append(
+            (session_id, list(todos))
+        )
+    )
+
+    local_provider, _hook = controller._compose_local_provider(session_id=session.id)
+
+    todos = [
+        {"content": "ship it", "status": "in_progress", "activeForm": "shipping"},
+        {"content": "celebrate", "status": "pending"},
+    ]
+    r = local_provider.invoke("local:todo_write", {"todos": todos})
+
+    assert r.ok
+    assert r.content == "2 todos (1 in progress)"
+    assert session.todos == todos  # the session's own list, mutated in place
+    assert markers == [(session.id, todos)]
+
+
+def test_compose_local_provider_unknown_session_registers_no_todo_spec(
+    monkeypatch, tmp_path
+):
+    """A session_id the store does not know must not create todo state."""
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(tmp_path)),
+    )
+    controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
+    controller.store = ConsoleChatStore()
+    controller._agent_bridge = SimpleNamespace(append_todo_marker=lambda *a: None)
+
+    local_provider, _hook = controller._compose_local_provider(session_id="ghost")
+
+    r = local_provider.invoke("local:todo_write", {"todos": []})
+    assert not r.ok
+    assert r.error == "Unknown local tool: todo_write"
