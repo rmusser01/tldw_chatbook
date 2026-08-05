@@ -139,6 +139,46 @@ def test_fs_edit_replace_all(tmp_path):
     assert "3 replacements" in out
 
 
+def test_fs_edit_rejects_identical_strings(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "f.txt").write_text("alpha")
+    with pytest.raises(LocalToolError, match="identical"):
+        edit_file("f.txt", "alpha", "alpha", workspace_root=ws)
+    assert (ws / "f.txt").read_text() == "alpha"  # untouched
+
+
+def test_fs_edit_refuses_non_utf8_file(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "f.txt").write_bytes(b"\xff\xfe not utf-8")
+    with pytest.raises(LocalToolError, match="not valid UTF-8"):
+        edit_file("f.txt", "not", "x", workspace_root=ws)
+
+
+def test_fs_edit_unencodable_new_string_preserves_file(tmp_path):
+    # A lone surrogate (reachable via tool-call JSON "ﺀ") must fail
+    # BEFORE the file is truncated — the original content stays intact.
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "f.txt").write_text("alpha beta")
+    with pytest.raises(LocalToolError, match="UTF-8"):
+        edit_file("f.txt", "beta", "\ud800", workspace_root=ws)
+    assert (ws / "f.txt").read_text() == "alpha beta"
+
+
+def test_fs_edit_preserves_crlf_line_endings(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "f.txt").write_bytes(b"a\r\nb")
+    edit_file("f.txt", "b", "c", workspace_root=ws)
+    assert (ws / "f.txt").read_bytes() == b"a\r\nc"
+
+
+def test_fs_write_unencodable_content_preserves_file(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "f.txt").write_text("keep me")
+    with pytest.raises(LocalToolError, match="UTF-8"):
+        write_file("f.txt", "lone surrogate: \ud800", workspace_root=ws)
+    assert (ws / "f.txt").read_text() == "keep me"
+
+
 def test_fs_glob_matches_and_sorts_by_mtime(tmp_path):
     ws = tmp_path / "ws"; ws.mkdir()
     import os, time
