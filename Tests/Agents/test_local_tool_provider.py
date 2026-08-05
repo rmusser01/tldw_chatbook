@@ -232,6 +232,7 @@ def git_workspace(tmp_path):
     ws.mkdir()
     _git(ws, "init")
     _git(ws, "config", "user.email", "test@example.com")
+    _git(ws, "config", "commit.gpgsign", "false")
     _git(ws, "config", "user.name", "Test User")
     (ws / "tracked.txt").write_text("line one\nline two\n", encoding="utf-8")
     _git(ws, "add", ".")
