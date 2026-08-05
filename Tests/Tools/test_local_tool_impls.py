@@ -3,6 +3,7 @@ import pytest
 from tldw_chatbook.Tools.local_tool_impls import (
     LocalToolError,
     list_directory,
+    read_file,
     resolve_workspace_path,
 )
 
@@ -43,3 +44,36 @@ def test_list_directory_rejects_file_and_missing(tmp_path):
         list_directory("f.txt", workspace_root=tmp_path)
     with pytest.raises(LocalToolError, match="not a directory"):
         list_directory("nope", workspace_root=tmp_path)
+
+
+def test_fs_read_line_numbered(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "a.txt").write_text("one\ntwo\nthree\n")
+    out = read_file("a.txt", workspace_root=ws)
+    assert out.splitlines() == ["1\tone", "2\ttwo", "3\tthree"]
+
+
+def test_fs_read_offset_limit(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "a.txt").write_text("".join(f"line{i}\n" for i in range(1, 11)))
+    out = read_file("a.txt", workspace_root=ws, offset=3, limit=2)
+    assert out.splitlines() == ["3\tline3", "4\tline4"]
+
+
+def test_fs_read_offset_past_eof_returns_notice(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "a.txt").write_text("only\n")
+    assert "past end of file" in read_file("a.txt", workspace_root=ws, offset=99)
+
+
+def test_fs_read_refuses_binary(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "img.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+    with pytest.raises(LocalToolError, match="binary"):
+        read_file("img.png", workspace_root=ws)
+
+
+def test_fs_read_missing_file(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    with pytest.raises(LocalToolError, match="not found"):
+        read_file("nope.txt", workspace_root=ws)
