@@ -1,6 +1,7 @@
 import pytest
 
 from tldw_chatbook.Tools.local_tool_impls import (
+    MAX_READ_CHARS,
     LocalToolError,
     edit_file,
     glob_files,
@@ -103,6 +104,36 @@ def test_fs_read_missing_file(tmp_path):
     ws = tmp_path / "ws"; ws.mkdir()
     with pytest.raises(LocalToolError, match="not found"):
         read_file("nope.txt", workspace_root=ws)
+
+
+def test_fs_read_empty_file_returns_notice(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "empty.txt").write_text("")
+    assert read_file("empty.txt", workspace_root=ws) == "(empty file)"
+    # offset-past-EOF on an empty file reports the same notice
+    assert read_file("empty.txt", workspace_root=ws, offset=5) == "(empty file)"
+
+
+def test_fs_read_limit_zero_returns_no_lines(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "a.txt").write_text("one\ntwo\n")
+    assert read_file("a.txt", workspace_root=ws, limit=0) == ""
+
+
+def test_fs_read_offset_zero_and_negative_clamp_to_first_line(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "a.txt").write_text("one\ntwo\n")
+    first = read_file("a.txt", workspace_root=ws, offset=1)
+    assert read_file("a.txt", workspace_root=ws, offset=0) == first
+    assert read_file("a.txt", workspace_root=ws, offset=-3) == first
+
+
+def test_fs_read_truncates_at_max_chars(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "big.txt").write_text("".join(f"line{i} " + "x" * 40 + "\n" for i in range(1000)))
+    out = read_file("big.txt", workspace_root=ws)
+    assert out.endswith("… [truncated]")
+    assert len(out) <= MAX_READ_CHARS + len("\n… [truncated]")
 
 
 def test_fs_write_creates_file(tmp_path):
@@ -248,6 +279,14 @@ def test_fs_glob_cannot_escape_workspace_via_dotdot(tmp_path):
     (ws / "inner.py").write_text("x")
     out = glob_files("../*.py", workspace_root=ws)
     assert "outside.py" not in out
+
+
+def test_fs_glob_dotdot_reentry_renders_workspace_relative(tmp_path):
+    # "../ws/*.py" leaves and re-enters the root; the match is confined but
+    # must still render workspace-relative, not as "../ws/a.py".
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "a.py").write_text("x")
+    assert glob_files("../ws/*.py", workspace_root=ws) == "a.py"
 
 
 def test_fs_grep_skips_symlinks_escaping_workspace(tmp_path):

@@ -271,6 +271,9 @@ def test_find_load_path_executes_fs_edit_after_approve_once(db, workspace):
         ],
         {"fs_edit": "approve_once"},
         approval_calls,
+        # The fence loop dispatches find_tools/load_tools by name even when
+        # they aren't offered; the padding is what makes the offer real
+        # (the boundary test above pins the offering).
         extra_specs=[PADDING_SPEC],
     )
     config = AgentConfig(
