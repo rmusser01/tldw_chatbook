@@ -58,7 +58,7 @@ class LocalToolProvider:
 
     Args:
         workspace_root: Confinement root for all path-taking tools.
-        specs: Tool specs; defaults to the built-in set (fs_list pilot).
+        specs: Tool specs; defaults to the built-in set (fs_list, fs_read).
         resolve_state: (HubTool) -> EffectiveToolState, injected by the
             controller (owns permission-store access).
         kill_switch: () -> bool master off-switch.
@@ -339,7 +339,7 @@ class LocalToolProvider:
 
 
 def _default_specs(workspace_root: Path) -> list[LocalToolSpec]:
-    from tldw_chatbook.Tools.local_tool_impls import list_directory
+    from tldw_chatbook.Tools.local_tool_impls import list_directory, read_file
 
     return [
         LocalToolSpec(
@@ -353,6 +353,26 @@ def _default_specs(workspace_root: Path) -> list[LocalToolSpec]:
                 "required": ["path"],
             },
             handler=lambda args: list_directory(args["path"], workspace_root=workspace_root),
+            tags=(),
+        ),
+        LocalToolSpec(
+            name="fs_read",
+            description="Read a text file with 1-based line numbers; pages via offset/limit. Refuses binary files.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path, relative to the workspace root."},
+                    "offset": {"type": "integer", "default": 1, "description": "1-based first line to return."},
+                    "limit": {"type": "integer", "description": "Maximum number of lines to return (default: all)."},
+                },
+                "required": ["path"],
+            },
+            handler=lambda args: read_file(
+                args["path"],
+                workspace_root=workspace_root,
+                offset=args.get("offset", 1),
+                limit=args.get("limit"),
+            ),
             tags=(),
         ),
     ]
