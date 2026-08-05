@@ -95,3 +95,89 @@ def test_stamp_scope_isolates_nested_run(tmp_path):
 def test_execution_error_becomes_result_string(tmp_path):
     r = make_provider(root=tmp_path).invoke("local:fs_list", {"path": "../escape"})
     assert not r.ok and "outside the workspace root" in r.error
+
+
+# -- session approvals + persistence seams (Task 5) ---------------------------
+
+
+def test_session_approval_skips_gate_and_executes(tmp_path):
+    (tmp_path / "a.txt").write_text("a")
+    p = make_provider(
+        state=ASK, root=tmp_path, is_session_approved=lambda hub: True
+    )
+    assert p.pending_gate_for("fs_list", {"path": "."}) is None
+    assert p.invoke("local:fs_list", {"path": "."}).ok  # no stamp, no callback
+
+
+def test_approve_session_stamp_persists(tmp_path):
+    (tmp_path / "a.txt").write_text("a")
+    persisted = []
+    p = make_provider(
+        state=ASK,
+        root=tmp_path,
+        persist_approval=lambda hub, decision: persisted.append((hub.name, decision)),
+    )
+    p.apply_batch_decisions({"fs_list": "approve_session"})
+    assert p.invoke("local:fs_list", {"path": "."}).ok
+    assert persisted == [("fs_list", "approve_session")]
+
+
+def test_always_allow_stamp_persists(tmp_path):
+    (tmp_path / "a.txt").write_text("a")
+    persisted = []
+    p = make_provider(
+        state=ASK,
+        root=tmp_path,
+        persist_approval=lambda hub, decision: persisted.append((hub.name, decision)),
+    )
+    p.apply_batch_decisions({"fs_list": "always_allow"})
+    assert p.invoke("local:fs_list", {"path": "."}).ok
+    assert persisted == [("fs_list", "always_allow")]
+
+
+def test_approve_once_stamp_does_not_persist(tmp_path):
+    (tmp_path / "a.txt").write_text("a")
+    persisted = []
+    p = make_provider(
+        state=ASK,
+        root=tmp_path,
+        persist_approval=lambda hub, decision: persisted.append((hub.name, decision)),
+    )
+    p.apply_batch_decisions({"fs_list": "approve_once"})
+    assert p.invoke("local:fs_list", {"path": "."}).ok
+    assert persisted == []
+
+
+def test_callback_approve_session_persists(tmp_path):
+    (tmp_path / "a.txt").write_text("a")
+    persisted = []
+    p = make_provider(
+        state=ASK,
+        root=tmp_path,
+        approval_callback=lambda pending: {"fs_list": "approve_session"},
+        persist_approval=lambda hub, decision: persisted.append((hub.name, decision)),
+    )
+    assert p.invoke("local:fs_list", {"path": "."}).ok
+    assert persisted == [("fs_list", "approve_session")]
+
+
+def test_persist_failure_does_not_block_execution(tmp_path):
+    (tmp_path / "a.txt").write_text("a")
+
+    def boom(hub, decision):
+        raise RuntimeError("store write failed")
+
+    p = make_provider(state=ASK, root=tmp_path, persist_approval=boom)
+    p.apply_batch_decisions({"fs_list": "always_allow"})
+    assert p.invoke("local:fs_list", {"path": "."}).ok
+
+
+def test_session_approval_read_failure_is_not_approved(tmp_path):
+    def boom(hub):
+        raise RuntimeError("store read failed")
+
+    p = make_provider(state=ASK, root=tmp_path, is_session_approved=boom)
+    # read failure -> still gated, and invoke still fails closed without a stamp
+    assert p.pending_gate_for("fs_list", {"path": "."}) is not None
+    r = p.invoke("local:fs_list", {"path": "."})
+    assert not r.ok and r.error == LOCAL_TIMEOUT_REFUSAL

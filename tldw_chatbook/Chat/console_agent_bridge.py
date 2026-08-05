@@ -614,6 +614,7 @@ def _compose_run_registry_and_allowed(
     context: Mapping[str, Any],
     *,
     mcp_provider: Any | None = None,
+    local_provider: Any | None = None,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
@@ -634,6 +635,10 @@ def _compose_run_registry_and_allowed(
             on the main loop BEFORE this function runs), or ``None`` when
             no MCP tools should be offered this run (no service, kill
             switch on, or composition yielded nothing).
+        local_provider: This run's already-composed local tool provider
+            (``LocalToolProvider``), or ``None`` when local tools are
+            disabled this run. ACCEPTED but NOT yet registered -- see the
+            registration site below.
 
     Returns:
         ``(registry, allowed_tools, builtin_names)`` -- the per-run
@@ -660,6 +665,13 @@ def _compose_run_registry_and_allowed(
                 _CollisionFilteredMCPProvider(mcp_provider, frozenset(mcp_names))
             )
             allowed_tools += mcp_names
+    # local_provider is ACCEPTED here (threaded from run_reply, which the
+    # controller already passes) but deliberately NOT registered yet --
+    # collision filtering + registration of the local catalog is the next
+    # task's (bridge registration) scope. Until then the provider only
+    # participates through the combined review hook, which is inert for
+    # tools the model cannot name.
+    _ = local_provider
     allowed_tools += (SPAWN_TOOL_NAME,)
     return registry, allowed_tools, builtin_names
 
@@ -783,6 +795,7 @@ class ConsoleAgentBridge:
         supersede_previous: bool = False,
         mcp_provider: Any | None = None,
         review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None,
+        local_provider: Any | None = None,
     ) -> RunOutcome:
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
         # MCP): rebuilt FRESH for this run whenever there is a skills
@@ -802,12 +815,16 @@ class ConsoleAgentBridge:
         registry = self._registry
         allowed_tools = self._allowed_tools
         skill_runner = None
-        if self._skills_service is not None or mcp_provider is not None:
+        if (
+            self._skills_service is not None
+            or mcp_provider is not None
+            or local_provider is not None
+        ):
             context: Mapping[str, Any] = {}
             if self._skills_service is not None:
                 context = asyncio.run(self._skills_service.get_context(mode="local"))
             registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(
-                context, mcp_provider=mcp_provider
+                context, mcp_provider=mcp_provider, local_provider=local_provider
             )
             if self._skills_service is not None:
                 skill_names = frozenset(
