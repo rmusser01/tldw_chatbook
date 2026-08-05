@@ -594,6 +594,21 @@ def test_format_todo_marker_empty_list_reads_as_cleared():
     assert format_todo_marker([]) == "☰ Todos cleared"
 
 
+def test_format_todo_marker_truncates_long_item_text():
+    # Same 200-char convention as step-marker summaries (_summarize).
+    long_content = "y" * 300
+    text = format_todo_marker([{"content": long_content, "status": "pending"}])
+    assert text == f"☰ Todos (0 in progress):\n  [ ] {'y' * 200}"
+
+
+def test_format_todo_marker_flattens_newlines_in_item_text():
+    # Markers stay one line per item; embedded newlines become spaces.
+    text = format_todo_marker(
+        [{"content": "first\nsecond\r\nthird", "status": "pending"}]
+    )
+    assert text == "☰ Todos (0 in progress):\n  [ ] first second third"
+
+
 def test_append_todo_marker_appends_tool_message_to_store(tmp_path):
     bridge, _db, store, session, _aid = _bridge(tmp_path, [])
     bridge.append_todo_marker(

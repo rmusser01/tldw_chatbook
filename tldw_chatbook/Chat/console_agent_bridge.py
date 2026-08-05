@@ -184,6 +184,10 @@ def format_todo_marker(todos: list[dict]) -> str:
     both transcript consumers render markup-off (see its docstring). Live
     only: todos are session-lifetime and never persisted, so there is no
     resume re-derivation path for these markers.
+
+    Render bounds: embedded newlines are flattened to spaces so the marker
+    stays one line per item, and each item's text is truncated at 200
+    chars -- the same convention as step-marker summaries (``_summarize``).
     """
     if not todos:
         return "☰ Todos cleared"
@@ -196,6 +200,7 @@ def format_todo_marker(todos: list[dict]) -> str:
             in_progress += 1
         label = item.get("activeForm") if status == "in_progress" else None
         label = label or str(item.get("content") or "")
+        label = " ".join(str(label).splitlines())[:200]
         lines.append(f"  {glyphs.get(status, '[ ]')} {label}")
     header = f"☰ Todos ({in_progress} in progress):"
     return "\n".join([header, *lines])

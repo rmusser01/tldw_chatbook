@@ -761,3 +761,109 @@ def test_todo_write_rejects_multiple_in_progress(tmp_path):
     assert not r.ok
     assert "in_progress" in r.error
     assert store == []  # untouched
+
+
+# -- todo_write bounds + strictness (quality review follow-ups) ----------------
+#
+# Model-controlled text is bounded everywhere else in this pipeline (step
+# markers truncate at 200 chars, tool results byte-fit); the todo list is no
+# exception. Caps: MAX_TODO_ITEMS items, MAX_TODO_CONTENT_CHARS per content.
+
+
+def test_todo_write_rejects_more_than_max_items(tmp_path):
+    from tldw_chatbook.Agents.local_tool_provider import MAX_TODO_ITEMS
+
+    store = [{"content": "keep", "status": "pending"}]
+    p = make_provider(root=tmp_path, todo_store=store)
+    r = p.invoke(
+        "local:todo_write",
+        {"todos": [
+            {"content": f"task {i}", "status": "pending"}
+            for i in range(MAX_TODO_ITEMS + 1)
+        ]},
+    )
+    assert not r.ok
+    assert str(MAX_TODO_ITEMS) in r.error
+    assert store == [{"content": "keep", "status": "pending"}]  # untouched
+
+
+def test_todo_write_accepts_exactly_max_items(tmp_path):
+    from tldw_chatbook.Agents.local_tool_provider import MAX_TODO_ITEMS
+
+    p = make_provider(root=tmp_path, todo_store=[])
+    r = p.invoke(
+        "local:todo_write",
+        {"todos": [
+            {"content": f"task {i}", "status": "pending"}
+            for i in range(MAX_TODO_ITEMS)
+        ]},
+    )
+    assert r.ok
+    assert r.content == f"{MAX_TODO_ITEMS} todos (0 in progress)"
+
+
+def test_todo_write_rejects_overlong_content(tmp_path):
+    from tldw_chatbook.Agents.local_tool_provider import MAX_TODO_CONTENT_CHARS
+
+    store = [{"content": "keep", "status": "pending"}]
+    p = make_provider(root=tmp_path, todo_store=store)
+    r = p.invoke(
+        "local:todo_write",
+        {"todos": [
+            {"content": "x" * (MAX_TODO_CONTENT_CHARS + 1), "status": "pending"}
+        ]},
+    )
+    assert not r.ok
+    assert "content" in r.error
+    assert str(MAX_TODO_CONTENT_CHARS) in r.error
+    assert store == [{"content": "keep", "status": "pending"}]  # untouched
+
+
+def test_todo_write_accepts_max_length_content(tmp_path):
+    from tldw_chatbook.Agents.local_tool_provider import MAX_TODO_CONTENT_CHARS
+
+    p = make_provider(root=tmp_path, todo_store=[])
+    r = p.invoke(
+        "local:todo_write",
+        {"todos": [{"content": "x" * MAX_TODO_CONTENT_CHARS, "status": "pending"}]},
+    )
+    assert r.ok
+
+
+def test_todo_write_rejects_non_string_active_form(tmp_path):
+    p = make_provider(root=tmp_path, todo_store=[])
+    r = p.invoke(
+        "local:todo_write",
+        {"todos": [{"content": "a", "status": "in_progress", "activeForm": 123}]},
+    )
+    assert not r.ok
+    assert "activeForm" in r.error
+
+
+def test_todo_write_whitelists_stored_keys(tmp_path):
+    store = []
+    p = make_provider(root=tmp_path, todo_store=store)
+    r = p.invoke(
+        "local:todo_write",
+        {"todos": [
+            {
+                "content": "a",
+                "status": "pending",
+                "activeForm": "doing a",
+                "model_junk": "x" * 100_000,  # must not reach session state
+            }
+        ]},
+    )
+    assert r.ok
+    assert store == [{"content": "a", "status": "pending", "activeForm": "doing a"}]
+
+
+def test_todo_write_validation_failure_does_not_fire_on_todo_change(tmp_path):
+    store = [{"content": "keep", "status": "pending"}]
+    seen = []
+    p = make_provider(
+        root=tmp_path, todo_store=store, on_todo_change=lambda todos: seen.append(todos)
+    )
+    r = p.invoke("local:todo_write", {"todos": [{"status": "pending"}]})
+    assert not r.ok
+    assert seen == []  # no state change -> no transcript marker

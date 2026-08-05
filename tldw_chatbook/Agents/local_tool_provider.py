@@ -356,15 +356,26 @@ class LocalToolProvider:
 
 
 _TODO_STATUSES = ("pending", "in_progress", "completed")
+#: Caps on the model-controlled todo payload: every state change re-renders
+#: the full list into the in-memory transcript, and model-controlled text is
+#: bounded everywhere else in this pipeline (step markers truncate at 200
+#: chars, tool results byte-fit) -- the todo list is no exception.
+MAX_TODO_ITEMS = 50
+MAX_TODO_CONTENT_CHARS = 500
+#: Keys copied into session state; anything else the model sends is dropped.
+_TODO_KEYS = ("content", "status", "activeForm")
 
 
 def _validate_todos(raw: object) -> list[dict]:
-    """Validate the todo_write payload; returns defensive copies of the items.
+    """Validate the todo_write payload; returns whitelisted copies of the items.
 
     Raises LocalToolError (a ValueError) with a model-actionable message on
-    any shape violation; ``invoke()`` converts it into a ToolResult error, so
-    nothing raises across the provider boundary. Validation happens BEFORE
-    the store is touched, so a rejected write leaves the todos unchanged.
+    any shape violation (bad types, missing/blank/overlong content, invalid
+    status, more than one in_progress, over MAX_TODO_ITEMS items);
+    ``invoke()`` converts it into a ToolResult error, so nothing raises
+    across the provider boundary. Validation happens BEFORE the store is
+    touched, so a rejected write leaves the todos unchanged. Returned items
+    carry only the known keys -- no arbitrary model junk in session state.
     """
     from tldw_chatbook.Tools.local_tool_impls import LocalToolError
 
@@ -372,6 +383,11 @@ def _validate_todos(raw: object) -> list[dict]:
         raise LocalToolError(
             "todos must be a list of {content, status, activeForm} items "
             f"(got {type(raw).__name__})"
+        )
+    if len(raw) > MAX_TODO_ITEMS:
+        raise LocalToolError(
+            f"todos has {len(raw)} items; at most {MAX_TODO_ITEMS} are "
+            "allowed -- drop completed items or split the work"
         )
     items: list[dict] = []
     in_progress = 0
@@ -385,15 +401,26 @@ def _validate_todos(raw: object) -> list[dict]:
             raise LocalToolError(
                 f"todos[{index}].content must be a non-empty string"
             )
+        if len(content) > MAX_TODO_CONTENT_CHARS:
+            raise LocalToolError(
+                f"todos[{index}].content is {len(content)} chars; at most "
+                f"{MAX_TODO_CONTENT_CHARS} are allowed -- shorten it"
+            )
         status = item.get("status")
         if status not in _TODO_STATUSES:
             raise LocalToolError(
                 f"todos[{index}].status must be one of "
                 f"{'|'.join(_TODO_STATUSES)} (got {status!r})"
             )
+        active_form = item.get("activeForm")
+        if active_form is not None and not isinstance(active_form, str):
+            raise LocalToolError(
+                f"todos[{index}].activeForm must be a string "
+                f"(got {type(active_form).__name__})"
+            )
         if status == "in_progress":
             in_progress += 1
-        items.append(dict(item))
+        items.append({key: item[key] for key in _TODO_KEYS if key in item})
     if in_progress > 1:
         raise LocalToolError(
             "at most one todo may be in_progress; mark the others pending "
