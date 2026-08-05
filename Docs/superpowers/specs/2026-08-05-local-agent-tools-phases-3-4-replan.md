@@ -1,7 +1,7 @@
 # Local Agent Tools — Phases 3-4 Re-plan (tldw_server-informed)
 
 **Date:** 2026-08-05
-**Status:** Draft (pending spec review + user review)
+**Status:** Spec-reviewed (three rounds; final amendments pending reviewer confirmation); pending user review
 **Supersedes:** phase 3 and phase 4 scope of `Docs/superpowers/specs/2026-08-04-local-agent-tools-design.md` (phases 1-2 shipped unchanged: PRs #1352, #1358)
 **ADR:** new ADR required (ADR-033) — git tools spawn subprocesses and the virtual-CLI model defines a process-execution boundary; both are security/runtime-boundary decisions per backlog.md rules. ADR-032 remains in force for naming, confinement, and approval discipline.
 **Reference:** tldw_server @ dev — `apps/mcp-unified` (gateway/policy) + `tldw_Server_API/app/core/MCP_unified/modules/implementations/` (tool modules). Research notes: tool modules register via `BaseModule.get_tools()/execute_tool()`, mostly opt-in/disabled by default, strict `domain.action` naming, systematic byte-caps with `truncated` flags, structured `{ok, reason_code, message}` errors.
@@ -56,7 +56,14 @@ Port tldw_server's `git_module.py` (~2,100 lines) into `Tools/git_tool_impls.py`
 
 Expose the full local tool set (fs_* + web_* + todo_write + git_* + fs_patch) through `MCP/server.py` backed by the same core modules, giving external MCP clients parity. Adopt from tldw_server: structured error reasons in tool results, and the domain-grouped catalog presentation. Naming stays `fs_*`/`git_*` snake_case (ADR-032); tldw_server's dotted convention is noted as the alternative and rejected for consistency with the chatbook registry.
 
-**External-caller permission policy (binding, user decision):** no special-casing. Exposed tools resolve through the same permission store under `local:__local__` exactly as Console calls do. Because external MCP calls carry no Console approval callback, an `ask` state fails closed to the pinned refusal — so mutates-tagged tools are effectively unusable externally until an operator sets them to `allow` in the store (via the MCP workbench UI). This is the desired posture: external writes are impossible by default and deliberately grantable, with no second permission system.
+**External-caller permission policy (binding, user decision):** no special-casing. Exposed tools resolve through the same permission store under `local:__local__` exactly as Console calls do. Because external MCP calls carry no Console approval callback, an `ask` state fails closed to the pinned refusal — so mutates-tagged tools are effectively unusable externally until an operator grants `allow`.
+
+**Two implementation facts phase 4 must honor (verified):**
+
+1. **The gating layer is new work, not an existing property.** `MCP/server.py` today registers raw tool functions with zero permission integration, and the core modules contain no permission logic — all gating lives in `LocalToolProvider`. External exposure MUST route invocation through `LocalToolProvider` (or an equivalent permission-resolving wrapper around it), never wrap the cores directly. Wrapping cores directly would be fail-open — the exact opposite of the posture above.
+2. **The operator grant path that exists today:** approving a tool "Always allow" in a Console session persists `allow` + `definition_hash` to the store under `local:__local__`, which then also authorizes external calls (explicit tool-level allow is never risk-floored). The MCP workbench does NOT enumerate `local:__local__` tools today (ADR-032 lists this as an accepted trade-off); adding workbench enumeration of the synthetic key is an optional phase-4 stretch goal, not a load-bearing part of the policy.
+
+Cosmetic note for phase 4: the no-callback refusal copy is the timeout string ("user did not approve within the time limit; do not retry") — mildly misleading for external clients that can never approve; consider a distinct external-caller refusal string during phase-4 planning.
 
 ### 3.2 Shell — adopt the virtual-CLI model (design only)
 
