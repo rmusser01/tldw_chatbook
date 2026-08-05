@@ -9,7 +9,11 @@ from typing import Any, Literal
 from uuid import UUID
 
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
-from tldw_chatbook.TTS.profile_types import TTSProfileDraft, canonical_json_options
+from tldw_chatbook.TTS.profile_types import (
+    PROFILE_PROVIDER_IDS,
+    TTSProfileDraft,
+    canonical_json_options,
+)
 
 PORTABLE_PROFILE_SCHEMA_VERSION = 1
 CHARACTER_CARD_TTS_EXTENSION_KEY = "tldw_chatbook/tts_generation_profile"
@@ -60,7 +64,7 @@ class PortableTTSProfile:
             raise ProfileValidationError("profile_id")
         if type(self.draft) is not TTSProfileDraft:
             raise ProfileValidationError("profiles")
-        if self.draft.provider_id != "audio_cpp":
+        if self.draft.provider_id not in PROFILE_PROVIDER_IDS:
             raise ProfileValidationError("audio_cpp")
 
 
@@ -77,14 +81,14 @@ def portable_profile_payload(profile: PortableTTSProfile) -> dict[str, Any]:
     """Return the exact version-one sanitized payload for a profile.
 
     Args:
-        profile: Validated local audio.cpp selection to make portable.
+        profile: Validated local provider selection to make portable.
 
     Returns:
         The strict version-one wire payload containing only portable fields.
 
     Raises:
-        ProfileValidationError: If ``profile`` is not a portable audio.cpp
-            profile selection.
+        ProfileValidationError: If ``profile`` is not a portable profile
+            selection.
     """
 
     if type(profile) is not PortableTTSProfile:
@@ -108,14 +112,14 @@ def portable_profile_json(profile: PortableTTSProfile) -> str:
     """Return deterministic standalone JSON for a sanitized profile.
 
     Args:
-        profile: Validated local audio.cpp selection to serialize.
+        profile: Validated local provider selection to serialize.
 
     Returns:
         Pretty-printed version-one JSON containing only portable fields.
 
     Raises:
-        ProfileValidationError: If ``profile`` is not a portable audio.cpp
-            profile selection.
+        ProfileValidationError: If ``profile`` is not a portable profile
+            selection.
     """
 
     return json.dumps(
@@ -225,7 +229,7 @@ def decode_portable_profile(payload: object) -> PortableProfileDecodeResult:
             if e.code == "provider_id":
                 return _skip_result("unsupported_provider")
             raise
-        if draft.provider_id != "audio_cpp":
+        if draft.provider_id not in PROFILE_PROVIDER_IDS:
             return _skip_result("unsupported_provider")
         return PortableProfileDecodeResult(
             status=PortableProfileDecodeStatus.VALID,

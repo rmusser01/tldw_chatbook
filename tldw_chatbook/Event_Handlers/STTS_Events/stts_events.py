@@ -848,6 +848,25 @@ class STTSEventHandler:
                     )
                     created_paths.discard(conversion_destination)
 
+            requested_selection: TTSRequestedSelectionSnapshot | None = None
+            try:
+                requested_selection = TTSRequestedSelectionSnapshot(
+                    provider_id=snapshot.provider_id,
+                    model_id=snapshot.model_id,
+                    voice_id=snapshot.voice_id or None,
+                    response_format=audio_format,
+                    speed=snapshot.speed,
+                    options={},
+                    configuration_revision=self._stts_service.configuration_revision(
+                        snapshot.provider_id
+                    ),
+                )
+            except Exception:  # noqa: BLE001 - best-effort provenance only
+                logger.debug(
+                    "Legacy playground result is not profile-save eligible "
+                    "(provider={}).",
+                    snapshot.provider_id,
+                )
             return STTSGeneratedAudio(
                 path=output_file,
                 provider_id=snapshot.provider_id,
@@ -858,6 +877,7 @@ class STTSEventHandler:
                 audio_format=audio_format,
                 content_type=self._audio_content_type(audio_format),
                 metadata={},
+                requested_selection=requested_selection,
             )
         except BaseException:
             for path in created_paths:

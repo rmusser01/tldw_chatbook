@@ -102,18 +102,21 @@ def _portable_profile(
     *,
     profile_id: UUID = _PROFILE_ID,
     display_name: str = "Imported voice",
+    provider_id: str = "audio_cpp",
     model_id: str = "model-a",
     voice_id: str | None = None,
+    response_format: str = "wav",
+    speed: float = 1.0,
 ) -> PortableTTSProfile:
     return PortableTTSProfile(
         profile_id=profile_id,
         draft=TTSProfileDraft(
             display_name=display_name,
-            provider_id="audio_cpp",
+            provider_id=provider_id,
             model_id=model_id,
             voice_id=voice_id,
-            response_format="wav",
-            speed=1.0,
+            response_format=response_format,
+            speed=speed,
             options={},
         ),
     )
@@ -435,16 +438,19 @@ def _artifact(
 
 def _selection(
     *,
+    provider_id: str = "audio_cpp",
     model_id: str = "selected-model",
     voice_id: str | None = "selected-voice",
+    response_format: str = "wav",
+    speed: float = 1.0,
     configuration_revision: int = 3,
 ) -> TTSRequestedSelectionSnapshot:
     return TTSRequestedSelectionSnapshot(
-        provider_id="audio_cpp",
+        provider_id=provider_id,
         model_id=model_id,
         voice_id=voice_id,
-        response_format="wav",
-        speed=1.0,
+        response_format=response_format,
+        speed=speed,
         options={},
         configuration_revision=configuration_revision,
     )
@@ -1429,10 +1435,11 @@ async def test_availability_rechecks_generation_after_page_canonicalization() ->
 @pytest.mark.asyncio
 async def test_availability_applies_exact_allowlist_before_capability_lookup() -> None:
     """audio.cpp profiles still gate on native catalog data; legacy-provider
-    profiles are now structurally in the allowlist too (they participate in
-    the capability batch's model collection) but classify as the interim
-    honest "unverified" state rather than being probed against the native
-    (audio.cpp) catalog, since legacy providers have no catalog authority."""
+    profiles are now structurally in the allowlist too, but classify as the
+    interim honest "unverified" state without ever being probed against the
+    native (audio.cpp) catalog, since legacy providers have no catalog
+    authority -- their model ids are excluded from the capability batch
+    entirely (task 2b), not merely left unclassified."""
 
     supported = _profile(
         profile_id=UUID(int=1),
@@ -1494,7 +1501,7 @@ async def test_availability_applies_exact_allowlist_before_capability_lookup() -
 
     observed = await service.observe_availability(page)
 
-    assert tts_service.capability_calls == [("audio_cpp", ("model-a", "legacy-model"))]
+    assert tts_service.capability_calls == [("audio_cpp", ("model-a",))]
     assert tuple(item.state for item in observed.profiles) == (
         "available",
         "available",
@@ -1683,6 +1690,102 @@ async def test_availability_deduplicates_only_exact_voice_supported_models() -> 
 
 
 @pytest.mark.asyncio
+async def test_availability_all_legacy_page_skips_native_capability_call() -> None:
+    def _raise() -> None:
+        raise RuntimeError("get_native_capability_snapshot must not be called")
+
+    openai_profile = _profile(
+        profile_id=UUID(int=20),
+        display_name="OpenAI voice",
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+    )
+    elevenlabs_profile = _profile(
+        profile_id=UUID(int=21),
+        display_name="ElevenLabs voice",
+        provider_id="elevenlabs",
+        model_id="eleven_multilingual_v2",
+        response_format="mp3",
+    )
+    tts_service = _FakeTTSService()
+    tts_service.capability_hook = _raise
+    service, repository, tts_service = _service(tts_service=tts_service)
+
+    observed = await service.observe_availability(
+        TTSProfilePageSnapshot(
+            repository_generation=repository.generation,
+            profiles=(openai_profile, elevenlabs_profile),
+            total=2,
+        )
+    )
+
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+    assert tts_service.revision_reads == ["audio_cpp"]
+    assert tuple(item.state for item in observed.profiles) == (
+        "unverified",
+        "unverified",
+    )
+    assert tuple(item.recovery_action for item in observed.profiles) == (
+        "refresh",
+        "refresh",
+    )
+    assert observed.catalog_revision is None
+    assert observed.repository_generation == repository.generation
+    assert observed.configuration_revision == tts_service.revision
+
+
+@pytest.mark.asyncio
+async def test_availability_mixed_page_probes_only_audio_cpp_models() -> None:
+    audio_cpp_profile = _profile(
+        profile_id=UUID(int=30),
+        display_name="Native",
+        model_id="model-a",
+        voice_id="voice-a",
+    )
+    openai_profile = _profile(
+        profile_id=UUID(int=31),
+        display_name="OpenAI voice",
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+    )
+    voice_result = TTSVoiceDiscoveryResult(
+        provider_id="audio_cpp",
+        model_id="model-a",
+        catalog_revision=9,
+        voices=("voice-a",),
+        state="complete",
+    )
+    tts_service = _FakeTTSService(
+        _capability_snapshot(
+            models=(_model("model-a"),),
+            voice_results={"model-a": voice_result},
+        )
+    )
+    service, repository, tts_service = _service(tts_service=tts_service)
+
+    observed = await service.observe_availability(
+        TTSProfilePageSnapshot(
+            repository_generation=repository.generation,
+            profiles=(audio_cpp_profile, openai_profile),
+            total=2,
+        )
+    )
+
+    assert tts_service.capability_calls == [("audio_cpp", ("model-a",))]
+    assert tuple(item.state for item in observed.profiles) == (
+        "available",
+        "unverified",
+    )
+    assert tuple(item.recovery_action for item in observed.profiles) == (
+        "none",
+        "refresh",
+    )
+
+
+@pytest.mark.asyncio
 async def test_create_from_artifact_rejects_legacy_or_missing_provenance_safely() -> (
     None
 ):
@@ -1735,6 +1838,24 @@ async def test_create_from_artifact_uses_only_immutable_requested_selection() ->
     assert loaded.profile.voice_id == "selected-voice"
     assert loaded.profile.provider_id != "legacy-response-provider"
     assert repository.coordinator_active_at_repository_calls == [False]
+
+
+@pytest.mark.asyncio
+async def test_create_from_artifact_accepts_legacy_selection() -> None:
+    service, repository, tts_service = _service()
+    selection = _selection(
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+        response_format="mp3",
+        speed=1.0,
+    )
+
+    await service.create_from_artifact("OpenAI voice", _artifact(selection=selection))
+
+    assert tts_service.revision_decisions == [("openai", 3)]
+    assert tts_service.capability_calls == []
+    assert [name for name, _ in repository.calls] == ["create"]
 
 
 @pytest.mark.asyncio
@@ -4378,6 +4499,28 @@ async def test_portable_observation_reports_unavailable_without_writing() -> Non
     assert observation.repository_generation == repository.generation
     assert repository.calls == []
     assert tts_service.capability_calls == [("audio_cpp", ())]
+
+
+@pytest.mark.asyncio
+async def test_portable_observation_of_legacy_provider_skips_native_capability() -> (
+    None
+):
+    repository = _FakeRepository()
+    tts_service = _FakeTTSService()
+    service = TTSProfileService(repository, tts_service)
+    portable = _portable_profile(
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+        response_format="mp3",
+    )
+
+    observation = await service.observe_portable_profile(portable)
+
+    assert observation.availability == "unverified"
+    assert observation.repository_generation == repository.generation
+    assert repository.calls == []
+    assert tts_service.capability_calls == []
 
 
 def test_portable_import_plan_rejects_candidate_with_different_generation() -> None:

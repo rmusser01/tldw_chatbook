@@ -12,7 +12,6 @@ from uuid import UUID
 import pytest
 
 from tldw_chatbook.TTS.profile_types import TTSProfileDraft
-from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 
 
 def _portability_module() -> ModuleType:
@@ -124,24 +123,23 @@ def test_valid_payload_decodes_to_an_exact_profile_selection() -> None:
     )
 
 
-def test_portable_profile_value_rejects_non_audio_cpp_selection() -> None:
+def test_portable_profile_value_accepts_legacy_provider_selection() -> None:
     portability = _portability_module()
 
-    with pytest.raises(ProfileValidationError) as caught:
-        portability.PortableTTSProfile(
-            profile_id=UUID("00000000-0000-4000-8000-000000000000"),
-            draft=TTSProfileDraft(
-                display_name="Unsupported voice",
-                provider_id="openai",
-                model_id="future-model",
-                voice_id=None,
-                response_format="wav",
-                speed=1.0,
-                options={},
-            ),
-        )
+    portable = portability.PortableTTSProfile(
+        profile_id=UUID("00000000-0000-4000-8000-000000000000"),
+        draft=TTSProfileDraft(
+            display_name="Legacy voice",
+            provider_id="openai",
+            model_id="tts-1",
+            voice_id=None,
+            response_format="mp3",
+            speed=1.0,
+            options={},
+        ),
+    )
 
-    assert caught.value.code == "audio_cpp"
+    assert portable.draft.provider_id == "openai"
 
 
 @pytest.mark.parametrize(

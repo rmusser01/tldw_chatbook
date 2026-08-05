@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -8,6 +9,11 @@ from types import MappingProxyType
 from typing import Any
 
 from tldw_chatbook.TTS.effective_settings import TTSStudioDraftSelection
+from tldw_chatbook.TTS.profile_types import (
+    AUDIO_CPP_PROFILE_SPEED,
+    PROFILE_PROVIDER_FORMATS,
+    PROFILE_PROVIDER_IDS,
+)
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 
 AudioMetadataValue = str | int | float | bool | None
@@ -52,7 +58,15 @@ def _require_exact_identifier(
 
 @dataclass(frozen=True, slots=True)
 class TTSRequestedSelectionSnapshot:
-    """Immutable text-free provenance for one exact admitted native request."""
+    """Immutable text-free provenance for one exact admitted request.
+
+    Covers all seven providers the profile system recognizes (`audio_cpp`
+    plus the six legacy-bridge providers), not native-only: `audio_cpp`
+    keeps its exact WAV / speed-1.0 contract; legacy providers accept any
+    format in their catalog set and any speed in [0.25, 4.0], matching
+    `profile_types.PROFILE_PROVIDER_FORMATS` and
+    `profile_service._selection_is_profile_safe`.
+    """
 
     provider_id: str
     model_id: str
@@ -64,15 +78,22 @@ class TTSRequestedSelectionSnapshot:
 
     def __post_init__(self) -> None:
         _require_exact_identifier("provider_id", self.provider_id)
-        if self.provider_id != "audio_cpp":
-            raise ValueError("Requested selection requires exact audio_cpp provider")
+        if self.provider_id not in PROFILE_PROVIDER_IDS:
+            raise ValueError("Requested selection requires a recognized provider")
         _require_exact_identifier("model_id", self.model_id)
         _require_exact_identifier("voice_id", self.voice_id, nullable=True)
         _require_exact_identifier("response_format", self.response_format)
-        if self.response_format != "wav":
-            raise ValueError("Requested selection requires WAV format")
-        if type(self.speed) is not float or self.speed != 1.0:
-            raise ValueError("Requested selection requires speed 1.0")
+        if self.response_format not in PROFILE_PROVIDER_FORMATS[self.provider_id]:
+            raise ValueError(
+                "Requested selection format is not valid for this provider"
+            )
+        if type(self.speed) is not float or not math.isfinite(self.speed):
+            raise ValueError("Requested selection requires a finite speed")
+        if self.provider_id == "audio_cpp":
+            if self.speed != AUDIO_CPP_PROFILE_SPEED:
+                raise ValueError("Requested selection requires speed 1.0")
+        elif not 0.25 <= self.speed <= 4.0:
+            raise ValueError("Requested selection speed is out of range")
         if not isinstance(self.options, Mapping):
             raise TypeError("options must be a mapping")
         try:

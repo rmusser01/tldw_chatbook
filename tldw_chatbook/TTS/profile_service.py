@@ -1236,9 +1236,34 @@ class TTSProfileService:
                 ),
             )
 
+        audio_cpp_supported = tuple(
+            profile
+            for profile in supported_profiles
+            if profile.provider_id == _PROFILE_PROVIDER_ID
+        )
+        if not audio_cpp_supported:
+            revision = self._current_configuration_revision()
+            self._require_repository_generation(page.repository_generation)
+            return TTSProfileAvailabilitySnapshot(
+                repository_generation=page.repository_generation,
+                configuration_revision=revision,
+                catalog_revision=None,
+                profiles=tuple(
+                    _availability(
+                        profile.profile_id,
+                        (
+                            "unverified"
+                            if _profile_is_structurally_supported(profile)
+                            else "unavailable"
+                        ),
+                    )
+                    for profile in page.profiles
+                ),
+            )
+
         relevant_models: dict[str, None] = {}
         exact_voice_models: dict[str, None] = {}
-        for profile in supported_profiles:
+        for profile in audio_cpp_supported:
             relevant_models.setdefault(profile.model_id, None)
             if profile.voice_id is not None:
                 exact_voice_models.setdefault(profile.model_id, None)

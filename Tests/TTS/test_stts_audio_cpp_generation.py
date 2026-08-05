@@ -169,10 +169,14 @@ class _LegacyService:
     def __init__(self) -> None:
         self.stream_calls: list[tuple[object, str, object]] = []
         self.native_calls = 0
+        self.revision = 5
 
     async def synthesize(self, *_args: object, **_kwargs: object) -> None:
         self.native_calls += 1
         raise AssertionError("legacy generation must retain the bridge")
+
+    def configuration_revision(self, _provider_id: str) -> int:
+        return self.revision
 
     async def generate_audio_stream(
         self,
@@ -778,7 +782,16 @@ async def test_legacy_generation_retains_stream_bridge_and_requested_conversion(
         assert artifact.provider_id == "openai"
         assert artifact.model_id == "model-1"
         assert artifact.voice_id == "alloy"
-        assert artifact.requested_selection is None
+        assert artifact.requested_selection == TTSRequestedSelectionSnapshot(
+            provider_id="openai",
+            model_id="model-1",
+            voice_id="alloy",
+            response_format="mp3",
+            speed=1.0,
+            options={},
+            configuration_revision=5,
+        )
+        assert artifact.profile_save_eligible is True
         assert artifact.path in handler._playground_audio_files
     finally:
         for path in tuple(handler._playground_audio_files):
