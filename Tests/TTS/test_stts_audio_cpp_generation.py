@@ -170,12 +170,15 @@ class _LegacyService:
         self.stream_calls: list[tuple[object, str, object]] = []
         self.native_calls = 0
         self.revision = 5
+        self.revision_error: BaseException | None = None
 
     async def synthesize(self, *_args: object, **_kwargs: object) -> None:
         self.native_calls += 1
         raise AssertionError("legacy generation must retain the bridge")
 
     def configuration_revision(self, _provider_id: str) -> int:
+        if self.revision_error is not None:
+            raise self.revision_error
         return self.revision
 
     async def generate_audio_stream(
@@ -792,6 +795,46 @@ async def test_legacy_generation_retains_stream_bridge_and_requested_conversion(
             configuration_revision=5,
         )
         assert artifact.profile_save_eligible is True
+        assert artifact.path in handler._playground_audio_files
+    finally:
+        for path in tuple(handler._playground_audio_files):
+            path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_legacy_generation_survives_configuration_revision_failure(
+    tmp_path: Path,
+) -> None:
+    """A `configuration_revision` failure must degrade provenance, not the
+    generation: the artifact still returns with the audio it produced, just
+    not profile-save eligible."""
+
+    service = _LegacyService()
+    service.revision_error = RuntimeError("registry unavailable")
+    handler = _handler(service)
+
+    async def convert(input_path: Path, output_format: str) -> Path:
+        assert input_path.read_bytes() == b"RIFFlegacy"
+        assert output_format == "mp3"
+        output = input_path.with_suffix(".mp3")
+        output.write_bytes(b"converted")
+        return output
+
+    handler._convert_audio_format = AsyncMock(side_effect=convert)
+
+    artifact = await handler._generate_legacy(
+        _snapshot(provider_id="openai", response_format="mp3"),
+        None,
+    )
+
+    try:
+        assert len(service.stream_calls) == 1
+        handler._convert_audio_format.assert_awaited_once()
+        assert artifact.audio_format == "mp3"
+        assert artifact.path.read_bytes() == b"converted"
+        assert artifact.provider_id == "openai"
+        assert artifact.requested_selection is None
+        assert artifact.profile_save_eligible is False
         assert artifact.path in handler._playground_audio_files
     finally:
         for path in tuple(handler._playground_audio_files):

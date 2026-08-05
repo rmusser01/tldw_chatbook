@@ -6,11 +6,13 @@ import importlib
 import importlib.util
 import json
 import math
+from dataclasses import fields
 from types import ModuleType
 from uuid import UUID
 
 import pytest
 
+from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 from tldw_chatbook.TTS.profile_types import TTSProfileDraft
 
 
@@ -20,6 +22,27 @@ def _portability_module() -> ModuleType:
         "the profile portability codec has not been implemented"
     )
     return importlib.import_module(module_name)
+
+
+def _forged_draft(draft: TTSProfileDraft, **updates: object) -> TTSProfileDraft:
+    """Build an adversarial exact draft without domain revalidation.
+
+    Mirrors `test_profile_service.py`'s `_forged_profile` helper: a plain
+    `TTSProfileDraft(provider_id="future_tts", ...)` construction is rejected
+    by the draft's own `__post_init__` (Task 1's provider contract table), so
+    the only honest way to exercise `PortableTTSProfile.__post_init__`'s own
+    provider-membership defense is a draft that bypasses its own validation,
+    matching the pattern already established for `TTSGenerationProfile`.
+    """
+
+    forged = object.__new__(TTSProfileDraft)
+    for draft_field in fields(TTSProfileDraft):
+        object.__setattr__(
+            forged,
+            draft_field.name,
+            updates.get(draft_field.name, getattr(draft, draft_field.name)),
+        )
+    return forged
 
 
 def test_version_one_payload_has_the_exact_sanitized_wire_shape() -> None:
@@ -140,6 +163,37 @@ def test_portable_profile_value_accepts_legacy_provider_selection() -> None:
     )
 
     assert portable.draft.provider_id == "openai"
+
+
+def test_portable_profile_value_rejects_hostile_provider() -> None:
+    """`PortableTTSProfile.__post_init__`'s own provider-membership check is
+    defense-in-depth: no honestly-constructed `TTSProfileDraft` can carry an
+    out-of-set `provider_id` (Task 1 already rejects that at the draft's own
+    construction), so this branch is only reachable via a forged draft --
+    e.g. one representing data that predates the current provider contract.
+    """
+
+    portability = _portability_module()
+    hostile_draft = _forged_draft(
+        TTSProfileDraft(
+            display_name="Hostile voice",
+            provider_id="openai",
+            model_id="tts-1",
+            voice_id=None,
+            response_format="mp3",
+            speed=1.0,
+            options={},
+        ),
+        provider_id="future_tts",
+    )
+
+    with pytest.raises(ProfileValidationError) as caught:
+        portability.PortableTTSProfile(
+            profile_id=UUID("00000000-0000-4000-8000-000000000000"),
+            draft=hostile_draft,
+        )
+
+    assert caught.value.code == "audio_cpp"
 
 
 @pytest.mark.parametrize(

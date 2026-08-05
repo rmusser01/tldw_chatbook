@@ -862,7 +862,7 @@ class STTSEventHandler:
                     ),
                 )
             except Exception:  # noqa: BLE001 - best-effort provenance only
-                logger.debug(
+                logger.warning(
                     "Legacy playground result is not profile-save eligible "
                     "(provider={}).",
                     snapshot.provider_id,
