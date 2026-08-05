@@ -3292,6 +3292,7 @@ class ChatScreen(BaseAppScreen):
         #: silence detection it can't deliver" constraint).
         self._console_hands_free_vad_degraded = False
         self._console_provider_gateway: Any | None = None
+        self._console_prompt_history: Any | None = None
         self._console_chat_controller: ConsoleChatController | None = None
         self._console_command_registry: ConsoleCommandRegistry = (
             default_console_registry()
