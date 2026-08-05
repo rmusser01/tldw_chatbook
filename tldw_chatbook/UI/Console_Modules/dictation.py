@@ -797,6 +797,17 @@ class ConsoleDictationController:
         return self._screen._deliver_console_hands_free_capture_ended
 
     @property
+    def _console_realtime_adopt_transcript(self) -> Any:
+        """Realtime's own entry point (sibling cluster). See `__init__`.
+
+        Live `@property` through `screen`, never snapshotted, for the same
+        staleness reason as the hands-free reach-backs above: the realtime
+        loop (V4) owns whether a capture's transcript becomes its first
+        spoken turn instead of composer text.
+        """
+        return self._screen._console_realtime_adopt_transcript
+
+    @property
     def _run_pending_console_voice_action(self) -> Any:
         """Fire a capture-ending `VoiceCommand`'s queued action.
 
@@ -1619,7 +1630,12 @@ class ConsoleDictationController:
         # that is not a silent-microphone failure, but it is also nothing to
         # insert. `_dictation_insertion` would otherwise pad it to a stray
         # space at the caret and persist that to the draft.
-        if transcript:
+        # V4 task 5, rule 10: a realtime loop entered while this capture was
+        # open ADOPTS its transcript as the loop's first spoken turn. It is
+        # consumed there instead of being inserted here -- the words were
+        # spoken as a turn, not typed as a draft, and a leftover copy in the
+        # composer would be sent a second time by the next Enter.
+        if transcript and not self._console_realtime_adopt_transcript(transcript):
             self._insert_console_dictation(
                 origin_session_id=origin_session_id,
                 transcript=transcript,

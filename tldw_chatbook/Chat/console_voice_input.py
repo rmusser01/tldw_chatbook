@@ -923,6 +923,274 @@ def acoustic_barge_in_enabled() -> bool:
     return bool(raw)
 
 
+#: Provider default for `realtime_provider()`. OpenAI's Realtime API is the
+#: only transport this V4 work implements first (see the design doc); other
+#: providers are additive later, not a reason to leave this unset.
+DEFAULT_REALTIME_PROVIDER = "openai"
+
+#: Model default for `realtime_model()`, OpenAI's current realtime model id.
+DEFAULT_REALTIME_MODEL = "gpt-realtime"
+
+#: Default idle-session timeout in *minutes* for `realtime_idle_timeout_
+#: seconds()` -- the raw config unit is minutes (human-facing), the reader's
+#: return value is seconds (what the session timer actually consumes).
+DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES = 5
+
+#: Valid values for `dictation.handsfree_engine`; anything else falls back
+#: to `"auto"`.
+_HANDSFREE_ENGINE_VALUES = {"auto", "pipeline", "realtime"}
+
+#: Valid values for `realtime.turn_detection` -- the provider's two
+#: turn-detection modes, both live-confirmed accepted by the GA endpoint
+#: (`Tests/LLM_Calls/openai_realtime_turn_detection_probe.py`).
+_REALTIME_TURN_DETECTION_VALUES = {"semantic_vad", "server_vad"}
+
+#: Default turn-detection mode. `semantic_vad`, NOT the provider's own
+#: default of `server_vad`, and that difference is deliberate: the live
+#: probe showed the server's server_vad defaults commit a turn after
+#: 200 ms of silence at a fixed 0.5 energy threshold. In a normal room --
+#: keyboard clatter (barge-in here IS a keypress, next to a hot mic),
+#: a cough, a mid-sentence breath -- that chops one spoken question into
+#: several "turns" and hands each fragment to the transcription model,
+#: which then hallucinates words out of the noise (gate round 5: "picking
+#: up random words instead of what I'm asking", with the capture path
+#: independently exonerated). `semantic_vad` decides turn ends from the
+#: content of the speech rather than from an energy gate, which is what
+#: the provider positions it for.
+DEFAULT_REALTIME_TURN_DETECTION = "semantic_vad"
+
+
+def realtime_enabled() -> bool:
+    """Return whether the realtime voice engine is enabled at all.
+
+    `realtime.enabled`, default False -- opt-in: the realtime engine talks
+    to a provider's realtime API over a live connection (billed differently
+    than the pipeline STT/TTS engines, and provider-specific), so it must be
+    turned on explicitly before `resolve_handsfree_engine()` can ever select
+    it via `"auto"`. Sibling validation shape to `acoustic_barge_in_enabled`.
+
+    Returns:
+        True when the realtime engine is enabled.
+    """
+    raw = get_cli_setting("realtime", "enabled", False)
+    if isinstance(raw, str):
+        return raw.strip().lower() not in {"false", "no", "0", "off"}
+    return bool(raw)
+
+
+def realtime_provider() -> str:
+    """Return the configured realtime voice provider id.
+
+    `realtime.provider`, default `"openai"`.
+
+    Returns:
+        The provider id.
+    """
+    return get_cli_setting("realtime", "provider", DEFAULT_REALTIME_PROVIDER)
+
+
+def realtime_model() -> str:
+    """Return the configured realtime voice model id.
+
+    `realtime.model`, default `"gpt-realtime"`.
+
+    Returns:
+        The model id.
+    """
+    return get_cli_setting("realtime", "model", DEFAULT_REALTIME_MODEL)
+
+
+def realtime_voice() -> str | None:
+    """Return the configured realtime output voice name.
+
+    `realtime.voice`, default None -- leaving this unset means the
+    provider's server-side default voice is used rather than this app
+    pinning one.
+
+    Returns:
+        The configured voice name, or None to use the provider default.
+    """
+    return get_cli_setting("realtime", "voice", None)
+
+
+def realtime_idle_timeout_seconds() -> float:
+    """Idle-session timeout, in seconds, from `realtime.idle_timeout_minutes`.
+
+    The configured unit is minutes (human-facing config), default 5 minutes
+    -- returned here as 300.0 seconds, the unit the session's idle timer
+    actually consumes. Sibling validation shape to `handsfree_send_delay_
+    seconds`: a non-numeric or non-positive configured value is invalid,
+    logged, and falls back to the default rather than arming a zero/
+    negative/broken timeout.
+
+    Returns:
+        The idle timeout in seconds, always positive.
+    """
+    raw = get_cli_setting(
+        "realtime", "idle_timeout_minutes", DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES
+    )
+    try:
+        minutes = float(raw)
+    except (TypeError, ValueError):
+        minutes = 0.0
+    if minutes <= 0:
+        logger.warning(
+            "realtime.idle_timeout_minutes invalid ({!r}); using {} minutes",
+            raw,
+            DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES,
+        )
+        return float(DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES) * 60.0
+    return minutes * 60.0
+
+
+def realtime_turn_detection() -> str:
+    """Return the configured realtime turn-detection mode.
+
+    `realtime.turn_detection`, one of `"semantic_vad"` or `"server_vad"`;
+    default `DEFAULT_REALTIME_TURN_DETECTION` (see its comment for why the
+    default diverges from the provider's own). Any other value is invalid,
+    logged, and falls back to the default rather than being sent to the
+    provider, which would reject the whole `session.update` and take the
+    conversation with it.
+
+    Returns:
+        `"semantic_vad"` or `"server_vad"`.
+    """
+    raw = get_cli_setting(
+        "realtime", "turn_detection", DEFAULT_REALTIME_TURN_DETECTION
+    )
+    value = raw.strip().lower() if isinstance(raw, str) else raw
+    if value not in _REALTIME_TURN_DETECTION_VALUES:
+        logger.warning(
+            "realtime.turn_detection invalid ({!r}); using '{}'",
+            raw,
+            DEFAULT_REALTIME_TURN_DETECTION,
+        )
+        return DEFAULT_REALTIME_TURN_DETECTION
+    return value
+
+
+def realtime_vad_threshold() -> float | None:
+    """Return the server-VAD energy threshold, or None to leave it unset.
+
+    `realtime.vad_threshold`, a 0-1 float. Applies to `server_vad` ONLY --
+    the live probe rejects it under `semantic_vad` with
+    `unknown_parameter`, so the session must not send it in that mode.
+
+    Unset (the default) means the key is omitted entirely and the provider
+    picks: this app does not restate someone else's default, which would
+    silently freeze it at whatever it happened to be the day this was
+    written.
+
+    Returns:
+        The configured threshold, or None when unset or invalid.
+    """
+    raw = get_cli_setting("realtime", "vad_threshold", None)
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        # `bool` is a subclass of `int`, so `float(True)` is 1.0 and would
+        # sail through the range check below -- pinning the gate at "only
+        # the loudest possible audio counts as speech", which reads as a
+        # microphone that stopped working. Same guard its sibling
+        # `realtime_vad_silence_ms` already had.
+        value = None
+    else:
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            value = None
+    if value is None or not 0.0 <= value <= 1.0:
+        logger.warning(
+            "realtime.vad_threshold must be a number between 0 and 1 "
+            "(got {!r}); leaving it to the provider",
+            raw,
+        )
+        return None
+    return value
+
+
+def realtime_vad_silence_ms() -> int | None:
+    """Return the server-VAD end-of-turn silence window in milliseconds.
+
+    `realtime.vad_silence_ms`, a positive int. Applies to `server_vad`
+    ONLY (same provider restriction as `realtime_vad_threshold`). Unset
+    means the provider decides -- currently 200 ms, which is short enough
+    that an ordinary mid-sentence pause ends the turn; raising it is the
+    server_vad-side answer to the fragmenting this reader exists for.
+
+    Returns:
+        The configured window in milliseconds, or None when unset or
+        invalid.
+    """
+    raw = get_cli_setting("realtime", "vad_silence_ms", None)
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        value = None
+    else:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = None
+    if value is None or value <= 0:
+        logger.warning(
+            "realtime.vad_silence_ms must be a positive number of "
+            "milliseconds (got {!r}); leaving it to the provider",
+            raw,
+        )
+        return None
+    return value
+
+
+def handsfree_engine() -> str:
+    """Return the configured hands-free engine selection.
+
+    `dictation.handsfree_engine`, one of `"auto"`, `"pipeline"`, or
+    `"realtime"`; default `"auto"`. Any other value is invalid, logged, and
+    falls back to `"auto"` rather than propagating an unrecognized engine
+    name into `resolve_handsfree_engine()`.
+
+    Returns:
+        One of `"auto"`, `"pipeline"`, `"realtime"`.
+    """
+    raw = get_cli_setting("dictation", "handsfree_engine", "auto")
+    value = raw.strip().lower() if isinstance(raw, str) else raw
+    if value not in _HANDSFREE_ENGINE_VALUES:
+        logger.warning(
+            "dictation.handsfree_engine invalid ({!r}); using 'auto'", raw
+        )
+        return "auto"
+    return value
+
+
+def resolve_handsfree_engine() -> str:
+    """Resolve which engine the hands-free loop should actually use.
+
+    Pure combination of `handsfree_engine()` and `realtime_enabled()`:
+    `"pipeline"` unless the engine is explicitly forced to `"realtime"`, or
+    the engine is `"auto"` and the realtime engine is enabled.
+
+    This function does NOT gate on whether realtime is actually usable
+    (e.g. an API key configured, the `realtime` extra installed) -- forcing
+    `"realtime"` while `realtime_enabled()` is False still returns
+    `"realtime"` here. That is deliberate: this reader stays a pure,
+    testable combination, and it is the caller's job to be honest with the
+    user about *why* a forced-but-disabled selection can't proceed (toast +
+    refuse), rather than this function silently downgrading the user's
+    explicit choice to `"pipeline"`.
+
+    Returns:
+        `"pipeline"` or `"realtime"`.
+    """
+    engine = handsfree_engine()
+    if engine == "realtime":
+        return "realtime"
+    if engine == "auto" and realtime_enabled():
+        return "realtime"
+    return "pipeline"
+
+
 def warm_transcription_model(transcriber: Any, effective: EffectiveConfig) -> None:
     """Load the speech model by transcribing silence through it.
 
