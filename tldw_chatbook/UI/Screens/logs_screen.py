@@ -68,7 +68,11 @@ class LogsScreen(BaseAppScreen):
         except Exception as e:
             from loguru import logger
 
-            logger.error(f"Failed to load buffered logs: {e}")
+            buffered = getattr(self.app_instance, "_log_records", None)
+            logger.error(
+                "Logs screen failed to load buffered log records on mount "
+                f"(buffered_records={len(buffered) if buffered is not None else 'n/a'}): {e}"
+            )
 
     def on_unmount(self) -> None:
         """When the logs screen is unmounted, clear the widget reference."""

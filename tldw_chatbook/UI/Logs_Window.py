@@ -8,7 +8,7 @@
 #
 # Imports
 import re
-from collections import deque
+from collections import Counter, deque
 from typing import TYPE_CHECKING, Iterable, NamedTuple, Optional
 
 #
@@ -133,9 +133,19 @@ class LogsWindow(Container):
     )
 
     def __init__(self, app_instance: "TldwCli", **kwargs):
+        """Create the Logs window.
+
+        Args:
+            app_instance: The running TldwCli app; source of the buffered
+                log records this window mirrors.
+            **kwargs: Forwarded to ``Container`` (id, classes, …).
+        """
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self._records: deque[LogRecord] = deque(maxlen=MAX_LOG_RECORDS)
+        # Per-level counts of the buffered records, maintained incrementally
+        # on append/evict so chip/header refreshes never rescan the buffer.
+        self._level_counts: Counter[str] = Counter()
         # "Info+" is the front door: the level word and the message stay
         # visible without the DEBUG firehose (users can still hit "All").
         self._level_chip = "info"
@@ -212,6 +222,9 @@ class LogsWindow(Container):
         for entry in app_records:
             level, name, message = entry
             self._records.append(LogRecord(level, name, message))
+        # The deque may have evicted oldest-first while seeding; rebuild the
+        # counts from the final buffer state (one pass, load-time only).
+        self._level_counts = Counter(record.level for record in self._records)
         self._render_view()
 
     def save_filter_state(self) -> None:
@@ -231,10 +244,21 @@ class LogsWindow(Container):
         self.save_filter_state()
 
     def append_record(self, level: str, name: str, message: str) -> None:
-        """Receive one live log record from the app's logging handler."""
+        """Receive one live log record from the app's logging handler.
+
+        Args:
+            level: Log level name (e.g. "INFO", "ERROR").
+            name: Name of the logger that emitted the record.
+            message: Fully formatted log line, prefix included.
+        """
         record = LogRecord(level, name, message)
         was_empty = not self._records
+        if len(self._records) == self._records.maxlen:
+            # The deque is full: appending evicts the oldest record, so its
+            # level count must leave with it.
+            self._level_counts[self._records[0].level] -= 1
         self._records.append(record)
+        self._level_counts[record.level] += 1
         if was_empty:
             # Leaving the empty state: restore the log widget and re-render.
             self._render_view()
@@ -303,13 +327,18 @@ class LogsWindow(Container):
         self._update_header_chip()
 
     def _update_filter_chips(self) -> None:
-        """Refresh chip active states and per-level counts."""
-        counts = {chip_id: 0 for chip_id, _label, _ in _LEVEL_FILTERS}
-        counts["all"] = len(self._records)
-        for record in self._records:
-            for chip_id, _label, levels in _LEVEL_FILTERS:
-                if levels and record.level in levels:
-                    counts[chip_id] += 1
+        """Refresh chip active states and per-level counts.
+
+        Counts come from the incrementally maintained ``_level_counts`` —
+        O(distinct levels) per refresh instead of rescanning up to
+        MAX_LOG_RECORDS buffered records on every appended line.
+        """
+        counts = {"all": len(self._records)}
+        for chip_id, _label, levels in _LEVEL_FILTERS:
+            if levels:
+                counts[chip_id] = sum(
+                    self._level_counts.get(level, 0) for level in levels
+                )
         for chip_id, label, _levels in _LEVEL_FILTERS:
             chip = self.query_one(f"#logs-filter-{chip_id}", Button)
             count = counts[chip_id]
@@ -343,8 +372,8 @@ class LogsWindow(Container):
             )
         except Exception:  # noqa: BLE001 - header not mounted / no screen
             return
-        errors = sum(
-            1 for record in self._records if record.level in ("ERROR", "CRITICAL")
+        errors = self._level_counts.get("ERROR", 0) + self._level_counts.get(
+            "CRITICAL", 0
         )
         if errors:
             status, label = "error", f"{errors} error{'s' if errors != 1 else ''} in buffer"
@@ -446,7 +475,12 @@ class LogsWindow(Container):
         self._set_paused(not self._paused)
 
     def action_level(self, chip_id: str) -> None:
-        """Switch the level filter chip (1-4 keys)."""
+        """Switch the level filter chip (1-4 keys).
+
+        Args:
+            chip_id: One of the ``_LEVEL_FILTERS`` ids ("all", "info",
+                "warning", "error").
+        """
         if chip_id != self._level_chip:
             self._level_chip = chip_id
             self._render_view()

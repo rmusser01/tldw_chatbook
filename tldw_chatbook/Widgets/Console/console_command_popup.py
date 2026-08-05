@@ -9,6 +9,8 @@ edge sits just above the composer — the same anchored-overlay technique as
 
 from __future__ import annotations
 
+from typing import Any
+
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.widget import Widget
@@ -21,7 +23,7 @@ MAX_VISIBLE_ROWS = 8
 MIN_WIDTH = 30
 
 
-class _SuggestionOption(Option):
+class SuggestionOption(Option):
     """OptionList row carrying its originating `CommandSuggestion`."""
 
     def __init__(self, suggestion: CommandSuggestion) -> None:
@@ -38,7 +40,13 @@ class ConsoleCommandPopup(Widget):
 
     can_focus = False
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: Any) -> None:
+        """Create the popup, hidden until `show_suggestions` is called.
+
+        Args:
+            **kwargs: Forwarded to ``Widget``. The popup forces its own
+                ``id`` ("console-command-popup") when none is given.
+        """
         kwargs.setdefault("id", "console-command-popup")
         super().__init__(**kwargs)
         self._suggestions: list[CommandSuggestion] = []
@@ -58,12 +66,17 @@ class ConsoleCommandPopup(Widget):
         return self.display
 
     def show_suggestions(self, suggestions: list[CommandSuggestion]) -> None:
-        """Replace rows, reset the highlight, reposition, and show."""
+        """Replace rows, reset the highlight, reposition, and show.
+
+        Args:
+            suggestions: Completions to list, in display order. An empty
+                list still opens the popup at height 0 (caller filters).
+        """
         self._suggestions = list(suggestions)
         option_list = self.query_one(OptionList)
         option_list.clear_options()
         option_list.add_options(
-            [_SuggestionOption(suggestion) for suggestion in self._suggestions]
+            [SuggestionOption(suggestion) for suggestion in self._suggestions]
         )
         self._desired_height = min(len(self._suggestions), MAX_VISIBLE_ROWS)
         self.styles.height = self._desired_height
@@ -77,7 +90,11 @@ class ConsoleCommandPopup(Widget):
         self._suggestions = []
 
     def move_highlight(self, delta: int) -> None:
-        """Move the highlight by ``delta`` rows, wrapping at both ends."""
+        """Move the highlight by ``delta`` rows, wrapping at both ends.
+
+        Args:
+            delta: Rows to move the highlight by; negative moves up.
+        """
         count = len(self._suggestions)
         if count == 0:
             return
