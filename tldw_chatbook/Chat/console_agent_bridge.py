@@ -106,7 +106,7 @@ _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
 # under direct disclosure every schema is already in the prompt and the hint
 # would point at tools that are, in fact, shown.
 FIND_LOAD_DISCOVERY_HINT = (
-    "Additional tools (file, web, git, and more) are available but not shown; "
+    "Additional tools (file, web, and more) are available but not shown; "
     "use find_tools to search the catalog and load_tools to load their "
     "schemas before calling them."
 )
