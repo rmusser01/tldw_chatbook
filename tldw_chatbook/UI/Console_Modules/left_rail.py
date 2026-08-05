@@ -88,15 +88,17 @@ class ConsoleLeftRail(Vertical):
         — this message only reports that this rail's own toggle button
         fired, so the screen never has to match a button id prefix out of
         an unrelated ``on_button_pressed`` if-chain.
-
-        Args:
-            section_id: The toggled section's id (e.g. ``"session"``).
-            opened: Whether the section appears open in this rail's own
-                last-synced header state (informational; the screen
-                recomputes the authoritative next state itself).
         """
 
         def __init__(self, section_id: str, opened: bool) -> None:
+            """Record which section toggled and this rail's last-synced open state for it.
+
+            Args:
+                section_id: The toggled section's id (e.g. ``"session"``).
+                opened: Whether the section appears open in this rail's own
+                    last-synced header state (informational; the screen
+                    recomputes the authoritative next state itself).
+            """
             self.section_id = section_id
             self.opened = opened
             super().__init__()
@@ -189,7 +191,13 @@ class ConsoleLeftRail(Vertical):
         self._character_avatar_name = character_avatar_name
 
     def compose(self) -> ComposeResult:
-        """Compose the rail header, pinned fleet line, and the five sections."""
+        """Compose the rail header, pinned fleet line, and the five sections.
+
+        Returns:
+            The rail-header row, the pinned fleet-summary line, and the
+            scrollable Session/Model/Agent/Details/Character section widgets,
+            in mount order.
+        """
         rail_state = self._rail_state
         workspace_context_state = self._workspace_context_state
 
@@ -527,6 +535,11 @@ class ConsoleLeftRail(Vertical):
         working unchanged: this method does not stop or otherwise touch
         events it does not recognize, so they bubble to the screen exactly
         as they did before this rail existed as its own widget.
+
+        Args:
+            event: The button-press event, as delivered to any Textual
+                ``on_button_pressed`` handler; only ``event.button.id`` is
+                consulted here.
         """
         button_id = event.button.id or ""
         if not button_id.startswith(RAIL_SECTION_TOGGLE_PREFIX):
@@ -552,6 +565,11 @@ class ConsoleLeftRail(Vertical):
         so a runtime scope switch (for example resuming a saved
         conversation after a relaunch) can change the effective flags
         without a recompose.
+
+        Args:
+            rail_state: The effective Console rail state to sync every
+                section's body/header to, one ``apply_section_open`` call
+                per id in ``CONSOLE_RAIL_SECTION_IDS``.
         """
         for section_id in CONSOLE_RAIL_SECTION_IDS:
             section_open = bool(getattr(rail_state, f"{section_id}_open", True))
@@ -561,6 +579,13 @@ class ConsoleLeftRail(Vertical):
         """Sync one section's body display and header glyph to an open state.
 
         Moved verbatim from ``ChatScreen._apply_console_rail_section_open``.
+
+        Args:
+            section_id: The section's id (e.g. ``"session"``), used to
+                locate its body and header by the ``console-rail-section-
+                body-<id>`` / ``console-rail-section-header-<id>`` ids.
+            section_open: Whether that section should render open (body
+                shown, header glyph synced) or closed.
         """
         try:
             body = self.query_one(f"#console-rail-section-body-{section_id}")

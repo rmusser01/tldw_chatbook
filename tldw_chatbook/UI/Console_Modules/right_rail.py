@@ -148,7 +148,14 @@ class ConsoleInspectorRail(Vertical):
         self._live_work_card_builder = live_work_card_builder
 
     def compose(self) -> ComposeResult:
-        """Compose the rail header, staged-context tray, scope row, and run inspector."""
+        """Compose the rail header, staged-context tray, scope row, and run inspector.
+
+        Returns:
+            The rail-header row followed by the scrollable body: the staged
+            Context tray, the retrieval-Scope row, the run inspector plus
+            session settings summary, and the live-work status card, in
+            mount order.
+        """
         right_rail_header = Horizontal(classes="console-rail-header")
         right_rail_header.styles.height = 1
         right_rail_header.styles.min_height = 1
