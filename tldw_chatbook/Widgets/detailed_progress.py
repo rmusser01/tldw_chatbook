@@ -286,6 +286,10 @@ class DetailedProgressBar(Widget):
         if not self.start_time:
             return
 
+        # Skip while the screen/tab is inactive so hidden tabs burn no CPU.
+        if not self.is_attached or not self.screen.is_active:
+            return
+
         try:
             # Calculate elapsed time
             elapsed = datetime.now() - self.start_time - self.total_pause_duration

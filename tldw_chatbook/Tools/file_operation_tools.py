@@ -27,6 +27,17 @@ from ..Utils.sensitive_paths import (
 )
 from .workspace_file_roots import allowed_file_roots, run_workspace
 
+# Maximum size (bytes) of file content captured for diff rendering (TASK-1351).
+# Files or writes larger than this skip before/after capture entirely and
+# render as plain text results.
+DIFF_CAPTURE_MAX_BYTES = 256 * 1024
+
+# Result keys carrying the raw before/after contents captured for UI diff
+# rendering (TASK-1351). Display-only, live-session state: they must be
+# stripped before a result is persisted or serialized back to a provider
+# (see Agents/tool_catalog.py and Widgets/diff_widgets.py).
+DIFF_CONTENT_KEYS = ("old_content", "new_content")
+
 
 def _resolve_sandbox_config() -> str:
     """Return the configured sandbox root string (indirection for tests)."""
@@ -622,6 +633,35 @@ class WriteFileTool(Tool):
             # Check if we're overwriting an existing file
             file_exists = path.exists()
 
+            # Capture pre-write content for diff rendering (TASK-1351), bounded
+            # by DIFF_CAPTURE_MAX_BYTES so the extra read stays cheap and no
+            # oversized payloads are produced. Capture is skipped entirely
+            # (keys omitted, result renders as plain text) when either side is
+            # oversized or the pre-existing file is undecodable — a partial or
+            # fabricated diff would be misleading.
+            old_content = None
+            if file_exists:
+                try:
+                    if path.stat().st_size <= DIFF_CAPTURE_MAX_BYTES:
+                        old_content = path.read_text(encoding=encoding)
+                except (UnicodeDecodeError, OSError):
+                    old_content = None
+            else:
+                old_content = ""
+
+            if old_content is not None:
+                new_size = len(content.encode(encoding))
+                # Append mode materializes new_content as old + appended, so
+                # the combined size is what must stay within the capture cap
+                # (otherwise a single captured field can reach ~2x the cap).
+                capped_size = (
+                    len(old_content.encode(encoding)) + new_size
+                    if mode == "append"
+                    else new_size
+                )
+                if capped_size > DIFF_CAPTURE_MAX_BYTES:
+                    old_content = None
+
             # Create parent directories if requested
             if create_directories and not path.parent.exists():
                 # TASK-849: `is_sensitive_path(path)` just above only ever
@@ -662,22 +702,32 @@ class WriteFileTool(Tool):
                 with open(path, "a", encoding=encoding) as f:
                     f.write(content)
                 action = "appended to"
+                new_content = (
+                    old_content + content if old_content is not None else None
+                )
             else:
                 # Overwrite mode
                 with open(path, "w", encoding=encoding) as f:
                     f.write(content)
                 action = "created" if not file_exists else "overwritten"
+                new_content = content if old_content is not None else None
 
             # Get file info after writing
             stat = path.stat()
 
-            return {
+            result = {
                 "file_path": str(path),
                 "action": action,
                 "size_bytes": stat.st_size,
                 "encoding": encoding,
                 "lines_written": len(content.splitlines()),
             }
+            # Before/after contents for client-side diff rendering (TASK-1351);
+            # omitted when capture was skipped (oversized or undecodable).
+            if new_content is not None:
+                result["old_content"] = old_content
+                result["new_content"] = new_content
+            return result
 
         except PermissionError:
             return {"file_path": file_path, "error": "Permission denied to write file"}

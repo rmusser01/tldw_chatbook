@@ -39,7 +39,8 @@ dependencies = [
     "chardet",
     "httpx",
     "loguru",
-    "textual>=8.2.8,<9",
+    "textual==8.2.8",  # exact pin: UI framework, bump deliberately (TASK-1353)
+    "textual-diff-view==0.1.5",  # exact pin: diff widget, bump deliberately (TASK-1351)
     "requests",
     "rich",
     "rich-pixels>=3.0.0",

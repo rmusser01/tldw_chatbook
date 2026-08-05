@@ -26,12 +26,15 @@ and ``console_transcript.py``.
 import json
 from typing import List, Dict, Any, Optional
 
+from loguru import logger
 from rich.text import Text
 from textual.widgets import Static
 from textual.containers import Vertical
 from textual.css.query import QueryError
+from textual_diff_view import DiffView
 
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
+from tldw_chatbook.Widgets.diff_widgets import extract_diff_from_result, make_diff
 
 
 class ToolCallMessage(ChatMessage):
@@ -164,8 +167,11 @@ class ToolResultMessage(ChatMessage):
 
                 result_data = result.get("result", {})
                 if isinstance(result_data, dict):
-                    # Format dict results
+                    # Format dict results (skip raw before/after contents;
+                    # those render as a DiffView instead, see TASK-1351)
                     for key, value in result_data.items():
+                        if key in ("old_content", "new_content"):
+                            continue
                         value_str = str(value)
                         if len(value_str) > 100:
                             value_str = value_str[:97] + "..."
@@ -230,6 +236,11 @@ class ToolExecutionWidget(Vertical):
         if self.tool_result_widget:
             yield self.tool_result_widget
 
+    async def on_mount(self):
+        """Mount diff views for any results already present at mount time."""
+        if self.tool_results:
+            self._queue_diff_mounts(self.tool_results)
+
     def update_results(self, tool_results: List[Dict[str, Any]]):
         """
         Update the widget with tool execution results.
@@ -255,3 +266,40 @@ class ToolExecutionWidget(Vertical):
                 static_widget.update(Text.from_markup(self.tool_result_widget.message))
             except QueryError:
                 pass
+
+        # Results carrying before/after file contents also render as a
+        # DiffView; the diff is prepared off the UI thread (TASK-1351).
+        # Cancel pending prepare workers and drop previously rendered diffs
+        # first so a repeated update can't double-render.
+        self.workers.cancel_group(self, "tool-diff-mount")
+        self.remove_children(DiffView)
+        self._queue_diff_mounts(tool_results)
+
+    def _queue_diff_mounts(self, tool_results: List[Dict[str, Any]]):
+        """Schedule DiffView mounts for results with before/after content."""
+        for result in tool_results:
+            diff_data = extract_diff_from_result(result)
+            if diff_data is None:
+                continue
+            path, old_content, new_content = diff_data
+            self.run_worker(
+                self._prepare_and_mount_diff(path, old_content, new_content),
+                thread=False,
+                group="tool-diff-mount",
+            )
+
+    async def _prepare_and_mount_diff(
+        self, path: str, old_content: str, new_content: str
+    ):
+        """Prepare the diff off the UI thread, then mount the DiffView."""
+        try:
+            diff_view = make_diff(path, old_content, new_content)
+            await diff_view.prepare()
+            if not self.is_mounted:
+                # Widget was unmounted while the diff prepared off-thread.
+                return
+            await self.mount(diff_view)
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"Failed to render tool-call diff for {path}: {e}"
+            )

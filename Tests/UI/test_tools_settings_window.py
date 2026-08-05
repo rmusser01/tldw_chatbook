@@ -259,33 +259,43 @@ async def test_save_invalid_toml_format(settings_window: ToolsSettingsWindow, mo
     assert mock_app_instance.notify.call_args.kwargs == {"severity": "error"}
 
 
-# Test for save I/O error (conceptual - requires mocking 'open')
-@pytest.mark.skip(reason="Complex to mock built-in open reliably for this specific write operation only")
 @pytest.mark.asyncio
-async def test_save_io_error(settings_window: ToolsSettingsWindow, mock_app_instance, monkeypatch):
-    """Test saving config when an IOError occurs."""
+async def test_save_io_error(
+    settings_window: ToolsSettingsWindow,
+    mock_app_instance,
+    temp_config_path: Path,
+    monkeypatch,
+):
+    """Test saving config when an IOError occurs.
+
+    The window module imports ``replace_cli_config`` by name
+    (``from tldw_chatbook.config import replace_cli_config``), so patching the
+    module-level reference in ``Tools_Settings_Window`` deterministically
+    forces the write step to fail without touching the fragile builtin
+    ``open`` -- which is what made the old version of this test a permanent
+    skip.
+    """
     config_text_area = settings_window.query_one("#config-text-area", TextArea)
+    save_button = settings_window.query_one("#save-config-button", Button)
 
-    config_text_area.text = toml.dumps({"good": "data"})
+    new_config_dict = {"good": "data"}
+    config_text_area.text = toml.dumps(new_config_dict)
+    original_bytes = temp_config_path.read_bytes()
 
-    # Mock 'open' within the tldw_chatbook.UI.Tools_Settings_Window context or globally
-    # to raise IOError only for the specific write operation.
-    # This is tricky because 'open' is a builtin and patching it requires care.
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Tools_Settings_Window.replace_cli_config",
+        MagicMock(side_effect=IOError("Disk full")),
+    )
 
-    # For example, using a more specific patch target if 'open' is imported like 'from io import open':
-    # with monkeypatch.context() as m:
-    # m.setattr("tldw_chatbook.UI.Tools_Settings_Window.open", MagicMock(side_effect=IOError("Disk full")))
-    # await settings_window.on_button_pressed(Button.Pressed(save_button))
+    await settings_window.on_button_pressed(Button.Pressed(save_button))
 
-    # Or if it uses the global 'open':
-    # with patch('builtins.open', MagicMock(side_effect=IOError("Cannot write"))):
-    # await settings_window.on_button_pressed(Button.Pressed(save_button))
+    message = mock_app_instance.notify.call_args.args[0]
+    assert message.startswith("Error: Could not write to configuration file:")
+    assert "Disk full" in message
+    assert mock_app_instance.notify.call_args.kwargs == {"severity": "error"}
 
-    # This test is skipped because such mocking is highly dependent on exact 'open' usage
-    # and can be fragile. A more robust way might involve filesystem-level mocks if available.
-
-    # mock_app_instance.notify.assert_called_with("Error: Could not write to configuration file.", severity="error")
-    pass
+    # The failed save must not have modified the on-disk config.
+    assert temp_config_path.read_bytes() == original_bytes
 
 
 # ===========================================

@@ -29,6 +29,10 @@ from .sync_engine import SyncDirection, ConflictResolution
 #
 # Classes:
 
+# Coalescing window for UI-facing file-change notifications: a burst of
+# watchdog events within this window produces a single on_files_changed call.
+FILES_CHANGED_NOTIFY_COALESCE_SECONDS = 0.25
+
 
 class NotesFileWatcher(FileSystemEventHandler):
     """Watches for file changes in the notes directory."""
@@ -91,6 +95,11 @@ class AutoSyncManager:
         self.pending_sync = False
         self.sync_in_progress = False
 
+        # Event loop captured on start() so the watchdog thread can safely
+        # schedule coalesced UI notifications.
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._files_changed_notify_handle: Optional[asyncio.TimerHandle] = None
+
         # Callbacks for UI updates
         self.on_sync_started: Optional[Callable] = None
         self.on_sync_completed: Optional[Callable] = None
@@ -103,6 +112,7 @@ class AutoSyncManager:
             return
 
         self.is_running = True
+        self._loop = asyncio.get_running_loop()
 
         # Start file watcher
         self._start_file_watcher()
@@ -115,6 +125,11 @@ class AutoSyncManager:
     def stop(self):
         """Stop auto-sync monitoring."""
         self.is_running = False
+
+        # Cancel any pending coalesced UI notification
+        if self._files_changed_notify_handle is not None:
+            self._files_changed_notify_handle.cancel()
+            self._files_changed_notify_handle = None
 
         # Stop file watcher
         if self.observer:
@@ -144,19 +159,49 @@ class AutoSyncManager:
         self.observer.start()
 
     def _on_file_changed(self, file_path: Path):
-        """Handle file change events."""
+        """Handle file change events (called from the watchdog thread)."""
         # Mark that we need to sync
         self.pending_sync = True
 
-        # Notify UI if callback is set
-        if self.on_files_changed:
-            asyncio.create_task(self._notify_files_changed())
+        # Notify UI if callback is set, coalescing event bursts into a single
+        # notification per window instead of one callback per raw event.
+        if not self.on_files_changed:
+            return
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(self._schedule_files_changed_notification)
+        except RuntimeError:
+            pass  # Loop closed between the check and the call
 
-    async def _notify_files_changed(self):
-        """Notify UI about file changes."""
-        if self.on_files_changed:
-            changed_count = len(self.file_watcher.changed_files)
+    def _schedule_files_changed_notification(self):
+        """Runs on the event loop; collapses bursts into one UI update."""
+        if not self.is_running:
+            return
+        if self._files_changed_notify_handle is not None:
+            # A notification is already scheduled; this event folds into it.
+            return
+        self._files_changed_notify_handle = self._loop.call_later(
+            FILES_CHANGED_NOTIFY_COALESCE_SECONDS,
+            self._emit_files_changed_notification,
+        )
+
+    def _emit_files_changed_notification(self):
+        """Deliver the single coalesced notification for a burst of events."""
+        self._files_changed_notify_handle = None
+        if not self.is_running or not self.on_files_changed:
+            return
+        changed_count = (
+            len(self.file_watcher.changed_files) if self.file_watcher else 0
+        )
+        try:
             self.on_files_changed(changed_count)
+        except Exception as e:
+            logger.error(
+                f"Error in on_files_changed callback "
+                f"(changed_count={changed_count}, is_running={self.is_running}): {e}"
+            )
 
     async def _sync_loop(self):
         """Main sync loop that runs periodically."""

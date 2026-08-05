@@ -389,6 +389,9 @@ class AudioTroubleshootingDialog(ModalScreen[bool]):
 
     def _update_level_meter(self):
         """Update the level meter with current audio level."""
+        # Skip while the screen/tab is inactive so hidden tabs burn no CPU.
+        if not self.is_attached or not self.screen.is_active:
+            return
         if not self.is_testing or not self.dictation_service:
             return
 

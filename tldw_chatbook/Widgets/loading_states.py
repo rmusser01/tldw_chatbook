@@ -236,6 +236,9 @@ class InlineLoader(Static):
 
     def _update_dots(self) -> None:
         """Update the loading dots animation."""
+        # Skip while the screen/tab is inactive so hidden tabs burn no CPU.
+        if not self.is_attached or not self.screen.is_active:
+            return
         if self.state == "loading":
             self.dots = (self.dots + 1) % 4
             dots_str = "." * self.dots
