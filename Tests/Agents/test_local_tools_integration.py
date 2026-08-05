@@ -225,6 +225,9 @@ def test_fs_list_fence_flow_denied_still_completes(db, workspace):
 
 # --- Phase 2: disclosure threshold + allow-state coverage -------------------
 
+# Original six fs_* tools only; fs_patch (added 3b-i) is deliberately excluded
+# so fs_only_specs stays at exactly the 8-entry disclosure boundary. Do NOT add
+# newer fs_* tools here — update LOCAL_TOOL_NAMES below instead.
 FS_TOOL_NAMES = {"fs_list", "fs_read", "fs_write", "fs_edit", "fs_glob", "fs_grep"}
 LOCAL_TOOL_NAMES = FS_TOOL_NAMES | {"fs_patch", "web_fetch", "web_search"}  # phase-3b-i default set
 BUILTIN_TOOL_NAMES = {"calculator", "get_current_datetime"}
