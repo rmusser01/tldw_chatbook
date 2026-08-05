@@ -233,12 +233,37 @@ def build_combined_review_hook(
     local names carry fs_/web_/todo_ prefixes, MCP names mcp__*), where
     the later hook's "proceed" would simply win; both stamps are still
     applied by each provider's own hook regardless.
+
+    I3 across providers: every hook runs even when an earlier one RAISES.
+    `run_agent_loop` fails the batch OPEN on hook exception
+    (agent_runtime.py:367-376), and each hook's clear-first stamp wipe is
+    the only thing standing between a stale prior-turn stamp and the
+    fail-open runtime handing it to `invoke()`. A naive sequential loop
+    would let one hook's raising approval round trip (the documented I3
+    mid-shutdown case) skip every LATER hook -- including its entry clear
+    -- stranding that provider's stale stamp. So each hook is invoked
+    under its own try/except and the FIRST exception is re-raised after
+    all hooks have run: every provider gets its clear (and, when its own
+    round trip succeeds, its fresh this-turn decisions), and the runtime
+    still sees the raise and applies its fail-open policy against stamps
+    that are guaranteed non-stale.
     """
 
     def review_tool_calls(calls: list["ToolCall"]) -> dict[str, str]:
         verdicts: dict[str, str] = {}
+        first_exc: Exception | None = None
         for hook in hooks:
-            verdicts.update(hook(calls))
+            try:
+                verdicts.update(hook(calls))
+            except Exception as exc:  # noqa: BLE001 -- re-raised after ALL hooks ran
+                logger.opt(exception=True).warning(
+                    "combined review_tool_calls: a provider hook raised; "
+                    "running remaining hooks so their entry clears still fire"
+                )
+                if first_exc is None:
+                    first_exc = exc
+        if first_exc is not None:
+            raise first_exc
         return verdicts
 
     return review_tool_calls

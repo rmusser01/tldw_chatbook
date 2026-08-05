@@ -156,6 +156,10 @@ class LocalToolProvider:
 
     def pending_gate_for(self, name: str, args: dict) -> MCPPendingCall | None:
         """The approval payload when this call needs human gating, else None."""
+        # Same `local:`-prefix tolerance as invoke()/load_schema(): the
+        # registry invokes by catalog id ("local:fs_list") while the review
+        # hook resolves by LLM-facing name ("fs_list").
+        name = name.split(":", 1)[1] if ":" in name else name
         spec = self._specs.get(name)
         if spec is None:
             return None
@@ -215,7 +219,18 @@ class LocalToolProvider:
         return ToolResult(ok=False, error=LOCAL_DENY_REFUSAL)
 
     def _kill_switch_engaged(self) -> bool:
-        """Never-raise kill-switch read; a read failure fails closed (engaged)."""
+        """Never-raise kill-switch read.
+
+        The fail-open/fail-closed POLICY for store read errors lives in the
+        injected callable, not here: the controller's composition closure
+        swallows `get_kill_switch` errors and returns False (fail open --
+        deliberate MCPToolProvider._kill_switch_engaged parity), so in
+        production this guard never sees a raise. What remains here is
+        only the protocol boundary: if the injected callable ITSELF
+        propagates (a test double, or a future composition without its own
+        guard), invoke() still cannot raise, and that case fails closed
+        (treated as engaged).
+        """
         try:
             return bool(self._kill_switch())
         except Exception as exc:  # noqa: BLE001 — invoke() must never raise
