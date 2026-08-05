@@ -351,16 +351,18 @@ def test_character_ref_never_leaks_unhashable_source_errors(source: object) -> N
 def test_options_are_canonical_json_and_are_defensively_frozen() -> None:
     source = {"z": [1, {"name": "Café"}], "a": True}
     draft = _draft(options={})
-    source_copy = {"z": [1, {"name": "Café"}], "a": True}
-    source_copy["z"][1]["name"] = "changed"  # type: ignore[index]
 
+    # Test defensive freezing: freeze, then mutate source, verify frozen copy unchanged
+    frozen_options = _freeze_options(source)
+    source["z"][1]["name"] = "changed"  # type: ignore[index]
+
+    # Frozen copy should still have original value despite source mutation
+    assert frozen_options["z"] == (1, MappingProxyType({"name": "Café"}))
     assert isinstance(draft.options, MappingProxyType)
     assert (
         canonical_json_options({"z": [1, {"name": "Café"}], "a": True})
         == '{"a":true,"z":[1,{"name":"Café"}]}'
     )
-    frozen_options = _freeze_options(source)
-    assert frozen_options["z"] == (1, MappingProxyType({"name": "Café"}))
     with pytest.raises(TypeError):
         frozen_options["a"] = False  # type: ignore[index]
     with pytest.raises(FrozenInstanceError):

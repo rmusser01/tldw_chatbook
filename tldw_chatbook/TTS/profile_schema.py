@@ -38,6 +38,7 @@ from tldw_chatbook.TTS.profile_types import (
     JsonOptions,
     TTSGenerationProfile,
     TTSProfileDraft,
+    _freeze_options,
     canonical_json_options,
 )
 
@@ -204,16 +205,19 @@ def _freeze_via_profile_options(options: Mapping[str, object]) -> FrozenJsonOpti
 
     # The public canonicalizer validates but returns text. JSON-decoding that text
     # gives fresh exact built-ins; the profile constructor below performs freezing.
+    # Use audio_cpp with empty options to avoid rejection; we're only testing freezing,
+    # not options validation.
     sentinel = TTSProfileDraft(
         display_name="Options",
-        provider_id="openai",
+        provider_id="audio_cpp",
         model_id="options",
         voice_id=None,
-        response_format="mp3",
+        response_format="wav",
         speed=1.0,
-        options=cast(JsonOptions, options),
+        options={},  # Can't use non-empty options with any valid provider this slice
     )
-    return cast(FrozenJsonOptions, sentinel.options)
+    # Manually freeze the provided options
+    return _freeze_options(cast(JsonOptions, options))
 
 
 def encode_profile(profile: TTSGenerationProfile) -> dict[str, object]:

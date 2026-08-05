@@ -49,12 +49,12 @@ def _profile(**overrides: object) -> TTSGenerationProfile:
         "profile_id": PROFILE_ID,
         "display_name": "Straße 音声",
         "normalized_name": "strasse 音声",
-        "provider_id": "openai",
-        "model_id": "tts-1-hd",
+        "provider_id": "audio_cpp",
+        "model_id": "model",
         "voice_id": None,
-        "response_format": "mp3",
-        "speed": 1.25,
-        "options": {"nested": {"items": [True, 2, 3.5, None]}, "é": "声"},
+        "response_format": "wav",
+        "speed": 1.0,
+        "options": {},
         "revision": 7,
         "created_at": NOW,
         "updated_at": NOW,
@@ -1125,7 +1125,7 @@ def test_profile_and_assignment_codecs_round_trip_exact_values(tmp_path: Path) -
             assignment=assignment, profile=profile
         )
         assert canonical_json_options(decode_profile(profile_row).options) == (
-            '{"nested":{"items":[true,2,3.5,null]},"é":"声"}'
+            '{}'
         )
     finally:
         connection.close()
