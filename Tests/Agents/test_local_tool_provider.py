@@ -477,17 +477,35 @@ def test_web_search_spec_schema(tmp_path):
     assert p.hub_tool_for("web_search").tags == ()
 
 
-def _fake_search_payload(count, snippet_len=50):
+def _fake_search_payload(count, snippet_len=50, snippet_char="x"):
+    # The REAL shape from process_web_search_results (WebSearch_APIs.py:1632+):
+    # body text under top-level "content"; "snippet" only inside "metadata".
+    body = lambda i: f"snippet {i} " + (snippet_char * snippet_len)  # noqa: E731
     return {
         "results": [
             {
                 "title": f"Result {i}",
                 "url": f"https://example.com/{i}",
-                "snippet": f"snippet {i} " + ("x" * snippet_len),
+                "content": body(i),
+                "metadata": {"snippet": body(i)},
             }
             for i in range(1, count + 1)
         ]
     }
+
+
+def test_web_search_handler_renders_real_result_shape(tmp_path, monkeypatch):
+    """Real perform_websearch items carry body text under 'content' (snippet
+    lives in metadata); the rendered text must contain it, not the fallback."""
+    monkeypatch.setattr(
+        "tldw_chatbook.Web_Scraping.WebSearch_APIs.perform_websearch",
+        lambda **kwargs: _fake_search_payload(count=1),
+    )
+    p = make_provider(root=tmp_path)
+    r = p.invoke("local:web_search", {"query": "python"})
+    assert r.ok
+    assert "snippet 1" in r.content
+    assert "No description available" not in r.content
 
 
 def test_web_search_handler_wires_legacy_defaults_and_bounds_results(tmp_path, monkeypatch):
@@ -512,11 +530,28 @@ def test_web_search_handler_wires_legacy_defaults_and_bounds_results(tmp_path, m
     assert seen["output_lang"] == "en"
     assert seen["result_count"] == 5
     assert seen["safesearch"] == "moderate"
-    # each result block bounded to ~4 KiB
+    # each result block bounded to ~4 KiB BYTES (provider fit is byte-based)
     blocks = [b for b in r.content.split("\n\n") if b.strip()]
     assert len(blocks) == 3
     for block in blocks:
-        assert len(block) <= 4 * 1024 + len("… [truncated]")
+        assert len(block.encode("utf-8")) <= 4 * 1024 + len("… [truncated]".encode("utf-8"))
+    assert "… [truncated]" in r.content
+
+
+def test_web_search_handler_bounds_multibyte_results_by_bytes(tmp_path, monkeypatch):
+    """CJK snippets are 3 bytes/char: a char-based cap would blow past the
+    byte budget; the per-result bound must hold on encoded bytes."""
+    monkeypatch.setattr(
+        "tldw_chatbook.Web_Scraping.WebSearch_APIs.perform_websearch",
+        lambda **kwargs: _fake_search_payload(count=2, snippet_len=3000, snippet_char="漢"),
+    )
+    p = make_provider(root=tmp_path)
+    r = p.invoke("local:web_search", {"query": "python"})
+    assert r.ok
+    blocks = [b for b in r.content.split("\n\n") if b.strip()]
+    assert len(blocks) == 2
+    for block in blocks:
+        assert len(block.encode("utf-8")) <= 4 * 1024 + len("… [truncated]".encode("utf-8"))
     assert "… [truncated]" in r.content
 
 
@@ -530,7 +565,19 @@ def test_web_search_handler_enforces_total_cap(tmp_path, monkeypatch):
     r = p.invoke("local:web_search", {"query": "python", "result_count": 10})
     assert r.ok
     assert "omitted" in r.content
-    assert len(r.content.encode("utf-8")) < 32 * 1024  # provider fit never triggers
+    # byte-exact: the provider's 32 KiB byte fit never triggers
+    assert len(r.content.encode("utf-8")) <= 24 * 1024 + 128  # cap + omitted marker
+
+
+def test_web_search_handler_enforces_total_cap_with_multibyte(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Web_Scraping.WebSearch_APIs.perform_websearch",
+        lambda **kwargs: _fake_search_payload(count=10, snippet_len=10_000, snippet_char="漢"),
+    )
+    p = make_provider(root=tmp_path)
+    r = p.invoke("local:web_search", {"query": "python", "result_count": 10})
+    assert r.ok
+    assert len(r.content.encode("utf-8")) <= 24 * 1024 + 128
 
 
 def test_web_search_backend_error_becomes_result_string(tmp_path, monkeypatch):
@@ -545,3 +592,43 @@ def test_web_search_backend_error_becomes_result_string(tmp_path, monkeypatch):
     # legacy contract: backend failure is a result string, not an exception.
     assert r.ok
     assert "backend exploded" in r.content
+
+
+def test_web_search_response_error_keys_surface_as_failure(tmp_path, monkeypatch):
+    """A well-formed envelope carrying error/processing_error reports THAT
+    reason, not the generic 'unexpected response format'."""
+    monkeypatch.setattr(
+        "tldw_chatbook.Web_Scraping.WebSearch_APIs.perform_websearch",
+        lambda **kwargs: {"results": [], "error": "engine quota exhausted",
+                          "processing_error": None},
+    )
+    p = make_provider(root=tmp_path)
+    r = p.invoke("local:web_search", {"query": "python"})
+    assert r.ok
+    assert "engine quota exhausted" in r.content
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Web_Scraping.WebSearch_APIs.perform_websearch",
+        lambda **kwargs: {"results": [], "error": None,
+                          "processing_error": "Error processing search results: boom"},
+    )
+    r = p.invoke("local:web_search", {"query": "python"})
+    assert r.ok
+    assert "Error processing search results: boom" in r.content
+
+
+def test_web_search_non_string_engine_falls_back_to_default(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_perform_websearch(**kwargs):
+        seen.update(kwargs)
+        return _fake_search_payload(count=1)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Web_Scraping.WebSearch_APIs.perform_websearch",
+        fake_perform_websearch,
+    )
+    p = make_provider(root=tmp_path)
+    r = p.invoke("local:web_search", {"query": "python", "search_engine": 123})
+    assert r.ok  # no AttributeError on .strip(); coerced like result_count
+    assert seen["search_engine"] == "duckduckgo"
