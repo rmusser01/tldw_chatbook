@@ -1,3 +1,5 @@
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -30,6 +32,8 @@ def test_catalog_lists_default_specs_with_local_ids(tmp_path):
     assert [e.id for e in entries] == [
         "local:fs_list", "local:fs_read", "local:fs_write", "local:fs_edit",
         "local:fs_patch", "local:fs_glob", "local:fs_grep",
+        "local:git_status", "local:git_diff", "local:git_log",
+        "local:git_blame", "local:git_branches",
         "local:web_fetch", "local:web_search",
     ]
     assert entries[0].name == "fs_list" and entries[0].source == "local"
@@ -133,6 +137,136 @@ def test_fs_grep_spec_read_only_with_mode_enum(tmp_path):
     assert props["mode"]["default"] == "content"
     assert "max_results" in props
     assert p.hub_tool_for("fs_grep").tags == ()  # read-only: no risk tags
+
+
+# -- git_* read-only tool specs (phase 3b-ii, ADR-033) -------------------------
+#
+# ADR-033 binding: the git_* set is read-only over a fixed, allowlisted argv
+# surface, so the `process` risk tag is deliberately NOT applied. The no-tags
+# assertion below is the tripwire that keeps that decision visible -- if a
+# future change adds a mutating git subcommand, the tags must change too.
+
+GIT_TOOL_NAMES = ("git_status", "git_diff", "git_log", "git_blame", "git_branches")
+GIT_AVAILABLE = shutil.which("git") is not None
+requires_git = pytest.mark.skipif(
+    not GIT_AVAILABLE, reason="git is not available on this system"
+)
+
+
+def test_git_specs_carry_no_risk_tags(tmp_path):
+    p = make_provider(root=tmp_path)
+    for name in GIT_TOOL_NAMES:
+        assert p.hub_tool_for(name).tags == (), (
+            f"{name}: ADR-033 pins tags == () for the read-only allowlisted git set"
+        )
+
+
+def test_git_descriptions_emphasize_read_only(tmp_path):
+    p = make_provider(root=tmp_path)
+    for name in GIT_TOOL_NAMES:
+        desc = p.load_schema(f"local:{name}").description.lower()
+        assert "read-only; cannot modify the repository" in desc, name
+
+
+def test_git_status_spec_schema(tmp_path):
+    p = make_provider(root=tmp_path)
+    schema = p.load_schema("local:git_status")
+    props = schema.parameters["properties"]
+    assert props["path"]["type"] == "string"
+    assert schema.parameters.get("required", []) == []
+
+
+def test_git_branches_spec_schema(tmp_path):
+    p = make_provider(root=tmp_path)
+    schema = p.load_schema("local:git_branches")
+    assert schema.parameters.get("required", []) == []
+    assert schema.parameters.get("properties", {}) == {}
+
+
+def test_git_log_spec_schema(tmp_path):
+    p = make_provider(root=tmp_path)
+    schema = p.load_schema("local:git_log")
+    props = schema.parameters["properties"]
+    assert props["count"]["type"] == "integer"
+    assert props["path"]["type"] == "string"
+    assert schema.parameters.get("required", []) == []
+
+
+def test_git_diff_spec_schema(tmp_path):
+    p = make_provider(root=tmp_path)
+    schema = p.load_schema("local:git_diff")
+    props = schema.parameters["properties"]
+    assert props["staged"]["type"] == "boolean"
+    assert props["staged"]["default"] is False
+    assert props["commit_range"]["type"] == "string"
+    assert props["path"]["type"] == "string"
+    assert props["stat"]["type"] == "boolean"
+    assert props["stat"]["default"] is False
+    assert schema.parameters.get("required", []) == []
+    # The description documents the modes (staged / commit_range / stat).
+    desc = schema.description
+    assert "staged" in desc and "commit_range" in desc and "stat" in desc
+
+
+def test_git_blame_spec_schema(tmp_path):
+    p = make_provider(root=tmp_path)
+    schema = p.load_schema("local:git_blame")
+    assert schema.parameters["required"] == ["path"]
+    props = schema.parameters["properties"]
+    assert props["path"]["type"] == "string"
+    assert props["start_line"]["type"] == "integer"
+    assert props["end_line"]["type"] == "integer"
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+@pytest.fixture()
+def git_workspace(tmp_path):
+    """Self-contained tmp git repo as the workspace root: one committed file,
+    one worktree modification, one untracked file."""
+    if not GIT_AVAILABLE:
+        pytest.skip("git is not available on this system")
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    _git(ws, "init")
+    _git(ws, "config", "user.email", "test@example.com")
+    _git(ws, "config", "user.name", "Test User")
+    (ws / "tracked.txt").write_text("line one\nline two\n", encoding="utf-8")
+    _git(ws, "add", ".")
+    _git(ws, "commit", "-m", "initial commit")
+    (ws / "tracked.txt").write_text("line one\nline two\nappended\n", encoding="utf-8")
+    (ws / "untracked.txt").write_text("new\n", encoding="utf-8")
+    return ws
+
+
+@requires_git
+def test_git_handlers_smoke_against_tmp_repo(git_workspace):
+    p = make_provider(root=git_workspace)
+
+    r = p.invoke("local:git_status", {})
+    assert r.ok and "branch:" in r.content
+    assert "untracked: untracked.txt" in r.content
+
+    r = p.invoke("local:git_branches", {})
+    assert r.ok and r.content.strip() and "(no branches)" not in r.content
+
+    r = p.invoke("local:git_log", {"count": 5})
+    assert r.ok and "initial commit" in r.content
+
+    r = p.invoke("local:git_diff", {"stat": True})
+    assert r.ok and "tracked.txt" in r.content
+
+    r = p.invoke("local:git_blame", {"path": "tracked.txt"})
+    assert r.ok and "line one" in r.content
+
+
+@requires_git
+def test_git_diff_handler_refuses_commit_range_injection(git_workspace):
+    p = make_provider(root=git_workspace)
+    r = p.invoke("local:git_diff", {"commit_range": "HEAD; rm -rf ."})
+    assert not r.ok and "invalid commit_range" in r.error
 
 
 def test_invoke_happy_path(tmp_path):
