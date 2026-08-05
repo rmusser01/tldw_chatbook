@@ -41,7 +41,13 @@ from tldw_chatbook.Library.library_ingest_state import (
     LibraryIngestFormState,
     build_library_ingest_state,
 )
-from tldw_chatbook.Library.library_rag_state import LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
+from tldw_chatbook.Library.library_rag_state import (
+    LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
+    LibraryRagPanelState,
+)
+from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
+    results_heading_text,
+)
 from tldw_chatbook.Library.library_export_scope import ExportScope
 from tldw_chatbook.Library.library_export_state import EMPTY_SCOPE_COPY
 from tldw_chatbook.Library.library_shell_state import (
@@ -2112,7 +2118,19 @@ async def test_library_shell_rail_search_submit_renders_every_result_row():
     some ancestor in the chain is actually scrollable.
     """
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
+    # Review round 2 (I1): seed a real note and media item -- the canned
+    # service below returns note-1/media-1 rows regardless of scope, but
+    # `from_values`'s D4 scope filter now checks the count-intersected
+    # `scope.selected_source_types`, which needs Notes/Media to actually
+    # have >0 items or their toggles (and evidence) would read as
+    # unavailable even though nothing was deselected. Arrangement only --
+    # every assertion below is unchanged.
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Tides research note", "id": "note-1"}],
+        media=[{"title": "Ocean survey transcript", "id": "media-1"}],
+    )
     service = _StaticLibraryRagSearchService(
         {
             "results": [
@@ -2270,7 +2288,17 @@ async def test_library_shell_rail_search_submit_renders_every_result_row_post_mo
     instead of a fresh ``compose()`` picking up already-set state.
     """
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
+    # Review round 2 (I1): see the sibling
+    # `test_library_shell_rail_search_submit_renders_every_result_row`'s
+    # comment -- Notes/Media need a real, non-zero count for the D4 scope
+    # filter (now checked against `scope.selected_source_types`) to keep
+    # showing these canned note-1/media-1 rows. Arrangement only.
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Tides research note", "id": "note-1"}],
+        media=[{"title": "Ocean survey transcript", "id": "media-1"}],
+    )
     service = _GatedLibraryRagSearchService(
         {
             "results": [
@@ -2349,7 +2377,17 @@ async def test_library_shell_search_run_button_renders_every_result_row():
     ``_refresh_library_rag_results_widgets`` DOM-mutation path.
     """
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
+    # Review round 2 (I1): see
+    # `test_library_shell_rail_search_submit_renders_every_result_row`'s
+    # comment -- Notes/Media need a real, non-zero count for the D4 scope
+    # filter (now checked against `scope.selected_source_types`) to keep
+    # showing these canned note-1/media-1 rows. Arrangement only.
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Tides research note", "id": "note-1"}],
+        media=[{"title": "Ocean survey transcript", "id": "media-1"}],
+    )
     service = _StaticLibraryRagSearchService(
         {
             "results": [
@@ -4390,6 +4428,516 @@ async def test_library_shell_scope_toggle_deselect_sends_only_selected_types():
         screen.query_one("#library-rag-run-query", Button).press()
         await pilot.pause()
         assert len(service.calls) == calls_before
+
+
+def test_library_rag_panel_state_scope_toggle_off_hides_that_sources_rows():
+    """D4 (task-5): a source toggled OFF must hide its ALREADY-LANDED rows in
+    the very same snapshot -- `from_values` filters `result_rows` against
+    `selected_source_types` BEFORE resolving selection/`can_use_console`, so
+    the panel never shows evidence the Sources strip claims is off. Hide,
+    don't grey: the scope line already claims the source is off, so showing
+    its rows would be the lie.
+
+    Pure state-derivation proof (no screen/pilot): the exact same raw
+    `results` list is passed to every `from_values` call below -- only
+    `selected_source_types`/`selected_result_id` change -- so "toggling
+    back on restores the row" is proven from state alone, never a re-query.
+    """
+    raw_results = [
+        {
+            "document_title": "Note Evidence",
+            "snippet": "note snippet",
+            "source_id": "note-1",
+            # Row-level provenance uses the SINGULAR vocabulary real
+            # retrieval seams emit (`_note_row`/`_conversation_row` in
+            # `library_local_rag_search_service.py`) -- distinct from the
+            # PLURAL scope-toggle vocabulary (`selected_source_types`
+            # below). The filter must canonicalize one to the other.
+            "provenance": {"source_type": "note"},
+        },
+        {
+            "document_title": "Media Evidence",
+            "snippet": "media snippet",
+            "source_id": "media-1",
+            "provenance": {"source_type": "media"},
+        },
+        {
+            "document_title": "Conversation Evidence",
+            "snippet": "conversation snippet",
+            "source_id": "chat-1",
+            "provenance": {"source_type": "conversation"},
+        },
+    ]
+    source_counts = {"notes": 1, "media": 1, "conversations": 1}
+
+    all_selected_state = LibraryRagPanelState.from_values(
+        source_counts=source_counts,
+        query="evidence",
+        mode="search",
+        results=raw_results,
+        retrieval_status="ready",
+        selected_source_types=("notes", "media", "conversations"),
+    )
+    assert [row.title for row in all_selected_state.results] == [
+        "Note Evidence",
+        "Media Evidence",
+        "Conversation Evidence",
+    ]
+
+    # Media toggled off, selection still pointing at the now-hidden Media
+    # row -- the exact state a `refresh(recompose=True)` after
+    # `toggle_library_rag_scope_source` produces when Media was selected.
+    media_off_state = LibraryRagPanelState.from_values(
+        source_counts=source_counts,
+        query="evidence",
+        mode="search",
+        results=raw_results,
+        retrieval_status="ready",
+        selected_result_id="media-1",
+        selected_source_types=("notes", "conversations"),
+    )
+    assert [row.title for row in media_off_state.results] == [
+        "Note Evidence",
+        "Conversation Evidence",
+    ]
+    # The selection pointing at the now-hidden Media row is cleared, not
+    # silently kept stageable.
+    assert media_off_state.selected_result is None
+    assert media_off_state.use_in_console_action.enabled is False
+    # The heading is mode/top_k-driven, not row-count-driven (Task 8) --
+    # filtering a row out must not change it.
+    assert results_heading_text(media_off_state) == results_heading_text(
+        all_selected_state
+    )
+
+    # A selection on a STILL-VISIBLE row survives the same toggle.
+    conversation_selected_state = LibraryRagPanelState.from_values(
+        source_counts=source_counts,
+        query="evidence",
+        mode="search",
+        results=raw_results,
+        retrieval_status="ready",
+        selected_result_id="chat-1",
+        selected_source_types=("notes", "conversations"),
+    )
+    assert conversation_selected_state.selected_result is not None
+    assert conversation_selected_state.selected_result.title == "Conversation Evidence"
+    assert conversation_selected_state.use_in_console_action.enabled is True
+
+    # Toggling Media back ON restores its row from the SAME `raw_results`
+    # object -- state-only, no re-query.
+    restored_state = LibraryRagPanelState.from_values(
+        source_counts=source_counts,
+        query="evidence",
+        mode="search",
+        results=raw_results,
+        retrieval_status="ready",
+        selected_source_types=("notes", "media", "conversations"),
+    )
+    assert [row.title for row in restored_state.results] == [
+        "Note Evidence",
+        "Media Evidence",
+        "Conversation Evidence",
+    ]
+
+
+def test_library_rag_panel_state_scope_filter_empties_results_and_coverage_note():
+    """Deselecting every source that produced rows drops into the "empty"
+    retrieval status (and the coverage note, silent whenever `results` is
+    empty) instead of keeping stale rows on screen under a scope that
+    claims nothing relevant is selected."""
+    raw_results = [
+        {
+            "document_title": "Note Evidence",
+            "snippet": "note snippet",
+            "source_id": "note-1",
+            "provenance": {"source_type": "note"},
+        },
+    ]
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1, "media": 1},
+        query="evidence",
+        mode="search",
+        results=raw_results,
+        retrieval_status="ready",
+        selected_source_types=("media",),
+    )
+    assert state.results == ()
+    assert state.retrieval_status == "empty"
+    assert state.coverage_note == ""
+    assert state.use_in_console_action.enabled is False
+
+
+def test_library_rag_panel_state_scope_hides_a_row_whose_source_count_drops_to_zero():
+    """D4/I1 (review round 2): a source's LOCAL COUNT can drop to zero
+    without the user ever touching its toggle -- e.g. the note backing an
+    already-landed row gets deleted elsewhere in Library
+    (`_refresh_local_source_snapshot` recounts it to zero), and the Search
+    canvas is revisited without re-querying. The Sources toggle strip's
+    own marker is already count-intersected
+    (`LibraryRagScopeState.from_source_counts`) and would read "○ Notes
+    (0)" in that state -- the evidence list must follow that SAME signal,
+    or the toggle-vs-evidence lie D4 exists to close just gets a
+    different trigger (count drift instead of a toggle press). Filtering
+    against the caller's raw, pre-availability `selected_source_types`
+    (an earlier draft of this fix) would have left the stale Notes row
+    visible here, since `selected_source_types` itself never changes
+    below -- only `source_counts["notes"]` does.
+    """
+    raw_results = [
+        {
+            "document_title": "Note Evidence",
+            "snippet": "note snippet",
+            "source_id": "note-1",
+            "provenance": {"source_type": "note"},
+        },
+        {
+            "document_title": "Media Evidence",
+            "snippet": "media snippet",
+            "source_id": "media-1",
+            "provenance": {"source_type": "media"},
+        },
+    ]
+    selected = ("notes", "media")  # the user's deliberate selection: unchanged below
+
+    landed_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1, "media": 1},
+        query="evidence",
+        mode="search",
+        results=raw_results,
+        retrieval_status="ready",
+        selected_result_id="note-1",
+        selected_source_types=selected,
+    )
+    assert [row.title for row in landed_state.results] == [
+        "Note Evidence",
+        "Media Evidence",
+    ]
+    assert landed_state.selected_result is not None
+    assert landed_state.use_in_console_action.enabled is True
+
+    # The note backing "note-1" is deleted elsewhere in Library --
+    # `source_counts["notes"]` drops to zero. `selected_source_types` is
+    # the exact same tuple as above: the user never touched the toggle.
+    after_delete_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 0, "media": 1},
+        query="evidence",
+        mode="search",
+        results=raw_results,
+        retrieval_status="ready",
+        selected_result_id="note-1",
+        selected_source_types=selected,
+    )
+    assert [row.title for row in after_delete_state.results] == ["Media Evidence"]
+    assert after_delete_state.selected_result is None
+    assert after_delete_state.use_in_console_action.enabled is False
+
+
+def test_library_rag_panel_state_keeps_restored_rows_while_counts_are_unloaded():
+    """PR-T1 C2: restored evidence must survive the pre-snapshot window.
+
+    `save_state`/`restore_state` deliberately carry `_library_rag_results`
+    but NOT `_local_source_counts` (bulk snapshots re-fetch), so a fresh
+    `LibraryScreen` composes with results present and every count still
+    zero while `_refresh_local_source_snapshot` is in flight. Feeding an
+    explicit `selected_source_types` into that window intersects every
+    source to nothing and D4/task-5's scope filter then hides EVERY
+    attributable row -- the panel announced "No evidence matched the
+    current query" about the restored query, with the rows sitting right
+    there in `_library_rag_results`. Nor did it recover: the real snapshot
+    lands via `_apply_local_source_snapshot`'s BROWSE_SEARCH branch, which
+    syncs the rail and scope toggles but deliberately never the results
+    region (RAG-27). Only a revisit inside `LIBRARY_SNAPSHOT_CACHE_TTL_
+    SECONDS` escaped, because that path recomposes.
+
+    Driven through the REAL `save_state`/`restore_state` pair on an
+    unmounted instance -- exactly how `handle_screen_navigation` uses it --
+    so the assertion covers the actual carried/not-carried field split
+    rather than a hand-set attribute soup.
+    """
+    app = _build_test_app()
+
+    original = LibraryScreen(app)
+    original._library_selected_row_id = LIBRARY_ROW_BROWSE_SEARCH
+    original._library_rag_query = "credential rotation"
+    original._library_rag_searched_query = "credential rotation"
+    original._library_rag_retrieval_status = "ready"
+    original._library_rag_results = (
+        {
+            "document_title": "Note Evidence",
+            "snippet": "note snippet",
+            "source_id": "note-1",
+            "provenance": {"source_type": "note"},
+        },
+        {
+            "document_title": "Conversation Evidence",
+            "snippet": "conversation snippet",
+            "source_id": "chat-1",
+            "provenance": {"source_type": "conversation"},
+        },
+    )
+    # The counts the first visit had -- these are exactly what does NOT
+    # survive the round trip, which is the whole point.
+    original._local_source_counts = {"notes": 1, "media": 0, "conversations": 1}
+    original._library_loaded = True
+    landed = original._library_rag_panel_state()
+    assert [row.title for row in landed.results] == [
+        "Note Evidence",
+        "Conversation Evidence",
+    ]
+
+    restored = LibraryScreen(app)
+    restored.restore_state(original.save_state())
+
+    # Precondition: the bug's exact setup -- rows restored, counts not.
+    assert restored._library_loaded is False
+    assert restored._local_source_counts == {
+        "notes": 0,
+        "media": 0,
+        "conversations": 0,
+    }
+    assert len(restored._library_rag_results) == 2
+
+    pre_snapshot = restored._library_rag_panel_state()
+    assert [row.title for row in pre_snapshot.results] == [
+        "Note Evidence",
+        "Conversation Evidence",
+    ]
+    assert pre_snapshot.retrieval_status != "empty"
+
+    # And once the snapshot lands, the honest count intersection resumes:
+    # media has no rows and no count, conversations lose theirs.
+    restored._apply_local_source_snapshot(
+        {"notes": (), "media": (), "conversations": ()},
+        {"notes": 1, "media": 0, "conversations": 0},
+        {"notes": True, "media": True, "conversations": True},
+    )
+    assert restored._library_loaded is True
+    post_snapshot = restored._library_rag_panel_state()
+    assert [row.title for row in post_snapshot.results] == ["Note Evidence"]
+
+
+def test_library_rag_panel_state_keeps_restored_rows_after_snapshot_timeout():
+    """PR-T1 fix-wave re-review: the C2 gate above reads `_library_loaded`
+    alone, but `_apply_source_snapshot_timeout` sets `_library_loaded =
+    True` TOGETHER WITH placeholder all-zero counts and
+    `_library_lookup_error` (its whole point is to avoid leaving Library in
+    an indefinite loading state on a slow/contended machine). That
+    re-opens the exact hole the test above closes, through the timeout
+    door: the gate sees `_library_loaded is True` and starts filtering on
+    fake zero counts, hiding every attributable restored row and making
+    the panel wrongly announce "No evidence matched the current query"
+    about the restored query.
+
+    The fix gates on the same two-conjunct "counts are real" predicate
+    `_build_library_shell_input` already uses as `counts_available`
+    (`_library_loaded and not _library_lookup_error`), so a timeout's fake
+    zeros can't enable filtering. This asserts restored rows survive a
+    timeout firing, and that a REAL snapshot landing afterwards resumes
+    honest filtering exactly as the sibling test above proves for the
+    pre-snapshot window -- so the fix doesn't disable filtering forever
+    once a timeout has fired.
+    """
+    app = _build_test_app()
+
+    original = LibraryScreen(app)
+    original._library_selected_row_id = LIBRARY_ROW_BROWSE_SEARCH
+    original._library_rag_query = "credential rotation"
+    original._library_rag_searched_query = "credential rotation"
+    original._library_rag_retrieval_status = "ready"
+    original._library_rag_results = (
+        {
+            "document_title": "Note Evidence",
+            "snippet": "note snippet",
+            "source_id": "note-1",
+            "provenance": {"source_type": "note"},
+        },
+        {
+            "document_title": "Conversation Evidence",
+            "snippet": "conversation snippet",
+            "source_id": "chat-1",
+            "provenance": {"source_type": "conversation"},
+        },
+    )
+    original._local_source_counts = {"notes": 1, "media": 0, "conversations": 1}
+    original._library_loaded = True
+
+    restored = LibraryScreen(app)
+    restored.restore_state(original.save_state())
+
+    # Precondition: same restored-but-uncounted setup as the sibling test.
+    assert restored._library_loaded is False
+    assert len(restored._library_rag_results) == 2
+
+    # The snapshot-timeout failsafe fires before any real snapshot lands.
+    restored._apply_source_snapshot_timeout()
+
+    # Precondition: this is the exact shape the bug re-enters through --
+    # `_library_loaded` is now True, but the counts are fabricated zeros
+    # and a lookup error is recorded.
+    assert restored._library_loaded is True
+    assert restored._library_lookup_error is not None
+    assert restored._local_source_counts == {
+        "notes": 0,
+        "media": 0,
+        "conversations": 0,
+    }
+
+    timeout_state = restored._library_rag_panel_state()
+    assert [row.title for row in timeout_state.results] == [
+        "Note Evidence",
+        "Conversation Evidence",
+    ], "the snapshot timeout's placeholder zero counts erased restored rows"
+    assert timeout_state.retrieval_status != "empty", (
+        "the timeout's fake zero counts made the panel claim no evidence "
+        "matched the restored query"
+    )
+
+    # A real snapshot then lands with genuine counts -- filtering must
+    # resume exactly as it does in the never-timed-out case, so the fix
+    # doesn't disable filtering permanently after a timeout has fired.
+    restored._apply_local_source_snapshot(
+        {"notes": (), "media": (), "conversations": ()},
+        {"notes": 1, "media": 0, "conversations": 0},
+        {"notes": True, "media": True, "conversations": True},
+    )
+    assert restored._library_loaded is True
+    assert restored._library_lookup_error is None
+    post_snapshot = restored._library_rag_panel_state()
+    assert [row.title for row in post_snapshot.results] == ["Note Evidence"]
+
+
+@pytest.mark.asyncio
+async def test_library_shell_scope_toggle_off_hides_rendered_rows_and_keeps_index_alignment():
+    """D4 (task-5) end-to-end: toggling a source off after retrieval landed
+    hides that source's rendered cards, clears a selection pointing at one
+    (the "Use in Console" handoff button un-mounts, and `u` refuses), and
+    toggling back on restores them WITHOUT a new search-service call.
+
+    Also pins a review finding from implementing this fix: `_select_
+    library_rag_result_by_index`/`_open_library_rag_result_by_index` used
+    to index into the screen's raw, unfiltered `self._library_rag_results`
+    -- once `from_values` hides a row, the rendered cards' indices (built
+    from the FILTERED `state.results`) no longer align with that raw list's
+    positions. Selecting the second still-visible card (Conversation, raw
+    index 2) after Media (raw index 1) is hidden must resolve to the
+    Conversation row, not whatever sits at raw index 1.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Research Note", "id": "note-1"}],
+        media=_two_media_items(),
+    )
+    service = _StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Note Evidence",
+                    "snippet": "note snippet",
+                    "source_id": "note-1",
+                    "provenance": {"source_type": "note"},
+                },
+                {
+                    "document_title": "Media Evidence",
+                    "snippet": "media snippet",
+                    "source_id": "media-1",
+                    "provenance": {"source_type": "media"},
+                },
+                {
+                    "document_title": "Conversation Evidence",
+                    "snippet": "conversation snippet",
+                    "source_id": "chat-1",
+                    "provenance": {"source_type": "conversation"},
+                },
+            ],
+        }
+    )
+    app.library_rag_search_service = service
+    app.open_console_for_live_work = Mock()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-scope-toggle-media")
+
+        screen.query_one("#library-rag-query-input", Input).value = "policy"
+        await _wait_for_library_rag_query_ready(screen, pilot, "policy")
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-card-2")
+
+        # Select the Media row (raw/rendered index 1) before toggling it off.
+        screen.query_one("#library-rag-select-result-1", Button).press()
+        await pilot.pause()
+        assert screen._library_rag_selected_result_id == "media-1"
+
+        # Toggle Media off -- its row must disappear from the canvas.
+        screen.query_one("#library-rag-scope-toggle-media", Button).press()
+        for _ in range(120):
+            toggles = list(screen.query("#library-rag-scope-toggle-media"))
+            if toggles and str(toggles[0].label).startswith("○"):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Media toggle never deselected.")
+        await pilot.pause()
+
+        visible_text = _visible_text(screen)
+        assert "Media Evidence" not in visible_text
+        assert "Note Evidence" in visible_text
+        assert "Conversation Evidence" in visible_text
+        assert not screen.query("#library-rag-result-card-2")
+
+        # The selection pointed at the now-hidden Media row is cleared: the
+        # per-selection Console handoff button un-mounts entirely (it only
+        # ever mounts next to the row matching the current selection), and
+        # `u` refuses instead of staging stale/hidden evidence.
+        assert not screen.query("#library-rag-use-selected-in-console")
+        panel_state = screen._library_rag_panel_state()
+        assert panel_state.selected_result is None
+        assert panel_state.use_in_console_action.enabled is False
+
+        await pilot.press("u")
+        await pilot.pause(0.1)
+        app.open_console_for_live_work.assert_not_called()
+
+        # Selecting the still-visible SECOND rendered card (Conversation,
+        # raw index 2) must resolve to the Conversation row -- not raw-list
+        # index 1 (Media) -- proving select-by-index stays aligned with
+        # what's actually rendered after filtering.
+        screen.query_one("#library-rag-select-result-1", Button).press()
+        await pilot.pause()
+        assert screen._library_rag_selected_result_id == "chat-1"
+        panel_state = screen._library_rag_panel_state()
+        assert panel_state.selected_result is not None
+        assert panel_state.selected_result.title == "Conversation Evidence"
+
+        await pilot.press("u")
+        await pilot.pause(0.1)
+        app.open_console_for_live_work.assert_called_once()
+        assert (
+            app.open_console_for_live_work.call_args.kwargs["title"]
+            == "Conversation Evidence"
+        )
+
+        # Toggle Media back on: its row returns WITHOUT a new search call --
+        # restored from state, not re-queried.
+        calls_before = len(service.calls)
+        screen.query_one("#library-rag-scope-toggle-media", Button).press()
+        for _ in range(120):
+            toggles = list(screen.query("#library-rag-scope-toggle-media"))
+            if toggles and str(toggles[0].label).startswith("✓"):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Media toggle never reselected.")
+        await pilot.pause()
+        assert len(service.calls) == calls_before
+        assert "Media Evidence" in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -13156,6 +13704,166 @@ async def test_library_search_rag_canvas_survives_ingest_done_count_growth(tmp_p
             "the snapshot-driven path called the shared "
             "_refresh_search_rag_panel_state_widgets coroutine after all -- "
             "this is exactly the interleaving hazard the fix-review flagged"
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_rag_source_snapshot_timeout_then_real_snapshot_clears_recovery():
+    """(task-2075 D5 fix) `_apply_source_snapshot_timeout`'s all-zeros
+    payload is only reachable while `_library_loaded` is still False (Task
+    5 fix-review finding) -- i.e. it can only ever be the FIRST
+    `_apply_local_source_snapshot` call for a screen instance, fired
+    through the SAME in-place branch a cold boot uses (the row is already
+    Search). This chains that failsafe firing first -- honestly showing
+    recovery given nothing has been fetched yet -- with the real snapshot
+    the docstring's own rationale describes it racing ("avoid leaving
+    Library in an indefinite loading state") landing moments later with
+    the actual counts, and proves the fix clears the banner on THAT second
+    application too -- not only on a cold boot where the failsafe never
+    fires at all.
+
+    The real snapshot worker is neutralized so both producers are driven
+    by hand in the documented order, rather than racing a live fetch.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=[{"title": "Research Note", "id": "note-1"}])
+    screen = LibraryScreen(app)
+    # Mirrors `default_tab = "search"`'s cold-boot flow: the row is Search
+    # before the first compose, which is what routes both producers below
+    # through `_apply_local_source_snapshot`'s in-place branch.
+    assert screen.is_mounted is False
+    screen.apply_navigation_context({"mode": "search"})
+    screen._refresh_local_source_snapshot = lambda: None
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        assert screen._library_loaded is False, (
+            "precondition (real reachability): the timeout payload is only "
+            "ever applied before the first real snapshot lands"
+        )
+
+        # Producer 1: the failsafe fires first.
+        screen._apply_source_snapshot_timeout()
+        await pilot.pause()
+
+        assert screen._library_loaded is True
+        scope_container = screen.query_one("#library-rag-source-scope")
+        assert scope_container.has_class("has-recovery"), (
+            "the timeout producer's all-zeros snapshot did not render the "
+            "recovery banner"
+        )
+        gate_line = screen.query_one("#library-rag-scope-recovery", Static)
+        assert (
+            str(gate_line.renderable)
+            == "No Library sources yet — import media or create notes, then search."
+        )
+
+        # Producer 2: the real snapshot the failsafe was racing against
+        # resolves moments later, with the actual (non-zero) counts.
+        screen._apply_local_source_snapshot(
+            {
+                "notes": ({"title": "Research Note", "id": "note-1"},),
+                "media": (),
+                "conversations": (),
+            },
+            {"notes": 1, "media": 0, "conversations": 0},
+            {"notes": True, "media": True, "conversations": True},
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert not scope_container.has_class("has-recovery"), (
+            "the real snapshot landing after the timeout's fallback never "
+            "cleared the recovery banner"
+        )
+        assert not screen.query("#library-rag-scope-recovery")
+        notes_toggle = screen.query_one("#library-rag-scope-toggle-notes", Button)
+        assert "(1)" in str(notes_toggle.label)
+
+
+@pytest.mark.asyncio
+async def test_library_rag_scope_recovery_steady_state_snapshot_causes_no_churn():
+    """(task-2075 D5 fix-review) Once the change-gated recovery mirror has
+    synced once for a given ``library_rag_scope_shows_recovery`` value, a
+    REPEAT in-place snapshot reporting the SAME value must be a pure no-op
+    -- no further remove/mount of the scope region's recovery block --
+    preserving RAG-27's no-eject guarantee (2075 AC2) for the steady-state
+    case the fix's change-gating exists to keep cheap.
+
+    The FIRST snapshot below is expected to reconcile the DOM once (the
+    cache starts unset, so it always settles against whatever ``compose()``
+    rendered) -- the identity/spy baseline is captured AFTER that settles,
+    and only the SECOND (repeat) apply is asserted to cause zero further
+    churn. The spy on ``_mirror_library_rag_scope_recovery`` is the direct,
+    mechanism-level proof (it does not exist at all pre-fix); the widget
+    identity check is the domain-meaningful one (nothing was torn down and
+    rebuilt).
+    """
+    app = _build_test_app()
+    # Genuinely empty: both snapshots below report zero sources, so
+    # `library_rag_scope_shows_recovery` never flips away from True across
+    # the two applies -- the steady-state case this test targets.
+    _seed_conversations(app, [])
+    screen = LibraryScreen(app)
+    assert screen.is_mounted is False
+    screen.apply_navigation_context({"mode": "search"})
+    screen._refresh_local_source_snapshot = lambda: None  # neutralize the real worker
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+
+        zero_records = {"notes": (), "media": (), "conversations": ()}
+        zero_counts = {"notes": 0, "media": 0, "conversations": 0}
+        zero_known = {"notes": True, "media": True, "conversations": True}
+
+        screen._apply_local_source_snapshot(zero_records, zero_counts, zero_known)
+        # Let the first-ever mirror worker (always reconciles once,
+        # regardless of whether the value actually changed vs. compose)
+        # finish before capturing the baseline identity.
+        for _ in range(75):
+            await pilot.pause(0.02)
+            if screen.query("#library-rag-scope-recovery"):
+                break
+        else:
+            raise AssertionError(
+                "the recovery banner never mounted for a genuinely empty "
+                "library on the first snapshot"
+            )
+
+        recovery_line = screen.query_one("#library-rag-scope-recovery", Static)
+        recovery_button = screen.query_one("#library-rag-open-import-export", Button)
+        scope_container = screen.query_one("#library-rag-source-scope")
+        assert scope_container.has_class("has-recovery")
+
+        # Spy (not replace) so a genuinely-scheduled mirror would still run
+        # -- this proves the repeat call below schedules nothing, on top of
+        # the widget-identity proof that nothing was mounted/removed.
+        screen._mirror_library_rag_scope_recovery = Mock(
+            wraps=screen._mirror_library_rag_scope_recovery
+        )
+
+        screen._apply_local_source_snapshot(zero_records, zero_counts, zero_known)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._mirror_library_rag_scope_recovery.call_count == 0, (
+            "a repeat snapshot reporting the SAME recovery state scheduled "
+            "another mirror worker -- the change-gate should have skipped it"
+        )
+        assert (
+            screen.query_one("#library-rag-scope-recovery", Static) is recovery_line
+        ), (
+            "the repeat steady-state snapshot rebuilt the recovery line -- "
+            "the change-gated mirror should have been a no-op"
+        )
+        assert (
+            screen.query_one("#library-rag-open-import-export", Button)
+            is recovery_button
+        ), (
+            "the repeat steady-state snapshot rebuilt the Import media "
+            "button -- the change-gated mirror should have been a no-op"
         )
 
 

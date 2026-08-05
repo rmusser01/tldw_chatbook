@@ -3539,8 +3539,39 @@ class ChatScreen(BaseAppScreen):
             return
 
     def _consume_pending_console_launch(self) -> Optional[ConsoleLiveWorkLaunch]:
-        """Accept one-shot live-work launch context from another destination."""
+        """Accept one-shot live-work launch context from another destination.
+
+        PR-T1/task-3 (D3): the resident-launch branch below is also what
+        makes a launch restored by `_restore_native_console_state` (a
+        tab-switch survivor, not a fresh handoff) safe to re-enter here.
+        `restore_state` runs BEFORE this screen is ever composed/mounted
+        (see `TldwCli._complete_screen_navigation`), so by the time
+        `compose_content()` calls this method, a restored launch has already
+        set `_pending_console_launch_context` to a non-`None` value.
+
+        PR-T1 final review (C1): "resident wins, full stop" was WRONG once
+        D3 made a launch survive navigation. Real flow: stage A from
+        Library -> go back to Library (`save_state` persists A) -> stage B
+        ("Use in Console") -> navigate to Console. `restore_state` runs
+        BEFORE compose (`app.py` restore precedes the compose call), so the
+        resident A was returned here and B stayed unclaimed in the store:
+        B never displayed (the click looked dead), the next send consumed
+        A, and the send AFTER that claimed B deep inside
+        `_console_send_blocked_reason`/`_capture_console_staged_rag` and
+        fed it to an unrelated message as evidence the user had never seen.
+        A RAG-labelled B with zero available references was worse still: it
+        BLOCKED an unrelated send citing evidence that was never on screen.
+
+        The rule is now "a fresh explicit user action supersedes a stale
+        survivor": when a resident launch coexists with an unclaimed store
+        entry, the store entry is claimed and staged through
+        `_stage_console_library_rag_launch`, which clears the previous
+        send's "evidence sent" notice and syncs every mounted surface --
+        so a claim can never be invisible, and in particular a claim can
+        never first become live inside a send gate.
+        """
         if self._pending_console_launch_context is not None:
+            self._supersede_resident_console_launch_from_store()
             return self._pending_console_launch_context
 
         store = self.app_instance.pending_handoffs
@@ -3562,6 +3593,52 @@ class ChatScreen(BaseAppScreen):
             return self._pending_console_launch_context
         store.acknowledge(claim)
         return self._pending_console_launch_context
+
+    def _supersede_resident_console_launch_from_store(self) -> None:
+        """Let a freshly staged handoff replace an already-resident launch.
+
+        Only ever called from `_consume_pending_console_launch` with a
+        non-`None` resident launch. `has_pending` is checked first so the
+        overwhelmingly common case (a resident launch, an empty channel)
+        costs one cheap slot read and touches nothing.
+
+        Failure containment: the resident context is repointed at the new
+        launch BEFORE anything fallible runs, and the claim is acknowledged
+        (never released) once that assignment has happened. Releasing after
+        the screen already owns the value would leave the same launch both
+        resident AND pending -- the exact double-delivery this method
+        exists to end. The surface refresh inside
+        `_stage_console_library_rag_launch` is the only fallible step, and
+        a failure there costs a stale chip, not lost or invisible evidence.
+        """
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if store is None or not store.has_pending(HandoffChannel.CONSOLE_LIVE_WORK):
+            return
+        claim = store.claim(HandoffChannel.CONSOLE_LIVE_WORK)
+        if claim is None:
+            return
+        launch = claim.value
+        # Non-fallible ownership transfer first, then settle the claim.
+        self._pending_console_launch_context = launch
+        self._console_evidence_sent_notice = None
+        # A superseding launch IS a fresh handoff, so it earns the
+        # auto-open-once Inspector behavior; set BEFORE staging, because
+        # staging syncs the rail state synchronously (same ordering as
+        # every other `_stage_console_library_rag_launch` caller).
+        self._pending_console_launch_auto_open_inspector = True
+        store.acknowledge(claim)
+        try:
+            self._stage_console_library_rag_launch(launch, allow_recompose=False)
+        except Exception as exc:
+            # Includes the never-composed screen shell, where the staging
+            # seam's surface sync has no DOM to query.
+            logger.warning(
+                "Console live-work supersede surface refresh failed "
+                "(channel={}, revision={}, exception_category={})",
+                claim.channel.value,
+                claim.revision,
+                type(exc).__name__,
+            )
 
     def _chat_default_value(self, key: str) -> Any:
         """Return a shared Console default value from app configuration."""
@@ -5166,6 +5243,7 @@ class ChatScreen(BaseAppScreen):
                 chat_dictionary_applier=self._console_chat_dictionary_applier,
                 world_info_applier=self._console_world_info_applier,
                 rag_capture_provider=self._capture_console_staged_rag,
+                default_session_settings=self._default_console_session_settings,
             )
         self._console_chat_controller.on_submission_accepted = (
             self._on_console_submission_accepted
@@ -13751,8 +13829,30 @@ class ChatScreen(BaseAppScreen):
     def _console_rag_source_status(
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
+        sent_source_count: Optional[int] = None,
     ) -> str:
+        """Return the Inspector's "Sources" row text (D1b).
+
+        Args:
+            pending_launch: Currently staged live-work launch, if any.
+            sent_source_count: The one-send "evidence sent" memory
+                (``ChatScreen._console_evidence_sent_notice``) -- the SAME
+                count the staged-evidence strip reads for its "Evidence
+                sent with this message" line. Only consulted when nothing
+                is staged: live staging always wins, exactly like the
+                strip (``build_console_staged_evidence_strip_state``).
+
+        Returns:
+            The existing staged/blocked/not-requested vocabulary when a
+            launch is pending; the last-send memory sentence when nothing
+            is staged but a send just consumed evidence; else the
+            genuinely-empty ``"not staged"``.
+        """
         if pending_launch is None:
+            if sent_source_count:
+                count = int(sent_source_count)
+                noun = "source" if count == 1 else "sources"
+                return f"sent with the last message · {count} {noun}"
             return "not staged"
         if _source_mentions_rag(pending_launch.source):
             launch_status = str(pending_launch.status or "").strip().lower()
@@ -13838,7 +13938,10 @@ class ChatScreen(BaseAppScreen):
             model_label=model,
             provider_ready=provider_ready,
             provider_recovery=provider_recovery,
-            rag_status=self._console_rag_source_status(pending_launch),
+            rag_status=self._console_rag_source_status(
+                pending_launch,
+                sent_source_count=self._console_evidence_sent_notice,
+            ),
             evidence_summary=evidence_state.summary if evidence_state else None,
             evidence_status=evidence_state.status if evidence_state else None,
             evidence_recovery=evidence_state.recovery if evidence_state else None,
@@ -15281,7 +15384,12 @@ class ChatScreen(BaseAppScreen):
         )
         self._execute_console_library_rag_search(request)
 
-    def _stage_console_library_rag_launch(self, launch: ConsoleLiveWorkLaunch) -> None:
+    def _stage_console_library_rag_launch(
+        self,
+        launch: ConsoleLiveWorkLaunch,
+        *,
+        allow_recompose: bool = True,
+    ) -> None:
         """Stage live-work launch context and refresh Console surfaces in place.
 
         TASK-259: previously this recomposed the ENTIRE ChatScreen to show
@@ -15292,11 +15400,19 @@ class ChatScreen(BaseAppScreen):
 
         Args:
             launch: Live-work launch metadata to stage for Console.
+            allow_recompose: Whether the never-composed case may fall back
+                to a full recompose. Only ``_supersede_resident_console_
+                launch_from_store`` passes ``False``: its unmounted case is
+                ``compose_content`` itself calling
+                ``_consume_pending_console_launch`` on its first line, so
+                the compose in progress already renders this exact launch
+                and scheduling a second one mid-compose would tear the
+                just-built DOM back down for no change.
         """
         self._pending_console_launch_context = launch
         # New staging supersedes the previous send's "evidence sent" line.
         self._console_evidence_sent_notice = None
-        if not self._sync_console_pending_launch_surfaces():
+        if not self._sync_console_pending_launch_surfaces() and allow_recompose:
             self.refresh(recompose=True)
 
     def _sync_console_pending_launch_surfaces(self) -> bool:
@@ -16379,6 +16495,9 @@ class ChatScreen(BaseAppScreen):
         }
         image_state.prune(live_ids)
 
+        pending_launch = getattr(self, "_pending_console_launch_context", None)
+        sent_notice = getattr(self, "_console_evidence_sent_notice", None)
+
         return {
             "version": NATIVE_CONSOLE_STATE_VERSION,
             "active_session_id": store.active_session_id,
@@ -16399,6 +16518,27 @@ class ChatScreen(BaseAppScreen):
             # otherwise "Prompts on" silently reverts the next time the user
             # comes back and retrieval quietly reads something else.
             "library_rag_source_types": list(_console_library_rag_source_scope(self)),
+            # PR-T1/task-3 (D3): `_pending_console_launch_context` and
+            # `_console_evidence_sent_notice` are screen-INSTANCE state set in
+            # `ChatScreen.__init__`, not app-owned -- and screens are never
+            # cached/reused (`TldwCli._create_navigation_screen` builds a
+            # fresh instance on every navigation). Without carrying them here,
+            # ANY navigation away from Console silently dropped staged
+            # evidence, with no error and no user-visible warning. Both are
+            # read via `getattr` (not a bare attribute access) so this method
+            # keeps working against the bare screen shells several existing
+            # tests build with `ChatScreen.__new__` to exercise serialize/
+            # restore without a mounted app.
+            # `to_pending_payload()` is the exact shape `PendingHandoffStore`
+            # already stores a Console live-work launch in, so restoring it
+            # via `ConsoleLiveWorkLaunch.from_pending` is the same
+            # reconstruction a handoff claim goes through.
+            "pending_console_launch": (
+                pending_launch.to_pending_payload()
+                if pending_launch is not None
+                else None
+            ),
+            "console_evidence_sent_notice": sent_notice,
         }
 
     def _console_session_from_state(
@@ -16571,6 +16711,35 @@ class ChatScreen(BaseAppScreen):
         # A legacy payload has no key at all -> the unchanged default.
         self._console_library_rag_source_types = normalize_console_rag_source_types(
             payload.get("library_rag_source_types")
+        )
+        # PR-T1/task-3 (D3): restore the staged live-work launch and the
+        # "evidence sent" memory `_serialize_native_console_state` saved
+        # above. `ConsoleLiveWorkLaunch.from_pending` returns `None` for a
+        # legacy payload (key absent entirely) exactly as it does for an
+        # explicit `None`, so an old save restores cleanly to "nothing
+        # staged" -- no `NATIVE_CONSOLE_STATE_VERSION` gating needed here,
+        # matching every other field in this method (each tolerates an
+        # absent key with `payload.get(...)` rather than branching on
+        # "version").
+        #
+        # A non-`None` result is a fully reconstructed `ConsoleLiveWorkLaunch`,
+        # not a `PendingHandoffStore` claim -- `_consume_pending_console_
+        # launch`'s early return (`self._pending_console_launch_context is
+        # not None`) treats it as already-claimed and never reaches back into
+        # the store for it, so restoring a launch here can never re-trigger
+        # `store.claim()`/`store.acknowledge()`. `_pending_console_launch_
+        # auto_open_inspector` is reset to its `__init__` default (`False`):
+        # the auto-open-once behavior is for a launch that JUST arrived via a
+        # live handoff, not one merely surviving a tab switch.
+        self._pending_console_launch_context = ConsoleLiveWorkLaunch.from_pending(
+            payload.get("pending_console_launch")
+        )
+        self._pending_console_launch_auto_open_inspector = False
+        raw_sent_notice = payload.get("console_evidence_sent_notice")
+        self._console_evidence_sent_notice = (
+            raw_sent_notice
+            if isinstance(raw_sent_notice, int) and not isinstance(raw_sent_notice, bool)
+            else None
         )
 
     def _rehydrate_console_message_image(self, message: ConsoleChatMessage) -> None:
@@ -17026,35 +17195,50 @@ class ChatScreen(BaseAppScreen):
             "source_selector_state": _safe_text(payload.source_selector_state),
             "metadata": dict(payload.metadata or {}),
         }
-        if "rag" in (payload.source or "").lower():
-            # RAG-class sources gate Console sends on available evidence;
-            # always carry a single-reference bundle (title stands in when
-            # the snippet is empty) so the handoff cannot dead-end the send.
-            try:
-                launch_payload["evidence_bundle"] = EvidenceBundle(
-                    bundle_id=_safe_text(payload.content_ref or payload.source_id)
-                    or "handoff-evidence",
-                    query=_safe_text(payload.suggested_prompt) or title,
-                    source=_safe_text(payload.source) or "Search/RAG",
-                    references=(
-                        EvidenceReference(
-                            evidence_id="S1",
-                            source_id=_safe_text(payload.source_id) or "unknown",
-                            source_type=_safe_text(payload.item_type) or "rag-result",
-                            title=title,
-                            snippet=snippet or title,
-                            authority_label=_safe_text(payload.runtime_backend)
-                            or "local",
-                            content_ref=payload.content_ref,
-                        ),
+        # Task-2 review bonus find (Task 9): this used to run only when
+        # `"rag" in (payload.source or "").lower()`. RAG-class sources gate
+        # Console sends on available evidence, and that gate is exactly why
+        # this branch existed -- but restricting bundle-building to a
+        # source-name substring meant every OTHER handoff (Library media,
+        # Library conversations, Library notes, and any future source that
+        # doesn't happen to spell "rag") staged visibly in the strip/tray
+        # while `capture_console_staged_evidence_for_chat` silently returned
+        # `LocalRagContextResult(None, None)` on send, because
+        # `payload.get("evidence_bundle")` was never a mapping for them: a
+        # live content-loss bug, not merely a missing gate. The gate itself
+        # is dropped rather than widened to an allowlist of known source
+        # names, since an allowlist only recreates the same class of bug for
+        # the next new source. Every handoff staged here now always carries
+        # a single-reference bundle (title stands in when the snippet is
+        # empty) so it can never dead-end the send, and the non-RAG sources
+        # this restores content for are never subject to the RAG evidence
+        # send-gate in the first place (`_console_send_blocked_reason` only
+        # checks it for a source whose label mentions "rag").
+        try:
+            launch_payload["evidence_bundle"] = EvidenceBundle(
+                bundle_id=_safe_text(payload.content_ref or payload.source_id)
+                or "handoff-evidence",
+                query=_safe_text(payload.suggested_prompt) or title,
+                source=_safe_text(payload.source) or "Search/RAG",
+                references=(
+                    EvidenceReference(
+                        evidence_id="S1",
+                        source_id=_safe_text(payload.source_id) or "unknown",
+                        source_type=_safe_text(payload.item_type) or "rag-result",
+                        title=title,
+                        snippet=snippet or title,
+                        authority_label=_safe_text(payload.runtime_backend)
+                        or "local",
+                        content_ref=payload.content_ref,
                     ),
-                ).to_payload()
-            except (TypeError, ValueError, ValidationError) as exc:
-                logger.warning(
-                    "Could not build evidence bundle for handoff "
-                    "(exception_category={})",
-                    type(exc).__name__,
-                )
+                ),
+            ).to_payload()
+        except (TypeError, ValueError, ValidationError) as exc:
+            logger.warning(
+                "Could not build evidence bundle for handoff "
+                "(exception_category={})",
+                type(exc).__name__,
+            )
 
         # PR-4/task-1: route through the staging SEAM, never a bare
         # assignment. This method finishes via `_sync_native_console_chat_ui`,
@@ -17990,6 +18174,22 @@ class ChatScreen(BaseAppScreen):
             # cleared at the keypress, so hand the draft back (ahead of any
             # keystrokes typed since).
             composer.restore_stashed_draft(stash)
+        if result.session_closed:
+            # Task 4 (D2 fix wave): `_session_closed_result` is `accepted`
+            # (see its own docstring) so the restore above never fires, and
+            # its owning session no longer exists to hold a SYSTEM row --
+            # there is nothing left to write into and nowhere to restore a
+            # keypress-cleared draft TO. A toast is the one surface still
+            # available: without it this outcome was completely silent
+            # (composer already cleared, no row, no notification).
+            # Fix-round-2 (I2/M2): `session_closed` is now set ONLY at the
+            # dispatch-gap call site (the OTHER ~19 `_session_closed_result`
+            # sites -- mid-run closes the user already confirmed -- leave it
+            # `False`), and that ONE site's `visible_copy` is always the
+            # informative "...before your message could send." string, not
+            # the generic "Session closed." every other site uses -- so
+            # `result.visible_copy` is used directly, with no dead fallback.
+            self.app_instance.notify(result.visible_copy, severity="warning")
         if (
             result.should_clear_draft
             and composer_visible_for_session
@@ -18308,12 +18508,29 @@ class ChatScreen(BaseAppScreen):
             self._focus_console_composer_if_needed(force=True)
             return False
         controller = self._ensure_console_chat_controller()
+        # Task 4 (D2 fix wave): resolve/create the session to submit into
+        # HERE, before `target_session_id` is read, rather than leaving that
+        # as an implicit side effect of the `_console_send_blocked_reason()`
+        # call above (which happens to already do this via
+        # `_active_console_settings_readiness` -> `_ensure_active_console_
+        # session_settings`, whenever it doesn't return early). Making the
+        # call explicit means a fresh profile's FIRST send never keys the
+        # stash map / worker group / double-send gate below on `""` even if
+        # that upstream call's own internals ever change -- the invariant
+        # is asserted right at the point that matters, not inherited
+        # incidentally from an unrelated gate a few lines up. This is a
+        # synchronous call (no `await` before `target_session_id` is read),
+        # so there is no scheduling gap for the store's active session to
+        # change out from under it.
+        self._ensure_active_console_session_settings()
         # Fix round 1 (minor): normalize the same way the controller side
         # already does (`store.active_session_id or ""`) -- `None` is a
         # valid (if unlikely, post-mount) dict key, but every other
         # per-session map in this train keys on the normalized string, so
         # a stray `None` here would silently start a SEPARATE bucket for
-        # "no session" instead of colliding predictably.
+        # "no session" instead of colliding predictably. After the call
+        # above, this is never actually `""` for a real send -- the `or ""`
+        # stays only as a defensive normalization, not a live code path.
         target_session_id = controller.store.active_session_id or ""
         refusal = controller.send_refusal_copy(target_session_id)
         if refusal:
@@ -21971,6 +22188,14 @@ class ChatScreen(BaseAppScreen):
             if current_kind != border[0] or current_color != Color.parse(border[1]):
                 rail.styles.border = border
 
+    #: Task 4 fix-round-2 (I3): how long `_recover_stuck_console_send_stash`
+    #: waits before treating `_console_pending_send_stash` as abandoned.
+    #: `Button.press()` only POSTS `Button.Pressed`; the message pump
+    #: normally delivers and consumes it within a pump cycle or two (well
+    #: under this), so this is a generous margin against a false-positive
+    #: recovery racing the normal path, not a tight deadline.
+    _CONSOLE_SEND_PENDING_STASH_WATCHDOG_SECONDS: float = 0.75
+
     def on_key(self, event: Key) -> None:
         """Treat the Console composer as the default printable text target."""
         try:
@@ -22151,13 +22376,58 @@ class ChatScreen(BaseAppScreen):
             stash = composer.stash_draft_for_send()
             self._console_pending_send_stash = stash
             try:
-                self.query_one("#console-send-message", Button).press()
+                send_button = self.query_one("#console-send-message", Button)
             except QueryError:
                 self._console_pending_send_stash = None
                 composer.restore_stashed_draft(stash)
                 self.app_instance.notify(
                     "Console send is unavailable.", severity="error"
                 )
+                return
+            if send_button.disabled or not send_button.display:
+                # Task 4 (D2 fix wave): Textual 8.2.7's `Button.press()`
+                # returns immediately -- without posting `Button.Pressed` --
+                # when the button is `disabled` or not `display`ed (which is
+                # also `False` while the button is being pruned, e.g. any
+                # `refresh(recompose=True)` mid-keypress). Without this
+                # check, `_console_pending_send_stash` above is set and
+                # never consumed (the Pressed handler that would clear it
+                # never runs), so the draft is stuck stashed with an empty
+                # composer AND the duplicate-guard just above permanently
+                # swallows every subsequent Enter, since the stash slot
+                # never goes back to `None` on its own.
+                # Fix-round-2 (M1): this branch was itself silent -- log the
+                # button state so a recurrence is diagnosable (the reviewer's
+                # own note: the pure no-op-press hypothesis alone can't
+                # explain "a second keyboard send worked", so a log here is
+                # what would confirm or rule this mechanism out if D2
+                # resurfaces).
+                logger.warning(
+                    "Console send Enter: no-op press guard tripped "
+                    "(disabled={}, display={}) -- restoring the draft "
+                    "instead of losing it.",
+                    send_button.disabled,
+                    send_button.display,
+                )
+                self._console_pending_send_stash = None
+                composer.restore_stashed_draft(stash)
+                return
+            send_button.press()
+            # Fix-round-2 (I3): `.press()` only POSTS `Button.Pressed` for
+            # the message pump to deliver later -- the check just above
+            # closes the case where `press()` itself no-ops, but NOT the
+            # narrower race where display/disabled were still fine at check
+            # time and go bad in the gap before the pump actually delivers
+            # the message (a prune beginning mid-flight). That drops the
+            # posted message with nothing to consume `_console_pending_
+            # send_stash`, latching the duplicate guard above shut forever.
+            # This watchdog is the backstop: if the stash is STILL this
+            # exact object once the window passes, nothing consumed it, so
+            # recover it instead of leaving it stuck.
+            self.set_timer(
+                self._CONSOLE_SEND_PENDING_STASH_WATCHDOG_SECONDS,
+                partial(self._recover_stuck_console_send_stash, stash),
+            )
             return
         if event.key in {"pageup", "pagedown"}:
             # TASK-348: scrollback must be keyboard-reachable. The composer
@@ -22228,6 +22498,47 @@ class ChatScreen(BaseAppScreen):
             self._dismiss_console_guidance()
             event.stop()
             event.prevent_default()
+
+    def _recover_stuck_console_send_stash(
+        self, stash: "ConsoleDraftStash | None"
+    ) -> None:
+        """Recover a keypress-captured draft `Button.Pressed` never consumed.
+
+        Task 4 fix-round-2 (I3): the Enter handler's own no-op-press check
+        (``send_button.disabled or not send_button.display`` right before
+        ``.press()``) only catches the case where the button was ALREADY
+        disabled/hidden at that instant. ``.press()`` itself just POSTS
+        ``Button.Pressed`` for the message pump to deliver later -- if the
+        button (or its composer) is pruned in the gap between that post and
+        the pump actually delivering it, the message is dropped and
+        ``handle_console_send_message``/``_send_console_message_from_
+        visible_action`` -- the ONLY code that consumes ``_console_pending_
+        send_stash`` -- never runs. Without this recovery, that leaves the
+        stash slot permanently non-``None``, and the duplicate-send guard at
+        the top of the ``"enter"`` branch swallows every subsequent Enter
+        forever (D2's exact shape, via a narrower door than the no-op-press
+        check alone closes).
+
+        Scheduled once per send via ``set_timer`` right after ``.press()``;
+        a no-op in the overwhelmingly common case where the Pressed handler
+        already consumed the slot (or a later send's own stash superseded
+        this one -- blocked from happening while this slot is still set by
+        the duplicate guard itself, but checked by identity anyway as a
+        cheap belt-and-suspenders).
+
+        Args:
+            stash: The exact stash object this watchdog was scheduled for.
+        """
+        if self._console_pending_send_stash is not stash:
+            return
+        logger.warning(
+            "Console send Enter: pending stash was never consumed by the "
+            "Pressed handler after {:.2f}s -- recovering the draft instead "
+            "of leaving the duplicate-send guard latched shut.",
+            self._CONSOLE_SEND_PENDING_STASH_WATCHDOG_SECONDS,
+        )
+        self._console_pending_send_stash = None
+        self._restore_console_send_stash(stash)
 
     def on_paste(self, event: Paste) -> None:
         """Treat pasted text as Console composer draft input by default."""

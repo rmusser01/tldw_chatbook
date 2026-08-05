@@ -782,6 +782,14 @@ class ConsoleSubmitResult:
     accepted: bool
     should_clear_draft: bool
     visible_copy: str = ""
+    #: Task 4 (D2 fix wave): set only by ``_session_closed_result``. The
+    #: owning session no longer exists by the time this result is produced
+    #: (``ConsoleChatStore.close_session`` already purged it), so there is no
+    #: live transcript left to append a SYSTEM row to -- unlike ``_block``/
+    #: ``_active_run_rejection``, whose target session is still live. The
+    #: screen-side caller (``ChatScreen._submit_console_native_draft``) uses
+    #: this flag to show a toast instead, so the outcome is never silent.
+    session_closed: bool = False
 
 
 @dataclass(frozen=True)
@@ -834,6 +842,7 @@ class ConsoleChatController:
         chat_dictionary_applier: "Callable[[str | None, str], str] | None" = None,
         world_info_applier: "Callable[[str | None, str, list], str] | None" = None,
         rag_capture_provider: "Callable[[str], Awaitable[Any]] | None" = None,
+        default_session_settings: "Callable[[], ConsoleSessionSettings] | None" = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -863,6 +872,19 @@ class ConsoleChatController:
         self._chat_dictionary_applier = chat_dictionary_applier
         self._world_info_applier = world_info_applier
         self._rag_capture_provider = rag_capture_provider
+        #: Task 4 (D2 fix wave, "bonus race"): screen-owned callable that
+        #: builds a fresh default `ConsoleSessionSettings` snapshot (mirrors
+        #: `ChatScreen._default_console_session_settings`, wired by
+        #: `_ensure_console_chat_controller`). Used ONLY by `submit_draft`'s
+        #: no-`session_id` bootstrap branch, so a session created THAT way
+        #: gets real settings from the start instead of `None` -- the mount-
+        #: time creator (`_ensure_active_console_session_settings`) already
+        #: passes settings when IT creates the first session; this closes
+        #: the same gap for the other creator. `None` in most controller-
+        #: only tests (that bootstrap path just keeps its pre-fix `None`
+        #: settings then, matching every other UI-bridge hook's no-op
+        #: default here).
+        self._default_session_settings = default_session_settings
         # Parallel-agents spec §2: run state is a PER-SESSION map, not a
         # single global slot -- two sessions can each have their own
         # in-flight/terminal run without stamping each other. `run_state`/
@@ -1656,7 +1678,9 @@ class ConsoleChatController:
             the time this runs (see ``_session_closed_result``); ``True``
             once the turn actually proceeds.
         """
-        active_rejection = self._active_run_rejection(session_id=session_id)
+        active_rejection = self._active_run_rejection(
+            session_id=session_id, append_row=True
+        )
         if active_rejection is not None:
             return active_rejection
 
@@ -1669,11 +1693,28 @@ class ConsoleChatController:
                 # dispatch and this coroutine actually running -- there is
                 # nothing left to submit into. Stamp the (now-orphaned)
                 # session id, never whatever is active now (see
-                # `_session_closed_result`'s own docstring).
-                return self._session_closed_result(session_id=session_id)
+                # `_session_closed_result`'s own docstring). `dispatch_gap`
+                # is what makes THIS call site (uniquely among ~19) toast --
+                # every other one fires mid-run, after the user already
+                # confirmed closing that session themselves.
+                return self._session_closed_result(
+                    session_id=session_id, dispatch_gap=True
+                )
         else:
+            # Task 4 (D2 fix wave, "bonus race"): mirror the mount-time
+            # creator (`ChatScreen._ensure_active_console_session_settings`),
+            # which always passes `settings=` -- without this, a session
+            # bootstrapped from THIS branch (no dispatch-captured session id
+            # at all) got `settings=None` while every other creator gave the
+            # first session a real snapshot, and whichever creator ran first
+            # decided the outcome.
             session = self.store.ensure_session(
                 workspace_id=self.store.workspace_context.active_workspace_id,
+                settings=(
+                    self._default_session_settings()
+                    if self._default_session_settings is not None
+                    else None
+                ),
             )
         pendings = self.store.pending_attachments(session.id)
         attachment_mode_pendings = [
@@ -8018,7 +8059,7 @@ class ConsoleChatController:
         return None
 
     def _session_closed_result(
-        self, *, session_id: str | None = None
+        self, *, session_id: str | None = None, dispatch_gap: bool = False
     ) -> ConsoleSubmitResult:
         """Result for a KeyError caused by the message's session vanishing mid-run.
 
@@ -8030,16 +8071,50 @@ class ConsoleChatController:
         owning session no longer exists in the store (``close_session``
         purges it), so this write is at worst an orphaned map entry -- never
         a stamp on a live, currently-viewed session.
+
+        Args:
+            dispatch_gap: Task 4 fix-round-2 (I2/M2): ``True`` ONLY at
+                ``submit_draft``'s own call site, where the DISPATCHED
+                session was closed in the gap between dispatch and this
+                coroutine actually running -- there the draft simply vanishes
+                with no other signal at all (the composer was already
+                cleared at the keypress). Every other call site of this
+                method (~19, across the stream/direct/agent finalization
+                paths) fires MID-RUN, after the user has already closed a
+                session they were actively viewing -- that session's run
+                state already reflects STOPPED and the close itself was a
+                deliberate, already-acknowledged user action, so toasting
+                "Session closed" there too would be a redundant, confusing
+                second signal for something the user just did on purpose.
         """
         visible_copy = "Session closed."
         self._set_run_state(
             ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy),
             session_id=session_id,
         )
-        return ConsoleSubmitResult(True, True, visible_copy)
+        if not dispatch_gap:
+            return ConsoleSubmitResult(True, True, visible_copy)
+        # Task 4 (D2 fix wave): the owning session is gone by definition here
+        # (every call site already failed a session lookup) -- appending a
+        # SYSTEM row the way `_block` does would raise `KeyError` against a
+        # purged session, and writing it into whatever session happens to be
+        # ACTIVE now would leak this outcome into an unrelated tab (exactly
+        # the cross-session leak this codebase's per-session maps exist to
+        # prevent). `session_closed=True` lets the screen-side caller show a
+        # toast instead, so the swallowed send is still visible, just not as
+        # a transcript row. The copy is deliberately more specific than the
+        # generic "Session closed." used everywhere else: this is the ONE
+        # case where a keypress-captured draft is simply gone, so the user
+        # needs to be told THAT, not just that some session closed.
+        return ConsoleSubmitResult(
+            True,
+            True,
+            "Console session closed before your message could send.",
+            session_closed=True,
+        )
 
     def _active_run_rejection(
-        self, *, session_id: str | None = None
+        self, *, session_id: str | None = None, append_row: bool = False
     ) -> ConsoleSubmitResult | None:
         """Defense-in-depth double-send guard for ``submit_draft``.
 
@@ -8057,6 +8132,17 @@ class ConsoleChatController:
         Args:
             session_id: The session to check, or ``None``/empty to check
                 the currently active session (the pre-fix behavior).
+            append_row: Task 4 fix-round-2 (I1): ``False`` by default so the
+                five pre-existing screen-level wrappers around this guard
+                (``retry_message``/``continue_from_message``/
+                ``regenerate_message``/``summarize_up_to``/
+                ``edit_and_resend_message``) stay byte-identical -- each of
+                those already surfaces this exact refusal copy as a toast
+                via its OWN screen wrapper (mirroring TASK-232's mid-run
+                gate), so appending a SYSTEM row here too would double-report
+                the same rejection. Only ``submit_draft`` -- whose caller
+                (``_dispatch_console_draft_send``) has no equivalent
+                defense-in-depth toast of its own -- passes ``True``.
 
         Returns:
             ``None`` when a new send may proceed; otherwise a blocked
@@ -8065,6 +8151,24 @@ class ConsoleChatController:
         target_id = session_id if session_id else (self.store.active_session_id or "")
         if self.run_state_for(target_id).is_send_allowed:
             return None
+        visible_copy = "A run is already running in this tab."
+        if append_row:
+            # Task 4 (D2 fix wave): this is defense-in-depth -- the screen's
+            # own `send_refusal_copy` gate (checked BEFORE any worker is even
+            # spawned) already notifies for the common case, so reaching
+            # this branch at all means that first check raced a run that
+            # started in the gap. Silently returning a blocked result here
+            # (the pre-fix behavior) left the transcript looking exactly
+            # like the send never happened -- no row, no toast, nothing to
+            # explain it. Append a SYSTEM row the same way `_block` does for
+            # every other pre-echo gate in `submit_draft`, but only when the
+            # target session is still live: `target_id` can be an orphaned/
+            # empty id when there is no active session at all, and
+            # `store.append_message` raises `KeyError` for an unknown id.
+            if any(session.id == target_id for session in self.store.sessions()):
+                self.store.append_message(
+                    target_id, role=ConsoleMessageRole.SYSTEM, content=visible_copy
+                )
         return ConsoleSubmitResult(
             accepted=False,
             should_clear_draft=False,
@@ -8074,5 +8178,5 @@ class ConsoleChatController:
             # gate (the loser of the exclusive-worker creation race), and a
             # mismatched copy there would read as two different bugs instead
             # of one lost race.
-            visible_copy="A run is already running in this tab.",
+            visible_copy=visible_copy,
         )

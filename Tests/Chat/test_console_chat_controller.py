@@ -969,6 +969,103 @@ async def test_close_streaming_session_stops_run_without_key_error():
 
 
 @pytest.mark.asyncio
+async def test_close_streaming_session_result_does_not_set_dispatch_gap_toast_flag():
+    """Task 4 fix-round-2 (I2): mid-run `_session_closed_result` sites
+    (~19 of ~20, reached when the user closes a session they are actively
+    viewing/streaming -- this scenario mirrors
+    ``test_close_streaming_session_stops_run_without_key_error`` above
+    exactly) must NOT set ``session_closed`` -- that session's run state
+    already went STOPPED and the close was a deliberate, already-
+    acknowledged user action, so the screen's dispatch-gap toast firing here
+    too would be a redundant, confusing second signal. Only ``submit_draft``'s
+    own dispatch-gap call site (the DISPATCHED session closing before the
+    worker got a chance to run at all -- no other signal exists there) sets
+    it."""
+    class WaitingGateway(StreamingGateway):
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            yield "partial"
+            self.started.set()
+            await self.release.wait()
+            yield "ignored"
+
+    gateway = WaitingGateway()
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    task = asyncio.create_task(controller.submit_draft("hello"))
+    await asyncio.wait_for(gateway.started.wait(), timeout=1)
+    session_id = store.active_session_id
+
+    controller.close_session(session_id)
+    gateway.release.set()
+    result = await asyncio.wait_for(task, timeout=0.5)
+
+    assert result.accepted is True
+    assert result.visible_copy == "Session closed."
+    assert result.session_closed is False
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_dispatch_gap_session_closed_sets_toast_flag_with_informative_copy():
+    """Task 4 fix-round-2 (I2/M2): the ONE call site that should toast --
+    ``submit_draft``'s own dispatch-gap branch, where the session captured
+    at DISPATCH time was closed before this coroutine got a chance to run
+    (the exact scenario ``test_submit_draft_closed_session_id_fails_closed_
+    without_touching_active`` in test_console_run_state_per_session.py
+    already pins for ``accepted``/``visible_copy`` byte-identically) -- must
+    set ``session_closed`` AND use the INFORMATIVE copy, not the generic
+    "Session closed." every other call site uses."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+
+    session_a = store.ensure_session(title="A")
+    closed_session_id = session_a.id
+    controller.new_session(title="B")
+    controller.close_session(closed_session_id)
+
+    result = await controller.submit_draft("hello", session_id=closed_session_id)
+
+    assert result.accepted is True
+    assert result.session_closed is True
+    assert result.visible_copy == "Console session closed before your message could send."
+
+
+@pytest.mark.asyncio
+async def test_retry_message_active_run_rejection_does_not_append_system_row():
+    """Task 4 fix-round-2 (I1): ``_active_run_rejection``'s SYSTEM-row
+    append is scoped to ``submit_draft`` alone (``append_row=True``) --
+    ``retry_message`` (like ``continue_from_message``/``regenerate_message``/
+    ``summarize_up_to``/``edit_and_resend_message``) already toasts this
+    exact copy via its own screen-level wrapper (TASK-232's mid-run gate,
+    see Tests/UI/test_console_run_gate.py), so the controller must stay
+    silent here or the user would see the identical rejection reported
+    twice."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    pending = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    failed = store.mark_message_failed(pending.id)
+
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STREAMING, "already streaming")
+    )
+
+    result = await controller.retry_message(failed.id)
+
+    assert result.accepted is False
+    assert "already running in this tab" in result.visible_copy
+    messages = store.messages_for_session(session.id)
+    system_messages = [m for m in messages if m.role is ConsoleMessageRole.SYSTEM]
+    assert system_messages == []
+
+
+@pytest.mark.asyncio
 async def test_submit_draft_marks_assistant_failed_when_stream_errors():
     persistence = FakePersistence()
     store = ConsoleChatStore(persistence=persistence)

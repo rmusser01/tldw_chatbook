@@ -1,8 +1,10 @@
 """Console live-work launch and staged-context handoff boundary tests."""
 
+import json
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -10,11 +12,23 @@ from textual.app import App
 
 from Tests.UI.test_destination_shells import DestinationHarness, _wait_for_selector
 from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Chat.citation_evidence_models import (
+    EvidenceBundle,
+    EvidenceReference,
+)
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+    LocalRagContextResult,
+    capture_console_staged_evidence_for_chat,
+)
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     SchedulesWorkbench,
 )
@@ -1785,6 +1799,395 @@ async def test_console_renders_pending_launch_context():
         assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_LIVE_WORK) is None
 
 
+def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
+    """Build a native-console screen shell for direct restore-path calls.
+
+    Mirrors ``test_console_native_chat_flow.py``'s own ``_bare_console_
+    screen`` helper: bypasses ``ChatScreen.__init__`` (heavy, requires a
+    mounted Textual app) while resolving the class's inherited restore/
+    consume helpers normally, so the D3 (staged-evidence-survives-
+    navigation) tests below can drive
+    ``_restore_native_console_state``/``_consume_pending_console_launch``
+    as plain, fast calls instead of a full pilot-driven screen.
+
+    Unlike that helper, this one also accepts ``app_instance`` -- the whole
+    point of the regression tests below is proving a *restored* launch does
+    NOT reach back into the real ``PendingHandoffStore`` on ``app_instance``,
+    which ``_consume_pending_console_launch`` only touches when
+    ``_pending_console_launch_context`` is still ``None``.
+
+    Args:
+        app_instance: The (real or fake) app instance to attach, or ``None``
+            for callers that never exercise the handoff-store seam.
+
+    Returns:
+        ChatScreen: A bare ChatScreen instance suitable for unit-level
+            restore-path testing.
+    """
+    screen = ChatScreen.__new__(ChatScreen)
+    screen.app_instance = app_instance
+    screen._console_chat_store = ConsoleChatStore()
+    screen._console_visible_draft_session_id = None
+    screen._console_composer_or_none = lambda: None
+    screen._task_resume_state = TaskResumeState()
+    return screen
+
+
+@pytest.mark.asyncio
+async def test_console_staged_launch_with_evidence_bundle_survives_screen_recreation_and_a_fresh_handoff_supersedes_it():
+    """D3: a staged live-work launch (with its real evidence bundle) must
+    survive screen re-creation; PR-T1 C1: a launch staged AFTER it must
+    supersede it on the next consume.
+
+    ``ChatScreen`` instances are never reused across navigation --
+    ``TldwCli._create_navigation_screen`` builds a fresh one on every
+    ``NavigateToScreen`` -- so continuity depends entirely on
+    ``save_state``/``restore_state`` carrying
+    ``_pending_console_launch_context`` (and its sibling
+    ``_console_evidence_sent_notice``) across. Before D3, neither
+    ``_serialize_native_console_state`` nor ``_restore_native_console_state``
+    touched either field at all: ANY navigation away from Console silently
+    dropped staged evidence with no error and no user-visible warning.
+
+    UPDATED BY PR-T1's final review (C1). This test previously asserted the
+    opposite of the second half: that a decoy staged into the store while a
+    restored launch was resident stayed there UNTOUCHED, as proof that a
+    restored launch never re-claims the channel. That "resident always
+    wins" rule was safe only while a launch could not survive navigation.
+    Once D3 made it survive, the leftover store entry was not a decoy at
+    all -- it was the user's newest "Use in Console" click, left invisible
+    and later spent on an unrelated message (see
+    ``_supersede_resident_console_launch_from_store``). The store entry is
+    now claimed and staged, and the assertions below are inverted to match:
+    the newer launch becomes resident and the channel is drained.
+
+    What the original test protected is still protected, by construction:
+    the restore itself is asserted in full (evidence bundle, sent notice)
+    BEFORE the newer launch is staged, and the no-newer-entry case -- the
+    plain tab-switch survivor, which must still not reach into the store --
+    is covered by
+    ``test_console_restored_launch_does_not_touch_an_empty_handoff_channel``
+    below.
+    """
+    ConsoleLiveWorkLaunch = _load_console_live_work_contract()
+    from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
+        build_library_rag_console_live_work_payload,
+    )
+
+    app = _build_test_app()
+    result = {
+        "result_id": "note-42:chunk-7",
+        "title": "Incident Review",
+        "snippet": "Expired credential caused the incident.",
+        "source_id": "note-42",
+        "chunk_id": "chunk-7",
+        "score": 0.93,
+        "runtime_backend": "local-fts",
+    }
+    # Built the exact same way `library_screen.py::_stage_library_rag_
+    # result_in_console` builds it, so `evidence_bundle` is real
+    # `to_payload()`-shaped data, not a hand-rolled stand-in.
+    launch_payload = build_library_rag_console_live_work_payload(
+        result, query="Why did the incident happen?"
+    )
+    original_launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title=result["title"],
+        payload=launch_payload,
+        status="staged",
+        recovery="Review citations before sending.",
+        action_label="Review evidence in Console",
+    )
+    app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, original_launch)
+
+    async with app.run_test(size=(180, 40)) as pilot:
+        screen1 = await _wait_for_production_chat_screen(app, pilot)
+        await _wait_for_selector(screen1, pilot, "#console-pending-launch-card")
+
+        launch1 = screen1._pending_console_launch_context
+        assert isinstance(launch1, ConsoleLiveWorkLaunch)
+        assert launch1.title == "Incident Review"
+        assert launch1.payload.get("evidence_bundle", {}).get("references")
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+
+        # Simulate a leftover "evidence sent" memory from an earlier send in
+        # this same screen instance (PR-4/task-1) coexisting with the launch
+        # just consumed via the handoff store --
+        # `_consume_pending_console_launch` never touches this field, unlike
+        # `_stage_console_library_rag_launch`, which clears it on new staging.
+        screen1._console_evidence_sent_notice = 2
+
+        state = screen1.save_state()
+        saved = state["native_console_state"]
+        assert saved["pending_console_launch"]["title"] == "Incident Review"
+        assert (
+            saved["pending_console_launch"]["payload"]["evidence_bundle"]
+            == launch1.payload["evidence_bundle"]
+        )
+        assert saved["console_evidence_sent_notice"] == 2
+
+        # Stage a NEWER launch after the original was consumed and
+        # acknowledged -- the store's slot is empty at this point, so this
+        # is a legitimate fresh stage (the user's next "Use in Console"
+        # click), not an overwrite of anything still owned by screen1.
+        newer_launch = ConsoleLiveWorkLaunch.from_values(
+            source="Library Search/RAG",
+            title="Rotation Runbook",
+            payload={},
+            status="staged",
+        )
+        app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, newer_launch)
+
+        screen2 = _bare_console_screen_for_restore(app)
+        screen2._restore_native_console_state(saved)
+
+        # The restore itself is complete and faithful, newer store entry or
+        # not: this is the D3 half of the test, asserted before any consume.
+        launch2 = screen2._pending_console_launch_context
+        assert isinstance(launch2, ConsoleLiveWorkLaunch)
+        assert launch2.title == "Incident Review"
+        assert launch2.source == "Library Search/RAG"
+        assert launch2.payload["evidence_bundle"] == launch1.payload["evidence_bundle"]
+        assert screen2._console_evidence_sent_notice == 2
+
+        strip_state = screen2._build_console_staged_evidence_strip_state(launch2)
+        assert strip_state.visible is True
+        assert strip_state.rows
+        assert strip_state.rows[0].title == "Incident Review"
+
+        # C1: consume supersedes -- the newer explicit user action wins over
+        # the stale survivor, and the channel is DRAINED so no later send can
+        # be ambushed by it.
+        consumed = screen2._consume_pending_console_launch()
+        assert consumed is not launch2
+        assert consumed is not None
+        assert consumed.title == "Rotation Runbook"
+        assert screen2._pending_console_launch_context is consumed
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+        assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_LIVE_WORK) is None
+        # Superseding is a fresh staging: the previous send's "evidence
+        # sent" line must not survive onto unrelated new evidence.
+        assert screen2._console_evidence_sent_notice is None
+        assert screen2._pending_console_launch_auto_open_inspector is True
+
+
+@pytest.mark.asyncio
+async def test_console_restored_launch_does_not_touch_an_empty_handoff_channel():
+    """PR-T1 C1: superseding is scoped to an actually-pending store entry.
+
+    The C1 fix loosened ``_consume_pending_console_launch``'s resident-wins
+    early return. This pins the other side of that loosening: with nothing
+    staged in the channel, a restored (tab-switch survivor) launch is still
+    returned as-is, is still not re-claimed, and the store is left exactly
+    as it was -- no spurious claim left in flight to poison the next real
+    handoff.
+    """
+    ConsoleLiveWorkLaunch = _load_console_live_work_contract()
+
+    app = _build_test_app()
+    async with app.run_test(size=(180, 40)):
+        survivor = ConsoleLiveWorkLaunch.from_values(
+            source="Library Search/RAG",
+            title="Tab-switch survivor",
+            payload={"source_id": "note-9"},
+            status="staged",
+        )
+        screen = _bare_console_screen_for_restore(app)
+        screen._pending_console_launch_context = survivor
+        screen._console_evidence_sent_notice = 3
+
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+
+        consumed = screen._consume_pending_console_launch()
+
+        assert consumed is survivor
+        # Untouched: no clear of the sent notice, no claim left in flight.
+        assert screen._console_evidence_sent_notice == 3
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+
+        # A real handoff arriving later is still claimable, which it would
+        # not be if the consume above had left an unsettled in-flight claim.
+        later = ConsoleLiveWorkLaunch.from_values(
+            source="Library Search/RAG",
+            title="Later handoff",
+            payload={},
+            status="staged",
+        )
+        app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, later)
+        assert screen._consume_pending_console_launch().title == "Later handoff"
+
+
+@pytest.mark.asyncio
+async def test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch():
+    """PR-T1 C1 pilot regression: the real stage A -> leave -> stage B flow.
+
+    Drives the exact user path the final review reconstructed, through the
+    production navigation machinery rather than direct restore calls:
+
+    1. A "Use in Console" handoff (A) lands and Console displays it.
+    2. The user navigates away; ``save_state`` persists A (D3).
+    3. A second handoff (B) is staged while Console is not mounted.
+    4. The user returns to Console.
+
+    Before the fix, ``restore_state`` (which runs BEFORE compose) made A
+    resident, compose's consume returned A, and B was never displayed --
+    the second click looked dead. B then sat in the store until some later
+    send claimed it from inside a send gate and silently prepended it to an
+    unrelated message.
+
+    Asserted here: B is what the rebuilt Console displays AND stages, and
+    the channel is empty afterwards so nothing is left to ambush a send.
+    """
+    ConsoleLiveWorkLaunch = _load_console_live_work_contract()
+
+    app = _build_test_app()
+    launch_a = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Launch A (stale survivor)",
+        payload={"source_id": "note-a"},
+        status="staged",
+        recovery="Review citations before sending.",
+        action_label="Review evidence in Console",
+    )
+    app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, launch_a)
+
+    async with app.run_test(size=(180, 40)) as pilot:
+        screen1 = await _wait_for_production_chat_screen(app, pilot)
+        await _wait_for_selector(screen1, pilot, "#console-pending-launch-card")
+        assert screen1._pending_console_launch_context.title == (
+            "Launch A (stale survivor)"
+        )
+
+        # Leave Console. `save_state` persists A onto the app's per-screen
+        # state, which the next Console instance restores before compose.
+        app.post_message(NavigateToScreen("library"))
+        await pilot.pause()
+        await pilot.pause()
+
+        # The user stages a SECOND result while standing in Library.
+        launch_b = ConsoleLiveWorkLaunch.from_values(
+            source="Library Search/RAG",
+            title="Launch B (the click that must not die)",
+            payload={"source_id": "note-b"},
+            status="staged",
+            recovery="Review citations before sending.",
+            action_label="Review evidence in Console",
+        )
+        app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, launch_b)
+
+        app.post_message(NavigateToScreen("chat"))
+        await pilot.pause()
+        screen2 = await _wait_for_production_chat_screen(app, pilot)
+        await _wait_for_selector(screen2, pilot, "#console-pending-launch-card")
+
+        staged = screen2._pending_console_launch_context
+        assert staged is not None
+        assert staged.title == "Launch B (the click that must not die)"
+
+        # Displayed, not merely staged.
+        strip_state = screen2._build_console_staged_evidence_strip_state(staged)
+        assert strip_state.visible is True
+        tray_state = screen2._build_console_staged_context_state(staged)
+        assert "Launch B (the click that must not die)" in tray_state.summary
+
+        # And A is not lurking in the store to be spent on a later send.
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+
+
+@pytest.mark.asyncio
+async def test_console_armed_sent_notice_round_trips_to_a_fresh_screen():
+    """D3: the one-send "Evidence sent with this message" memory
+    (``_console_evidence_sent_notice``) must also survive screen
+    re-creation, independent of any staged launch.
+
+    Unlike the staged-launch case above, a sent notice has nothing to do
+    with ``PendingHandoffStore`` -- it is purely local memory of what the
+    LAST send consumed (PR-4/task-1) -- so this is a plain serialize/
+    restore round trip, mirroring the existing unit-level round-trip tests
+    in ``test_console_native_chat_flow.py``.
+    """
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+
+    store = ConsoleChatStore()
+    session = ConsoleChatSession(id="session-a", title="Chat 1")
+    store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: []},
+        active_session_id=session.id,
+    )
+    screen = _bare_console_screen_for_restore()
+    screen._console_chat_store = store
+    screen._pending_console_launch_context = None
+    screen._console_evidence_sent_notice = 5
+
+    payload = screen._serialize_native_console_state()
+    assert payload is not None
+    assert payload["pending_console_launch"] is None
+    assert payload["console_evidence_sent_notice"] == 5
+
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen_for_restore()
+    restored_screen._console_chat_store = restored_store
+    restored_screen._restore_native_console_state(payload)
+
+    assert restored_screen._pending_console_launch_context is None
+    assert restored_screen._console_evidence_sent_notice == 5
+
+    strip_state = restored_screen._build_console_staged_evidence_strip_state(
+        restored_screen._pending_console_launch_context
+    )
+    assert strip_state.visible is True
+    assert strip_state.notice == "Evidence sent with this message · 5 sources"
+
+
+def test_console_native_state_restore_tolerates_legacy_payload_without_launch_or_notice_keys():
+    """D3 legacy tolerance: a payload saved before this fix (no
+    ``pending_console_launch``/``console_evidence_sent_notice`` keys at all)
+    must restore cleanly to "nothing staged, nothing sent" instead of
+    raising.
+    """
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+
+    store = ConsoleChatStore()
+    session = ConsoleChatSession(id="session-a", title="Chat 1")
+    store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: []},
+        active_session_id=session.id,
+    )
+    legacy_payload = {
+        "version": "1.0",
+        "active_session_id": session.id,
+        "task_resume_state": {},
+        "sessions": [
+            {
+                "id": session.id,
+                "title": "Chat 1",
+                "workspace_id": "default",
+                "persisted_conversation_id": None,
+                "draft": "",
+                "settings": None,
+                "updated_at": None,
+                "character_id": None,
+                "character_name": None,
+            }
+        ],
+        "messages_by_session": {session.id: []},
+        "image_view_modes": {},
+        # Deliberately no "pending_console_launch"/"console_evidence_sent_
+        # notice" keys -- this is what every payload saved before PR-T1
+        # task-3 looks like.
+    }
+
+    screen = _bare_console_screen_for_restore()
+    screen._console_chat_store = store
+
+    screen._restore_native_console_state(legacy_payload)
+
+    assert screen._pending_console_launch_context is None
+    assert screen._console_evidence_sent_notice is None
+
+
 @pytest.mark.asyncio
 async def test_console_renders_source_readiness_summary_without_pending_launch():
     app = _build_test_app()
@@ -2046,3 +2449,339 @@ async def test_stage_console_library_rag_launch_still_auto_opens_inspector():
         await pilot.pause()
 
         assert screen.query_one("#console-right-rail").styles.display != "none"
+
+
+# --------------------------------------------------------------------------
+# Task 9 (Task-2 review bonus find): non-RAG "Use in Console" handoffs
+# silently sent zero staged content to the model. Only a handoff whose
+# `payload.source` contained the substring "rag" reached the
+# `evidence_bundle`-building branch of `_stage_handoff_as_console_live_work`
+# -- so Library media/conversation handoffs (`source="library"`) and Library
+# note handoffs (`source="notes"`) staged visibly in the strip/tray but
+# `capture_console_staged_evidence_for_chat` short-circuited to
+# `LocalRagContextResult(None, None)` on send, because
+# `payload.get("evidence_bundle")` was never a mapping for them.
+# --------------------------------------------------------------------------
+
+
+def _media_handoff_payload() -> ChatHandoffPayload:
+    return ChatHandoffPayload(
+        source="library",
+        item_type="media",
+        title="Transformer notes",
+        body="Attention is all you need. " * 5,
+        source_id="media-77",
+        content_ref="media-77#c1",
+        display_summary="Media staged: Transformer notes",
+        suggested_prompt="Use this media as source context for my next question.",
+        runtime_backend="local",
+        source_owner="local",
+        source_selector_state="local",
+    )
+
+
+def _notes_handoff_payload() -> ChatHandoffPayload:
+    return ChatHandoffPayload(
+        source="notes",
+        item_type="note",
+        title="Meeting notes",
+        body="Discussed the Q3 roadmap and follow-up owners.",
+        source_id="42",
+        suggested_prompt="Use this note as context and help me work with it.",
+        runtime_backend="local",
+        source_owner="local",
+        source_selector_state="local",
+    )
+
+
+def _conversation_handoff_payload() -> ChatHandoffPayload:
+    return ChatHandoffPayload(
+        source="library",
+        item_type="conversation",
+        title="Prior planning chat",
+        body=(
+            "Conversation: Prior planning chat\n"
+            "Conversation ID: conv-9\n"
+            "Messages: 12\n"
+            "Workspace: unassigned\n"
+            "Updated: unknown\n"
+            "Source authority: local"
+        ),
+        source_id="conv-9",
+        display_summary="Conversation staged: Prior planning chat",
+        suggested_prompt="Use this conversation as source context for my next question.",
+        runtime_backend="local",
+        source_owner="local",
+        source_selector_state="local",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "build_payload",
+    (_media_handoff_payload, _notes_handoff_payload, _conversation_handoff_payload),
+    ids=("media", "notes", "conversation"),
+)
+async def test_non_rag_handoff_stages_a_non_empty_evidence_bundle(build_payload):
+    """A Library/Notes handoff (no "rag" token in its source) must still
+    carry a real, non-empty `evidence_bundle` after staging -- the strip and
+    the model must agree on what content is staged."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+
+        payload = build_payload()
+        screen._stage_handoff_as_console_live_work(payload)
+        await pilot.pause()
+
+        launch = screen._pending_console_launch_context
+        assert launch is not None
+        bundle_payload = launch.payload.get("evidence_bundle")
+        assert isinstance(bundle_payload, dict), (
+            "evidence_bundle must be a real mapping, not absent -- "
+            "capture_console_staged_evidence_for_chat treats anything else "
+            "as if nothing were staged at all"
+        )
+        references = bundle_payload.get("references")
+        assert references, "bundle must carry at least one reference"
+        reference = references[0]
+        assert reference["source_id"] == payload.source_id
+        assert reference["snippet"].strip()
+        assert reference["title"].strip()
+
+
+@pytest.mark.asyncio
+async def test_rag_labeled_handoff_evidence_bundle_shape_is_byte_unchanged():
+    """Pin: dropping the `"rag" in source` gate so every handoff builds a
+    bundle must not change the bundle a RAG-labeled handoff already built.
+    The expected shape below is hand-derived from the branch's own formula
+    (see `_stage_handoff_as_console_live_work`), independent of the
+    production code path, so a regression in field derivation trips this."""
+    payload = ChatHandoffPayload(
+        source="Library Search/RAG",
+        item_type="rag-result",
+        title="Transformer notes",
+        body="Attention is all you need.",
+        source_id="media-77",
+        content_ref="media-77#c1",
+        suggested_prompt="Use this retrieved result as context.",
+        runtime_backend="local",
+    )
+    expected_bundle = EvidenceBundle(
+        bundle_id="media-77#c1",
+        query="Use this retrieved result as context.",
+        source="Library Search/RAG",
+        references=(
+            EvidenceReference(
+                evidence_id="S1",
+                source_id="media-77",
+                source_type="rag-result",
+                title="Transformer notes",
+                snippet="Attention is all you need.",
+                authority_label="local",
+                content_ref="media-77#c1",
+            ),
+        ),
+    ).to_payload()
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_handoff_as_console_live_work(payload)
+        await pilot.pause()
+        launch = screen._pending_console_launch_context
+        assert launch is not None
+        actual_bundle = launch.payload["evidence_bundle"]
+
+    assert actual_bundle == expected_bundle
+
+
+class _RowsDouble:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+
+class _ExistingMediaDBDouble:
+    """Minimal double for `app.media_db`'s existence-check seam.
+
+    Module name starts with "Tests." so `_sensitive_fetchall`'s test-double
+    allowance (`chat_rag_events._sensitive_fetchall`) accepts `execute_query`
+    in place of the production `get_connection` path.
+    """
+
+    is_memory_db = True
+
+    def __init__(self, *existing_ids: str):
+        self.existing_ids = set(existing_ids)
+
+    def execute_query(self, _query, params):
+        requested = set(json.loads(params[0]))
+        return _RowsDouble(
+            [(source_id,) for source_id in sorted(requested & self.existing_ids)]
+        )
+
+
+class _ExistingChaChaDBDouble:
+    """Minimal double for `app.chachanotes_db`'s existence-check seam."""
+
+    is_memory_db = True
+
+    def __init__(self, *, note_ids=(), conversation_ids=()):
+        self.note_ids = set(note_ids)
+        self.conversation_ids = set(conversation_ids)
+
+    def execute_query(self, _query, params):
+        requested_notes = set(json.loads(params[0]))
+        requested_conversations = set(json.loads(params[1]))
+        rows = [
+            ("notes", note_id)
+            for note_id in sorted(requested_notes & self.note_ids)
+        ]
+        rows += [
+            ("chat_history", conversation_id)
+            for conversation_id in sorted(
+                requested_conversations & self.conversation_ids
+            )
+        ]
+        return _RowsDouble(rows)
+
+
+@pytest.mark.asyncio
+async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context():
+    """The exact launch a media handoff stages must let
+    `capture_console_staged_evidence_for_chat` return REAL context, not the
+    `LocalRagContextResult(None, None)` it always returned before this fix
+    (the handoff carried no `evidence_bundle` key at all).
+
+    The pre-existing (byte-unchanged) snippet formula in
+    `_stage_handoff_as_console_live_work` is `payload.display_summary or
+    payload.body` -- and `library_screen.py`'s real media/conversation
+    handoffs set `display_summary` to a short "Media staged: <title>" label
+    rather than the body excerpt, so that label -- not the raw body -- is
+    what reaches the model here. This test asserts the actual production
+    formula's output, not the excerpt; see the report for this as a
+    separate, pre-existing content-fidelity note out of this task's scope.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_handoff_as_console_live_work(_media_handoff_payload())
+        await pilot.pause()
+        launch = screen._pending_console_launch_context
+        assert launch is not None
+
+    capture_app = SimpleNamespace(media_db=_ExistingMediaDBDouble("media-77"))
+    result = await capture_console_staged_evidence_for_chat(
+        capture_app, launch, user_message="What does this media say?"
+    )
+
+    assert isinstance(result, LocalRagContextResult)
+    assert result.context is not None
+    assert "Media staged: Transformer notes" in result.context
+
+
+@pytest.mark.asyncio
+async def test_notes_handoff_evidence_bundle_reaches_capture_as_real_context():
+    """Same round trip as the media case, for a Library note handoff."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_handoff_as_console_live_work(_notes_handoff_payload())
+        await pilot.pause()
+        launch = screen._pending_console_launch_context
+        assert launch is not None
+
+    capture_app = SimpleNamespace(
+        chachanotes_db=_ExistingChaChaDBDouble(note_ids={"42"})
+    )
+    result = await capture_console_staged_evidence_for_chat(
+        capture_app, launch, user_message="What should I follow up on?"
+    )
+
+    assert isinstance(result, LocalRagContextResult)
+    assert result.context is not None
+    assert "Discussed the Q3 roadmap" in result.context
+
+
+@pytest.mark.asyncio
+async def test_conversation_handoff_evidence_bundle_reaches_capture_as_real_context():
+    """Same round trip as the media/notes cases, for a Library conversation
+    handoff -- the third of the three brief-named kinds. Rounds out the
+    suite so all three kinds this task actually fixes (media, notes,
+    conversations) get the same deep, unmocked capture-round-trip proof,
+    not just two of the three."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_handoff_as_console_live_work(_conversation_handoff_payload())
+        await pilot.pause()
+        launch = screen._pending_console_launch_context
+        assert launch is not None
+
+    capture_app = SimpleNamespace(
+        chachanotes_db=_ExistingChaChaDBDouble(conversation_ids={"conv-9"})
+    )
+    result = await capture_console_staged_evidence_for_chat(
+        capture_app, launch, user_message="What did we plan?"
+    )
+
+    assert isinstance(result, LocalRagContextResult)
+    assert result.context is not None
+    # `item_type="conversation"` maps to `CanonicalSourceKind.CHAT_HISTORY`,
+    # labeled "CHAT HISTORY" in the formatted context (`_SOURCE_LABELS` in
+    # `RAG_Search/local_citation_capture.py`).
+    assert "CHAT HISTORY" in result.context
+    # Same pre-existing `display_summary`-over-`body` snippet formula as the
+    # media case (see the report): the conversation handoff also sets a
+    # generic `display_summary`, so that -- not the multi-line body -- is
+    # what reaches the model here.
+    assert "Conversation staged: Prior planning chat" in result.context
+
+
+@pytest.mark.asyncio
+async def test_console_send_blocked_reason_sendable_for_media_handoff_with_new_bundle():
+    """Send-gating blast radius: `_console_send_blocked_reason` only checks
+    available evidence for a RAG-labeled source (`_source_mentions_rag`).
+    `"library"` never matches that token, so a media handoff gaining a real
+    `evidence_bundle` here must not newly block the send."""
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1-2025-04-14",
+        },
+        "api_settings": {"openai": {"api_key": "configured-test-key"}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+
+        screen._stage_handoff_as_console_live_work(_media_handoff_payload())
+        await pilot.pause()
+
+        launch = screen._pending_console_launch_context
+        assert launch is not None
+        assert isinstance(launch.payload.get("evidence_bundle"), dict)
+        assert chat_screen_module._source_mentions_rag(launch.source) is False
+        assert screen._console_send_blocked_reason() == ""

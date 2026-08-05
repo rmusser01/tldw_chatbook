@@ -6,13 +6,53 @@ import pytest
 from textual.app import App
 from textual.widgets import Static
 
+from tldw_chatbook.Chat.citation_evidence_models import (
+    EvidenceBundle,
+    EvidenceReference,
+)
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleDisplayRow,
     ConsoleStagedContextState,
 )
+from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Widgets.Console.console_staged_context import (
     ConsoleStagedContextTray,
 )
+
+
+def _five_reference_launch() -> ConsoleLiveWorkLaunch:
+    """A real 5-reference bundle, staged the way Library RAG actually stages one.
+
+    Each reference explodes into 3-4 provenance rows (Evidence source /
+    Evidence authority / Evidence status / optional Snippet) inside
+    ``ConsoleStagedContextState.from_live_work``, so 5 references yield
+    17-22 display rows -- the exact gap that let the tray render
+    "Sources 18" (D1a): the OLD code rendered ``len(rows)`` instead of the
+    true staged-source count.
+    """
+    bundle = EvidenceBundle(
+        bundle_id="bundle-5",
+        query="What changed?",
+        references=tuple(
+            EvidenceReference(
+                evidence_id=f"S{index}",
+                source_id=f"media-{index}",
+                source_type="media",
+                title=f"Source {index}",
+                snippet=f"Body {index}",
+                authority_label="local",
+                status="available",
+                source_owner="local",
+            )
+            for index in range(1, 6)
+        ),
+    )
+    return ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Library Search/RAG retrieval",
+        payload={"query": "What changed?", "evidence_bundle": bundle.to_payload()},
+        status="staged",
+    )
 
 
 @pytest.mark.asyncio
@@ -98,3 +138,114 @@ async def test_staged_context_row_renders_name_and_normalized_status() -> None:
         blocked_status = tray.query_one("#console-staged-source-status-1", Static)
         assert str(blocked_status.renderable) == "blocked"
         assert blocked_status.has_class("blocked")
+
+
+@pytest.mark.asyncio
+async def test_staged_context_tray_counts_sources_not_display_rows() -> None:
+    """D1a: a 5-reference bundle must render '5', not the exploded row count.
+
+    Built via the REAL ``from_live_work`` (not a hand-built 1-row state --
+    that shape is exactly what let "Sources 18" ship, since a 1-reference
+    launch's row count and source count coincide).
+    """
+    launch = _five_reference_launch()
+    state = ConsoleStagedContextState.from_live_work(launch)
+    # Sanity: this bundle really does explode past the source count --
+    # otherwise this test could not distinguish the fix from the bug.
+    assert len(state.rows) > 5
+    assert state.source_count == 5
+
+    class TestApp(App):
+        def compose(self):
+            yield ConsoleStagedContextTray(state)
+
+    app = TestApp()
+    async with app.run_test():
+        tray = app.query_one(ConsoleStagedContextTray)
+        count = tray.query_one("#console-staged-context-count", Static)
+        assert str(count.renderable) == "5"
+
+
+@pytest.mark.asyncio
+async def test_staged_context_tray_counts_zero_when_genuinely_empty() -> None:
+    """The genuinely-empty state (nothing staged at all) still renders '0'."""
+    state = ConsoleStagedContextState.empty()
+    assert state.source_count == 0
+
+    class TestApp(App):
+        def compose(self):
+            yield ConsoleStagedContextTray(state)
+
+    app = TestApp()
+    async with app.run_test():
+        tray = app.query_one(ConsoleStagedContextTray)
+        count = tray.query_one("#console-staged-context-count", Static)
+        assert str(count.renderable) == "0"
+
+
+@pytest.mark.asyncio
+async def test_staged_context_tray_survives_a_markup_hostile_title() -> None:
+    """PR-T1 I1: a launch title containing Rich markup must not crash compose.
+
+    The summary line interpolates the launch title, and it was the only
+    Static in this widget rendering untrusted text with markup ENABLED
+    (every sibling row already passes ``markup=False``). A title carrying
+    a stray closing tag -- ``[/]`` -- raised ``MarkupError`` from compose,
+    and ``[bold]`` silently swallowed the text into a style.
+
+    That was survivable while a staged launch died on navigation. It is
+    not survivable now that D3 persists it: the restore succeeds on every
+    later visit, so the crash lands in compose INSIDE ``switch_screen``
+    (where ``app.py`` reports it as a navigation failure) and Console
+    becomes permanently unopenable -- a sticky lockout from one badly
+    named note.
+
+    Asserted: compose completes, and the markup renders LITERALLY rather
+    than being interpreted or dropped.
+    """
+    hostile_title = "Rotation [/] runbook [bold]v2"
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title=hostile_title,
+        payload={"query": "rotation"},
+        status="staged",
+    )
+    state = ConsoleStagedContextState.from_live_work(launch)
+    assert hostile_title in state.summary
+
+    class TestApp(App):
+        def compose(self):
+            yield ConsoleStagedContextTray(state)
+
+    app = TestApp()
+    async with app.run_test():
+        tray = app.query_one(ConsoleStagedContextTray)
+        summary = tray.query_one("#console-staged-context-summary", Static)
+        rendered = str(summary.renderable)
+        assert hostile_title in rendered
+        # Not interpreted away: the literal tags are still in the output.
+        assert "[/]" in rendered
+        assert "[bold]" in rendered
+
+
+@pytest.mark.asyncio
+async def test_staged_context_summary_normalizes_launch_text() -> None:
+    """PR-T1 I1 (defence in depth): the summary goes through the module's
+    shared display-text normalizer instead of raw f-string interpolation,
+    so it no longer stands out as this module's one unescaped exit.
+
+    This does NOT fix the markup crash above (HTML escaping leaves ``[/]``
+    untouched -- that is fixed at the sink with ``markup=False``); it is
+    the same treatment every other value in
+    ``ConsoleStagedContextState`` already receives.
+    """
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Q&A <notes>",
+        payload={},
+        status="staged",
+    )
+    state = ConsoleStagedContextState.from_live_work(launch)
+    assert "&amp;" in state.summary
+    assert "&lt;notes&gt;" in state.summary
+    assert "<notes>" not in state.summary

@@ -758,3 +758,74 @@ async def test_console_blocked_send_keeps_staged_evidence(monkeypatch) -> None:
         capture.assert_not_awaited()
         assert screen._pending_console_launch_context is launch
         assert screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip).display is True
+
+
+# --------------------------------------------------------------------------
+# D1c blast radius: Library launches gaining real bundles changes
+# `_console_send_blocked_reason`'s inputs (it gates on
+# `evidence_state.available_count == 0` for any RAG-labeled staged launch).
+# Pin both directions so a bundleless-vs-bundled Library launch keeps
+# sending exactly the way it already does.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_console_send_blocked_reason_sendable_for_library_staged_one_ref() -> (
+    None
+):
+    """A Library-staged launch with one AVAILABLE local reference must be
+    sendable -- the same shape `library_screen.py`'s own "Use in Console"
+    produces for a single selected result."""
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1-2025-04-14",
+        },
+        "api_settings": {"openai": {"api_key": "configured-test-key"}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    launch = _launch(1)
+
+    async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
+        screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_console_library_rag_launch(launch)
+        await pilot.pause()
+
+        assert screen._console_send_blocked_reason() == ""
+
+
+@pytest.mark.asyncio
+async def test_console_send_blocked_reason_blocks_for_library_staged_zero_available_refs() -> (
+    None
+):
+    """A Library-staged launch whose sole reference has no available
+    evidence must still block with the EXISTING copy -- unchanged by
+    attaching real bundles to Library launches."""
+    app = _build_test_app()
+    bundle = EvidenceBundle(
+        bundle_id="bundle-blocked",
+        query="question",
+        source="Library Search/RAG",
+        references=(_reference(1, status="blocked"),),
+    )
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Library Search/RAG retrieval",
+        payload={"query": "question", "evidence_bundle": bundle.to_payload()},
+        status="staged",
+    )
+
+    async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
+        screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_console_library_rag_launch(launch)
+        await pilot.pause()
+
+        reason = screen._console_send_blocked_reason()
+        assert (
+            "Console send blocked: Library Search/RAG has no available evidence"
+            in reason
+        )

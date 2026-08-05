@@ -616,7 +616,16 @@ async def test_submit_draft_closed_session_id_fails_closed_without_touching_acti
     scheduling gap (not just switched away from), there is nothing left
     to submit into. The fix must fail closed (``_session_closed_result``)
     rather than silently falling back to ``ensure_session()`` and
-    submitting into whatever is active now."""
+    submitting into whatever is active now.
+
+    Task 4 fix-round-2 (I2/M2): this IS the dispatch-gap scenario
+    (``submit_draft`` called with an explicit, already-closed
+    ``session_id``) -- the one call site of ``_session_closed_result`` that
+    now sets ``session_closed`` and carries the INFORMATIVE copy (not the
+    generic "Session closed." every other call site still uses -- see
+    ``test_close_streaming_session_stops_run_without_key_error`` in
+    test_console_chat_controller.py, which pins that generic copy
+    unchanged for a MID-RUN close)."""
     store = ConsoleChatStore()
     gateway = StreamingGateway()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
@@ -630,7 +639,8 @@ async def test_submit_draft_closed_session_id_fails_closed_without_touching_acti
     result = await controller.submit_draft("hello", session_id=closed_session_id)
 
     assert result.accepted is True
-    assert result.visible_copy == "Session closed."
+    assert result.visible_copy == "Console session closed before your message could send."
+    assert result.session_closed is True
     messages_b = store.messages_for_session(session_b.id)
     assert messages_b == []
 

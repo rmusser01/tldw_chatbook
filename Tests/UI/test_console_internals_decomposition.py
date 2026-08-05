@@ -3450,6 +3450,99 @@ def test_console_control_and_inspector_share_effective_provider_model_sources():
     assert rows_by_label["Provider"].text == "Provider: ready"
 
 
+def test_console_rag_source_status_unchanged_with_a_pending_launch():
+    """D1b: a sent-notice count must never override an actually staged
+    launch -- live staging always wins, mirroring the strip's own
+    precedence rule (``build_console_staged_evidence_strip_state``)."""
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="RAG result",
+        payload={"source_id": "note-1"},
+        status="ready",
+    )
+
+    assert screen._console_rag_source_status(launch) == (
+        "staged from Library Search/RAG"
+    )
+    # A stale sent-notice sitting alongside a NEW pending launch changes
+    # nothing -- pending-launch derivation takes over unconditionally.
+    assert screen._console_rag_source_status(launch, sent_source_count=5) == (
+        "staged from Library Search/RAG"
+    )
+
+
+def test_console_rag_source_status_remembers_the_last_send_when_nothing_is_staged():
+    """D1b: the Inspector gains the strip's one-send memory."""
+    app = _build_test_app()
+    screen = ChatScreen(app)
+
+    assert screen._console_rag_source_status(None, sent_source_count=5) == (
+        "sent with the last message · 5 sources"
+    )
+    assert screen._console_rag_source_status(None, sent_source_count=1) == (
+        "sent with the last message · 1 source"
+    )
+
+
+def test_console_rag_source_status_genuinely_empty_reads_not_staged():
+    """Neither a pending launch nor a sent-notice: the honest empty copy."""
+    app = _build_test_app()
+    screen = ChatScreen(app)
+
+    assert screen._console_rag_source_status(None) == "not staged"
+    assert screen._console_rag_source_status(None, sent_source_count=0) == "not staged"
+    assert screen._console_rag_source_status(None, sent_source_count=None) == (
+        "not staged"
+    )
+
+
+def test_console_inspector_sources_row_remembers_the_last_send():
+    """D1b end-to-end: the Inspector's "Sources" row (and the run recipe
+    line built from the same value) read the one-send memory instead of
+    the literal "not staged" a send just superseded."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    screen = ChatScreen(app)
+    screen._console_evidence_sent_notice = 5
+
+    inspector_state = screen._build_console_inspector_state(None)
+    rows_by_label = {row.label: row for row in inspector_state.rows}
+
+    assert rows_by_label["Sources"].value == "sent with the last message · 5 sources"
+    assert "sent with the last message · 5 sources" in rows_by_label["Run recipe"].value
+
+
+def test_console_strip_and_inspector_sent_counts_provably_agree():
+    """D1a+D1b agreement: the strip and the Inspector must read the SAME
+    number after a send releases its staged launch -- this fix gives the
+    Inspector the strip's own memory field, not a second, independently
+    derived count that could drift from it again."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    screen = ChatScreen(app)
+    # Simulate the state immediately after `_release_consumed_console_launch`:
+    # the launch is gone, and the one-send memory is armed.
+    screen._pending_console_launch_context = None
+    screen._console_evidence_sent_notice = 5
+
+    strip_state = screen._build_console_staged_evidence_strip_state(None)
+    inspector_state = screen._build_console_inspector_state(None)
+    rows_by_label = {row.label: row for row in inspector_state.rows}
+
+    assert strip_state.notice == "Evidence sent with this message · 5 sources"
+    assert rows_by_label["Sources"].value == "sent with the last message · 5 sources"
+    # Change the ONE shared field and both surfaces move together -- proof
+    # they read the same number, not two counts that merely match today.
+    screen._console_evidence_sent_notice = 2
+    strip_state_2 = screen._build_console_staged_evidence_strip_state(None)
+    inspector_state_2 = screen._build_console_inspector_state(None)
+    rows_by_label_2 = {row.label: row for row in inspector_state_2.rows}
+    assert strip_state_2.notice == "Evidence sent with this message · 2 sources"
+    assert rows_by_label_2["Sources"].value == "sent with the last message · 2 sources"
+
+
 def test_console_prefers_configured_provider_when_app_reactive_is_stale_default():
     app = _build_test_app()
     app.app_config = {

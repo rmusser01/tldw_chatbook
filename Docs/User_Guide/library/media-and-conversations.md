@@ -179,6 +179,13 @@ navigation keys live in the [guide index](../index.md).
   handoff requires the conversation to be eligible for the active
   workspace; until your sources are linked into it, staging is blocked
   (the same gate guards the other "Use in Console" actions).
+- **Staging now actually reaches the model.** "Use in Console" (media)
+  and "Open in Console" (conversations) used to stage content that
+  displayed as attached but never made it into what the model was sent
+  — that's fixed. What arrives today is a real, correctly attributed
+  reference to the item, but a thin one: a short generic label (e.g.
+  "Media staged: \<title\>"), not an excerpt of the actual content —
+  upgrading that to a real excerpt is still open (task-2376).
 - **No conversation delete here** — by design, this panel never modifies
   chats. Manage sessions from Console itself.
 - **"Media item is unavailable."** — the item was removed while you had it
@@ -186,4 +193,8 @@ navigation keys live in the [guide index](../index.md).
   list.
 
 —
-*Verified against dev @ bd05a692a — 2026-07-31*
+*Verified against c2cbb8081 — 2026-08-04 (PR-T1: media and conversation
+handoffs delivering a real, attributed reference to the model on send is
+covered by capture round-trip tests, task-2374; the live check's own
+handoff scenario was blocked on that profile by an unrelated Library
+workspace-eligibility gate).*

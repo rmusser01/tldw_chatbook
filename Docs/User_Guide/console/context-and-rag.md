@@ -140,6 +140,16 @@ empty state: "No sources attached. Stage sources from Library." The
 control-bar **Attach context** action opens the "Console context" rail;
 the staging itself is done from the Library screen.
 
+Media, notes, and conversation handoffs now actually reach the model on
+send — they used to display as staged while delivering nothing. Notes
+send a real excerpt of the note body; media and conversation handoffs
+currently send only a short generic label naming the item (e.g. "Media
+staged: \<title\>"), not an excerpt of the content itself — upgrading
+that to a real excerpt is still open (task-2376). A few other handoff
+kinds (skills, watchlists/collections snapshots, quizzes, personas) can
+still show as staged while the model receives nothing at all for them —
+that gap is also still open (task-2375).
+
 To gather evidence *before* sending, use the Inspector's **Live work
 sources** card: type a question into "Ask Library sources before sending"
 and press **Run Library RAG** (also a control-bar action). It searches
@@ -167,6 +177,17 @@ the **next** send — once a send consumes it, the field clears itself, so
 the strip and the settings modal's "staged for your next send" wording
 are both literally true (an earlier build let one staged bundle silently
 ride every later send too; that is fixed).
+
+Staged evidence also survives leaving Console and coming back: it lives
+in the Console's own session state, not only in memory, so navigating to
+Library (or anywhere else) and returning still shows the same bundle
+staged — the strip, the Inspector's Sources tray, and the settings
+estimate all keep reporting it. Staging a *new* item from Library while
+something is already staged replaces it outright: a fresh "Use in
+Console" click always wins, even over a bundle restored from an earlier
+visit. Whatever is currently staged, the strip's count, the tray's
+"Sources N" count, and the Inspector's Source Readiness line ("Evidence:
+N/N available") always agree on the same number.
 
 ### Citations
 
@@ -253,5 +274,10 @@ Enter again to send as text."
   a billing meter.
 
 —
-*Verified against 4646922ed — 2026-08-04 (PR-4 Task 6 live check, including
-a real-provider send round trip)*
+*Verified against c2cbb8081 — 2026-08-04 (PR-T1 live check S1-S6: staged
+evidence survives Console <-> Library navigation and a fresh handoff
+supersedes a stale restored one. Media/notes/conversation handoffs
+delivering content on send is covered by capture round-trip tests
+(task-2374); the live check's own handoff scenario was blocked on this
+profile by an unrelated Library workspace-eligibility gate, so that part
+is verified at the code level, not live).*

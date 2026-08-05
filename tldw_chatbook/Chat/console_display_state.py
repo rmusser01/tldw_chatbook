@@ -491,6 +491,26 @@ class ConsoleStagedContextState:
     rows: tuple[ConsoleDisplayRow, ...] = ()
     recovery: str = ""
     is_empty: bool = False
+    #: True staged-source count for the tray's "Sources N" heading (D1a).
+    #: NOT ``len(rows)`` -- one staged reference explodes into 3-4
+    #: provenance rows (Evidence source/authority/status, optional
+    #: Snippet), so a 5-reference bundle produced 17-22 rows and the tray
+    #: rendered "Sources 18". ``None`` (matching this file's existing
+    #: ``mcp_tool_count: int | None = None`` idiom) means "the caller did
+    #: not supply one" -- every real production constructor (both
+    #: ``from_live_work`` and ``empty()`` below) passes it explicitly, so
+    #: this only fires for a state built directly without it (pre-fix
+    #: tests, and any other hand-built state), where ``__post_init__``
+    #: falls back to ``len(rows)`` so a single hand-built row still reads
+    #: "1" -- weak but not wrong for that one-row shape. Deliberately NOT
+    #: a negative-int sentinel: that would silently swallow a future
+    #: production caller that forgets to pass ``source_count=``, regressing
+    #: straight back to the row-count lie this task fixed with no signal.
+    source_count: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.source_count is None:
+            object.__setattr__(self, "source_count", len(self.rows))
 
     @classmethod
     def from_live_work(
@@ -520,11 +540,24 @@ class ConsoleStagedContextState:
             ConsoleDisplayRow(label=key, value=value)
             for key, value in launch.payload_display_items()
         )
+        # PR-T1 final review (I1): the summary interpolates raw launch
+        # fields that originate in user data (a note title, a media
+        # filename), so it goes through the same normalizer every other
+        # display value in this module uses instead of being the one raw
+        # f-string. This is defence in depth, not the crash fix -- HTML
+        # escaping leaves Rich markup like `[/]` untouched, so the
+        # MarkupError is fixed at the sink (`markup=False` on the staged-
+        # context summary Static); this just stops the summary being the
+        # module's lone unescaped exit.
+        summary_title = _safe_display_text(launch.title, "Untitled source")
+        summary_source = _safe_display_text(launch.source, "unknown")
+        summary_status = _safe_display_text(launch.status, "unknown")
         return cls(
             heading="Staged Context",
-            summary=f"{launch.title} ({launch.source}, {launch.status})",
+            summary=f"{summary_title} ({summary_source}, {summary_status})",
             rows=tuple(rows),
             recovery=launch.recovery,
+            source_count=console_staged_source_count(launch),
         )
 
     @classmethod
@@ -544,6 +577,7 @@ class ConsoleStagedContextState:
             heading="Staged Context",
             summary="",
             is_empty=True,
+            source_count=0,
         )
 
 
