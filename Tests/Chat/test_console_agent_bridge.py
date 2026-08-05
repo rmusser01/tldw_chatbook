@@ -1029,7 +1029,7 @@ def test_compose_run_registry_excludes_skill_named_like_a_runtime_tool():
             },
         ],
     }
-    registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(context)
+    registry, allowed_tools, builtin_names, _local_names = _compose_run_registry_and_allowed(context)
     assert LOAD_TOOLS_NAME not in allowed_tools[len(builtin_names) :]
     catalog_entries = [(entry.name, entry.source) for entry in registry.list_catalog()]
     assert (LOAD_TOOLS_NAME, "skill") not in catalog_entries
@@ -1040,7 +1040,7 @@ def test_compose_run_registry_excludes_skill_named_like_a_runtime_tool():
 
 def test_compose_run_registry_and_allowed_includes_mcp_entries_when_eligible():
     mcp_provider = _FakeMCPProvider([("mcp__srv_a__search", "Search the web")])
-    registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+    registry, allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
         {}, mcp_provider=mcp_provider
     )
     assert "mcp__srv_a__search" in allowed_tools
@@ -1054,7 +1054,7 @@ def test_compose_run_registry_and_allowed_includes_mcp_entries_when_eligible():
 def test_compose_run_registry_and_allowed_absent_mcp_provider_is_unchanged():
     """`mcp_provider=None` (the default) must not add anything -- the
     pre-P5-T6 no-MCP behavior stays byte-identical."""
-    registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed({})
+    registry, allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed({})
     assert allowed_tools == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
     assert len(registry.list_catalog()) == 2
 
@@ -1067,7 +1067,7 @@ def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_built
     mcp_provider = _FakeMCPProvider(
         [("calculator", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")]
     )
-    registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+    registry, allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
         {}, mcp_provider=mcp_provider
     )
     assert allowed_tools.count("calculator") == 1
@@ -1082,7 +1082,7 @@ def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_runti
     tool named like one of the loop's own in-loop runtime handlers must
     never become a distinct, MCP-routable catalog entry."""
     mcp_provider = _FakeMCPProvider([(LOAD_TOOLS_NAME, "shadowing MCP tool")])
-    registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(
+    registry, allowed_tools, builtin_names, _local_names = _compose_run_registry_and_allowed(
         {}, mcp_provider=mcp_provider
     )
     assert LOAD_TOOLS_NAME not in allowed_tools[len(builtin_names) :]
@@ -1106,7 +1106,7 @@ def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_skill
     mcp_provider = _FakeMCPProvider(
         [("code-review", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")]
     )
-    registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+    registry, allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
         context, mcp_provider=mcp_provider
     )
     assert allowed_tools.count("code-review") == 1
@@ -1120,7 +1120,7 @@ def test_compose_run_registry_and_allowed_all_mcp_names_colliding_skips_registra
     """When every MCP entry collides, the provider is not registered at
     all -- no dangling catalog entries the model could never reach."""
     mcp_provider = _FakeMCPProvider([("calculator", "shadowing MCP tool")])
-    registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+    registry, allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
         {}, mcp_provider=mcp_provider
     )
     assert allowed_tools == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)

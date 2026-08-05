@@ -11,6 +11,7 @@ asyncio.to_thread). No widget mutation.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -459,9 +460,12 @@ def _eligible_skill_entries(context: Mapping[str, Any]) -> list[Mapping[str, Any
 def _non_colliding_skill_entries(
     context: Mapping[str, Any],
     builtin_names: tuple[str, ...],
+    *,
+    local_names: tuple[str, ...] = (),
 ) -> list[Mapping[str, Any]]:
     """Eligible skill entries, excluding any name that collides with a
-    builtin OR one of the loop's own in-loop runtime tool names.
+    builtin, a local tool, OR one of the loop's own in-loop runtime tool
+    names.
 
     Shadowing (Task 11 review note 2 + this task's own allow-list
     ordering): a builtin tool name must always win over a same-named
@@ -487,8 +491,17 @@ def _non_colliding_skill_entries(
     wins that comparison first. Excluding these names too means such a
     skill is simply never registered as a catalog entry at all, matching
     what would happen at invocation time anyway.
+
+    The same dispatch-layer reasoning applies to ``local_names`` (Task 6
+    review): ``AgentService.invoke_tool`` checks
+    ``skill_runner.is_skill_tool(name)`` BEFORE registry dispatch, so the
+    registry's first-registrant-wins order cannot protect a local tool --
+    a skill literally named e.g. ``fs_list`` would be routed to the skill
+    runner and shadow the local tool. Excluding local-name collisions here
+    keeps both call sites (``_compose_run_registry_and_allowed`` and
+    ``run_reply``'s skill-runner name set) in agreement with dispatch.
     """
-    collision_names = set(builtin_names) | RUNTIME_TOOL_NAMES
+    collision_names = set(builtin_names) | set(local_names) | RUNTIME_TOOL_NAMES
     return [
         item
         for item in _eligible_skill_entries(context)
@@ -615,7 +628,7 @@ def _compose_run_registry_and_allowed(
     *,
     mcp_provider: Any | None = None,
     local_provider: Any | None = None,
-) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...]]:
+) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
     Called once per ``run_reply`` invocation (never cached across runs --
@@ -627,8 +640,12 @@ def _compose_run_registry_and_allowed(
     is at least one non-colliding eligible entry) an already-composed MCP
     provider -- shadowing order: builtins beat local beat skills beat MCP,
     matching the allow-list's own ``builtins ∪ local ∪ skills ∪ mcp``
-    ordering. Local registers BEFORE skills/MCP (first-registrant-wins)
-    so a malicious MCP server or skill can never shadow the fs_* names.
+    ordering. Local registers BEFORE skills/MCP (first-registrant-wins),
+    AND local names join the skill/MCP collision sets -- so a malicious
+    MCP server or skill can never shadow the fs_* names at ANY layer (the
+    registry's own resolution, or ``AgentService.invoke_tool``'s
+    skill-runner-first dispatch, which registration order alone cannot
+    protect).
 
     Args:
         context: A fresh ``get_context(mode="local")`` payload.
@@ -642,13 +659,16 @@ def _compose_run_registry_and_allowed(
             disabled this run.
 
     Returns:
-        ``(registry, allowed_tools, builtin_names)`` -- the per-run
-        registry, its full allow-list (builtins + local + eligible skills
-        + eligible MCP tools + spawn), and just the builtin names (needed
-        separately by ``_BridgeSkillRunner`` to intersect a skill's own
-        declared ``allowed_tools`` against -- never against skill OR local
-        names, so a skill's sub-agent can never call another skill and
-        skills never narrow/grant local tools).
+        ``(registry, allowed_tools, builtin_names, local_names)`` -- the
+        per-run registry, its full allow-list (builtins + local + eligible
+        skills + eligible MCP tools + spawn), just the builtin names
+        (needed separately by ``_BridgeSkillRunner`` to intersect a
+        skill's own declared ``allowed_tools`` against -- never against
+        skill OR local names, so a skill's sub-agent can never call
+        another skill and skills never narrow/grant local tools), and
+        just the local names (needed by ``run_reply`` to keep its
+        skill-runner name set's collision filtering in agreement with the
+        registry built here).
     """
     registry = ToolCatalogRegistry()
     builtin_provider = BuiltinToolProvider()
@@ -658,13 +678,20 @@ def _compose_run_registry_and_allowed(
     if local_provider is not None:
         registry.register_provider(local_provider)
         local_names = tuple(e.name for e in local_provider.list_catalog())
-    eligible = _non_colliding_skill_entries(context, builtin_names)
+    eligible = _non_colliding_skill_entries(
+        context, builtin_names, local_names=local_names
+    )
     if eligible:
         registry.register_provider(SkillToolProvider(eligible))
     skill_names = tuple(str(item["name"]) for item in eligible)
     allowed_tools = tuple(builtin_names) + local_names + skill_names
     if mcp_provider is not None:
-        collision_names = set(builtin_names) | set(skill_names) | RUNTIME_TOOL_NAMES
+        collision_names = (
+            set(builtin_names)
+            | set(local_names)
+            | set(skill_names)
+            | RUNTIME_TOOL_NAMES
+        )
         mcp_names = _non_colliding_mcp_names(mcp_provider, collision_names)
         if mcp_names:
             registry.register_provider(
@@ -672,18 +699,18 @@ def _compose_run_registry_and_allowed(
             )
             allowed_tools += mcp_names
     allowed_tools += (SPAWN_TOOL_NAME,)
-    return registry, allowed_tools, builtin_names
+    return registry, allowed_tools, builtin_names, local_names
 
 
-def _combined_review_state_scope(*providers: Any | None):
+def _combined_review_state_scope(
+    *providers: Any | None,
+) -> Callable[[], contextlib.AbstractContextManager] | None:
     """Compose every provider's stamp_scope into one review_state_scope.
 
     None providers and providers without stamp_scope (test doubles) are
     skipped; returns None when nothing contributes, preserving the
     pre-existing AgentService default.
     """
-    import contextlib
-
     scopes = [
         p.stamp_scope for p in providers
         if p is not None and getattr(p, "stamp_scope", None) is not None
@@ -849,13 +876,17 @@ class ConsoleAgentBridge:
             context: Mapping[str, Any] = {}
             if self._skills_service is not None:
                 context = asyncio.run(self._skills_service.get_context(mode="local"))
-            registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(
-                context, mcp_provider=mcp_provider, local_provider=local_provider
+            registry, allowed_tools, builtin_names, local_names = (
+                _compose_run_registry_and_allowed(
+                    context, mcp_provider=mcp_provider, local_provider=local_provider
+                )
             )
             if self._skills_service is not None:
                 skill_names = frozenset(
                     str(item["name"])
-                    for item in _non_colliding_skill_entries(context, builtin_names)
+                    for item in _non_colliding_skill_entries(
+                        context, builtin_names, local_names=local_names
+                    )
                 )
                 skill_runner = _BridgeSkillRunner(
                     skills_service=self._skills_service,
