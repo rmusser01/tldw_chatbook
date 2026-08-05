@@ -1,7 +1,7 @@
 # Local Agent Tools — Phases 3-4 Re-plan (tldw_server-informed)
 
 **Date:** 2026-08-05
-**Status:** Spec-reviewed (three rounds; final amendments pending reviewer confirmation); pending user review
+**Status:** Spec-reviewed (approved, three rounds); pending user review
 **Supersedes:** phase 3 and phase 4 scope of `Docs/superpowers/specs/2026-08-04-local-agent-tools-design.md` (phases 1-2 shipped unchanged: PRs #1352, #1358)
 **ADR:** new ADR required (ADR-033) — git tools spawn subprocesses and the virtual-CLI model defines a process-execution boundary; both are security/runtime-boundary decisions per backlog.md rules. ADR-032 remains in force for naming, confinement, and approval discipline.
 **Reference:** tldw_server @ dev — `apps/mcp-unified` (gateway/policy) + `tldw_Server_API/app/core/MCP_unified/modules/implementations/` (tool modules). Research notes: tool modules register via `BaseModule.get_tools()/execute_tool()`, mostly opt-in/disabled by default, strict `domain.action` naming, systematic byte-caps with `truncated` flags, structured `{ok, reason_code, message}` errors.
