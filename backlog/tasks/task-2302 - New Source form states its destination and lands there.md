@@ -1,7 +1,7 @@
 ---
 id: TASK-2302
 title: New Source form states its destination and lands there
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04'
 labels:

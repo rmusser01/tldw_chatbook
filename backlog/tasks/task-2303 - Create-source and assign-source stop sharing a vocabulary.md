@@ -1,7 +1,7 @@
 ---
 id: TASK-2303
 title: Create-source and assign-source stop sharing a vocabulary
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04'
 labels:
