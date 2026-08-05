@@ -15,7 +15,7 @@
 - `fs_list` already landed in phase 1 — it is NOT in this phase's scope.
 - Audit recording (`record_tool_decision`) for local deny/timeout outcomes is in scope (Task 7) — phase-1 docstring flagged it.
 - AGENTS.md "Tool Calling" update is in scope (Task 8).
-- With 6 local tools + 2 builtins, the catalog exceeds `DIRECT_DISCLOSE_THRESHOLD = 8`; an integration test must prove tools remain reachable via `find_tools`/`load_tools` (Task 6).
+- With 6 local tools + 2 builtins the catalog lands at exactly 8 entries — `select_active_schemas` direct-discloses at `<= DIRECT_DISCLOSE_THRESHOLD` (8), so phase 2 does NOT itself flip disclosure mode. The find/load path must therefore be tested with a padded 9-entry registry (Task 6); the spec's "nine tools" claim only holds after phase 3.
 
 ---
 
@@ -375,7 +375,7 @@ def test_fs_grep_caps_output(tmp_path):
     ws = tmp_path / "ws"; ws.mkdir()
     (ws / "big.py").write_text("hit\n" * 500)
     out = grep_files("hit", workspace_root=ws, max_results=10)
-    assert "10" in out and "more" in out
+    assert "more, truncated" in out
 ```
 
 - [ ] **Step 2: Verify failure**
@@ -488,9 +488,9 @@ Specs (both read-only, no tags):
 
 - [ ] **Step 1: Write the tests**
 
-1. **find/load path**: build the production-composed registry (all 6 local tools + builtins = 8 entries, past `DIRECT_DISCLOSE_THRESHOLD`); ScriptedChat turn 1 calls `find_tools` with query "edit", turn 2 `load_tools` for `local:fs_edit`, turn 3 calls `fs_edit` (approval: approve_once), turn 4 final text. Assert the edit happened on disk and exactly one approval round trip occurred.
+1. **find/load path**: build the production-composed registry (6 local tools + 2 builtins = 8 entries — still direct-disclosed at `<= 8`), then add ONE extra dummy `LocalToolSpec` (or a stub provider) to reach 9 entries and genuinely cross `DIRECT_DISCLOSE_THRESHOLD`; ScriptedChat turn 1 calls `find_tools` with query "edit", turn 2 `load_tools` for `local:fs_edit`, turn 3 calls `fs_edit` (approval: approve_once), turn 4 final text. Assert the edit happened on disk and exactly one approval round trip occurred. Also assert that at 8 entries (no padding) the registry still direct-discloses (documents the boundary).
 2. **allow-state e2e** (phase-1 review follow-up): `resolve_state` → allow; scripted `fs_read` call; assert ZERO approval round trips and the file content reached the model's second-turn payload.
-3. **deny-path feedback symmetry** (phase-1 review follow-up): extend the existing deny test — assert the `Tool result for fs_list: ERROR: …` line appears in the second-turn messages payload.
+3. **deny-path feedback symmetry** (phase-1 review follow-up): extend `test_fs_list_fence_flow_denied_still_completes` in `Tests/Agents/test_local_tools_integration.py` — assert the `Tool result for fs_list: ERROR: …` line appears in the second-turn messages payload.
 
 - [ ] **Step 2: Run** — new + existing integration tests PASS.
 - [ ] **Step 3: Commit** — `git commit -m "test: find/load disclosure path and allow-state e2e coverage"`
