@@ -94,12 +94,12 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                     LibraryScreen,
                     "library",
                 )
-                # F-012: the landing state advertises the one Library key
-                # that works there (`/` focuses the rail search box)
-                # instead of the bare global default.
+                # task-2237 (R2): the landing footer advertises the full
+                # keyboard story that works there (F-012 started with just
+                # `/` focus search).
                 assert (
                     screen.query_one(AppFooterStatus).shortcut_text
-                    == "/ focus search"
+                    == "/ focus search | i add content | n new note | F6 next pane"
                 )
                 for _ in range(300):
                     rows = list(screen.query("#library-row-browse-search"))
@@ -181,8 +181,13 @@ def test_library_shortcuts_advertise_the_evidence_card_keys():
         ("o", "open evidence"),
         ("/", "focus search"),
     )
+    # task-2237 (R2): the landing set advertises the full keyboard story --
+    # the hub next-action accelerators and the pane-cycle key, not just `/`.
     assert LibraryScreen.LIBRARY_LANDING_SHORTCUTS == (
         ("/", "focus search"),
+        ("i", "add content"),
+        ("n", "new note"),
+        ("F6", "next pane"),
     )
 
 

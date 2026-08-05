@@ -170,7 +170,9 @@ def build_library_shell_state(
             target_id="media",
             count=state.media_count,
             count_known=state.media_known,
-            subtitle="imported files & transcripts",
+            # task-2236 (R2): glosses fit the rail's realistic
+            # width budget (<=25 content cells with title+count).
+            subtitle="your files",
             count_loading=state.counts_loading,
         ),
         LibraryRailRow(
@@ -206,7 +208,7 @@ def build_library_shell_state(
             target_id="prompts",
             count=state.prompts_count,
             count_known=state.prompts_known,
-            subtitle="saved instructions for the AI",
+            subtitle="AI asks",
             count_loading=state.counts_loading,
         ),
         LibraryRailRow(
@@ -221,7 +223,7 @@ def build_library_shell_state(
             target_id="skills",
             count=state.skills_count,
             count_known=state.skills_known,
-            subtitle="installable AI abilities",
+            subtitle="AI add-ons",
             count_loading=state.counts_loading,
         ),
         LibraryRailRow(
@@ -232,7 +234,7 @@ def build_library_shell_state(
             target_id="collections",
             count=state.collections_count,
             count_known=state.collections_known,
-            subtitle="saved groups of content",
+            subtitle="item sets",
         ),
         LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_SEARCH,
@@ -242,7 +244,7 @@ def build_library_shell_state(
             target_id="search",
             count=None,
             count_known=True,
-            subtitle="search everything",
+            subtitle="find all",
         ),
     )
 
@@ -334,7 +336,11 @@ def build_library_shell_state(
         LibraryRailRow(
             row_id=LIBRARY_ROW_INGEST_MEDIA,
             section_id="ingest",
-            title="Import media",
+            # task-2235 (R2): one canonical label for the ingest CTA across
+            # rail, landing hub, and command palette -- F-013's plain
+            # "Add content…". "Import media" survives only inside the
+            # ingest flow itself (canvas header, file-picker title).
+            title="Add content…",
             target_kind="canvas",
             target_id="ingest-media",
             count=None,

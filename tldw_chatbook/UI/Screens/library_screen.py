@@ -233,8 +233,13 @@ from ...Workspaces import (
 )
 from ...Workspaces.registry_service import next_local_workspace_identity
 from ...Widgets.destination_rail import (
+
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailSectionHeader,
+)
+from ...Widgets.workbench_focus import (
+    WorkbenchPaneTarget,
+    focus_relative_workbench_pane,
 )
 from ...Widgets.Library import (
     LibraryCollectionsPanel,
@@ -972,12 +977,37 @@ class LibraryScreen(BaseAppScreen):
         ("/", "focus search"),
     )
 
-    #: F-012: the landing state (and every non-Search canvas) still has one
-    #: working Library key -- `/` focuses the rail search box. Advertising
-    #: only what works beats the old bare-default footer, which read as
-    #: "no keyboard support here".
+    #: task-2237 (R2): the landing state advertises its full keyboard
+    #: story -- `/` focuses the rail search box, `i`/`n` are the hub
+    #: next-action accelerators (landing-scoped, like the actions they
+    #: mirror), and F6 cycles the workbench panes.
     LIBRARY_LANDING_SHORTCUTS = (
         ("/", "focus search"),
+        ("i", "add content"),
+        ("n", "new note"),
+        ("F6", "next pane"),
+    )
+
+    #: The non-landing, non-Search canvases: `/` and F6 work there; the
+    #: hub accelerators are landing-scoped, so they are not advertised.
+    LIBRARY_GENERAL_SHORTCUTS = (
+        ("/", "focus search"),
+        ("F6", "next pane"),
+    )
+
+    #: task-2237 (R2): F6 pane-cycle targets (the app's
+    #: ``focus_relative_workbench_pane`` idiom, per personas). The rail's
+    #: preferred focus is its search box; the canvas's is the hub's first
+    #: action, which exists only on the landing.
+    _WORKBENCH_FOCUS_TARGETS = (
+        WorkbenchPaneTarget(
+            "library-rail",
+            ("library-search-input",),
+        ),
+        WorkbenchPaneTarget(
+            "library-canvas",
+            ("library-hub-action-import",),
+        ),
     )
 
     # Baseline workbench geometry so the screen renders correctly even without
@@ -1079,6 +1109,15 @@ class LibraryScreen(BaseAppScreen):
     Button.library-hub-action {
         height: 1;
         min-height: 1;
+    }
+    /* task-2238: the hub's recents rows hug their own height, quiet like
+    the action triad above them. */
+    Button.library-hub-recent {
+        height: 1;
+        min-height: 1;
+        width: 100%;
+        text-align: left;
+        content-align: left middle;
     }
 
     #library-collection-form Input {
@@ -1588,18 +1627,20 @@ class LibraryScreen(BaseAppScreen):
         # everywhere else -- they register only where they work,
         # re-registered on every rail-row switch AND on navigation-context
         # deep links (F-012: `_apply_navigation_context_state` can land on
-        # the Search canvas without a rail-row press). F-012: everywhere
-        # else gets the one key that works there instead of the bare
-        # default -- `/` focuses the rail search box on every canvas.
-        shortcuts = (
-            self.LIBRARY_SHORTCUTS
-            if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
-            else self.LIBRARY_LANDING_SHORTCUTS
-        )
+        # the Search canvas without a rail-row press). task-2237 (R2):
+        # three honest contexts -- the landing advertises its full
+        # keyboard story (`/`, hub accelerators, F6), other canvases get
+        # the keys that work there, never a dead key.
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
+            shortcuts = self.LIBRARY_SHORTCUTS
+        elif not self._library_selected_row_id:
+            shortcuts = self.LIBRARY_LANDING_SHORTCUTS
+        else:
+            shortcuts = self.LIBRARY_GENERAL_SHORTCUTS
         self.register_footer_shortcuts(source="library", shortcuts=shortcuts)
 
     def on_key(self, event: Key) -> None:
-        """``/``: focus the rail search box from anywhere but a text field.
+        """Keyboard affordances: ``/`` anywhere, plus landing accelerators.
 
         F-012's focus-search key, implemented as a screen-level key handler
         (the settings screen's task-1715 pattern) rather than a ``Binding``:
@@ -1609,21 +1650,58 @@ class LibraryScreen(BaseAppScreen):
         braces for any field that lets an event through. Once the rail box
         itself has focus, its own ``_on_key`` re-arms the query instead
         (see ``LibraryRailSearchInput``).
+
+        task-2237 (R2): on the LANDING only, `i` and `n` are the hub
+        next-action accelerators (add content / new note), dispatched
+        through the same guarded row-switch the hub rows use. They are
+        advertised on the landing footer and nowhere else, so they never
+        fire off the landing.
         """
+        if isinstance(self.focused, (Input, TextArea)):
+            return
         is_slash = (
             event.key in {"/", "slash"}
             or getattr(event, "character", None) == "/"
         )
-        if not is_slash:
+        if is_slash:
+            try:
+                self.query_one("#library-search-input", Input).focus()
+            except (NoMatches, QueryError):
+                return
+            event.stop()
+            event.prevent_default()
             return
-        if isinstance(self.focused, (Input, TextArea)):
+        # Landing-scoped hub accelerators (task-2237).
+        if self._library_selected_row_id:
             return
-        try:
-            self.query_one("#library-search-input", Input).focus()
-        except (NoMatches, QueryError):
+        accelerator_row = {
+            "i": LIBRARY_ROW_INGEST_MEDIA,
+            "n": LIBRARY_ROW_CREATE_NOTE,
+        }.get(event.key)
+        if accelerator_row is None:
             return
+        self.run_worker(
+            self._select_library_rail_row(accelerator_row),
+            exclusive=True,
+            group="library_rail_row_switch",
+        )
         event.stop()
         event.prevent_default()
+
+    def action_focus_next_workbench_pane(self) -> None:
+        """F6: move focus to the next Library workbench pane (task-2237).
+
+        Previously the screen defined no pane targets, so the app's global
+        F6 dead-ended in a "no focus target" notification here. The rail's
+        search box is the rail target; on the landing the hub's first
+        action is the canvas target (other canvases mount their own focus
+        order and are skipped when the target is absent).
+        """
+        focus_relative_workbench_pane(
+            self,
+            self._WORKBENCH_FOCUS_TARGETS,
+            direction=1,
+        )
 
     def on_mount(self) -> None:
         """Populate the Library on entry, rendering instantly from cache.
@@ -3449,11 +3527,30 @@ class LibraryScreen(BaseAppScreen):
         suffix = "" if self._local_source_total_known.get(source_type, True) else "+"
         return f"{count}{suffix}"
 
-    def _source_recent_value(self, source_type: str) -> str:
-        titles = self._source_sample_titles(source_type)
-        if not titles:
-            return "none"
-        return self._hub_table_cell(titles[0])
+    def _hub_recent_items(self) -> list[tuple[str, str, str, str]]:
+        """One recent item per source for the landing hub (task-2238).
+
+        Returns:
+            ``(source_type, record_id, title, label)`` tuples in the hub's
+            source order, for sources whose most recent record resolves an
+            id -- empty sources are skipped, so a fresh library yields an
+            empty list (the old line's None-when-empty contract).
+        """
+        items: list[tuple[str, str, str, str]] = []
+        for source_type, label in (
+            ("notes", "Notes"),
+            ("media", "Media"),
+            ("conversations", "Conversations"),
+        ):
+            records = self._local_source_records.get(source_type) or ()
+            if not records:
+                continue
+            record_id = self._source_record_id(records[0])
+            if not record_id:
+                continue
+            title = self._hub_table_cell(self._source_title(source_type, records[0]))
+            items.append((source_type, record_id, title, label))
+        return items
 
     def _hub_counts_line(self) -> str:
         """Per-source counts for the F-010 landing hub.
@@ -3480,23 +3577,6 @@ class LibraryScreen(BaseAppScreen):
             f"Notes {value('notes')} · Media {value('media')} · "
             f"Conversations {value('conversations')}"
         )
-
-    def _hub_recents_line(self) -> str | None:
-        """Recent-item line for the F-010 landing hub, or None when the
-        library has no content yet (a bare 'Recent: none ×3' line on a
-        fresh install would read as broken, not empty)."""
-        parts = [
-            f"{label}: {recent}"
-            for label, source_type in (
-                ("Notes", "notes"),
-                ("Media", "media"),
-                ("Conversations", "conversations"),
-            )
-            if (recent := self._source_recent_value(source_type)) != "none"
-        ]
-        if not parts:
-            return None
-        return f"Recent — {' · '.join(parts)}"
 
     @classmethod
     def _source_record_id(cls, record: Mapping[str, Any]) -> str | None:
@@ -4455,28 +4535,24 @@ class LibraryScreen(BaseAppScreen):
                         markup=False,
                     )
                     # F-010: the landing canvas is the wired hub, not a
-                    # one-line void -- per-source counts and recents from
-                    # the existing helpers, plus quiet next-action rows
-                    # that dispatch exactly like their rail-row
-                    # counterparts (same `@on(.library-hub-action)` path,
-                    # same dirty-edit guards).
+                    # one-line void -- per-source counts from the existing
+                    # helpers, quiet next-action rows that dispatch exactly
+                    # like their rail-row counterparts (same
+                    # `@on(.library-hub-action)` path, same dirty-edit
+                    # guards), and (task-2238) the recents as one clickable
+                    # row per source, jumping straight into the item via
+                    # the same route the Search/RAG "Open" action uses.
                     yield Static(
                         self._hub_counts_line(),
                         id="library-hub-counts",
                         classes="library-hub-meta",
                         markup=False,
                     )
-                    recents_line = self._hub_recents_line()
-                    if recents_line is not None:
-                        yield Static(
-                            recents_line,
-                            id="library-hub-recents",
-                            classes="library-hub-meta",
-                            markup=False,
-                        )
                     with Horizontal(id="library-hub-actions", classes="ds-toolbar"):
                         for label, tooltip, row_id, target_id, button_id in (
-                            ("Import media", "Import media files into the Library.",
+                            # task-2235 (R2): the canonical ingest CTA label
+                            # and tooltip match the rail-top primary button.
+                            ("Add content…", "Add files, links, and transcripts to your Library.",
                              LIBRARY_ROW_INGEST_MEDIA, "ingest-media",
                              "library-hub-action-import"),
                             ("Search", "Search everything in the Library.",
@@ -4499,6 +4575,21 @@ class LibraryScreen(BaseAppScreen):
                             action.target_kind = "canvas"
                             action.target_id = target_id
                             yield action
+                    # task-2238 (R2): the triad stays on top; the recents
+                    # follow as clickable rows, not one dim text line.
+                    for source_type, record_id, title, source_label in (
+                        self._hub_recent_items()
+                    ):
+                        recent = Button(
+                            f"{source_label} · {escape_markup(title)}",
+                            id=f"library-hub-recent-{source_type}",
+                            classes="library-hub-recent console-action-subdued",
+                            compact=True,
+                            tooltip=f"Open {source_label.lower()}: {title}",
+                        )
+                        recent.source_type = source_type
+                        recent.record_id = record_id
+                        yield recent
 
     def _build_library_shell_input(self) -> LibraryShellInput:
         """Build the pure shell input from live counts and runtime state.
@@ -7567,6 +7658,26 @@ class LibraryScreen(BaseAppScreen):
         """Jump from the rail-top Ingest button to the Ingest media canvas."""
         event.stop()
         await self._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
+
+    @on(Button.Pressed, ".library-hub-recent")
+    def _on_library_hub_recent(self, event: Button.Pressed) -> None:
+        """Open a landing-hub recent row straight into its item (task-2238).
+
+        The row carries the same (source_type, record_id) pair the
+        Search/RAG evidence "Open" action resolves, so both share
+        `_open_library_item_by_id`'s route (dirty-edit guards included).
+        Runs as a worker because that route awaits the note/prompt flushes.
+        """
+        event.stop()
+        source_type = str(getattr(event.button, "source_type", "") or "")
+        record_id = str(getattr(event.button, "record_id", "") or "")
+        if not source_type or not record_id:
+            return
+        self.run_worker(
+            self._open_library_item_by_id(source_type, record_id),
+            exclusive=True,
+            group="library_hub_open_recent",
+        )
 
     @on(Button.Pressed, "#library-notes-source-files")
     async def _show_library_file_notes(self, event: Button.Pressed) -> None:

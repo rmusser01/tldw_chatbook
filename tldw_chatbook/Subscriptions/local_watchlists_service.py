@@ -26,6 +26,7 @@ from .item_persist import (
 from .watchlist_content_alert_service import WatchlistContentAlertService
 from .watchlist_filter_service import WatchlistFilterService
 from .watchlist_normalizers import (
+    WATCHLIST_NAME_SEPARATOR,
     build_watchlist_item_id,
     normalize_local_subscription_row,
     normalize_watchlist_alert_rule,
@@ -269,6 +270,34 @@ def _max_withheld_percentage(dispositions: list[dict[str, Any]]) -> float | None
 class LocalWatchlistsService:
     """Thin adapter over `SubscriptionsDB` for the shared watchlists seam."""
 
+    #: TASK-2305. Every local run read goes through this projection, so a run
+    #: arrives already knowing which source produced it and which watchlists
+    #: that source belongs to. `local_watchlist_runs` stores only a
+    #: `source_id`, and nothing on the Runs pane's path had ever resolved it
+    #: -- so a whole run history rendered as "Untitled". `LEFT JOIN`, not
+    #: `JOIN`: a run whose source cannot be resolved must still be listed
+    #: (unnameable is a better history than absent).
+    #:
+    #: The watchlist names arrive as one `WATCHLIST_NAME_SEPARATOR`-joined
+    #: column rather than a second query per run, ordered by name so the
+    #: display is stable between reads.
+    _RUN_SELECT = f"""
+        SELECT r.*,
+               s.name AS source_title,
+               (
+                   SELECT group_concat(name, '{WATCHLIST_NAME_SEPARATOR}')
+                   FROM (
+                       SELECT w.name AS name
+                       FROM watchlist_sources ws
+                       JOIN watchlists w ON w.id = ws.watchlist_id
+                       WHERE ws.subscription_id = r.source_id
+                       ORDER BY w.name
+                   )
+               ) AS watchlist_names
+        FROM local_watchlist_runs r
+        LEFT JOIN subscriptions s ON s.id = r.source_id
+    """
+
     def __init__(
         self,
         *,
@@ -329,16 +358,53 @@ class LocalWatchlistsService:
         status: str | None = None,
         limit: int = 100,
         offset: int = 0,
+        run_id: Any = None,
     ) -> list[dict[str, Any]]:
-        """List watchlist items from the local subscriptions database."""
+        """List watchlist items from the local subscriptions database.
+
+        TASK-2301. `status=None` used to be collapsed to `"new"` here, so
+        "list every item" was not expressible through this API at all: the
+        Items tab asks with `status=None` and got a new-only list back, which
+        its own "All statuses" filter then had nothing else to filter. An
+        ingested or ignored item was not stale in that result -- it was
+        absent, and therefore unreachable anywhere in the tab. `None` now
+        means what it says and reaches `get_new_items(status=None)`, which
+        drops the status predicate entirely.
+
+        Review wave, Minor 7 -- the empty string changed meaning too, and it
+        is called out here rather than glossed. Before TASK-2301 any falsey
+        `status` (`None` OR `""`) became `"new"`; now any falsey `status`
+        means EVERY status. `""` is deliberately kept on the same side as
+        `None`: it is not a status any row holds, so the alternative would be
+        a query guaranteed to return nothing. Audited at the time of the
+        change -- `WatchlistsCollectionsScreen._load_items` is the only caller
+        in the tree (via `WatchlistScopeService.list_items` /
+        `WatchlistsBackendController.list_items`) and it passes `None` or a
+        real status, never `""` -- so nothing relied on the old default. A
+        future caller that wants the unread bucket must now ask for it by
+        name.
+
+        Args:
+            source_id: Restrict to one source, or `None` for all.
+            status: A single item status. Falsey (`None` or `""`) means every
+                status -- NOT `"new"`, which is what it used to mean.
+            limit: Page size.
+            offset: Page offset.
+            run_id: Restrict to the items one run produced (TASK-2306), or
+                `None` for every run's.
+
+        Returns:
+            Normalized item dicts for the requested window.
+        """
         db = self._db()
         subscription_id = int(source_id) if source_id is not None else None
-        status_filter = status if status else "new"
+        status_filter = status if status else None
         fetch_limit = int(limit) + int(offset)
         rows = db.get_new_items(
             subscription_id=subscription_id,
             status=status_filter,
             limit=fetch_limit,
+            run_id=int(run_id) if run_id is not None else None,
         )
         normalized = [normalize_watchlist_item("local", row) for row in rows]
         return normalized[int(offset) : int(offset) + int(limit)]
@@ -593,6 +659,18 @@ class LocalWatchlistsService:
             )
             stats["items_ingested"] = len(kept_items)
             stats["new_items_found"] = len(kept_items)
+            # No separate `items_filtered` here (review wave, Minor 3). It was
+            # written for one round and removed: `items_found` above is the
+            # ONLY writer of that key in the whole package, so on every row
+            # this pipeline can produce the recorded value is exactly
+            # `items_found - items_ingested`, which is what
+            # `_run_accounting` derives. The recorded form was justified by an
+            # injected `run_executor` reporting a feed's total rather than
+            # what it handed over -- but the only production injection point
+            # is `WatchlistPreviewService`, which previews and records no run.
+            # Rather than keep a key that cannot differ (and a test pinning a
+            # shape nothing emits), the derivation is the single answer until
+            # an executor actually diverges.
 
             self._upsert_subscription_items(db, source_id, int(run_id), kept_items)
             # task-1394 fix wave (review Finding #1): a `url_list`/`sitemap`
@@ -703,51 +781,44 @@ class LocalWatchlistsService:
         values: list[Any] = []
         resolved_source_id = source_id if source_id is not None else job_id
         if resolved_source_id is not None:
-            filters.append("source_id = ?")
+            filters.append("r.source_id = ?")
             values.append(int(resolved_source_id))
         where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
         values.extend([int(limit), int(offset)])
         cursor = db.conn.cursor()
         cursor.execute(
             f"""
-            SELECT * FROM local_watchlist_runs
+            {self._RUN_SELECT}
             {where_clause}
-            ORDER BY id DESC
+            ORDER BY r.id DESC
             LIMIT ? OFFSET ?
             """,
             values,
         )
-        return [
-            normalize_watchlist_run("local", self._run_row_to_dict(row))
-            for row in cursor.fetchall()
-        ]
+        return [self._normalize_run_row(row) for row in cursor.fetchall()]
 
     def list_home_run_snapshot(self, *, limit: int = 20) -> list[dict[str, Any]]:
         """Return recent local watchlist runs from a synchronous Home-safe path."""
         db = self._db()
         cursor = db.conn.cursor()
         cursor.execute(
-            """
-            SELECT local_watchlist_runs.*, subscriptions.name AS source_title
-            FROM local_watchlist_runs
-            LEFT JOIN subscriptions ON subscriptions.id = local_watchlist_runs.source_id
-            ORDER BY local_watchlist_runs.id DESC
+            f"""
+            {self._RUN_SELECT}
+            ORDER BY r.id DESC
             LIMIT ?
             """,
             (int(limit),),
         )
-        return [self._normalize_home_run_snapshot(row) for row in cursor.fetchall()]
+        return [self._normalize_run_row(row) for row in cursor.fetchall()]
 
     async def get_run(self, run_id: Any) -> dict[str, Any]:
         db = self._db()
         cursor = db.conn.cursor()
-        cursor.execute(
-            "SELECT * FROM local_watchlist_runs WHERE id = ?", (int(run_id),)
-        )
+        cursor.execute(f"{self._RUN_SELECT} WHERE r.id = ?", (int(run_id),))
         row = cursor.fetchone()
         if row is None:
             raise KeyError(f"Watchlist run not found: {run_id}")
-        return normalize_watchlist_run("local", self._run_row_to_dict(row))
+        return self._normalize_run_row(row)
 
     async def get_run_detail(self, run_id: Any, **_: Any) -> dict[str, Any]:
         return await self.get_run(run_id)
@@ -1497,14 +1568,31 @@ class LocalWatchlistsService:
             "log_text": payload.get("log_text"),
             "created_at": payload.get("created_at"),
             "updated_at": payload.get("updated_at"),
+            # TASK-2305: joined identity. Carried through the row dict so
+            # `normalize_watchlist_run` -- which also serves the server
+            # backend, where neither exists -- reads them the same way it
+            # reads every other field.
+            "source_title": payload.get("source_title"),
+            "watchlist_names": payload.get("watchlist_names"),
         }
 
-    def _normalize_home_run_snapshot(self, row: Mapping[str, Any]) -> dict[str, Any]:
+    def _normalize_run_row(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        """Normalize one `_RUN_SELECT` row.
+
+        The single normalizer for every local run read (`list_runs`,
+        `get_run`, `list_home_run_snapshot`). Before TASK-2305 only the Home
+        snapshot resolved a run's source name, with its own hand-written JOIN,
+        and the Runs pane's own list did not -- so the Runs tab showed
+        "Untitled" for every run while Home, reading the same table, showed
+        the real name. One query and one normalizer is what keeps those two
+        from drifting again.
+        """
         payload = dict(row)
         normalized = normalize_watchlist_run("local", self._run_row_to_dict(payload))
-        source_title = payload.get("source_title")
+        source_title = normalized.get("source_title")
         if source_title:
-            normalized["source_title"] = source_title
+            # Home's active-work rail reads `title` (see
+            # `HomeActiveWorkAdapter._local_watchlist_run_items`).
             normalized["title"] = source_title
         return normalized
 

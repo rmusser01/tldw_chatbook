@@ -343,7 +343,12 @@ def test_stats_text_without_dispositions_key_is_unchanged():
         "filtered_count": 2,
         "error_count": 0,
     }
+    # The `Source:` line is task-2305's -- a run that could not name its
+    # source was the other half of the same UAT finding. What this test pins
+    # is that no empty `Checks:` line is tacked on for a run with no
+    # dispositions at all.
     assert RunsPane._stats_text(run) == (
+        "Source: AI News RSS\n"
         "Status: completed\n"
         "Started: 2026-07-18 10:00\n"
         "Duration: 5m\n"
@@ -396,3 +401,162 @@ async def test_run_selection_highlight_moves_without_rebuilding_the_table(sample
         assert pane.query_one("#runs-table", DataTable) is table
         assert not _cell_style(table, "run-1", 0).reverse
         assert _cell_style(table, "run-2", 0).reverse
+
+
+# --- TASK-2306: the run-detail region follows the selection -----------------
+
+
+@pytest.mark.asyncio
+async def test_selecting_a_run_repaints_the_detail_stats_in_place(sample_runs):
+    """F34's render half, at the unit.
+
+    `selected_run` is not `recompose=True` (and must not become one -- a
+    recompose rebuilds `#runs-table` under the cursor the click just moved), so
+    the detail block is only ever written by `compose()` unless the watcher
+    pushes it. It did not, so `#runs-detail-stats` kept the "No run selected."
+    the FIRST compose wrote and the Runs tab had a permanently dead detail.
+    """
+    app = RunsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RunsPane)
+        pane.runs = sample_runs
+        await pilot.pause()
+        stats = pane.query_one("#runs-detail-stats", Static)
+        table = pane.query_one("#runs-table", DataTable)
+        assert "No run selected" in str(stats.renderable)
+
+        pane.select_run_by_id("run-2")
+        await pilot.pause()
+
+        assert "No run selected" not in str(stats.renderable)
+        assert "Status: running" in str(stats.renderable)
+        assert "Found: 5" in str(stats.renderable)
+        assert pane.query_one("#runs-detail-stats", Static) is stats
+        assert pane.query_one("#runs-table", DataTable) is table, (
+            "the repaint must not rebuild the table the user just clicked"
+        )
+
+
+@pytest.mark.asyncio
+async def test_run_items_and_logs_land_in_the_mounted_widgets(sample_runs):
+    """Both detail reactives are pushed in place, not composed."""
+    app = RunsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RunsPane)
+        pane.runs = sample_runs
+        pane.select_run_by_id("run-1")
+        await pilot.pause()
+        items_table = pane.query_one("#runs-detail-items", DataTable)
+        logs = pane.query_one("#runs-detail-logs", Static)
+
+        pane.run_items = [{"title": "Item A", "status": "new", "alert_count": 3}]
+        pane.run_logs = "Scrape started"
+        await pilot.pause()
+
+        assert pane.query_one("#runs-detail-items", DataTable) is items_table
+        assert items_table.row_count == 1
+        assert str(items_table.get_cell_at((0, 2))) == "3"
+        assert pane.query_one("#runs-detail-logs", Static) is logs
+        assert "Scrape started" in str(logs.renderable)
+
+
+@pytest.mark.asyncio
+async def test_changing_the_selection_drops_the_previous_runs_detail(sample_runs):
+    """A run's items and log must never outlive the run they describe."""
+    app = RunsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RunsPane)
+        pane.runs = sample_runs
+        pane.select_run_by_id("run-1")
+        pane.run_items = [{"title": "Item A", "status": "new", "alert_count": 0}]
+        pane.run_logs = "Run one log"
+        await pilot.pause()
+        assert pane.query_one("#runs-detail-items", DataTable).row_count == 1
+
+        pane.select_run_by_id("run-2")
+        await pilot.pause()
+
+        assert pane.run_items == []
+        assert pane.run_logs == ""
+        assert pane.query_one("#runs-detail-items", DataTable).row_count == 0
+        assert "Run one log" not in str(
+            pane.query_one("#runs-detail-logs", Static).renderable
+        )
+
+
+# --- TASK-2305: a run row names its source (and watchlist) ------------------
+
+
+@pytest.mark.asyncio
+async def test_a_run_row_names_its_source_and_its_watchlist():
+    """F32: a history of "Untitled" rows is unusable.
+
+    The row is the only place a run is identified, and `local_watchlist_runs`
+    stores nothing but a `source_id` -- so the name has to arrive on the
+    record (TASK-2305's `_RUN_SELECT`) and be rendered here.
+    """
+    app = RunsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RunsPane)
+        pane.runs = [
+            {
+                "id": "run-9",
+                "source_title": "Hacker News",
+                "watchlist_names": ["Morning read"],
+                "status": "completed",
+                "found_count": 30,
+            }
+        ]
+        await pilot.pause()
+
+        table = pane.query_one("#runs-table", DataTable)
+        assert str(table.get_cell_at((0, 0))) == "Hacker News · Morning read"
+        assert str(table.get_cell_at((0, 4))) == "30"
+
+
+def test_a_run_row_abbreviates_extra_watchlists():
+    """`DataTable` sizes a column to its widest cell, so the join is bounded."""
+    cell = RunsPane._run_identity(
+        {
+            "source_title": "Hacker News",
+            "watchlist_names": ["Morning read", "Security", "Ops"],
+        }
+    )
+
+    assert cell == "Hacker News · Morning read +2"
+
+
+def test_a_run_whose_source_cannot_be_resolved_still_renders():
+    assert RunsPane._run_identity({}) == "Untitled"
+    assert RunsPane._run_identity({"source_title": "Feed"}) == "Feed"
+
+
+def test_the_detail_block_lists_every_watchlist_not_just_the_first():
+    """The row abbreviates for width; the detail block has no such constraint."""
+    text = RunsPane._stats_text(
+        {
+            "source_title": "Hacker News",
+            "watchlist_names": ["Morning read", "Security"],
+            "status": "completed",
+            "found_count": 30,
+        }
+    )
+
+    assert text.startswith(
+        "Source: Hacker News\nWatchlists: Morning read, Security\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_run_identity_reaches_the_table_inert():
+    """Source and watchlist names are user-typed; `DataTable` parses markup."""
+    app = RunsPaneHarness()
+    hostile = "[bold red]Feed[/]"
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RunsPane)
+        pane.runs = [{"id": "run-x", "source_title": hostile, "status": "completed"}]
+        await pilot.pause()
+
+        cell = pane.query_one("#runs-table", DataTable).get_cell_at((0, 0))
+        assert cell.plain == hostile
+        assert cell.spans == []

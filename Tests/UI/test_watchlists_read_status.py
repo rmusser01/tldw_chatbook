@@ -450,23 +450,36 @@ async def test_a_cancelled_mark_read_still_leaves_the_cached_dict_coherent():
 
         # And the screen's own cache, reloaded by Ignore's `refresh=True`
         # tail, must end up coherent with that same final database state.
-        # `_load_items()` always queries `status=None`, which
-        # `LocalWatchlistsService.list_items` collapses to `status="new"` --
-        # so an item that is no longer "new" (whether "ingested" or
-        # "ignored") is simply ABSENT from `_loaded_items`, not present with
-        # some other status string. Coherence here means the reload has
-        # genuinely happened and agrees the item is no longer new -- not
-        # that it is still sitting in the cache believing itself "new" (the
-        # pre-write value) or "ingested" (the superseded write's value).
+        #
+        # TASK-2301 changed what "coherent" can be asserted as -- and made it
+        # stronger. This used to assert the item was ABSENT from
+        # `_loaded_items`, because `_load_items()` queries `status=None` and
+        # `LocalWatchlistsService.list_items` collapsed that to
+        # `status="new"`, so a triaged item fell out of the cache entirely
+        # and "coherent" could only mean "no longer here". That collapse WAS
+        # the defect (the Items tab could not show a triaged item at all), so
+        # the cache now carries every status and this can name the status the
+        # item must hold: `ignored` -- the last dispatched action, not the
+        # superseded Ingest's `ingested`, not the pre-write `new`.
+        def _cached_status():
+            return next(
+                (
+                    row.get("status")
+                    for row in screen._loaded_items
+                    if row.get("item_id") == item_id
+                ),
+                None,
+            )
+
         for _ in range(40):
             await pilot.pause(0.05)
-            if not any(row.get("item_id") == item_id for row in screen._loaded_items):
+            if _cached_status() == "ignored":
                 break
-        assert not any(row.get("item_id") == item_id for row in screen._loaded_items), (
-            "the reloaded Items cache must agree the item is no longer "
-            "'new' -- coherent with the database's final ('ignored') "
-            "status, not stuck on the superseded Ingest's write or the "
-            "original pre-write 'new'"
+        assert _cached_status() == "ignored", (
+            "the reloaded Items cache must agree with the database's final "
+            "('ignored') status -- not the superseded Ingest's write, not "
+            "the original pre-write 'new', and not missing from the cache "
+            "altogether"
         )
 
 

@@ -408,6 +408,18 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         "PDF ingestion",
         OWNER_LIBRARY_MEDIA,
     ),
+    "realtime": _feature(
+        "realtime",
+        "Realtime voice engine",
+        AREA_MEDIA,
+        # Every package the engine actually needs at runtime: the
+        # WebSocket transport, plus the capture/playback backends the mic
+        # tap and the streaming sink refuse to run without.
+        ("websockets", "sounddevice", "numpy"),
+        "Console > hands-free (Ctrl+Shift+H)",
+        "Realtime voice conversation",
+        OWNER_LIBRARY_MEDIA,
+    ),
     "speech_recording": _feature(
         "speech_recording",
         "Speech recording",
@@ -459,6 +471,15 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         ("faster-whisper",),
         "Library > Import/Export",
         "Faster Whisper transcription",
+        OWNER_LIBRARY_MEDIA,
+    ),
+    "transcription_transcribe_cpp": _feature(
+        "transcription_transcribe_cpp",
+        "transcribe.cpp local GGUF transcription",
+        AREA_MEDIA,
+        ("transcribe_cpp",),
+        "Library > Import/Export",
+        "transcribe.cpp transcription",
         OWNER_LIBRARY_MEDIA,
     ),
     "transcription_lightning_whisper": _feature(

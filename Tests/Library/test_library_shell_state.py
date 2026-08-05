@@ -115,7 +115,7 @@ def test_shell_sections_rows_and_targets_are_fixed():
     assert all(r.target_kind == "handoff" for r in study.rows)
     assert [r.target_id for r in study.rows] == ["study", "flashcards", "quizzes"]
     ingest = shell.sections[3]
-    assert [r.title for r in ingest.rows] == ["Import media", "Export"]
+    assert [r.title for r in ingest.rows] == ["Add content…", "Export"]
     assert (ingest.rows[0].target_kind, ingest.rows[0].target_id) == (
         "canvas",
         "ingest-media",
@@ -139,18 +139,20 @@ def test_empty_selection_yields_landing_canvas():
 
 def test_jargon_rows_carry_plain_language_subtitles():
     """F-013: the load-bearing jargon rows get a one-line plain-language
-    gloss; already-plain rows stay unglossed so the rail doesn't stutter."""
+    gloss; already-plain rows stay unglossed so the rail doesn't stutter.
+    task-2236 (R2): every gloss fits the rail's realistic width budget
+    (<=25 content cells at 170x50, title and count included)."""
     shell = build_library_shell_state(LibraryShellInput())
     subtitles = {
         row.row_id: row.subtitle
         for section in shell.sections
         for row in section.rows
     }
-    assert subtitles["browse-media"] == "imported files & transcripts"
-    assert subtitles[LIBRARY_ROW_BROWSE_PROMPTS] == "saved instructions for the AI"
-    assert subtitles[LIBRARY_ROW_BROWSE_SKILLS] == "installable AI abilities"
-    assert subtitles["browse-collections"] == "saved groups of content"
-    assert subtitles["browse-search"] == "search everything"
+    assert subtitles["browse-media"] == "your files"
+    assert subtitles[LIBRARY_ROW_BROWSE_PROMPTS] == "AI asks"
+    assert subtitles[LIBRARY_ROW_BROWSE_SKILLS] == "AI add-ons"
+    assert subtitles["browse-collections"] == "item sets"
+    assert subtitles["browse-search"] == "find all"
     # Plain-language rows carry no gloss.
     assert subtitles["browse-conversations"] == ""
     assert subtitles["browse-notes"] == ""
