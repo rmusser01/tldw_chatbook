@@ -74,6 +74,7 @@ from tldw_chatbook.Chat.console_skill_resolver import (
     find_embedded_mentions,
     resolve_skill_command,
 )
+from tldw_chatbook.Chat.prompt_history import PromptHistory
 from loguru import logger
 
 from tldw_chatbook.Agents.builtin_tool_gate import build_builtin_gate
@@ -952,6 +953,13 @@ class ConsoleChatController:
         #: persisted, run about to start) so the composer can clear immediately
         #: instead of holding the sent text for the whole run.
         self.on_submission_accepted: Callable[[], None] | None = None
+        #: TASK-1364: optional shared JSONL prompt-history store, assigned by
+        #: the owning screen (mirroring ``on_submission_accepted``). An
+        #: ACCEPTED send's cleaned draft is appended here -- never a blocked,
+        #: refused, or empty (attachment-only) one -- so the composer's ghost
+        #: text and Up/Down recall can offer it later. ``None`` (e.g. in
+        #: controller-only tests) disables recording.
+        self.prompt_history: PromptHistory | None = None
         # Task 3b: PER-SESSION maps, mirroring `_run_states`' own keying --
         # two sessions can each have their own in-flight stream/cancel state
         # without clobbering each other. Written/cleared at the SAME
@@ -1890,6 +1898,12 @@ class ConsoleChatController:
         # never reach this hook -- this ordering just extends that same
         # rule to cover it too.
         self._notify_submission_accepted()
+        # TASK-1364: record the accepted send to the shared prompt history.
+        # Same placement rule as the accepted-hook above: only a send that is
+        # confirmed to proceed is recorded -- every `_block`/refusal path
+        # returns before this point, and `_record_prompt_history` itself
+        # skips empty (attachment-only) drafts.
+        await self._record_prompt_history(clean_draft)
         # TASK-485: the turn is confirmed to proceed — flush the deferred USER
         # echo to durable storage now (creating the conversation), BEFORE the
         # assistant row, so a reload shows the user's prompt ahead of its reply.
@@ -5908,6 +5922,27 @@ class ConsoleChatController:
             # The hook is a UI convenience (composer clearing); a failure there
             # must never abort an already-accepted provider run.
             pass
+
+    async def _record_prompt_history(self, text: str) -> None:
+        """Append an accepted send's draft to the shared prompt history.
+
+        Best-effort (TASK-1364): ``PromptHistory.append`` already logs and
+        swallows its own IO failures, and the guard here keeps even an
+        unexpected raise from breaking an already-accepted run. Empty or
+        whitespace-only drafts (attachment-only sends) record nothing.
+
+        Args:
+            text: The cleaned draft text that was just accepted for sending.
+        """
+        history = self.prompt_history
+        if history is None or not text.strip():
+            return
+        try:
+            await history.append(text)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Prompt-history recording failed for an accepted send."
+            )
 
     _IMAGE_REJECTION_RECOVERY_HINT = (
         " This conversation includes an image attachment; if the model can't "
