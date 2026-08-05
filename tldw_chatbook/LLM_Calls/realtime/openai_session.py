@@ -234,7 +234,7 @@ class OpenAIRealtimeSession:
         if request_response:
             self._enqueue({"type": "response.create"})
 
-    def cancel_response(self, played_ms: int) -> None:
+    def cancel_response(self, played_ms: int) -> bool:
         """Cancel the assistant's in-progress response (barge-in).
 
         No-ops (logged, not raised) if no response is currently active --
@@ -254,14 +254,20 @@ class OpenAIRealtimeSession:
                 have already been played to the user.
 
         Returns:
-            None.
+            True when a cancel was actually enqueued, False for the
+            no-active-response no-op. Reported so a caller can record
+            WHICH branch a barge-in took: "the user barged and the
+            provider was told" and "the user barged into a response that
+            had already ended" are different events, and from outside
+            this class they are otherwise indistinguishable (a live-gate
+            incident was spent guessing which had happened).
         """
         if not self._response_active:
             logger.debug(
                 "OpenAIRealtimeSession.cancel_response: no active response, "
                 f"skipping: op=cancel_response played_ms={played_ms}"
             )
-            return
+            return False
         self._enqueue({"type": "response.cancel"})
         item_id = self._current_assistant_item_id
         if item_id is not None:
@@ -273,6 +279,7 @@ class OpenAIRealtimeSession:
                     "audio_end_ms": played_ms,
                 }
             )
+        return True
 
     async def close(self) -> None:
         """Close the session and release its transport. Idempotent.

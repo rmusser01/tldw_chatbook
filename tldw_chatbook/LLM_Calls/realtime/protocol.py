@@ -137,13 +137,19 @@ class RealtimeSession(Protocol):
         """
         ...
 
-    def cancel_response(self, played_ms: int) -> None:
+    def cancel_response(self, played_ms: int) -> bool:
         """Cancel the assistant's in-progress response (barge-in).
 
         Args:
             played_ms: Milliseconds of the current response's audio that
                 have already been played to the user, so the provider can
                 truncate its record of what was actually heard.
+
+        Returns:
+            True when a cancel was actually sent, False when there was no
+            active response to cancel. Implementations that cannot tell
+            the difference should return True; the value exists so callers
+            can RECORD which happened, never to gate behavior on.
         """
         ...
 

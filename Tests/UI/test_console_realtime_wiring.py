@@ -19,6 +19,7 @@ import asyncio
 import logging
 import threading
 import time
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
@@ -1333,11 +1334,16 @@ async def test_acoustic_mode_never_gates_the_mic(monkeypatch):
         assert b"live frame" in session.audio_frames
 
         # Server-side VAD barges in, in this mode only.
-        session.fire_speech_started()
-        await _wait_for(
-            lambda: console._console_realtime.controller.state == "live", pilot
-        )
+        with _realtime_diagnostics() as capture:
+            session.fire_speech_started()
+            await _wait_for(
+                lambda: console._console_realtime.controller.state == "live", pilot
+            )
         assert session.cancels == [100]
+        # The OTHER trigger, recorded as itself: a barge report that could
+        # not tell VAD from a keypress would be useless in acoustic mode,
+        # where both are live.
+        assert _fields_for(capture, "realtime_barge")["initiator"] == "speech"
 
 
 # ---------------------------------------------------------------------------
@@ -1558,6 +1564,120 @@ async def test_realtime_lifecycle_is_persistently_logged(monkeypatch):
     ), messages
     # Never the key, in the one log that is written to disk.
     assert not any(_KEY_FRAGMENT in message for message in messages)
+
+
+@contextmanager
+def _realtime_diagnostics():
+    """Capture the persistent-diagnostics records for the realtime logger."""
+    capture = _DiagnosticsCapture()
+    diagnostics_logger = logging.getLogger("tldw_chatbook.diagnostics.realtime")
+    diagnostics_logger.addHandler(capture)
+    previous_level = diagnostics_logger.level
+    diagnostics_logger.setLevel(logging.DEBUG)
+    try:
+        yield capture
+    finally:
+        diagnostics_logger.removeHandler(capture)
+        diagnostics_logger.setLevel(previous_level)
+
+
+def _event_names(capture: "_DiagnosticsCapture") -> list[str]:
+    names = []
+    for record in capture.records:
+        message = record.getMessage()
+        assert message.startswith("event="), message
+        names.append(message.split(" ", 1)[0].removeprefix("event="))
+    return names
+
+
+def _fields_for(capture: "_DiagnosticsCapture", event: str) -> dict[str, str]:
+    for record in capture.records:
+        message = record.getMessage()
+        if message.startswith(f"event={event} "):
+            return dict(
+                part.split("=", 1) for part in message.split(" ") if "=" in part
+            )
+    raise AssertionError(f"{event} never fired: {_event_names(capture)}")
+
+
+@pytest.mark.asyncio
+async def test_a_whole_turn_is_reconstructable_from_the_persistent_log(monkeypatch):
+    """Owner gate round 4: a turn that never produced a reply left NO trace
+    -- only entry/ready/exit persisted, so the incident could not be
+    diagnosed from the log at all. Every turn-level transition now writes
+    one line through the same admitted logger."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    with _realtime_diagnostics() as capture:
+        async with host.run_test(size=(140, 42)) as pilot:
+            console = await _mounted_console(host, pilot)
+            session = await _enter_live_realtime(console, pilot, rig)
+
+            await _drive_to_speaking(console, pilot, session, audio=b"\x00" * 4800)
+            session.fire_reply_done()
+            await pilot.pause()
+            rig.sink.finish_playback()
+            await _wait_for(
+                lambda: console._console_realtime.controller.state == "live", pilot
+            )
+
+    names = _event_names(capture)
+    assert all(
+        record.name == "tldw_chatbook.diagnostics.realtime" for record in capture.records
+    )
+    turn = [name for name in names if name not in {"realtime_entry", "realtime_ready"}]
+    assert turn[:4] == [
+        "realtime_turn_committed",
+        "realtime_reply_started",
+        "realtime_first_audio",
+        "realtime_reply_done",
+    ], names
+
+    # The generation half deferred; the playback half fired the FSM. That
+    # distinction IS the third live-gate defect, and it must be readable
+    # from the log without the code in hand.
+    done_records = [
+        message
+        for message in (record.getMessage() for record in capture.records)
+        if message.startswith("event=realtime_reply_done ")
+    ]
+    assert len(done_records) == 2, done_records
+    assert "initiator=generation" in done_records[0] and "decision=deferred" in (
+        done_records[0]
+    )
+    assert "initiator=playback" in done_records[1] and "decision=fired" in (
+        done_records[1]
+    )
+
+
+@pytest.mark.asyncio
+async def test_barge_diagnostics_carry_the_trigger_and_the_state(monkeypatch):
+    """The owner's report was "keyboard barge, then no reply". Which input
+    barged, from which state, how much audio had played, and whether the
+    provider was actually told -- all of it has to be in the log."""
+    _patch_realtime_config(monkeypatch)
+    app, host = _ready_host()
+    rig = _install_realtime_fakes(app)
+
+    with _realtime_diagnostics() as capture:
+        async with host.run_test(size=(140, 42)) as pilot:
+            console = await _mounted_console(host, pilot)
+            session = await _enter_live_realtime(console, pilot, rig)
+
+            await _drive_to_speaking(console, pilot, session, audio=b"\x00" * 48000)
+            await pilot.press("x")
+            await _wait_for(
+                lambda: console._console_realtime.controller.state == "live", pilot
+            )
+
+    barge = _fields_for(capture, "realtime_barge")
+    assert barge["initiator"] == "keypress"
+    assert barge["phase"] == "speaking"
+    assert barge["duration_ms"] == "1000"
+    assert "realtime_cancel_sent" in _event_names(capture)
 
 
 # ---------------------------------------------------------------------------

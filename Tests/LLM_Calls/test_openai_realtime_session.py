@@ -450,7 +450,7 @@ async def test_cancel_response_sends_cancel_then_truncate_with_played_ms(fake_se
     # cancel.
     await asyncio.sleep(0.1)
 
-    session.cancel_response(1234)
+    assert session.cancel_response(1234) is True
 
     await scripted.wait_done()
 
@@ -841,7 +841,10 @@ async def test_cancel_response_noops_when_no_response_active(fake_server):
         fake_server,
         [("expect_none", None)],
     )
-    session.cancel_response(500)
+    # The return value reports WHICH branch ran, so a caller can log
+    # "there was nothing to cancel" instead of guessing; asserted here so
+    # the guard cannot be neutered while the wire assertion stays green.
+    assert session.cancel_response(500) is False
     await scripted.wait_done()
 
 
@@ -867,7 +870,7 @@ async def test_cancel_response_noops_after_response_already_done(fake_server):
     # Let the client fully process response.done (and flip _response_active
     # to False) before attempting the stale cancel.
     await asyncio.sleep(0.1)
-    session.cancel_response(500)
+    assert session.cancel_response(500) is False
     await scripted.wait_done()
 
 

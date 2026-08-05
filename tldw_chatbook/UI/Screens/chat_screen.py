@@ -1011,6 +1011,11 @@ class ConsoleRealtimeSession:
         barged: True once the user cut this reply short. Mirrors Task 2's
             "a cancelled response fires no reply-done": the aborted pump's
             completion must report nothing.
+        barge_trigger: Which input drove the barge-in currently being
+            handled -- `"keypress"` or `"speech"`. Recorded here because
+            the `SilenceSpeech` intent is shared by both and carries no
+            trigger of its own, and "which one fired" is the first
+            question any barge-in report raises.
         user_row_id: The transcript row created at turn-commit, waiting for
             its input transcript to land.
         assistant_row_id: The current reply's transcript row, or None
@@ -1047,6 +1052,7 @@ class ConsoleRealtimeSession:
     generation_done: bool = False
     playback_pending: bool = False
     barged: bool = False
+    barge_trigger: str = "unknown"
     mic_gated: bool = False
     fed_bytes: int = 0
     user_row_id: str | None = None
@@ -8326,7 +8332,19 @@ class ChatScreen(BaseAppScreen):
         started replying, so a row created on arrival would sit below the
         answer it asked for. Creating it at commit fixes its place in the
         transcript; `_on_console_realtime_input_transcript` fills it in.
+
+        `phase` records the state this arrived IN, before the FSM sees it:
+        `on_turn_committed` is a no-op outside `live`, so a commit landing
+        in `thinking` is silently dropped -- which is exactly the shape of
+        the owner's "I spoke and nothing came back" incident, and was
+        invisible in the log.
         """
+        self._persist_console_realtime_event(
+            "realtime_turn_committed",
+            operation="turn_committed",
+            initiator="audio",
+            phase=session.controller.state,
+        )
         session.user_row_id = self._append_console_realtime_row(
             session, ConsoleMessageRole.USER, ""
         )
@@ -8402,6 +8420,11 @@ class ChatScreen(BaseAppScreen):
         `played_ms` -- a barge-in must be measured against THIS reply's
         audio, not everything played since the loop started.
         """
+        self._persist_console_realtime_event(
+            "realtime_reply_started",
+            operation="reply_started",
+            phase=session.controller.state,
+        )
         row_id = self._append_console_realtime_row(
             session, ConsoleMessageRole.ASSISTANT, ""
         )
@@ -8666,6 +8689,15 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Latch "no reply audio this reply", and say so once per loop."""
         session.audio_failed_for_reply = True
+        # Persisted every time, not just the first: the toast is
+        # deduplicated for the user's sake, but "which replies were
+        # silent" is exactly what a support log needs.
+        self._persist_console_realtime_event(
+            "realtime_audio_begin_failed",
+            operation="audio_begin",
+            status="failed",
+            error_category="sink_unavailable",
+        )
         if session.audio_unavailable_notified:
             return
         session.audio_unavailable_notified = True
@@ -8772,6 +8804,11 @@ class ChatScreen(BaseAppScreen):
         self, session: ConsoleRealtimeSession
     ) -> None:
         """`on_first_audio`: reply audio started -- `thinking` -> `speaking`."""
+        self._persist_console_realtime_event(
+            "realtime_first_audio",
+            operation="first_audio",
+            phase=session.controller.state,
+        )
         session.controller.on_first_audio()
 
     def _on_console_realtime_reply_done(self, session: ConsoleRealtimeSession) -> None:
@@ -8800,6 +8837,14 @@ class ChatScreen(BaseAppScreen):
         session.generation_done = True
         self._end_console_realtime_reply_audio(session, abort=False)
         self._finish_console_realtime_reply_row(session, interrupted=False)
+        self._persist_console_realtime_event(
+            "realtime_reply_done",
+            operation="reply_done",
+            initiator="generation",
+            decision="deferred" if session.playback_pending else "fired",
+            phase=session.controller.state,
+            cancelled=session.barged,
+        )
         if session.playback_pending:
             return
         session.controller.on_reply_done(time.monotonic())
@@ -8827,7 +8872,16 @@ class ChatScreen(BaseAppScreen):
         if session.reply_token != token:
             return
         session.playback_pending = False
-        if session.barged or not session.generation_done:
+        fires = session.generation_done and not session.barged
+        self._persist_console_realtime_event(
+            "realtime_reply_done",
+            operation="reply_done",
+            initiator="playback",
+            decision="fired" if fires else "dropped",
+            phase=session.controller.state,
+            cancelled=session.barged,
+        )
+        if not fires:
             return
         session.controller.on_reply_done(time.monotonic())
 
@@ -8839,6 +8893,7 @@ class ChatScreen(BaseAppScreen):
         The FSM itself decides whether that is a barge-in (acoustic mode
         only) or noise to ignore.
         """
+        session.barge_trigger = "speech"
         session.controller.on_speech_started()
 
     def _on_console_realtime_error(
@@ -9000,6 +9055,17 @@ class ChatScreen(BaseAppScreen):
         # reply first, and `played_ms` must describe what they heard up to
         # that moment.
         played_ms = self._console_realtime_played_ms(session)
+        self._persist_console_realtime_event(
+            "realtime_barge",
+            operation="barge",
+            # Which input barged is the FIRST question asked of any
+            # barge-in report, and the intent itself does not carry it --
+            # `SilenceSpeech` is shared by both triggers, so the wiring
+            # records which one it just handed the FSM.
+            initiator=session.barge_trigger,
+            phase=session.controller.state,
+            duration_ms=played_ms,
+        )
         # Latched before the abort: the pump is about to unwind and report
         # playback finished, and a cancelled reply must complete nothing
         # (Task 2's contract, mirrored in
@@ -9010,10 +9076,22 @@ class ChatScreen(BaseAppScreen):
         provider_session = session.session
         if provider_session is not None:
             try:
-                provider_session.cancel_response(played_ms)
+                sent = provider_session.cancel_response(played_ms)
             except Exception:  # noqa: BLE001
                 logger.opt(exception=True).warning(
                     "Console realtime: cancel_response failed"
+                )
+            else:
+                # The provider's own guard refuses a cancel for a response
+                # that already ended. "Told the provider" and "there was
+                # nothing left to cancel" are different incidents and were
+                # indistinguishable from outside the session.
+                self._persist_console_realtime_event(
+                    "realtime_cancel_sent" if sent is not False
+                    else "realtime_cancel_noop",
+                    operation="cancel",
+                    decision="sent" if sent is not False else "noop",
+                    duration_ms=played_ms,
                 )
 
     def _console_realtime_played_ms(self, session: ConsoleRealtimeSession) -> int:
@@ -22296,6 +22374,7 @@ class ChatScreen(BaseAppScreen):
                 event.stop()
                 event.prevent_default()
                 return
+            realtime.barge_trigger = "keypress"
             realtime.controller.on_keypress()
         if not self._should_capture_console_input(composer):
             return
