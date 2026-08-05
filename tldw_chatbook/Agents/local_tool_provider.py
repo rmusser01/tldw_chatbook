@@ -58,7 +58,7 @@ class LocalToolProvider:
 
     Args:
         workspace_root: Confinement root for all path-taking tools.
-        specs: Tool specs; defaults to the built-in set (fs_list, fs_read).
+        specs: Tool specs; defaults to the built-in set (fs_list, fs_read, fs_write).
         resolve_state: (HubTool) -> EffectiveToolState, injected by the
             controller (owns permission-store access).
         kill_switch: () -> bool master off-switch.
@@ -307,7 +307,7 @@ class LocalToolProvider:
 
 
 def _default_specs(workspace_root: Path) -> list[LocalToolSpec]:
-    from tldw_chatbook.Tools.local_tool_impls import list_directory, read_file
+    from tldw_chatbook.Tools.local_tool_impls import list_directory, read_file, write_file
 
     return [
         LocalToolSpec(
@@ -342,5 +342,19 @@ def _default_specs(workspace_root: Path) -> list[LocalToolSpec]:
                 limit=args.get("limit"),
             ),
             tags=(),
+        ),
+        LocalToolSpec(
+            name="fs_write",
+            description="Create or overwrite a file with the given content (full-file write), relative to the workspace root.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path, relative to the workspace root. Parent directory must already exist."},
+                    "content": {"type": "string", "description": "Full file content to write."},
+                },
+                "required": ["path", "content"],
+            },
+            handler=lambda args: write_file(args["path"], args["content"], workspace_root=workspace_root),
+            tags=("mutates",),
         ),
     ]

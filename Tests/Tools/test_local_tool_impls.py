@@ -5,6 +5,7 @@ from tldw_chatbook.Tools.local_tool_impls import (
     list_directory,
     read_file,
     resolve_workspace_path,
+    write_file,
 )
 
 
@@ -77,3 +78,29 @@ def test_fs_read_missing_file(tmp_path):
     ws = tmp_path / "ws"; ws.mkdir()
     with pytest.raises(LocalToolError, match="not found"):
         read_file("nope.txt", workspace_root=ws)
+
+
+def test_fs_write_creates_file(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    out = write_file("new.txt", "hello\n", workspace_root=ws)
+    assert (ws / "new.txt").read_text() == "hello\n"
+    assert "wrote" in out and "new.txt" in out
+
+
+def test_fs_write_overwrites(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "f.txt").write_text("old")
+    write_file("f.txt", "new", workspace_root=ws)
+    assert (ws / "f.txt").read_text() == "new"
+
+
+def test_fs_write_requires_existing_parent(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    with pytest.raises(LocalToolError, match="parent directory"):
+        write_file("no/such/dir/f.txt", "x", workspace_root=ws)
+
+
+def test_fs_write_confined(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    with pytest.raises(LocalToolError, match="outside the workspace root"):
+        write_file("../evil.txt", "x", workspace_root=ws)
