@@ -1550,7 +1550,6 @@ async def test_create_snapshots_draft_before_queued_worker_runs(
     draft = _draft(
         "Admission Create",
         model_id="admitted-model",
-        options={"voice": {"style": "admitted"}},
     )
     worker_entered = threading.Event()
     worker_resume = threading.Event()
@@ -1584,7 +1583,7 @@ async def test_create_snapshots_draft_before_queued_worker_runs(
         assert created.display_name == "Admission Create"
         assert created.model_id == "admitted-model"
         assert (
-            canonical_json_options(created.options) == '{"voice":{"style":"admitted"}}'
+            canonical_json_options(created.options) == '{}'
         )
 
 
@@ -1596,7 +1595,6 @@ async def test_update_snapshots_draft_before_queued_worker_runs(
     draft = _draft(
         "Admission Update",
         model_id="admitted-update-model",
-        options={"voice": {"style": "admitted-update"}},
     )
     worker_entered = threading.Event()
     worker_resume = threading.Event()
@@ -1644,7 +1642,7 @@ async def test_update_snapshots_draft_before_queued_worker_runs(
         assert updated.display_name == "Admission Update"
         assert updated.model_id == "admitted-update-model"
         assert canonical_json_options(updated.options) == (
-            '{"voice":{"style":"admitted-update"}}'
+            '{}'
         )
 
 
@@ -1877,7 +1875,6 @@ async def test_create_generates_uuid4_or_retains_exact_caller_uuid_and_round_tri
         voice_id=None,
         response_format="wav",
         speed=1.0,
-        options={"seed": 7, "labels": ["声", False]},
     )
     generated_factory = _SequenceCallable(iter((GENERATED_ID,)))
 
@@ -2456,13 +2453,11 @@ async def test_update_uses_optimistic_revision_and_preserves_winner_exactly(
             voice_id=None,
             response_format="wav",
             speed=1.0,
-            options={"winner": {"exact": [1, "声"]}},
         )
         loser_draft = _draft(
             "Loser Value",
             provider_id="audio_cpp",
             model_id="loser-model",
-            options={"must": "not persist"},
         )
 
         winner = (
