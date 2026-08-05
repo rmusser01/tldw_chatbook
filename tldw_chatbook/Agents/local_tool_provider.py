@@ -59,7 +59,8 @@ class LocalToolProvider:
     Args:
         workspace_root: Confinement root for all path-taking tools.
         specs: Tool specs; defaults to the built-in set (fs_list, fs_read,
-            fs_write, fs_edit, fs_glob, fs_grep, web_fetch, web_search).
+            fs_write, fs_edit, fs_patch, fs_glob, fs_grep, web_fetch,
+            web_search).
         resolve_state: (HubTool) -> EffectiveToolState, injected by the
             controller (owns permission-store access).
         kill_switch: () -> bool master off-switch.
@@ -496,6 +497,7 @@ def _default_specs(
         read_file,
         write_file,
     )
+    from tldw_chatbook.Tools.patch_tool_impls import patch_files
     from tldw_chatbook.Tools.web_tool_impls import (
         FETCH_MAX_BYTES,
         SEARCH_DEFAULT_ENGINE,
@@ -573,6 +575,33 @@ def _default_specs(
                 args["new_string"],
                 workspace_root=workspace_root,
                 replace_all=args.get("replace_all", False),
+            ),
+            tags=("mutates",),
+        ),
+        LocalToolSpec(
+            name="fs_patch",
+            description=(
+                "Apply a unified diff to one or more workspace files. The diff "
+                "argument must be standard unified-diff text (---/+++ headers, "
+                "@@ hunks); a/ and b/ header prefixes are optional. Creates and "
+                "modifies are supported; deletes and renames are NOT. Paths are "
+                "relative to the workspace root; a create target's parent "
+                "directory must already exist. Pass dry_run=true to validate "
+                "and preview which files would be patched without writing. "
+                "Prefer fs_edit for single exact-string replacements."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "diff": {"type": "string", "description": "Unified diff text (---/+++ headers, @@ hunks); a/ and b/ prefixes optional. No deletes or renames."},
+                    "dry_run": {"type": "boolean", "default": False, "description": "Validate and report what would be patched without writing anything."},
+                },
+                "required": ["diff"],
+            },
+            handler=lambda args: patch_files(
+                args["diff"],
+                workspace_root=workspace_root,
+                dry_run=args.get("dry_run", False),
             ),
             tags=("mutates",),
         ),

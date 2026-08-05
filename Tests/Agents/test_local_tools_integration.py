@@ -5,8 +5,8 @@ emits a ```tool_call fence for fs_list; the run must flow fence -> registry
 -> fs_list core -> result appended back into the model's next turn.
 
 Phase 2 adds: the find_tools/load_tools disclosure path past
-DIRECT_DISCLOSE_THRESHOLD (the phase-3a default catalog — 8 local + 2
-builtin = 10 entries — crosses it on its own), the 8-entry direct-disclosure
+DIRECT_DISCLOSE_THRESHOLD (the default catalog — 9 local + 2
+builtin = 11 entries — crosses it on its own), the 8-entry direct-disclosure
 boundary, and the allow-state e2e (zero approval round trips).
 
 Harness pattern mirrors test_agent_service.py (ScriptedChat + real
@@ -226,7 +226,7 @@ def test_fs_list_fence_flow_denied_still_completes(db, workspace):
 # --- Phase 2: disclosure threshold + allow-state coverage -------------------
 
 FS_TOOL_NAMES = {"fs_list", "fs_read", "fs_write", "fs_edit", "fs_glob", "fs_grep"}
-LOCAL_TOOL_NAMES = FS_TOOL_NAMES | {"web_fetch", "web_search"}  # phase-3a default set
+LOCAL_TOOL_NAMES = FS_TOOL_NAMES | {"fs_patch", "web_fetch", "web_search"}  # phase-3b-i default set
 BUILTIN_TOOL_NAMES = {"calculator", "get_current_datetime"}
 
 
@@ -250,10 +250,11 @@ def production_registry(workspace, extra_specs=(), specs=None):
 
 
 def test_direct_disclosure_boundary_at_eight_entries(workspace):
-    """6 fs_* local + 2 builtin = 8 entries is still direct-disclosed; the
-    full default catalog (8 local + 2 builtin = 10) crosses into find/load.
-    Documents the boundary via the runtime's own API (initial_disclosure,
-    the same call AgentService.run_turn makes)."""
+    """6 fs_* local (fs_patch deliberately excluded to stay at the boundary)
+    + 2 builtin = 8 entries is still direct-disclosed; the full default
+    catalog (9 local + 2 builtin = 11) crosses into find/load. Documents the
+    boundary via the runtime's own API (initial_disclosure, the same call
+    AgentService.run_turn makes)."""
     registry = production_registry(workspace, specs=fs_only_specs(workspace))
     assert len(registry.list_catalog()) == DIRECT_DISCLOSE_THRESHOLD == 8
     schemas, offer_find_load = initial_disclosure(registry, RunBudget())
@@ -261,7 +262,7 @@ def test_direct_disclosure_boundary_at_eight_entries(workspace):
     assert {s.name for s in schemas} == FS_TOOL_NAMES | BUILTIN_TOOL_NAMES
 
     full = production_registry(workspace)
-    assert len(full.list_catalog()) == DIRECT_DISCLOSE_THRESHOLD + 2
+    assert len(full.list_catalog()) == DIRECT_DISCLOSE_THRESHOLD + 3
     assert {e.name for e in full.list_catalog()} == LOCAL_TOOL_NAMES | BUILTIN_TOOL_NAMES
     schemas, offer_find_load = initial_disclosure(full, RunBudget())
     assert offer_find_load is True
