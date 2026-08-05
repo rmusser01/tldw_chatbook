@@ -2458,6 +2458,8 @@ async def test_update_uses_optimistic_revision_and_preserves_winner_exactly(
             "Loser Value",
             provider_id="audio_cpp",
             model_id="loser-model",
+            response_format="wav",
+            speed=1.0,
         )
 
         winner = (

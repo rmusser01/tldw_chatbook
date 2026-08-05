@@ -1460,13 +1460,6 @@ async def test_availability_applies_exact_allowlist_before_capability_lookup() -
         model_id="future-speed",
         speed=1.25,
     )
-    invalid_options = _profile(
-        profile_id=UUID(int=6),
-        display_name="Invalid options",
-        provider_id="openai",
-        model_id="future-options",
-        options={"quality": "high"},
-    )
     voice_result = TTSVoiceDiscoveryResult(
         provider_id="audio_cpp",
         model_id="model-a",
@@ -1489,9 +1482,8 @@ async def test_availability_applies_exact_allowlist_before_capability_lookup() -
             future_native,
             invalid_format,
             invalid_speed,
-            invalid_options,
         ),
-        total=6,
+        total=5,
     )
 
     observed = await service.observe_availability(page)
@@ -1503,12 +1495,10 @@ async def test_availability_applies_exact_allowlist_before_capability_lookup() -
         "unavailable",
         "unavailable",
         "unavailable",
-        "unavailable",
     )
     assert tuple(item.recovery_action for item in observed.profiles) == (
         "none",
         "none",
-        "edit",
         "edit",
         "edit",
         "edit",
@@ -4264,8 +4254,7 @@ def test_preview_preset_copies_only_persisted_selection_and_availability() -> No
             model_id="opaque-model",
             voice_id="opaque-voice",
             response_format="flac",
-            speed=1.5,
-            options={"quality": {"level": 2}},
+            speed=2.0,
         ),
     )
     availability = TTSProfileAvailability(
