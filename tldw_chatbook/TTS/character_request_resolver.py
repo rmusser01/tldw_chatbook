@@ -16,7 +16,7 @@ from tldw_chatbook.TTS.profile_errors import (
     ProfileValidationError,
 )
 from tldw_chatbook.TTS.profile_service import LoadedCharacterTTSAssignment
-from tldw_chatbook.TTS.profile_types import CharacterRef
+from tldw_chatbook.TTS.profile_types import PROFILE_PROVIDER_IDS, CharacterRef
 
 CharacterTTSResolutionSource: TypeAlias = Literal[
     "global",
@@ -88,7 +88,7 @@ class CharacterTTSRequestResolution:
         if self.source == "assigned":
             if (
                 type(self.request) is not TTSRequest
-                or self.request.provider_id != "audio_cpp"
+                or self.request.provider_id not in PROFILE_PROVIDER_IDS
                 or type(self.repository_generation) is not int
                 or self.repository_generation < 0
                 or type(self.profile_id) is not UUID
