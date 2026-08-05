@@ -33,5 +33,15 @@ The base is `get_user_data_dir()` (`config.py:4373`) — by default
 `skills/skills/` subdirectory (`app.py:4488-4497`). The Skills screen shows
 the exact path for your install.
 
+### A note for skill authors
+
+Skills that declare no `allowed-tools` front-matter now pass the full
+builtins + local tool set through to their subagent run (previously builtins
+only — changed in phase 3c, matching how native `spawn_subagent` children
+inherit tools). Every call stays approval-gated through the same permission
+store, so an undeclared skill still prompts before any mutating or network
+tool executes. Declare `allowed-tools` explicitly if you want a skill's child
+restricted to a narrower set.
+
 Imported skills are trust-scanned before use (ADR-009). Once installed, ask
 the agent to "research <question>" or invoke the skill explicitly.
