@@ -1,7 +1,7 @@
 ---
 id: TASK-2306
 title: Run selection populates the run detail region
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04'
 labels:
