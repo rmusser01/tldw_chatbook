@@ -28,9 +28,23 @@ from .local_tool_impls import LocalToolError
 
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
 
+# Non-public ranges ipaddress does not flag on its own: CGNAT/shared space
+# (RFC 6598 — Tailscale tailnets, carrier gear) is NOT private per
+# ipaddress.is_private on Python 3.12, and 192.0.0.0/24 (IETF protocol
+# assignments, RFC 6890) is only partially covered across versions.
+_BLOCKED_EXTRA_NETWORKS = (
+    ipaddress.ip_network("100.64.0.0/10"),
+    ipaddress.ip_network("192.0.0.0/24"),
+)
+
 
 def _is_public_ip(ip_str: str) -> bool:
     ip = ipaddress.ip_address(ip_str)
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:  # ::ffff:127.0.0.1 -> check the embedded v4 address
+        ip = mapped
+    if any(ip in net for net in _BLOCKED_EXTRA_NETWORKS):
+        return False
     return not (
         ip.is_private or ip.is_loopback or ip.is_link_local
         or ip.is_multicast or ip.is_reserved or ip.is_unspecified
@@ -42,7 +56,7 @@ def validate_outbound_url(url: str) -> str:
 
     Checks: scheme allowlist (http/https only), host resolves, and EVERY
     resolved IP is public (private/loopback/link-local/multicast/reserved/
-    unspecified refused). Literal IPs are checked directly without DNS.
+    unspecified/CGNAT refused). Literal IPs are checked directly without DNS.
 
     Called for the initial URL AND every redirect hop. DNS-rebinding caveat:
     resolution happens again inside the HTTP client, so a hostile DNS server
@@ -51,10 +65,15 @@ def validate_outbound_url(url: str) -> str:
     connection to the validated IP is deliberately out of scope.
 
     Raises:
-        LocalToolError: if the scheme is disallowed, the host is missing or
-            does not resolve, or any resolved IP is not public.
+        LocalToolError: if the scheme is disallowed, the URL is malformed
+            (bad port, bad IPv6 brackets), the host is missing or does not
+            resolve, or any resolved IP is not public.
     """
-    parts = urlsplit(url.strip())
+    try:
+        parts = urlsplit(url.strip())
+        port = parts.port  # ValueError on out-of-range/non-numeric ports
+    except ValueError as exc:
+        raise LocalToolError(f"URL is malformed: {url!r}") from exc
     if parts.scheme.lower() not in _ALLOWED_SCHEMES:
         raise LocalToolError(f"URL scheme not allowed (http/https only): {url!r}")
     host = parts.hostname
@@ -65,7 +84,7 @@ def validate_outbound_url(url: str) -> str:
         candidates = [host]
     except ValueError:
         try:
-            infos = socket.getaddrinfo(host, parts.port or (443 if parts.scheme == "https" else 80),
+            infos = socket.getaddrinfo(host, port or (443 if parts.scheme == "https" else 80),
                                        proto=socket.IPPROTO_TCP)
         except (socket.gaierror, UnicodeError, OSError) as exc:
             raise LocalToolError(f"host does not resolve: {host!r}") from exc
@@ -238,7 +257,10 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
     if not isinstance(url, str) or not url.strip():
         raise LocalToolError("[invalid-url] url must be a non-empty string")
     url = url.strip()
-    max_bytes = max(1, min(int(max_bytes), FETCH_HARD_MAX_BYTES))
+    try:
+        max_bytes = max(1, min(int(max_bytes), FETCH_HARD_MAX_BYTES))
+    except (TypeError, ValueError) as exc:
+        raise LocalToolError(f"[invalid-url] max_bytes must be an integer: {max_bytes!r}") from exc
 
     cached = _fetch_cache.get(url)
     if cached is not None:
@@ -253,6 +275,9 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
         timeout=FETCH_TIMEOUT_SECONDS,
         headers={"User-Agent": _USER_AGENT},
         transport=_transport,
+        # trust_env=False: with HTTP(S)_PROXY set, the proxy does its own DNS
+        # and connects on our behalf, bypassing the SSRF guard entirely.
+        trust_env=False,
     )
     try:
         current_url = url
@@ -277,6 +302,8 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
         raise LocalToolError(
             f"[timeout] fetch timed out after {FETCH_TIMEOUT_SECONDS}s: {url!r}"
         ) from exc
+    except httpx.InvalidURL as exc:  # NOT an HTTPError subclass — catch explicitly
+        raise LocalToolError(f"[invalid-url] {exc}") from exc
     except httpx.HTTPError as exc:
         raise LocalToolError(f"[fetch-failed] {exc}") from exc
     finally:
