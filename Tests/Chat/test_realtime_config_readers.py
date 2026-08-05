@@ -196,3 +196,71 @@ def test_resolve_engine_forced_realtime_ignores_realtime_enabled(monkeypatch):
         },
     )
     assert cvi.resolve_handsfree_engine() == "realtime"
+
+
+# ---------------------------------------------------------------------------
+# Turn detection (gate round 5)
+#
+# Probed live against the GA endpoint before any of this shipped
+# (`Tests/LLM_Calls/openai_realtime_turn_detection_probe.py`): both modes
+# are accepted, and the server_vad knobs are accepted ONLY for server_vad
+# (`semantic_vad` + `threshold` is rejected `unknown_parameter`). The
+# default is `semantic_vad` because the server's own server_vad defaults
+# commit a turn after 200 ms of silence, which is what was chopping the
+# owner's speech into fragments for whisper-1 to hallucinate from.
+# ---------------------------------------------------------------------------
+
+
+def test_turn_detection_defaults_to_semantic_vad(monkeypatch):
+    calls = _patch_setting(monkeypatch, {})
+    assert cvi.realtime_turn_detection() == "semantic_vad"
+    assert ("realtime", "turn_detection", "semantic_vad") in calls
+
+
+def test_turn_detection_accepts_server_vad(monkeypatch):
+    _patch_setting(monkeypatch, {("realtime", "turn_detection"): "server_vad"})
+    assert cvi.realtime_turn_detection() == "server_vad"
+
+
+def test_turn_detection_normalizes_case_and_whitespace(monkeypatch):
+    _patch_setting(monkeypatch, {("realtime", "turn_detection"): "  Server_VAD "})
+    assert cvi.realtime_turn_detection() == "server_vad"
+
+
+def test_turn_detection_rejects_unknown_values(monkeypatch):
+    _patch_setting(monkeypatch, {("realtime", "turn_detection"): "psychic_vad"})
+    assert cvi.realtime_turn_detection() == "semantic_vad"
+
+
+def test_vad_threshold_is_unset_by_default(monkeypatch):
+    """Unset means "let the provider decide" -- this app does not restate
+    the provider's own default, which would freeze it at today's value."""
+    _patch_setting(monkeypatch, {})
+    assert cvi.realtime_vad_threshold() is None
+
+
+def test_vad_threshold_accepts_the_configured_value(monkeypatch):
+    _patch_setting(monkeypatch, {("realtime", "vad_threshold"): 0.6})
+    assert cvi.realtime_vad_threshold() == 0.6
+
+
+def test_vad_threshold_rejects_out_of_range_and_non_numeric(monkeypatch):
+    for bad in (1.5, -0.1, "loud"):
+        _patch_setting(monkeypatch, {("realtime", "vad_threshold"): bad})
+        assert cvi.realtime_vad_threshold() is None, bad
+
+
+def test_vad_silence_ms_is_unset_by_default(monkeypatch):
+    _patch_setting(monkeypatch, {})
+    assert cvi.realtime_vad_silence_ms() is None
+
+
+def test_vad_silence_ms_accepts_a_positive_int(monkeypatch):
+    _patch_setting(monkeypatch, {("realtime", "vad_silence_ms"): 700})
+    assert cvi.realtime_vad_silence_ms() == 700
+
+
+def test_vad_silence_ms_rejects_non_positive_and_non_numeric(monkeypatch):
+    for bad in (0, -200, "later"):
+        _patch_setting(monkeypatch, {("realtime", "vad_silence_ms"): bad})
+        assert cvi.realtime_vad_silence_ms() is None, bad

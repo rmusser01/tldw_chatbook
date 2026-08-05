@@ -940,6 +940,25 @@ DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES = 5
 #: to `"auto"`.
 _HANDSFREE_ENGINE_VALUES = {"auto", "pipeline", "realtime"}
 
+#: Valid values for `realtime.turn_detection` -- the provider's two
+#: turn-detection modes, both live-confirmed accepted by the GA endpoint
+#: (`Tests/LLM_Calls/openai_realtime_turn_detection_probe.py`).
+_REALTIME_TURN_DETECTION_VALUES = {"semantic_vad", "server_vad"}
+
+#: Default turn-detection mode. `semantic_vad`, NOT the provider's own
+#: default of `server_vad`, and that difference is deliberate: the live
+#: probe showed the server's server_vad defaults commit a turn after
+#: 200 ms of silence at a fixed 0.5 energy threshold. In a normal room --
+#: keyboard clatter (barge-in here IS a keypress, next to a hot mic),
+#: a cough, a mid-sentence breath -- that chops one spoken question into
+#: several "turns" and hands each fragment to the transcription model,
+#: which then hallucinates words out of the noise (gate round 5: "picking
+#: up random words instead of what I'm asking", with the capture path
+#: independently exonerated). `semantic_vad` decides turn ends from the
+#: content of the speech rather than from an energy gate, which is what
+#: the provider positions it for.
+DEFAULT_REALTIME_TURN_DETECTION = "semantic_vad"
+
 
 def realtime_enabled() -> bool:
     """Return whether the realtime voice engine is enabled at all.
@@ -1022,6 +1041,98 @@ def realtime_idle_timeout_seconds() -> float:
         )
         return float(DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES) * 60.0
     return minutes * 60.0
+
+
+def realtime_turn_detection() -> str:
+    """Return the configured realtime turn-detection mode.
+
+    `realtime.turn_detection`, one of `"semantic_vad"` or `"server_vad"`;
+    default `DEFAULT_REALTIME_TURN_DETECTION` (see its comment for why the
+    default diverges from the provider's own). Any other value is invalid,
+    logged, and falls back to the default rather than being sent to the
+    provider, which would reject the whole `session.update` and take the
+    conversation with it.
+
+    Returns:
+        `"semantic_vad"` or `"server_vad"`.
+    """
+    raw = get_cli_setting(
+        "realtime", "turn_detection", DEFAULT_REALTIME_TURN_DETECTION
+    )
+    value = raw.strip().lower() if isinstance(raw, str) else raw
+    if value not in _REALTIME_TURN_DETECTION_VALUES:
+        logger.warning(
+            "realtime.turn_detection invalid ({!r}); using '{}'",
+            raw,
+            DEFAULT_REALTIME_TURN_DETECTION,
+        )
+        return DEFAULT_REALTIME_TURN_DETECTION
+    return value
+
+
+def realtime_vad_threshold() -> float | None:
+    """Return the server-VAD energy threshold, or None to leave it unset.
+
+    `realtime.vad_threshold`, a 0-1 float. Applies to `server_vad` ONLY --
+    the live probe rejects it under `semantic_vad` with
+    `unknown_parameter`, so the session must not send it in that mode.
+
+    Unset (the default) means the key is omitted entirely and the provider
+    picks: this app does not restate someone else's default, which would
+    silently freeze it at whatever it happened to be the day this was
+    written.
+
+    Returns:
+        The configured threshold, or None when unset or invalid.
+    """
+    raw = get_cli_setting("realtime", "vad_threshold", None)
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = None
+    if value is None or not 0.0 <= value <= 1.0:
+        logger.warning(
+            "realtime.vad_threshold must be a number between 0 and 1 "
+            "(got {!r}); leaving it to the provider",
+            raw,
+        )
+        return None
+    return value
+
+
+def realtime_vad_silence_ms() -> int | None:
+    """Return the server-VAD end-of-turn silence window in milliseconds.
+
+    `realtime.vad_silence_ms`, a positive int. Applies to `server_vad`
+    ONLY (same provider restriction as `realtime_vad_threshold`). Unset
+    means the provider decides -- currently 200 ms, which is short enough
+    that an ordinary mid-sentence pause ends the turn; raising it is the
+    server_vad-side answer to the fragmenting this reader exists for.
+
+    Returns:
+        The configured window in milliseconds, or None when unset or
+        invalid.
+    """
+    raw = get_cli_setting("realtime", "vad_silence_ms", None)
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        value = None
+    else:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = None
+    if value is None or value <= 0:
+        logger.warning(
+            "realtime.vad_silence_ms must be a positive number of "
+            "milliseconds (got {!r}); leaving it to the provider",
+            raw,
+        )
+        return None
+    return value
 
 
 def handsfree_engine() -> str:
