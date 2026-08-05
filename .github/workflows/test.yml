@@ -204,7 +204,7 @@ jobs:
           ui-test-results.json
 
   textual-minimum:
-    name: MCP - Minimum Textual 8.0.0
+    name: MCP - Minimum Textual 8.2.8
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -222,7 +222,8 @@ jobs:
         python -m pip install --upgrade pip setuptools wheel
         pip install -e .
         pip install pytest pytest-asyncio pytest-timeout
-        pip install "textual==8.0.0"
+        # Floor check against the declared minimum supported Textual (pinned in pyproject.toml).
+        pip install "textual==8.2.8"
 
     - name: Verify packaging and MCP at the Textual floor
       run: |
