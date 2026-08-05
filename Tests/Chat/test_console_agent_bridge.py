@@ -1837,7 +1837,7 @@ def test_compose_run_registry_excludes_skill_named_like_a_runtime_tool():
             },
         ],
     }
-    registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(context)
+    registry, allowed_tools, builtin_names, _local_names = _compose_run_registry_and_allowed(context)
     assert LOAD_TOOLS_NAME not in allowed_tools[len(builtin_names) :]
     catalog_entries = [(entry.name, entry.source) for entry in registry.list_catalog()]
     assert (LOAD_TOOLS_NAME, "skill") not in catalog_entries
@@ -1848,7 +1848,7 @@ def test_compose_run_registry_excludes_skill_named_like_a_runtime_tool():
 
 def test_compose_run_registry_and_allowed_includes_mcp_entries_when_eligible():
     mcp_provider = _FakeMCPProvider([("mcp__srv_a__search", "Search the web")])
-    registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+    registry, allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
         {}, mcp_provider=mcp_provider
     )
     assert "mcp__srv_a__search" in allowed_tools
@@ -1862,7 +1862,7 @@ def test_compose_run_registry_and_allowed_includes_mcp_entries_when_eligible():
 def test_compose_run_registry_and_allowed_absent_mcp_provider_is_unchanged():
     """`mcp_provider=None` (the default) must not add anything -- the
     pre-P5-T6 no-MCP behavior stays byte-identical."""
-    registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed({})
+    registry, allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed({})
     assert allowed_tools == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
     assert len(registry.list_catalog()) == 2
 
@@ -1886,7 +1886,7 @@ def test_compose_run_registry_and_allowed_threads_builtin_gate_into_the_provider
     else a decision the caller's review hook stamped on that gate would
     never be visible to `invoke()`."""
     gate = _FakeBuiltinGateForRegistry(refuse=True)
-    registry, _allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+    registry, _allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
         {}, builtin_gate=gate
     )
     result = registry.invoke_by_name("calculator", {"expression": "6*7"})
@@ -1898,7 +1898,7 @@ def test_compose_run_registry_and_allowed_threads_builtin_gate_into_the_provider
 def test_compose_run_registry_and_allowed_no_builtin_gate_is_unchanged():
     """`builtin_gate=None` (the default) must not alter the pre-task-545
     no-skills/no-MCP behavior -- the provider builds its own lazy gate."""
-    registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed({})
+    registry, allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed({})
     assert allowed_tools == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
     result = registry.invoke_by_name("calculator", {"expression": "6*7"})
     assert result.ok is True
@@ -1921,7 +1921,7 @@ def test_compose_run_registry_and_allowed_threads_workspace_id_into_the_provider
     """task-6 (settings-workspaces-folder-roots spec Sec3): `workspace_id=`
     must reach the freshly-built `BuiltinToolProvider` so its `invoke()`
     binds the run's workspace around every tool call."""
-    registry, _allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+    registry, _allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
         {},
         builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
         workspace_id="ws-compose",
@@ -1939,7 +1939,7 @@ def test_compose_run_registry_and_allowed_threads_workspace_id_into_the_provider
 def test_compose_run_registry_and_allowed_no_workspace_id_is_unchanged():
     """`workspace_id=None` (the default) must not alter the pre-task-6
     behavior -- the provider leaves the run workspace unbound."""
-    registry, _allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+    registry, _allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
         {}, builtin_gate=_FakeBuiltinGateForRegistry(refuse=False)
     )
     registry._providers[0]._tools["probe_workspace"] = _WorkspaceProbeTool()
@@ -1968,7 +1968,7 @@ def test_compose_run_registry_and_allowed_threads_ephemeral_into_the_provider():
     `BuiltinToolProvider` so its `invoke()` refuses the write-shaped
     built-ins for a temporary session. Mirrors ``..._threads_workspace_id_
     into_the_provider`` exactly."""
-    registry, _allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+    registry, _allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
         {},
         builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
         ephemeral=True,
@@ -1982,7 +1982,7 @@ def test_compose_run_registry_and_allowed_threads_ephemeral_into_the_provider():
 def test_compose_run_registry_and_allowed_no_ephemeral_is_unchanged():
     """`ephemeral=False` (the default) must not alter pre-F4 behavior --
     the provider dispatches the tool normally."""
-    registry, _allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+    registry, _allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
         {}, builtin_gate=_FakeBuiltinGateForRegistry(refuse=False)
     )
     registry._providers[0]._tools["write_file"] = _StubWriteFileTool()
@@ -2168,7 +2168,7 @@ def test_temporary_run_keeps_read_only_builtins_and_still_refuses_write_shaped_o
     write_shaped = ("write_file", "create_note", "update_note")
     read_only = ("read_file", "list_directory", "glob_files", "grep_files")
 
-    temporary, _allowed, _names = _compose_run_registry_and_allowed(
+    temporary, _allowed, _names, _local = _compose_run_registry_and_allowed(
         {}, builtin_gate=_FakeBuiltinGateForRegistry(refuse=False), ephemeral=True
     )
     # The gateable built-ins ship behind `[tools]` gates that default to
@@ -2188,7 +2188,7 @@ def test_temporary_run_keeps_read_only_builtins_and_still_refuses_write_shaped_o
     calc = temporary.invoke_by_name("calculator", {"expression": "6*7"})
     assert calc.ok, calc.error
 
-    saved, _allowed, _names = _compose_run_registry_and_allowed(
+    saved, _allowed, _names, _local = _compose_run_registry_and_allowed(
         {}, builtin_gate=_FakeBuiltinGateForRegistry(refuse=False)
     )
     for name in write_shaped:
@@ -2204,7 +2204,7 @@ def test_temporary_run_never_advertises_mcp_or_skill_tools_but_a_saved_run_does(
     tool whose only possible outcome is a refusal. Control in the same
     test: the identical composition for a saved chat advertises both."""
     saved_mcp = _FakeMCPProvider([("mcp__srv_a__search", "Search the web")])
-    saved, saved_allowed, _names = _compose_run_registry_and_allowed(
+    saved, saved_allowed, _names, _local = _compose_run_registry_and_allowed(
         _SKILL_CONTEXT, mcp_provider=saved_mcp
     )
     assert "mcp__srv_a__search" in saved_allowed
@@ -2212,7 +2212,7 @@ def test_temporary_run_never_advertises_mcp_or_skill_tools_but_a_saved_run_does(
     assert {e.source for e in saved.list_catalog()} == {"builtin", "skill", "mcp"}
 
     temp_mcp = _FakeMCPProvider([("mcp__srv_a__search", "Search the web")])
-    temporary, temp_allowed, _names = _compose_run_registry_and_allowed(
+    temporary, temp_allowed, _names, _local = _compose_run_registry_and_allowed(
         _SKILL_CONTEXT, mcp_provider=temp_mcp, ephemeral=True
     )
     assert "mcp__srv_a__search" not in temp_allowed
@@ -2233,7 +2233,7 @@ def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_built
     mcp_provider = _FakeMCPProvider(
         [("calculator", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")]
     )
-    registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+    registry, allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
         {}, mcp_provider=mcp_provider
     )
     assert allowed_tools.count("calculator") == 1
@@ -2248,7 +2248,7 @@ def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_runti
     tool named like one of the loop's own in-loop runtime handlers must
     never become a distinct, MCP-routable catalog entry."""
     mcp_provider = _FakeMCPProvider([(LOAD_TOOLS_NAME, "shadowing MCP tool")])
-    registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(
+    registry, allowed_tools, builtin_names, _local_names = _compose_run_registry_and_allowed(
         {}, mcp_provider=mcp_provider
     )
     assert LOAD_TOOLS_NAME not in allowed_tools[len(builtin_names) :]
@@ -2272,7 +2272,7 @@ def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_skill
     mcp_provider = _FakeMCPProvider(
         [("code-review", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")]
     )
-    registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+    registry, allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
         context, mcp_provider=mcp_provider
     )
     assert allowed_tools.count("code-review") == 1
@@ -2286,7 +2286,7 @@ def test_compose_run_registry_and_allowed_all_mcp_names_colliding_skips_registra
     """When every MCP entry collides, the provider is not registered at
     all -- no dangling catalog entries the model could never reach."""
     mcp_provider = _FakeMCPProvider([("calculator", "shadowing MCP tool")])
-    registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+    registry, allowed_tools, _builtin_names, _local_names = _compose_run_registry_and_allowed(
         {}, mcp_provider=mcp_provider
     )
     assert allowed_tools == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)

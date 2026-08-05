@@ -892,9 +892,12 @@ def _eligible_skill_entries(context: Mapping[str, Any]) -> list[Mapping[str, Any
 def _non_colliding_skill_entries(
     context: Mapping[str, Any],
     builtin_names: tuple[str, ...],
+    *,
+    local_names: tuple[str, ...] = (),
 ) -> list[Mapping[str, Any]]:
     """Eligible skill entries, excluding any name that collides with a
-    builtin OR one of the loop's own in-loop runtime tool names.
+    builtin, a local tool, OR one of the loop's own in-loop runtime tool
+    names.
 
     Shadowing (Task 11 review note 2 + this task's own allow-list
     ordering): a builtin tool name must always win over a same-named
@@ -920,8 +923,17 @@ def _non_colliding_skill_entries(
     wins that comparison first. Excluding these names too means such a
     skill is simply never registered as a catalog entry at all, matching
     what would happen at invocation time anyway.
+
+    The same dispatch-layer reasoning applies to ``local_names`` (Task 6
+    review): ``AgentService.invoke_tool`` checks
+    ``skill_runner.is_skill_tool(name)`` BEFORE registry dispatch, so the
+    registry's first-registrant-wins order cannot protect a local tool --
+    a skill literally named e.g. ``fs_list`` would be routed to the skill
+    runner and shadow the local tool. Excluding local-name collisions here
+    keeps both call sites (``_compose_run_registry_and_allowed`` and
+    ``run_reply``'s skill-runner name set) in agreement with dispatch.
     """
-    collision_names = set(builtin_names) | RUNTIME_TOOL_NAMES
+    collision_names = set(builtin_names) | set(local_names) | RUNTIME_TOOL_NAMES
     return [
         item
         for item in _eligible_skill_entries(context)
@@ -1144,7 +1156,7 @@ def _compose_run_registry_and_allowed(
     ephemeral: bool = False,
     diff_sink: Callable[[tuple[str, str, str, str]], None] | None = None,
     local_provider: Any | None = None,
-) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...]]:
+) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
     Called once per ``run_reply`` invocation (never cached across runs --
@@ -1156,10 +1168,13 @@ def _compose_run_registry_and_allowed(
     is at least one non-colliding eligible entry) an already-composed MCP
     provider -- shadowing order: builtins beat local beat skills beat MCP,
     matching the allow-list's own ``builtins ∪ local ∪ skills ∪ mcp``
-    ordering. Local registers BEFORE skills/MCP (first-registrant-wins)
-    so a malicious MCP server or skill can never shadow the fs_* names.
-    For a temporary session (``ephemeral=True``) neither the skill nor
-    the MCP provider is registered at all.
+    ordering. Local registers BEFORE skills/MCP (first-registrant-wins),
+    AND local names join the skill/MCP collision sets -- so a malicious
+    MCP server or skill can never shadow the fs_* names at ANY layer (the
+    registry's own resolution, or ``AgentService.invoke_tool``'s
+    skill-runner-first dispatch, which registration order alone cannot
+    protect). For a temporary session (``ephemeral=True``) neither the
+    skill nor the MCP provider is registered at all.
 
     Args:
         context: A fresh ``get_context(mode="local")`` payload.
@@ -1205,13 +1220,16 @@ def _compose_run_registry_and_allowed(
             disabled this run.
 
     Returns:
-        ``(registry, allowed_tools, builtin_names)`` -- the per-run
-        registry, its full allow-list (builtins + local + eligible skills
-        + eligible MCP tools + spawn), and just the builtin names (needed
-        separately by ``_BridgeSkillRunner`` to intersect a skill's own
-        declared ``allowed_tools`` against -- never against skill OR local
-        names, so a skill's sub-agent can never call another skill and
-        skills never narrow/grant local tools).
+        ``(registry, allowed_tools, builtin_names, local_names)`` -- the
+        per-run registry, its full allow-list (builtins + local + eligible
+        skills + eligible MCP tools + spawn), just the builtin names
+        (needed separately by ``_BridgeSkillRunner`` to intersect a
+        skill's own declared ``allowed_tools`` against -- never against
+        skill OR local names, so a skill's sub-agent can never call
+        another skill and skills never narrow/grant local tools), and
+        just the local names (needed by ``run_reply`` to keep its
+        skill-runner name set's collision filtering in agreement with the
+        registry built here).
     """
     registry = ToolCatalogRegistry(ephemeral=ephemeral)
     builtin_provider = BuiltinToolProvider(
@@ -1226,7 +1244,9 @@ def _compose_run_registry_and_allowed(
     if local_provider is not None:
         registry.register_provider(local_provider)
         local_names = tuple(e.name for e in local_provider.list_catalog())
-    eligible = _non_colliding_skill_entries(context, builtin_names)
+    eligible = _non_colliding_skill_entries(
+        context, builtin_names, local_names=local_names
+    )
     # Defense in depth, NOT the guarantee: a temporary session refuses every
     # skill and MCP call at `ToolCatalogRegistry.invoke_by_name` regardless
     # of what is advertised here. Dropping them from the run's catalog and
@@ -1259,7 +1279,7 @@ def _compose_run_registry_and_allowed(
             )
             allowed_tools += mcp_names
     allowed_tools += (SPAWN_TOOL_NAME,)
-    return registry, allowed_tools, builtin_names
+    return registry, allowed_tools, builtin_names, local_names
 
 
 class _BridgeSkillRunner:
@@ -1511,19 +1531,23 @@ class ConsoleAgentBridge:
                     run_is_ephemeral = False
             # TASK-1366: wire this run's diff channel (declared above) into
             # the freshly-built provider.
-            registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(
-                context,
-                mcp_provider=mcp_provider,
-                builtin_gate=builtin_gate,
-                workspace_id=run_workspace_id,
-                ephemeral=run_is_ephemeral,
-                diff_sink=pending_diffs.append,
-                local_provider=local_provider,
+            registry, allowed_tools, builtin_names, local_names = (
+                _compose_run_registry_and_allowed(
+                    context,
+                    mcp_provider=mcp_provider,
+                    builtin_gate=builtin_gate,
+                    workspace_id=run_workspace_id,
+                    ephemeral=run_is_ephemeral,
+                    diff_sink=pending_diffs.append,
+                    local_provider=local_provider,
+                )
             )
             if self._skills_service is not None:
                 skill_names = frozenset(
                     str(item["name"])
-                    for item in _non_colliding_skill_entries(context, builtin_names)
+                    for item in _non_colliding_skill_entries(
+                        context, builtin_names, local_names=local_names
+                    )
                 )
                 skill_file_bindings = SkillFileBindings(
                     authorized=set(),
