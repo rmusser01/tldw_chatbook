@@ -28,9 +28,28 @@ instead of the reference's ``_GitToolError``. Deviations from the reference
    the workspace root is refused (the reference's ``_path_inside`` rule,
    :2062-2063), so the model cannot read repo state outside confinement.
 
-Note for Task 2 (tool cores): diff argv must carry the machine-safe flags
-from the reference's ``_run_diff_command`` (:1049-1080): ``--no-ext-diff``,
-``--no-textconv``, ``--no-color``.
+The tool cores (``git_status``/``git_branches``/``git_log``/``git_diff``/
+``git_blame``) are sync adaptations of the reference's ``_execute_status``
+(:570), ``_execute_branches`` (:621), ``_execute_log`` (:831),
+``_execute_diff`` (:709) + ``_run_diff_command`` (:1049-1080 — the
+``--no-ext-diff``/``--no-textconv``/``--no-color`` machine-safe flags are
+ported), and ``_execute_blame`` (:892), returning plain text for the agent
+provider instead of the reference's structured dicts. Disclosed deviations
+from the reference (deliberate, per the phase-3b-ii plan):
+
+(a) ``git_diff`` adds ``commit_range`` and ``stat`` modes the reference
+    does not have; the reference's third ``working_tree`` scope is omitted
+    (``staged=False`` maps to ``unstaged``, ``staged=True`` to ``staged``).
+    ``commit_range`` is regex-validated (``^[A-Za-z0-9._/~^-]+$``) before
+    entering argv to keep the fixed-argv guarantee meaningful.
+(b) ``git_log`` defaults ``count=20`` (the reference has no default — an
+    absent limit falls back to its max-100); both clamp to 1..100.
+(c) ``_parse_blame_header`` accepts 3-field headers (``sha orig final``),
+    not just 4-field group headers: git emits 3-field headers for the
+    remaining lines of a commit group, and the reference's 4-field minimum
+    silently drops those lines.
+(d) ``git_blame``'s ``-L`` range is optional (the reference always passes
+    one); the range is capped at ``GIT_BLAME_MAX_LINES`` lines.
 """
 
 from __future__ import annotations
@@ -38,6 +57,7 @@ from __future__ import annotations
 import contextlib
 import os
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -275,3 +295,423 @@ def prepare_repository(workspace_root: Path, path: str = ".") -> Path:
             f"repository root ({repo_root}) is outside the workspace root ({workspace_root}); refusing"
         )
     return repo_root
+
+
+# ---------------------------------------------------------------------------
+# Tool cores (sync adaptations of the reference's _execute_* functions)
+# ---------------------------------------------------------------------------
+
+GIT_LOG_DEFAULT_COUNT = 20
+GIT_LOG_MAX_COUNT = 100
+GIT_STATUS_MAX_ENTRIES = 200
+GIT_BLAME_MAX_LINES = 500
+
+_COMMIT_RANGE_PATTERN = re.compile(r"^[A-Za-z0-9._/~^-]+$")
+_EMAIL_PATTERN = re.compile(r"<[^<>\s@]+@[^<>\s@]+>|\b\S+@\S+\b")
+
+
+def _stderr_gist(result: GitCommandResult) -> str:
+    for line in (result.stderr or result.stdout).strip().splitlines():
+        if line.strip():
+            return line.strip()[:200]
+    return f"exit code {result.returncode}"
+
+
+def _run_git_checked(argv: list[str], *, subcommand: str) -> GitCommandResult:
+    result = run_git(argv)
+    if result.returncode != 0:
+        raise LocalToolError(f"git {subcommand} failed: {_stderr_gist(result)}")
+    return result
+
+
+def _repo_relative_path(workspace_root: Path, repo_root: Path, path: str) -> str:
+    """Resolve ``path`` confined to the workspace, rendered repo-relative."""
+    resolved = resolve_workspace_path(path, Path(workspace_root).resolve())
+    try:
+        relative = resolved.relative_to(repo_root)
+    except ValueError:
+        raise LocalToolError(
+            f"path '{path}' is outside the repository root ({repo_root})"
+        ) from None
+    return relative.as_posix() or "."
+
+
+def _prepare_for_path(workspace_root: Path, path: str | None) -> Path:
+    """Repo discovery that tolerates ``path`` being a file (uses its parent)."""
+    if path is None:
+        return prepare_repository(workspace_root, ".")
+    resolved = resolve_workspace_path(path, Path(workspace_root).resolve())
+    discovery = resolved if resolved.is_dir() else resolved.parent
+    relative = os.path.relpath(discovery, Path(workspace_root).resolve())
+    return prepare_repository(workspace_root, relative)
+
+
+def _sanitize_author_name(value: str) -> str:
+    return " ".join(_EMAIL_PATTERN.sub("", value).split())
+
+
+def _nul_records(stdout: str) -> list[str]:
+    return [record for record in stdout.split("\0") if record]
+
+
+def git_status(workspace_root: Path, path: str = ".") -> str:
+    """Branch header + staged/unstaged/untracked/conflicted entries as text.
+
+    Sync adaptation of the reference's ``_execute_status`` (:570): porcelain
+    v2 ``-z`` output with the ``--branch`` header, parsed and rendered as
+    ``category: XY path`` lines capped at ``GIT_STATUS_MAX_ENTRIES``.
+    """
+    repo_root = _prepare_for_path(workspace_root, path)
+    result = _run_git_checked(
+        [
+            "git",
+            "--no-pager",
+            "-C",
+            str(repo_root),
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--branch",
+            "--untracked-files=all",
+        ],
+        subcommand="status",
+    )
+    branch, entries, truncated = _parse_status_porcelain_v2(
+        result.stdout, limit=GIT_STATUS_MAX_ENTRIES
+    )
+    lines = [_format_branch_header(branch)]
+    lines.extend(_format_status_entry(entry) for entry in entries)
+    if not entries:
+        lines.append("(working tree clean)")
+    if truncated:
+        lines.append("… (more entries, truncated)")
+    return "\n".join(lines)
+
+
+def _parse_status_porcelain_v2(
+    stdout: str, *, limit: int
+) -> tuple[dict[str, object], list[dict[str, object]], bool]:
+    branch: dict[str, object] = {
+        "branch": None,
+        "upstream": None,
+        "ahead": None,
+        "behind": None,
+    }
+    entries: list[dict[str, object]] = []
+    total = 0
+    for record in _nul_records(stdout):
+        if record.startswith("# "):
+            _parse_status_branch_header(record, branch)
+            continue
+        if record.startswith("! "):
+            continue
+        entry = _parse_status_entry(record)
+        if entry is None:
+            continue
+        total += 1
+        if len(entries) < limit:
+            entries.append(entry)
+    return branch, entries, total > limit
+
+
+def _parse_status_branch_header(record: str, branch: dict[str, object]) -> None:
+    if record.startswith("# branch.head "):
+        value = record.removeprefix("# branch.head ").strip()
+        branch["branch"] = None if value == "(detached)" else value or None
+        return
+    if record.startswith("# branch.upstream "):
+        branch["upstream"] = record.removeprefix("# branch.upstream ").strip() or None
+        return
+    if record.startswith("# branch.ab "):
+        for part in record.removeprefix("# branch.ab ").split():
+            if part.startswith("+"):
+                with contextlib.suppress(ValueError):
+                    branch["ahead"] = int(part[1:])
+            elif part.startswith("-"):
+                with contextlib.suppress(ValueError):
+                    branch["behind"] = int(part[1:])
+
+
+def _parse_status_entry(record: str) -> dict[str, object] | None:
+    if record.startswith("? "):
+        path = record[2:].strip()
+        if not path:
+            return None
+        return {"path": path, "xy": "??", "category": "untracked"}
+    if record.startswith("1 "):
+        parts = record.split(" ", 8)
+        if len(parts) < 9:
+            return None
+        return _status_entry_from_xy(parts[1], parts[8])
+    if record.startswith("2 "):
+        parts = record.split(" ", 9)
+        if len(parts) < 10:
+            return None
+        return _status_entry_from_xy(parts[1], parts[9])
+    if record.startswith("u "):
+        parts = record.split(" ", 10)
+        if len(parts) < 11 or not parts[10].strip():
+            return None
+        return {"path": parts[10].strip(), "xy": parts[1], "category": "conflicted"}
+    return None
+
+
+def _status_entry_from_xy(xy: str, path_raw: str) -> dict[str, object] | None:
+    path = path_raw.strip()
+    if not path or len(xy) < 2:
+        return None
+    staged = xy[0] not in {".", "?", "!"}
+    unstaged = xy[1] not in {".", "?", "!"}
+    if staged and unstaged:
+        category = "staged+unstaged"
+    elif staged:
+        category = "staged"
+    elif unstaged:
+        category = "unstaged"
+    else:
+        category = "clean"
+    return {"path": path, "xy": xy, "category": category}
+
+
+def _format_branch_header(branch: dict[str, object]) -> str:
+    name = branch.get("branch") or "(detached)"
+    extras: list[str] = []
+    if branch.get("upstream"):
+        extras.append(f"upstream: {branch['upstream']}")
+    if branch.get("ahead") is not None:
+        extras.append(f"ahead: {branch['ahead']}")
+    if branch.get("behind") is not None:
+        extras.append(f"behind: {branch['behind']}")
+    suffix = f" ({', '.join(extras)})" if extras else ""
+    return f"branch: {name}{suffix}"
+
+
+def _format_status_entry(entry: dict[str, object]) -> str:
+    category = entry["category"]
+    if category == "untracked":
+        return f"untracked: {entry['path']}"
+    return f"{category}: {entry['xy']} {entry['path']}"
+
+
+def git_branches(workspace_root: Path) -> str:
+    """Verbose branch list with the current branch marked by ``*``.
+
+    Sync adaptation of the reference's ``_execute_branches`` (:621).
+    """
+    repo_root = prepare_repository(workspace_root, ".")
+    result = _run_git_checked(
+        [
+            "git",
+            "--no-pager",
+            "-C",
+            str(repo_root),
+            "branch",
+            "--format=%(HEAD)%00%(refname:short)%00%(upstream:short)%00%(objectname)",
+        ],
+        subcommand="branch",
+    )
+    lines: list[str] = []
+    for record in result.stdout.splitlines():
+        if not record:
+            continue
+        parts = record.split("\0")
+        if len(parts) < 4:
+            continue
+        marker, name, upstream, commit = (part.strip() for part in parts[:4])
+        if not name:
+            continue
+        extras: list[str] = []
+        if commit:
+            extras.append(commit[:12])
+        if upstream:
+            extras.append(f"upstream: {upstream}")
+        suffix = f" ({', '.join(extras)})" if extras else ""
+        lines.append(f"* {name}{suffix}" if marker == "*" else f"  {name}{suffix}")
+    return "\n".join(lines) if lines else "(no branches)"
+
+
+def git_log(
+    workspace_root: Path,
+    *,
+    count: int = GIT_LOG_DEFAULT_COUNT,
+    path: str | None = None,
+) -> str:
+    """Bounded commit log, newest first; ``count`` is clamped to 1..100.
+
+    Sync adaptation of the reference's ``_execute_log`` (:831). Deviation:
+    ``count`` defaults to 20 here (the reference has no default and falls
+    back to its max-100 when no limit is given).
+    """
+    count = min(max(int(count), 1), GIT_LOG_MAX_COUNT)
+    repo_root = _prepare_for_path(workspace_root, path)
+    argv = [
+        "git",
+        "--no-pager",
+        "-C",
+        str(repo_root),
+        "log",
+        "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1e",
+        "-n",
+        str(count),
+    ]
+    if path is not None:
+        argv.extend(["--", _repo_relative_path(workspace_root, repo_root, path)])
+    result = _run_git_checked(argv, subcommand="log")
+    lines: list[str] = []
+    for record in result.stdout.split("\x1e"):
+        fields = record.strip("\n").split("\x1f", 4)
+        if len(fields) < 5:
+            continue
+        _commit_hash, short_hash, author_name, author_date, subject = fields
+        lines.append(
+            f"{short_hash} {author_date} {_sanitize_author_name(author_name)}: {subject}"
+        )
+    return "\n".join(lines) if lines else "(no commits)"
+
+
+def git_diff(
+    workspace_root: Path,
+    *,
+    staged: bool = False,
+    commit_range: str | None = None,
+    path: str | None = None,
+    stat: bool = False,
+) -> str:
+    """Unified diff of the worktree (default) or the index (``staged=True``).
+
+    Sync adaptation of the reference's ``_execute_diff`` (:709) +
+    ``_run_diff_command`` (:1049-1080 — ``--no-ext-diff``/``--no-textconv``/
+    ``--no-color`` ported). Disclosed deviations: adds ``commit_range``
+    (regex-validated before entering argv) and ``stat`` modes; the
+    reference's third ``working_tree`` scope is omitted.
+    """
+    if commit_range is not None and not _COMMIT_RANGE_PATTERN.match(commit_range):
+        raise LocalToolError(
+            f"invalid commit_range {commit_range!r}: only [A-Za-z0-9._/~^-] allowed"
+        )
+    repo_root = _prepare_for_path(workspace_root, path)
+    argv = [
+        "git",
+        "--no-pager",
+        "-C",
+        str(repo_root),
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+    ]
+    if stat:
+        argv.append("--stat")
+    else:
+        # --unified implies patch output; combining it with --stat would
+        # emit BOTH formats, so patch context is only set in patch mode.
+        argv.append("--unified=3")
+    if staged:
+        argv.append("--cached")
+    if commit_range is not None:
+        argv.append(commit_range)
+    if path is not None:
+        argv.extend(["--", _repo_relative_path(workspace_root, repo_root, path)])
+    result = _run_git_checked(argv, subcommand="diff")
+    return result.stdout if result.stdout.strip() else "(no changes)"
+
+
+def git_blame(
+    workspace_root: Path,
+    path: str,
+    *,
+    start_line: int | None = None,
+    end_line: int | None = None,
+) -> str:
+    """Per-line blame for ``path``; optional 1-based inclusive line range.
+
+    Sync adaptation of the reference's ``_execute_blame`` (:892) — line
+    porcelain parse — except the ``-L`` range is optional here (omitted when
+    neither bound is given) and the range is capped at
+    ``GIT_BLAME_MAX_LINES`` lines.
+    """
+    resolved = resolve_workspace_path(path, Path(workspace_root).resolve())
+    if not resolved.is_file():
+        raise LocalToolError(f"file not found: {path}")
+    repo_root = _prepare_for_path(workspace_root, path)
+    try:
+        repo_relative = resolved.relative_to(repo_root).as_posix()
+    except ValueError:
+        raise LocalToolError(
+            f"path '{path}' is outside the repository root ({repo_root})"
+        ) from None
+
+    argv = [
+        "git",
+        "--no-pager",
+        "-C",
+        str(repo_root),
+        "blame",
+        "--line-porcelain",
+        "--no-textconv",
+    ]
+    if start_line is not None or end_line is not None:
+        start = int(start_line) if start_line is not None else 1
+        if start < 1:
+            raise LocalToolError(f"start_line must be >= 1, got {start}")
+        end = int(end_line) if end_line is not None else start + GIT_BLAME_MAX_LINES - 1
+        if end < start:
+            raise LocalToolError(f"end_line ({end}) is before start_line ({start})")
+        end = min(end, start + GIT_BLAME_MAX_LINES - 1)
+        argv.extend(["-L", f"{start},{end}"])
+    argv.extend(["--", repo_relative])
+
+    result = _run_git_checked(argv, subcommand="blame")
+    lines = [f"{ln}: {author}: {text}" for ln, author, text in _parse_blame(result.stdout)]
+    return "\n".join(lines) if lines else "(no blame output)"
+
+
+def _parse_blame(stdout: str) -> list[tuple[int, str, str]]:
+    """Parse ``blame --line-porcelain`` into (line_number, author, text)."""
+    lines: list[tuple[int, str, str]] = []
+    current: dict[str, object] | None = None
+    commit_metadata: dict[str, dict[str, object]] = {}
+    for raw_line in stdout.splitlines():
+        if raw_line.startswith("\t"):
+            if current is None:
+                continue
+            author = _sanitize_author_name(str(current.get("author_name") or ""))
+            lines.append((int(current["line_number"]), author, raw_line[1:]))
+            current = None
+            continue
+        header = _parse_blame_header(raw_line)
+        if header is not None:
+            cached = commit_metadata.get(str(header["commit"]))
+            if cached:
+                header.update(cached)
+            current = header
+            continue
+        if current is None:
+            continue
+        if raw_line.startswith("author "):
+            author_name = raw_line.removeprefix("author ")
+            current["author_name"] = author_name
+            commit_metadata.setdefault(str(current["commit"]), {})["author_name"] = author_name
+    return lines
+
+
+def _parse_blame_header(raw_line: str) -> dict[str, object] | None:
+    # Group headers carry 4 fields (sha orig final count); subsequent headers
+    # for lines of the same commit group carry only 3 (sha orig final) — the
+    # reference's `len(parts) < 4` check drops those lines, so this port
+    # deliberately accepts >= 3 (deviation; see module header).
+    parts = raw_line.split()
+    if len(parts) < 3:
+        return None
+    commit_hash = parts[0]
+    if len(commit_hash) < 8 or not all(
+        character in "0123456789abcdefABCDEF" for character in commit_hash
+    ):
+        return None
+    with contextlib.suppress(ValueError):
+        return {
+            "commit": commit_hash,
+            "line_number": int(parts[2]),
+            "author_name": None,
+        }
+    return None

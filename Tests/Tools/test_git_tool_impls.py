@@ -17,6 +17,11 @@ import pytest
 from tldw_chatbook.Tools import git_tool_impls
 from tldw_chatbook.Tools.git_tool_impls import (
     GitCommandResult,
+    git_blame,
+    git_branches,
+    git_diff,
+    git_log,
+    git_status,
     prepare_repository,
     run_git,
 )
@@ -133,3 +138,181 @@ def test_git_unavailable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
         prepare_repository(tmp_path, ".")
     with pytest.raises(LocalToolError, match="git is not available"):
         run_git(["git", "--version"])
+
+
+def _current_branch(repo: Path) -> str:
+    result = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def _commit_file(repo: Path, name: str, text: str, message: str) -> None:
+    (repo / name).write_text(text, encoding="utf-8")
+    _git(repo, "add", name)
+    _git(repo, "commit", "-m", message)
+
+
+# --- git_status ---------------------------------------------------------
+
+
+def test_git_status_porcelain(tmp_git_repo: Path) -> None:
+    clean = git_status(tmp_git_repo)
+    assert "clean" in clean
+
+    (tmp_git_repo / "file.txt").write_text("changed\n", encoding="utf-8")
+    (tmp_git_repo / "untracked.txt").write_text("new\n", encoding="utf-8")
+    out = git_status(tmp_git_repo)
+    assert f"branch: {_current_branch(tmp_git_repo)}" in out
+    assert "file.txt" in out
+    assert "unstaged" in out
+    assert "untracked.txt" in out
+    assert "untracked" in out
+
+
+def test_git_status_not_repo(tmp_path: Path) -> None:
+    with pytest.raises(LocalToolError, match="not a git repository"):
+        git_status(tmp_path)
+
+
+# --- git_branches -------------------------------------------------------
+
+
+def test_git_branches(tmp_git_repo: Path) -> None:
+    main = _current_branch(tmp_git_repo)
+    _git(tmp_git_repo, "checkout", "-b", "feature-x")
+    out = git_branches(tmp_git_repo)
+    assert main in out
+    assert "feature-x" in out
+    # The current branch carries the marker.
+    assert "* feature-x" in out
+    assert f"* {main}" not in out
+
+
+# --- git_log ------------------------------------------------------------
+
+
+def test_git_log(tmp_git_repo: Path) -> None:
+    _commit_file(tmp_git_repo, "a.txt", "a\n", "add a")
+    _commit_file(tmp_git_repo, "b.txt", "b\n", "add b")
+
+    out = git_log(tmp_git_repo)
+    lines = out.strip().splitlines()
+    assert len(lines) == 3
+    assert "add b" in lines[0]
+    assert "add a" in lines[1]
+    assert "initial commit" in lines[2]
+    assert "Test User" in out
+
+    capped = git_log(tmp_git_repo, count=2)
+    assert len(capped.strip().splitlines()) == 2
+
+    filtered = git_log(tmp_git_repo, path="a.txt")
+    assert "add a" in filtered
+    assert "add b" not in filtered
+    assert "initial commit" not in filtered
+
+
+def test_git_log_count_clamped(
+    tmp_git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: list[list[str]] = []
+    real_run_git = git_tool_impls.run_git
+
+    def spy(argv, **kwargs):  # noqa: ANN001, ANN202 - test spy
+        captured.append(list(argv))
+        return real_run_git(argv, **kwargs)
+
+    monkeypatch.setattr(git_tool_impls, "run_git", spy)
+    git_log(tmp_git_repo, count=0)
+    git_log(tmp_git_repo, count=250)
+    log_calls = [argv for argv in captured if "log" in argv]
+    assert len(log_calls) == 2
+    for argv, expected in zip(log_calls, ["1", "100"], strict=True):
+        assert argv[argv.index("-n") + 1] == expected
+
+
+# --- git_diff -----------------------------------------------------------
+
+
+def test_git_diff_worktree_and_staged(tmp_git_repo: Path) -> None:
+    (tmp_git_repo / "file.txt").write_text("hello\nchanged\n", encoding="utf-8")
+
+    unstaged = git_diff(tmp_git_repo)
+    assert "+changed" in unstaged
+    assert "file.txt" in unstaged
+    assert git_diff(tmp_git_repo, staged=True) == "(no changes)"
+
+    _git(tmp_git_repo, "add", "file.txt")
+    staged = git_diff(tmp_git_repo, staged=True)
+    assert "+changed" in staged
+    assert git_diff(tmp_git_repo) == "(no changes)"
+
+
+def test_git_diff_path_filter_and_stat(tmp_git_repo: Path) -> None:
+    _commit_file(tmp_git_repo, "other.txt", "other\n", "add other")
+    (tmp_git_repo / "file.txt").write_text("hello\nmore\n", encoding="utf-8")
+    (tmp_git_repo / "other.txt").write_text("other\nmore2\n", encoding="utf-8")
+
+    filtered = git_diff(tmp_git_repo, path="file.txt")
+    assert "file.txt" in filtered
+    assert "other.txt" not in filtered
+
+    stat = git_diff(tmp_git_repo, stat=True)
+    assert "files changed" in stat
+    assert "+more" not in stat
+
+
+def test_git_diff_commit_range(tmp_git_repo: Path) -> None:
+    (tmp_git_repo / "file.txt").write_text("hello\nsecond\n", encoding="utf-8")
+    _git(tmp_git_repo, "add", "file.txt")
+    _git(tmp_git_repo, "commit", "-m", "second commit")
+
+    out = git_diff(tmp_git_repo, commit_range="HEAD~1..HEAD")
+    assert "+second" in out
+    assert "file.txt" in out
+
+
+def test_git_diff_commit_range_injection_refused(tmp_git_repo: Path) -> None:
+    with pytest.raises(LocalToolError, match="commit_range"):
+        git_diff(tmp_git_repo, commit_range="HEAD; rm -rf")
+    with pytest.raises(LocalToolError, match="commit_range"):
+        git_diff(tmp_git_repo, commit_range="HEAD $(whoami)")
+
+
+# --- git_blame ----------------------------------------------------------
+
+
+def test_git_blame(tmp_git_repo: Path) -> None:
+    _commit_file(tmp_git_repo, "multi.txt", "line1\nline2\nline3\n", "add multi")
+
+    out = git_blame(tmp_git_repo, "multi.txt")
+    assert "Test User" in out
+    assert "line1" in out
+    assert "line3" in out
+
+    ranged = git_blame(tmp_git_repo, "multi.txt", start_line=2, end_line=3)
+    assert "line2" in ranged
+    assert "line3" in ranged
+    assert "line1" not in ranged
+
+
+def test_git_blame_missing_file(tmp_git_repo: Path) -> None:
+    with pytest.raises(LocalToolError, match="not found"):
+        git_blame(tmp_git_repo, "nope.txt")
+
+
+# --- confinement --------------------------------------------------------
+
+
+def test_path_filter_confined(tmp_git_repo: Path) -> None:
+    with pytest.raises(LocalToolError, match="outside"):
+        git_diff(tmp_git_repo, path="../x")
+    with pytest.raises(LocalToolError, match="outside"):
+        git_log(tmp_git_repo, path="../x")
+    with pytest.raises(LocalToolError, match="outside"):
+        git_blame(tmp_git_repo, "../x")
