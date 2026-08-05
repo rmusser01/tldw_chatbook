@@ -22,6 +22,7 @@ from loguru import logger
 from tldw_chatbook.Agents.agent_models import (
     AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
+    DIRECT_DISCLOSE_THRESHOLD,
     FIND_TOOLS_NAME,
     LOAD_TOOLS_NAME,
     RunBudget,
@@ -99,22 +100,43 @@ CONSOLE_RUN_BUDGET = RunBudget(max_steps=32, max_wall_seconds=480.0, max_model_t
 
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
 
+# Phase-3a Task 5: one-line pointer to the find/load discovery path, appended
+# to the composed system prompt ONLY when this run's catalog crosses
+# DIRECT_DISCLOSE_THRESHOLD (i.e. initial_disclosure would offer find/load) --
+# under direct disclosure every schema is already in the prompt and the hint
+# would point at tools that are, in fact, shown.
+FIND_LOAD_DISCOVERY_HINT = (
+    "Additional tools (file, web, git, and more) are available but not shown; "
+    "use find_tools to search the catalog and load_tools to load their "
+    "schemas before calling them."
+)
 
-def compose_agent_system_prompt(session_prompt: str) -> str:
+
+def compose_agent_system_prompt(session_prompt: str, *, offer_find_load: bool = False) -> str:
     """Compose the primary system prompt: session prompt first, agent prompt appended.
 
     Args:
         session_prompt: The Console session's own system prompt, if any.
+        offer_find_load: True when this run's registry catalog crosses
+            ``DIRECT_DISCLOSE_THRESHOLD`` (the caller knows the registry;
+            compose does not), appending ``FIND_LOAD_DISCOVERY_HINT`` after
+            the operating prompt.
 
     Returns:
         ``session_prompt`` followed by ``CONSOLE_AGENT_OPERATING_PROMPT``
         (blank-line separated), or just the operating prompt when
-        ``session_prompt`` is blank.
+        ``session_prompt`` is blank; plus the discovery hint when
+        ``offer_find_load`` is set.
     """
     base = (session_prompt or "").strip()
-    if not base:
-        return CONSOLE_AGENT_OPERATING_PROMPT
-    return f"{session_prompt}\n\n{CONSOLE_AGENT_OPERATING_PROMPT}"
+    composed = (
+        CONSOLE_AGENT_OPERATING_PROMPT
+        if not base
+        else f"{session_prompt}\n\n{CONSOLE_AGENT_OPERATING_PROMPT}"
+    )
+    if offer_find_load:
+        composed = f"{composed}\n\n{FIND_LOAD_DISCOVERY_HINT}"
+    return composed
 
 
 def format_agent_step_marker(
@@ -932,7 +954,15 @@ class ConsoleAgentBridge:
         )
         config = AgentConfig(
             model=model,
-            system_prompt=compose_agent_system_prompt(session_system_prompt),
+            system_prompt=compose_agent_system_prompt(
+                session_system_prompt,
+                # Same condition initial_disclosure applies inside
+                # AgentService.run_turn: past the threshold, find/load is
+                # the live disclosure mode and the hint points at it.
+                offer_find_load=(
+                    len(registry.list_catalog()) > DIRECT_DISCLOSE_THRESHOLD
+                ),
+            ),
             allowed_tools=allowed_tools,
             budget=CONSOLE_RUN_BUDGET,
             native_tools=native_tools,
