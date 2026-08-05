@@ -783,6 +783,14 @@ def load_settings(force_reload: bool = False) -> Dict:
         minimum=MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
         maximum=MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     )
+    final_console_settings_cli["local_tools_enabled"] = coerce_bool_setting(
+        final_console_settings_cli.get("local_tools_enabled", False),
+        False,
+    )
+    workspace_root = final_console_settings_cli.get("workspace_root", "")
+    if not isinstance(workspace_root, str):
+        workspace_root = ""
+    final_console_settings_cli["workspace_root"] = workspace_root.strip()
     background_effects = final_console_settings_cli.get("background_effects")
     if not isinstance(background_effects, dict):
         background_effects = {}
@@ -2134,6 +2142,8 @@ users_name = "default_user" # Default user name for the TUI
 [console]
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
+# local_tools_enabled = false   # workspace-local agent tools (fs_*); approvals via MCP permission store
+# workspace_root = ""           # confinement root for fs_* tools; empty = app cwd at startup
 
 [console.background_effects]
 enabled = false  # Optional Console ambience. Off by default for readability.

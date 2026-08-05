@@ -161,6 +161,31 @@ def test_load_settings_coerces_console_string_false(tmp_path, monkeypatch):
     assert settings["console"]["collapse_large_pastes"] is False
 
 
+def test_console_local_tools_defaults(tmp_path, monkeypatch):
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "missing-config.toml"))
+
+    settings = config_module.load_settings(force_reload=True)
+    console = settings["console"]
+
+    assert console["local_tools_enabled"] is False
+    assert console["workspace_root"] == ""
+
+
+def test_console_local_tools_coerced(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[console]\nlocal_tools_enabled = "yes"\nworkspace_root = 123\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    settings = config_module.load_settings(force_reload=True)
+    console = settings["console"]
+
+    assert console["local_tools_enabled"] is True
+    assert console["workspace_root"] == ""
+
+
 def test_save_setting_respects_tldw_config_path_override(tmp_path, monkeypatch):
     override_config = tmp_path / "override" / "config.toml"
     default_config = tmp_path / "default" / "config.toml"
