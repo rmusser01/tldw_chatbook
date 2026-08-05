@@ -69,6 +69,7 @@ from ..Console_Modules.right_rail import ConsoleInspectorRail
 from ...Chat.chat_persistence_service import ChatPersistenceService
 from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import ConsoleChatController
+from ...Chat.prompt_history import PromptHistory, default_prompt_history_path
 from ...Chat.console_cost_tracker import (
     ConsoleCacheState,
     ConsoleCostRowTotals,
@@ -3291,6 +3292,7 @@ class ChatScreen(BaseAppScreen):
         #: silence detection it can't deliver" constraint).
         self._console_hands_free_vad_degraded = False
         self._console_provider_gateway: Any | None = None
+        self._console_prompt_history: Any | None = None
         self._console_chat_controller: ConsoleChatController | None = None
         self._console_command_registry: ConsoleCommandRegistry = (
             default_console_registry()
@@ -5225,6 +5227,27 @@ class ChatScreen(BaseAppScreen):
             )
         return self._console_provider_gateway
 
+    def _ensure_console_prompt_history(self) -> PromptHistory:
+        """Return the shared JSONL prompt-history store (TASK-1364).
+
+        One instance feeds both the composer (ghost text, Up/Down recall)
+        and the controller (recording accepted sends). Creation is lazy and
+        IO-free -- the store self-loads on first awaited use, and the
+        composer kicks a background `load()` on mount so ghost text works on
+        the first keystroke. `console_prompt_history_factory` on the app is
+        the test seam, mirroring `console_provider_gateway_factory`.
+        """
+        history = getattr(self, "_console_prompt_history", None)
+        if history is None:
+            factory = getattr(self.app_instance, "console_prompt_history_factory", None)
+            history = (
+                factory()
+                if callable(factory)
+                else PromptHistory(default_prompt_history_path())
+            )
+            self._console_prompt_history = history
+        return history
+
     def _ensure_console_chat_controller(self) -> ConsoleChatController:
         """Return the native Console chat controller with fresh selection state."""
         if self._console_chat_controller is None:
@@ -5261,6 +5284,11 @@ class ChatScreen(BaseAppScreen):
             )
         self._console_chat_controller.on_submission_accepted = (
             self._on_console_submission_accepted
+        )
+        # TASK-1364: accepted sends are recorded to the shared prompt
+        # history (inside `submit_draft`, past every block/refusal gate).
+        self._console_chat_controller.prompt_history = (
+            self._ensure_console_prompt_history()
         )
         # MCP batch-approval bridge (task-5): `request_mcp_approvals` runs
         # on the agent bridge's worker thread and needs both a
@@ -16307,6 +16335,10 @@ class ChatScreen(BaseAppScreen):
                 collapse_large_pastes=self._console_collapse_large_pastes_enabled(),
                 paste_collapse_threshold=self._console_paste_collapse_threshold(),
             )
+            # TASK-1364: the composer shares the screen's prompt-history
+            # store with the controller (which records accepted sends) so
+            # ghost text and Up/Down recall see this app's own past prompts.
+            composer.set_prompt_history(self._ensure_console_prompt_history())
             store = self._console_chat_store
             if store is not None and store.active_session_id is not None:
                 try:
@@ -22650,7 +22682,10 @@ class ChatScreen(BaseAppScreen):
             event.prevent_default()
             return
         if event.key == "right":
-            composer.move_cursor_right()
+            # TASK-1364: with a ghost-text suggestion visible (caret at end,
+            # live draft), Right accepts it instead of moving the caret.
+            if not composer.accept_ghost_text():
+                composer.move_cursor_right()
             event.stop()
             event.prevent_default()
             return
@@ -22663,13 +22698,17 @@ class ChatScreen(BaseAppScreen):
         # preserving whatever up/down would otherwise do on this screen
         # (nothing today; a future transcript scroll or default focus
         # behavior must not be silently swallowed by a no-op composer move).
+        # TASK-1364: on exactly those boundary rows, Up/Down first offer
+        # prompt-history recall (the composer gates on first/last visual row
+        # of the wrapped draft); only when recall declines does ordinary
+        # caret movement get its chance.
         if event.key == "up":
-            if composer.move_cursor_up():
+            if composer.recall_history_previous() or composer.move_cursor_up():
                 event.stop()
                 event.prevent_default()
                 return
         if event.key == "down":
-            if composer.move_cursor_down():
+            if composer.recall_history_next() or composer.move_cursor_down():
                 event.stop()
                 event.prevent_default()
                 return

@@ -1104,6 +1104,7 @@ class ConsoleChatStore:
         terminal_citation_finalizer: TerminalCitationFinalizer | None = None,
         defer_terminal_persistence: bool = False,
         tool_output_full: str | None = None,
+        tool_diff: tuple[str, str, str] | None = None,
         change_review_run_id: str | None = None,
         metadata: "MessageMetadata | None" = None,
     ) -> ConsoleChatMessage:
@@ -1113,6 +1114,10 @@ class ConsoleChatStore:
         (engine provenance, interrupted, transcript status) at creation
         time, so a row that knows its own provenance writes it with the
         create instead of chasing it with a second update.
+
+        ``tool_diff`` (TASK-1366) is the raw (path, before, after) capture
+        behind a file-writing TOOL marker -- session-only, never persisted
+        (see ``ConsoleChatMessage.tool_diff``).
         """
         self._session_or_raise(session_id)
         effective = tuple(attachments)
@@ -1163,6 +1168,7 @@ class ConsoleChatStore:
             content=content,
             status=self._initial_status(role=role, content=content),
             tool_output_full=tool_output_full,
+            tool_diff=tool_diff,
             change_review_run_id=change_review_run_id,
             metadata=metadata,
         )

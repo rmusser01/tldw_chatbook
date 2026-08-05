@@ -214,3 +214,79 @@ class TestBuiltinProviderStripsDiffContents:
         assert result.ok
         assert '"action": "created"' in result.content
         assert '"lines_written": 1' in result.content
+
+
+class TestBuiltinProviderDiffSink:
+    """TASK-1366: invoke hands raw diff contents to a UI-side sink.
+
+    The sink is the narrow channel that lets the live Console render a
+    diff: it fires at the strip seam, BEFORE old_content/new_content are
+    removed from the dict that becomes the LLM/run-log-bound JSON, so the
+    UI gets the raw contents while the strip guarantee is untouched.
+    """
+
+    def test_sink_receives_raw_contents_while_result_stays_stripped(
+        self, _sandbox_only_roots
+    ):
+        captured = []
+        provider = BuiltinToolProvider(gate=AllowAllGate(), diff_sink=captured.append)
+        provider._tools["write_file"] = WriteFileTool()
+
+        result = provider.invoke(
+            "builtin:write_file",
+            {"file_path": "note.txt", "content": "secret after text\n"},
+        )
+
+        assert result.ok
+        assert captured == [
+            (
+                "write_file",
+                str(_sandbox_only_roots / "note.txt"),
+                "",
+                "secret after text\n",
+            )
+        ]
+        # The strip guarantee is unchanged: nothing raw in the LLM-bound text.
+        assert "old_content" not in result.content
+        assert "new_content" not in result.content
+        assert "secret after text" not in result.content
+
+    def test_sink_not_called_for_results_without_diff_content(
+        self, _sandbox_only_roots
+    ):
+        captured = []
+        provider = BuiltinToolProvider(gate=AllowAllGate(), diff_sink=captured.append)
+
+        result = provider.invoke("builtin:calculator", {"expression": "6*7"})
+
+        assert result.ok
+        assert captured == []
+
+    def test_sink_not_called_when_unset(self, _sandbox_only_roots):
+        """Default construction (no sink) behaves exactly as before."""
+        provider = BuiltinToolProvider(gate=AllowAllGate())
+        provider._tools["write_file"] = WriteFileTool()
+
+        result = provider.invoke(
+            "builtin:write_file", {"file_path": "note.txt", "content": "hi\n"}
+        )
+
+        assert result.ok
+        assert '"action": "created"' in result.content
+
+    def test_raising_sink_never_breaks_invoke(self, _sandbox_only_roots):
+        """A UI-side failure must never fail or corrupt the tool call."""
+
+        def boom(_capture):
+            raise RuntimeError("UI exploded")
+
+        provider = BuiltinToolProvider(gate=AllowAllGate(), diff_sink=boom)
+        provider._tools["write_file"] = WriteFileTool()
+
+        result = provider.invoke(
+            "builtin:write_file", {"file_path": "note.txt", "content": "hi\n"}
+        )
+
+        assert result.ok
+        assert '"action": "created"' in result.content
+        assert "old_content" not in result.content

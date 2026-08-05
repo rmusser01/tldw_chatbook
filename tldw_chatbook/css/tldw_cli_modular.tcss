@@ -5010,6 +5010,14 @@ with stray left-edge border fragments), and padding 0 1 so the full
     text-style: italic;
 }
 
+/* TASK-1366: inline diff row under an expanded file-write TOOL marker.
+   Indented to read as belonging to the marker above it; height stays
+   auto so the mounted DiffView sizes itself. */
+.console-transcript-tool-diff {
+    height: auto;
+    padding: 0 0 0 4;
+}
+
 .console-transcript-message-system {
     color: $ds-text-muted;
 }

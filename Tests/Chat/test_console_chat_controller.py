@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -4659,3 +4660,72 @@ async def test_baseline_ignores_dispatch_time_substitution_and_stays_comparable(
     # No break immediately after an ordinary send -- the substitution never
     # touched the store, so both sides read the same raw view.
     assert fingerprint_break_reason(baseline, current) is None
+
+
+# ---------------------------------------------------------------------------
+# Prompt-history recording (TASK-1364)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_accepted_send_records_cleaned_draft_to_prompt_history(tmp_path):
+    """AC4: an accepted send lands in the shared JSONL history exactly once."""
+    from tldw_chatbook.Chat.prompt_history import PromptHistory
+
+    history_path = tmp_path / "prompt_history.jsonl"
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    controller.prompt_history = PromptHistory(history_path)
+
+    result = await controller.submit_draft("record this prompt")
+    assert result.accepted
+    assert controller.prompt_history.size == 1
+    entry = await controller.prompt_history.get_entry(-1)
+    assert entry["input"] == "record this prompt"
+
+    # Persisted as JSONL (one object per line, real timestamp).
+    lines = history_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    persisted = json.loads(lines[0])
+    assert persisted["input"] == "record this prompt"
+    assert persisted["timestamp"] > 0
+
+
+@pytest.mark.asyncio
+async def test_blocked_send_records_nothing_to_prompt_history(tmp_path):
+    """Refused/blocked sends never reach the history (validation failures)."""
+    from tldw_chatbook.Chat.prompt_history import PromptHistory
+
+    history_path = tmp_path / "prompt_history.jsonl"
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=BlockedGateway())
+    controller.prompt_history = PromptHistory(history_path)
+
+    result = await controller.submit_draft("blocked prompt")
+    assert not result.accepted
+    assert controller.prompt_history.size == 0
+    assert not history_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_empty_and_whitespace_drafts_record_nothing(tmp_path):
+    """Attachment-only (empty cleaned draft) sends skip recording."""
+    from tldw_chatbook.Chat.prompt_history import PromptHistory
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    controller.prompt_history = PromptHistory(tmp_path / "prompt_history.jsonl")
+
+    await controller._record_prompt_history("")
+    await controller._record_prompt_history("   \n  ")
+    assert controller.prompt_history.size == 0
+
+
+@pytest.mark.asyncio
+async def test_submit_without_prompt_history_configured_is_a_noop():
+    """Controllers with no history wired (tests, embedders) send as before."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    assert controller.prompt_history is None
+    result = await controller.submit_draft("hello")
+    assert result.accepted

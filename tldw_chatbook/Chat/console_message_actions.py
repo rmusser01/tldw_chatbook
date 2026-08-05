@@ -74,6 +74,12 @@ class ConsoleMessageActionService:
     _TOOL_OUTPUT_ACTIONS: tuple[tuple[str, str], ...] = (
         ("tool-output", "Full output"),
     )
+    #: TASK-1366: a diff-carrying marker whose stripped result FIT the
+    #: preview has no fuller text to show -- expansion reveals the inline
+    #: diff row instead, so the affordance says what it opens.
+    _TOOL_DIFF_ACTIONS: tuple[tuple[str, str], ...] = (
+        ("tool-output", "Diff"),
+    )
     #: TASK-1972: offered only on a change-summary row (one carrying the
     #: run id it reviews). Opens the Change Review screen for THAT turn.
     _REVIEW_CHANGES_ACTIONS: tuple[tuple[str, str], ...] = (
@@ -101,7 +107,10 @@ class ConsoleMessageActionService:
         # EXPANDED row does contain it, and that must not remove the control
         # that collapses it again. Whether there is more to show is settled
         # once, when the marker is built.
-        return bool(message.tool_output_full)
+        # TASK-1366: a diff-carrying marker always has more to show -- the
+        # inline diff row -- even when the stripped result was short enough
+        # that `tool_output_full` is None (the common case for file writes).
+        return bool(message.tool_output_full) or message.tool_diff is not None
 
     @staticmethod
     def _has_image(message: ConsoleChatMessage) -> bool:
@@ -195,7 +204,14 @@ class ConsoleMessageActionService:
         if extra_actions:
             completed_actions = self._base_actions_with(tuple(extra_actions))
         if self._has_tool_output(message):
-            completed_actions = completed_actions + list(self._TOOL_OUTPUT_ACTIONS)
+            # Diff-only marker (no fuller TEXT behind the preview): the
+            # expand control opens the inline diff row, so label it that
+            # way. Full-output and full-output+diff markers keep the
+            # TASK-1860 copy.
+            if message.tool_output_full:
+                completed_actions = completed_actions + list(self._TOOL_OUTPUT_ACTIONS)
+            else:
+                completed_actions = completed_actions + list(self._TOOL_DIFF_ACTIONS)
         if getattr(message, "change_review_run_id", None):
             completed_actions = completed_actions + list(
                 self._REVIEW_CHANGES_ACTIONS

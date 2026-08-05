@@ -2870,6 +2870,15 @@ min_p = 0.05
 top_k = 50
 strip_thinking_tags = true
 
+# Console transcript view pruning: when the transcript's virtual height (in
+# terminal rows) exceeds prune_high_watermark, the oldest message rows are
+# dropped from the view until the remaining height fits under
+# prune_low_watermark. Scroll position is preserved, the in-progress
+# streaming row is never pruned, and the store keeps the full history
+# (pruning is view-only). Set prune_high_watermark <= 0 to disable pruning.
+prune_high_watermark = 20000
+prune_low_watermark = 12000
+
 # Image attachment settings for chat
 [chat.images]
 enabled = true
