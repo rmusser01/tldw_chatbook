@@ -17,7 +17,7 @@ The spec's six migration rules bind every task (see the spec's "Migration safety
 House rules, sharpened by wave 1's cost:
 
 - **EXECUTION GATE (owner ruling, standing):** before Task 1 is dispatched, run the churn gate — `git log origin/dev --oneline --since="24 hours ago" -- tldw_chatbook/UI/Screens/chat_screen.py` plus a scan of open `origin/*console*` branches — and get the owner's explicit go.
-- **The wait-trap rule (burned five implementers in wave 1):** every pytest call is FOREGROUND with Bash `timeout: 600000`. Dispatches name the exact 1-2 verification files; extra runs are forbidden. If a call auto-backgrounds, the timeout parameter was wrong — fix it, never wait.
+- **The wait-trap rule (burned five implementers in wave 1):** every pytest call is FOREGROUND with Bash `timeout: 600000`. Dispatches name the exact verification files (two to four, in ONE pytest call; Task 4's close-out gate runs two calls); anything not named is forbidden. If a call auto-backgrounds, the timeout parameter was wrong — fix it, never wait.
 - **Commit the extraction the moment it exists**, before any sweep.
 - Rebase onto `origin/dev` before each task; CSS-bundle conflicts resolve by `git checkout --theirs` the bundle then regenerating via `/private/tmp/tldw-venv/bin/python tldw_chatbook/css/build_css.py`; re-run the geometry baseline (`Tests/UI/test_console_shell_regions.py`, 30 tests) after every rebase.
 - Never `git stash`; never `git checkout --` on uncommitted work; line numbers below were measured at dev `2fbd5571e` — re-locate by anchor.
@@ -45,7 +45,7 @@ House rules, sharpened by wave 1's cost:
 - `tldw_chatbook/UI/Console_Modules/hands_free.py` (new) — `ConsoleHandsFreeController`
 - `tldw_chatbook/UI/Console_Modules/workspace.py` (new) — `ConsoleWorkspaceController`
 - `tldw_chatbook/UI/Console_Modules/session.py` (new) — `ConsoleSessionController`
-- `tldw_chatbook/UI/Screens/chat_screen.py` — delegations shrink; `UI/Console_Modules/dictation.py` — exception language retired (Task 1)
+- `tldw_chatbook/UI/Screens/chat_screen.py` — delegations shrink; `tldw_chatbook/UI/Console_Modules/dictation.py` — exception language retired (Task 1)
 - Tests: `Tests/UI/test_console_hands_free_controller.py`, `..._workspace_controller.py`, `..._session_controller.py` (new characterisation + unit files)
 
 ---
