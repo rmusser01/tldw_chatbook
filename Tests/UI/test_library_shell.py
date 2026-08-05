@@ -4504,6 +4504,96 @@ def test_library_rag_panel_state_keeps_restored_rows_while_counts_are_unloaded()
     assert [row.title for row in post_snapshot.results] == ["Note Evidence"]
 
 
+def test_library_rag_panel_state_keeps_restored_rows_after_snapshot_timeout():
+    """PR-T1 fix-wave re-review: the C2 gate above reads `_library_loaded`
+    alone, but `_apply_source_snapshot_timeout` sets `_library_loaded =
+    True` TOGETHER WITH placeholder all-zero counts and
+    `_library_lookup_error` (its whole point is to avoid leaving Library in
+    an indefinite loading state on a slow/contended machine). That
+    re-opens the exact hole the test above closes, through the timeout
+    door: the gate sees `_library_loaded is True` and starts filtering on
+    fake zero counts, hiding every attributable restored row and making
+    the panel wrongly announce "No evidence matched the current query"
+    about the restored query.
+
+    The fix gates on the same two-conjunct "counts are real" predicate
+    `_build_library_shell_input` already uses as `counts_available`
+    (`_library_loaded and not _library_lookup_error`), so a timeout's fake
+    zeros can't enable filtering. This asserts restored rows survive a
+    timeout firing, and that a REAL snapshot landing afterwards resumes
+    honest filtering exactly as the sibling test above proves for the
+    pre-snapshot window -- so the fix doesn't disable filtering forever
+    once a timeout has fired.
+    """
+    app = _build_test_app()
+
+    original = LibraryScreen(app)
+    original._library_selected_row_id = LIBRARY_ROW_BROWSE_SEARCH
+    original._library_rag_query = "credential rotation"
+    original._library_rag_searched_query = "credential rotation"
+    original._library_rag_retrieval_status = "ready"
+    original._library_rag_results = (
+        {
+            "document_title": "Note Evidence",
+            "snippet": "note snippet",
+            "source_id": "note-1",
+            "provenance": {"source_type": "note"},
+        },
+        {
+            "document_title": "Conversation Evidence",
+            "snippet": "conversation snippet",
+            "source_id": "chat-1",
+            "provenance": {"source_type": "conversation"},
+        },
+    )
+    original._local_source_counts = {"notes": 1, "media": 0, "conversations": 1}
+    original._library_loaded = True
+
+    restored = LibraryScreen(app)
+    restored.restore_state(original.save_state())
+
+    # Precondition: same restored-but-uncounted setup as the sibling test.
+    assert restored._library_loaded is False
+    assert len(restored._library_rag_results) == 2
+
+    # The snapshot-timeout failsafe fires before any real snapshot lands.
+    restored._apply_source_snapshot_timeout()
+
+    # Precondition: this is the exact shape the bug re-enters through --
+    # `_library_loaded` is now True, but the counts are fabricated zeros
+    # and a lookup error is recorded.
+    assert restored._library_loaded is True
+    assert restored._library_lookup_error is not None
+    assert restored._local_source_counts == {
+        "notes": 0,
+        "media": 0,
+        "conversations": 0,
+    }
+
+    timeout_state = restored._library_rag_panel_state()
+    assert [row.title for row in timeout_state.results] == [
+        "Note Evidence",
+        "Conversation Evidence",
+    ], "the snapshot timeout's placeholder zero counts erased restored rows"
+    assert timeout_state.retrieval_status != "empty", (
+        "the timeout's fake zero counts made the panel claim no evidence "
+        "matched the restored query"
+    )
+
+    # A real snapshot then lands with genuine counts -- filtering must
+    # resume exactly as it does in the never-timed-out case, so the fix
+    # doesn't disable filtering permanently after a timeout has fired.
+    restored._apply_local_source_snapshot(
+        {"notes": (), "media": (), "conversations": ()},
+        {"notes": 1, "media": 0, "conversations": 0},
+        {"notes": True, "media": True, "conversations": True},
+    )
+    assert restored._library_loaded is True
+    assert restored._library_lookup_error is None
+    post_snapshot = restored._library_rag_panel_state()
+    assert [row.title for row in post_snapshot.results] == ["Note Evidence"]
+
+
 @pytest.mark.asyncio
 async def test_library_shell_scope_toggle_off_hides_rendered_rows_and_keeps_index_alignment():
     """D4 (task-5) end-to-end: toggling a source off after retrieval landed

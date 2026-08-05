@@ -3696,12 +3696,20 @@ class LibraryScreen(BaseAppScreen):
         # options unselected as the explicit tuple would. The only
         # difference is that restored rows stay visible until the real
         # counts arrive and the honest intersection can run.
+        #
+        # PR-T1 fix-wave re-review: `_library_loaded` alone re-opens this
+        # same hole through `_apply_source_snapshot_timeout`, which sets
+        # `_library_loaded = True` together with placeholder all-zero
+        # counts AND `_library_lookup_error`. Gate on the same two-conjunct
+        # "counts are real" predicate `_build_library_shell_input` already
+        # uses as `counts_available` (~line 4530), so a snapshot timeout's
+        # fake zeros can't enable the filter either.
         selected_source_types: tuple[str, ...] | None = tuple(
             source_type
             for source_type in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES
             if source_type not in self._library_rag_scope_deselected
         )
-        if not self._library_loaded:
+        if not (self._library_loaded and not self._library_lookup_error):
             selected_source_types = None
         return LibraryRagPanelState.from_values(
             source_counts={
