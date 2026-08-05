@@ -12,10 +12,12 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, DataTable, Static, TabbedContent, TabPane
+from textual.widgets import Button, DataTable, Input, Static, TabbedContent, TabPane
 
 from ...Navigation.base_app_screen import BaseAppScreen
 from ...Navigation.screen_state_store import RuntimeIdentity
+from ...Workbench.workbench_state import RecoveryState, WorkbenchHeaderState, WorkbenchStatus
+from ...Workbench.workbench_widgets import DestinationHeader, RecoveryCallout
 from ....runtime_policy.bootstrap import set_authoritative_runtime_source
 from ....Scheduling.events import (
     DeleteTaskRequested,
@@ -53,19 +55,25 @@ class SchedulesWorkbench(BaseAppScreen):
     """Main workbench for managing scheduled runs, reminders, and jobs."""
 
     BINDINGS = [
-        Binding("ctrl+c", "create_reminder", "Create"),
-        Binding("ctrl+r", "run_now", "Run now"),
-        Binding("ctrl+p", "pause_resume", "Pause/Resume"),
-        Binding("ctrl+d", "delete", "Delete"),
-        Binding("ctrl+s", "sync_now", "Sync"),
+        Binding("c", "create_reminder", "Create"),
+        Binding("e", "edit_task", "Edit"),
+        Binding("space", "toggle_enabled", "Enable/Disable"),
+        Binding("d", "delete", "Delete"),
+        Binding("x", "mark_task", "Mark"),
+        Binding("escape", "clear_marks", "Clear marks"),
+        Binding("s", "sync_now", "Sync"),
     ]
 
+    # Footer hints must stay 1:1 with BINDINGS and only advertise implemented
+    # actions (ADR-031). Single letters are safe: focused inputs consume
+    # printable keys before screen bindings fire.
     SCHEDULES_SHORTCUTS = (
-        ("ctrl+c", "create reminder"),
-        ("ctrl+r", "run now"),
-        ("ctrl+p", "pause/resume"),
-        ("ctrl+d", "delete"),
-        ("ctrl+s", "sync now"),
+        ("c", "create"),
+        ("e", "edit"),
+        ("space", "toggle"),
+        ("d", "delete"),
+        ("x", "mark"),
+        ("s", "sync"),
     )
 
     def __init__(
@@ -74,6 +82,9 @@ class SchedulesWorkbench(BaseAppScreen):
         super().__init__(app_instance, screen_name, **kwargs)
         self._scheduling_service = getattr(app_instance, "scheduling_service", None)
         self._tasks: list[ReminderTask | ScheduledTask] = []
+        self._visible_tasks: list[ReminderTask | ScheduledTask] = []
+        self._filter_text = ""
+        self._marked_ids: set[str] = set()
         self._sync_running = False
         self._current_console_follow_item = None
         self._latest_console_follow_item_id: str | None = None
@@ -100,6 +111,30 @@ class SchedulesWorkbench(BaseAppScreen):
         owner_id = service.owner_id if service else "local"
         active_server_id = self._active_server_id()
         server_available = self._server_available(service, active_server_id)
+        yield DestinationHeader(
+            WorkbenchHeaderState(
+                title="Schedules",
+                subtitle="When jobs, watchlists, and workflows run.",
+                status="loading",
+                status_label="Checking sync status…",
+            ),
+            id="schedules-destination-header",
+        )
+        if service is None:
+            # Visible recovery instead of a silently empty workbench (UX-043).
+            yield RecoveryCallout(
+                RecoveryState(
+                    title="Scheduling service unavailable",
+                    body=(
+                        "The scheduling service did not start, so the queue and "
+                        "sync are offline. Check the scheduling configuration, "
+                        "then restart the app."
+                    ),
+                    action=None,
+                    visible=True,
+                ),
+                id="scheduling-recovery",
+            )
         with Vertical(id="schedules-shell"):
             yield SyncStatusWidget(
                 id="scheduling-sync-status",
@@ -107,7 +142,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 active_server_id=active_server_id,
                 server_available=server_available,
             )
-            with TabbedContent():
+            with TabbedContent(id="scheduling-tabs"):
                 with TabPane("Queue", id="scheduling-queue-tab"):
                     with Horizontal(id="scheduling-workbench"):
                         with Vertical(id="scheduling-list-pane"):
@@ -116,7 +151,12 @@ class SchedulesWorkbench(BaseAppScreen):
                                 id="scheduling-list-title",
                                 classes="scheduling-column-title",
                             )
-                            yield DataTable(id="scheduling-task-table")
+                            yield Input(
+                                placeholder="Filter: title, type, or status…",
+                                id="scheduling-queue-filter",
+                            )
+                            yield DataTable(id="scheduling-task-table", cursor_type="row")
+                            yield Static("", id="scheduling-pane-notice")
                         with Vertical(id="scheduling-detail-pane"):
                             yield TaskDetail(id="scheduling-task-detail")
                         with Vertical(id="scheduling-inspector-pane"):
@@ -142,6 +182,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._sync_responsive_workbench()
         self._register_footer_shortcuts()
         self._refresh_owner_select()
+        self._refresh_conflicts_tab()
         table = self.query_one("#scheduling-task-table", DataTable)
         table.add_columns("Title", "Type", "Status", "Next Run")
         self.run_worker(self.load_tasks, exclusive=True)  # type: ignore[arg-type]
@@ -184,15 +225,29 @@ class SchedulesWorkbench(BaseAppScreen):
             return
 
         self._tasks = list(tasks)
+        self._render_table()
+        await self._refresh_console_context()
 
+    def _render_table(self) -> None:
+        """Rebuild the queue rows from the current tasks + filter text."""
+        text = self._filter_text.strip().lower()
+        self._visible_tasks = [
+            task
+            for task in self._tasks
+            if not text
+            or text in task.title.lower()
+            or text in _task_type_label(task).lower()
+            or text in _task_status(task).value.lower().replace("_", " ")
+            or text in _task_status(task).value.lower()
+        ]
         rows: list[tuple[str, str, Text, str]] = [
             (
-                task.title,
+                ("● " if task.id in self._marked_ids else "") + task.title,
                 _task_type_label(task),
                 status_badge_text(_task_status(task)),
                 _format_next_run(task),
             )
-            for task in self._tasks
+            for task in self._visible_tasks
         ]
 
         table = self.query_one("#scheduling-task-table", DataTable)
@@ -204,11 +259,23 @@ class SchedulesWorkbench(BaseAppScreen):
             self._update_detail_for_index(0)
         else:
             self.query_one("#scheduling-task-detail", TaskDetail).set_task(
-                None, queue_empty=True
+                None, queue_empty=not self._tasks
             )
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
+            if self._tasks and self._filter_text.strip():
+                # Everything filtered out: say so instead of "select a task".
+                self.query_one(
+                    "#scheduling-task-detail-empty-state", Static
+                ).update(
+                    f"No tasks match '{self._filter_text.strip()}'. "
+                    "Clear the filter to see the queue."
+                )
 
-        await self._refresh_console_context()
+    @on(Input.Changed, "#scheduling-queue-filter")
+    def _on_queue_filter_changed(self, event: Input.Changed) -> None:
+        """Filter the queue rows by title substring."""
+        self._filter_text = event.value
+        self._render_table()
 
     @on(DataTable.RowHighlighted)
     def _on_task_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
@@ -217,14 +284,14 @@ class SchedulesWorkbench(BaseAppScreen):
 
     def _update_detail_for_index(self, index: int) -> None:
         """Render task details in the detail and inspector panes."""
-        if not (0 <= index < len(self._tasks)):
+        if not (0 <= index < len(self._visible_tasks)):
             self.query_one("#scheduling-task-detail", TaskDetail).set_task(
                 None, queue_empty=not self._tasks
             )
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
             return
 
-        task = self._tasks[index]
+        task = self._visible_tasks[index]
         self.query_one("#scheduling-task-detail", TaskDetail).set_task(task)
         self.query_one("#scheduling-task-inspector", TaskInspector).set_task(task)
 
@@ -352,6 +419,7 @@ class SchedulesWorkbench(BaseAppScreen):
     def _on_delete_task_requested(self, event: DeleteTaskRequested) -> None:
         """Delete the requested task and refresh the queue."""
         event.stop()
+        self._marked_ids.discard(event.task.id)
         service = self._scheduling_service
         if service is None:
             self.app_instance.notify(
@@ -517,16 +585,73 @@ class SchedulesWorkbench(BaseAppScreen):
         if service is None:
             status.set_owner_state("local", None, False)
             status.update_status(None, None, [])
+            self._sync_header_status("blocked", "Scheduling unavailable")
             return
         active_server_id = self._active_server_id()
         server_available = self._server_available(service, active_server_id)
         status.set_owner_state(service.owner_id, active_server_id, server_available)
         state = service.db.get_sync_state(service.owner_id) or {}
+        sync_errors = state.get("sync_errors") or []
         status.update_status(
             last_pull_at=state.get("last_pull_at"),
             last_push_at=state.get("last_push_at"),
-            sync_errors=state.get("sync_errors") or [],
+            sync_errors=sync_errors,
         )
+        if sync_errors:
+            count = len(sync_errors)
+            self._sync_header_status(
+                "error", f"{count} sync error{'s' if count != 1 else ''}"
+            )
+        elif not server_available:
+            self._sync_header_status("empty", "Local only — no server connection")
+        elif service.owner_id.startswith("server:"):
+            self._sync_header_status("ready", "Synced with server")
+        else:
+            self._sync_header_status("ready", "Local schedules")
+
+    def _sync_header_status(self, status: WorkbenchStatus, label: str) -> None:
+        """Reflect real sync health in the destination header chip."""
+        try:
+            header = self.query_one("#schedules-destination-header", DestinationHeader)
+        except Exception:  # noqa: BLE001 - header not mounted yet
+            return
+        header.sync_state(
+            WorkbenchHeaderState(
+                title="Schedules",
+                subtitle="When jobs, watchlists, and workflows run.",
+                status=status,
+                status_label=label,
+            )
+        )
+
+    def on_resize(self) -> None:
+        """Hide side panes (with a notice) instead of clipping them."""
+        try:
+            width = self.size.width
+            inspector = self.query_one("#scheduling-inspector-pane")
+            detail = self.query_one("#scheduling-detail-pane")
+            notice = self.query_one("#scheduling-pane-notice", Static)
+        except Exception:  # noqa: BLE001 - panes not mounted yet
+            return
+        hide_inspector = 0 < width < 118
+        hide_detail = 0 < width < 84
+        inspector.set_class(hide_inspector, "pane-hidden")
+        detail.set_class(hide_detail, "pane-hidden")
+        # At detail-hiding widths the pane chrome also gets too tall to fit:
+        # the Queue tab label already names this pane, so the in-pane title
+        # yields its row to the table + notice (see _scheduling.tcss).
+        self.query_one("#scheduling-workbench").set_class(hide_detail, "compact")
+        if hide_detail:
+            # The create CTA normally lives in the (now hidden) detail pane;
+            # keep it reachable at compact widths when the queue is empty.
+            base = "Detail and inspector hidden — widen the window to see them."
+            if not self._tasks:
+                base += " Press c to schedule your first task."
+            notice.update(base)
+        elif hide_inspector:
+            notice.update("Inspector hidden — widen the window to see it.")
+        else:
+            notice.update("")
 
     @on(Button.Pressed, "#scheduling-owner-local")
     def _on_owner_local(self) -> None:
@@ -596,18 +721,177 @@ class SchedulesWorkbench(BaseAppScreen):
             service.owner_id, primitive="reminder_task"
         )
         conflicts_tab.populate(conflicts)
-
-    def action_run_now(self) -> None:
-        """Run the selected schedule immediately (stub for later tasks)."""
-        self.app_instance.notify("Not yet available", severity="warning")
-
-    def action_pause_resume(self) -> None:
-        """Pause or resume the selected schedule (stub for later tasks)."""
-        self.app_instance.notify("Not yet available", severity="warning")
+        # Surface the conflict count on the tab label itself (UX-063).
+        try:
+            pane = self.query_one("#scheduling-conflicts-tab", TabPane)
+            pane.label = (
+                f"Conflicts ({len(conflicts)})" if conflicts else "Conflicts"
+            )
+        except Exception:  # noqa: BLE001 - pane not mounted
+            pass
 
     def action_delete(self) -> None:
-        """Delete the selected schedule after confirmation."""
+        """Delete marked tasks in bulk, else the selected one (confirmed)."""
+        marked = self._marked_reminder_tasks()
+        if marked:
+            from ....Widgets.delete_confirmation_dialog import (
+                DeleteConfirmationDialog,
+            )
+
+            self.app.push_screen(
+                DeleteConfirmationDialog(
+                    item_type="Scheduled tasks",
+                    item_name=f"{len(marked)} marked tasks",
+                    permanent=True,
+                ),
+                callback=lambda confirmed: self._on_bulk_delete_confirmed(
+                    confirmed, marked
+                ),
+            )
+            return
+        if not self._tasks:
+            self.app_instance.notify(
+                "Nothing to delete — the queue is empty.",
+                severity="warning",
+            )
+            return
         self.query_one("#scheduling-task-detail", TaskDetail).request_delete()
+
+    def _on_bulk_delete_confirmed(self, confirmed, marked: list[ReminderTask]) -> None:
+        """Delete all marked tasks after the confirmation dialog."""
+        if not confirmed:
+            return
+        service = self._service()
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot delete tasks.",
+                severity="warning",
+            )
+            return
+
+        async def _bulk_delete() -> None:
+            errors = 0
+            for task in marked:
+                try:
+                    await service.delete_reminder(task.id)
+                except Exception:  # noqa: BLE001
+                    logger.exception("Failed to delete reminder {}", task.id)
+                    errors += 1
+            count = len(marked) - errors
+            self.app_instance.notify(
+                f"Deleted {count} marked task{'s' if count != 1 else ''}"
+                + (f" ({errors} failed)" if errors else "") + ".",
+                severity="information" if not errors else "warning",
+            )
+            self._marked_ids.clear()
+            await self.load_tasks()
+
+        self.run_worker(_bulk_delete, exclusive=True)  # type: ignore[arg-type]
+
+    def _selected_task(self) -> ReminderTask | ScheduledTask | None:
+        """Return the task under the queue cursor, if any."""
+        if not self._visible_tasks:
+            return None
+        table = self.query_one("#scheduling-task-table", DataTable)
+        row = table.cursor_row
+        if row is None or not (0 <= row < len(self._visible_tasks)):
+            return None
+        return self._visible_tasks[row]
+
+    def action_edit_task(self) -> None:
+        """Open the highlighted task in the edit form (e key)."""
+        task = self._selected_task()
+        if task is None:
+            self.app_instance.notify(
+                "Nothing to edit — select a task first.",
+                severity="warning",
+            )
+            return
+        if not isinstance(task, ReminderTask):
+            self.app_instance.notify(
+                "Only reminder tasks can be edited here.",
+                severity="warning",
+            )
+            return
+        self.post_message(EditTaskRequested(task))
+
+    def action_mark_task(self) -> None:
+        """Mark/unmark the highlighted task for bulk actions (x key)."""
+        task = self._selected_task()
+        if task is None:
+            self.app_instance.notify(
+                "Nothing to mark — select a task first.",
+                severity="warning",
+            )
+            return
+        if task.id in self._marked_ids:
+            self._marked_ids.discard(task.id)
+        else:
+            self._marked_ids.add(task.id)
+        self._render_table()
+
+    def action_clear_marks(self) -> None:
+        """Clear all bulk marks (escape key)."""
+        if self._marked_ids:
+            self._marked_ids.clear()
+            self._render_table()
+
+    def _marked_reminder_tasks(self) -> list[ReminderTask]:
+        """Marked tasks that support bulk operations."""
+        return [
+            task
+            for task in self._tasks
+            if task.id in self._marked_ids and isinstance(task, ReminderTask)
+        ]
+
+    def action_toggle_enabled(self) -> None:
+        """Enable/disable marked tasks in bulk, else the highlighted one."""
+        marked = self._marked_reminder_tasks()
+        if marked:
+            service = self._service()
+            if service is None:
+                self.app_instance.notify(
+                    "Scheduling service is unavailable; cannot update reminders.",
+                    severity="warning",
+                )
+                return
+
+            async def _bulk_toggle() -> None:
+                errors = 0
+                for task in marked:
+                    try:
+                        await service.update_reminder(
+                            task.id, {"enabled": not task.enabled}
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.exception("Failed to toggle reminder {}", task.id)
+                        errors += 1
+                count = len(marked) - errors
+                self.app_instance.notify(
+                    f"Toggled {count} marked task{'s' if count != 1 else ''}"
+                    + (f" ({errors} failed)" if errors else "") + ".",
+                    severity="information" if not errors else "warning",
+                )
+                self._marked_ids.clear()
+                await self.load_tasks()
+
+            self.run_worker(_bulk_toggle, exclusive=True)  # type: ignore[arg-type]
+            return
+
+        task = self._selected_task()
+        if task is None:
+            self.app_instance.notify(
+                "Nothing to toggle — select a task first.",
+                severity="warning",
+            )
+            return
+        if not isinstance(task, ReminderTask):
+            self.app_instance.notify(
+                "Only reminder tasks can be enabled or disabled here.",
+                severity="warning",
+            )
+            return
+        self._set_reminder_enabled(task, not task.enabled)
 
     def action_sync_now(self) -> None:
         """Sync schedule state now."""
@@ -619,6 +903,13 @@ class SchedulesWorkbench(BaseAppScreen):
             self.app_instance.notify(
                 "Scheduling service is unavailable; cannot sync.",
                 severity="warning",
+            )
+            return
+        if service.server_client.notifications_service is None:
+            # Honest no-op: never claim "Sync completed" when nothing can sync.
+            self.app_instance.notify(
+                "Local only — nothing to sync (no server connection).",
+                severity="information",
             )
             return
         self._sync_running = True

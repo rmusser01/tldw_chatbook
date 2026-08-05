@@ -3120,7 +3120,10 @@ async def test_mcp_destination_registers_footer_workbench_shortcuts():
         # the harness's default-screen stand-in.
         footer = screen.query_one(AppFooterStatus)
 
-        assert footer.shortcut_text == "1-4 mode | a add server | r refresh"
+        assert (
+            footer.shortcut_text
+            == f"1-4 mode | a add server | r refresh | {AppFooterStatus.GLOBAL_HINTS}"
+        )
 
 
 @pytest.mark.asyncio
@@ -3136,23 +3139,24 @@ async def test_mcp_destination_footer_shortcuts_follow_mode():
         await _wait_for_selector(screen, pilot, "#mcp-shell")
         footer = screen.query_one(AppFooterStatus)
         common = "1-4 mode | a add server | r refresh"
-        assert footer.shortcut_text == common
+        globals_suffix = f" | {AppFooterStatus.GLOBAL_HINTS}"
+        assert footer.shortcut_text == f"{common}{globals_suffix}"
 
         screen.action_mcp_mode("tools")
         await pilot.pause()
-        assert footer.shortcut_text == f"{common} | t test tool"
+        assert footer.shortcut_text == f"{common} | t test tool{globals_suffix}"
 
         screen.action_mcp_mode("permissions")
         await pilot.pause()
-        assert footer.shortcut_text == f"{common} | space cycle permission"
+        assert footer.shortcut_text == f"{common} | space cycle permission{globals_suffix}"
 
         screen.action_mcp_mode("audit")
         await pilot.pause()
-        assert footer.shortcut_text == common
+        assert footer.shortcut_text == f"{common}{globals_suffix}"
 
         screen.action_mcp_mode("servers")
         await pilot.pause()
-        assert footer.shortcut_text == common
+        assert footer.shortcut_text == f"{common}{globals_suffix}"
 
 
 @pytest.mark.asyncio
@@ -3172,7 +3176,10 @@ async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend
         # task-264: the registration lands on the SCREEN's own footer, not
         # the harness's default-screen stand-in.
         footer = screen.query_one(AppFooterStatus)
-        assert footer.shortcut_text == "1-4 mode | a add server | r refresh"
+        assert (
+            footer.shortcut_text
+            == f"1-4 mode | a add server | r refresh | {AppFooterStatus.GLOBAL_HINTS}"
+        )
 
         overlay = TextualScreen()
         await host.push_screen(overlay)
@@ -3181,7 +3188,10 @@ async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend
 
         await host.pop_screen()
         await pilot.pause()
-        assert footer.shortcut_text == "1-4 mode | a add server | r refresh"
+        assert (
+            footer.shortcut_text
+            == f"1-4 mode | a add server | r refresh | {AppFooterStatus.GLOBAL_HINTS}"
+        )
 
 
 def test_skills_screen_public_initializer_is_typed():

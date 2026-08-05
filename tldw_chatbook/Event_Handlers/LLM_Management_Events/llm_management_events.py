@@ -244,7 +244,10 @@ async def handle_start_llamafile_server_button_pressed(
             # NO 'args' or 'done' parameters
         )
         window._sync_process_controls("llamafile")
-        app.notify("Llamafile server starting…")
+        app.notify(
+            f"Llamafile server starting… — endpoint will be "
+            f"http://{host}:{port} once the chip shows 'running'."
+        )
     except Exception as err:
         if "claim" in locals():
             release_server_claim(app, "llamafile", claim)
@@ -376,7 +379,10 @@ async def handle_start_llamacpp_server_button_pressed(
         )
 
         window._sync_process_controls("llamacpp")
-        app.notify("Llama.cpp server starting…")
+        app.notify(
+            f"Llama.cpp server starting… — endpoint will be "
+            f"http://{host}:{port} once the chip shows 'running'."
+        )
     except Exception as err:
         if "claim" in locals():
             release_server_claim(app, "llamacpp", claim)

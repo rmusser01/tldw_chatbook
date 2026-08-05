@@ -129,6 +129,11 @@ class WorkbenchHeaderState:
     subtitle: str = ""
     status: WorkbenchStatus = "ready"
     density: Density = "normal"
+    # Optional verbatim status-chip text. When set, it replaces the
+    # title-cased ``status`` label so chips can carry honest, specific state
+    # (e.g. "No server running", "2 sync errors") while ``status`` keeps
+    # driving the styling class.
+    status_label: str = ""
 
 
 @dataclass(frozen=True)

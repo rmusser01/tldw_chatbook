@@ -57,9 +57,9 @@ async def test_master_shell_navigation_order_and_labels():
         ("nav-workflows", "\u23038 Workflows"),
         ("nav-mcp", "\u23039 MCP"),
         ("nav-acp", "\u23030 ACP"),
-        ("nav-lab", "Lab"),
-        ("nav-logs", "Logs"),
-        ("nav-settings", "Settings"),
+        ("nav-lab", "F7 Lab"),
+        ("nav-logs", "F8 Logs"),
+        ("nav-settings", "F9 Settings"),
     ]
 
 
@@ -70,13 +70,13 @@ def test_nav_button_label_numbering_scheme():
     # -- while the actual binding is ctrl+digit. The label now carries the
     # control glyph so the affordance matches the keybinding at zero extra
     # width per tab. ctrl+1..ctrl+9 cover the first nine destinations,
-    # ctrl+0 the tenth; Lab, Logs, Settings stay unnumbered.
+    # ctrl+0 the tenth; Lab, Logs, Settings carry their F7/F8/F9 routes.
     digits = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
     for index, digit in enumerate(digits):
         assert nav_button_label(index, "Label") == f"\u2303{digit} Label"
-    assert nav_button_label(10, "Lab") == "Lab"
-    assert nav_button_label(11, "Logs") == "Logs"
-    assert nav_button_label(12, "Settings") == "Settings"
+    assert nav_button_label(10, "Lab") == "F7 Lab"
+    assert nav_button_label(11, "Logs") == "F8 Logs"
+    assert nav_button_label(12, "Settings") == "F9 Settings"
 
 
 @pytest.mark.asyncio
@@ -188,8 +188,8 @@ async def test_home_and_console_remain_first_primary_destinations():
         buttons = list(app.query(".nav-button"))
 
     assert [(button.id, str(button.label).strip()) for button in buttons[:2]] == [
-        ("nav-home", "\u23031 Home"),
-        ("nav-console", "\u23032 Console"),
+        ("nav-home", "⌃1 Home"),
+        ("nav-console", "⌃2 Console"),
     ]
 
 
@@ -329,7 +329,9 @@ def test_shell_destination_hotkeys_follow_destination_order():
         if binding.action.startswith("shell_destination(")
     ]
 
-    expected_keys = list(TldwCli.SHELL_DESTINATION_HOTKEYS)
+    expected_keys = list(TldwCli.SHELL_DESTINATION_HOTKEYS) + list(
+        TldwCli.SHELL_DESTINATION_FKEYS
+    )
     assert expected_keys == [
         "ctrl+1",
         "ctrl+2",
@@ -341,10 +343,15 @@ def test_shell_destination_hotkeys_follow_destination_order():
         "ctrl+8",
         "ctrl+9",
         "ctrl+0",
+        "f7",
+        "f8",
+        "f9",
     ]
-    # One binding per hotkey, zipped against the destination order; the layer
-    # never invents keys beyond ctrl+0 and never skips a destination.
+    # One binding per hotkey, zipped against the destination order: ctrl+digits
+    # cover the first ten, F7/F8/F9 the remaining three — every destination
+    # has a keyboard route and none is skipped.
     assert len(hotkey_bindings) == min(len(expected_keys), len(SHELL_DESTINATION_ORDER))
+    assert len(hotkey_bindings) == len(SHELL_DESTINATION_ORDER)
     for index, binding in enumerate(hotkey_bindings):
         destination = SHELL_DESTINATION_ORDER[index]
         assert binding.key == expected_keys[index]

@@ -147,9 +147,9 @@
 }
 #llm-view-ollama .section_label { /* For labels that act as section headers */
     margin-top: 2; /* More space above section labels */
-    padding: 1 0;
-    border: ascii $primary-background-lighten-1; /* Optional: add a border or background */
-    text-align: center;
+    padding: 0;
+    /* no decorative border — the design system's "Border Has A Job" rule */
+    text-align: left;
     width: 100%;
 }
 
@@ -175,12 +175,12 @@
 #llm-view-ollama .input_action_container .action_button_short {
     width: auto; /* Let button size itself */
     min-width: 10; /* Ensure it's not too small */
-    height: 100%; /* Match input height */
+    height: 3; /* Match the default Input height (100% of an auto parent collapses) */
 }
 #llm-view-ollama .input_action_container .browse_button_short {
     width: auto;
     min-width: 15;
-    height: 100%;
+    height: 3;
 }
 
 #llm-view-ollama .action_container { /* For standalone buttons */
@@ -270,7 +270,7 @@
 .ollama-actions-column {
     layout: vertical;
     width: 1fr;
-    height: 100%; /* Make columns fill parent height */
+    height: auto; /* 100% of the auto-height grid collapsed columns to empty boxes */
     padding: 1;
     border: round $panel-lighten-1;
     margin: 0 1;

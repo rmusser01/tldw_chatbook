@@ -1085,12 +1085,15 @@ class AudioBookGenerationWidget(Widget):
 class TTSPlaygroundWidget(Widget):
     """TTS Playground for testing different providers and settings"""
 
+    # ADR-031: no ctrl-chords here (ctrl+p shadows the palette, ctrl+s is
+    # XOFF, ctrl+r is readline history); single printable letters are
+    # consumed first by the focused TextArea, so they're safe elsewhere.
     BINDINGS = [
-        Binding("ctrl+g", "generate_tts", "Generate Speech"),
-        Binding("ctrl+r", "random_text", "Random Text"),
-        Binding("ctrl+l", "clear_text", "Clear Text"),
-        Binding("ctrl+p", "play_audio", "Play Audio"),
-        Binding("ctrl+s", "stop_audio", "Stop Audio"),
+        Binding("g", "generate_tts", "Generate Speech"),
+        Binding("r", "random_text", "Random Text"),
+        Binding("x", "clear_text", "Clear Text"),
+        Binding("p", "play_audio", "Play Audio"),
+        Binding("s", "stop_audio", "Stop Audio"),
     ]
 
     DEFAULT_CSS = """
@@ -1317,7 +1320,7 @@ class TTSPlaygroundWidget(Widget):
     def compose(self) -> ComposeResult:
         """Compose the TTS Playground UI"""
         with ScrollableContainer(classes="tts-playground-container"):
-            yield Label("🎤 TTS Playground", classes="section-title")
+            yield Label("TTS Playground", classes="section-title")
             yield Static(
                 "",
                 id="tts-profile-preview-status",
@@ -1332,7 +1335,7 @@ class TTSPlaygroundWidget(Widget):
                     classes="example-text",
                 )
                 yield TextArea(
-                    "Welcome to the Text-to-Speech playground! This is where you can experiment with different voices, providers, and settings to create natural-sounding speech.",
+                    "",
                     id="tts-text-input",
                     classes="tts-text-input",
                 )
@@ -1694,7 +1697,7 @@ class TTSPlaygroundWidget(Widget):
             # Keyboard shortcuts info
             yield Rule()
             yield Static(
-                "Shortcuts: Ctrl+G=Generate | Ctrl+R=Random | Ctrl+L=Clear | Ctrl+P=Play | Ctrl+S=Stop",
+                "Shortcuts: g=Generate | r=Random | x=Clear | p=Play | s=Stop",
                 classes="tip-text",
             )
 
@@ -4873,8 +4876,6 @@ class STTSWindow(Container):
             self.app.push_screen(VoiceCloningWindow())
         elif event.button.id == "view-stt-btn":
             self.run_worker(self.request_view("dictation"), exclusive=True)
-        elif event.button.id == "view-effects-btn":
-            self.app.notify("Audio Effects coming soon!", severity="information")
         else:
             # Try to delegate to the active content widget
             try:

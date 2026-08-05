@@ -24,7 +24,30 @@ _FOOTER_STATS_HEADROOM = 10
 
 
 class AppFooterStatus(Widget):
-    DEFAULT_SHORTCUT_TEXT = "Ctrl+Q quit | Ctrl+P palette"
+    """Per-screen footer: screen hint context + protected global hints.
+
+    Layout contract (see the UX critique, UX-006/UX-041):
+    * The app-global hints (F1 help, F6 panes, Ctrl+P palette, Ctrl+Q quit)
+      are ALWAYS present — a screen's shortcut context may prepend its own
+      hints but never replaces the globals.
+    * When width runs out, the screen-context hints drop first (leaving an
+      ellipsis marker), then the right cluster (token/word/DB sizes) hides
+      progressively; nothing ever clips mid-word.
+    """
+
+    GLOBAL_HINTS = "F1 help · F6 panes · Ctrl+P palette · Ctrl+Q quit"
+    GLOBAL_HINTS_COMPACT = "F1 · Ctrl+P · Ctrl+Q"
+    GLOBAL_HINTS_MIN = "Ctrl+Q"
+    DEFAULT_SHORTCUT_TEXT = GLOBAL_HINTS
+
+    #: Keys owned by the app-global layer (ADR-031); context hints that
+    #: repeat them are filtered so the footer never says the same key twice.
+    _RESERVED_GLOBAL_KEYS = frozenset({"f1", "f6", "ctrl+p", "ctrl+q"})
+
+    # Right-cluster hiding thresholds (terminal columns).
+    _TOKEN_MIN_WIDTH = 110
+    _WORD_MIN_WIDTH = 100
+    _DB_MIN_WIDTH = 80
 
     # task-264: this widget used to be mounted exactly once, directly by
     # `TldwCli.compose()` -- which always loads the app's full CSS bundle
@@ -80,9 +103,14 @@ class AppFooterStatus(Widget):
     }
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, show_token_count: bool = True, **kwargs) -> None:
         super().__init__(**kwargs)
+        #: Token counts only mean something on chat/console screens; other
+        #: destinations hide the dead "Tokens: --" chrome (UX-076).
+        self._show_token_count = show_token_count
         self._shortcut_text = self.DEFAULT_SHORTCUT_TEXT
+        #: Rendered screen-context hints, or ``None`` for the default footer.
+        self._context_text: str | None = None
         #: Source of the active shortcut context (e.g. "personas"); ``None``
         #: when the default shortcuts are shown.
         self._shortcut_source: str | None = None
@@ -117,11 +145,16 @@ class AppFooterStatus(Widget):
     def on_resize(self, event: Resize) -> None:
         """Reprioritise the footer when its width changes (TASK-451).
 
+        Runs both responsive pipelines: the shortcut-context ladder (hint
+        variants + right-cluster visibility) and the priority reflow, which
+        gets the final say on the debug memory stats.
+
         Args:
             event: The resize event; its ``size.width`` becomes the width the
                 priority reflow measures against.
         """
         self._last_footer_width = event.size.width
+        self._apply_responsive_footer()
         self._reflow_footer_priority()
 
     def _reflow_footer_priority(self) -> None:
@@ -142,8 +175,12 @@ class AppFooterStatus(Widget):
         if width <= 0:
             return
         stats_text = str(self._db_status_display.renderable)
+        # Measure the DISPLAYED hint variant (the responsive ladder may have
+        # shrunk `self._shortcut_text` to a compact form), not the stored
+        # full text -- otherwise the stats would yield to hints that are not
+        # actually taking the cells.
         needed = (
-            cell_len(self._shortcut_text)
+            cell_len(str(self._shortcut_display.renderable))
             + cell_len(str(self._word_count_display.renderable))
             + cell_len(str(self._token_count_display.renderable))
             + cell_len(stats_text)
@@ -155,17 +192,34 @@ class AppFooterStatus(Widget):
     def shortcut_text(self) -> str:
         return self._shortcut_text
 
+    def _full_text(self) -> str:
+        """Screen context followed by the always-present global hints."""
+        if self._context_text:
+            return f"{self._context_text} | {self.GLOBAL_HINTS}"
+        return self.GLOBAL_HINTS
+
     def _set_shortcut_text(self, text: str) -> None:
         self._shortcut_text = text
-        self._shortcut_display.update(text)
-        # A new shortcut context changes how much room the hints need, so the
-        # memory-stats visibility can flip (TASK-451).
+        # The responsive ladder owns the hint text (it may render a shrunken
+        # variant for the current width); the TASK-451 reflow then gets the
+        # final say on the debug memory stats, since a new shortcut context
+        # changes how much room the hints need.
+        self._apply_responsive_footer()
         self._reflow_footer_priority()
 
     def set_shortcut_context(self, context: ShortcutContext) -> None:
-        text = context.render() or self.DEFAULT_SHORTCUT_TEXT
+        # Drop hints that duplicate the always-present global keys.
+        filtered_actions = tuple(
+            action
+            for action in context.actions
+            if action.key.lower() not in self._RESERVED_GLOBAL_KEYS
+        )
+        rendered = ShortcutContext(
+            source=context.source, actions=filtered_actions
+        ).render()
         self._shortcut_source = context.source
-        self._set_shortcut_text(text)
+        self._context_text = rendered or None
+        self._set_shortcut_text(self._full_text())
 
     def set_workbench_shortcuts(
         self,
@@ -192,8 +246,101 @@ class AppFooterStatus(Widget):
         if source is not None and source != self._shortcut_source:
             return
         self._shortcut_source = None
-        self._set_shortcut_text(self.DEFAULT_SHORTCUT_TEXT)
+        self._context_text = None
+        self._set_shortcut_text(self._full_text())
 
+    # ------------------------------------------------------------------
+    # Responsive behavior
+    # ------------------------------------------------------------------
+    def _right_cluster_text_len(self) -> int:
+        """Rendered width of the visible right-cluster displays."""
+        total = 0
+        for display in (
+            self._word_count_display,
+            self._token_count_display,
+            self._db_status_display,
+        ):
+            if display.display:
+                total += len(str(display.render()))
+        return total
+
+    def _apply_responsive_footer(self) -> None:
+        """Pick the honest hint variant that fits; never clip mid-word.
+
+        Degradation order with a screen context registered (discoverability
+        outranks metrics chrome): shrink the right cluster (DB sizes, then
+        word, then token counts) BEFORE eliding the screen's own hints;
+        globals stay to the last row. With no context the full and compact
+        variants advertise the same global keys, so the hints shrink to
+        compact first and the DB stats chip keeps its cells until even that
+        overflows (matching the TASK-451 reflow's geometry).
+        """
+        width = self.size.width
+        if width <= 0:
+            # Pre-layout: show the full text; on_resize will refine.
+            self._shortcut_display.update(self._shortcut_text)
+            return
+
+        hard_token = width >= self._TOKEN_MIN_WIDTH and self._show_token_count
+        hard_word = width >= self._WORD_MIN_WIDTH
+        hard_db = width >= self._DB_MIN_WIDTH
+
+        if self._context_text:
+            full = f"{self._context_text} | {self.GLOBAL_HINTS}"
+            ellipsis = f"… {self.GLOBAL_HINTS}"
+            compact = f"… {self.GLOBAL_HINTS_COMPACT}"
+        else:
+            full = self.GLOBAL_HINTS
+            ellipsis = self.GLOBAL_HINTS_COMPACT
+            compact = self.GLOBAL_HINTS_COMPACT
+
+        if self._context_text:
+            # (text, show_token, show_word, show_db) in degradation order.
+            steps = [
+                (full, True, True, True),
+                (full, True, True, False),
+                (full, True, False, False),
+                (full, False, False, False),
+                (ellipsis, False, False, False),
+                (compact, False, False, False),
+                (self.GLOBAL_HINTS_MIN, False, False, False),
+            ]
+        else:
+            # No screen context: the full and compact variants advertise the
+            # same global keys, so shrink the hints to compact and keep the
+            # DB stats chip until even that overflows (the TASK-451 reflow's
+            # geometry assumes the stats can coexist with short hints).
+            steps = [
+                (full, True, True, True),
+                (compact, False, False, True),
+                (full, True, True, False),
+                (full, True, False, False),
+                (full, False, False, False),
+                (compact, False, False, False),
+                (self.GLOBAL_HINTS_MIN, False, False, False),
+            ]
+        for text, token_flag, word_flag, db_flag in steps:
+            token_vis = token_flag and hard_token
+            word_vis = word_flag and hard_word
+            db_vis = db_flag and hard_db
+            right_len = 0
+            if word_vis:
+                right_len += len(str(self._word_count_display.render()))
+            if token_vis:
+                right_len += len(str(self._token_count_display.render()))
+            if db_vis:
+                right_len += len(str(self._db_status_display.render()))
+            available = max(width - right_len - 6, 8)
+            if len(text) <= available:
+                self._token_count_display.display = token_vis
+                self._word_count_display.display = word_vis
+                self._db_status_display.display = db_vis
+                self._shortcut_display.update(text)
+                return
+
+    # ------------------------------------------------------------------
+    # Right-cluster updaters
+    # ------------------------------------------------------------------
     def update_db_sizes_display(self, status_string: str) -> None:
         try:
             self._db_status_display.update(status_string)
@@ -201,6 +348,7 @@ class AppFooterStatus(Widget):
             # content -- an empty string collapses it (the reflow keeps it
             # down; see `_reflow_footer_priority`).
             self._db_status_display.display = bool(status_string)
+            self._apply_responsive_footer()
             self._reflow_footer_priority()
         except Exception as e:
             # If the app is shutting down, the widget might be gone

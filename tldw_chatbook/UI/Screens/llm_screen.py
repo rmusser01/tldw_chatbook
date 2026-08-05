@@ -24,6 +24,7 @@ from ...Widgets.ModelArtifacts import (
     ModelInstallModal,
 )
 from ..Lab_Modules.lab_server_status import (
+    LAB_SERVER_SOURCES,
     LabServerRow,
     read_server_rows,
     server_row_id,
@@ -80,9 +81,30 @@ MODELS_RAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
 #: press-triggered read would report "stopped".
 LAB_SERVER_POLL_SECONDS = 2.0
 
+#: Back-compat alias for the (app attribute, display name) server-process
+#: table; ``LAB_SERVER_SOURCES`` in ``lab_server_status`` is the canonical
+#: copy and carries the same six providers.
+_SERVER_PROCESS_ATTRS = LAB_SERVER_SOURCES
+
+
+def _probe_local_server(host: str = "127.0.0.1", port: int = 11434) -> bool:
+    """Cheap TCP probe for an externally-started Ollama server."""
+    import socket
+
+    try:
+        with socket.create_connection((host, port), timeout=0.25):
+            return True
+    except OSError:
+        return False
+
 
 class LLMScreen(LabScreen):
-    """Models mode: provider rail, legacy management body, server status."""
+    """Models mode: provider rail, legacy management body, server status.
+
+    The ``DestinationHeader`` above the rail is composed by the ``LabScreen``
+    frame from this mode's ``lab_header_state()`` (a ``WorkbenchHeaderState``)
+    and re-synced on every ``refresh_lab_status()`` pass.
+    """
 
     def __init__(self, app_instance: "TldwCli", **kwargs: Any) -> None:
         """Create the Models screen.

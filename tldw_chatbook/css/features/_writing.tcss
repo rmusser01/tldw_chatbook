@@ -1,0 +1,22 @@
+/* ========================================
+ * FEATURES: Writing
+ * ========================================
+ * The legacy `.window` class forces `layout: horizontal` (see
+ * layout/_windows.tcss); WritingWindow has no DEFAULT_CSS of its own, so
+ * its status line and three-panel layout ended up side-by-side, jammed
+ * onto one row. Outrank it by id (same pattern as #logs-window, UX-046).
+ * ======================================== */
+
+#writing-window {
+    layout: vertical;
+}
+
+#writing-status {
+    height: auto;
+    width: 100%;
+}
+
+#writing-layout {
+    height: 1fr;
+    width: 100%;
+}

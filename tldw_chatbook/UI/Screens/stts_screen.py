@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
@@ -100,7 +101,34 @@ def _bounded_playground_axes(value: object) -> dict[str, str]:
 
 
 class STTSScreen(LabScreen):
-    """Speech mode: view rail, capability line, and the legacy STTS window."""
+    """Speech mode: view rail, capability line, and the legacy STTS window.
+
+    The ``DestinationHeader`` above the rail is composed by the ``LabScreen``
+    frame from this mode's ``lab_header_state()`` (a ``WorkbenchHeaderState``)
+    and re-synced on every ``refresh_lab_status()`` pass.
+    """
+
+    #: Footer hint context (registered on mount; matches BINDINGS, ADR-031).
+    #: The inherited Lab mode hints (``[ / ]``/``Enter``) register from
+    #: ``LabScreen.on_mount``; these are the Speech playground keys.
+    STTS_SHORTCUTS: tuple[tuple[str, str], ...] = (
+        ("g", "generate"),
+        ("r", "random text"),
+        ("x", "clear"),
+        ("p", "play"),
+        ("s", "stop"),
+    )
+
+    # Screen-level mirrors of TTSPlaygroundWidget.BINDINGS so the keys work
+    # from the landed state (nav bar holds initial focus; widget bindings
+    # only fire with in-window focus).
+    BINDINGS = [
+        Binding("g", "generate_tts", "Generate Speech", show=False),
+        Binding("r", "random_text", "Random Text", show=False),
+        Binding("x", "clear_text", "Clear Text", show=False),
+        Binding("p", "play_audio", "Play Audio", show=False),
+        Binding("s", "stop_audio", "Stop Audio", show=False),
+    ]
 
     def __init__(self, app_instance: "TldwCli", **kwargs: Any) -> None:
         """Create the Speech screen.
@@ -120,6 +148,43 @@ class STTSScreen(LabScreen):
             | None
         ) = None
         self._restored_playground_axes: dict[str, str] = {}
+
+    def on_mount(self) -> None:
+        """Register the Speech playground hints after the Lab frame's."""
+        super().on_mount()
+        self.register_footer_shortcuts(
+            source="stts",
+            shortcuts=self.STTS_SHORTCUTS + self.LAB_FOOTER_SHORTCUTS,
+        )
+
+    def _playground(self):
+        """Return the playground widget, if mounted."""
+        from ..STTS_Window import TTSPlaygroundWidget
+
+        try:
+            return self.query_one(TTSPlaygroundWidget)
+        except Exception:  # noqa: BLE001 - playground not mounted
+            return None
+
+    def action_generate_tts(self) -> None:
+        if widget := self._playground():
+            widget.action_generate_tts()
+
+    def action_random_text(self) -> None:
+        if widget := self._playground():
+            widget.action_random_text()
+
+    def action_clear_text(self) -> None:
+        if widget := self._playground():
+            widget.action_clear_text()
+
+    def action_play_audio(self) -> None:
+        if widget := self._playground():
+            widget.action_play_audio()
+
+    def action_stop_audio(self) -> None:
+        if widget := self._playground():
+            widget.action_stop_audio()
 
     def lab_header_state(self) -> WorkbenchHeaderState:
         """Return the Speech header copy and derived readiness.

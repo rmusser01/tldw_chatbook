@@ -43,7 +43,7 @@ async def test_reminder_form_submits_when_valid_one_time():
         title_input = pilot.app.screen.query_one("#reminder-title", Input)
         title_input.value = "Water plants"
         run_at_input = pilot.app.screen.query_one("#reminder-run-at", Input)
-        run_at_input.value = "2026-07-20T14:00:00+00:00"
+        run_at_input.value = "2030-07-20T14:00:00+00:00"
         await pilot.click("#reminder-save")
         await pilot.pause()
 
@@ -51,7 +51,7 @@ async def test_reminder_form_submits_when_valid_one_time():
         assert app.submitted is not None
         assert app.submitted["title"] == "Water plants"
         assert app.submitted["schedule_kind"] == "one_time"
-        assert app.submitted["run_at"] == datetime(2026, 7, 20, 14, 0, tzinfo=timezone.utc)
+        assert app.submitted["run_at"] == datetime(2030, 7, 20, 14, 0, tzinfo=timezone.utc)
         assert app.submitted["cron"] is None
         assert app.submitted["timezone"] is None
 
@@ -119,7 +119,7 @@ async def test_reminder_form_rejects_invalid_run_at():
 
 @pytest.mark.asyncio
 async def test_reminder_form_requires_cron_for_recurring():
-    """A recurring reminder without a cron expression shows a validation error."""
+    """A recurring reminder with a blank custom cron shows a validation error."""
     app = FormTestApp()
     async with app.run_test() as pilot:
         await app.push_screen(ReminderForm())
@@ -128,6 +128,13 @@ async def test_reminder_form_requires_cron_for_recurring():
         kind_select = pilot.app.screen.query_one("#reminder-kind", Select)
         kind_select.value = ScheduleKind.RECURRING.value
         await pilot.pause()
+
+        # The create form pre-fills cron from the default preset; choosing a
+        # custom frequency with a blank expression must still be caught.
+        preset = pilot.app.screen.query_one("#reminder-cron-preset", Select)
+        preset.value = "custom"
+        cron_input = pilot.app.screen.query_one("#reminder-cron", Input)
+        cron_input.value = ""
 
         tz_input = pilot.app.screen.query_one("#reminder-timezone", Input)
         tz_input.value = "UTC"

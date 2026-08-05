@@ -1898,9 +1898,9 @@ async def test_main_navigation_copy_and_order():
         ("nav-workflows", "\u23038 Workflows"),
         ("nav-mcp", "\u23039 MCP"),
         ("nav-acp", "\u23030 ACP"),
-        ("nav-lab", "Lab"),
-        ("nav-logs", "Logs"),
-        ("nav-settings", "Settings"),
+        ("nav-lab", "F7 Lab"),
+        ("nav-logs", "F8 Logs"),
+        ("nav-settings", "F9 Settings"),
     ]
 
     class TestApp(App):
@@ -1922,11 +1922,17 @@ async def test_main_navigation_copy_and_order():
         assert nav_buttons[0].id == "nav-home"
         assert nav_buttons[1].id == "nav-console"
         assert nav_buttons[-1].id == "nav-settings"
-        # F-001: the "More ›" affordance is conditional -- at 160 cols every
-        # destination fits, so it stays hidden instead of crowding the edge.
+        # F-001: the "More ›" affordance is conditional -- it shows only when
+        # the strip actually overflows, carrying the F-key legend when the
+        # bar has the cells to spare ("More ›" otherwise).
         overflow_hint = app.query_one("#nav-overflow-hint")
-        assert str(overflow_hint.label).strip() == "More ›"
-        assert overflow_hint.display is False
+        if overflow_hint.display:
+            assert str(overflow_hint.label).strip() in (
+                MainNavigationBar._HINT_WIDE,
+                MainNavigationBar._HINT_NARROW,
+            )
+        else:
+            assert str(overflow_hint.label).strip() == "More ›"
 
 
 @pytest.mark.asyncio

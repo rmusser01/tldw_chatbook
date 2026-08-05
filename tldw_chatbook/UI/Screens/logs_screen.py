@@ -2,9 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from textual import on
 from textual.app import ComposeResult
-from textual.widgets import Button
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Logs_Window import LogsWindow
@@ -20,9 +18,27 @@ class LogsScreen(BaseAppScreen):
     Logs screen wrapper.
     """
 
+    # Screen-level mirrors of LogsWindow.BINDINGS: widget bindings only fire
+    # when focus is inside the window, so the advertised keys were dead from
+    # the landed state (nav bar has initial focus). Both layers delegate to
+    # the same actions; whichever is nearest the focus wins.
+    BINDINGS = LogsWindow.BINDINGS
+
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "logs", **kwargs)
         self.logs_window = None
+
+    def action_focus_filter(self) -> None:
+        self.logs_window.action_focus_filter()
+
+    def action_toggle_pause(self) -> None:
+        self.logs_window.action_toggle_pause()
+
+    def action_level(self, chip_id: str) -> None:
+        self.logs_window.action_level(chip_id)
+
+    def action_copy_visible(self) -> None:
+        self.logs_window.action_copy_visible()
 
     def compose_content(self) -> ComposeResult:
         """Compose the logs window content with its destination header."""
@@ -31,34 +47,38 @@ class LogsScreen(BaseAppScreen):
                 title="Logs",
                 subtitle="Application logs and diagnostics.",
                 status="ready",
+                status_label="Listening",
             ),
             id="logs-destination-header",
         )
-        self.logs_window = LogsWindow(self.app_instance, classes="window")
+        self.logs_window = LogsWindow(self.app_instance, classes="window", id="logs-window")
         # Leave room for the destination header above the window.
         self.logs_window.styles.height = "1fr"
         yield self.logs_window
 
     def on_mount(self) -> None:
-        """When the logs screen is mounted, display all buffered logs."""
+        """Route live log records through the rebuilt LogsWindow."""
         super().on_mount()
+        self.register_footer_shortcuts(
+            source="logs", shortcuts=LogsWindow.LOGS_SHORTCUTS
+        )
+        self.app_instance._current_logs_window = self.logs_window
+        try:
+            self.logs_window.load_from_app()
+        except Exception as e:
+            from loguru import logger
 
-        # Always display buffered logs when the screen is mounted
-        if hasattr(self.app_instance, "_log_buffer"):
-            try:
-                # Find the RichLog widget
-                log_widget = self.query_one("#app-log-display")
-                # Display all buffered logs
-                self.app_instance._display_buffered_logs(log_widget)
-            except Exception as e:
-                from loguru import logger
-
-                logger.error(f"Failed to display buffered logs: {e}")
+            buffered = getattr(self.app_instance, "_log_records", None)
+            logger.error(
+                "Logs screen failed to load buffered log records on mount "
+                f"(buffered_records={len(buffered) if buffered is not None else 'n/a'}): {e}"
+            )
 
     def on_unmount(self) -> None:
         """When the logs screen is unmounted, clear the widget reference."""
         super().on_unmount()
-
+        if hasattr(self.app_instance, "_current_logs_window"):
+            self.app_instance._current_logs_window = None
         # Clear the current log widget reference
         if hasattr(self.app_instance, "_current_log_widget"):
             self.app_instance._current_log_widget = None
@@ -74,89 +94,6 @@ class LogsScreen(BaseAppScreen):
         super().restore_state(state)
         # Restore any logs-specific state here
 
-    @on(Button.Pressed, "#copy-logs-button")
-    async def handle_copy_logs_button(self, event: Button.Pressed) -> None:
-        """Handle the copy logs button press."""
-        from loguru import logger
-        from textual.widgets import RichLog
-
-        logger.info("Copy logs button pressed in LogsScreen")
-
-        try:
-            # For screen navigation, we have a simpler approach
-            # Just copy the buffered logs directly
-            if (
-                hasattr(self.app_instance, "_log_buffer")
-                and self.app_instance._log_buffer
-            ):
-                # Join all buffered log messages
-                all_log_text = "\n".join(self.app_instance._log_buffer)
-
-                if all_log_text:
-                    # Copy to clipboard
-                    self.app.copy_to_clipboard(all_log_text)
-                    self.app.notify(
-                        f"Copied {len(self.app_instance._log_buffer)} log entries to clipboard!",
-                        title="Clipboard",
-                        severity="information",
-                        timeout=4,
-                    )
-                    logger.info(
-                        f"Copied {len(self.app_instance._log_buffer)} log entries to clipboard"
-                    )
-                else:
-                    self.app.notify(
-                        "Log is empty, nothing to copy.",
-                        title="Clipboard",
-                        severity="warning",
-                        timeout=4,
-                    )
-            else:
-                # Fallback: try to get from the RichLog widget
-                log_widget = self.query_one("#app-log-display", RichLog)
-
-                if log_widget.lines:
-                    # Extract text from the widget's lines
-                    all_log_text_parts = []
-                    for strip in log_widget.lines:
-                        if hasattr(strip, "text"):
-                            all_log_text_parts.append(strip.text)
-                        else:
-                            all_log_text_parts.append(str(strip))
-
-                    all_log_text = "\n".join(all_log_text_parts)
-
-                    if all_log_text:
-                        self.app.copy_to_clipboard(all_log_text)
-                        self.app.notify(
-                            f"Copied {len(log_widget.lines)} lines to clipboard!",
-                            title="Clipboard",
-                            severity="information",
-                            timeout=4,
-                        )
-                        logger.info(
-                            f"Copied {len(log_widget.lines)} lines to clipboard"
-                        )
-                    else:
-                        self.app.notify(
-                            "Log is empty, nothing to copy.",
-                            title="Clipboard",
-                            severity="warning",
-                            timeout=4,
-                        )
-                else:
-                    self.app.notify(
-                        "Log is empty, nothing to copy.",
-                        title="Clipboard",
-                        severity="warning",
-                        timeout=4,
-                    )
-
-        except Exception as e:
-            self.app.notify(
-                f"Error copying logs: {str(e)}",
-                title="Error",
-                severity="error",
-                timeout=6,
-            )
-            logger.opt(exception=True).error(f"Failed to copy logs: {e}")
+    # Copy buttons are handled inside LogsWindow itself (copy-visible from
+    # the filtered structured records, copy-all from the unbounded session
+    # buffer) — one widget, one clipboard path.

@@ -69,14 +69,19 @@ async def test_footer_renders_workbench_shortcuts():
 
         footer.set_workbench_shortcuts(
             source="console",
-            shortcuts=(("F6", "next pane"), ("F1", "help")),
+            shortcuts=(("F6", "next pane"), ("F1", "help"), ("Ctrl+K", "switch session")),
         )
         await pilot.pause()
 
         shortcut_display = footer.query_one("#footer-key-quit", Static)
         rendered = str(shortcut_display.renderable)
 
-        assert "F6 next pane" in rendered
+        # Reserved global keys (F1/F6/Ctrl+P/Ctrl+Q) are never duplicated by
+        # the screen context — the always-present global strip covers them.
+        assert "F6 next pane" not in rendered
+        assert rendered.count("F1") == 1
+        # Non-reserved context hints render ahead of the globals.
+        assert "Ctrl+K switch session" in rendered
         assert "F1 help" in rendered
 
 
@@ -229,7 +234,14 @@ async def test_footer_reflows_when_counts_change_without_a_resize():
     # F-003 recalibration: the width budget below used to include the
     # "Tokens: --" placeholder's 10 cells; the chip now starts hidden and
     # empty, so the same push-over-the-edge exercise runs at 90 cols.
-    async with app.run_test(size=(90, 12)) as pilot:
+    # Merge recalibration (82 cols): the merged footer's no-context hint set
+    # is the four-key global strip ("F1 help · F6 panes · Ctrl+P palette ·
+    # Ctrl+Q quit"), wider than the two-key default this budget was tuned
+    # against. 82 terminal cols puts the widget at exactly the DB-stats
+    # minimum width (80, after the footer's 2-cell padding): the stats fit
+    # with the compact hints (71 cells) and the grown word count pushes
+    # them over (90 cells).
+    async with app.run_test(size=(82, 12)) as pilot:
         footer = app.query_one("#footer", AppFooterStatus)
         footer.update_db_sizes_display("P: 144.0 KB | C/N: 904.0 KB | M: 376.0 KB")
         await pilot.pause()

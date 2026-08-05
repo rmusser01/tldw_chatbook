@@ -193,7 +193,10 @@ class BaseAppScreen(Screen):
         # `AppFooterStatus` here gives every screen its OWN instance that
         # `self.query_one(AppFooterStatus)` (queried against the screen
         # itself) correctly resolves.
-        footer = AppFooterStatus(id="screen-footer-status")
+        footer = AppFooterStatus(
+            id="screen-footer-status",
+            show_token_count=self.screen_name == "chat",
+        )
         # Screen-level recompose (settings' recompose=True reactives,
         # library/chat `refresh(recompose=True)` calls) re-runs THIS method
         # and replaces the footer with a fresh instance -- re-seed the
