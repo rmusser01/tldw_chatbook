@@ -14,7 +14,9 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 
 
 def validate_path(
-    user_path: Union[str, Path], base_directory: Union[str, Path]
+    user_path: Union[str, Path],
+    base_directory: Union[str, Path],
+    allow_hidden: bool = False,
 ) -> Path:
     """
     Validates that a user-provided path is within the allowed base directory.
@@ -22,6 +24,10 @@ def validate_path(
     Args:
         user_path: The path provided by the user
         base_directory: The allowed base directory
+        allow_hidden: If True, permit hidden path components (e.g. ``.github/``)
+            as long as the path stays within the base directory. Defaults to
+            False, preserving the original behavior of rejecting hidden files
+            and directories.
 
     Returns:
         Path: The validated absolute path
@@ -57,7 +63,9 @@ def validate_path(
             raise ValueError(f"Path '{user_path}' is outside the allowed directory")
 
         # Additional checks for safety
-        if any(part.startswith(".") for part in full_path.parts if part != "."):
+        if not allow_hidden and any(
+            part.startswith(".") for part in full_path.parts if part != "."
+        ):
             logger.warning(f"Hidden file/directory access attempt: {full_path}")
             log_counter(
                 "path_validation_security_violation",
