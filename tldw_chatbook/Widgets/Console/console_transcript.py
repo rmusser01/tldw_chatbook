@@ -18,6 +18,7 @@ from textual.content import Content
 from textual.css.query import NoMatches
 from textual.dom import NoScreen
 from textual.events import Click, Key
+from textual.message_pump import NoActiveAppError
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
@@ -51,6 +52,12 @@ from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
 CONSOLE_GENERATING_PLACEHOLDER = "Generating…"
+#: TASK-1365: virtual-height watermarks (terminal rows) for transcript pruning.
+#: 20000 rows is several hundred long messages; rows are cheap to measure but
+#: expensive to keep laid out. Mirrored from the legacy chat log pruning
+#: (``UI/Chat_Modules/chat_log_pruning.py`` on feat/toad-ui-improvements).
+DEFAULT_PRUNE_HIGH_WATERMARK = 20000
+DEFAULT_PRUNE_LOW_WATERMARK = 12000
 #: SP2 /rewind: render-derived (never a tree node) one-line banner shown above
 #: the boundary message when "summarize up to here" is in effect.
 CONSOLE_SUMMARY_BANNER_COPY = (
@@ -99,6 +106,43 @@ def _coerce_card_state(value: object) -> ConsoleSetupCardState:
     if isinstance(value, ConsoleSetupCardState):
         return value
     return ConsoleSetupCardState(mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY)
+
+
+def _coerce_prune_int(value: object, default: int) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def get_console_prune_watermarks(
+    app_config: Mapping[str, object] | None,
+) -> tuple[int, int]:
+    """Resolve ``(low_mark, high_mark)`` pruning watermarks from config.
+
+    Reads ``[chat_defaults] prune_high_watermark`` / ``prune_low_watermark``,
+    falling back to :data:`DEFAULT_PRUNE_HIGH_WATERMARK` /
+    :data:`DEFAULT_PRUNE_LOW_WATERMARK` when missing or invalid, and clamps
+    ``low <= high``. A ``high_mark <= 0`` disables pruning.
+
+    Args:
+        app_config: The loaded application config dict (``app.app_config``).
+
+    Returns:
+        Tuple of ``(low_mark, high_mark)`` in virtual rows.
+    """
+    chat_defaults = (app_config or {}).get("chat_defaults", {})
+    if not isinstance(chat_defaults, Mapping):
+        chat_defaults = {}
+    high = _coerce_prune_int(
+        chat_defaults.get("prune_high_watermark"), DEFAULT_PRUNE_HIGH_WATERMARK
+    )
+    low = _coerce_prune_int(
+        chat_defaults.get("prune_low_watermark"), DEFAULT_PRUNE_LOW_WATERMARK
+    )
+    if low > high:
+        low = high
+    return low, high
 
 
 def _message_role_label(message: ConsoleChatMessage) -> str:
@@ -666,6 +710,13 @@ class ConsoleTranscript(VerticalScroll):
         #: Last-applied (visible, text) pill state; lets the 0.2s streaming sync
         #: tick skip the query_one + update when nothing changed (Qodo #826).
         self._jump_pill_state: tuple[bool, str] | None = None
+        #: TASK-1365: view-only prune window. Ids of the oldest messages whose
+        #: rows were dropped after the virtual height crossed the high
+        #: watermark. The store keeps the full history; ``_transcript_rows``
+        #: filters these ids, so a refresh or recompose never resurrects them
+        #: and the reconciliation stale-key path owns their removal.
+        self._pruned_message_ids: set[str] = set()
+        self._prune_check_scheduled = False
 
     def on_mount(self) -> None:
         """Engage tail-follow: stay scrolled to the newest content.
@@ -676,6 +727,9 @@ class ConsoleTranscript(VerticalScroll):
         viewport used to finish below the fold with no scroll).
         """
         self.anchor()
+        # TASK-1365: a transcript composed with a preloaded (resumed) history
+        # can already exceed the watermarks before any refresh_messages call.
+        self._schedule_prune_check()
 
     def compose(self) -> ComposeResult:
         self._row_widgets.clear()
@@ -805,6 +859,9 @@ class ConsoleTranscript(VerticalScroll):
         # set grows for the life of the widget and a recycled id would come
         # back already expanded.
         self._expanded_tool_output_ids &= message_ids
+        # TASK-1365: same lifecycle for the prune window -- a session switch
+        # re-renders from scratch, and a deleted message must not linger here.
+        self._pruned_message_ids &= message_ids
         new_user_send = any(
             message.id not in self._seen_message_ids
             and message.role == ConsoleMessageRole.USER
@@ -929,6 +986,153 @@ class ConsoleTranscript(VerticalScroll):
         """Reconcile mounted message rows from the current transcript state."""
         async with self._refresh_lock:
             await self._reconcile_rows(self._transcript_rows())
+        self._schedule_prune_check()
+
+    def _schedule_prune_check(self) -> None:
+        """Run one watermark pruning check after the pending refresh settles.
+
+        Heights are only meaningful once layout has run, so the check is
+        deferred with ``call_after_refresh`` rather than firing on a timer or
+        mid-reconcile. Coalesced: at most one check is ever queued.
+        """
+        if self._prune_check_scheduled or not self.is_mounted:
+            return
+        self._prune_check_scheduled = True
+        self.call_after_refresh(self._run_prune_check)
+
+    def _prune_watermarks(self) -> tuple[int, int]:
+        """Return the configured ``(low_mark, high_mark)`` for this transcript."""
+        try:
+            app_config = getattr(self.app, "app_config", None)
+        except NoActiveAppError:
+            app_config = None
+        return get_console_prune_watermarks(app_config)
+
+    async def _run_prune_check(self) -> None:
+        """Drop the oldest message rows when virtual height exceeds the marks.
+
+        View-only: ids are added to ``_pruned_message_ids`` and the regular
+        reconciliation pass removes the now-undesired rows, so the store and
+        ``_messages`` keep the full history. The scroll position is preserved
+        for a scrolled-up reader and re-anchored when following the tail.
+        """
+        self._prune_check_scheduled = False
+        if not self.is_mounted:
+            return
+        low_mark, high_mark = self._prune_watermarks()
+        if high_mark <= 0:
+            return
+        total_height = self.virtual_size.height
+        if total_height <= high_mark:
+            return
+        prune_ids, _estimated_height = self._compute_prunable_prefix(
+            total_height, low_mark
+        )
+        if not prune_ids:
+            return
+        following = self._is_following_tail()
+        anchor_y = self.scroll_y
+        self._pruned_message_ids.update(prune_ids)
+        logger.info(
+            f"Pruned {len(prune_ids)} oldest Console transcript message(s) "
+            f"(virtual height {total_height} over high mark {high_mark})"
+        )
+        async with self._refresh_lock:
+            await self._reconcile_rows(self._transcript_rows())
+
+        def _restore_scroll() -> None:
+            if not self.is_mounted:
+                return
+            if following:
+                self.anchor()
+                self.scroll_end(animate=False)
+            else:
+                # Keep the same content in view: shift the offset up by the
+                # height actually removed (measured, not estimated).
+                removed = total_height - self.virtual_size.height
+                self.scroll_to(y=max(0.0, anchor_y - removed), animate=False)
+
+        self.call_after_refresh(_restore_scroll)
+
+    def _compute_prunable_prefix(
+        self, total_height: int, low_mark: int
+    ) -> tuple[list[str], int]:
+        """Walk mounted rows top-down and pick oldest whole messages to drop.
+
+        Rows of one message (rule, body, citations, image, actions, ...) are
+        contiguous, so they are committed as a group: a message is either
+        fully pruned or fully kept. The walk stops at the first protected
+        group (the in-progress streaming message or the selected message) or
+        when dropping another group would push the remaining height below
+        ``low_mark`` -- pruning is a prefix removal that errs on keeping
+        content. Margin-collapse math mirrors the legacy chat-log pruning.
+
+        Args:
+            total_height: Current virtual height of the transcript.
+            low_mark: Target remaining height after pruning.
+
+        Returns:
+            Tuple of ``(message_ids, prune_height)``.
+        """
+        key_by_widget_id = {
+            id(widget): key for key, widget in self._row_widgets.items()
+        }
+        message_ids = {message.id for message in self._messages}
+        protected_ids = {
+            message.id for message in self._messages if message.status == "streaming"
+        }
+        if self.selected_message_id is not None:
+            protected_ids.add(self.selected_message_id)
+
+        prune_ids: list[str] = []
+        prune_height = 0
+        bottom_margin = 0
+        group_id: str | None = None
+        group_height = 0
+        group_margin = 0
+
+        def _try_close_group() -> bool:
+            """Commit the finished group, or return False to stop the walk."""
+            nonlocal prune_height, bottom_margin
+            if group_id is None or group_id in protected_ids:
+                return False
+            if total_height - group_height <= low_mark:
+                return False
+            prune_height = group_height
+            bottom_margin = group_margin
+            prune_ids.append(group_id)
+            return True
+
+        for child in self.children:
+            key = key_by_widget_id.get(id(child))
+            row_message_id: str | None = None
+            if key is not None and ":" in key:
+                candidate = key.split(":", 1)[1]
+                if candidate in message_ids:
+                    row_message_id = candidate
+            if row_message_id is None:
+                # The trailing end-rule, the empty panel, or the docked jump
+                # pill: nothing prunable lives past a non-message row.
+                break
+            if row_message_id != group_id:
+                if group_id is not None and not _try_close_group():
+                    break
+                group_id = row_message_id
+                group_height = prune_height
+                group_margin = bottom_margin
+            if not child.display:
+                # Hidden rows take no space; the group decision covers them.
+                continue
+            top, _, bottom, _ = child.styles.margin
+            group_height = (
+                (group_height - group_margin + max(group_margin, top))
+                + bottom
+                + child.outer_size.height
+            )
+            group_margin = bottom
+        if group_id is not None:
+            _try_close_group()
+        return prune_ids, prune_height
 
     def row_build_counts(self) -> dict[str, int]:
         """Return row build counts for focused reconciliation tests."""
@@ -1057,8 +1261,9 @@ class ConsoleTranscript(VerticalScroll):
         if self.selected_message_id is not None:
             self.toggle_message_selection(self.selected_message_id)
             return
-        if self._messages:
-            self.select_message(self._messages[0].id)
+        visible = self._visible_messages()
+        if visible:
+            self.select_message(visible[0].id)
 
     def action_clear_selection(self) -> None:
         self.selected_message_id = None
@@ -1194,26 +1399,41 @@ class ConsoleTranscript(VerticalScroll):
             event.stop()
 
     def _select_relative(self, offset: int) -> None:
-        if not self._messages:
+        visible = self._visible_messages()
+        if not visible:
             return
         if self.selected_message_id is None:
-            index = 0 if offset >= 0 else len(self._messages) - 1
+            index = 0 if offset >= 0 else len(visible) - 1
         else:
             current = next(
                 (
                     index
-                    for index, message in enumerate(self._messages)
+                    for index, message in enumerate(visible)
                     if message.id == self.selected_message_id
                 ),
                 0,
             )
-            index = min(max(current + offset, 0), len(self._messages) - 1)
-        self.select_message(self._messages[index].id)
+            index = min(max(current + offset, 0), len(visible) - 1)
+        self.select_message(visible[index].id)
 
     def _message_by_id(self, message_id: str) -> ConsoleChatMessage | None:
         return next(
             (message for message in self._messages if message.id == message_id), None
         )
+
+    def _visible_messages(self) -> list[ConsoleChatMessage]:
+        """Return the messages with rendered rows (excludes the pruned window).
+
+        Keyboard selection walks this list so j/k never lands on a pruned
+        (row-less) message; the store-facing ``_messages`` keeps full history.
+        """
+        if not self._pruned_message_ids:
+            return self._messages
+        return [
+            message
+            for message in self._messages
+            if message.id not in self._pruned_message_ids
+        ]
 
     def _notify_selection_changed(self) -> None:
         """Let the owning screen refresh inspector/control surfaces after selection changes."""
@@ -1226,6 +1446,10 @@ class ConsoleTranscript(VerticalScroll):
     def _transcript_rows(self) -> list[_TranscriptRow]:
         rows: list[_TranscriptRow] = []
         for message in self._messages:
+            if message.id in self._pruned_message_ids:
+                # TASK-1365: pruned by the height watermarks; the store keeps
+                # the message, the view window drops every row derived from it.
+                continue
             message = self._with_expanded_tool_output(message)
             selected = message.id == self.selected_message_id
             rows.append(
