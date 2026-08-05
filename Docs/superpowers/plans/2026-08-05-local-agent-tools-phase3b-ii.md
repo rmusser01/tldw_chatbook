@@ -15,7 +15,7 @@
 - Argv validation (`:270-297`): argv[0] must be `git`; global options limited to `-C <path>` and `--no-pager` (`--version` must be alone); anything else starting with `-` before the subcommand is rejected; subcommand must be allowlisted.
 - Sanitized env (`:247-268`): PATH (+SYSTEMROOT/WINDIR on Windows) plus `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`, `GIT_PAGER=cat`, `GIT_EXTERNAL_DIFF=""`, `GIT_CONFIG_COUNT/KEY_0/VALUE_0` disabling fsmonitor. stdin is DEVNULL.
 - Output: bounded stream reads, decoded utf-8/replace, `truncated` flag; default cap 1 MB (`:50`). Timeout kills the process and reports `timed_out`.
-- Tool implementations (`:570-1010`): status (porcelain v2 + branch header), branches (verbose list + ahead/behind), diff (workspace/staged/commit-range modes, optional path filter, stat option), log (count-capped, oneline-ish format, optional path filter), blame (line-range optional, porcelain parse), conflicts.list/read (deferred this phase).
+- Tool implementations (`:570-1010`): status (porcelain v2 + branch header), branches (verbose list + ahead/behind), diff (THREE scopes only — `unstaged`/`staged`/`working_tree` (`_DIFF_SCOPES`, `:46`) via `_run_diff_command` (`:1049-1080`, which also sets `--no-ext-diff/--no-textconv/--no-color` — port those flags); optional path filter; NO commit-range mode and NO --stat in the reference — see Task 2's disclosed deviations), log (count cap, max 100 — an absent limit falls back to the max, there is no default-20 in the reference; optional path filter), blame (line-range optional, porcelain parse), conflicts.list/read (deferred this phase). The reference diff also has its own 120 KB `max_bytes` cap (`:2092`) below the 1 MB command cap — omitted here given the provider's 32 KiB byte-fit; noted so nobody thinks they missed it.
 - `_prepare_repository` (`:1134+`): repo root discovered via `git rev-parse --show-toplevel`, must exist and be a repo.
 - Chatbook side: cores are SYNC, `LocalToolError` on model-actionable failures, confinement via `resolve_workspace_path` / workspace root, provider byte-fits results to 32 KiB (git's own 1 MB cap stays the inner bound; per-call `max_bytes` arg optional).
 - Tests use tmp git repos (git IS available on this machine); add an availability skip (`shutil.which("git")` / pytest.importorskip pattern) per re-plan §2.5. `ws = tmp_path/"ws"` fixture pattern.
@@ -64,10 +64,15 @@ _ALLOWED_GIT_SUBCOMMANDS = frozenset({"--version", "blame", "branch", "diff", "l
 
 def run_git(argv: list[str], *, timeout: float = GIT_TIMEOUT_SECONDS,
             max_output_bytes: int = GIT_MAX_OUTPUT_BYTES) -> GitCommandResult: ...
-    # fixed argv, subprocess.run(capture_output=True, timeout=..., env=_git_environment(), stdin=DEVNULL)
-    # _validate_argv ported from reference (:270-297) near-verbatim
-    # timeout -> kill + GitToolError/LocalToolError "git command timed out"
-    # output capped with truncated marker
+    # fixed argv, sanitized env (reference :247-267), stdin=DEVNULL,
+    # _validate_argv ported from reference (:270-297) near-verbatim,
+    # timeout -> kill + LocalToolError "git command timed out",
+    # output capped with truncated marker.
+    # Memory-bound: subprocess.run(capture_output=True, timeout=...) buffers ALL
+    # output before the cap applies; the reference kills AT the cap via bounded
+    # stream reads (:166-223). Prefer Popen with a bounded read loop (kill on
+    # exceed) — the reference-faithful option; capture-then-truncate only if
+    # documented as the trade-off.
 
 def prepare_repository(workspace_root: Path, path: str = ".") -> Path:
     """Resolve the repo root for ``path`` (confined to workspace_root).
@@ -76,9 +81,13 @@ def prepare_repository(workspace_root: Path, path: str = ".") -> Path:
     is found (via `git -C <resolved> rev-parse --show-toplevel`). The repo
     root itself must also be inside the workspace root (a repo whose root is
     the workspace root or below it; a repo ABOVE the workspace root is
-    refused — the model shouldn't read repo state outside the confinement).
+    refused — the model shouldn't read repo state outside the confinement;
+    matches the reference's _path_inside rule, :2062-2063). A test must pin
+    this direction: ws nested INSIDE a tmp repo -> refused.
     """
 ```
+
+Also port the diff argv flags `--no-ext-diff/--no-textconv/--no-color` from `_run_diff_command` (`:1049-1080`) — they keep output machine-safe.
 
 - [ ] **Step 3:** tests pass — `pytest Tests/Tools/test_git_tool_impls.py -q`
 - [ ] **Step 4:** `git commit -m "feat: sync run_git wrapper with ADR-033 allowlist boundary"`
@@ -116,6 +125,7 @@ def git_blame(workspace_root: Path, path: str, *, start_line: int | None = None,
               end_line: int | None = None) -> str: ...
 ```
 
+  **Disclosed deviations from the reference (deliberate, record them in the module header):** (a) `git_diff` adds `commit_range` and `stat` modes the reference does not have (the reference has a third `working_tree` scope instead — map `staged=False`→unstaged, `staged=True`→staged; working_tree omitted for simplicity); (b) `git_log` defaults `count=20` (reference falls back to its max-100 with no default); both remain fixed-argv, read-only, allowlisted — the ADR-033 no-tag rationale is unaffected.
   NOTE on `commit_range`: it goes into argv after validation — it must match `^[A-Za-z0-9._/~^-]+$` (no spaces/semicolons) to keep the fixed-argv guarantee meaningful; test an injection attempt (`"HEAD; rm -rf"` → refused).
 
 - [ ] **Step 3:** tests pass
@@ -131,7 +141,7 @@ def git_blame(workspace_root: Path, path: str, *, start_line: int | None = None,
 
 - [ ] **Step 1: Failing tests** — catalog includes all five `local:git_*` ids; all `tags == ()` (ADR-033 binding — NO process tag; the test should pin this so the tripwire stays visible); schemas have correct required params (`git_blame` requires `path`; others optional-only); one handler smoke test per tool against a tmp repo (or one combined).
 - [ ] **Step 2: Implement** — five specs in `_default_specs` (order: after `fs_grep`, before `web_fetch`; keep the exact-id test in sync). Descriptions: read-only emphasis ("read-only; cannot modify the repository"), param docs; `git_diff` documents staged/commit_range/stat modes.
-- [ ] **Step 3:** update the integration harness count pins (`LOCAL_TOOL_NAMES` + full-catalog count, following the fs_patch precedent); run `pytest Tests/Agents/ -q`
+- [ ] **Step 3:** update the integration harness count pins (`LOCAL_TOOL_NAMES` + full-catalog count, following the fs_patch precedent); ALSO extend the find/load e2e per re-plan §4 (binding): a scripted run where the model reaches one of the new git tools through `find_tools`/`load_tools` (the harness's find/load test pattern from phase 2/3a) proving new tools stay reachable past the disclosure threshold; run `pytest Tests/Agents/ -q`
 - [ ] **Step 4:** `git commit -m "feat: git_* read-only tool specs (no process tag per ADR-033)"`
 
 ---
