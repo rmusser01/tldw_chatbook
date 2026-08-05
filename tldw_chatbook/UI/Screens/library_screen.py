@@ -16585,12 +16585,16 @@ class LibraryScreen(BaseAppScreen):
     def toggle_library_rag_scope_source(self, event: Button.Pressed) -> None:
         """Toggle one source type in/out of the Search/RAG retrieval scope (B2).
 
-        Unlike the mode toggle, this deliberately does NOT reset in-flight
-        or already-landed retrieval state: scope only affects the NEXT run,
-        so existing results/history stay visible. Still a transition (like
+        Unlike the mode toggle, this does NOT reset in-flight retrieval or
+        search history. It used to leave already-landed RESULTS visible too
+        ("scope only affects the NEXT run") -- D4/task-5 fixed that:
+        `LibraryRagPanelState.from_values` now filters already-landed rows
+        against the current scope on every build, so a source toggled off
+        hides its rows (and clears a selection pointing at one) in this
+        exact recompose, not just the next run. Still a transition (like
         the mode toggle), so the canvas recomposes to pick up the new
-        toggle labels, run-gate state, and (if the scope is now empty) the
-        A1 quiet line.
+        toggle labels, run-gate state, the now-filtered evidence list, and
+        (if the scope is now empty) the A1 quiet line.
         """
         event.stop()
         button_id = event.button.id or ""
@@ -16826,12 +16830,21 @@ class LibraryScreen(BaseAppScreen):
         focused-card Enter key path (`action_library_rag_result_card_select`)
         so both routes run the exact same selection logic -- no duplicated
         implementation between the mouse and keyboard paths.
+
+        Resolves `result_index` against the CURRENT panel state's
+        (scope-filtered, D4/task-5) `results`, not the screen's raw
+        `_library_rag_results` -- the rendered cards' indices come from
+        `library_rag_results_body_children`'s `enumerate(state.results)`,
+        which is that same filtered tuple. Indexing the raw list instead
+        would misalign as soon as any earlier row is scope-hidden: e.g.
+        clicking the second VISIBLE card after an earlier source is
+        toggled off would select whatever sits at raw position 1, not the
+        row actually shown at that card.
         """
-        if result_index is None or result_index >= len(self._library_rag_results):
+        rows = self._library_rag_panel_state().results
+        if result_index is None or result_index >= len(rows):
             return
-        self._library_rag_selected_result_id = self._library_rag_results[
-            result_index
-        ].result_id
+        self._library_rag_selected_result_id = rows[result_index].result_id
         await self._refresh_search_rag_panel_state_widgets()
 
     @on(Button.Pressed, ".library-rag-result-open")
@@ -16848,8 +16861,13 @@ class LibraryScreen(BaseAppScreen):
         key path (`action_library_rag_result_card_open`) so both routes run
         the exact same open logic -- no duplicated implementation between
         the mouse and keyboard paths.
+
+        Resolves `index` against the CURRENT panel state's (scope-filtered,
+        D4/task-5) `results` -- see `_select_library_rag_result_by_index`'s
+        docstring for why the raw `_library_rag_results` list is the wrong
+        source once scope filtering can remove earlier rows.
         """
-        rows = self._library_rag_results
+        rows = self._library_rag_panel_state().results
         if index is None or not (0 <= index < len(rows)):
             return
         row = rows[index]

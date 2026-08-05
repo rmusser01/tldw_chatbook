@@ -41,7 +41,13 @@ from tldw_chatbook.Library.library_ingest_state import (
     LibraryIngestFormState,
     build_library_ingest_state,
 )
-from tldw_chatbook.Library.library_rag_state import LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
+from tldw_chatbook.Library.library_rag_state import (
+    LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
+    LibraryRagPanelState,
+)
+from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
+    results_heading_text,
+)
 from tldw_chatbook.Library.library_export_scope import ExportScope
 from tldw_chatbook.Library.library_export_state import EMPTY_SCOPE_COPY
 from tldw_chatbook.Library.library_shell_state import (
@@ -4177,6 +4183,277 @@ async def test_library_shell_scope_toggle_deselect_sends_only_selected_types():
         screen.query_one("#library-rag-run-query", Button).press()
         await pilot.pause()
         assert len(service.calls) == calls_before
+
+
+def test_library_rag_panel_state_scope_toggle_off_hides_that_sources_rows():
+    """D4 (task-5): a source toggled OFF must hide its ALREADY-LANDED rows in
+    the very same snapshot -- `from_values` filters `result_rows` against
+    `selected_source_types` BEFORE resolving selection/`can_use_console`, so
+    the panel never shows evidence the Sources strip claims is off. Hide,
+    don't grey: the scope line already claims the source is off, so showing
+    its rows would be the lie.
+
+    Pure state-derivation proof (no screen/pilot): the exact same raw
+    `results` list is passed to every `from_values` call below -- only
+    `selected_source_types`/`selected_result_id` change -- so "toggling
+    back on restores the row" is proven from state alone, never a re-query.
+    """
+    raw_results = [
+        {
+            "document_title": "Note Evidence",
+            "snippet": "note snippet",
+            "source_id": "note-1",
+            # Row-level provenance uses the SINGULAR vocabulary real
+            # retrieval seams emit (`_note_row`/`_conversation_row` in
+            # `library_local_rag_search_service.py`) -- distinct from the
+            # PLURAL scope-toggle vocabulary (`selected_source_types`
+            # below). The filter must canonicalize one to the other.
+            "provenance": {"source_type": "note"},
+        },
+        {
+            "document_title": "Media Evidence",
+            "snippet": "media snippet",
+            "source_id": "media-1",
+            "provenance": {"source_type": "media"},
+        },
+        {
+            "document_title": "Conversation Evidence",
+            "snippet": "conversation snippet",
+            "source_id": "chat-1",
+            "provenance": {"source_type": "conversation"},
+        },
+    ]
+    source_counts = {"notes": 1, "media": 1, "conversations": 1}
+
+    all_selected_state = LibraryRagPanelState.from_values(
+        source_counts=source_counts,
+        query="evidence",
+        mode="search",
+        results=raw_results,
+        retrieval_status="ready",
+        selected_source_types=("notes", "media", "conversations"),
+    )
+    assert [row.title for row in all_selected_state.results] == [
+        "Note Evidence",
+        "Media Evidence",
+        "Conversation Evidence",
+    ]
+
+    # Media toggled off, selection still pointing at the now-hidden Media
+    # row -- the exact state a `refresh(recompose=True)` after
+    # `toggle_library_rag_scope_source` produces when Media was selected.
+    media_off_state = LibraryRagPanelState.from_values(
+        source_counts=source_counts,
+        query="evidence",
+        mode="search",
+        results=raw_results,
+        retrieval_status="ready",
+        selected_result_id="media-1",
+        selected_source_types=("notes", "conversations"),
+    )
+    assert [row.title for row in media_off_state.results] == [
+        "Note Evidence",
+        "Conversation Evidence",
+    ]
+    # The selection pointing at the now-hidden Media row is cleared, not
+    # silently kept stageable.
+    assert media_off_state.selected_result is None
+    assert media_off_state.use_in_console_action.enabled is False
+    # The heading is mode/top_k-driven, not row-count-driven (Task 8) --
+    # filtering a row out must not change it.
+    assert results_heading_text(media_off_state) == results_heading_text(
+        all_selected_state
+    )
+
+    # A selection on a STILL-VISIBLE row survives the same toggle.
+    conversation_selected_state = LibraryRagPanelState.from_values(
+        source_counts=source_counts,
+        query="evidence",
+        mode="search",
+        results=raw_results,
+        retrieval_status="ready",
+        selected_result_id="chat-1",
+        selected_source_types=("notes", "conversations"),
+    )
+    assert conversation_selected_state.selected_result is not None
+    assert conversation_selected_state.selected_result.title == "Conversation Evidence"
+    assert conversation_selected_state.use_in_console_action.enabled is True
+
+    # Toggling Media back ON restores its row from the SAME `raw_results`
+    # object -- state-only, no re-query.
+    restored_state = LibraryRagPanelState.from_values(
+        source_counts=source_counts,
+        query="evidence",
+        mode="search",
+        results=raw_results,
+        retrieval_status="ready",
+        selected_source_types=("notes", "media", "conversations"),
+    )
+    assert [row.title for row in restored_state.results] == [
+        "Note Evidence",
+        "Media Evidence",
+        "Conversation Evidence",
+    ]
+
+
+def test_library_rag_panel_state_scope_filter_empties_results_and_coverage_note():
+    """Deselecting every source that produced rows drops into the "empty"
+    retrieval status (and the coverage note, silent whenever `results` is
+    empty) instead of keeping stale rows on screen under a scope that
+    claims nothing relevant is selected."""
+    raw_results = [
+        {
+            "document_title": "Note Evidence",
+            "snippet": "note snippet",
+            "source_id": "note-1",
+            "provenance": {"source_type": "note"},
+        },
+    ]
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1, "media": 1},
+        query="evidence",
+        mode="search",
+        results=raw_results,
+        retrieval_status="ready",
+        selected_source_types=("media",),
+    )
+    assert state.results == ()
+    assert state.retrieval_status == "empty"
+    assert state.coverage_note == ""
+    assert state.use_in_console_action.enabled is False
+
+
+@pytest.mark.asyncio
+async def test_library_shell_scope_toggle_off_hides_rendered_rows_and_keeps_index_alignment():
+    """D4 (task-5) end-to-end: toggling a source off after retrieval landed
+    hides that source's rendered cards, clears a selection pointing at one
+    (the "Use in Console" handoff button un-mounts, and `u` refuses), and
+    toggling back on restores them WITHOUT a new search-service call.
+
+    Also pins a review finding from implementing this fix: `_select_
+    library_rag_result_by_index`/`_open_library_rag_result_by_index` used
+    to index into the screen's raw, unfiltered `self._library_rag_results`
+    -- once `from_values` hides a row, the rendered cards' indices (built
+    from the FILTERED `state.results`) no longer align with that raw list's
+    positions. Selecting the second still-visible card (Conversation, raw
+    index 2) after Media (raw index 1) is hidden must resolve to the
+    Conversation row, not whatever sits at raw index 1.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Research Note", "id": "note-1"}],
+        media=_two_media_items(),
+    )
+    service = _StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Note Evidence",
+                    "snippet": "note snippet",
+                    "source_id": "note-1",
+                    "provenance": {"source_type": "note"},
+                },
+                {
+                    "document_title": "Media Evidence",
+                    "snippet": "media snippet",
+                    "source_id": "media-1",
+                    "provenance": {"source_type": "media"},
+                },
+                {
+                    "document_title": "Conversation Evidence",
+                    "snippet": "conversation snippet",
+                    "source_id": "chat-1",
+                    "provenance": {"source_type": "conversation"},
+                },
+            ],
+        }
+    )
+    app.library_rag_search_service = service
+    app.open_console_for_live_work = Mock()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-scope-toggle-media")
+
+        screen.query_one("#library-rag-query-input", Input).value = "policy"
+        await _wait_for_library_rag_query_ready(screen, pilot, "policy")
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-card-2")
+
+        # Select the Media row (raw/rendered index 1) before toggling it off.
+        screen.query_one("#library-rag-select-result-1", Button).press()
+        await pilot.pause()
+        assert screen._library_rag_selected_result_id == "media-1"
+
+        # Toggle Media off -- its row must disappear from the canvas.
+        screen.query_one("#library-rag-scope-toggle-media", Button).press()
+        for _ in range(120):
+            toggles = list(screen.query("#library-rag-scope-toggle-media"))
+            if toggles and str(toggles[0].label).startswith("○"):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Media toggle never deselected.")
+        await pilot.pause()
+
+        visible_text = _visible_text(screen)
+        assert "Media Evidence" not in visible_text
+        assert "Note Evidence" in visible_text
+        assert "Conversation Evidence" in visible_text
+        assert not screen.query("#library-rag-result-card-2")
+
+        # The selection pointed at the now-hidden Media row is cleared: the
+        # per-selection Console handoff button un-mounts entirely (it only
+        # ever mounts next to the row matching the current selection), and
+        # `u` refuses instead of staging stale/hidden evidence.
+        assert not screen.query("#library-rag-use-selected-in-console")
+        panel_state = screen._library_rag_panel_state()
+        assert panel_state.selected_result is None
+        assert panel_state.use_in_console_action.enabled is False
+
+        await pilot.press("u")
+        await pilot.pause(0.1)
+        app.open_console_for_live_work.assert_not_called()
+
+        # Selecting the still-visible SECOND rendered card (Conversation,
+        # raw index 2) must resolve to the Conversation row -- not raw-list
+        # index 1 (Media) -- proving select-by-index stays aligned with
+        # what's actually rendered after filtering.
+        screen.query_one("#library-rag-select-result-1", Button).press()
+        await pilot.pause()
+        assert screen._library_rag_selected_result_id == "chat-1"
+        panel_state = screen._library_rag_panel_state()
+        assert panel_state.selected_result is not None
+        assert panel_state.selected_result.title == "Conversation Evidence"
+
+        await pilot.press("u")
+        await pilot.pause(0.1)
+        app.open_console_for_live_work.assert_called_once()
+        assert (
+            app.open_console_for_live_work.call_args.kwargs["title"]
+            == "Conversation Evidence"
+        )
+
+        # Toggle Media back on: its row returns WITHOUT a new search call --
+        # restored from state, not re-queried.
+        calls_before = len(service.calls)
+        screen.query_one("#library-rag-scope-toggle-media", Button).press()
+        for _ in range(120):
+            toggles = list(screen.query("#library-rag-scope-toggle-media"))
+            if toggles and str(toggles[0].label).startswith("✓"):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Media toggle never reselected.")
+        await pilot.pause()
+        assert len(service.calls) == calls_before
+        assert "Media Evidence" in _visible_text(screen)
 
 
 @pytest.mark.asyncio

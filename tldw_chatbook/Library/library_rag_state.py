@@ -148,6 +148,38 @@ _OPEN_SOURCE_TYPE_MAP = {
     # used for search selection and the rail row.
     "prompt": "prompt",
 }
+# Raw provenance `source_type`/`item_type`/`type` identifiers -> the
+# scope-toggle vocabulary `LibraryRagScopeState.selected_source_types`
+# speaks ("notes"/"media"/"conversations"/"prompts"). D4/task-5: a scope
+# toggle flipped OFF after retrieval already landed used to leave that
+# source's rows displayed, selectable, and stageable into Console --
+# `LibraryRagPanelState.from_values` filters already-landed rows against
+# the CURRENT scope using this map. Distinct from `_OPEN_SOURCE_TYPE_MAP`
+# just above: that map's "prompt" deliberately stays singular
+# (`_open_library_item_by_id`'s dispatch key) -- this one's "prompt" must
+# canonicalize to the plural "prompts" scope-toggle key, or toggling
+# Prompts off would never hide a prompt row. Mirrors
+# `_SEMANTIC_SOURCE_TYPE_MAP` in `library_local_rag_search_service.py`
+# (the retrieval-time analogue of this same filter, applied to rag mode's
+# semantic leg before rows even land) -- extended with "prompt"/"prompts",
+# which that map deliberately omits (prompts have no semantic-index seam,
+# but DO have a keyword-mode retrieval leg that emits singular "prompt"
+# rows, see `_prompt_row`).
+_SCOPE_SOURCE_TYPE_MAP = {
+    "note": "notes",
+    "notes": "notes",
+    "media": "media",
+    "media_chunk": "media",
+    "conversation": "conversations",
+    "conversations": "conversations",
+    "chat": "conversations",
+    "prompt": "prompts",
+    "prompts": "prompts",
+    "workspace": "workspaces",
+    "workspaces": "workspaces",
+    "collection": "collections",
+    "collections": "collections",
+}
 
 
 def update_search_history(history: Sequence[str], query: str) -> tuple[str, ...]:
@@ -1321,6 +1353,38 @@ class LibraryRagResultRow:
         return _OPEN_SOURCE_TYPE_MAP.get(raw, "")
 
     @property
+    def scope_source_type(self) -> str:
+        """Canonical Sources-toggle vocabulary for this row (D4/task-5).
+
+        `LibraryRagPanelState.from_values` filters already-landed rows by
+        scope using this -- a source toggled OFF must hide rows whose
+        provenance says they came from it. Distinct from `open_source_type`
+        just above: that property deliberately keeps "prompt" singular
+        (`_open_library_item_by_id`'s dispatch key); this one lands in the
+        exact "notes"/"media"/"conversations"/"prompts" vocabulary
+        `LibraryRagScopeState.selected_source_types` speaks, or a
+        Prompts-scope toggle-off would never catch a prompt row.
+
+        Returns "" when `source_type`/`item_type`/`type` is missing or does
+        not canonicalize -- the scope filter treats that as "cannot be
+        attributed to any toggle" and never hides it, mirroring
+        `_semantic_row_matches_scope`'s permissive default in
+        `library_local_rag_search_service.py` (the retrieval-time analogue
+        of this same filter).
+        """
+        raw = (
+            str(
+                self.provenance.get("source_type")
+                or self.provenance.get("item_type")
+                or self.provenance.get("type")
+                or ""
+            )
+            .strip()
+            .lower()
+        )
+        return _SCOPE_SOURCE_TYPE_MAP.get(raw, "")
+
+    @property
     def can_open(self) -> bool:
         """True when the row carries a resolvable parent id and known type."""
         return bool(self.open_source_type and self.source_id)
@@ -1513,7 +1577,14 @@ class LibraryRagPanelState:
                 searched, which can differ from `query` once the user edits
                 the box (or a separate rail search box) without re-running.
             mode: Search mode, either `rag` or `search`.
-            results: Retrieval result rows or mappings.
+            results: Retrieval result rows or mappings. Filtered against
+                `selected_source_types` before use (D4/task-5): a row whose
+                provenance canonicalizes to a source type NOT in the
+                current scope is dropped from the returned state's
+                `results`/`selected_result`/`can_use_console`, so a scope
+                toggle flipped off after retrieval already landed hides
+                that source's rows in this exact snapshot rather than only
+                affecting the next run.
             selected_result_id: Result ID selected for inspector/Console handoff.
             retrieval_status: Explicit retrieval status override.
             recovery_copy: Explicit retrieval recovery copy from a service outcome.
@@ -1567,6 +1638,51 @@ class LibraryRagPanelState:
             if isinstance(result, LibraryRagResultRow)
             else LibraryRagResultRow.from_result(result)
             for result in results
+        )
+        # D4/task-5: a scope toggle flipped OFF after retrieval already
+        # landed used to leave that source's rows displayed, selectable,
+        # and stageable into Console even though the Sources toggle read
+        # "off" (the toggle only reset state for the NEXT run). Hide,
+        # don't grey -- the scope line already claims the source is off,
+        # so showing its rows would be the lie. This is a pure,
+        # one-snapshot filter over the rows already built above (no
+        # re-query): everything downstream -- coverage note, status
+        # classification, selection resolution, `can_use_console` --
+        # reads this same filtered `result_rows`, so a selection pointing
+        # at a just-hidden row resolves to `None` for free below, and
+        # toggling the source back ON restores its rows from this exact
+        # `results` argument on the very next call. A row whose
+        # provenance `source_type` cannot be attributed to any toggle
+        # (`scope_source_type == ""`) is never hidden -- see
+        # `LibraryRagResultRow.scope_source_type`.
+        #
+        # Filters against the CALLER's raw `selected_source_types` --
+        # the DELIBERATE selection -- not `scope.selected_source_types`,
+        # which additionally intersects with per-type availability
+        # (count > 0, `LibraryRagScopeState.from_source_counts`). Using
+        # the availability-intersected version would ALSO hide a row
+        # whenever its source currently counts zero items, even when the
+        # user never touched that toggle: a real retrieval seam can never
+        # produce a row for a source with nothing in it, but several
+        # pre-existing display-only tests feed canned multi-source rows
+        # through a zero-count source anyway (there's nothing to search,
+        # so nothing was seeded) -- this filter must not invent a new,
+        # narrower defect for that case. `None` (every call site that
+        # predates this fix) filters nothing, exactly like before.
+        deliberately_selected_source_types = (
+            None
+            if selected_source_types is None
+            else frozenset(
+                _clean_text(source_type).lower()
+                for source_type in selected_source_types
+            )
+        )
+        result_rows = tuple(
+            row
+            for row in result_rows
+            if not row.scope_source_type
+            or deliberately_selected_source_types is None
+            or row.scope_source_type in deliberately_selected_source_types
         )
         coverage_note = library_rag_coverage_note(diagnostics, result_rows)
         normalized_selected_result_id = _clean_text(selected_result_id)
