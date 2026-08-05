@@ -1143,6 +1143,7 @@ def _compose_run_registry_and_allowed(
     workspace_id: str | None = None,
     ephemeral: bool = False,
     diff_sink: Callable[[tuple[str, str, str, str]], None] | None = None,
+    local_provider: Any | None = None,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
@@ -1197,6 +1198,10 @@ def _compose_run_registry_and_allowed(
         diff_sink: TASK-1366 -- this run's UI-side diff channel, threaded
             into the freshly-constructed ``BuiltinToolProvider`` (see its
             ``__init__``). ``None`` (the default) means no diff capture.
+        local_provider: This run's already-composed local tool provider
+            (``LocalToolProvider``), or ``None`` when local tools are
+            disabled this run. ACCEPTED but NOT yet registered -- see the
+            registration site below.
 
     Returns:
         ``(registry, allowed_tools, builtin_names)`` -- the per-run
@@ -1245,6 +1250,13 @@ def _compose_run_registry_and_allowed(
                 _CollisionFilteredMCPProvider(mcp_provider, frozenset(mcp_names))
             )
             allowed_tools += mcp_names
+    # local_provider is ACCEPTED here (threaded from run_reply, which the
+    # controller already passes) but deliberately NOT registered yet --
+    # collision filtering + registration of the local catalog is the next
+    # task's (bridge registration) scope. Until then the provider only
+    # participates through the combined review hook, which is inert for
+    # tools the model cannot name.
+    _ = local_provider
     allowed_tools += (SPAWN_TOOL_NAME,)
     return registry, allowed_tools, builtin_names
 
@@ -1402,58 +1414,8 @@ class ConsoleAgentBridge:
         turn_bundle_block: str = "",
         request_skill_install_confirm: Callable[[str], bool] | None = None,
         request_skill_script_confirm: Callable[[dict], dict] | None = None,
+        local_provider: Any | None = None,
     ) -> tuple[str, RunOutcome]:
-        """Run the agent loop as the Console reply engine.
-
-        The primary run row is created with a NULL ``assistant_message_id``
-        (the native ``assistant_message_id`` argument is used only for
-        streaming into the placeholder, never forwarded to ``run_turn`` --
-        see the ``run_turn`` call below for why a native id must never be
-        stored on the run). The caller records the reply's durable persisted
-        id onto the run on every terminal path via
-        ``record_run_assistant_message`` once the reply is persisted; an
-        unfinished/crashed run stays NULL for resume's null->ordinal fallback.
-
-        Concurrency: this bridge does NOT serialize runs. The
-        ``_live``/``_historical_cache`` dicts are per-conversation DISPLAY
-        snapshots, not a mutual-exclusion guard. Serialization is enforced
-        upstream by ``ConsoleChatController`` (its ``_active_run_rejection``
-        / ``run_state.is_send_allowed`` gate -- covered by
-        ``Tests/UI/test_console_run_gate.py``), and that gate is actually
-        CONTROLLER-WIDE (only one run active across the whole controller at
-        a time), which trivially bounds it per conversation too: a second
-        send -- whether to the same conversation or a different, otherwise-
-        idle one -- while any run is live is rejected there before
-        ``run_reply`` is ever called. Do not add a competing guard here.
-
-        task-545/T6: ``builtin_gate`` (when passed) is threaded into this
-        run's freshly-built ``BuiltinToolProvider`` so its ``invoke()``
-        checks the SAME gate instance the caller's review hook
-        (``console_chat_controller.build_tool_review_hook``) already
-        stamped -- see ``_compose_run_registry_and_allowed``'s own
-        docstring for why two independently-built gates would silently
-        desynchronize. Passing ``None`` (the default -- existing callers
-        that don't care about built-in gating are unaffected) leaves a
-        skills/MCP-free run on the shared, construction-time
-        ``self._registry``/``self._allowed_tools`` fast path unchanged.
-
-        task-6 (settings-workspaces-folder-roots spec §3): whenever this
-        run takes the fresh-build branch below, ``self._store``'s own
-        record of ``session_id``'s bound workspace is looked up and
-        threaded into ``_compose_run_registry_and_allowed`` as
-        ``workspace_id`` -- so this run's ``BuiltinToolProvider`` binds
-        THIS session's workspace, not whatever workspace is active in the
-        UI by the time a file tool actually fires. A missing store or an
-        already-closed session degrades to ``None`` (the documented
-        active-workspace fallback) rather than failing the run over an
-        ancillary lookup.
-
-        Returns:
-            A ``(run_id, outcome)`` tuple: the primary run's id (so the
-            caller can record the produced reply's persisted id onto the run
-            via ``record_run_assistant_message`` after the reply is
-            persisted) and its terminal ``RunOutcome``.
-        """
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
         # MCP, and by task-545/T6 for a per-run builtin_gate): rebuilt FRESH
         # for this run whenever there is a skills service, an already-
@@ -1518,6 +1480,7 @@ class ConsoleAgentBridge:
             self._skills_service is not None
             or mcp_provider is not None
             or builtin_gate is not None
+            or local_provider is not None
         ):
             context: Mapping[str, Any] = {}
             if self._skills_service is not None:
@@ -1552,6 +1515,7 @@ class ConsoleAgentBridge:
                 workspace_id=run_workspace_id,
                 ephemeral=run_is_ephemeral,
                 diff_sink=pending_diffs.append,
+                local_provider=local_provider,
             )
             if self._skills_service is not None:
                 skill_names = frozenset(

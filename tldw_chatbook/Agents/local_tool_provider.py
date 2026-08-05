@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator
 
+from loguru import logger
+
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
@@ -62,6 +64,13 @@ class LocalToolProvider:
         kill_switch: () -> bool master off-switch.
         approval_callback: invoke()'s single-call fallback gate for an
             "ask"-state tool with no batch stamp; None fails closed.
+        is_session_approved: (HubTool) -> bool session-grant check (MCP
+            Finding I1 parity); None means "no session store" (never
+            short-circuits).
+        persist_approval: (HubTool, decision) -> None side-effect hook for
+            "approve_session"/"always_allow" verdicts (session grant write /
+            permission-store "allow" with definition_hash); None means the
+            decision executes this turn but is not persisted.
     """
 
     def __init__(
@@ -72,12 +81,16 @@ class LocalToolProvider:
         resolve_state: Callable[[HubTool], EffectiveToolState] | None = None,
         kill_switch: Callable[[], bool] = lambda: False,
         approval_callback: Callable[[list[MCPPendingCall]], dict[str, str]] | None = None,
+        is_session_approved: Callable[[HubTool], bool] | None = None,
+        persist_approval: Callable[[HubTool, str], None] | None = None,
     ) -> None:
         self._root = workspace_root
         self._specs = {s.name: s for s in (specs if specs is not None else _default_specs(workspace_root))}
         self._resolve_state = resolve_state or (lambda hub: EffectiveToolState(state="ask", origin="global_default"))
         self._kill_switch = kill_switch
         self._approval_callback = approval_callback
+        self._is_session_approved = is_session_approved
+        self._persist_approval = persist_approval
         self._stamps: dict[str, str] = {}
 
     # -- catalog ------------------------------------------------------
@@ -139,8 +152,13 @@ class LocalToolProvider:
         spec = self._specs.get(name)
         if spec is None:
             return None
-        state = self._resolve_state(self.hub_tool_for(name))
+        hub = self.hub_tool_for(name)
+        state = self._resolve_state(hub)
         if state.state != "ask":
+            return None
+        # Finding I1 parity: a live session approval makes invoke() execute
+        # without a stamp, so asking again here would be a pure re-prompt.
+        if self._is_session_approved_safe(hub):
             return None
         reason = (
             "config_changed" if state.config_changed
@@ -177,23 +195,54 @@ class LocalToolProvider:
 
     def _verdict_for(self, name: str) -> str:
         """Resolve this call's gate decision: allow executes; anything else refuses."""
-        state = self._resolve_state(self.hub_tool_for(name))
+        hub = self.hub_tool_for(name)
+        state = self._resolve_state(hub)
         if state.state == "allow":
             return "allow"
         if state.state == "deny":
             return "deny"
-        # ask: per-turn stamp wins; then single-call fallback; then fail closed.
+        # ask: per-turn stamp wins; then a live session approval; then the
+        # single-call fallback; then fail closed.
         stamp = self._stamps.get(name)
         if stamp in ("approve_once", "approve_session", "always_allow"):
+            if stamp != "approve_once":
+                self._persist_approval_safe(hub, stamp)
             return "allow"
         if stamp == "deny":
             return "deny"
         if stamp == "timeout":
             return "timeout"
+        if self._is_session_approved_safe(hub):
+            return "allow"
         if self._approval_callback is not None:
             decision = self._approval_callback([self.pending_gate_for(name, {})]).get(name, "timeout")
+            if decision in ("approve_session", "always_allow"):
+                self._persist_approval_safe(hub, decision)
             return "allow" if decision in ("approve_once", "approve_session", "always_allow") else decision
         return "no_callback"
+
+    def _is_session_approved_safe(self, hub: HubTool) -> bool:
+        """Never-raise session-grant read; absent/failed read means not approved."""
+        if self._is_session_approved is None:
+            return False
+        try:
+            return bool(self._is_session_approved(hub))
+        except Exception as exc:  # noqa: BLE001 — a read failure must not deny silently-wrongly
+            logger.warning(
+                f"LocalToolProvider: is_session_approved failed for {hub.name}: {exc}"
+            )
+            return False
+
+    def _persist_approval_safe(self, hub: HubTool, decision: str) -> None:
+        """Never-raise persistence side effect; a failure must not block execution."""
+        if self._persist_approval is None:
+            return
+        try:
+            self._persist_approval(hub, decision)
+        except Exception as exc:  # noqa: BLE001 — persistence failure must not block execution
+            logger.warning(
+                f"LocalToolProvider: persist_approval ({decision}) failed for {hub.name}: {exc}"
+            )
 
 
 def _default_specs(workspace_root: Path) -> list[LocalToolSpec]:
