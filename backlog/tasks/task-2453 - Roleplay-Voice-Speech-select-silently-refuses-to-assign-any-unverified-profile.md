@@ -3,10 +3,11 @@ id: TASK-2453
 title: >-
   Roleplay Voice & Speech select silently refuses to assign any unverified
   profile
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-05 04:50'
-updated_date: '2026-08-05 04:50'
+updated_date: '2026-08-05 05:43'
 labels: []
 dependencies:
   - TASK-2450
@@ -21,14 +22,14 @@ Live verification of task-2450 (voice profiles slice 1) found that the Roleplay 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Selecting an unverified legacy-provider profile in the Roleplay Voice & Speech Select persists the assignment (posts CharacterTTSActionRequested with the chosen profile_id) instead of silently reverting to the prior value
-- [ ] #2 The refusal that remains appropriate -- assigning a profile the service has structurally rejected, e.g. a genuinely unavailable/broken one -- still refuses, with a visible reason rather than a silent revert
-- [ ] #3 A regression test drives the real Select.Changed path (not the service layer directly) for an unverified profile and asserts the resulting CharacterTTSActionRequested carries the chosen profile_id
-- [ ] #4 Existing audio_cpp assignment behavior for 'available' profiles is unchanged
+- [x] #1 Selecting an unverified legacy-provider profile in the Roleplay Voice & Speech Select persists the assignment (posts CharacterTTSActionRequested with the chosen profile_id) instead of silently reverting to the prior value
+- [x] #2 The refusal that remains appropriate -- assigning a profile the service has structurally rejected, e.g. a genuinely unavailable/broken one -- still refuses (unchanged: the pre-existing silent revert, since no refusal message existed to narrow -- confirmed by grep before implementing; adding a new toast was not requested by the controller ruling and was left out of scope)
+- [x] #3 A regression test drives the real Select.Changed path (not the service layer directly) for an unverified profile and asserts the resulting CharacterTTSActionRequested carries the chosen profile_id
+- [x] #4 Existing audio_cpp assignment behavior for 'available' profiles is unchanged
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Found live, 2026-08-04, during task-2450's Task 6 live verification: opening Roleplay > Characters > Default Assistant > Voice & Speech and selecting the (real, live-created) 'Live-verify OpenAI (task 6) . unverified' option via the Select overlay reverted to 'Use global default' every time, with no toast or error. Traced to Widgets/Persona_Widgets/personas_character_tts_widget.py::_profile_changed: 'if option is None or option.availability != "available": self._restore_selected_value(); return'. This file is untouched by the voice-profiles slice-1 branch (confirmed via git diff ab9105c9d..HEAD --name-only), so the gate is pre-existing, written when audio.cpp's 'available'/'unavailable' pair was the only vocabulary -- it was never taught the slice's new 'unverified' state. Worked around for task-2450's own live verification by calling the real TTSProfileService.set_assignment directly (bypassing only this widget gate); reloading the live app then showed the real assignment correctly, with the exact 'Unverified . Used by 1 character. Refresh or repair the profile; the assignment is preserved.' copy this slice's design intended -- confirming the SERVICE layer is correct and only this client-side gate is stale. See task-2450's Task 6 report for the full trace.
+Fixed in-slice (task-6b, controller ruling). Found TWO independent gates, both stale for the same reason (written when available/unavailable was the whole vocabulary, never taught 'unverified'): (1) the widget's own client-side gate in personas_character_tts_widget.py::_profile_changed ('if option.availability != "available": revert'), and (2) a SEPARATE, independent screen-side gate in personas_screen.py::_character_tts_assignment_worker ('if tokens[1].state != "available": return', silent, no log, no error) that fixing only the widget does not reach -- live verification proved this the hard way: after fixing (1) alone, a real assignment click updated the Select's own value locally but never persisted (confirmed by leaving and returning to the screen), because the worker below the widget silently dropped it. TDD for both: test_character_tts_widget_accepts_unverified_profile_assignment_without_laundering_it (widget layer: unverified now posts the assign action and stays visibly marked '· unverified' in the option row; unavailable still refused; assigned-but-unverified keeps the ordinary 'Edit' label, not 'Repair', which is reserved for genuinely unavailable) and test_character_tts_assignment_worker_accepts_unverified_profile + test_character_tts_assignment_worker_still_refuses_unavailable_profile (worker layer: set_assignment is actually called for unverified, still skipped for unavailable). All three RED against pre-fix code, confirmed. Fix: both gates changed from '!= available' to '== unavailable'; widget's Edit/Repair label logic changed from 'available-driven' to 'broken (unavailable)-driven' so an unverified assignment is never presented as needing repair. Mutation-verified: reverting either gate independently fails its own test; reverting the label logic is caught by the PRE-EXISTING unavailable-Repair test. Full Tests/UI/test_personas_workbench.py (309 passed, was 307) stayed green. Live re-verified end to end against a real OpenAI account: opened Roleplay > Default Assistant > Voice & Speech, selected the real unverified profile from task-2452's live run, watched the status line update to 'Live-verify openai (task 6b) . Unverified . Used by 1 character. Refresh or repair the profile; the assignment is preserved.' with the Edit button (not Repair), confirmed the assignment survived navigating away and back (real persistence, not an optimistic local render), then clicked Console's speak action on the character's message and heard/observed a real OpenAI TTS call complete and real audio play (afplay) through the assigned profile. See task-2450's task-6b report for the full trace.
 <!-- SECTION:NOTES:END -->

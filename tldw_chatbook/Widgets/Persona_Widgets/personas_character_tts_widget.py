@@ -219,7 +219,7 @@ class PersonasCharacterTTSWidget(Container):
             ),
             None,
         )
-        available = selected is not None and selected.availability == "available"
+        broken = selected is not None and selected.availability == "unavailable"
         self.query_one(
             ".personas-character-tts-preview",
             Button,
@@ -229,7 +229,12 @@ class PersonasCharacterTTSWidget(Container):
             Button,
         ).disabled = not state.controls_enabled
         edit = self.query_one(".personas-character-tts-edit", Button)
-        edit.label = "Edit" if available else "Repair"
+        # "Repair" is reserved for a genuinely unavailable profile. An
+        # unverified one is not confirmed broken -- it works, this slice just
+        # has no catalog check backing that claim yet (task-2450 amendment) --
+        # so it keeps the ordinary "Edit" label rather than being presented
+        # as needing repair.
+        edit.label = "Repair" if broken else "Edit"
         edit.disabled = not (state.controls_enabled and assigned)
         self.query_one(
             ".personas-character-tts-remove",
@@ -270,7 +275,7 @@ class PersonasCharacterTTSWidget(Container):
             ),
             None,
         )
-        if option is None or option.availability != "available":
+        if option is None or option.availability == "unavailable":
             self._restore_selected_value()
             return
         self.post_message(CharacterTTSActionRequested("assign", profile_id))

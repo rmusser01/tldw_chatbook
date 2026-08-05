@@ -3,7 +3,7 @@
 #
 # Imports
 import asyncio
-from collections.abc import Coroutine, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -770,6 +770,45 @@ class STTSEventHandler:
                 self._forget_operation_file(snapshot.operation_id, path)
             raise
 
+    def _build_requested_selection(
+        self,
+        *,
+        provider_id: str,
+        model_id: str,
+        voice_id: str | None,
+        response_format: str,
+        speed: float,
+        configuration_revision: Callable[[], int],
+    ) -> TTSRequestedSelectionSnapshot | None:
+        """Build one save-eligible provenance snapshot, degrading to `None`.
+
+        Shared by every Playground generation path -- native audio_cpp (via
+        Studio-effective) and every legacy-bridge provider (via both
+        Studio-effective and the standalone legacy bridge). Reading the
+        configuration revision and constructing the snapshot both happen
+        inside the same guard: either can fail on hostile or momentarily
+        unreadable state (a registry read error, an inconsistent effective
+        selection), and neither may fail the generation itself -- the caller
+        already has real audio by the time this runs. A failure here only
+        costs "Save result as profile" eligibility.
+        """
+        try:
+            return TTSRequestedSelectionSnapshot(
+                provider_id=provider_id,
+                model_id=model_id,
+                voice_id=voice_id,
+                response_format=response_format,
+                speed=speed,
+                options={},
+                configuration_revision=configuration_revision(),
+            )
+        except Exception:  # noqa: BLE001 - best-effort provenance only
+            logger.warning(
+                "Playground result is not profile-save eligible (provider={}).",
+                provider_id,
+            )
+            return None
+
     async def _generate_legacy(
         self,
         snapshot: STTSPlaygroundRequest,
@@ -848,25 +887,16 @@ class STTSEventHandler:
                     )
                     created_paths.discard(conversion_destination)
 
-            requested_selection: TTSRequestedSelectionSnapshot | None = None
-            try:
-                requested_selection = TTSRequestedSelectionSnapshot(
-                    provider_id=snapshot.provider_id,
-                    model_id=snapshot.model_id,
-                    voice_id=snapshot.voice_id or None,
-                    response_format=audio_format,
-                    speed=snapshot.speed,
-                    options={},
-                    configuration_revision=self._stts_service.configuration_revision(
-                        snapshot.provider_id
-                    ),
-                )
-            except Exception:  # noqa: BLE001 - best-effort provenance only
-                logger.warning(
-                    "Legacy playground result is not profile-save eligible "
-                    "(provider={}).",
-                    snapshot.provider_id,
-                )
+            requested_selection = self._build_requested_selection(
+                provider_id=snapshot.provider_id,
+                model_id=snapshot.model_id,
+                voice_id=snapshot.voice_id or None,
+                response_format=audio_format,
+                speed=snapshot.speed,
+                configuration_revision=lambda: (
+                    self._stts_service.configuration_revision(snapshot.provider_id)
+                ),
+            )
             return STTSGeneratedAudio(
                 path=output_file,
                 provider_id=snapshot.provider_id,
@@ -933,18 +963,13 @@ class STTSEventHandler:
             )
         )
         self._track_operation_file(snapshot.operation_id, path)
-        requested_selection = (
-            TTSRequestedSelectionSnapshot(
-                provider_id="audio_cpp",
-                model_id=effective.model_id,
-                voice_id=effective.voice_id,
-                response_format="wav",
-                speed=1.0,
-                options={},
-                configuration_revision=effective.revisions.provider_configuration,
-            )
-            if effective.provider_id == "audio_cpp"
-            else None
+        requested_selection = self._build_requested_selection(
+            provider_id=effective.provider_id,
+            model_id=effective.model_id,
+            voice_id=effective.voice_id,
+            response_format=effective.response_format,
+            speed=effective.speed,
+            configuration_revision=lambda: effective.revisions.provider_configuration,
         )
         try:
             return STTSGeneratedAudio(

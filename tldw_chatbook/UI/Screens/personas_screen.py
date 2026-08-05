@@ -1945,7 +1945,7 @@ class PersonasScreen(BaseAppScreen):
                 return
             if action == "assign" and profile_id is not None:
                 tokens = self._character_tts_profile_tokens(snapshot, profile_id)
-                if tokens is None or tokens[1].state != "available":
+                if tokens is None or tokens[1].state == "unavailable":
                     return
                 loaded, _availability = tokens
                 await service.set_assignment(

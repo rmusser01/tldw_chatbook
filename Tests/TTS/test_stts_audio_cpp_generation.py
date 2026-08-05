@@ -193,17 +193,37 @@ class _LegacyService:
 
 
 class _StudioService:
-    def __init__(self, response: _Response) -> None:
+    def __init__(
+        self,
+        response: _Response,
+        *,
+        effective_provider_id: str = "audio_cpp",
+        effective_model_id: str = "draft/model",
+        effective_voice_id: str | None = None,
+        effective_response_format: str = "wav",
+        effective_speed: float = 1.0,
+        effective_configuration_revision: int = 9,
+    ) -> None:
         self.response = response
         self.calls: list[dict[str, object]] = []
+        self._effective_provider_id = effective_provider_id
+        self._effective_model_id = effective_model_id
+        self._effective_voice_id = effective_voice_id
+        self._effective_response_format = effective_response_format
+        self._effective_speed = effective_speed
+        self._effective_configuration_revision = effective_configuration_revision
 
     async def synthesize_effective(self, **kwargs: object) -> tuple[object, object]:
         self.calls.append(kwargs)
         return self.response, SimpleNamespace(
-            provider_id="audio_cpp",
-            model_id="draft/model",
-            voice_id=None,
-            revisions=SimpleNamespace(provider_configuration=9),
+            provider_id=self._effective_provider_id,
+            model_id=self._effective_model_id,
+            voice_id=self._effective_voice_id,
+            response_format=self._effective_response_format,
+            speed=self._effective_speed,
+            revisions=SimpleNamespace(
+                provider_configuration=self._effective_configuration_revision
+            ),
         )
 
 
@@ -1086,7 +1106,152 @@ async def test_studio_generation_uses_current_draft_without_persisting_it() -> N
         assert artifact.model_id == "draft/model"
         assert artifact.requested_selection is not None
         assert artifact.requested_selection.configuration_revision == 9
+        assert artifact.profile_save_eligible is True
         assert preferences.revision == 5
+    finally:
+        await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_studio_generation_attaches_provenance_for_legacy_effective_provider() -> (
+    None
+):
+    """The real Playground dispatch always routes Generate through the Studio-
+    effective path (`studio_preferences` is never None once a pane is mounted).
+    `_generate_legacy`'s own provenance construction is therefore unreachable
+    from the live UI -- this proves the path the UI actually takes attaches
+    provenance for a legacy effective provider too, not just audio_cpp."""
+
+    response = _Response(
+        _CountingStream((b"ID3", b"mp3-bytes")),
+        provider_id="openai",
+        model_id="tts-1",
+        audio_format="mp3",
+        content_type="audio/mpeg",
+    )
+    service = _StudioService(
+        response,
+        effective_provider_id="openai",
+        effective_model_id="tts-1",
+        effective_voice_id="alloy",
+        effective_response_format="mp3",
+        effective_speed=1.25,
+        effective_configuration_revision=7,
+    )
+    app = _DeliveryApp()
+    handler = STTSEventHandler(app=app)
+    handler._stts_service = service
+    preferences = StudioTTSPreferencesSnapshot(revision=5)
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="openai",
+            model_mode="exact",
+            model_id="tts-1",
+            voice_mode="exact",
+            voice_id="alloy",
+            response_format="mp3",
+            speed=1.25,
+            provider_options={},
+        ),
+        base_revision=5,
+    )
+    request = STTSPlaygroundRequest(
+        operation_id="studio-legacy-operation",
+        provider_id="openai",
+        model_id="tts-1",
+        text="private Studio legacy text",
+        voice_id="alloy",
+        response_format="mp3",
+        speed=1.25,
+        studio_draft=draft,
+        studio_preferences=preferences,
+    )
+
+    await handler.handle_playground_generate(STTSPlaygroundGenerateEvent(request))
+
+    artifact = handler._current_playground_artifact
+    try:
+        assert artifact is not None
+        assert artifact.provider_id == "openai"
+        assert artifact.requested_selection == TTSRequestedSelectionSnapshot(
+            provider_id="openai",
+            model_id="tts-1",
+            voice_id="alloy",
+            response_format="mp3",
+            speed=1.25,
+            options={},
+            configuration_revision=7,
+        )
+        assert artifact.profile_save_eligible is True
+    finally:
+        await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_studio_generation_survives_invalid_provenance_for_legacy_effective_provider() -> (
+    None
+):
+    """Mirrors `test_legacy_generation_survives_configuration_revision_failure`
+    for the path the live UI actually takes: a provenance snapshot that fails
+    to construct must degrade the artifact to not-save-eligible, never fail
+    the generation that already produced real audio."""
+
+    response = _Response(
+        _CountingStream((b"ID3", b"mp3-bytes")),
+        provider_id="openai",
+        model_id="tts-1",
+        audio_format="mp3",
+        content_type="audio/mpeg",
+    )
+    service = _StudioService(
+        response,
+        effective_provider_id="openai",
+        effective_model_id="tts-1",
+        effective_voice_id="alloy",
+        # Not in PROFILE_PROVIDER_FORMATS["openai"] -- TTSRequestedSelectionSnapshot
+        # construction must raise and be swallowed, not propagate.
+        effective_response_format="not-a-real-format",
+        effective_speed=1.25,
+        effective_configuration_revision=7,
+    )
+    app = _DeliveryApp()
+    handler = STTSEventHandler(app=app)
+    handler._stts_service = service
+    preferences = StudioTTSPreferencesSnapshot(revision=5)
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="openai",
+            model_mode="exact",
+            model_id="tts-1",
+            voice_mode="exact",
+            voice_id="alloy",
+            response_format="mp3",
+            speed=1.25,
+            provider_options={},
+        ),
+        base_revision=5,
+    )
+    request = STTSPlaygroundRequest(
+        operation_id="studio-legacy-degrade-operation",
+        provider_id="openai",
+        model_id="tts-1",
+        text="private Studio legacy degrade text",
+        voice_id="alloy",
+        response_format="mp3",
+        speed=1.25,
+        studio_draft=draft,
+        studio_preferences=preferences,
+    )
+
+    await handler.handle_playground_generate(STTSPlaygroundGenerateEvent(request))
+
+    artifact = handler._current_playground_artifact
+    try:
+        assert artifact is not None
+        assert artifact.provider_id == "openai"
+        assert artifact.path.read_bytes() == b"ID3mp3-bytes"
+        assert artifact.requested_selection is None
+        assert artifact.profile_save_eligible is False
     finally:
         await handler.cleanup_tts_resources()
 

@@ -3,10 +3,11 @@ id: TASK-2452
 title: >-
   TTS Playground Save-as-profile is unreachable for legacy providers
   (Studio-effective path never attaches provenance)
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-05 04:49'
-updated_date: '2026-08-05 04:49'
+updated_date: '2026-08-05 05:42'
 labels: []
 dependencies:
   - TASK-2450
@@ -21,14 +22,14 @@ Live verification of task-2450 (voice profiles slice 1) found that the TTS Playg
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Generating audio for any of the seven providers through the real TTS Playground (Generate button, not a test harness calling _generate_legacy directly) leaves the result save-eligible when its provenance would otherwise qualify, matching the audio_cpp behavior
-- [ ] #2 _generate_studio_effective attaches a TTSRequestedSelectionSnapshot for the six legacy providers using the same exact-selection provenance _generate_legacy already builds, not only for audio_cpp
-- [ ] #3 A regression test drives the real Playground Generate path (not _generate_legacy in isolation) for a legacy provider and asserts the resulting artifact is profile_save_eligible
-- [ ] #4 audio_cpp's existing Studio-effective save-as-profile behavior is unchanged (characterized before the fix, pinned after)
+- [x] #1 Generating audio for any of the seven providers through the real TTS Playground (Generate button, not a test harness calling _generate_legacy directly) leaves the result save-eligible when its provenance would otherwise qualify, matching the audio_cpp behavior
+- [x] #2 _generate_studio_effective attaches a TTSRequestedSelectionSnapshot for the six legacy providers using the same exact-selection provenance _generate_legacy already builds, not only for audio_cpp
+- [x] #3 A regression test drives the real Playground Generate path (not _generate_legacy in isolation) for a legacy provider and asserts the resulting artifact is profile_save_eligible
+- [x] #4 audio_cpp's existing Studio-effective save-as-profile behavior is unchanged (characterized before the fix, pinned after)
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Found live, 2026-08-04, during task-2450's Task 6 live verification: a real Generate click against the real OpenAI backend produced a real, successful artifact (confirmed via the app's own RichLog 'TTS generation complete!' and the persistent-diagnostics event log), but 'Save result as profile' stayed hidden/disabled. Root cause isolated by temporary debug instrumentation (added and reverted, never committed) proving current_audio_artifact.requested_selection was None: SpeechPlaygroundPane is always constructed with studio_preferences=load_result.snapshot (UI/STTS_Window.py:4711, never None), so _generate_tts (UI/Speech/speech_synthesis_mixin.py) always builds a non-None studio_draft and every real Generate click's STTSPlaygroundRequest.studio_preferences is set, routing _generate_tts_worker (Event_Handlers/STTS_Events/stts_events.py:1060) into _generate_studio_effective, never _generate_legacy. Confirmed the branch's own diff (git diff ab9105c9d..HEAD -- Event_Handlers/STTS_Events/stts_events.py) touched only _generate_legacy's provenance block (~848-877); _generate_studio_effective (~895-972) was untouched and still hard-codes 'if effective.provider_id == "audio_cpp" else None' at line ~953. Worked around for task-2450's own live verification with an honest, clearly-labeled in-process substitute (real TTSService.generate_audio_stream + real TTSProfileService.create_from_artifact, bypassing only this broken UI glue) -- see task-2450's Task 6 report for the full trace.
+Fixed in-slice (task-6b, controller ruling: this and TASK-2453 defeat the slice's own requirement and are not follow-ups). TDD: added test_studio_generation_attaches_provenance_for_legacy_effective_provider (RED against pre-fix code, confirmed) plus a degrade-gracefully sibling test and a profile_save_eligible pin on the existing audio_cpp studio test, all in Tests/TTS/test_stts_audio_cpp_generation.py. Fix: factored a shared STTSEventHandler._build_requested_selection(...) helper (provider_id, model_id, voice_id, response_format, speed, configuration_revision callable) that both _generate_legacy and _generate_studio_effective now call; _generate_studio_effective's audio_cpp-only ternary is gone -- it calls the helper unconditionally using effective.response_format/effective.speed/effective.revisions.provider_configuration, which research confirmed are valid, already-resolved values for every provider (audio_cpp's effective values are guaranteed wav/1.0 by TTSEffectiveSelectionSnapshot's own validation, so unifying the two providers onto one code path changes nothing for audio_cpp). Mutation-verified twice: removing the helper's try/except makes both degrade-gracefully tests fail with a real exception; reinstating the old audio_cpp-only gate makes the new provenance test fail. Full Tests/TTS/ (2224 passed) and the branch's 12 targeted files (943 passed) stayed green throughout. Live re-verified end to end against a real OpenAI account (fresh tmux session, scratch profile): Generate produced real audio, 'Save result as profile' was visible and clickable, the name modal saved, and the app reported 'Voice profile saved.' -- confirmed present in the Voice Profiles library as Unverified. See task-2450's task-6b report for the full trace.
 <!-- SECTION:NOTES:END -->
