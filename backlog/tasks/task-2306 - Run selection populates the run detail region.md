@@ -177,3 +177,15 @@ brought the newest run's 20 items back.
 * `tldw_chatbook/Subscriptions/watchlist_normalizers.py`,
   `local_watchlists_service.py`, `watchlist_scope_service.py`
 * `tldw_chatbook/DB/Subscriptions_DB.py`
+
+### Follow-up material (found by this task's tooling, deliberately not fixed)
+
+`_load_source_rows_for_tree` (`watchlists_collections_screen.py:1535`)
+swallows its failure into `logger.opt(exception=True).debug` and tells the
+user nothing, so an expanded watchlist can render no sources with no
+explanation. It is **synchronous** (the tree calls it during `compose()`), so
+it sits outside the awaited-read contract
+`test_watchlists_check_now_failure.py` now enforces, and it PRE-DATES this
+batch. Named in that test's comment block so the next reader finds it. Needs
+its own task; a drive-by fix here would have been out of the batch's scope and
+untested against the tree's own empty-branch rendering.

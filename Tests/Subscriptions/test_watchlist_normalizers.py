@@ -220,16 +220,19 @@ def _run(**payload):
 def test_run_counters_come_from_the_names_the_pipeline_actually_writes():
     """The whole of F33 in one assertion.
 
-    `execute_run` records `items_found`/`items_ingested`/`items_filtered`
-    inside `stats`; the Runs pane reads `found_count`/`processed_count`/
-    `filtered_count` off the run's top level. Nothing bridged the two, so
-    every run displayed four zeros.
+    The `stats` blob below is exactly what `execute_run` writes -- and only
+    what it writes (re-review, m7): `items_found`, `items_ingested`,
+    `new_items_found` and `response_time_ms`. There is deliberately no
+    `items_filtered` key; the pipeline records none, so `filtered_count` is
+    derived here (see `_run_accounting`). The Runs pane reads
+    `found_count`/`processed_count`/`filtered_count` off the run's top level,
+    nothing bridged the two, and every run displayed four zeros.
     """
     run = _run(
         stats={
             "items_found": 30,
             "items_ingested": 28,
-            "items_filtered": 2,
+            "new_items_found": 28,
             "response_time_ms": 412,
         }
     )
@@ -243,7 +246,11 @@ def test_run_counters_come_from_the_names_the_pipeline_actually_writes():
 
 
 def test_a_run_recorded_before_the_filtered_count_existed_derives_it():
-    """Rows written before TASK-2305 have no `items_filtered` to lift."""
+    """No row this pipeline writes carries `items_filtered` -- it is derived.
+
+    Kept as its own case because the arithmetic (not merely the absence) is
+    the contract: everything found and not ingested was dropped by a filter.
+    """
     run = _run(stats={"items_found": 10, "items_ingested": 4})
 
     assert run["filtered_count"] == 6

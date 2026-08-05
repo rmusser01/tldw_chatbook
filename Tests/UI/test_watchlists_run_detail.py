@@ -496,7 +496,10 @@ async def test_a_run_whose_items_a_later_check_reclaimed_says_so():
         assert await _settle_until(pilot, lambda: bool(_note_text(pane)))
 
         assert pane.query_one("#runs-detail-items", DataTable).row_count == 0
-        assert "Found: 7" in _stats_text(pane), "precondition: the counts claim 7"
+        assert "Processed: 5" in _stats_text(pane), (
+            "precondition: the run persisted rows, so their absence IS "
+            "re-attribution and not filtering"
+        )
         assert "re-claimed" in _note_text(pane), (
             f"the note must name the cause; got {_note_text(pane)!r}"
         )
@@ -518,6 +521,7 @@ async def test_a_run_that_genuinely_found_nothing_is_not_blamed_on_a_later_check
         screen._controller.list_items = no_rows
         empty_run = dict(RUNS[1])
         empty_run["found_count"] = 0
+        empty_run["processed_count"] = 0
         pane.runs = [dict(RUNS[0]), empty_run]
         await pilot.pause(0.2)
 
@@ -613,6 +617,7 @@ async def test_a_truncated_items_table_says_how_many_it_is_showing():
         screen._controller.list_items = a_full_page
         big_run = dict(RUNS[1])
         big_run["found_count"] = 500
+        big_run["processed_count"] = 500
         pane.runs = [dict(RUNS[0]), big_run]
         await pilot.pause(0.2)
 
@@ -677,20 +682,25 @@ async def test_the_items_note_does_not_outlive_the_run_it_describes():
         assert pane.query_one("#runs-detail-items-note", Static).display is False
 
 
-def test_the_note_for_an_unidentifiable_run_names_that_cause():
-    """The fourth road to an empty table, at the unit."""
+def test_every_empty_items_cause_has_its_own_words():
+    """Five roads to an empty table; five different things to say."""
     from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
-        WatchlistsCollectionsScreen,
+        WatchlistsCollectionsScreen as Screen,
     )
 
     notes = {
-        WatchlistsCollectionsScreen._RUN_ITEMS_SERVER_NOTE,
-        WatchlistsCollectionsScreen._RUN_ITEMS_FAILED_NOTE,
-        WatchlistsCollectionsScreen._RUN_ITEMS_UNIDENTIFIED_NOTE,
-        WatchlistsCollectionsScreen._RUN_ITEMS_REATTRIBUTED_NOTE,
-        WatchlistsCollectionsScreen._RUN_ITEMS_EMPTY_NOTE,
+        Screen._RUN_ITEMS_SERVER_NOTE,
+        Screen._RUN_ITEMS_FAILED_NOTE,
+        Screen._RUN_ITEMS_REATTRIBUTED_NOTE,
+        Screen._RUN_ITEMS_ALL_FILTERED_NOTE,
+        Screen._RUN_ITEMS_EMPTY_NOTE,
     }
     assert len(notes) == 5, "each cause must be distinguishable from the others"
+    assert not hasattr(Screen, "_RUN_ITEMS_UNIDENTIFIED_NOTE"), (
+        "the 'unidentified run' label was unreachable -- `normalize_watchlist_"
+        "run` reads `payload['id']` unsubscripted, so every run has a run_id "
+        "(re-review, m6)"
+    )
 
 
 @pytest.mark.asyncio
@@ -736,3 +746,108 @@ async def test_the_previous_runs_note_is_gone_before_the_loader_answers():
             "run 2's excuse is showing under run 1's stats while run 1's own "
             f"items are still loading: {in_window!r}"
         )
+
+
+# --- Re-review, I1-b: the discriminator is `processed`, never `found` -------
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_filtered_everything_is_not_blamed_on_a_later_check():
+    """The re-review's measured scenario, at the UI.
+
+    A source with an exclude filter, checked ONCE: `found 5 · processed 0 ·
+    filtered 5`, zero rows. The first cut of this feature discriminated on
+    `found_count` and told the user "a later check re-claimed the items that
+    had not changed" — when there was no later check, and nothing had been
+    re-claimed. `Found` is what the FETCH saw; `Processed` is what the run
+    actually stored, and rows are the only thing this table can show.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+
+        async def no_rows(**_kwargs):
+            return []
+
+        screen._controller.list_items = no_rows
+        filtered_run = dict(RUNS[1])
+        filtered_run.update(
+            found_count=5, processed_count=0, filtered_count=5, error_count=0
+        )
+        pane.runs = [dict(RUNS[0]), filtered_run]
+        await pilot.pause(0.2)
+
+        await _select_second_run(pilot, pane)
+        assert await _settle_until(pilot, lambda: bool(_note_text(pane)))
+
+        note = _note_text(pane)
+        assert "excluded by a filter" in note, f"got {note!r}"
+        assert "re-claimed" not in note, (
+            "a run checked once cannot have had its items re-claimed by a "
+            "later check that does not exist"
+        )
+        assert "produced no items" not in note, (
+            "it DID find five; it stored none of them, which is a different "
+            "thing to say"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_full_page_of_everything_the_run_stored_is_not_called_truncated():
+    """The same bug in reverse (re-review, I1-b).
+
+    `found 500 · processed 200`, returning exactly 200 rows: every row the run
+    ever stored is on screen. Keying the truncation line off `found` claimed
+    300 more were hidden when the missing 300 were filtered out and never
+    stored at all.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, pane = await _runs_pane(pilot, host)
+        limit = screen._RUN_ITEMS_LIMIT
+
+        async def a_full_page(**_kwargs):
+            return [
+                {"title": f"Item {index}", "status": "new", "alert_count": 0}
+                for index in range(limit)
+            ]
+
+        screen._controller.list_items = a_full_page
+        run = dict(RUNS[1])
+        run.update(found_count=500, processed_count=limit, filtered_count=300)
+        pane.runs = [dict(RUNS[0]), run]
+        await pilot.pause(0.2)
+
+        await _select_second_run(pilot, pane)
+        assert await _settle_until(
+            pilot,
+            lambda: pane.query_one("#runs-detail-items", DataTable).row_count == limit,
+        )
+
+        assert _note_text(pane) == "", (
+            "nothing is hidden: the run stored exactly what is on screen — "
+            f"got {_note_text(pane)!r}"
+        )
+
+
+def test_the_note_reads_processed_not_found():
+    """The discriminator, pinned at the unit against both directions."""
+    from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+        WatchlistsCollectionsScreen as Screen,
+    )
+
+    filtered_out = {"found_count": 5, "processed_count": 0}
+    stored_then_lost = {"found_count": 5, "processed_count": 5}
+    never_found = {"found_count": 0, "processed_count": 0}
+
+    assert Screen._run_items_note(filtered_out, []) == (
+        Screen._RUN_ITEMS_ALL_FILTERED_NOTE
+    )
+    assert Screen._run_items_note(stored_then_lost, []) == (
+        Screen._RUN_ITEMS_REATTRIBUTED_NOTE
+    )
+    assert Screen._run_items_note(never_found, []) == Screen._RUN_ITEMS_EMPTY_NOTE

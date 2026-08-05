@@ -3795,15 +3795,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         items: list[dict[str, Any]] = []
         note = ""
+        # `normalize_watchlist_run` reads `payload["id"]` unsubscripted, so
+        # every run that reaches this screen HAS a `run_id` -- there is no
+        # user-facing "unidentified run" state, and the label this branch used
+        # to carry was dead (re-review, m6). The guard itself stays and is not
+        # a label: `list_items(run_id=None)` drops the predicate and returns
+        # EVERY item, which would attribute the whole database to one run. It
+        # is an invariant backstop, so it falls through to the ordinary
+        # count-derived note rather than inventing a state of its own.
         run_id = run.get("run_id")
         backend = str(run.get("backend") or self.runtime_backend)
-        if run_id is None:
-            note = self._RUN_ITEMS_UNIDENTIFIED_NOTE
-        elif backend != "local":
+        if backend != "local":
             # `WatchlistScopeService.list_items` refuses the server backend
             # outright, so there is no query here to fail -- say so, rather
             # than drawing the same blank a local run with no items draws.
             note = self._RUN_ITEMS_SERVER_NOTE
+        elif run_id is None:
+            note = self._run_items_note(run, [])
         else:
             try:
                 rows = await self._controller.list_items(
@@ -3851,12 +3859,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     _RUN_ITEMS_LIMIT = 200
     _RUN_ITEMS_SERVER_NOTE = "Items are not listed for server-backend runs."
     _RUN_ITEMS_FAILED_NOTE = "Could not load this run's items."
-    _RUN_ITEMS_UNIDENTIFIED_NOTE = (
-        "This run has no identifier, so its items cannot be looked up."
-    )
     _RUN_ITEMS_REATTRIBUTED_NOTE = (
         "No item rows are still attributed to this run — a later check "
         "re-claimed the items that had not changed."
+    )
+    _RUN_ITEMS_ALL_FILTERED_NOTE = (
+        "Every item this run found was excluded by a filter, so it stored "
+        "none."
     )
     _RUN_ITEMS_EMPTY_NOTE = "This run produced no items."
 
@@ -3866,6 +3875,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> str:
         """What to say about a successful item query's result.
 
+        **`processed_count`, never `found_count`** (re-review, I1-b). `Found`
+        is the tally the FETCH reported; `Processed` is how many rows the run
+        actually persisted, and rows are the only thing this table can ever
+        show. Discriminating on `Found` mistook filtering for
+        re-attribution: a source with an exclude filter, checked ONCE
+        (`found 5 · processed 0 · filtered 5`), was told "a later check
+        re-claimed the items that had not changed" when no later check
+        existed. The truncation line had the same bug in reverse — a run of
+        `found 500 · processed 200` returning exactly 200 rows claimed 300
+        were hidden when every row it ever stored was on screen.
+
         Args:
             run: The run whose items were queried.
             items: The rows that came back.
@@ -3873,23 +3893,33 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         Returns:
             The note, or `""` when the table speaks for itself.
         """
-        found = run.get("found_count") or 0
-        try:
-            found = int(found)
-        except (TypeError, ValueError):
-            found = 0
+        found = cls._run_count(run, "found_count")
+        processed = cls._run_count(run, "processed_count")
         if not items:
-            # The discriminating pair: a run that found nothing is not the
-            # same as a run whose rows a later check took over, and only the
-            # second contradicts the counts printed above it.
-            return (
-                cls._RUN_ITEMS_REATTRIBUTED_NOTE
-                if found > 0
-                else cls._RUN_ITEMS_EMPTY_NOTE
-            )
-        if len(items) >= cls._RUN_ITEMS_LIMIT and found > len(items):
-            return f"Showing the first {len(items)} of {found} items."
+            if processed > 0:
+                # It stored rows and none are left: something took them, and
+                # `persist_subscription_item`'s `run_id = excluded.run_id` is
+                # the only thing that does.
+                return cls._RUN_ITEMS_REATTRIBUTED_NOTE
+            if found > 0:
+                # It fetched, kept nothing, and therefore stored nothing.
+                # Empty is the CORRECT render here -- the note exists to stop
+                # the user reading it as breakage, and to point at the filter
+                # that caused it.
+                return cls._RUN_ITEMS_ALL_FILTERED_NOTE
+            return cls._RUN_ITEMS_EMPTY_NOTE
+        if len(items) >= cls._RUN_ITEMS_LIMIT and processed > len(items):
+            return f"Showing the first {len(items)} of {processed} items."
         return ""
+
+    @staticmethod
+    def _run_count(run: Mapping[str, Any], key: str) -> int:
+        """One of a run's accounting counters as an int, 0 if unreadable."""
+        value = run.get(key) or 0
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
 
     def _push_run_detail_to_live_pane(self, run: Mapping[str, Any] | None) -> None:
         """Push the mirrored run detail into the mounted `RunsPane`.
