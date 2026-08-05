@@ -1834,27 +1834,40 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
 
 
 @pytest.mark.asyncio
-async def test_console_staged_launch_with_evidence_bundle_survives_screen_recreation_without_reclaiming_handoff():
+async def test_console_staged_launch_with_evidence_bundle_survives_screen_recreation_and_a_fresh_handoff_supersedes_it():
     """D3: a staged live-work launch (with its real evidence bundle) must
-    survive screen re-creation, and a restored launch must NOT re-claim the
-    ``PendingHandoffStore`` channel.
+    survive screen re-creation; PR-T1 C1: a launch staged AFTER it must
+    supersede it on the next consume.
 
     ``ChatScreen`` instances are never reused across navigation --
     ``TldwCli._create_navigation_screen`` builds a fresh one on every
     ``NavigateToScreen`` -- so continuity depends entirely on
     ``save_state``/``restore_state`` carrying
     ``_pending_console_launch_context`` (and its sibling
-    ``_console_evidence_sent_notice``) across. Before this fix, neither
+    ``_console_evidence_sent_notice``) across. Before D3, neither
     ``_serialize_native_console_state`` nor ``_restore_native_console_state``
     touched either field at all: ANY navigation away from Console silently
     dropped staged evidence with no error and no user-visible warning.
 
-    The decoy handoff staged into the store AFTER the original was consumed
-    is the proof that a restored launch doesn't re-claim: if the early
-    return in ``_consume_pending_console_launch`` (``self.
-    _pending_console_launch_context is not None``) were ever weakened, this
-    test would catch it by the decoy silently vanishing, not by an unrelated
-    crash.
+    UPDATED BY PR-T1's final review (C1). This test previously asserted the
+    opposite of the second half: that a decoy staged into the store while a
+    restored launch was resident stayed there UNTOUCHED, as proof that a
+    restored launch never re-claims the channel. That "resident always
+    wins" rule was safe only while a launch could not survive navigation.
+    Once D3 made it survive, the leftover store entry was not a decoy at
+    all -- it was the user's newest "Use in Console" click, left invisible
+    and later spent on an unrelated message (see
+    ``_supersede_resident_console_launch_from_store``). The store entry is
+    now claimed and staged, and the assertions below are inverted to match:
+    the newer launch becomes resident and the channel is drained.
+
+    What the original test protected is still protected, by construction:
+    the restore itself is asserted in full (evidence bundle, sent notice)
+    BEFORE the newer launch is staged, and the no-newer-entry case -- the
+    plain tab-switch survivor, which must still not reach into the store --
+    is covered by
+    ``test_console_restored_launch_does_not_touch_an_empty_handoff_channel``
+    below.
     """
     ConsoleLiveWorkLaunch = _load_console_live_work_contract()
     from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
@@ -1913,20 +1926,23 @@ async def test_console_staged_launch_with_evidence_bundle_survives_screen_recrea
         )
         assert saved["console_evidence_sent_notice"] == 2
 
-        # Stage a decoy AFTER the original was consumed and acknowledged --
-        # the store's slot is empty at this point, so this is a legitimate
-        # fresh stage, not an overwrite of anything still owned by screen1.
-        decoy_launch = ConsoleLiveWorkLaunch.from_values(
-            source="decoy-source",
-            title="Decoy launch",
+        # Stage a NEWER launch after the original was consumed and
+        # acknowledged -- the store's slot is empty at this point, so this
+        # is a legitimate fresh stage (the user's next "Use in Console"
+        # click), not an overwrite of anything still owned by screen1.
+        newer_launch = ConsoleLiveWorkLaunch.from_values(
+            source="Library Search/RAG",
+            title="Rotation Runbook",
             payload={},
-            status="pending",
+            status="staged",
         )
-        app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, decoy_launch)
+        app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, newer_launch)
 
         screen2 = _bare_console_screen_for_restore(app)
         screen2._restore_native_console_state(saved)
 
+        # The restore itself is complete and faithful, newer store entry or
+        # not: this is the D3 half of the test, asserted before any consume.
         launch2 = screen2._pending_console_launch_context
         assert isinstance(launch2, ConsoleLiveWorkLaunch)
         assert launch2.title == "Incident Review"
@@ -1934,19 +1950,148 @@ async def test_console_staged_launch_with_evidence_bundle_survives_screen_recrea
         assert launch2.payload["evidence_bundle"] == launch1.payload["evidence_bundle"]
         assert screen2._console_evidence_sent_notice == 2
 
-        consumed = screen2._consume_pending_console_launch()
-        assert consumed is launch2
-
-        # The decoy must still be sitting there, untouched.
-        assert app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
-        remaining_claim = app.pending_handoffs.claim(HandoffChannel.CONSOLE_LIVE_WORK)
-        assert remaining_claim is not None
-        assert remaining_claim.value.source == "decoy-source"
-
         strip_state = screen2._build_console_staged_evidence_strip_state(launch2)
         assert strip_state.visible is True
         assert strip_state.rows
         assert strip_state.rows[0].title == "Incident Review"
+
+        # C1: consume supersedes -- the newer explicit user action wins over
+        # the stale survivor, and the channel is DRAINED so no later send can
+        # be ambushed by it.
+        consumed = screen2._consume_pending_console_launch()
+        assert consumed is not launch2
+        assert consumed is not None
+        assert consumed.title == "Rotation Runbook"
+        assert screen2._pending_console_launch_context is consumed
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+        assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_LIVE_WORK) is None
+        # Superseding is a fresh staging: the previous send's "evidence
+        # sent" line must not survive onto unrelated new evidence.
+        assert screen2._console_evidence_sent_notice is None
+        assert screen2._pending_console_launch_auto_open_inspector is True
+
+
+@pytest.mark.asyncio
+async def test_console_restored_launch_does_not_touch_an_empty_handoff_channel():
+    """PR-T1 C1: superseding is scoped to an actually-pending store entry.
+
+    The C1 fix loosened ``_consume_pending_console_launch``'s resident-wins
+    early return. This pins the other side of that loosening: with nothing
+    staged in the channel, a restored (tab-switch survivor) launch is still
+    returned as-is, is still not re-claimed, and the store is left exactly
+    as it was -- no spurious claim left in flight to poison the next real
+    handoff.
+    """
+    ConsoleLiveWorkLaunch = _load_console_live_work_contract()
+
+    app = _build_test_app()
+    async with app.run_test(size=(180, 40)):
+        survivor = ConsoleLiveWorkLaunch.from_values(
+            source="Library Search/RAG",
+            title="Tab-switch survivor",
+            payload={"source_id": "note-9"},
+            status="staged",
+        )
+        screen = _bare_console_screen_for_restore(app)
+        screen._pending_console_launch_context = survivor
+        screen._console_evidence_sent_notice = 3
+
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+
+        consumed = screen._consume_pending_console_launch()
+
+        assert consumed is survivor
+        # Untouched: no clear of the sent notice, no claim left in flight.
+        assert screen._console_evidence_sent_notice == 3
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+
+        # A real handoff arriving later is still claimable, which it would
+        # not be if the consume above had left an unsettled in-flight claim.
+        later = ConsoleLiveWorkLaunch.from_values(
+            source="Library Search/RAG",
+            title="Later handoff",
+            payload={},
+            status="staged",
+        )
+        app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, later)
+        assert screen._consume_pending_console_launch().title == "Later handoff"
+
+
+@pytest.mark.asyncio
+async def test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch():
+    """PR-T1 C1 pilot regression: the real stage A -> leave -> stage B flow.
+
+    Drives the exact user path the final review reconstructed, through the
+    production navigation machinery rather than direct restore calls:
+
+    1. A "Use in Console" handoff (A) lands and Console displays it.
+    2. The user navigates away; ``save_state`` persists A (D3).
+    3. A second handoff (B) is staged while Console is not mounted.
+    4. The user returns to Console.
+
+    Before the fix, ``restore_state`` (which runs BEFORE compose) made A
+    resident, compose's consume returned A, and B was never displayed --
+    the second click looked dead. B then sat in the store until some later
+    send claimed it from inside a send gate and silently prepended it to an
+    unrelated message.
+
+    Asserted here: B is what the rebuilt Console displays AND stages, and
+    the channel is empty afterwards so nothing is left to ambush a send.
+    """
+    ConsoleLiveWorkLaunch = _load_console_live_work_contract()
+
+    app = _build_test_app()
+    launch_a = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Launch A (stale survivor)",
+        payload={"source_id": "note-a"},
+        status="staged",
+        recovery="Review citations before sending.",
+        action_label="Review evidence in Console",
+    )
+    app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, launch_a)
+
+    async with app.run_test(size=(180, 40)) as pilot:
+        screen1 = await _wait_for_production_chat_screen(app, pilot)
+        await _wait_for_selector(screen1, pilot, "#console-pending-launch-card")
+        assert screen1._pending_console_launch_context.title == (
+            "Launch A (stale survivor)"
+        )
+
+        # Leave Console. `save_state` persists A onto the app's per-screen
+        # state, which the next Console instance restores before compose.
+        app.post_message(NavigateToScreen("library"))
+        await pilot.pause()
+        await pilot.pause()
+
+        # The user stages a SECOND result while standing in Library.
+        launch_b = ConsoleLiveWorkLaunch.from_values(
+            source="Library Search/RAG",
+            title="Launch B (the click that must not die)",
+            payload={"source_id": "note-b"},
+            status="staged",
+            recovery="Review citations before sending.",
+            action_label="Review evidence in Console",
+        )
+        app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, launch_b)
+
+        app.post_message(NavigateToScreen("chat"))
+        await pilot.pause()
+        screen2 = await _wait_for_production_chat_screen(app, pilot)
+        await _wait_for_selector(screen2, pilot, "#console-pending-launch-card")
+
+        staged = screen2._pending_console_launch_context
+        assert staged is not None
+        assert staged.title == "Launch B (the click that must not die)"
+
+        # Displayed, not merely staged.
+        strip_state = screen2._build_console_staged_evidence_strip_state(staged)
+        assert strip_state.visible is True
+        tray_state = screen2._build_console_staged_context_state(staged)
+        assert "Launch B (the click that must not die)" in tray_state.summary
+
+        # And A is not lurking in the store to be spent on a later send.
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
 
 @pytest.mark.asyncio

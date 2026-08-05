@@ -3655,18 +3655,37 @@ class ChatScreen(BaseAppScreen):
     def _consume_pending_console_launch(self) -> Optional[ConsoleLiveWorkLaunch]:
         """Accept one-shot live-work launch context from another destination.
 
-        PR-T1/task-3 (D3): this early return is also what makes a launch
-        restored by `_restore_native_console_state` (a tab-switch survivor,
-        not a fresh handoff) safe to re-enter here. `restore_state` runs
-        BEFORE this screen is ever composed/mounted (see
-        `TldwCli._complete_screen_navigation`), so by the time
+        PR-T1/task-3 (D3): the resident-launch branch below is also what
+        makes a launch restored by `_restore_native_console_state` (a
+        tab-switch survivor, not a fresh handoff) safe to re-enter here.
+        `restore_state` runs BEFORE this screen is ever composed/mounted
+        (see `TldwCli._complete_screen_navigation`), so by the time
         `compose_content()` calls this method, a restored launch has already
-        set `_pending_console_launch_context` to a non-`None` value -- this
-        branch returns it as-is and never reaches `store.claim(...)` below,
-        so a restored launch can never re-claim (or double-consume) the
-        `PendingHandoffStore` channel.
+        set `_pending_console_launch_context` to a non-`None` value.
+
+        PR-T1 final review (C1): "resident wins, full stop" was WRONG once
+        D3 made a launch survive navigation. Real flow: stage A from
+        Library -> go back to Library (`save_state` persists A) -> stage B
+        ("Use in Console") -> navigate to Console. `restore_state` runs
+        BEFORE compose (`app.py` restore precedes the compose call), so the
+        resident A was returned here and B stayed unclaimed in the store:
+        B never displayed (the click looked dead), the next send consumed
+        A, and the send AFTER that claimed B deep inside
+        `_console_send_blocked_reason`/`_capture_console_staged_rag` and
+        fed it to an unrelated message as evidence the user had never seen.
+        A RAG-labelled B with zero available references was worse still: it
+        BLOCKED an unrelated send citing evidence that was never on screen.
+
+        The rule is now "a fresh explicit user action supersedes a stale
+        survivor": when a resident launch coexists with an unclaimed store
+        entry, the store entry is claimed and staged through
+        `_stage_console_library_rag_launch`, which clears the previous
+        send's "evidence sent" notice and syncs every mounted surface --
+        so a claim can never be invisible, and in particular a claim can
+        never first become live inside a send gate.
         """
         if self._pending_console_launch_context is not None:
+            self._supersede_resident_console_launch_from_store()
             return self._pending_console_launch_context
 
         store = self.app_instance.pending_handoffs
@@ -3688,6 +3707,52 @@ class ChatScreen(BaseAppScreen):
             return self._pending_console_launch_context
         store.acknowledge(claim)
         return self._pending_console_launch_context
+
+    def _supersede_resident_console_launch_from_store(self) -> None:
+        """Let a freshly staged handoff replace an already-resident launch.
+
+        Only ever called from `_consume_pending_console_launch` with a
+        non-`None` resident launch. `has_pending` is checked first so the
+        overwhelmingly common case (a resident launch, an empty channel)
+        costs one cheap slot read and touches nothing.
+
+        Failure containment: the resident context is repointed at the new
+        launch BEFORE anything fallible runs, and the claim is acknowledged
+        (never released) once that assignment has happened. Releasing after
+        the screen already owns the value would leave the same launch both
+        resident AND pending -- the exact double-delivery this method
+        exists to end. The surface refresh inside
+        `_stage_console_library_rag_launch` is the only fallible step, and
+        a failure there costs a stale chip, not lost or invisible evidence.
+        """
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if store is None or not store.has_pending(HandoffChannel.CONSOLE_LIVE_WORK):
+            return
+        claim = store.claim(HandoffChannel.CONSOLE_LIVE_WORK)
+        if claim is None:
+            return
+        launch = claim.value
+        # Non-fallible ownership transfer first, then settle the claim.
+        self._pending_console_launch_context = launch
+        self._console_evidence_sent_notice = None
+        # A superseding launch IS a fresh handoff, so it earns the
+        # auto-open-once Inspector behavior; set BEFORE staging, because
+        # staging syncs the rail state synchronously (same ordering as
+        # every other `_stage_console_library_rag_launch` caller).
+        self._pending_console_launch_auto_open_inspector = True
+        store.acknowledge(claim)
+        try:
+            self._stage_console_library_rag_launch(launch, allow_recompose=False)
+        except Exception as exc:
+            # Includes the never-composed screen shell, where the staging
+            # seam's surface sync has no DOM to query.
+            logger.warning(
+                "Console live-work supersede surface refresh failed "
+                "(channel={}, revision={}, exception_category={})",
+                claim.channel.value,
+                claim.revision,
+                type(exc).__name__,
+            )
 
     def _chat_default_value(self, key: str) -> Any:
         """Return a shared Console default value from app configuration."""
@@ -14474,7 +14539,12 @@ class ChatScreen(BaseAppScreen):
         )
         self._execute_console_library_rag_search(request)
 
-    def _stage_console_library_rag_launch(self, launch: ConsoleLiveWorkLaunch) -> None:
+    def _stage_console_library_rag_launch(
+        self,
+        launch: ConsoleLiveWorkLaunch,
+        *,
+        allow_recompose: bool = True,
+    ) -> None:
         """Stage live-work launch context and refresh Console surfaces in place.
 
         TASK-259: previously this recomposed the ENTIRE ChatScreen to show
@@ -14485,11 +14555,19 @@ class ChatScreen(BaseAppScreen):
 
         Args:
             launch: Live-work launch metadata to stage for Console.
+            allow_recompose: Whether the never-composed case may fall back
+                to a full recompose. Only ``_supersede_resident_console_
+                launch_from_store`` passes ``False``: its unmounted case is
+                ``compose_content`` itself calling
+                ``_consume_pending_console_launch`` on its first line, so
+                the compose in progress already renders this exact launch
+                and scheduling a second one mid-compose would tear the
+                just-built DOM back down for no change.
         """
         self._pending_console_launch_context = launch
         # New staging supersedes the previous send's "evidence sent" line.
         self._console_evidence_sent_notice = None
-        if not self._sync_console_pending_launch_surfaces():
+        if not self._sync_console_pending_launch_surfaces() and allow_recompose:
             self.refresh(recompose=True)
 
     def _sync_console_pending_launch_surfaces(self) -> bool:
