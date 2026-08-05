@@ -715,14 +715,14 @@ def _compose_run_registry_and_allowed(
     Returns:
         ``(registry, allowed_tools, builtin_names, local_names)`` -- the
         per-run registry, its full allow-list (builtins + local + eligible
-        skills + eligible MCP tools + spawn), just the builtin names
-        (needed separately by ``_BridgeSkillRunner`` to intersect a
-        skill's own declared ``allowed_tools`` against -- never against
-        skill OR local names, so a skill's sub-agent can never call
-        another skill and skills never narrow/grant local tools), and
-        just the local names (needed by ``run_reply`` to keep its
+        skills + eligible MCP tools + spawn), just the builtin names, and
+        just the local names. ``_BridgeSkillRunner`` intersects a skill's
+        own declared ``allowed_tools`` against builtins + local (never
+        against skill names, so a skill's sub-agent can never call another
+        skill, and never against runtime/MCP names -- a skill narrows, it
+        never grants), and ``run_reply`` uses the local names to keep its
         skill-runner name set's collision filtering in agreement with the
-        registry built here).
+        registry built here.
     """
     registry = ToolCatalogRegistry()
     builtin_provider = BuiltinToolProvider()
@@ -786,7 +786,8 @@ class _BridgeSkillRunner:
     """``SkillRunner``: renders a skill, then routes it through THIS run's spawn.
 
     Built fresh per ``run_reply`` invocation from that run's own eligible
-    skill-name set and builtin names (see ``_compose_run_registry_and_allowed``).
+    skill-name set and builtin + local tool names (see
+    ``_compose_run_registry_and_allowed``).
     ``run`` re-verifies trust at render time via ``execute_skill`` -- never
     a cached snapshot -- so a skill approved when the catalog was built but
     revoked before the model actually calls it still refuses (mirrors
@@ -800,10 +801,12 @@ class _BridgeSkillRunner:
         skills_service: Any,
         skill_names: frozenset[str],
         builtin_names: tuple[str, ...],
+        local_names: tuple[str, ...] = (),
     ) -> None:
         self._skills_service = skills_service
         self._skill_names = skill_names
         self._builtin_names = builtin_names
+        self._local_names = local_names
 
     def is_skill_tool(self, name: str) -> bool:
         return name in self._skill_names
@@ -824,8 +827,15 @@ class _BridgeSkillRunner:
         declared_allowed_tools = (
             result.get("allowed_tools") if isinstance(result, Mapping) else None
         )
+        # Narrow-only against THIS run's builtin + local tool names: a skill
+        # can never grant its child a tool the parent run doesn't have (no
+        # runtime tools, no MCP tools, no other skills). Local tools in the
+        # child stay approval-gated -- the spawn below shares the parent's
+        # review hook and stamp scope. ``None`` (undeclared) passes the full
+        # builtin + local set through, matching how native spawn_subagent
+        # children already inherit local tools.
         allowed_tools = intersect_skill_tools(
-            declared_allowed_tools, self._builtin_names
+            declared_allowed_tools, self._builtin_names + self._local_names
         )
         return spawn(rendered, allowed_tools=allowed_tools)
 
@@ -946,6 +956,7 @@ class ConsoleAgentBridge:
                     skills_service=self._skills_service,
                     skill_names=skill_names,
                     builtin_names=builtin_names,
+                    local_names=local_names,
                 )
         # [console] native_tool_calls kill-switch (Task 5): a caller-supplied
         # predicate (chat_screen.py's _console_native_tool_calls_enabled)

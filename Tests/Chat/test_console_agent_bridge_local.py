@@ -4,16 +4,44 @@ Covers: LocalToolProvider registration in the per-run registry/allow-list
 (builtin -> local -> skill -> MCP shadowing order) and the combined
 review_state_scope that isolates BOTH providers' approval stamps around
 nested sub-agent runs (ADR-032's third mechanism).
+
+Phase 3c adds: _BridgeSkillRunner narrows a skill's declared allowed_tools
+against builtins + local tool names (never grants), undeclared skills pass
+the full builtins+local set through, and the resulting child run is still
+approval-gated through the shared review hook.
 """
 
+import dataclasses
+import json
 from contextlib import contextmanager
 
-from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.Agents.agent_models import (
+    RUN_DONE,
+    SPAWN_TOOL_NAME,
+    AgentConfig,
+    RunBudget,
+    ToolResult,
+)
+from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.local_tool_provider import (
+    LOCAL_SERVER_KEY,
+    LocalToolProvider,
+    _default_specs,
+)
+from tldw_chatbook.Agents.tool_catalog import (
+    BuiltinToolProvider,
+    SkillToolProvider,
+    ToolCatalogRegistry,
+)
 from tldw_chatbook.Chat.console_agent_bridge import (
+    _BridgeSkillRunner,
     _combined_review_state_scope,
     _compose_run_registry_and_allowed,
     _non_colliding_skill_entries,
 )
+from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
 
 def test_run_registry_includes_local_tools(tmp_path):
@@ -25,7 +53,8 @@ def test_run_registry_includes_local_tools(tmp_path):
     assert "fs_list" in names and "calculator" in names
     assert "fs_list" in allowed
     assert "fs_list" in local_names
-    assert "fs_list" not in builtin_names  # skills never narrow/grant local tools
+    assert "fs_list" not in builtin_names  # local names stay a separate tuple;
+    # _BridgeSkillRunner narrows against builtin_names + local_names combined
 
 
 def test_skill_named_like_local_tool_is_filtered(tmp_path):
@@ -127,3 +156,191 @@ def test_provider_without_stamp_scope_is_skipped():
     with scope():
         pass
     assert real.log == ["enter", "exit"]
+
+
+# --- Phase 3c Task 1: _BridgeSkillRunner narrows against builtins + local ---
+
+_BUILTIN_NAMES = ("calculator", "get_current_datetime")
+_LOCAL_NAMES = ("web_fetch", "web_search", "fs_write")
+
+
+class _StubSkillsService:
+    """Minimal async execute_skill stand-in for _BridgeSkillRunner tests."""
+
+    def __init__(self, allowed_tools):
+        self._allowed_tools = allowed_tools
+
+    async def execute_skill(self, name, *, mode, args):
+        return {
+            "rendered_prompt": f"RENDERED[{name}]({args})",
+            "allowed_tools": self._allowed_tools,
+        }
+
+
+class _CapturingSpawn:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, task, *, allowed_tools=None):
+        self.calls.append((task, allowed_tools))
+        return ToolResult(ok=True, content="child done")
+
+
+def _make_runner(declared):
+    return _BridgeSkillRunner(
+        skills_service=_StubSkillsService(declared),
+        skill_names=frozenset({"web-research"}),
+        builtin_names=_BUILTIN_NAMES,
+        local_names=_LOCAL_NAMES,
+    )
+
+
+def test_skill_run_narrows_against_local_tools():
+    """A skill declaring a mix of builtin and local tools gets exactly those,
+    ordered by the narrowing set (builtins first, then local) -- not by the
+    skill's own declaration order."""
+    spawn = _CapturingSpawn()
+    result = _make_runner(["web_fetch", "calculator"]).run(
+        "web-research", "the question", spawn
+    )
+    assert result.ok
+    task, allowed = spawn.calls[0]
+    assert task.startswith("RENDERED[web-research]")
+    assert allowed == ("calculator", "web_fetch")
+
+
+def test_skill_run_undeclared_gets_builtins_and_local():
+    """Declared ``None`` passes the FULL narrowing set through.
+
+    Behavior change (phase 3c): previously an undeclared skill's child got
+    builtins only; it now gets builtins + local tool names. This matches how
+    native spawn_subagent children already behave (they inherit the parent's
+    local tools) and stays safe because every child call resolves through
+    the parent's shared review hook -- approval gating is unchanged.
+    """
+    spawn = _CapturingSpawn()
+    result = _make_runner(None).run("web-research", "the question", spawn)
+    assert result.ok
+    _task, allowed = spawn.calls[0]
+    assert allowed == _BUILTIN_NAMES + _LOCAL_NAMES
+
+
+def test_skill_run_never_grants():
+    """A skill can only narrow, never grant: runtime tools, MCP tools, and
+    other skills' names declared in allowed-tools are all dropped."""
+    spawn = _CapturingSpawn()
+    declared = ["web_fetch", "spawn_subagent", "mcp__x__y", "other-skill"]
+    result = _make_runner(declared).run("web-research", "the question", spawn)
+    assert result.ok
+    _task, allowed = spawn.calls[0]
+    assert allowed == ("web_fetch",)
+
+
+def _fence(name, args):
+    return f"```tool_call\n{json.dumps({'name': name, 'arguments': args})}\n```"
+
+
+class _ScriptedChat:
+    """Returns scripted replies; mirrors Tests/Agents harness pattern."""
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+
+    def __call__(self, **kwargs):
+        item = self.replies.pop(0)
+        message = item if isinstance(item, dict) else {"content": item}
+        return {"choices": [{"message": message}]}
+
+
+def test_skill_run_child_still_approval_gated(tmp_path):
+    """Wire-level: a skill child narrowed onto a local tool still resolves
+    that call through the parent's shared review hook -- the wider narrowing
+    set does not bypass approval gating (network cut at the handler seam,
+    mirroring Tests/Agents/test_local_tools_integration.py)."""
+    fetched = []
+
+    def fake_fetch(args):
+        fetched.append(dict(args))
+        return "Example body"
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    specs = [
+        dataclasses.replace(s, handler=fake_fetch)
+        for s in _default_specs(workspace)
+        if s.name == "web_fetch"
+    ]
+    provider = LocalToolProvider(
+        workspace_root=workspace,
+        specs=specs,
+        resolve_state=lambda hub: EffectiveToolState(
+            state="ask", origin="global_default"
+        ),
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    registry.register_provider(provider)
+    registry.register_provider(
+        SkillToolProvider(
+            [
+                {
+                    "name": "web-research",
+                    "description": "Researches a question.",
+                    "argument_hint": "the question",
+                }
+            ]
+        )
+    )
+    runner = _BridgeSkillRunner(
+        skills_service=_StubSkillsService(["web_fetch"]),
+        skill_names=frozenset({"web-research"}),
+        builtin_names=_BUILTIN_NAMES,
+        local_names=("web_fetch",),
+    )
+    approval_calls = []
+
+    def request_approvals(pending):
+        approval_calls.append(pending)
+        return {"web_fetch": "approve_once"}
+
+    chat = _ScriptedChat(
+        [
+            _fence("web-research", {"args": "the question"}),  # primary: skill
+            _fence("web_fetch", {"url": "http://example.com/"}),  # child: local
+            "child synthesis",  # child final
+            "primary final",
+        ]
+    )
+    service = AgentService(
+        db=AgentRunsDB(tmp_path / "runs.db", client_id="t"),
+        registry=registry,
+        chat_call=chat,
+        skill_runner=runner,
+        review_tool_calls=build_local_review_hook(provider, request_approvals),
+        review_state_scope=provider.stamp_scope,
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "research it"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=(
+                "web-research",
+                "calculator",
+                "get_current_datetime",
+                SPAWN_TOOL_NAME,
+            ),
+            budget=RunBudget(max_steps=12),
+        ),
+        api_endpoint="llama_cpp",  # fence-protocol endpoint (harness pattern)
+    )
+    assert outcome.status == RUN_DONE
+    # The child's web_fetch call hit the shared review hook exactly once.
+    assert len(approval_calls) == 1
+    assert len(approval_calls[0]) == 1
+    pending = approval_calls[0][0]
+    assert pending.server_key == LOCAL_SERVER_KEY
+    assert pending.llm_name == "web_fetch"
+    # Approved, so the stubbed handler ran with the model's args.
+    assert fetched == [{"url": "http://example.com/"}]

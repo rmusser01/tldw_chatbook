@@ -371,9 +371,11 @@ class AgentService:
                 return ToolResult(ok=False, error="sub-agent budget exhausted")
             sub_agent_spawns += 1
             remaining = config.budget.max_wall_seconds - (self.clock() - started)
-            # Q6/Task-12: an explicit override (a skill's own narrowed,
-            # builtins-only allow-list -- see SkillRunner.run) replaces the
-            # default entirely; the default itself preserves the shipped
+            # Q6/Task-12: an explicit override (a skill's own narrowed
+            # allow-list -- builtins + local tool names, intersect-only so
+            # a skill narrows but never grants; see SkillRunner.run)
+            # replaces the default entirely; the default itself preserves
+            # the shipped
             # behavior (spawn_subagent's child inherits the parent's
             # allow-list minus the spawn tool itself, so a depth-1 child
             # never re-offers spawn_subagent) -- MINUS any skill-tool names
@@ -386,7 +388,7 @@ class AgentService:
             # gate every other disallowed tool hits -- fragile (an
             # incidental side effect of the budget clamp, not a modeled
             # boundary) and inconsistent with the skill-driven child's own
-            # explicit builtins-only allow-list. Excluding skill names
+            # explicit narrowed allow-list. Excluding skill names
             # here too means a child can neither discover (find_tools/
             # disclosure) nor invoke one; a stray direct call still gets a
             # graceful "Tool not permitted" ToolResult from invoke_tool's
