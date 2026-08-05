@@ -797,6 +797,17 @@ class ConsoleDictationController:
         return self._screen._deliver_console_hands_free_capture_ended
 
     @property
+    def _console_realtime_adopt_transcript(self) -> Any:
+        """Realtime's own entry point (sibling cluster). See `__init__`.
+
+        Live `@property` through `screen`, never snapshotted, for the same
+        staleness reason as the hands-free reach-backs above: the realtime
+        loop (V4) owns whether a capture's transcript becomes its first
+        spoken turn instead of composer text.
+        """
+        return self._screen._console_realtime_adopt_transcript
+
+    @property
     def _run_pending_console_voice_action(self) -> Any:
         """Fire a capture-ending `VoiceCommand`'s queued action.
 
