@@ -4420,6 +4420,90 @@ def test_library_rag_panel_state_scope_hides_a_row_whose_source_count_drops_to_z
     assert after_delete_state.use_in_console_action.enabled is False
 
 
+def test_library_rag_panel_state_keeps_restored_rows_while_counts_are_unloaded():
+    """PR-T1 C2: restored evidence must survive the pre-snapshot window.
+
+    `save_state`/`restore_state` deliberately carry `_library_rag_results`
+    but NOT `_local_source_counts` (bulk snapshots re-fetch), so a fresh
+    `LibraryScreen` composes with results present and every count still
+    zero while `_refresh_local_source_snapshot` is in flight. Feeding an
+    explicit `selected_source_types` into that window intersects every
+    source to nothing and D4/task-5's scope filter then hides EVERY
+    attributable row -- the panel announced "No evidence matched the
+    current query" about the restored query, with the rows sitting right
+    there in `_library_rag_results`. Nor did it recover: the real snapshot
+    lands via `_apply_local_source_snapshot`'s BROWSE_SEARCH branch, which
+    syncs the rail and scope toggles but deliberately never the results
+    region (RAG-27). Only a revisit inside `LIBRARY_SNAPSHOT_CACHE_TTL_
+    SECONDS` escaped, because that path recomposes.
+
+    Driven through the REAL `save_state`/`restore_state` pair on an
+    unmounted instance -- exactly how `handle_screen_navigation` uses it --
+    so the assertion covers the actual carried/not-carried field split
+    rather than a hand-set attribute soup.
+    """
+    app = _build_test_app()
+
+    original = LibraryScreen(app)
+    original._library_selected_row_id = LIBRARY_ROW_BROWSE_SEARCH
+    original._library_rag_query = "credential rotation"
+    original._library_rag_searched_query = "credential rotation"
+    original._library_rag_retrieval_status = "ready"
+    original._library_rag_results = (
+        {
+            "document_title": "Note Evidence",
+            "snippet": "note snippet",
+            "source_id": "note-1",
+            "provenance": {"source_type": "note"},
+        },
+        {
+            "document_title": "Conversation Evidence",
+            "snippet": "conversation snippet",
+            "source_id": "chat-1",
+            "provenance": {"source_type": "conversation"},
+        },
+    )
+    # The counts the first visit had -- these are exactly what does NOT
+    # survive the round trip, which is the whole point.
+    original._local_source_counts = {"notes": 1, "media": 0, "conversations": 1}
+    original._library_loaded = True
+    landed = original._library_rag_panel_state()
+    assert [row.title for row in landed.results] == [
+        "Note Evidence",
+        "Conversation Evidence",
+    ]
+
+    restored = LibraryScreen(app)
+    restored.restore_state(original.save_state())
+
+    # Precondition: the bug's exact setup -- rows restored, counts not.
+    assert restored._library_loaded is False
+    assert restored._local_source_counts == {
+        "notes": 0,
+        "media": 0,
+        "conversations": 0,
+    }
+    assert len(restored._library_rag_results) == 2
+
+    pre_snapshot = restored._library_rag_panel_state()
+    assert [row.title for row in pre_snapshot.results] == [
+        "Note Evidence",
+        "Conversation Evidence",
+    ]
+    assert pre_snapshot.retrieval_status != "empty"
+
+    # And once the snapshot lands, the honest count intersection resumes:
+    # media has no rows and no count, conversations lose theirs.
+    restored._apply_local_source_snapshot(
+        {"notes": (), "media": (), "conversations": ()},
+        {"notes": 1, "media": 0, "conversations": 0},
+        {"notes": True, "media": True, "conversations": True},
+    )
+    assert restored._library_loaded is True
+    post_snapshot = restored._library_rag_panel_state()
+    assert [row.title for row in post_snapshot.results] == ["Note Evidence"]
+
+
 @pytest.mark.asyncio
 async def test_library_shell_scope_toggle_off_hides_rendered_rows_and_keeps_index_alignment():
     """D4 (task-5) end-to-end: toggling a source off after retrieval landed

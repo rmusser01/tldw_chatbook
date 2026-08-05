@@ -3670,11 +3670,39 @@ class LibraryScreen(BaseAppScreen):
         # `LibraryRagScopeState.from_source_counts` intersects this with
         # actual availability, so a deselected-but-empty source can't
         # falsely count as "selected".
-        selected_source_types = tuple(
+        #
+        # PR-T1 final review (C2): that count intersection is only honest
+        # once counts EXIST. `restore_state` carries `_library_rag_results`
+        # across navigation but NOT `_local_source_counts` (bulk snapshots
+        # are deliberately re-fetched -- see `save_state`), so a fresh
+        # `LibraryScreen` composes with all-zero counts while
+        # `_refresh_local_source_snapshot` is still in flight. Feeding an
+        # explicit selection into that window intersects every source down
+        # to nothing, and D4/task-5's scope filter then hid EVERY restored
+        # evidence row, flipping the panel to "No evidence matched the
+        # current query" -- naming the restored query, about rows that were
+        # right there. Nothing recovered it either: the snapshot lands via
+        # the BROWSE_SEARCH branch of `_apply_local_source_snapshot`, which
+        # deliberately syncs only the rail + scope toggles and never the
+        # results region (RAG-27, so a background ingest can't eject a user
+        # mid-search). Only a revisit INSIDE `LIBRARY_SNAPSHOT_CACHE_TTL_
+        # SECONDS` escaped, because the cached-snapshot path recomposes.
+        #
+        # So while counts are unloaded, pass the documented "no explicit
+        # scope was supplied" sentinel (`None`) instead: the hybrid basis
+        # in `LibraryRagPanelState.from_values` skips the filter entirely
+        # for it, and `from_source_counts` derives selection from
+        # availability -- which, at all-zero counts, marks exactly the same
+        # options unselected as the explicit tuple would. The only
+        # difference is that restored rows stay visible until the real
+        # counts arrive and the honest intersection can run.
+        selected_source_types: tuple[str, ...] | None = tuple(
             source_type
             for source_type in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES
             if source_type not in self._library_rag_scope_deselected
         )
+        if not self._library_loaded:
+            selected_source_types = None
         return LibraryRagPanelState.from_values(
             source_counts={
                 "notes": self._local_source_counts.get("notes", 0),
