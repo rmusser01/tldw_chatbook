@@ -8,12 +8,13 @@ result (AC1 data path + AC3).
 """
 
 import json
+from collections import deque
 
 import pytest
 
 import tldw_chatbook.config as config_module
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
-from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge, _pair_step_diff
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -190,3 +191,92 @@ def test_plain_write_result_without_capture_has_no_diff(
     tool_rows = _tool_rows(store, session)
     assert tool_rows
     assert tool_rows[0].tool_diff is None
+
+
+class TestPairStepDiff:
+    """_pair_step_diff: capture/step pairing under the real threading model.
+
+    invoke() runs on a per-call daemon thread (AgentService
+    ._call_with_timeout) -- joined before the result step normally,
+    abandoned unjoined on timeout/cancel, so a late capture can land
+    after its own step passed. The pairing rule (most-recent name match;
+    everything older is stale) must keep such a capture from pairing with
+    a later write.
+    """
+
+    @staticmethod
+    def _capture(name, path):
+        return (name, path, f"old {path}\n", f"new {path}\n")
+
+    def test_normal_case_pairs_the_only_capture(self):
+        queue = deque([self._capture("write_file", "/tmp/a.py")])
+        assert _pair_step_diff(queue, "write_file") == (
+            "/tmp/a.py",
+            "old /tmp/a.py\n",
+            "new /tmp/a.py\n",
+        )
+        assert not queue
+
+    def test_stale_capture_from_abandoned_call_does_not_pair_with_next_write(self):
+        """A timed-out write's capture lands late (after its result step
+        passed); the NEXT write's result must pair with its OWN capture,
+        and the stale one is dropped."""
+        queue = deque(
+            [
+                self._capture("write_file", "/tmp/stale.py"),
+                self._capture("write_file", "/tmp/fresh.py"),
+            ]
+        )
+        assert _pair_step_diff(queue, "write_file") == (
+            "/tmp/fresh.py",
+            "old /tmp/fresh.py\n",
+            "new /tmp/fresh.py\n",
+        )
+        assert not queue, "the stale capture must be dropped with the pair"
+
+    def test_older_capture_for_other_tool_is_stale_and_dropped(self):
+        """An unmatched older entry had its own result step pass already;
+        it must not survive to pair with a later same-name step."""
+        queue = deque(
+            [
+                self._capture("read_file", "/tmp/unrelated.py"),
+                self._capture("write_file", "/tmp/b.py"),
+            ]
+        )
+        assert _pair_step_diff(queue, "write_file") is not None
+        assert not queue
+
+    def test_no_match_clears_stale_queue(self):
+        """A captureless result step (plain/oversized write, non-diff
+        tool) leaves nothing behind for a later step to mis-pair."""
+        queue = deque([self._capture("write_file", "/tmp/stale.py")])
+        assert _pair_step_diff(queue, "calculator") is None
+        assert not queue
+
+    def test_no_match_on_empty_queue_is_a_noop(self):
+        queue = deque()
+        assert _pair_step_diff(queue, "write_file") is None
+        assert not queue
+
+    def test_same_name_race_pairs_most_recent_and_leaves_no_residue(self):
+        """A cross-thread append that lands AFTER the current call's
+        capture (newer, same tool name) is indistinguishable from the
+        current call's own capture -- the documented residual mis-pair.
+        The important half: nothing older survives to cascade into
+        FUTURE steps."""
+        queue = deque(
+            [
+                self._capture("write_file", "/tmp/current.py"),
+                self._capture("write_file", "/tmp/late.py"),
+            ]
+        )
+        paired = _pair_step_diff(queue, "write_file")
+        assert paired[0] == "/tmp/late.py"
+        assert not queue
+
+    def test_sequential_writes_each_pair_with_their_own_capture(self):
+        queue = deque([self._capture("write_file", "/tmp/one.py")])
+        assert _pair_step_diff(queue, "write_file")[0] == "/tmp/one.py"
+        queue.append(self._capture("write_file", "/tmp/two.py"))
+        assert _pair_step_diff(queue, "write_file")[0] == "/tmp/two.py"
+        assert not queue

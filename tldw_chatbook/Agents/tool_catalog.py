@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Iterable, Mapping, NamedTuple, Protocol
+from typing import Any, Callable, Iterable, Mapping, NamedTuple, Protocol
 
 from loguru import logger
 
@@ -467,7 +467,7 @@ class BuiltinToolProvider:
         gate: Any | None = None,
         workspace_id: str | None = None,
         ephemeral: bool = False,
-        diff_sink: Any | None = None,
+        diff_sink: Callable[[tuple[str, str, str, str]], None] | None = None,
     ) -> None:
         # settings-workspaces-folder-roots spec §3: the run's workspace,
         # bound around every tool execution (see `invoke`) so file tools
@@ -534,10 +534,15 @@ class BuiltinToolProvider:
         # This is the ONLY way the live Console can render a diff: the
         # stripped JSON text is all that leaves this method. `None` (the
         # default) means no UI is listening -- behavior is byte-identical
-        # to pre-diff-channel runs. A sink runs on the caller's thread and
-        # its exceptions are swallowed (a UI failure must never break a
-        # tool call), so it must be cheap and non-blocking -- the bridge
-        # hands in a `deque.append` (single-argument contract).
+        # to pre-diff-channel runs. The sink runs on the tool call's
+        # PER-CALL DAEMON THREAD (AgentService._call_with_timeout) -- on
+        # timeout/cancel that thread is abandoned unjoined and the sink
+        # can fire LATE, after the call's result step already passed (the
+        # bridge's pairing tolerates this; see console_agent_bridge.
+        # _pair_step_diff). Its exceptions are swallowed (a UI failure
+        # must never break a tool call), so it must be cheap, non-
+        # blocking, and safe to call cross-thread -- the bridge hands in
+        # a `deque.append` (single-argument contract, atomic in CPython).
         self._diff_sink = diff_sink
 
     def _tool_id(self, name: str) -> str:
@@ -668,8 +673,9 @@ class BuiltinToolProvider:
                             )
                         )
                     except Exception:  # noqa: BLE001 — UI failure never breaks a tool call
-                        logger.opt(exception=True).debug(
-                            "diff_sink raised during tool result capture; continuing"
+                        logger.opt(exception=True).warning(
+                            "diff_sink raised during tool result capture; "
+                            "console diff rows will be missing for this write"
                         )
             raw = {
                 key: value for key, value in raw.items() if key not in DIFF_CONTENT_KEYS

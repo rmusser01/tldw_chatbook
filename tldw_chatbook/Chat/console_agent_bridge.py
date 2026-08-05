@@ -380,6 +380,60 @@ def full_step_output(
     return text
 
 
+def _pair_step_diff(
+    pending_diffs: deque[tuple[str, str, str, str]],
+    tool_name: str | None,
+) -> tuple[str, str, str] | None:
+    """Pair one STEP_TOOL_RESULT with its queued diff capture (TASK-1366).
+
+    Captures are appended by the provider's ``diff_sink`` at the strip seam,
+    on the tool call's PER-CALL DAEMON THREAD (``AgentService.
+    _call_with_timeout``). That thread is joined before the result step is
+    emitted in the normal case, so the current call's capture -- when it
+    exists -- is the MOST RECENT queued entry for its tool name. On
+    timeout/cancel the thread is abandoned unjoined and a late capture can
+    land AFTER its own result step already passed; that stale entry must
+    never pair with a later call.
+
+    Pairing rule: take the RIGHTMOST (most recent) entry matching
+    ``tool_name`` and drop it together with every older entry -- anything
+    older had its own result step pass already (dispatch and step emission
+    are sequential), so it is stale by construction. When nothing matches,
+    the whole queue is stale for the same reason and is cleared.
+
+    Residual, documented and cosmetic-only: a stale capture from an
+    abandoned call that shares the tool name AND arrives after the current
+    call's own capture can still mis-pair (the two are indistinguishable
+    without threading call identity through invoke()). The consequence is a
+    wrong diff shown under a live marker -- in-memory only, never persisted
+    or replayed, and self-correcting on the next result step.
+
+    Args:
+        pending_diffs: This run's capture queue (mutated in place).
+        tool_name: The result step's tool name.
+
+    Returns:
+        ``(file_path, old_content, new_content)`` for the paired capture,
+        or ``None`` when this call produced no diff.
+    """
+    match_index = next(
+        (
+            index
+            for index in range(len(pending_diffs) - 1, -1, -1)
+            if pending_diffs[index][0] == tool_name
+        ),
+        None,
+    )
+    if match_index is None:
+        pending_diffs.clear()
+        return None
+    _name, diff_path, diff_old, diff_new = pending_diffs[match_index]
+    # deque has no slice-delete; drop the pair and everything older (stale).
+    for _ in range(match_index + 1):
+        pending_diffs.popleft()
+    return (diff_path, diff_old, diff_new)
+
+
 #: TASK-1844: transcript marker kind for an approval that expired. Not an
 #: `AgentStep` kind -- the timeout happens in the approval round, before any
 #: step exists -- but it renders through the same formatter so live and
@@ -1088,7 +1142,7 @@ def _compose_run_registry_and_allowed(
     builtin_gate: Any | None = None,
     workspace_id: str | None = None,
     ephemeral: bool = False,
-    diff_sink: Any | None = None,
+    diff_sink: Callable[[tuple[str, str, str, str]], None] | None = None,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
@@ -1432,12 +1486,18 @@ class ConsoleAgentBridge:
         # (BuiltinToolProvider.invoke) appends
         # ``(tool_name, file_path, old, new)`` here BEFORE the raw contents
         # are removed from the LLM/run-log-bound result; the on_step
-        # handler below pairs each capture with its STEP_TOOL_RESULT and
-        # hangs it on the TOOL marker message (session-only ``tool_diff``).
-        # A plain deque: invoke() and on_step both run on this run's worker
-        # thread, dispatch is sequential, and every capture is followed by
-        # exactly one result step before the next dispatch -- FIFO with a
-        # tool-name check is exact. The shared fast path's construction-
+        # handler below pairs each capture with its STEP_TOOL_RESULT (via
+        # ``_pair_step_diff``) and hangs it on the TOOL marker message
+        # (session-only ``tool_diff``). Threading: invoke() runs on the
+        # tool call's PER-CALL DAEMON THREAD (AgentService.
+        # _call_with_timeout) while on_step runs on this run's worker
+        # thread. In the normal case the daemon thread is joined before
+        # the result step is emitted, so a capture always precedes its
+        # step; on timeout/cancel the thread is abandoned unjoined and a
+        # late capture can land cross-thread AFTER its step -- the pairing
+        # rule (most-recent match, everything older is stale) tolerates
+        # both orderings, and deque append/scan/del degrade to a cosmetic
+        # missed pairing at worst. The shared fast path's construction-
         # time provider has no sink (a cross-run provider must not capture
         # into one run's queue), so gate-less callers simply get no diff
         # capture -- their rows render exactly as before. Production always
@@ -1768,19 +1828,15 @@ class ConsoleAgentBridge:
             )
             # TASK-1366: pair this result step with the raw before/after
             # contents the provider's diff_sink captured at the strip seam,
-            # when this call was a diff-carrying file write. The name check
-            # keeps the FIFO honest: only THIS tool's own result step may
-            # claim its capture. Sub-agent result steps drain the queue too
-            # (their writes ride this run's provider) even though only
-            # primary steps drop markers.
+            # when this call was a diff-carrying file write. Sub-agent
+            # result steps pair-and-discard too (their writes can ride this
+            # run's provider) even though only primary steps drop markers.
+            # See _pair_step_diff for the threading model and the staleness
+            # rule that keeps an abandoned call's late capture from pairing
+            # with a later write.
             tool_diff: tuple[str, str, str] | None = None
-            if (
-                step.kind == STEP_TOOL_RESULT
-                and pending_diffs
-                and pending_diffs[0][0] == step.tool_name
-            ):
-                _diff_tool, diff_path, diff_old, diff_new = pending_diffs.popleft()
-                tool_diff = (diff_path, diff_old, diff_new)
+            if step.kind == STEP_TOOL_RESULT and pending_diffs:
+                tool_diff = _pair_step_diff(pending_diffs, step.tool_name)
             if agent_kind == AGENT_KIND_PRIMARY:
                 if step.kind == STEP_SPAWN:
                     subagents.append(SubAgentSummary(step.summary or ""))
