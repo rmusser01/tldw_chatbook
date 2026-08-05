@@ -1,8 +1,13 @@
 # Tests/Agents/test_local_tools_integration.py
-"""End-to-end local-tool integration (phase 1, ADR-032): a scripted model
+"""End-to-end local-tool integration (phases 1-2, ADR-032): a scripted model
 emits a ```tool_call fence for fs_list; the run must flow fence -> registry
 -> build_local_review_hook -> approval round trip -> LocalToolProvider.invoke
 -> fs_list core -> result appended back into the model's next turn.
+
+Phase 2 adds: the find_tools/load_tools disclosure path past
+DIRECT_DISCLOSE_THRESHOLD (padded to 9 entries — 6 local + 2 builtin = 8 is
+still direct-disclosed), the 8-entry direct-disclosure boundary, and the
+allow-state e2e (zero approval round trips).
 
 Harness pattern mirrors test_agent_service.py (ScriptedChat + real
 AgentRunsDB, no network); provider/review-hook wiring mirrors
@@ -15,15 +20,26 @@ import json
 
 import pytest
 
-from tldw_chatbook.Agents.agent_models import RUN_DONE, AgentConfig
+from tldw_chatbook.Agents.agent_models import (
+    DIRECT_DISCLOSE_THRESHOLD,
+    RUN_DONE,
+    AgentConfig,
+    RunBudget,
+)
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_DENY_REFUSAL,
     LOCAL_SERVER_KEY,
     LocalToolProvider,
+    LocalToolSpec,
+    _default_specs,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
-from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
+from tldw_chatbook.Agents.tool_catalog import (
+    BuiltinToolProvider,
+    ToolCatalogRegistry,
+    initial_disclosure,
+)
 from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
@@ -62,15 +78,16 @@ def workspace(tmp_path):
     return root
 
 
-def make_service(db, workspace, replies, approvals, approval_calls):
+def make_service(db, workspace, replies, approvals, approval_calls, *,
+                 state=None, extra_specs=()):
     """Assemble the run exactly as the bridge does: registry with builtins +
     the local provider, the build_local_review_hook batch hook, and the
     provider's stamp_scope as review_state_scope."""
     provider = LocalToolProvider(
         workspace_root=workspace,
-        resolve_state=lambda hub: EffectiveToolState(
-            state="ask", origin="global_default"
-        ),
+        specs=_default_specs(workspace) + list(extra_specs),
+        resolve_state=lambda hub: state
+        or EffectiveToolState(state="ask", origin="global_default"),
     )
 
     def request_approvals(pending):
@@ -179,3 +196,172 @@ def test_fs_list_fence_flow_denied_still_completes(db, workspace):
     # The approval gate was still consulted exactly once.
     assert len(approval_calls) == 1
     assert approval_calls[0][0].server_key == LOCAL_SERVER_KEY
+
+    # The denial is fed back to the model with the same "Tool result for
+    # {name}: ..." line shape a success produces, so turn 2 can react to it.
+    second_payload = chat.calls[1]["messages_payload"]
+    assert any(
+        m["role"] == "user"
+        and m["content"].startswith("Tool result for fs_list: ERROR: ")
+        and LOCAL_DENY_REFUSAL in m["content"]
+        for m in second_payload
+    )
+
+
+# --- Phase 2: disclosure threshold + allow-state coverage -------------------
+
+LOCAL_TOOL_NAMES = {"fs_list", "fs_read", "fs_write", "fs_edit", "fs_glob", "fs_grep"}
+BUILTIN_TOOL_NAMES = {"calculator", "get_current_datetime"}
+
+# One inert spec that pads the composed catalog from 8 entries (6 local +
+# 2 builtin — still direct-disclosed at <= DIRECT_DISCLOSE_THRESHOLD) to 9,
+# genuinely crossing into find/load disclosure. Never called by the script.
+PADDING_SPEC = LocalToolSpec(
+    name="fs_noop_pad",
+    description="No-op padding tool for disclosure-threshold tests.",
+    parameters={"type": "object", "properties": {}},
+    handler=lambda args: "noop",
+)
+
+
+def production_registry(workspace, extra_specs=()):
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    registry.register_provider(
+        LocalToolProvider(
+            workspace_root=workspace,
+            specs=_default_specs(workspace) + list(extra_specs),
+        )
+    )
+    return registry
+
+
+def test_direct_disclosure_boundary_at_eight_entries(workspace):
+    """6 local + 2 builtin = 8 entries is still direct-disclosed; 9 flips to
+    find/load. Documents the boundary via the runtime's own API
+    (initial_disclosure, the same call AgentService.run_turn makes)."""
+    registry = production_registry(workspace)
+    assert len(registry.list_catalog()) == DIRECT_DISCLOSE_THRESHOLD == 8
+    schemas, offer_find_load = initial_disclosure(registry, RunBudget())
+    assert offer_find_load is False
+    assert {s.name for s in schemas} == LOCAL_TOOL_NAMES | BUILTIN_TOOL_NAMES
+
+    padded = production_registry(workspace, extra_specs=[PADDING_SPEC])
+    assert len(padded.list_catalog()) == DIRECT_DISCLOSE_THRESHOLD + 1
+    schemas, offer_find_load = initial_disclosure(padded, RunBudget())
+    assert offer_find_load is True
+    assert schemas == []
+
+
+def test_find_load_path_executes_fs_edit_after_approve_once(db, workspace):
+    """Past the threshold the model must discover fs_edit via find_tools ->
+    load_tools -> call; the edit lands on disk behind one approval gate."""
+    approval_calls = []
+    service, chat = make_service(
+        db,
+        workspace,
+        [
+            fence("find_tools", {"query": "edit"}),
+            fence("load_tools", {"ids": ["local:fs_edit"]}),
+            fence(
+                "fs_edit",
+                {"path": "notes.txt", "old_string": "hello", "new_string": "goodbye"},
+            ),
+            "Edited the file.",
+        ],
+        {"fs_edit": "approve_once"},
+        approval_calls,
+        extra_specs=[PADDING_SPEC],
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=("fs_edit",),
+        # 3 tool turns + the final answer blow past the 8-step default.
+        budget=RunBudget(max_steps=16, max_model_turns=8),
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "change hello to goodbye"}],
+        config=config,
+        api_endpoint="llama_cpp",
+        should_cancel=lambda: False,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert outcome.final_text == "Edited the file."
+    assert len(chat.calls) == 4  # find + load + edit + final
+
+    # The scripted discovery sequence ran in order.
+    called = [s.tool_name for s in outcome.steps if s.kind == "tool_call"]
+    assert called == ["find_tools", "load_tools", "fs_edit"]
+
+    # find_tools surfaced the catalog id the model then loaded.
+    second_payload = chat.calls[1]["messages_payload"]
+    assert any(
+        m["role"] == "user"
+        and m["content"].startswith("Tool result for find_tools: ")
+        and "local:fs_edit" in m["content"]
+        for m in second_payload
+    )
+
+    # The edit actually happened on disk.
+    assert (workspace / "notes.txt").read_text(encoding="utf-8") == "goodbye"
+
+    # Exactly ONE approval round trip: the fs_edit gate. find_tools and
+    # load_tools are runtime tools the local provider doesn't gate.
+    assert len(approval_calls) == 1
+    assert len(approval_calls[0]) == 1
+    pending = approval_calls[0][0]
+    assert isinstance(pending, MCPPendingCall)
+    assert pending.server_key == LOCAL_SERVER_KEY
+    assert pending.llm_name == "fs_edit"
+
+
+def test_allow_state_executes_without_approval_round_trip(db, workspace):
+    """resolve_state -> allow (tool_override): fs_read runs with ZERO
+    approval round trips and its content reaches the model's next turn."""
+    approval_calls = []
+    service, chat = make_service(
+        db,
+        workspace,
+        [fence("fs_read", {"path": "notes.txt"}), "The file says hello."],
+        {},  # no scripted approvals: any round trip would fail loudly here
+        approval_calls,
+        state=EffectiveToolState(state="allow", origin="tool_override"),
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=("fs_read",),
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "read notes.txt"}],
+        config=config,
+        api_endpoint="llama_cpp",
+        should_cancel=lambda: False,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert outcome.final_text == "The file says hello."
+    assert len(chat.calls) == 2
+
+    # Zero approval round trips — an allow-state tool never enters the batch.
+    assert approval_calls == []
+
+    # The read executed and its (line-numbered) content came back.
+    tool_results = [s for s in outcome.steps if s.kind == "tool_result"]
+    assert [s.tool_name for s in tool_results] == ["fs_read"]
+    assert "hello" in tool_results[0].result
+    assert not tool_results[0].result.startswith("ERROR")
+
+    second_payload = chat.calls[1]["messages_payload"]
+    assert any(
+        m["role"] == "user"
+        and m["content"].startswith("Tool result for fs_read: ")
+        and "hello" in m["content"]
+        for m in second_payload
+    )
