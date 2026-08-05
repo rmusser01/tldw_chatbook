@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import threading
 import time
 from contextlib import contextmanager
@@ -2628,3 +2629,75 @@ async def test_seed_trims_a_marker_suffix_even_when_the_flag_says_otherwise(monk
 
         items, _instructions = rig.session.seeds[0]
         assert items == [("assistant", "Half a sentence")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "seconds",
+    [-1, float("nan"), float("inf"), float("-inf")],
+    ids=["negative", "nan", "inf", "-inf"],
+)
+async def test_a_nonsense_transcription_duration_is_sanitized_before_it_persists(
+    monkeypatch, seconds
+):
+    """Qodo Q2: the duration comes off the wire and went straight into
+    `ProviderUsage.transcription_seconds` via a bare `float()`, so a
+    negative or non-finite value propagated through `plus()` and into the
+    JSON written to the database."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+        store = console._ensure_console_chat_store()
+
+        session.fire_turn_committed()
+        await _wait_for(
+            lambda: console._console_realtime.user_row_id is not None, pilot
+        )
+        row_id = console._console_realtime.user_row_id
+        session.fire_transcription_usage({"type": "duration", "seconds": seconds})
+        await _wait_for(lambda: store.get_message(row_id).usage is not None, pilot)
+
+        usage = store.get_message(row_id).usage
+        assert math.isfinite(usage.transcription_seconds)
+        assert usage.transcription_seconds == 0.0
+        # And the record it produces is still round-trippable: `json.dumps`
+        # emits bare NaN/Infinity, which strict JSON readers reject.
+        assert "Infinity" not in usage.to_json()
+        assert "NaN" not in usage.to_json()
+
+
+@pytest.mark.asyncio
+async def test_a_duration_payload_with_no_seconds_attaches_nothing(monkeypatch):
+    """The sanitizer maps unusable values to 0.0, so the ABSENT-key case
+    needs its own guard: attaching a 0.0-second record would occupy the
+    row's single usage slot and make the real duration -- if it followed --
+    look like a late duplicate."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+        store = console._ensure_console_chat_store()
+
+        session.fire_turn_committed()
+        await _wait_for(
+            lambda: console._console_realtime.user_row_id is not None, pilot
+        )
+        row_id = console._console_realtime.user_row_id
+        session.fire_transcription_usage({"type": "duration"})
+        await pilot.pause()
+        await pilot.pause()
+        assert store.get_message(row_id).usage is None
+
+        # ...and the real duration that follows is still accepted.
+        session.fire_transcription_usage({"type": "duration", "seconds": 2})
+        await _wait_for(lambda: store.get_message(row_id).usage is not None, pilot)
+        assert store.get_message(row_id).usage.transcription_seconds == 2.0

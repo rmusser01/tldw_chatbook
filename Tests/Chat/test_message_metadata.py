@@ -95,3 +95,33 @@ def test_from_json_drops_unknown_keys_and_unknown_statuses():
 
     assert restored == MessageMetadata(engine="realtime", interrupted=True)
     assert restored.transcript_status == ""
+
+
+@pytest.mark.parametrize(
+    "stored, expected",
+    [
+        (True, True),
+        (False, False),
+        ("true", True),
+        ("True", True),
+        ("false", False),
+        ("False", False),
+        ("1", True),
+        ("0", False),
+        ("garbage", False),
+        ("", False),
+        (1, True),
+        (0, False),
+        (None, False),
+        ([], False),
+    ],
+)
+def test_interrupted_survives_every_shape_a_payload_can_carry_it_in(stored, expected):
+    """Qodo Q1: `bool("false")` is True. A JSON payload that spells the flag
+    as a STRING -- a hand-edited row, a foreign writer, an older/newer
+    serializer -- would restore a NOT-interrupted reply as interrupted,
+    silently inverting a durable fact on resume and in exports."""
+    restored = MessageMetadata.from_json(json.dumps({"interrupted": stored}))
+
+    assert restored is not None
+    assert restored.interrupted is expected

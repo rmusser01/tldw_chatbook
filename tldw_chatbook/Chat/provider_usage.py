@@ -9,22 +9,48 @@ stored — pricing is applied at read time by the pricing catalog.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass
 from typing import Any, Mapping
 
 
 def _as_count(value: Any) -> int:
+    # OverflowError: `int(float("inf"))` raises it, and `json.loads` accepts
+    # the `Infinity` literal -- so a provider payload or a corrupt stored row
+    # can reach here with a non-finite count. Degrading to 0 keeps the same
+    # contract as every other unusable value.
     try:
         count = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0
     return max(count, 0)
 
 
-def _as_seconds(value: Any) -> float:
+def as_seconds(value: Any) -> float:
+    """Coerce a wire/stored value to a finite, non-negative duration.
+
+    The single sanitizer for every seconds-valued field: `ProviderUsage`'s
+    own JSON restore and the realtime wiring that captures a transcription
+    duration both route through it, so "what counts as a usable duration"
+    has one definition.
+
+    `max(value, 0.0)` alone is not enough. Every comparison with NaN is
+    False, so `max(nan, 0.0)` returns NaN, and `max(inf, 0.0)` returns inf
+    -- both would land in `transcription_seconds`, survive `plus()`, and be
+    written to the database as JSON.
+
+    Args:
+        value: Any raw value claiming to be a number of seconds.
+
+    Returns:
+        The duration as a float, clamped to >= 0.0, with anything
+        unparseable, negative or non-finite (NaN, +/-inf) reported as 0.0.
+    """
     try:
         seconds = float(value)
     except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(seconds):
         return 0.0
     return max(seconds, 0.0)
 
@@ -173,7 +199,7 @@ class ProviderUsage:
             output=_as_count(data.get("output")),
             audio_input=_as_count(data.get("audio_input")),
             audio_output=_as_count(data.get("audio_output")),
-            transcription_seconds=_as_seconds(data.get("transcription_seconds")),
+            transcription_seconds=as_seconds(data.get("transcription_seconds")),
             provider=str(data.get("provider") or ""),
             model=str(data.get("model") or ""),
             partial=bool(data.get("partial")),

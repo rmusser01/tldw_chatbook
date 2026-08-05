@@ -80,7 +80,7 @@ from ...Chat.console_cost_tracker import (
     fingerprint_break_reason,
 )
 from ...Chat.message_metadata import MessageMetadata
-from ...Chat.provider_usage import ProviderUsage
+from ...Chat.provider_usage import ProviderUsage, as_seconds
 from ...LLM_Calls.pricing_catalog import get_pricing_catalog
 from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
     console_attachable_dictionaries,
@@ -8429,10 +8429,17 @@ class ChatScreen(BaseAppScreen):
         """
         if not isinstance(payload, dict) or payload.get("type") != "duration":
             return
-        try:
-            seconds = float(payload.get("seconds"))
-        except (TypeError, ValueError):
+        if "seconds" not in payload:
             return
+        # `as_seconds` is `ProviderUsage`'s OWN sanitizer, shared rather than
+        # re-implemented here so a duration means the same thing however it
+        # enters the record. A bare `float()` let a negative, NaN or +/-inf
+        # value off the wire into `transcription_seconds`, where it survived
+        # `plus()` and was persisted -- as bare `NaN`/`Infinity` tokens that
+        # strict JSON readers reject (Qodo Q2). Anything unusable becomes
+        # 0.0: the turn still records WHICH provider/model transcribed it,
+        # with no duration claimed.
+        seconds = as_seconds(payload.get("seconds"))
         row_id = session.user_row_id
         if row_id is None:
             return

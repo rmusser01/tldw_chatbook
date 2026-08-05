@@ -218,3 +218,56 @@ def test_from_json_rejects_garbage():
 def test_total_tokens_sums_buckets():
     usage = ProviderUsage(uncached_input=1, cache_read=2, cache_write=3, output=4)
     assert usage.total_tokens == 10
+
+
+import math
+
+import pytest
+
+from tldw_chatbook.Chat.provider_usage import as_seconds
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        (2.5, 2.5),
+        ("2.5", 2.5),
+        (0, 0.0),
+        (-1, 0.0),
+        (-0.0001, 0.0),
+        (None, 0.0),
+        ("nonsense", 0.0),
+        (float("nan"), 0.0),
+        (float("inf"), 0.0),
+        (float("-inf"), 0.0),
+    ],
+)
+def test_as_seconds_yields_a_finite_non_negative_duration(raw, expected):
+    """Qodo Q2: a duration reaches this from the wire. `max(value, 0.0)`
+    alone lets NaN and ±inf straight through (every comparison with NaN is
+    False), so they landed in `transcription_seconds`, survived `plus()`
+    and were persisted as JSON."""
+    result = as_seconds(raw)
+
+    assert math.isfinite(result)
+    assert result == expected
+
+
+def test_non_finite_duration_never_survives_a_json_round_trip():
+    restored = ProviderUsage.from_json(
+        '{"transcription_seconds": Infinity, "output": 5}'
+    )
+
+    assert restored is not None
+    assert restored.transcription_seconds == 0.0
+    assert restored.output == 5
+
+
+def test_an_infinite_token_count_degrades_instead_of_raising():
+    """`int(float("inf"))` raises OverflowError, which the count coercion
+    did not catch -- and `json.loads` accepts the `Infinity` literal, so a
+    provider (or a corrupt row) could reach it."""
+    restored = ProviderUsage.from_json('{"output": Infinity}')
+
+    assert restored is not None
+    assert restored.output == 0

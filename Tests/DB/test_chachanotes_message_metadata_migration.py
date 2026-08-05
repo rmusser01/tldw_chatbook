@@ -126,6 +126,20 @@ def test_migration_is_idempotent_when_column_already_present(tmp_path, monkeypat
     _seed_v30_database(db_path, monkeypatch)
 
     # Hand-apply the column while the schema still says v30.
+    #
+    # Raw connection, not `db.transaction()`, deliberately (Qodo round). This
+    # is fabricating a state the application can never produce -- a column
+    # present with the version not yet bumped -- by reaching AROUND the
+    # migration machinery, which is exactly what every schema-fabricating
+    # test in this directory does: the v29->v30 sibling this file mirrors
+    # (`test_chachanotes_message_usage_migration.py`, same ALTER + commit),
+    # `test_chachanotes_citation_provenance_migration.py` (`executescript` of
+    # migration SQL), and both world-book fixtures (`DROP COLUMN` to rewind a
+    # schema). Files here use `db.transaction()` for ordinary DATA writes and
+    # raw connections for schema fabrication -- see
+    # `test_chachanotes_character_authority_migration.py`, which does both.
+    # Routing this through the shared helper would read as an ordinary app
+    # write and break that distinction for no safety gained.
     with monkeypatch.context() as v30_patch:
         v30_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 30)
         db = CharactersRAGDB(db_path, client_id="pre-applied")

@@ -126,13 +126,45 @@ class MessageMetadata:
             engine=_as_text(data.get("engine")),
             provider=_as_text(data.get("provider")),
             model=_as_text(data.get("model")),
-            interrupted=bool(data.get("interrupted")),
+            interrupted=_as_bool(data.get("interrupted")),
             transcript_status=_as_transcript_status(data.get("transcript_status")),
         )
 
 
 def _as_text(value: Any) -> str:
     return str(value) if value else ""
+
+
+#: Payload spellings of a true boolean, lowercased. Anything not in here --
+#: including the empty string and any unrecognised word -- reads as False.
+_TRUE_TOKENS = frozenset({"true", "1", "yes", "y", "on"})
+
+
+def _as_bool(value: Any) -> bool:
+    """Coerce a stored payload value to a boolean without inverting it.
+
+    Plain ``bool()`` is wrong here: every non-empty string is truthy, so a
+    row whose flag was serialized as the STRING ``"false"`` -- a hand-edited
+    payload, a foreign writer, a different serializer -- would restore as
+    True and silently invert a durable fact on resume and in exports.
+
+    Args:
+        value: The raw value pulled out of the decoded JSON object.
+
+    Returns:
+        The boolean it denotes: a real bool as itself; an int/float by its
+        own truthiness; a string by a closed token vocabulary
+        (case-insensitive, whitespace-tolerant), where anything
+        unrecognised is False; and every other type False, since a value
+        this code cannot read is not evidence that the flag was set.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in _TRUE_TOKENS
+    return False
 
 
 def _as_transcript_status(value: Any) -> str:
