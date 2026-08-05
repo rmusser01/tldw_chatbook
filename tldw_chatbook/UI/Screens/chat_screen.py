@@ -385,7 +385,7 @@ from ...Utils.console_background_effects import (
     normalize_console_background_effects,
 )
 from ...Utils.input_validation import sanitize_string, validate_text_input
-from ...Utils.persistent_diagnostics import persist_event
+from ...Utils.persistent_diagnostics import persist_event, safe_metadata_token
 from ...Utils.token_counter import estimate_tokens
 from ...UI.Workbench import (
     CommandStrip,
@@ -835,6 +835,15 @@ CONSOLE_REALTIME_FAILURE_TEXT_MAX_CHARS = 120
 #: when the rest of the message does not.
 _CONSOLE_REALTIME_CODE_RE = re.compile(r"\(code=([A-Za-z0-9_.\- ]{1,64})\)")
 
+#: Provider error codes whose literal spelling the persistent-diagnostics
+#: schema refuses (anything containing `api_key` reads as a credential to
+#: its admission boundary -- rightly, since it cannot tell them apart),
+#: mapped to marker-free synonyms so the reason still reaches the log.
+CONSOLE_REALTIME_ERROR_CATEGORY_ALIASES: dict[str, str] = {
+    "invalid_api_key": "invalid_credentials",
+    "missing_api_key": "missing_credentials",
+}
+
 #: Anything long, unbroken and word-character-ish looks like a credential.
 #: Applied AFTER the leading-clause truncation as a second net, because
 #: "take the text before the first colon" only helps when the provider
@@ -989,6 +998,19 @@ class ConsoleRealtimeSession:
         audio_unavailable_notified: True once the user has been told, in
             THIS loop entry, that reply audio is unavailable. One toast per
             loop, not one per reply.
+        reply_token: Monotonic per-reply counter. A reply's playback
+            completion carries the token it started with, so a completion
+            that lands after the next reply began is dropped instead of
+            reporting that one finished.
+        generation_done: True once `response.done` arrived for the current
+            reply. Half of the rendezvous below.
+        playback_pending: True while this reply's audio is still being fed
+            or played. The other half: whichever of these two finishes
+            LAST is what tells the FSM the reply is over -- see
+            `_on_console_realtime_reply_done`.
+        barged: True once the user cut this reply short. Mirrors Task 2's
+            "a cancelled response fires no reply-done": the aborted pump's
+            completion must report nothing.
         user_row_id: The transcript row created at turn-commit, waiting for
             its input transcript to land.
         assistant_row_id: The current reply's transcript row, or None
@@ -1021,6 +1043,10 @@ class ConsoleRealtimeSession:
     connect_attempt: int = 0
     ready: bool = False
     connect_returned_at: float | None = None
+    reply_token: int = 0
+    generation_done: bool = False
+    playback_pending: bool = False
+    barged: bool = False
     mic_gated: bool = False
     fed_bytes: int = 0
     user_row_id: str | None = None
@@ -7751,6 +7777,12 @@ class ChatScreen(BaseAppScreen):
         )
         self._console_realtime = session
         session.tick_timer = self.set_interval(0.1, self._tick_console_realtime)
+        self._persist_console_realtime_event(
+            "realtime_entry",
+            operation="entry",
+            provider=provider,
+            model=str(realtime_model()),
+        )
         controller.enter()
 
         if not self._start_console_realtime_tap(session):
@@ -8105,6 +8137,52 @@ class ChatScreen(BaseAppScreen):
         session.connect_returned_at = time.monotonic()
 
     @staticmethod
+    def _persist_console_realtime_event(event: str, **fields: Any) -> None:
+        """Record one realtime lifecycle event to the persistent log.
+
+        The persistent log admits ONLY `tldw_chatbook.diagnostics.*`
+        records (`Utils/persistent_diagnostics.py`), so without this a
+        realtime run left no durable trace at all -- the owner's
+        stuck-at-connecting session had to be reconstructed from a
+        screenshot. Same shape as the dictation-failure site above, for
+        the same reason.
+
+        Every field goes through the persistent schema, which is bounded
+        tokens only: a provider's error prose (which quotes API keys)
+        cannot be passed here even by accident. Failures to persist are
+        swallowed -- diagnostics must never break the voice loop.
+        """
+        try:
+            persist_event("realtime", event, **fields)
+        except Exception:  # noqa: BLE001 - diagnostics never break the loop
+            logger.opt(exception=True).debug(
+                "Could not persist a realtime diagnostics event"
+            )
+
+    @staticmethod
+    def _console_realtime_failure_token(text: str) -> str:
+        """Reduce a sanitized failure to a bounded token for the log.
+
+        Prefers the provider's own `(code=…)` -- the single most
+        diagnostic word available -- and falls back to `unspecified`
+        rather than forcing prose through `safe_metadata_token`, which
+        would write a useless `invalid`.
+
+        The alias table exists because the persistent schema REFUSES any
+        token containing `api_key` (`_PRIVATE_TOKEN_MARKERS`): from the
+        admission boundary's seat, "invalid_api_key" is indistinguishable
+        from a leaked credential, and it is right to refuse it. So the
+        credential-failure case -- the one that actually brought this
+        logging into existence -- is recorded under a marker-free synonym
+        instead of defeating the guard that protects the log.
+        """
+        match = _CONSOLE_REALTIME_CODE_RE.search(text or "")
+        candidate = match.group(1).strip() if match else ""
+        candidate = CONSOLE_REALTIME_ERROR_CATEGORY_ALIASES.get(candidate, candidate)
+        token = safe_metadata_token(candidate) if candidate else "invalid"
+        return "unspecified" if token == "invalid" else token
+
+    @staticmethod
     def _sanitize_console_realtime_failure(raw: object) -> str:
         """Reduce a provider failure to something safe to show and log.
 
@@ -8164,6 +8242,15 @@ class ChatScreen(BaseAppScreen):
         session.failure_text = self._sanitize_console_realtime_failure(
             str(exc) or type(exc).__name__
         )
+        self._persist_console_realtime_event(
+            "realtime_connect_failed",
+            level=logging.ERROR,
+            operation="connect",
+            status="failed",
+            exception_type=type(exc).__name__,
+            error_category=self._console_realtime_failure_token(str(exc)),
+            retry_count=max(attempt - 1, 0),
+        )
         logger.warning(
             "Console realtime: connect attempt failed: "
             f"op=realtime_connect attempt={attempt} reason={session.failure_text!r}"
@@ -8210,6 +8297,12 @@ class ChatScreen(BaseAppScreen):
                 )
         session.ready = True
         session.connect_returned_at = None
+        self._persist_console_realtime_event(
+            "realtime_ready",
+            operation="ready",
+            status="reconnected" if reconnected else "connected",
+            retry_count=max(session.connect_attempt - 1, 0),
+        )
         session.controller.on_session_ready()
         if reconnected:
             self.app_instance.notify(
@@ -8318,6 +8411,10 @@ class ChatScreen(BaseAppScreen):
         # A fresh attempt at the output device for this reply: the latch is
         # per-reply, not per-loop (the toast is the per-loop half).
         session.audio_failed_for_reply = False
+        session.reply_token += 1
+        session.generation_done = False
+        session.playback_pending = False
+        session.barged = False
         session.controller.on_reply_started()
 
     def _on_console_realtime_output_transcript_delta(
@@ -8552,8 +8649,13 @@ class ChatScreen(BaseAppScreen):
         session.sink = sink
         session.audio_queue = queue
         session.fed_bytes = 0
+        # From here until the pump reports back, this reply is not over --
+        # however long ago the provider stopped generating it.
+        session.playback_pending = True
         session.pump_worker = self.run_worker(
-            self._pump_console_realtime_audio(sink, queue),
+            self._pump_console_realtime_audio(
+                session, session.reply_token, sink, queue
+            ),
             exclusive=False,
             group="console-realtime-audio",
             exit_on_error=False,
@@ -8590,13 +8692,27 @@ class ChatScreen(BaseAppScreen):
         notify thread, so nothing here may touch widgets."""
         logger.debug(f"Console realtime: sink event: op=sink_event event={event!r}")
 
-    async def _pump_console_realtime_audio(self, sink: Any, queue: Any) -> None:
-        """Feed one reply's queued audio into `sink` until it ends.
+    async def _pump_console_realtime_audio(
+        self, session: ConsoleRealtimeSession, token: int, sink: Any, queue: Any
+    ) -> None:
+        """Feed one reply's queued audio into `sink`, then report playback end.
 
         The queue's `None` item is the end-of-reply sentinel: it ends the
         async iterator, which is what tells `pump` to close the sink and
         let the buffered tail actually finish playing (rather than cutting
         it off the way an abort does).
+
+        `pump` returning is the sink reaching a terminal state -- drained
+        (the device played everything), stopped (a barge-in or teardown
+        aborted it), or failed. `settle()` then waits for that terminal
+        EVENT to have been delivered, which `pump` explicitly does not
+        promise (its own N4 note): the same "playback is really over"
+        signal the V3 TTS path waits on before reporting an utterance
+        finished. It blocks, so it runs off-thread.
+
+        Whatever the outcome, this reply's audio is over exactly once, so
+        `_console_realtime_playback_finished` is called on every exit --
+        it owns the decision about whether that means anything to the FSM.
         """
         from ...Audio.streaming_sink import pump
 
@@ -8607,7 +8723,17 @@ class ChatScreen(BaseAppScreen):
                     return
                 yield chunk
 
-        await pump(sink, _chunks())
+        try:
+            await pump(sink, _chunks())
+            settle = getattr(sink, "settle", None)
+            if callable(settle):
+                await asyncio.to_thread(settle)
+        except Exception:  # noqa: BLE001 - a pump failure still ends playback
+            logger.opt(exception=True).warning(
+                "Console realtime: reply audio playback failed"
+            )
+        finally:
+            self._console_realtime_playback_finished(session, token)
 
     def _end_console_realtime_reply_audio(
         self, session: ConsoleRealtimeSession, *, abort: bool
@@ -8649,13 +8775,60 @@ class ChatScreen(BaseAppScreen):
         session.controller.on_first_audio()
 
     def _on_console_realtime_reply_done(self, session: ConsoleRealtimeSession) -> None:
-        """`on_reply_done`: a genuine end-of-reply.
+        """`on_reply_done`: GENERATION finished. Not necessarily the reply.
 
         Never fires for a response this client cancelled (Task 2's
         semantics), so there is no barge-in case to disambiguate here.
+
+        It does NOT go straight to the FSM (live-gate defect, default
+        speaker-safe mode: the model heard itself and answered its own
+        voice). `response.done` means the provider finished GENERATING,
+        and 24 kHz audio generates far faster than it plays -- the sink
+        still holds seconds of the reply at this point. Telling the FSM
+        the reply was over here left `speaking` early, which ungated the
+        mic straight into the reply's own audible tail; the provider's
+        server-side VAD then committed the model's voice as the user's
+        next turn.
+
+        So this half only records that generation is done and closes the
+        audio source (letting the buffered tail play out). Whichever of
+        the two halves finishes LAST -- this one or
+        `_console_realtime_playback_finished` -- is what tells the FSM.
+        A reply that produced no audio at all has no playback half, and
+        completes here immediately.
         """
+        session.generation_done = True
         self._end_console_realtime_reply_audio(session, abort=False)
         self._finish_console_realtime_reply_row(session, interrupted=False)
+        if session.playback_pending:
+            return
+        session.controller.on_reply_done(time.monotonic())
+
+    def _console_realtime_playback_finished(
+        self, session: ConsoleRealtimeSession, token: int
+    ) -> None:
+        """This reply's audio has finished playing (or was aborted).
+
+        The other half of the rendezvous in
+        `_on_console_realtime_reply_done`. Three guards, each for a real
+        case:
+
+          * a different loop owns the screen now (exit/teardown, whose
+            abort makes the pump return) -- report nothing;
+          * a NEWER reply is in flight (`token`), so this completion
+            belongs to a reply the FSM has already moved past -- reporting
+            it would end the current one;
+          * the user barged in, and Task 2's contract is that a cancelled
+            response completes nothing. The FSM already returned to `live`
+            through its own barge-in input.
+        """
+        if self._console_realtime is not session:
+            return
+        if session.reply_token != token:
+            return
+        session.playback_pending = False
+        if session.barged or not session.generation_done:
+            return
         session.controller.on_reply_done(time.monotonic())
 
     def _on_console_realtime_speech_started(
@@ -8791,6 +8964,12 @@ class ChatScreen(BaseAppScreen):
         """
         provider_session, session.session = session.session, None
         session.ready = False
+        self._persist_console_realtime_event(
+            "realtime_reconnect",
+            operation="reconnect",
+            status="started",
+            error_category=self._console_realtime_failure_token(session.failure_text),
+        )
         # A reply that was in flight when the transport died is over, and
         # over abruptly: close its audio and its transcript row as an
         # interruption rather than leaving a `pending` row that will never
@@ -8821,6 +9000,11 @@ class ChatScreen(BaseAppScreen):
         # reply first, and `played_ms` must describe what they heard up to
         # that moment.
         played_ms = self._console_realtime_played_ms(session)
+        # Latched before the abort: the pump is about to unwind and report
+        # playback finished, and a cancelled reply must complete nothing
+        # (Task 2's contract, mirrored in
+        # `_console_realtime_playback_finished`).
+        session.barged = True
         self._end_console_realtime_reply_audio(session, abort=True)
         self._finish_console_realtime_reply_row(session, interrupted=True)
         provider_session = session.session
@@ -8856,6 +9040,15 @@ class ChatScreen(BaseAppScreen):
         if session is None:
             return
         failure = session.failure_text
+        self._persist_console_realtime_event(
+            "realtime_exit",
+            operation="exit",
+            # The FSM's own reason vocabulary is already token-shaped
+            # ("connect-failed", "connection-lost", "idle-timeout"); a
+            # user-initiated exit has no reason, which is itself the fact
+            # worth recording.
+            status=safe_metadata_token(reason or "user"),
+        )
         self._teardown_console_realtime_loop()
         if reason == "connect-failed":
             self._console_realtime_fallback_to_pipeline(failure)

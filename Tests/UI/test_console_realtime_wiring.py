@@ -16,6 +16,7 @@ See `.superpowers/sdd/2026-08-04-realtime-voice-engine/task-5-brief.md`.
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 import time
 from typing import Any
@@ -207,7 +208,16 @@ class FakeRecorder:
 
 
 class FakeSink:
-    """`StreamingPcmSink`-shaped double exposing the surface `pump` uses."""
+    """`StreamingPcmSink`-shaped double exposing the surface `pump` uses.
+
+    `close()` starts DRAINING and stays non-terminal until
+    `finish_playback()` -- exactly like the real sink, whose drain ends
+    when the device callback has actually played the buffered audio out.
+    That gap is the whole subject of the generation-done vs playback-done
+    distinction, so a fake that collapsed it (terminal on close) could
+    never test it. `buffered_seconds` is deliberately generous so `pump`'s
+    own drain-wait deadline cannot expire mid-test on a loaded machine.
+    """
 
     def __init__(self, order: list[str] | None = None) -> None:
         self._order = order if order is not None else []
@@ -217,7 +227,8 @@ class FakeSink:
         self.terminal_reason = None
         self.fail_reason = None
         self.bytes_per_second = 48000
-        self.buffered_seconds = 0.0
+        self.buffered_seconds = 30.0
+        self.settled = 0
 
     def open(self, sample_rate: int, channels: int = 1) -> None:
         self.opened = (sample_rate, channels)
@@ -228,16 +239,25 @@ class FakeSink:
         return True
 
     def close(self) -> None:
+        if self.terminal_reason is None and self.state != "draining":
+            self.state = "draining"
+            self._order.append("sink.close")
+
+    def finish_playback(self) -> None:
+        """The device finished playing everything buffered."""
         if self.terminal_reason is None:
             self.state = "closed"
             self.terminal_reason = "drained"
-            self._order.append("sink.close")
 
     def stop(self) -> None:
         if self.terminal_reason is None:
             self.state = "stopped"
             self.terminal_reason = "stopped"
             self._order.append("sink.stop")
+
+    def settle(self, timeout: float = 5.0) -> bool:
+        self.settled += 1
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -1121,6 +1141,181 @@ async def test_reply_transcript_is_actually_repainted_mid_reply(monkeypatch):
         await _wait_for(lambda: "ZEBRAFISH" in _visible_text(console), pilot)
 
 
+def _spy_on_reply_done(session_state) -> list[float]:
+    """Record every `on_reply_done(now)` the wiring hands the FSM."""
+    controller = session_state.controller
+    original = controller.on_reply_done
+    calls: list[float] = []
+
+    def _spy(now: float) -> None:
+        calls.append(now)
+        original(now)
+
+    controller.on_reply_done = _spy
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_mic_stays_gated_until_the_reply_audio_finishes_playing(monkeypatch):
+    """LIVE GATE: in default (speaker-safe) mode the model heard ITSELF and
+    replied to its own voice.
+
+    `response.done` means GENERATION finished, and 24 kHz audio generates
+    far faster than it plays -- so the sink still held seconds of the
+    reply. Handing that straight to `controller.on_reply_done` left
+    `speaking` early, ungated the tap into the reply's own audible tail,
+    and the provider's server-side VAD committed the model's voice as a
+    user turn. `on_reply_done` to the FSM must mean "including playback".
+    """
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        await _drive_to_speaking(console, pilot, session, audio=b"\x00" * 4800)
+        assert console._console_realtime.mic_gated is True
+
+        # Generation finishes; the audio is still draining.
+        session.fire_reply_done()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert console._console_realtime.controller.state == "speaking"
+        assert console._console_realtime.mic_gated is True
+        rig.recorder.push(b"the model's own tail")
+        assert b"the model's own tail" not in session.audio_frames, (
+            "the mic reopened into the reply's audible tail -- the model "
+            "will hear itself"
+        )
+
+        # Playback actually completes.
+        rig.sink.finish_playback()
+        await _wait_for(
+            lambda: console._console_realtime.controller.state == "live", pilot
+        )
+        assert console._console_realtime.mic_gated is False
+        rig.recorder.push(b"the user's next turn")
+        assert b"the user's next turn" in session.audio_frames
+
+
+@pytest.mark.asyncio
+async def test_reply_with_no_audio_completes_immediately(monkeypatch):
+    """A reply that produced no audio has no playback to wait for --
+    deferring it would hang the loop in `speaking` forever."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        session.fire_turn_committed()
+        session.fire_reply_started("item-1")
+        session.fire_output_transcript_delta("text only, no audio")
+        await _wait_for(
+            lambda: console._console_realtime.controller.state == "thinking", pilot
+        )
+
+        session.fire_reply_done()
+        await _wait_for(
+            lambda: console._console_realtime.controller.state == "live", pilot
+        )
+        assert rig.sinks == [], "a sink was opened for a reply with no audio"
+
+
+@pytest.mark.asyncio
+async def test_barge_in_mid_drain_fires_no_late_reply_done(monkeypatch):
+    """Task 2's semantics, mirrored: a cancelled reply completes nothing.
+    The aborted pump's completion must not report a reply the user cut."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+        calls = _spy_on_reply_done(console._console_realtime)
+
+        await _drive_to_speaking(console, pilot, session, audio=b"\x00" * 4800)
+        session.fire_reply_done()  # generation done, audio still draining
+        await pilot.pause()
+        assert console._console_realtime.controller.state == "speaking"
+
+        console._console_realtime.controller.on_keypress()
+        await pilot.pause()
+        assert console._console_realtime.controller.state == "live"
+
+        # The aborted pump now unwinds.
+        await pilot.pause(0.2)
+        assert calls == [], "a barged reply reported itself finished"
+        assert console._console_realtime.controller.state == "live"
+
+
+@pytest.mark.asyncio
+async def test_a_stale_playback_completion_never_ends_the_next_reply(monkeypatch):
+    """The identity guard, driven directly.
+
+    Today the barge-in latch also covers the only reachable ordering, so
+    this is pinned at the seam (the same idiom the V3 suite uses for its
+    deferred capture-ended delivery) rather than through a race the fakes
+    cannot stage deterministically. Without it, a completion from the
+    PREVIOUS reply would report the CURRENT one finished -- ungating the
+    mic into a reply that is still speaking, which is the exact defect
+    this whole change exists to prevent.
+    """
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+        state = console._console_realtime
+
+        await _drive_to_speaking(console, pilot, session, audio=b"\x00" * 4800)
+        stale_token = state.reply_token - 1
+
+        console._console_realtime_playback_finished(state, stale_token)
+        await pilot.pause()
+
+        assert state.controller.state == "speaking"
+        assert state.playback_pending is True
+
+
+@pytest.mark.asyncio
+async def test_reply_done_is_stamped_at_playback_end_not_generation_end(monkeypatch):
+    """The idle ceiling anchors on this `now`. Stamping it at generation
+    end would charge a long drain against the idle budget."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+        calls = _spy_on_reply_done(console._console_realtime)
+
+        await _drive_to_speaking(console, pilot, session, audio=b"\x00" * 4800)
+        session.fire_reply_done()
+        await pilot.pause()
+        assert calls == []
+
+        drain_ended_after = time.monotonic()
+        rig.sink.finish_playback()
+        await _wait_for(lambda: bool(calls), pilot)
+
+        assert calls[0] >= drain_ended_after
+
+
 @pytest.mark.asyncio
 async def test_acoustic_mode_never_gates_the_mic(monkeypatch):
     _patch_realtime_config(monkeypatch, acoustic=True)
@@ -1294,6 +1489,75 @@ async def test_connect_timeout_is_bounded_and_falls_back(monkeypatch):
 # ---------------------------------------------------------------------------
 # Rules 8 + 9: reasoned toasts and reconnect-once
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Persistent diagnostics
+# ---------------------------------------------------------------------------
+
+
+class _DiagnosticsCapture(logging.Handler):
+    """Collect records from the persistent-diagnostics logger namespace."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+@pytest.mark.asyncio
+async def test_realtime_lifecycle_is_persistently_logged(monkeypatch):
+    """The persistent log admits only `tldw_chatbook.diagnostics.*`, so the
+    owner's stuck-connecting run left ZERO trace to diagnose. Entry and
+    connect-failure must both be reconstructable from the log alone."""
+    _patch_realtime_config(monkeypatch)
+    monkeypatch.setattr(
+        chat_screen_module.console_voice_input,
+        "probe",
+        lambda: chat_screen_module.console_voice_input.Availability(
+            ok=False, kind="missing-capture", reason="No microphone.", remedy=""
+        ),
+    )
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    rig.connect_error = RuntimeError(_INVALID_KEY_REASON)
+    host = ConsoleHarness(app)
+
+    capture = _DiagnosticsCapture()
+    diagnostics_logger = logging.getLogger("tldw_chatbook.diagnostics.realtime")
+    diagnostics_logger.addHandler(capture)
+    previous_level = diagnostics_logger.level
+    diagnostics_logger.setLevel(logging.DEBUG)
+
+    try:
+        async with host.run_test(size=(140, 42)) as pilot:
+            console = await _mounted_console(host, pilot)
+            console.action_toggle_console_hands_free()
+            await _wait_for(lambda: console._console_realtime is None, pilot)
+    finally:
+        diagnostics_logger.removeHandler(capture)
+        diagnostics_logger.setLevel(previous_level)
+
+    assert all(
+        record.name == "tldw_chatbook.diagnostics.realtime" for record in capture.records
+    )
+    # `event=<name> field=value …` -- the same single-line shape the
+    # dictation events already write, and the shape the persistent
+    # formatter puts on disk.
+    messages = [record.getMessage() for record in capture.records]
+    assert any(message.startswith("event=realtime_entry ") for message in messages), (
+        messages
+    )
+    assert any(
+        message.startswith("event=realtime_connect_failed ") for message in messages
+    ), messages
+    assert any(
+        "error_category=invalid_credentials" in message for message in messages
+    ), messages
+    # Never the key, in the one log that is written to disk.
+    assert not any(_KEY_FRAGMENT in message for message in messages)
 
 
 # ---------------------------------------------------------------------------
