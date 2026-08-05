@@ -175,18 +175,20 @@ handsfree_engine = "auto"     # "auto" | "pipeline" | "realtime"
     exports, summaries and any later reader consult instead of inferring it
     from UI copy. The visible `⏹ interrupted` marker stays in the content for
     the human reader.
-  - Seeding trims that marker as a **suffix**, unconditionally, because
-    `_finish_console_realtime_reply_row` only ever *appends* it: the trim
-    removes every marker this app has written while leaving the same
-    characters alone anywhere else, so a user who types "the docs say
-    ⏹ interrupted means cut off" has their sentence seeded intact (the old
-    global `replace` ate it). This branch is **permanent, not transitional**:
-    only the realtime loop stamps metadata, so every ordinary typed turn
-    reaches the seed builder with no metadata at all — a strip that read
-    "no metadata ⇒ legacy interrupted reply" would mangle live user text
-    forever. Trimming regardless of the flag also covers the case where the
-    marker append succeeded and the metadata write was swallowed; that
-    disagreement is logged rather than acted on.
+  - Seeding trims that marker as a **suffix**, on every row, with no
+    condition attached, because `_finish_console_realtime_reply_row` only ever
+    *appends* it: the trim removes every marker this app has written while
+    leaving the same characters alone inside a turn's actual words, so a user
+    who types "the docs say ⏹ interrupted means cut off" has their sentence
+    seeded intact (the old global `replace` ate it). The trim is deliberately
+    **not gated on the flag**: only the realtime loop stamps metadata, so every
+    ordinary typed turn reaches the seed builder with none at all — a gate
+    reading "no metadata ⇒ legacy interrupted reply" would mangle live user
+    text forever, and a gate reading the flag alone would leak chrome whenever
+    the marker append succeeded but the metadata write was swallowed. Removing
+    chrome this code appended is a mechanical undo, not an inference; where
+    marker and flag disagree, in either direction, that is logged rather than
+    acted on.
   - `transcript_status` (`pending` → `final`/`empty`/`failed`) closes the
     empty-user-row strand: a transcript that legitimately came back empty now
     records that it did, instead of leaving a blank row with no explanation.

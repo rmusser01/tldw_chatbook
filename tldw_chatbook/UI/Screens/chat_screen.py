@@ -7675,24 +7675,34 @@ class ChatScreen(BaseAppScreen):
         The interrupted marker is OUR chrome for the human reader (final
         review M4): replaying it into the model's context on every reseed
         would teach it that "⏹ interrupted" is part of how the assistant
-        speaks. What changed in task-2364 is WHERE the decision comes
-        from -- `metadata.interrupted`, a fact the engine recorded, rather
-        than an inference drawn from UI copy.
+        speaks. So it is removed here -- as a TRAILING marker, always, on
+        every row, with no condition attached.
 
-        The marker is trimmed as a SUFFIX regardless of the flag, and that
-        is the whole trick: `_finish_console_realtime_reply_row` only ever
-        APPENDS it (via `append_stream_chunk`), so a suffix trim removes
-        every marker this app has ever written while leaving alone the same
-        characters occurring anywhere else. A user who types "the docs say
-        ⏹ interrupted means cut off" gets their sentence seeded intact.
+        Trimming a suffix rather than matching the text anywhere is what
+        makes that safe: `_finish_console_realtime_reply_row` only ever
+        APPENDS the marker (via `append_stream_chunk`), so a suffix trim
+        removes every marker this app has written while leaving alone the
+        same characters occurring in a turn's actual words. A user who
+        types "the docs say ⏹ interrupted means cut off" gets their
+        sentence seeded intact; the earlier global replace ate it.
 
-        The marker-free branch is NOT transitional. Only the realtime loop
-        stamps metadata onto rows, so every ordinary typed turn -- past,
-        present and future -- arrives here with `metadata is None`; a strip
-        that assumed "no metadata means a legacy interrupted reply" would
-        be mangling live user text forever. Trimming the suffix
-        unconditionally also means a reply whose metadata write was
-        swallowed while its marker landed still does not seed chrome.
+        Deliberately NOT gated on `metadata.interrupted` (task-2364, review
+        round 1). Only the realtime loop stamps metadata onto rows, so
+        every ordinary typed turn -- past, present and future -- arrives
+        here with `metadata is None`: a gate reading "no metadata means a
+        legacy interrupted reply" would mangle live user text forever, and
+        a gate reading the flag alone would leak chrome whenever the marker
+        append succeeded but the metadata write was swallowed (they are
+        separate, separately-swallowed calls). `interrupted` remains the
+        SEMANTIC record -- what exports, summaries and later readers
+        consult; removing chrome this code appended is a mechanical undo,
+        not an inference, so it needs no fact to consult.
+
+        Where the two disagree, that is logged rather than acted on: it is
+        the only place the divergence is observable, and each direction
+        means something different (a marker without the flag is a stale
+        marker; a flag without the marker is a LOST one, so the reader
+        never saw the reply was cut).
 
         Args:
             message: A transcript row from the loop's Console session.
@@ -7704,16 +7714,20 @@ class ChatScreen(BaseAppScreen):
         raw = str(message.content or "")
         trimmed = raw.removesuffix(CONSOLE_REALTIME_INTERRUPTED_MARKER)
         metadata = message.metadata
-        if trimmed != raw and metadata is not None and not metadata.interrupted:
-            # A row the engine stamped, carrying the marker but NOT the
-            # flag: the append and the metadata write are separate calls,
-            # each independently swallowed on failure, so this is the one
-            # place the divergence is observable. The text is trimmed
-            # either way -- this only names it.
-            logger.debug(
-                "Console realtime: seeded a row whose marker and interrupted "
-                "flag disagree: op=realtime_seed_text"
-            )
+        if metadata is not None:
+            if trimmed != raw and not metadata.interrupted:
+                logger.debug(
+                    "Console realtime: seeded a row carrying the interrupted "
+                    "marker without the flag; the metadata write was likely "
+                    "swallowed: op=realtime_seed_text"
+                )
+            elif trimmed == raw and metadata.interrupted:
+                logger.debug(
+                    "Console realtime: seeded a row flagged interrupted with no "
+                    "marker in its text; the marker append was likely "
+                    "swallowed, so the reader never saw the cut: "
+                    "op=realtime_seed_text"
+                )
         return trimmed.strip()
 
     def _console_realtime_row_metadata(

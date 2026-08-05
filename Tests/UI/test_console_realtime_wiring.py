@@ -2411,10 +2411,10 @@ async def test_a_completed_reply_is_not_marked_interrupted(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_seed_uses_the_interrupted_flag_not_the_marker_text(monkeypatch):
-    """AC#2: the reseed builder reads the structured flag. The marker is
-    still trimmed off what the model sees -- it is our chrome -- but the
-    DECISION comes from metadata, not from matching UI copy."""
+async def test_seed_trims_the_marker_from_a_flagged_interrupted_reply(monkeypatch):
+    """The ordinary interrupted case: a reply the engine cut short carries
+    both the flag and the trailing marker, and the marker never reaches the
+    model -- it is our chrome for the human reader."""
     _patch_realtime_config(monkeypatch)
     app = _build_test_app()
     rig = _install_realtime_fakes(app)
@@ -2442,8 +2442,9 @@ async def test_seed_uses_the_interrupted_flag_not_the_marker_text(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_seed_keeps_marker_shaped_text_a_user_actually_said(monkeypatch):
-    """The old blind string-strip mangled any row containing the marker
-    text; only a row the engine actually marked interrupted is trimmed."""
+    """The marker is trimmed as a SUFFIX, so text merely CONTAINING it
+    survives: the old global replace mangled any row whose words held the
+    marker string, which is live user text, not chrome."""
     _patch_realtime_config(monkeypatch)
     app = _build_test_app()
     rig = _install_realtime_fakes(app)

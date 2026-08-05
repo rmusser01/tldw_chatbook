@@ -89,6 +89,17 @@ in `backlog/docs/lessons-live-verification.md`.
 Continuity section, `backlog/docs/lessons-live-verification.md`, and the
 store/resume/realtime test suites (plus four schema-version literals in sibling
 DB tests that move with each migration).
+**AC #2, adjudicated (review round 1 -- do not re-litigate).** The seed
+builder's marker trim is unconditional, not gated on `metadata.interrupted`,
+and that satisfies "reads the field instead of string-matching": `interrupted`
+remains the SEMANTIC source -- what exports, summaries and resume consult --
+while removing a marker this same code appended is a mechanical undo of chrome,
+not an inference about the turn. Gating it was tried and is worse in both
+directions: gating on "no metadata" mangles live typed text forever (only
+realtime rows are ever stamped), and gating on the flag alone leaks chrome
+whenever the marker append lands and the metadata write is swallowed (F1/F2).
+Marker/flag disagreement is logged, in both directions, rather than acted on.
+
 <!-- SECTION:NOTES:END -->
 
 ## Description (the why)
