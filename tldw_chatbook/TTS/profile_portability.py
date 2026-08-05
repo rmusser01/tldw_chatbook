@@ -211,15 +211,20 @@ def decode_portable_profile(payload: object) -> PortableProfileDecodeResult:
         if type(profile_id_value) is not str:
             raise ValueError
         profile_id = UUID(profile_id_value)
-        draft = TTSProfileDraft(
-            display_name=payload["name"],
-            provider_id=payload["provider_id"],
-            model_id=payload["model_id"],
-            voice_id=payload["voice_id"],
-            response_format=payload["response_format"],
-            speed=payload["speed"],
-            options=payload["options"],
-        )
+        try:
+            draft = TTSProfileDraft(
+                display_name=payload["name"],
+                provider_id=payload["provider_id"],
+                model_id=payload["model_id"],
+                voice_id=payload["voice_id"],
+                response_format=payload["response_format"],
+                speed=payload["speed"],
+                options=payload["options"],
+            )
+        except ProfileValidationError as e:
+            if e.code == "provider_id":
+                return _skip_result("unsupported_provider")
+            raise
         if draft.provider_id != "audio_cpp":
             return _skip_result("unsupported_provider")
         return PortableProfileDecodeResult(

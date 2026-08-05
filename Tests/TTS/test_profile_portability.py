@@ -132,7 +132,7 @@ def test_portable_profile_value_rejects_non_audio_cpp_selection() -> None:
             profile_id=UUID("00000000-0000-4000-8000-000000000000"),
             draft=TTSProfileDraft(
                 display_name="Unsupported voice",
-                provider_id="future_tts",
+                provider_id="openai",
                 model_id="future-model",
                 voice_id=None,
                 response_format="wav",
@@ -197,11 +197,11 @@ def test_malformed_known_payload_is_rejected_without_echoing_values(
 def test_size_and_depth_are_checked_before_skipping_an_unknown_provider() -> None:
     portability = _portability_module()
     oversized = _valid_payload(
-        provider_id="future_tts",
+        provider_id="openai",
         options={"blob": "x" * (16 * 1024)},
     )
     too_deep = _valid_payload(
-        provider_id="future_tts",
+        provider_id="openai",
         options={"a": {"b": {"c": {"d": {}}}}},
     )
 

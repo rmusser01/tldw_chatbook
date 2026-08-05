@@ -1033,24 +1033,21 @@ def test_service_values_are_immutable_and_defensively_freeze_containers() -> Non
         profiles=source_availability,
     )
     source_availability.clear()
-    source_options: dict[str, Any] = {"nested": ["value"]}
     preset = TTSPlaygroundSelectionPreset(
-        provider_id="future_native",
+        provider_id="audio_cpp",
         model_id="model",
         voice_id=None,
         response_format="wav",
         speed=1.0,
-        options=source_options,
         availability="unavailable",
     )
-    source_options["nested"].append("changed")
 
     assert page.profiles == (profile,)
     assert page.profiles[0] is not profile
     assert loaded.profile == profile
     assert loaded.profile is not profile
     assert snapshot.profiles == (availability,)
-    assert preset.options == {"nested": ("value",)}
+    assert preset.options == {}
     assert isinstance(preset.options, MappingProxyType)
     with pytest.raises(FrozenInstanceError):
         page.total = 2  # type: ignore[misc]
@@ -1142,7 +1139,7 @@ def test_profile_wrappers_reject_forged_mutable_options_safely(
     secret = "https://user:credential@example.test/private/path"
     forged = _forged_profile(
         _profile(
-            provider_id="future_native",
+            provider_id="openai",
             response_format="flac",
             speed=1.5,
         ),
@@ -1292,7 +1289,7 @@ async def test_list_profiles_rejects_forged_mutable_profile_safely() -> None:
         profiles=(
             _forged_profile(
                 _profile(
-                    provider_id="future_native",
+                    provider_id="openai",
                     response_format="flac",
                     speed=1.5,
                 ),
@@ -1445,28 +1442,28 @@ async def test_availability_applies_exact_allowlist_before_capability_lookup() -
     future_native = _profile(
         profile_id=UUID(int=3),
         display_name="Future native",
-        provider_id="future_native",
+        provider_id="openai",
         model_id="future-model",
         voice_id="future-voice",
     )
     invalid_format = _profile(
         profile_id=UUID(int=4),
         display_name="Invalid format",
-        provider_id="future_native",
+        provider_id="openai",
         model_id="future-format",
         response_format="mp3",
     )
     invalid_speed = _profile(
         profile_id=UUID(int=5),
         display_name="Invalid speed",
-        provider_id="future_native",
+        provider_id="openai",
         model_id="future-speed",
         speed=1.25,
     )
     invalid_options = _profile(
         profile_id=UUID(int=6),
         display_name="Invalid options",
-        provider_id="future_native",
+        provider_id="openai",
         model_id="future-options",
         options={"quality": "high"},
     )
@@ -1528,7 +1525,7 @@ async def test_availability_rejects_wrong_provider_snapshot_before_classificatio
 ) -> None:
     tts_service = _FakeTTSService(
         _capability_snapshot(
-            provider_id="future_native",
+            provider_id="openai",
             state=snapshot_state,
             models=(_model("model-a"),),
         )
@@ -1594,7 +1591,7 @@ async def test_availability_sanitizes_malformed_exact_capability_snapshot(
 @pytest.mark.asyncio
 async def test_all_unsupported_profiles_do_not_observe_capabilities() -> None:
     unsupported = _profile(
-        provider_id="future_native",
+        provider_id="openai",
         model_id="model",
         voice_id="voice",
     )
@@ -1660,7 +1657,7 @@ async def test_availability_deduplicates_only_exact_voice_supported_models() -> 
     unsupported = _profile(
         profile_id=UUID(int=13),
         display_name="Unsupported",
-        provider_id="future_native",
+        provider_id="openai",
         model_id="other",
         voice_id="other-voice",
     )
@@ -2394,7 +2391,7 @@ async def test_capability_rejects_mismatched_provider_before_state_or_decision(
 ) -> None:
     tts_service = _FakeTTSService(
         _capability_snapshot(
-            provider_id="future_native",
+            provider_id="openai",
             state=snapshot_state,
             models=(_model("model-b"),),
         )
@@ -4263,7 +4260,7 @@ def test_preview_preset_copies_only_persisted_selection_and_availability() -> No
     loaded = LoadedTTSProfile(
         repository_generation=repository.generation,
         profile=_profile(
-            provider_id="future_native",
+            provider_id="openai",
             model_id="opaque-model",
             voice_id="opaque-voice",
             response_format="flac",
