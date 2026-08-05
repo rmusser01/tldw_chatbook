@@ -395,6 +395,9 @@ class SplashScreen(Container):
 
     def _update_animation(self) -> None:
         """Update animation frame."""
+        # Skip while the screen/tab is inactive so hidden tabs burn no CPU.
+        if not self.is_attached or not self.screen.is_active:
+            return
         if self.effect_handler:
             try:
                 # Get next frame from effect

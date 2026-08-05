@@ -251,6 +251,9 @@ class MainNavigationBar(Container):
 
     def _update_overflow_hints(self) -> None:
         """Toggle the ‹ / More indicators and their text from real state."""
+        # Skip while the screen/tab is inactive so hidden tabs burn no CPU.
+        if not self.is_attached or not self.screen.is_active:
+            return
         try:
             strip = self.query_one("#nav-destination-strip", Horizontal)
             left_hint = self.query_one("#nav-overflow-hint-left", Static)

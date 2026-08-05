@@ -400,6 +400,9 @@ class ActivityLogWidget(Widget):
 
     def _update_timestamps(self) -> None:
         """Update relative timestamps periodically."""
+        # Skip while the screen/tab is inactive so hidden tabs burn no CPU.
+        if not self.is_attached or not self.screen.is_active:
+            return
         # This would update all visible timestamps
         # For now, just trigger a display update
         self._update_display()
