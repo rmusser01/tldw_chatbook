@@ -815,6 +815,32 @@ CONSOLE_REALTIME_SUPPORTED_PROVIDER = "openai"
 #: so tests can shrink it instead of waiting out a real 8 s.
 CONSOLE_REALTIME_CONNECT_TIMEOUT_SECONDS = 8.0
 
+#: Ceiling on the window between `connect()` RETURNING and the provider
+#: acknowledging the handshake (`on_ready`). A separate ceiling from the
+#: one above because they are separate failures: live-confirmed, OpenAI
+#: accepts the WebSocket upgrade for an invalid key and only then rejects,
+#: so `connect()` returns perfectly happily and the refusal arrives as
+#: callbacks. This is the backstop for any no-ready path that arrives as
+#: NOTHING at all -- see `_tick_console_realtime`.
+CONSOLE_REALTIME_READY_TIMEOUT_SECONDS = 8.0
+
+#: Longest sanitized provider-failure text this wiring will carry into a
+#: toast. Long enough to name a cause, short enough that an unexpectedly
+#: chatty provider cannot paste an essay (or a credential) into the UI.
+CONSOLE_REALTIME_FAILURE_TEXT_MAX_CHARS = 120
+
+#: Matches the `(code=<something>)` suffix `OpenAIRealtimeSession` appends
+#: to provider error events. The code is provider vocabulary
+#: ("invalid_api_key"), never user material, so it survives sanitization
+#: when the rest of the message does not.
+_CONSOLE_REALTIME_CODE_RE = re.compile(r"\(code=([A-Za-z0-9_.\- ]{1,64})\)")
+
+#: Anything long, unbroken and word-character-ish looks like a credential.
+#: Applied AFTER the leading-clause truncation as a second net, because
+#: "take the text before the first colon" only helps when the provider
+#: happened to put the key after one.
+_CONSOLE_REALTIME_SECRET_RE = re.compile(r"[A-Za-z0-9_\-]{24,}")
+
 #: Input AND output PCM rate for the realtime engine, in Hz. Both ends are
 #: pinned to the same rate on purpose: the mic tap captures at it, the
 #: session declares it in both directions, and the sink plays at it, so
@@ -879,6 +905,14 @@ CONSOLE_REALTIME_AUDIO_UNAVAILABLE_MESSAGE = (
 CONSOLE_REALTIME_CONNECT_TIMEOUT_MESSAGE = (
     "the connection timed out after {seconds:g}s"
 )
+#: `connect()` returned but the provider never acknowledged the handshake.
+CONSOLE_REALTIME_HANDSHAKE_INCOMPLETE_MESSAGE = (
+    "the handshake never completed after {seconds:g}s"
+)
+#: Fallback when a provider failure sanitizes down to nothing at all.
+CONSOLE_REALTIME_UNSPECIFIED_FAILURE_MESSAGE = (
+    "the realtime session could not be opened"
+)
 CONSOLE_REALTIME_FALLBACK_TEMPLATE = (
     "Realtime voice unavailable ({reason}); using the pipeline hands-free "
     "loop instead."
@@ -936,7 +970,14 @@ class ConsoleRealtimeSession:
         ready: True once the provider acknowledged the handshake and the
             tap was flushed; an adopted transcript arriving before that is
             held in `pending_text_turn` rather than enqueued into a session
-            that cannot send it yet.
+            that cannot send it yet. Also the discriminator for what a
+            close/error MEANS (see `_on_console_realtime_closed`): before
+            it, a refused connect; after it, a transport drop.
+        connect_returned_at: Monotonic stamp of the moment `connect()`
+            returned for the outstanding attempt, or None when no attempt
+            is waiting on `on_ready`. Drives the ready deadline in
+            `_tick_console_realtime` -- the backstop for a no-ready path
+            that arrives as nothing at all.
         mic_gated: The gate value last synced to `tap.set_gated(...)` --
             the wiring's record of rule 7, and what tests assert against
             (the tap's own flag is private).
@@ -979,6 +1020,7 @@ class ConsoleRealtimeSession:
     tick_timer: Any = None
     connect_attempt: int = 0
     ready: bool = False
+    connect_returned_at: float | None = None
     mic_gated: bool = False
     fed_bytes: int = 0
     user_row_id: str | None = None
@@ -8051,6 +8093,55 @@ class ChatScreen(BaseAppScreen):
         except Exception as exc:  # noqa: BLE001 - every failure is a fallback
             await self._close_console_realtime_session(provider_session)
             self._console_realtime_connect_failed(session, attempt, exc)
+            return
+        if self._console_realtime is not session or session.connect_attempt != attempt:
+            return
+        # The transport is up, but the provider has NOT accepted the
+        # session yet (`on_ready` is the acknowledgement). Arm the ready
+        # deadline for that window -- see `CONSOLE_REALTIME_READY_TIMEOUT_
+        # SECONDS`; a refusal usually arrives as a callback long before
+        # this fires, and this exists for the case where nothing arrives
+        # at all.
+        session.connect_returned_at = time.monotonic()
+
+    @staticmethod
+    def _sanitize_console_realtime_failure(raw: object) -> str:
+        """Reduce a provider failure to something safe to show and log.
+
+        Provider error text quotes credentials. OpenAI's own invalid-key
+        message is literally `Incorrect API key provided: sk-proj-…` --
+        so the raw string can never reach a toast, and (the discipline
+        this codebase already keeps for `loguru`'s frame dumps) can never
+        reach a log line either.
+
+        Three steps, in order:
+          1. Keep the code the session appended (`(code=invalid_api_key)`)
+             -- provider vocabulary, never user material, and the single
+             most useful token in the whole message.
+          2. Keep only the LEADING clause, up to the first `:` or newline.
+             That is where providers put the human summary and after which
+             they put the offending value.
+          3. Scrub any long unbroken token that survived anyway, and cap
+             the length.
+
+        Args:
+            raw: An exception or reason string from the provider.
+
+        Returns:
+            Sanitized text, never empty.
+        """
+        text = str(raw or "").strip()
+        if not text:
+            return CONSOLE_REALTIME_UNSPECIFIED_FAILURE_MESSAGE
+        code_match = _CONSOLE_REALTIME_CODE_RE.search(text)
+        code = code_match.group(1).strip() if code_match else ""
+        lead = text.splitlines()[0].split(":", 1)[0].strip()
+        lead = _CONSOLE_REALTIME_SECRET_RE.sub("…", lead).strip()
+        if code and code not in lead:
+            lead = f"{lead} ({code})".strip() if lead else code
+        if len(lead) > CONSOLE_REALTIME_FAILURE_TEXT_MAX_CHARS:
+            lead = lead[: CONSOLE_REALTIME_FAILURE_TEXT_MAX_CHARS - 1].rstrip() + "…"
+        return lead or CONSOLE_REALTIME_UNSPECIFIED_FAILURE_MESSAGE
 
     def _console_realtime_connect_failed(
         self, session: ConsoleRealtimeSession, attempt: int, exc: BaseException
@@ -8061,13 +8152,21 @@ class ChatScreen(BaseAppScreen):
         `connect-failed`, which the exit handler turns into the loud
         fallback; a failed reconnect exits with `connection-lost`), so this
         never decides for it.
+
+        The SINGLE choke point for every way a connect can fail -- a
+        raising `connect()`, a timeout, a close or an error arriving before
+        the handshake was acknowledged, or the ready deadline -- so
+        sanitization happens here, once, and no caller can forget it.
         """
         if self._console_realtime is not session or session.connect_attempt != attempt:
             return
-        session.failure_text = str(exc) or type(exc).__name__
+        session.connect_returned_at = None
+        session.failure_text = self._sanitize_console_realtime_failure(
+            str(exc) or type(exc).__name__
+        )
         logger.warning(
             "Console realtime: connect attempt failed: "
-            f"op=realtime_connect attempt={attempt} error={exc!r}"
+            f"op=realtime_connect attempt={attempt} reason={session.failure_text!r}"
         )
         session.session = None
         session.controller.on_connect_failed()
@@ -8110,6 +8209,7 @@ class ChatScreen(BaseAppScreen):
                     "Console realtime: flushing the mic tap failed"
                 )
         session.ready = True
+        session.connect_returned_at = None
         session.controller.on_session_ready()
         if reconnected:
             self.app_instance.notify(
@@ -8571,14 +8671,29 @@ class ChatScreen(BaseAppScreen):
     def _on_console_realtime_error(
         self, session: ConsoleRealtimeSession, exc: Exception
     ) -> None:
-        """`on_error`: logged, never fatal on its own.
+        """`on_error`: terminal before the handshake, logged after it.
 
-        A provider error that actually ends the session arrives separately
-        as `on_closed`; treating every error event as terminal would end a
-        working conversation over a single recoverable event.
+        Once the session is live, a provider error that actually ends it
+        arrives separately as `on_closed`, and treating every error event
+        as terminal would end a working conversation over one recoverable
+        event.
+
+        BEFORE `on_ready`, the same event means the opposite: the
+        handshake did not succeed, and (live-confirmed) it is how an
+        invalid key is reported -- OpenAI accepts the WebSocket upgrade,
+        so `connect()` returns cleanly and the refusal arrives here. There
+        is no reply-in-flight to protect at that point, so it routes to
+        the connect-failure path rather than being logged into a chip that
+        would otherwise say `connecting…` forever.
         """
+        if not session.ready:
+            self._console_realtime_connect_failed(
+                session, session.connect_attempt, exc
+            )
+            return
         logger.warning(
-            f"Console realtime: provider error: op=realtime_error error={exc!r}"
+            "Console realtime: provider error: op=realtime_error "
+            f"reason={self._sanitize_console_realtime_failure(exc)!r}"
         )
 
     def _on_console_realtime_closed(
@@ -8586,17 +8701,34 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """`on_closed`: the transport ended.
 
-        Always reported to the FSM as an ERROR close: a close this wiring
-        performed deliberately (exit, reconnect) can never reach here,
-        because both paths supersede the attempt first -- the marshal drops
-        the callback before it lands. So anything that does arrive is by
-        definition an unexpected drop, and the FSM's reconnect-once policy
-        is what decides between a retry and giving up.
+        A close this wiring performed deliberately (exit, reconnect) can
+        never reach here -- both paths supersede the attempt first, and the
+        marshal drops the callback before it lands. So anything arriving
+        here is an unexpected end.
+
+        WHEN it arrives decides what it means. After the handshake, it is
+        a transport drop and the FSM's reconnect-once policy decides
+        between a retry and giving up. BEFORE the handshake was
+        acknowledged, it is a REFUSED CONNECT wearing a close's clothes:
+        the provider accepted the upgrade and then rejected the session
+        (an invalid key closes with 3000/`invalid_api_key`). The FSM
+        deliberately ignores a transport-closed input while `connecting`
+        -- Task 4's state table assumes connect failures surface as
+        `connect()` raising -- so routing it there left the loop parked in
+        `connecting` with no toast, forever. It goes to the same
+        connect-failure path a raising `connect()` takes, which is where
+        the reasoned exit and the loud fallback already live.
         """
+        if not session.ready:
+            self._console_realtime_connect_failed(
+                session, session.connect_attempt, RuntimeError(reason)
+            )
+            return
+        session.failure_text = self._sanitize_console_realtime_failure(reason)
         logger.info(
-            f"Console realtime: transport closed: op=realtime_closed reason={reason!r}"
+            "Console realtime: transport closed: op=realtime_closed "
+            f"reason={session.failure_text!r}"
         )
-        session.failure_text = reason
         session.controller.on_transport_closed(error=True)
 
     # -- intents ------------------------------------------------------------
@@ -8820,7 +8952,27 @@ class ChatScreen(BaseAppScreen):
         session = self._console_realtime
         if session is None:
             return
-        session.controller.tick(time.monotonic())
+        now = time.monotonic()
+        if (
+            not session.ready
+            and session.connect_returned_at is not None
+            and now - session.connect_returned_at
+            >= CONSOLE_REALTIME_READY_TIMEOUT_SECONDS
+        ):
+            # `connect()` returned and then NOTHING arrived -- no ready, no
+            # error, no close. Whatever that is, it is not a live session,
+            # and the entry must not sit at `connecting…` waiting for it.
+            self._console_realtime_connect_failed(
+                session,
+                session.connect_attempt,
+                TimeoutError(
+                    CONSOLE_REALTIME_HANDSHAKE_INCOMPLETE_MESSAGE.format(
+                        seconds=CONSOLE_REALTIME_READY_TIMEOUT_SECONDS
+                    )
+                ),
+            )
+            return
+        session.controller.tick(now)
         self._repaint_console_realtime_chip()
         if session.transcript_dirty:
             session.transcript_dirty = False

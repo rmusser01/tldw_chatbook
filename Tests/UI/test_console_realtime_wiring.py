@@ -168,6 +168,9 @@ class FakeRealtimeSession:
     def fire_closed(self, reason: str = "connection lost") -> None:
         self._fire("on_closed", reason)
 
+    def fire_error(self, exc: Exception) -> None:
+        self._fire("on_error", exc)
+
 
 class FakeRecorder:
     """Stands in for `AudioRecordingService` inside the REAL `RealtimeMicTap`.
@@ -1291,6 +1294,170 @@ async def test_connect_timeout_is_bounded_and_falls_back(monkeypatch):
 # ---------------------------------------------------------------------------
 # Rules 8 + 9: reasoned toasts and reconnect-once
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Second live-gate defect: a handshake the endpoint ACCEPTS and then rejects
+# ---------------------------------------------------------------------------
+
+#: Shaped like OpenAI's real `error` payload for a bad key: the message
+#: quotes a fragment of the key itself, which must never reach a toast or
+#: a log line.
+_KEY_FRAGMENT = "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+_INVALID_KEY_REASON = (
+    f"Incorrect API key provided: {_KEY_FRAGMENT}. You can find your API "
+    "key at https://platform.openai.com/account/api-keys (code=invalid_api_key)"
+)
+
+
+def _capture_warnings() -> tuple[list[str], int]:
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)), level="DEBUG")
+    return records, sink_id
+
+
+@pytest.mark.asyncio
+async def test_close_before_ready_fails_the_connect_instead_of_hanging(monkeypatch):
+    """LIVE GATE: OpenAI ACCEPTS the WebSocket upgrade for a bad key and
+    only then rejects, via an `error` event plus `close(3000,
+    invalid_api_key)`.
+
+    So `connect()` RETURNS -- no raise, no timeout -- and the failure
+    arrives as callbacks while the FSM is still `connecting`, where a
+    transport-closed input is deliberately ignored. Nothing routed to
+    `on_connect_failed`, so the chip sat at `realtime · connecting…`
+    forever with no toast: the dead entry the spec forbids.
+    """
+    _patch_realtime_config(monkeypatch)
+    monkeypatch.setattr(
+        chat_screen_module.console_voice_input,
+        "probe",
+        lambda: chat_screen_module.console_voice_input.Availability(
+            ok=False, kind="missing-capture", reason="No microphone.", remedy=""
+        ),
+    )
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+    records, sink_id = _capture_warnings()
+
+    try:
+        async with host.run_test(size=(160, 48)) as pilot:
+            console = await _mounted_console(host, pilot)
+            notifications = _capture_notifications(console)
+
+            console.action_toggle_console_hands_free()
+            await _wait_for(lambda: bool(rig.sessions), pilot)
+            await _wait_for(lambda: rig.session.connected, pilot)
+            assert console._console_realtime.controller.state == "connecting"
+
+            rig.session.fire_closed(_INVALID_KEY_REASON)
+            await _wait_for(lambda: console._console_realtime is None, pilot)
+            await pilot.pause()
+
+            assert "connecting" not in _visible_text(console), _visible_text(console)
+            joined = " ".join(message for message, _kw in notifications)
+            assert joined, "the dead entry produced no toast at all"
+            assert "invalid_api_key" in joined, joined
+    finally:
+        logger.remove(sink_id)
+
+    # Never the key itself -- not in the toast, not in any log line.
+    assert _KEY_FRAGMENT not in " ".join(
+        message for message, _kw in notifications
+    ), "a key fragment reached a toast"
+    assert not any(_KEY_FRAGMENT in record for record in records), (
+        "a key fragment reached the log"
+    )
+
+
+@pytest.mark.asyncio
+async def test_error_before_ready_fails_the_connect(monkeypatch):
+    """The provider's `error` event arrives BEFORE the close, so routing it
+    ends the dead entry a beat sooner -- and with the same reason."""
+    _patch_realtime_config(monkeypatch)
+    monkeypatch.setattr(
+        chat_screen_module.console_voice_input,
+        "probe",
+        lambda: chat_screen_module.console_voice_input.Availability(
+            ok=False, kind="missing-capture", reason="No microphone.", remedy=""
+        ),
+    )
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        notifications = _capture_notifications(console)
+
+        console.action_toggle_console_hands_free()
+        await _wait_for(lambda: bool(rig.sessions) and rig.session.connected, pilot)
+
+        rig.session.fire_error(RuntimeError(_INVALID_KEY_REASON))
+        await _wait_for(lambda: console._console_realtime is None, pilot)
+
+        joined = " ".join(message for message, _kw in notifications)
+        assert "invalid_api_key" in joined, joined
+        assert _KEY_FRAGMENT not in joined
+
+
+@pytest.mark.asyncio
+async def test_ready_that_never_arrives_times_out_instead_of_hanging(monkeypatch):
+    """Belt and braces: `connect()` returned and NOTHING followed. No
+    unforeseen no-ready path may hang the entry."""
+    _patch_realtime_config(monkeypatch)
+    monkeypatch.setattr(
+        chat_screen_module, "CONSOLE_REALTIME_READY_TIMEOUT_SECONDS", 0.05
+    )
+    monkeypatch.setattr(
+        chat_screen_module.console_voice_input,
+        "probe",
+        lambda: chat_screen_module.console_voice_input.Availability(
+            ok=False, kind="missing-capture", reason="No microphone.", remedy=""
+        ),
+    )
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        notifications = _capture_notifications(console)
+
+        console.action_toggle_console_hands_free()
+        await _wait_for(lambda: bool(rig.sessions) and rig.session.connected, pilot)
+
+        await _wait_for(lambda: console._console_realtime is None, pilot)
+        joined = " ".join(message for message, _kw in notifications)
+        assert "handshake" in joined.lower(), joined
+
+
+@pytest.mark.asyncio
+async def test_auth_failure_during_reconnect_gives_up_instead_of_hanging(monkeypatch):
+    """The same close shape in the RECONNECTING window must reach the
+    give-up exit -- the reconnect-once allowance is already spent there."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        notifications = _capture_notifications(console)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        session.fire_closed("connection lost")
+        await _wait_for(lambda: len(rig.sessions) == 2, pilot)
+        assert console._console_realtime.controller.state == "reconnecting"
+
+        await _wait_for(lambda: rig.sessions[1].connected, pilot)
+        rig.sessions[1].fire_closed(_INVALID_KEY_REASON)
+        await _wait_for(lambda: console._console_realtime is None, pilot)
+
+        joined = " ".join(message for message, _kw in notifications)
+        assert "connection lost" in joined, joined
+        assert _KEY_FRAGMENT not in joined
 
 
 @pytest.mark.asyncio
