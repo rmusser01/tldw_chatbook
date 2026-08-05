@@ -29,6 +29,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-029](029-versioned-prompt-artifacts-and-safe-improvement-transactions.md) | Accepted | Use schema v2 plus a first-class Prompt/Recipe discriminator, segment-safe composer transactions, recipe-fill responses, and sensitive auxiliary provider calls. |
 | [ADR-030](030-local-library-agent-tool-boundary.md) | Accepted | Share one byte-bounded lexical-only local Library read contract across Console and MCP while keeping Console mode selection and MCP policy boundaries distinct. |
 | [ADR-032](032-local-agent-tool-permission-boundary.md) | Accepted | Register workspace-local agent tools as a first-class provider reusing the MCP permission store under a synthetic server key, with fail-closed approval and workspace-root path confinement. |
+| [ADR-033](033-local-agent-process-execution-boundary.md) | Accepted | Bound model-invocable process execution to fixed-argv read-only git tools without the `process` risk tag (with a binding tripwire), and reject a raw shell tool in favor of tldw_server's governed virtual-CLI design. |
 
 ## Historical Decision Material
 
