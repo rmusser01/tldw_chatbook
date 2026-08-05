@@ -143,7 +143,7 @@ def validate_outbound_url(url: str) -> str:
     return url
 ```
 
-(DNS rebinding caveat: resolution happens again inside httpx; the guard re-checks every redirect hop, which bounds the window. Document this in the docstring. Do NOT attempt to pin the connection IP — that's the heavy version, not needed here.)
+(DNS rebinding caveat: resolution happens again inside httpx; the guard re-checks every redirect hop, which bounds the window. Document this in the docstring. Do NOT attempt to pin the connection IP — that's the heavy version, not needed here. `LocalToolError` is imported at MODULE level — `from .local_tool_impls import LocalToolError` at the top of the file; there is no circular-import risk, and the tests import it from `web_tool_impls`.)
 
 - [ ] **Step 4:** tests pass
 - [ ] **Step 5:** `git commit -m "feat: SSRF guard for outbound web tools"`
@@ -195,7 +195,7 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
     """
 ```
 
-Implementation notes: manual redirect following (httpx `follow_redirects=False`, loop with per-hop `validate_outbound_url`); read response streaming with a byte cap (`response.iter_bytes` bound, or read then cap — bounded reads preferred); rate limiter = min interval per `urlsplit(url).hostname` (sleep the remainder; tests monkeypatch `time.monotonic`/`time.sleep`); cache keyed by url. `max_bytes` arg clamped to `FETCH_HARD_MAX_BYTES`. Keep the module's cache/rate-limit dicts module-level but expose a `_reset_state_for_tests()` helper.
+Implementation notes: manual redirect following (httpx `follow_redirects=False`, loop with per-hop `validate_outbound_url`); read response streaming with a byte cap (`response.iter_bytes` bound, or read then cap — bounded reads preferred); rate limiter = min interval per `urlsplit(url).hostname` (sleep the remainder; tests monkeypatch `time.monotonic`/`time.sleep`); cache keyed by url. `max_bytes` arg clamped to `FETCH_HARD_MAX_BYTES`. Keep the module's cache/rate-limit dicts module-level but expose a `_reset_state_for_tests()` helper. **Tests must monkeypatch `socket.getaddrinfo` (returning a public IP) or use literal public IPs in fixture URLs — `validate_outbound_url` does real DNS on every hop, so fake hostnames like `example.test` will fail to resolve for real.**
 
 - [ ] **Step 3:** tests pass
 - [ ] **Step 4:** `git commit -m "feat: web_fetch core with SSRF guard, caps, rate limit, cache"`
@@ -248,7 +248,7 @@ Design (binding): the provider is per-run and context-free per call, so todo sta
 - Test: `Tests/Agents/test_local_tools_integration.py`
 
 - [ ] **Step 1:** Add to the composed system prompt one line (verbatim): `Additional tools (file, web, git, and more) are available but not shown; use find_tools to search the catalog and load_tools to load their schemas before calling them.` — placed so it only appears when the registry catalog exceeds the direct-disclosure threshold (check how compose happens vs when disclosure is decided; if the prompt is composed before registry size is known, include the line unconditionally with a "when available" framing — pick the cleaner option and note it). Test: composed prompt contains the hint.
-- [ ] **Step 2: Integration tests** — extend the phase-2 padded find/load e2e: a scripted run where the model uses `find_tools` for "fetch", loads and calls `web_fetch` (handler monkeypatched to avoid network — or mock at the httpx layer), asserting one approval round trip; and a `todo_write` e2e asserting the session list mutated and one approval round trip (mutates tag floors inherited allow → ask; the test's resolve_state returns allow-inherited or ask to exercise this — verify which).
+- [ ] **Step 2: Integration tests** — extend the phase-2 padded find/load e2e: a scripted run where the model uses `find_tools` for "fetch", loads and calls `web_fetch` (handler monkeypatched to avoid network — or mock at the httpx layer), asserting one approval round trip; and a `todo_write` e2e asserting the session list mutated and one approval round trip (mutates tag floors inherited allow → ask; BEFORE writing this test, read `MCP/permission_store.py`'s `resolve_effective_state` risk-floor logic (~lines 601-608) and construct the test's `resolve_state` return value deliberately — an inherited allow (`origin="server_default"` or `"global_default"`) floors to ask for a mutates-tagged tool, an explicit `origin="tool_override"` allow does not).
 - [ ] **Step 3:** full `Tests/Agents Tests/Tools Tests/Chat` green (minus known pre-existing failures)
 - [ ] **Step 4:** `git commit -m "feat: tool-discovery hint + research-tool e2e coverage"`
 
