@@ -744,6 +744,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # fresh pane would silently turn "watch everything" into the default,
         # and seeding the default over a cleared field would be the reverse.
         self._source_create_draft_selectors: str | None = None
+        # TASK-2302: the create form's chosen type and destination, mirrored
+        # for the same reason as the fields above. `None` means "the pane has
+        # not reported one", which is why the destination mirror is `None`
+        # here and not `SourcesPane.UNASSIGNED_DESTINATION` -- an untouched
+        # form takes its destination from the live scope
+        # (`_scope_default_destination`), not from a stale mirror.
+        self._source_create_draft_type: str | None = None
+        self._source_create_draft_destination: Any = None
         # Mirrors RulesPane's edit-form state (Finding 4, fix round 2): the
         # same rebuild-destroys-pane-local-state failure mode as the Sources
         # create form above, but for an in-progress rule EDIT rather than a
@@ -1597,6 +1605,41 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             logger.opt(exception=True).debug("Failed to resolve scoped source rows.")
             return []
 
+    def _create_form_watchlist_choices(self) -> list[dict[str, Any]]:
+        """Watchlists the create form may file a new source into (TASK-2302).
+
+        Empty whenever membership cannot be written at all -- the server
+        backend has no wire path for it and a missing bundle service has no
+        store, exactly the two conditions `_tree_write_disabled_reason`
+        already names for the rail's own write verbs. Offering a destination
+        the create would then silently ignore is the defect this task exists
+        to remove, restated one control over; with no choices the Select
+        still renders, showing `Unassigned`, which is what actually happens.
+        """
+        if self._tree_write_disabled_reason() is not None:
+            return []
+        return [dict(watchlist) for watchlist in self._tree_watchlists]
+
+    def _scope_default_destination(self) -> Any:
+        """The watchlist a new source joins by default: the one in scope.
+
+        TASK-2302 AC#1. The `all` and `unassigned` roots are not watchlists,
+        so they resolve to Unassigned -- which is the truthful answer for
+        both, and for a `source` scope the answer is that source's own
+        watchlist (a source node is always reached THROUGH one).
+
+        Returns:
+            A watchlist id, or `SourcesPane.UNASSIGNED_DESTINATION`.
+        """
+        scope = self.tree_scope
+        if scope.kind in ("watchlist", "source") and scope.watchlist_id is not None:
+            if any(
+                int(watchlist.get("id", -1)) == int(scope.watchlist_id)
+                for watchlist in self._create_form_watchlist_choices()
+            ):
+                return int(scope.watchlist_id)
+        return SourcesPane.UNASSIGNED_DESTINATION
+
     def _tree_scope_label(self, rows: Sequence[Mapping[str, Any]]) -> str:
         """A human name for `tree_scope` -- "All sources", "Unassigned", a
         watchlist's name, or a single source's name.
@@ -1903,6 +1946,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # watchlist.
             sources_pane.sources = self.scoped_loaded_sources()
             sources_pane.selected_source = self.selected_source
+            # TASK-2302: the destination Select's options and its default,
+            # seeded BEFORE `show_create_form` so a form that opens as part
+            # of this very rebuild has them. The pane holds no service of its
+            # own, the same as every other pane here.
+            sources_pane.watchlist_choices = self._create_form_watchlist_choices()
+            sources_pane.default_destination = self._scope_default_destination()
+            sources_pane.create_draft_destination = (
+                self._source_create_draft_destination
+                if self._source_create_draft_destination is not None
+                else sources_pane.default_destination
+            )
+            if self._source_create_draft_type is not None:
+                sources_pane.create_draft_source_type = self._source_create_draft_type
             # Seed the create-form draft so it survives this pane being
             # reconstructed (see the note on `_source_create_draft` in
             # __init__ and CreateFormDraftChanged/CreateFormVisibilityChanged
@@ -3851,6 +3907,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         }
         if event.ignore_selectors is not None:
             self._source_create_draft_selectors = event.ignore_selectors
+        if event.source_type is not None:
+            self._source_create_draft_type = event.source_type
+        if event.destination is not None:
+            self._source_create_draft_destination = event.destination
 
     @on(CreateFormVisibilityChanged)
     def handle_source_create_visibility_changed(
@@ -4203,17 +4263,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # Back to "untouched", so the next create form is prefilled again
         # rather than inheriting the selectors of the source just submitted.
         self._source_create_draft_selectors = None
+        # Same, for the type and the destination (TASK-2302): the next form
+        # opens at the default feed type and at whatever scope is current
+        # THEN, not at the one this submission happened to use.
+        self._source_create_draft_type = None
+        self._source_create_draft_destination = None
         self.run_worker(self._create_source(event.payload), exclusive=True)
 
     async def _create_source(self, payload: dict[str, Any]) -> None:
+        # TASK-2302: the destination is not part of the source record -- it
+        # is a membership row -- so it is lifted out before the payload
+        # reaches a backend that has no column for it.
+        watchlist_id = payload.pop("watchlist_id", None)
         try:
-            await self._controller.create_source(
+            created = await self._controller.create_source(
                 runtime_backend=self.runtime_backend,
                 payload=payload,
             )
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify("Source created.", severity="information")
+            destination = self._file_created_source(created, watchlist_id)
+            # markup=False: the destination is a user-typed watchlist name.
+            self._notify_watchlists(
+                f"Source created in {destination}.", markup=False
+            )
         except Exception:
             logger.opt(exception=True).warning("Failed to create source.")
             notify = getattr(self.app_instance, "notify", None)
@@ -4230,6 +4301,51 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._refresh_overview_data()
         self.run_worker(self._load_sources(), exclusive=True, group="wc_sources")
         self._load_tree_data()
+
+    def _file_created_source(
+        self, created: Mapping[str, Any] | None, watchlist_id: Any
+    ) -> str:
+        """Write the new source's membership row and name where it landed.
+
+        TASK-2302 AC#2. The confirmation is derived from what this method
+        actually did, not from what the form asked for: a destination that
+        could not be honoured (no bundle service, a source the backend gave
+        no local id) reports Unassigned, which is where the source really is.
+        A toast claiming a watchlist the source is not in would be the exact
+        defect this task exists to remove, restated as a lie instead of a
+        silence.
+
+        Args:
+            created: The normalized row `create_source` returned.
+            watchlist_id: The chosen watchlist id, or None for Unassigned.
+
+        Returns:
+            The destination as it should be named to the user -- a quoted
+            watchlist name, or `Unassigned`.
+        """
+        unassigned = "Unassigned"
+        if watchlist_id is None:
+            return unassigned
+        service = self._watchlist_bundle_service()
+        if service is None or self._tree_write_disabled_reason() is not None:
+            return unassigned
+        # The raw local subscription id, not the namespaced `id`
+        # (`local:subscription:5`) -- membership rows key on the former, the
+        # same distinction `_resume_source` documents.
+        source_id = (created or {}).get("source_id")
+        if source_id is None:
+            logger.warning(
+                "Created source carries no local id; leaving it unassigned."
+            )
+            return unassigned
+        try:
+            service.add_source(int(watchlist_id), int(source_id))
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to add the new source to its watchlist."
+            )
+            return unassigned
+        return f'"{self._watchlist_display_name(int(watchlist_id))}"'
 
     @on(CancelRunRequested)
     def handle_cancel_run_requested(self, event: CancelRunRequested) -> None:
@@ -4668,6 +4784,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         except NoMatches:
             return
         sources_pane.sources = self.scoped_loaded_sources()
+        # TASK-2302, and pushed from exactly here for the same reason the
+        # rows are: this method is called from `_apply_tree_data_to_live_
+        # surfaces` (a watchlist was created, renamed or deleted) and from
+        # `watch_tree_scope` (the user moved), which are the only two events
+        # that can change either the destination CHOICES or the default. Both
+        # are plain reactive assignments -- an open create form is not
+        # rebuilt, so a half-typed draft is untouched; its Select re-reads
+        # these on the next compose, which the next open supplies.
+        sources_pane.watchlist_choices = self._create_form_watchlist_choices()
+        sources_pane.default_destination = self._scope_default_destination()
 
     async def _load_sources(self) -> None:
         notify = getattr(self.app_instance, "notify", None)

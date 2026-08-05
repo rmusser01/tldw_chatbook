@@ -80,6 +80,29 @@ class PersistingSourcesPaneHarness(SourcesPaneHarness):
             self.create_error = exc
 
 
+async def _open_page_create_form(pilot, app) -> SourcesPane:
+    """Open the create form with a page-scrape type chosen.
+
+    TASK-2302 renders the noise field only for the url family (CSS selectors
+    describe elements on a page; an RSS feed has none), so every test in this
+    module that is about that field has to put the form in the state the
+    field exists in. `Select.value` is the same state change a click through
+    the overlay makes, and the pane recomposes around it.
+    """
+    pane = app.query_one(SourcesPane)
+    pane.query_one("#sources-new-button", Button).press()
+    await pilot.pause()
+    pane.query_one("#sources-create-type", Select).value = "url"
+    for _ in range(100):
+        await pilot.pause()
+        if pane.query("#sources-create-ignore-selectors"):
+            break
+    assert pane.query("#sources-create-ignore-selectors"), (
+        "choosing a page type did not bring the noise field back"
+    )
+    return pane
+
+
 async def _create_through_the_form(pilot, app, **field_values) -> dict:
     """Fill the create form and press `Create`, then return the stored row.
 
@@ -96,9 +119,7 @@ async def _create_through_the_form(pilot, app, **field_values) -> dict:
     Returns:
         The `subscriptions` row as stored.
     """
-    pane = app.query_one(SourcesPane)
-    pane.query_one("#sources-new-button", Button).press()
-    await pilot.pause()
+    pane = await _open_page_create_form(pilot, app)
 
     pane.query_one("#sources-create-name", Input).value = field_values.pop(
         "name", "Noisy Page"
@@ -158,9 +179,7 @@ async def test_clearing_the_noise_field_stores_no_selectors(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     app = PersistingSourcesPaneHarness(LocalWatchlistsService(db_factory=lambda: db))
     async with app.run_test(size=(120, 40)) as pilot:
-        pane = app.query_one(SourcesPane)
-        pane.query_one("#sources-new-button", Button).press()
-        await pilot.pause()
+        pane = await _open_page_create_form(pilot, app)
         # The real clearing edit, not a `.text` assignment: this is what
         # select-all-and-delete performs, and it posts `TextArea.Changed`.
         pane.query_one("#sources-create-ignore-selectors", TextArea).clear()
@@ -195,9 +214,7 @@ async def test_create_is_refused_when_a_noise_line_is_not_valid_css(tmp_path):
     toasts: list[tuple[str, dict]] = []
     async with app.run_test(size=(120, 40)) as pilot:
         app.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
-        pane = app.query_one(SourcesPane)
-        pane.query_one("#sources-new-button", Button).press()
-        await pilot.pause()
+        pane = await _open_page_create_form(pilot, app)
 
         field = pane.query_one("#sources-create-ignore-selectors", TextArea)
         # One good line, one unparseable one: the refusal must not need the
@@ -256,9 +273,7 @@ async def test_a_valid_multi_line_noise_field_still_creates(tmp_path):
     toasts: list[tuple[str, dict]] = []
     async with app.run_test(size=(120, 40)) as pilot:
         app.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
-        pane = app.query_one(SourcesPane)
-        pane.query_one("#sources-new-button", Button).press()
-        await pilot.pause()
+        pane = await _open_page_create_form(pilot, app)
 
         exotic = (
             default_ignore_selectors_text()
@@ -287,20 +302,23 @@ async def test_noise_field_is_visible_prefilled_and_labelled():
     """
     app = SourcesPaneHarness()
     async with app.run_test(size=(120, 40)) as pilot:
-        pane = app.query_one(SourcesPane)
-        pane.query_one("#sources-new-button", Button).press()
-        await pilot.pause()
+        pane = await _open_page_create_form(pilot, app)
 
         field = pane.query_one("#sources-create-ignore-selectors", TextArea)
         assert field.display and field.region.height > 0, (
             "the noise field is not on screen"
         )
         assert field.text == default_ignore_selectors_text()
-        assert field.border_title == (
-            "Ignore elements (CSS selectors — one rule per line; commas group)"
-        )
+        # TASK-2302 shortened both strings to fit the field's REAL width (see
+        # `_IGNORE_SELECTORS_LABEL`); what they have to say is asserted here,
+        # and that they fit is asserted against the mounted field's own width
+        # in `Tests/UI/test_watchlists_create_form_destination.py`.
+        assert "Ignore elements" in str(field.border_title)
+        assert "CSS selectors" in str(field.border_title)
         # The spam -> add-a-selector loop has to be stated where the field is.
-        assert "silence" in str(field.border_subtitle)
+        assert "silence" in str(field.border_subtitle).lower()
+        # And the syntax detail the shortening displaced is still reachable.
+        assert "comma" in str(field.tooltip)
 
 
 @pytest.mark.asyncio
@@ -316,10 +334,8 @@ async def test_noise_field_is_seeded_from_the_draft_not_the_default():
     """
     app = SourcesPaneHarness()
     async with app.run_test(size=(120, 40)) as pilot:
-        pane = app.query_one(SourcesPane)
-        pane.create_draft_ignore_selectors = ""
-        pane.query_one("#sources-new-button", Button).press()
-        await pilot.pause()
+        app.query_one(SourcesPane).create_draft_ignore_selectors = ""
+        pane = await _open_page_create_form(pilot, app)
 
         field = pane.query_one("#sources-create-ignore-selectors", TextArea)
         assert field.text == "", (

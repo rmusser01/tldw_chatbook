@@ -61,7 +61,13 @@ class CreateFormDraftChanged(Message):
     """
 
     def __init__(
-        self, name: str, url: str, tags: str, ignore_selectors: str | None = None
+        self,
+        name: str,
+        url: str,
+        tags: str,
+        ignore_selectors: str | None = None,
+        source_type: str | None = None,
+        destination: Any = None,
     ) -> None:
         self.name = name
         self.url = url
@@ -70,6 +76,16 @@ class CreateFormDraftChanged(Message):
         #: report (it only ever posts a string, but the screen stores None
         #: for "untouched", so the field is optional for any other caller).
         self.ignore_selectors = ignore_selectors
+        #: TASK-2302. The chosen type and destination, carried for the same
+        #: reason the three free-text fields are: both are pane-local state
+        #: that a workbench rebuild would otherwise reset to a class default,
+        #: silently moving a source the user had already aimed somewhere.
+        #: Both are None when the poster has nothing to report -- the pane's
+        #: own `_post_create_draft_changed` always fills them in, and a
+        #: destination of "no watchlist" is the `UNASSIGNED_DESTINATION`
+        #: string, never None, precisely so the two cases stay distinct.
+        self.source_type = source_type
+        self.destination = destination
         super().__init__()
 
 
@@ -122,6 +138,36 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     # pane, and re-seeding the default over a user's edit (or over a field
     # they deliberately emptied) would be re-filling it behind their back.
     create_draft_ignore_selectors = reactive(default_ignore_selectors_text())
+    # TASK-2302. Which watchlist the new source will JOIN, and the choices
+    # offered for it. Both are screen-seeded (the pane has no service of its
+    # own; see `_build_detail_pane`), and both are plain reactives -- read
+    # once per `compose()` to build the Select, exactly like the three drafts
+    # above. `create_draft_destination` is a draft in the same sense too: a
+    # workbench rebuild constructs a brand new pane, and re-deriving the
+    # destination from the scope there would silently overwrite a choice the
+    # user had already made in a form that is still open.
+    watchlist_choices = reactive[list[dict[str, Any]]]([])
+    default_destination = reactive[Any]("unassigned")
+    create_draft_destination = reactive[Any]("unassigned")
+    # TASK-2302. The chosen source type, which decides whether the
+    # ignore-selectors field is rendered at all -- hence `recompose=True`,
+    # unlike its sibling drafts. Owning the conditional in `compose()` (the
+    # single place that already decides what this form contains) rather than
+    # mounting and unmounting the field from a watcher is deliberate: a
+    # conditionally-composed control with a second, in-place owner is a bug
+    # class this codebase has paid for more than once.
+    create_draft_source_type = reactive("rss", recompose=True)
+
+    #: The value the destination Select carries for "no watchlist". A string
+    #: rather than `None`: `Select` reserves a `NoSelection` sentinel of its
+    #: own and this control is `allow_blank=False`, so "unassigned" has to be
+    #: a real, selectable option value like any other.
+    UNASSIGNED_DESTINATION = "unassigned"
+
+    #: Source types `ignore_selectors` can actually affect. Mirrors
+    #: `InspectorPane._URL_FAMILY_SOURCE_TYPES` -- the same question, asked of
+    #: a type the user is choosing rather than of a source that exists.
+    _URL_FAMILY_TYPES = frozenset({"url", "url_list", "sitemap", "site"})
 
     # Plain attribute, not a reactive: mirrors which row `compose()` last
     # painted as selected, so `_update_selection_highlight` knows which row
@@ -132,11 +178,18 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     #: The create form's focusable controls, in visual order (TASK-1035).
     #: `compose()` yields them in this order and the form is a plain
     #: `Vertical`, so DOM order, paint order and Tab order are the same list.
+    #:
+    #: TASK-2302: `sources-create-ignore-selectors` is now rendered only for
+    #: url-family types, so this tuple is a superset of what is mounted at
+    #: any one moment. That is fine for both readers -- it is a membership
+    #: test in `_focused_create_field_id` and a focus target in `recompose`,
+    #: which already tolerates a missing id (`NoMatches`).
     _CREATE_FORM_FIELD_IDS = (
         "sources-create-name",
         "sources-create-url",
         "sources-create-type",
         "sources-create-active",
+        "sources-create-watchlist",
         "sources-create-tags",
         "sources-create-frequency",
         "sources-create-ignore-selectors",
@@ -153,17 +206,32 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     #:
     #: TASK-1362 close-out (spec AC#2): the help copy also states
     #: `change_threshold`'s role, since it is the other half of "why did/did
-    #: not a change fire" and has no live UI of its own to explain it in. Kept
-    #: to a single added clause -- the field's bottom border is 91 columns
-    #: wide at 160x42 (verified: 87 chars is the hard cutoff before Textual's
-    #: border-label renderer silently truncates with an ellipsis), so this is
-    #: not decorative belt-tightening, it is the actual budget.
-    _IGNORE_SELECTORS_LABEL = (
-        "Ignore elements (CSS selectors — one rule per line; commas group)"
-    )
-    _IGNORE_SELECTORS_HELP = (
-        "Add a rule to silence noise; changes always report; "
-        "change_threshold limits volume."
+    #: not a change fire" and has no live UI of its own to explain it in.
+    #:
+    #: TASK-2302 (F11/F12) re-measured the budget those two strings were
+    #: written against and found it wrong. The 91-column figure recorded here
+    #: was taken with the right rail out of the way; with the shell as it
+    #: ships, the field is **53** columns at 160x42 and **78** at 235x52
+    #: (measured through the production stylesheet by
+    #: `test_the_noise_help_text_fits_the_field_it_is_painted_on`, which
+    #: reads the mounted field's own width rather than trusting a number in
+    #: a comment). Textual's border-label renderer truncates silently at
+    #: width - 4, so the old 65-character label and 83-character help copy
+    #: were both cut -- the UAT read "…changes always report;
+    #: change_threshold" and filed it.
+    #:
+    #: Both strings now fit the NARROWEST supported size, and the syntax
+    #: detail the shortening displaced moves to the tooltip, which has no
+    #: width budget at all -- the same trade the Inspector's copy of this
+    #: field already documents for its own, even shorter label.
+    _IGNORE_SELECTORS_LABEL = "Ignore elements (CSS selectors, one per line)"
+    _IGNORE_SELECTORS_HELP = "Silence noise; change_threshold limits volume."
+    _IGNORE_SELECTORS_TOOLTIP = (
+        "One rule per line; a comma inside a line groups selectors, as in "
+        ":is(.a, .b). Matching elements are dropped before the page is "
+        "compared, so their churn stops reporting a change. Changes to what "
+        "is left always report; change_threshold limits how much has to move "
+        "before they do."
     )
 
     #: Cap on the stored selector text. Generous next to the shipped default
@@ -191,6 +259,14 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     #: follow-up). See that method's docstring for why a bound is safe here.
     _CREATE_FOCUS_CONFIRM_MAX_ATTEMPTS = 20
 
+    #: TASK-2302 adds `Web page`. Every other entry here is a FEED type, and
+    #: `ignore_selectors` (an element-level rule) can only ever affect a
+    #: scraped page -- so before this the create form could not produce a
+    #: single source the noise field applied to, which is why that field read
+    #: as decorative prefill. `url` is the value
+    #: `LocalWatchlistsService._local_type_for_source_type` accepts verbatim
+    #: and the value `normalize_local_subscription_row` publishes back, so
+    #: this one entry serves the create Select and the filter Select alike.
     _TYPE_OPTIONS = [
         ("All", "all"),
         ("RSS", "rss"),
@@ -198,6 +274,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         ("Feed", "feed"),
         ("Playlist", "playlist"),
         ("Channel", "channel"),
+        ("Web page", "url"),
     ]
 
     _STATUS_OPTIONS = [
@@ -330,19 +407,48 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 # bottom -- unreachable, which is the same class of defect
                 # this task is fixing.
                 yield Horizontal(
+                    # TASK-2302 AC#3: the Type Select painted as a bare
+                    # "RSS ▼" with nothing saying what the word was the type
+                    # OF. Labelled with the form's own existing idiom -- the
+                    # `Active` Static one control to the right -- rather than
+                    # a border title, because a compact/bordered Select draws
+                    # its border on its child `SelectCurrent` (TASK-2300), so
+                    # a title set on the Select itself has no border to sit
+                    # on, and a `Static` row of its own is a row this form
+                    # does not have.
+                    Static("Type", classes="sources-create-field-label"),
                     PruneSafeSelect(
                         [
                             (label, value)
                             for label, value in self._TYPE_OPTIONS
                             if value != "all"
                         ],
-                        value="rss",
+                        value=self.create_draft_source_type,
                         id="sources-create-type",
                         allow_blank=False,
                     ),
                     Static("Active", classes="sources-create-active-label"),
                     Switch(value=True, id="sources-create-active"),
                     classes="sources-create-type-row",
+                )
+                # TASK-2302 AC#1: where this source will LAND, stated before
+                # it is submitted and changeable. The 2026-08-04 UAT created
+                # a source with a watchlist in scope, the first-run guidance
+                # having just promised "press New source to add a feed to
+                # it", and the source silently went to Unassigned. One
+                # compact row: this is a single-value choice, and the form
+                # has no full-height row to spare (see the pairing notes
+                # above).
+                yield Horizontal(
+                    Static("Watchlist", classes="sources-create-field-label"),
+                    PruneSafeSelect(
+                        self._destination_options(),
+                        value=self._resolved_destination(),
+                        id="sources-create-watchlist",
+                        allow_blank=False,
+                        compact=True,
+                    ),
+                    classes="sources-create-destination-row",
                 )
                 # Tags and the check cadence share a row for the same reason
                 # Type and Active do: the pane has no spare rows, and a sixth
@@ -371,7 +477,17 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 # not the problem -- a page whose ad slot or view counter
                 # rewrites itself reports a change every single check, and
                 # nothing on this screen previously let a user say so.
-                yield self._ignore_selectors_field()
+                #
+                # TASK-2302 AC#4: rendered only for the types it can affect.
+                # CSS selectors describe elements on a scraped PAGE; for an
+                # RSS/Atom feed there are no elements for a rule to match, so
+                # prefilling four rows of them was prominent, prefilled and
+                # inert -- and it cost the rows this form needed for the
+                # destination above. The Inspector's own copy of this editor
+                # has always been gated the same way
+                # (`_is_url_family_source`).
+                if self._type_takes_ignore_selectors(self.create_draft_source_type):
+                    yield self._ignore_selectors_field()
                 # `.dialog-buttons` is the same one-row, side-by-side pairing
                 # `WatchlistNameDialog` uses for its own Create/Cancel, so the
                 # two creation flows read the same (TASK-1035 AC#6). Only the
@@ -400,6 +516,48 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         self._highlighted_source_key = selected_key
         yield table
 
+    @classmethod
+    def _type_takes_ignore_selectors(cls, source_type: Any) -> bool:
+        """Whether `ignore_selectors` can affect a source of this type."""
+        return str(source_type or "").strip().lower() in cls._URL_FAMILY_TYPES
+
+    def _destination_options(self) -> list[tuple[Text, Any]]:
+        """Options for the destination Select: Unassigned, then watchlists.
+
+        Unassigned is FIRST and always present -- it is the honest name for
+        what happens when a source belongs to no watchlist, and it is the
+        only possible answer on a profile that has none. Labels are `Text`,
+        not `str`: a watchlist name is user-typed, and Textual renders a
+        plain-string option through its markup parser.
+        """
+        options: list[tuple[Text, Any]] = [
+            (Text("Unassigned (no watchlist)"), self.UNASSIGNED_DESTINATION)
+        ]
+        for watchlist in self.watchlist_choices:
+            try:
+                watchlist_id = int(watchlist["id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            options.append(
+                (Text(str(watchlist.get("name") or f"Watchlist {watchlist_id}")),
+                 watchlist_id)
+            )
+        return options
+
+    def _resolved_destination(self) -> Any:
+        """The destination value `compose()` should seed the Select with.
+
+        Falls back to Unassigned when the draft names a watchlist that is not
+        in the current choices -- it was deleted, or the backend changed
+        under an open form. `Select` with `allow_blank=False` raises
+        `InvalidSelectValueError` on a value it has no option for, so this is
+        the difference between a stale draft and a form that will not mount.
+        """
+        draft = self.create_draft_destination
+        if any(draft == value for _label, value in self._destination_options()):
+            return draft
+        return self.UNASSIGNED_DESTINATION
+
     def _ignore_selectors_field(self) -> TextArea:
         """The prefilled noise-selector field (TASK-1362, spec §2).
 
@@ -425,6 +583,8 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         )
         field.border_title = self._IGNORE_SELECTORS_LABEL
         field.border_subtitle = self._IGNORE_SELECTORS_HELP
+        # The long form, where nothing can truncate it (TASK-2302).
+        field.tooltip = self._IGNORE_SELECTORS_TOOLTIP
         return field
 
     @staticmethod
@@ -583,6 +743,8 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 url=self.create_draft_url,
                 tags=self.create_draft_tags,
                 ignore_selectors=self.create_draft_ignore_selectors,
+                source_type=self.create_draft_source_type,
+                destination=self.create_draft_destination,
             )
         )
 
@@ -591,6 +753,11 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         self.create_draft_name = ""
         self.create_draft_url = ""
         self.create_draft_tags = ""
+        # Back to the pane's defaults, not to whatever was just submitted:
+        # the next form is a NEW source, which starts at the scope the user
+        # is looking at (TASK-2302) and at the default feed type.
+        self.create_draft_source_type = "rss"
+        self.create_draft_destination = self.default_destination
         # Back to the shipped default, not to empty: the next time the form
         # opens it is a *new* source, which gets the prefill again. Only a
         # user emptying the field for a source they are creating right now
@@ -619,6 +786,13 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         if self.is_mounted:
             if is_open:
                 self._pending_create_focus = self._CREATE_FORM_FIELD_IDS[0]
+                # TASK-2302 AC#1: opening the form aims it at the scope the
+                # user is looking at right now. Gated on `is_mounted` for the
+                # same reason the focus arm above is: `_build_detail_pane`
+                # re-opens an already-open form on every workbench rebuild,
+                # and resetting the destination there would throw away a
+                # choice the user had already made.
+                self.create_draft_destination = self.default_destination
             self.post_message(CreateFormVisibilityChanged(is_open))
 
     def _focused_create_field_id(self) -> str | None:
@@ -840,6 +1014,17 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             self.status_filter = str(event.value or "all")
         elif event.select.id == "sources-active-filter":
             self.active_filter = str(event.value or "all")
+        elif event.select.id == "sources-create-type":
+            # TASK-2302. `recompose=True`, so this rebuilds the form to add
+            # or drop the ignore-selectors field. Every other draft survives
+            # that (they are seeded from these same reactives) and
+            # `recompose` re-homes focus, which for this control lands back
+            # on the Select the user just used.
+            self.create_draft_source_type = str(event.value or "rss")
+            self._post_create_draft_changed()
+        elif event.select.id == "sources-create-watchlist":
+            self.create_draft_destination = event.value
+            self._post_create_draft_changed()
         event.stop()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -901,10 +1086,19 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         # would break `:is(.a, .b)`. Empty means empty -- a user who cleared
         # the field is saying "watch everything on this page", and re-filling
         # the default here would overrule them silently.
-        ignore_selectors = sanitize_string(
-            self.query_one("#sources-create-ignore-selectors", TextArea).text,
-            max_length=self._IGNORE_SELECTORS_MAX_LENGTH,
-        ).strip()
+        # Read through the DOM, not through the draft, and only when the
+        # field is actually on screen: TASK-2302 renders it for url-family
+        # types alone, and a feed source carries no selectors by definition.
+        # `_clear_create_draft` keeps the draft prefilled for the next form,
+        # so reading the draft here would file the shipped default against
+        # every RSS source ever created from this form.
+        if self.query("#sources-create-ignore-selectors"):
+            ignore_selectors = sanitize_string(
+                self.query_one("#sources-create-ignore-selectors", TextArea).text,
+                max_length=self._IGNORE_SELECTORS_MAX_LENGTH,
+            ).strip()
+        else:
+            ignore_selectors = ""
         # Refuse a selector CSS cannot parse, here, while the text is still on
         # screen and the user can see which line. `ContentExtractor` now skips
         # a bad line rather than aborting the check, but a silently-skipped
@@ -923,6 +1117,17 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 markup=False,
             )
             return
+        # TASK-2302 AC#1/#2: whatever the destination Select is SHOWING is
+        # what travels with the request. Read off the mounted control rather
+        # than off `create_draft_destination` so the payload cannot disagree
+        # with the row the user is looking at.
+        try:
+            destination = self.query_one("#sources-create-watchlist", Select).value
+        except Exception:
+            destination = self.UNASSIGNED_DESTINATION
+        watchlist_id = (
+            None if destination == self.UNASSIGNED_DESTINATION else int(destination)
+        )
         self.post_message(
             CreateSourceRequested(
                 {
@@ -933,6 +1138,10 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     "tags": tags,
                     "check_frequency": check_frequency,
                     "ignore_selectors": ignore_selectors,
+                    # `None` means Unassigned, which is a real destination
+                    # and not a missing one -- the pane always supplies this
+                    # key.
+                    "watchlist_id": watchlist_id,
                 }
             )
         )

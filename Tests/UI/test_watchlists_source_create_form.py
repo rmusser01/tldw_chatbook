@@ -53,16 +53,37 @@ from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 # by `.region`, and unreachable.
 SIZES = [(160, 42), (235, 52)]
 
+# The form as it opens: type `rss`, so no noise control (TASK-2302 renders it
+# only for the url family -- see `URL_FAMILY_FIELD_ORDER` below, which is the
+# shape every geometry assertion here also has to hold for).
 CREATE_FIELD_ORDER = [
     "sources-create-name",
     "sources-create-url",
     "sources-create-type",
     "sources-create-active",
+    # TASK-2302: the destination. Focusable, so it joins the Tab walk, and
+    # placed here because a source's watchlist is a top-level property of it,
+    # not a detail below the tags.
+    "sources-create-watchlist",
     "sources-create-tags",
     "sources-create-frequency",
-    # TASK-1362: the noise control. Focusable, so it is part of the Tab walk,
-    # and subject to every geometry assertion below -- the form had exactly
-    # zero spare rows at 160x42 before it was added.
+    "sources-create-submit",
+    "sources-create-cancel",
+]
+
+# The same form with a page-scrape type chosen, which is the only state the
+# noise control exists in (TASK-1362's field, TASK-2302's gate). Kept as a
+# separate list rather than an `if` inside the walk so the two shapes are
+# both stated, and so the taller one is measured at both sizes -- the form
+# had exactly zero spare rows at 160x42 when that field was added.
+URL_FAMILY_FIELD_ORDER = [
+    "sources-create-name",
+    "sources-create-url",
+    "sources-create-type",
+    "sources-create-active",
+    "sources-create-watchlist",
+    "sources-create-tags",
+    "sources-create-frequency",
     "sources-create-ignore-selectors",
     "sources-create-submit",
     "sources-create-cancel",
@@ -132,6 +153,25 @@ async def _open_sources_create_form(pilot, host):
     ), "the create form mounted but did not focus its Name field"
     await pilot.pause()
     return screen, pane
+
+
+async def _choose_source_type(pilot, pane, value: str) -> None:
+    """Pick a source type, and wait out the recompose the pane runs for it.
+
+    Assigning `Select.value` is exactly the state change a click through the
+    overlay produces (`Select.Changed` either way); what is under test is
+    what the pane does with it, which is rebuild the form around the noise
+    control.
+    """
+    pane.query_one("#sources-create-type", Select).value = value
+    for _ in range(200):
+        await pilot.pause(0.02)
+        if pane.create_draft_source_type == value:
+            break
+    assert pane.create_draft_source_type == value, (
+        f"the pane never took source type {value!r}"
+    )
+    await pilot.pause(0.1)
 
 
 @pytest.mark.parametrize("size", SIZES)
@@ -456,29 +496,40 @@ async def test_typing_straight_after_opening_the_form_lands_in_name(size):
 
 
 @pytest.mark.parametrize("size", SIZES)
+@pytest.mark.parametrize(
+    "source_type,field_order",
+    [("rss", CREATE_FIELD_ORDER), ("url", URL_FAMILY_FIELD_ORDER)],
+    ids=["feed", "page"],
+)
 @pytest.mark.asyncio
-async def test_tab_walks_the_create_form_in_visual_order(size):
+async def test_tab_walks_the_create_form_in_visual_order(
+    size, source_type, field_order
+):
     """AC#4: from the focused first field, `Tab` follows what the eye sees."""
     host = _watchlists_host()
     async with host.run_test(size=size) as pilot:
         screen, pane = await _open_sources_create_form(pilot, host)
+        if source_type != "rss":
+            await _choose_source_type(pilot, pane, source_type)
+            pane.query_one("#sources-create-name", Input).focus()
+            await pilot.pause(0.1)
 
         assert screen.focused is not None, "nothing focused; see AC#3 test"
         seen = [screen.focused.id]
-        for _ in range(len(CREATE_FIELD_ORDER) - 1):
+        for _ in range(len(field_order) - 1):
             await pilot.press("tab")
             await pilot.pause(0.05)
             seen.append(screen.focused.id if screen.focused else None)
 
-        assert seen == CREATE_FIELD_ORDER, (
+        assert seen == field_order, (
             f"Tab order through the create form is {seen}, expected "
-            f"{CREATE_FIELD_ORDER}"
+            f"{field_order}"
         )
 
         # "Visual order" is not just DOM order: every step must move down the
         # form, or right along the same row, and must stay inside the pane.
         previous = None
-        for field_id in CREATE_FIELD_ORDER:
+        for field_id in field_order:
             widget = pane.query_one(f"#{field_id}")
             region = widget.region
             assert region.x >= pane.region.x and region.right <= pane.region.right, (
@@ -523,8 +574,15 @@ async def test_create_and_cancel_sit_side_by_side_like_the_dialog(size):
 
 
 @pytest.mark.parametrize("size", SIZES)
+@pytest.mark.parametrize(
+    "source_type,field_order",
+    [("rss", CREATE_FIELD_ORDER), ("url", URL_FAMILY_FIELD_ORDER)],
+    ids=["feed", "page"],
+)
 @pytest.mark.asyncio
-async def test_the_whole_create_form_fits_inside_the_sources_pane(size):
+async def test_the_whole_create_form_fits_inside_the_sources_pane(
+    size, source_type, field_order
+):
     """Every control has to be reachable, not merely present.
 
     The `Grid` this form used to be took `height: 1fr` and spread seven
@@ -538,9 +596,11 @@ async def test_the_whole_create_form_fits_inside_the_sources_pane(size):
     host = _watchlists_host()
     async with host.run_test(size=size) as pilot:
         screen, pane = await _open_sources_create_form(pilot, host)
+        if source_type != "rss":
+            await _choose_source_type(pilot, pane, source_type)
 
         strips = screen._compositor.render_strips()
-        for field_id in CREATE_FIELD_ORDER:
+        for field_id in field_order:
             region = pane.query_one(f"#{field_id}").region
             assert region.bottom <= pane.region.bottom, (
                 f"#{field_id} at {region} hangs below the Sources pane "

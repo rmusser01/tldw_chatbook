@@ -973,6 +973,47 @@ WatchlistPickerDialog {
     padding: 0 1;
 }
 
+/* TASK-2302 AC#3: the visible label for a Select that painted as a bare
+ * "RSS ▼". Sized exactly like `.sources-create-active-label` above -- same
+ * row, same three rows of height, same vertical centring -- because it is
+ * the same idiom, and `width: auto` is what stops it claiming the row and
+ * pushing the control it names off the pane's right edge (the defect that
+ * comment records for the `Active` label).
+ *
+ * `height: 3` is overridden to 1 inside the compact destination row below;
+ * a `Static` of height 3 in a one-row container is the strip defect
+ * TASK-995 fixed, three rows of label over one row of box.
+ */
+#sources-create-form .sources-create-field-label {
+    width: auto;
+    height: 3;
+    content-align: left middle;
+    padding: 0 1;
+}
+
+/* TASK-2302 AC#1: the destination row. Compact (one row) for the reason the
+ * tags row above it is: the Sources pane is 16 rows at 160x42 and a
+ * full-height row would push `Create`/`Cancel` past its bottom edge. The
+ * Select needs the same `margin: 0` override as its two siblings -- the bare
+ * global `Select { width: 100%; margin-bottom: 1; }` in
+ * features/_conversations.tcss otherwise adds a blank row and reintroduces
+ * exactly that overflow.
+ */
+#sources-create-form .sources-create-destination-row {
+    width: 100%;
+    height: 1;
+}
+
+#sources-create-form .sources-create-destination-row
+.sources-create-field-label {
+    height: 1;
+}
+
+#sources-create-form #sources-create-watchlist {
+    width: 1fr;
+    margin: 0;
+}
+
 /* Tags + check cadence share the next row, for the reason spelled out above:
  * the Sources pane is 16 rows tall at 160x42 and a sixth full-height field row
  * would put `Create`/`Cancel` past its bottom edge. The Select needs the same
