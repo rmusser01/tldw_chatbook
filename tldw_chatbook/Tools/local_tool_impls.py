@@ -134,3 +134,16 @@ def read_file(
     if len(numbered) > MAX_READ_CHARS:
         numbered = numbered[:MAX_READ_CHARS] + "\n… [truncated]"
     return numbered
+
+
+def write_file(path: str, content: str, *, workspace_root: Path) -> str:
+    """Create or overwrite ``path`` with ``content`` (full-file write).
+
+    The parent directory must already exist (deliberate divergence from
+    claude-code's Write, to catch model path typos early — spec §2).
+    """
+    root = resolve_workspace_path(path, workspace_root)
+    if not root.parent.is_dir():
+        raise LocalToolError(f"parent directory does not exist for: {path}")
+    root.write_text(content, encoding="utf-8")
+    return f"wrote {len(content)} characters to {path}"
