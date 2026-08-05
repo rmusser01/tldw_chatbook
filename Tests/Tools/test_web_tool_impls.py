@@ -206,3 +206,81 @@ def test_fetch_invalid_url(fetch_env):
     with pytest.raises(LocalToolError, match="invalid-url"):
         web_fetch("ftp://example.com/x")
     assert fetch_env.calls == []  # never touched the network
+
+
+# ---------------------------------------------------------------------------
+# SSRF bypass-class regressions + hardening
+# ---------------------------------------------------------------------------
+
+def test_rejects_cgnat_and_shared_space_literals():
+    # 100.64.0.0/10 (RFC 6598 CGNAT/shared space — Tailscale tailnets, carrier
+    # gear) is NOT covered by ipaddress.is_private on Python 3.12; the guard
+    # must block it explicitly. 192.0.0.0/24 is IETF protocol assignments.
+    for url in ("http://100.64.0.1/", "http://100.100.100.100/", "http://192.0.0.1/"):
+        with pytest.raises(LocalToolError):
+            validate_outbound_url(url)
+
+
+def test_rejects_decimal_and_hex_ip_forms(monkeypatch):
+    # libc getaddrinfo translates these odd literal forms to the canonical
+    # IPv4 address (2130706433 == 0x7f000001 == 127.0.0.1); the guard must
+    # see and refuse the translated answer.
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("127.0.0.1", 80))])
+    for url in ("http://2130706433/", "http://0x7f000001/"):
+        with pytest.raises(LocalToolError):
+            validate_outbound_url(url)
+
+
+def test_rejects_ipv4_mapped_ipv6_loopback():
+    with pytest.raises(LocalToolError):
+        validate_outbound_url("http://[::ffff:127.0.0.1]/")
+
+
+def test_rejects_userinfo_host_trick():
+    # The real host is 127.0.0.1; "example.com" is userinfo. No DNS needed.
+    with pytest.raises(LocalToolError):
+        validate_outbound_url("http://example.com@127.0.0.1/")
+
+
+def test_rejects_port_out_of_range():
+    # parts.port raises "Port out of range" ValueError; must be a LocalToolError.
+    with pytest.raises(LocalToolError):
+        validate_outbound_url("http://example.com:99999/")
+
+
+def test_fetch_rejects_bad_port(fetch_env):
+    with pytest.raises(LocalToolError, match="invalid-url"):
+        web_fetch("http://example.com:99999/")
+    assert fetch_env.calls == []  # never touched the network
+
+
+def test_fetch_rejects_garbage_max_bytes(fetch_env):
+    fetch_env.routes["http://example.com/page"] = _text_page(b"ok")
+    with pytest.raises(LocalToolError):
+        web_fetch("http://example.com/page", max_bytes="10MB")
+
+
+def test_fetch_client_disables_trust_env(fetch_env, monkeypatch):
+    # With HTTP(S)_PROXY set, trust_env=True would let the proxy do its own
+    # DNS and connect anywhere, bypassing the guard. The client must opt out.
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:8888")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:8888")
+    captured: dict = {}
+    real_client = httpx.Client
+
+    def recording_client(*args, **kwargs):
+        captured.update(kwargs)
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(web_tool_impls.httpx, "Client", recording_client)
+    fetch_env.routes["http://example.com/page"] = _text_page(b"ok")
+    assert web_fetch("http://example.com/page") == "ok"
+    assert captured.get("trust_env") is False
+
+
+def test_fetch_httpx_invalid_url_becomes_local_tool_error(fetch_env):
+    # \x7f in the path passes urlsplit and the guard, but httpx's stricter
+    # parser rejects it with httpx.InvalidURL — NOT an HTTPError subclass,
+    # so it must be caught explicitly.
+    with pytest.raises(LocalToolError, match="invalid-url"):
+        web_fetch("http://example.com/\x7f")
