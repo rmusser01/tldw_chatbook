@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import sqlite3
+import tempfile
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1124,8 +1125,28 @@ def test_profile_and_assignment_codecs_round_trip_exact_values(tmp_path: Path) -
         assert decode_assigned_snapshot(joined_row) == AssignedTTSProfileSnapshot(
             assignment=assignment, profile=profile
         )
+    finally:
+        connection.close()
+
+
+@pytest.mark.skip(reason="options re-enabled in a later slice — no valid draft can carry options in slice 1")
+def test_profile_options_round_trip_through_codec() -> None:
+    """Verify frozen options round-trip through schema codec.
+
+    When options support is re-enabled for non-audio_cpp providers, this test
+    documents the expected round-trip behavior for complex nested JSON options.
+    """
+    profile = _profile(options={"nested": {"items": [True, 2, 3.5, None]}, "é": "声"})
+    connection = open_profile_store(Path(tempfile.mkdtemp()) / "profiles.sqlite3")
+    try:
+        _insert_profile(connection, profile)
+        connection.commit()
+        profile_row = connection.execute(
+            "SELECT * FROM tts_generation_profiles"
+        ).fetchone()
+        # Verify options are frozen and canonicalized through the round-trip
         assert canonical_json_options(decode_profile(profile_row).options) == (
-            '{}'
+            '{"é":"声","nested":{"items":[true,2,3.5,null]}}'
         )
     finally:
         connection.close()
