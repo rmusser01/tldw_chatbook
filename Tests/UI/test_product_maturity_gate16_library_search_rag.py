@@ -343,6 +343,118 @@ def test_history_row_tooltip_names_current_mode_and_tracks_mode_changes() -> Non
     )
 
 
+# --- PR-T2 Task 4: mark the paid mode as paid -------------------------------
+
+
+def test_query_quiet_line_names_the_paid_provider_when_rag_mode_is_ready() -> None:
+    """(PR-T2 Task 4) Until this task, the ONLY provider-adjacent copy on
+    this panel was the *blocked* branch's "Select a provider/model..."
+    text -- it vanishes the instant a provider IS configured, the exact
+    inversion of what a keyboard-fast user needs before pressing a button
+    that spends real money. The reserved quiet-line row
+    (`library_rag_query_status_children`) must fill with a plain,
+    provider-named statement in the one state that row was otherwise left
+    empty for: ready, `rag` mode, provider configured.
+    """
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
+        library_rag_query_status_children,
+    )
+
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="What changed?",
+        mode="rag",
+        provider_ready=True,
+        provider_name="openai",
+    )
+    quiet_line = next(
+        child
+        for child in library_rag_query_status_children(state)
+        if child.id == "library-rag-query-quiet-line"
+    )
+    assert str(quiet_line.renderable) == (
+        "RAG Answer sends your question and the evidence to openai. "
+        "Search stays local."
+    )
+
+
+def test_query_quiet_line_stays_empty_in_search_mode() -> None:
+    """(PR-T2 Task 4) Search mode never calls a provider -- the reserved
+    quiet-line row's no-layout-shift property (2026-07 UAT) must not
+    regress: it stays empty, not fill with a fact about the OTHER mode.
+    """
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
+        library_rag_query_status_children,
+    )
+
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="What changed?",
+        mode="search",
+        provider_ready=True,
+        provider_name="openai",
+    )
+    quiet_line = next(
+        child
+        for child in library_rag_query_status_children(state)
+        if child.id == "library-rag-query-quiet-line"
+    )
+    assert str(quiet_line.renderable) == ""
+
+
+def test_query_quiet_line_omits_the_paid_notice_when_run_is_blocked() -> None:
+    """(PR-T2 Task 4) The blocked branch's existing "Select a provider/
+    model..." copy already says the right thing for its case -- the new
+    ready-state notice must not also appear while Run is blocked on a
+    missing provider.
+    """
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
+        library_rag_query_status_children,
+    )
+
+    blocked_no_provider = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="What changed?",
+        mode="rag",
+        provider_ready=False,
+    )
+    quiet_line = next(
+        child
+        for child in library_rag_query_status_children(blocked_no_provider)
+        if child.id == "library-rag-query-quiet-line"
+    )
+    assert str(quiet_line.renderable) == ""
+    assert blocked_no_provider.query_state.run_action.disabled_reason == (
+        "Select a provider/model before asking for a RAG answer."
+    )
+
+
+def test_mode_toggle_tooltip_names_the_paid_mode_fact() -> None:
+    """(PR-T2 Task 4) The tooltip carries the same paid/local fact as the
+    quiet line, in its own compact register -- stated unconditionally,
+    since "RAG Answer calls a provider" / "Search stays local" are
+    properties of the MODE itself, true whether or not a provider happens
+    to be configured right now.
+    """
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
+        _mode_toggle_tooltip,
+    )
+
+    search_state = LibraryRagPanelState.from_values(mode="search")
+    rag_state = LibraryRagPanelState.from_values(mode="rag")
+
+    assert _mode_toggle_tooltip(search_state) == (
+        "Cycle Search/RAG mode. Next: RAG Answer — calls a paid provider."
+    )
+    assert _mode_toggle_tooltip(rag_state) == (
+        "Cycle Search/RAG mode. Next: Search — stays local."
+    )
+
+
 # --- PR-3 Task 3: answer region ---------------------------------------------
 #
 # `library_rag_answer_children` builds `Vertical#library-rag-answer`, mounted

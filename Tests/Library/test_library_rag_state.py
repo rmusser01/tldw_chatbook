@@ -19,6 +19,7 @@ from tldw_chatbook.Library.library_rag_state import (
     library_rag_all_matches_weak,
     library_rag_coverage_note,
     library_rag_empty_state_quiet_copy,
+    library_rag_paid_mode_notice,
     library_rag_score_suffix,
     library_rag_scope_summary,
     searching_status_line,
@@ -241,6 +242,88 @@ def test_query_state_provider_gate_is_rag_only() -> None:
 
     assert ready_rag.status == "ready"
     assert ready_rag.run_action.enabled is True
+
+
+def test_query_state_ready_answer_provider_names_the_paid_mode_provider() -> None:
+    """(PR-T2 Task 4) `ready_answer_provider` feeds the quiet line's paid-
+    mode notice -- non-empty ONLY when `rag` mode is actually ready to run
+    AND a real provider name was supplied. Search mode, every blocked
+    state, and a `provider_ready=True` call site that forgot to name a
+    provider must all leave it empty rather than fabricate a fact nobody
+    actually confirmed.
+    """
+    ready = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_ready=True,
+        provider_name="openai",
+    )
+    assert ready.status == "ready"
+    assert ready.ready_answer_provider == "openai"
+
+    search_mode = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="search",
+        provider_ready=True,
+        provider_name="openai",
+    )
+    assert search_mode.status == "ready"
+    assert search_mode.ready_answer_provider == ""
+
+    blocked_empty_query = LibraryRagQueryState.from_values(
+        query="",
+        mode="rag",
+        provider_ready=True,
+        provider_name="openai",
+    )
+    assert blocked_empty_query.status == "blocked"
+    assert blocked_empty_query.ready_answer_provider == ""
+
+    blocked_no_provider = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_ready=False,
+    )
+    assert blocked_no_provider.status == "blocked"
+    assert blocked_no_provider.ready_answer_provider == ""
+
+    ready_without_a_name = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_ready=True,
+    )
+    assert ready_without_a_name.status == "ready"
+    assert ready_without_a_name.ready_answer_provider == ""
+
+
+def test_library_rag_paid_mode_notice_names_the_provider() -> None:
+    assert library_rag_paid_mode_notice("openai") == (
+        "RAG Answer sends your question and the evidence to openai. "
+        "Search stays local."
+    )
+
+
+def test_panel_state_threads_provider_name_into_query_state() -> None:
+    """(PR-T2 Task 4) `LibraryRagPanelState.from_values`'s `provider_name`
+    reaches `query_state.ready_answer_provider` unchanged -- the screen
+    passes both `provider_ready` and `provider_name` from a single
+    `resolve_library_rag_answer_provider()` read.
+    """
+    ready = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="summarize the policy",
+        mode="rag",
+        provider_ready=True,
+        provider_name="anthropic",
+    )
+    assert ready.query_state.ready_answer_provider == "anthropic"
+
+    default_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="summarize the policy",
+        mode="rag",
+    )
+    assert default_state.query_state.ready_answer_provider == ""
 
 
 def test_query_state_blocked_is_empty_query_and_no_scope_properties() -> None:

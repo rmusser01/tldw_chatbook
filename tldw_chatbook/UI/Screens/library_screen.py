@@ -3873,6 +3873,19 @@ class LibraryScreen(BaseAppScreen):
             # from_values`'s `normalized_mode == "rag"` check) -- keyword
             # Search mode never calls a provider and stays unaffected.
             provider_ready=library_rag_answer_provider_ready(),
+            # PR-T2 Task 4: named for the ready-state quiet line's paid-mode
+            # notice (`library_rag_paid_mode_notice`) -- the ONLY provider-
+            # adjacent copy on this panel used to be the *blocked* branch's
+            # "Select a provider/model..." text above, which disappears the
+            # instant a provider IS configured, the exact inversion of what
+            # a keyboard-fast user needs before pressing a button that
+            # spends real money. A second `resolve_library_rag_answer_
+            # provider()` call (rather than threading the one above's
+            # discarded provider name through) keeps this diff to an
+            # addition beside the pre-existing line instead of restructuring
+            # it -- both calls read the same cheap, no-I/O config attribute
+            # within the same render, so they cannot disagree.
+            provider_name=resolve_library_rag_answer_provider()[0] or "",
             selected_source_types=selected_source_types,
             history=self._library_search_history,
             history_collapsed=self._library_rag_history_collapsed,

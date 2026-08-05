@@ -29,6 +29,7 @@ from ...Library.library_rag_state import (
     LibraryRagSourceOption,
     library_rag_answer_display_text,
     library_rag_empty_state_quiet_copy,
+    library_rag_paid_mode_notice,
     library_rag_score_suffix,
     library_rag_scope_summary,
     searching_status_line,
@@ -523,16 +524,25 @@ def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widge
     """Return the query region's status widgets (A1/A2).
 
     Shared by `compose()` and the screen's incremental refresh. The quiet
-    gate line is ALWAYS returned -- with empty text in the ready/searching
-    states, and a fixed one-row height so the Run button below it never
-    shifts vertically when a gate's copy appears or disappears (2026-07
-    UAT: the button jumped ~2 rows on valid input, breaking muscle
-    memory). The no-scope gate stays quiet-but-empty when the Library has
-    no sources at all: the scope region's single no-sources gate line +
-    "Open Import media" action own that state, so a second "Select at
-    least one source." line would just re-stack guidance. Real failures
-    (unsafe query, missing dependencies/index, no provider) additionally
-    render the callout + recovery-copy block.
+    gate line is ALWAYS returned -- with empty text in the searching state
+    and a fixed one-row height so the Run button below it never shifts
+    vertically when a gate's copy appears or disappears (2026-07 UAT: the
+    button jumped ~2 rows on valid input, breaking muscle memory). The
+    no-scope gate stays quiet-but-empty when the Library has no sources at
+    all: the scope region's single no-sources gate line + "Open Import
+    media" action own that state, so a second "Select at least one
+    source." line would just re-stack guidance. Real failures (unsafe
+    query, missing dependencies/index, no provider) additionally render
+    the callout + recovery-copy block.
+
+    The READY state is no longer always empty (PR-T2 Task 4): `rag` mode
+    with a provider actually configured fills this same reserved row with
+    `library_rag_paid_mode_notice`, naming the provider Run would bill --
+    until this task, the ONLY provider-adjacent copy on this whole panel
+    was the *blocked* branch's "Select a provider/model..." text, which
+    vanishes the instant a provider IS configured. `search` mode's ready
+    state is untouched -- it never calls a provider, so the row keeps its
+    original empty-and-reserved behavior there.
 
     Args:
         state: Current Library Search/RAG panel display state.
@@ -547,10 +557,13 @@ def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widge
         quiet_text = "Enter a question or search query."
     elif query_state.blocked_is_no_scope and state.scope.has_available_sources:
         quiet_text = "Select at least one source."
+    elif query_state.ready_answer_provider:
+        quiet_text = library_rag_paid_mode_notice(query_state.ready_answer_provider)
     quiet_line = Static(
         quiet_text,
         id="library-rag-query-quiet-line",
         classes="library-rag-quiet-line",
+        markup=False,
     )
     quiet_line.styles.height = 1
     children: list[Widget] = [quiet_line]
@@ -593,8 +606,17 @@ def _mode_toggle_tooltip(state: LibraryRagPanelState) -> str:
     it reads `state.query_state.mode` fresh on every build (recompose is
     the only path that rebuilds this button -- see the mode-toggle
     `Button.Pressed` handler in `library_screen.py`).
+
+    PR-T2 Task 4: also names which side of the toggle spends money, in the
+    tooltip's own compact register -- unconditionally, since "RAG Answer
+    calls a provider" and "Search stays local" are properties of the MODE
+    itself, true whether or not a provider happens to be configured right
+    now (the quiet line's `library_rag_paid_mode_notice` is the one that
+    additionally names the actual provider, and only once one is ready).
     """
-    return f"Cycle Search/RAG mode. Next: {_other_mode_label(state)}."
+    other = _other_mode_label(state)
+    fact = "calls a paid provider" if other == "RAG Answer" else "stays local"
+    return f"Cycle Search/RAG mode. Next: {other} — {fact}."
 
 
 def results_heading_text(state: LibraryRagPanelState) -> str:

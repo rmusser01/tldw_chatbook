@@ -1504,7 +1504,9 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
 
         toggle = screen.query_one("#library-rag-mode-toggle", Button)
         assert str(toggle.label) == "mode: Search ▸"
-        assert toggle.tooltip == "Cycle Search/RAG mode. Next: RAG Answer."
+        assert toggle.tooltip == (
+            "Cycle Search/RAG mode. Next: RAG Answer — calls a paid provider."
+        )
         assert not screen.query("#library-rag-query-status")
 
         screen.query_one("#library-rag-mode-toggle", Button).press()
@@ -1516,7 +1518,7 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
         else:
             raise AssertionError("Mode toggle never switched to RAG Answer.")
         assert screen.query_one("#library-rag-mode-toggle", Button).tooltip == (
-            "Cycle Search/RAG mode. Next: Search."
+            "Cycle Search/RAG mode. Next: Search — stays local."
         )
 
         screen.query_one("#library-rag-mode-toggle", Button).press()
@@ -1528,7 +1530,7 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
         else:
             raise AssertionError("Mode toggle never switched back to Search.")
         assert screen.query_one("#library-rag-mode-toggle", Button).tooltip == (
-            "Cycle Search/RAG mode. Next: RAG Answer."
+            "Cycle Search/RAG mode. Next: RAG Answer — calls a paid provider."
         )
 
 

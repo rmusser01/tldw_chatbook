@@ -218,6 +218,36 @@ def searching_status_line(source_types: Sequence[str]) -> str:
     return f"searching · {labels}…" if labels else "searching…"
 
 
+def library_rag_paid_mode_notice(provider: str) -> str:
+    """Return the quiet line's ready-state paid-mode notice (PR-T2 Task 4).
+
+    Until this task, the ONLY provider-adjacent copy on the Library
+    Search/RAG panel was the *blocked* branch's "Select a provider/model
+    before asking for a RAG answer." text (`LibraryRagQueryState.
+    from_values`) -- it vanishes the instant a provider IS configured,
+    the exact inversion of what a keyboard-fast user needs before
+    pressing a button that spends real money. This fills the query
+    region's reserved quiet-line row (`library_search_rag_panel.py`'s
+    `library_rag_query_status_children`) in the one state that row was
+    otherwise left empty for -- ready, `rag` mode, a provider configured
+    -- naming the provider that would actually be billed. No confirmation
+    dialog, no gate: a statement, not a speed bump.
+
+    Args:
+        provider: The provider `resolve_library_rag_answer_provider`
+            would call if Run were pressed right now
+            (`LibraryRagQueryState.ready_answer_provider`).
+
+    Returns:
+        One sentence naming `provider`, e.g. `RAG Answer sends your
+        question and the evidence to openai. Search stays local.`
+    """
+    return (
+        f"RAG Answer sends your question and the evidence to {provider}. "
+        "Search stays local."
+    )
+
+
 def _clean_text(value: Any, fallback: str = "") -> str:
     if value is None:
         return fallback
@@ -961,6 +991,18 @@ class LibraryRagQueryState:
     status: str
     run_action: LibraryRagActionState
     recovery_copy: str = ""
+    #: The provider that would be billed if Run were pressed right now
+    #: (PR-T2 Task 4) -- `""` whenever there is nothing pending to
+    #: announce: Search mode never calls a provider, and any blocked `rag`
+    #: state (empty query, no scope, missing deps/index, no provider) has
+    #: no run about to happen. Non-empty ONLY when `mode == "rag"`,
+    #: `status == "ready"`, AND a caller actually supplied a provider name
+    #: -- a `provider_ready=True` call site that forgot to name one (every
+    #: call site that predates this field) leaves this `""` rather than
+    #: fabricate a fact nobody actually confirmed. Feeds the quiet line's
+    #: `library_rag_paid_mode_notice` (`library_search_rag_panel.py`'s
+    #: `library_rag_query_status_children`).
+    ready_answer_provider: str = ""
 
     @property
     def blocked_is_empty_query(self) -> bool:
@@ -993,6 +1035,7 @@ class LibraryRagQueryState:
         dependencies_ready: bool = True,
         index_ready: bool = True,
         provider_ready: bool = True,
+        provider_name: str = "",
     ) -> "LibraryRagQueryState":
         """Build query-control display state from UI or service values.
 
@@ -1005,6 +1048,12 @@ class LibraryRagQueryState:
             dependencies_ready: Whether Search/RAG optional dependencies are available.
             index_ready: Whether the selected source scope has an index.
             provider_ready: Whether a provider/model is ready for RAG-answer mode.
+            provider_name: The provider `resolve_library_rag_answer_provider`
+                resolved (PR-T2 Task 4), or `""` (the default -- every call
+                site that predates this parameter). Feeds `ready_answer_
+                provider`, which is only ever non-empty when this is also
+                non-empty -- a truthy `provider_ready` with no name here
+                still leaves the quiet line silent rather than guessing.
 
         Returns:
             Display state for query controls and the run action.
@@ -1060,6 +1109,11 @@ class LibraryRagQueryState:
                 recovery_action=recovery_action,
                 owner=owner,
             )
+        ready_answer_provider = (
+            provider_name
+            if normalized_mode == "rag" and enabled and provider_name
+            else ""
+        )
         return cls(
             query=normalized_query,
             mode=normalized_mode,
@@ -1074,6 +1128,7 @@ class LibraryRagQueryState:
                 disabled_reason=disabled_reason,
             ),
             recovery_copy=recovery_copy,
+            ready_answer_provider=ready_answer_provider,
         )
 
 
@@ -1568,6 +1623,7 @@ class LibraryRagPanelState:
         dependencies_ready: bool = True,
         index_ready: bool = True,
         provider_ready: bool = True,
+        provider_name: str = "",
         selected_source_types: Sequence[str] | None = None,
         history: Sequence[str] = (),
         history_collapsed: bool = False,
@@ -1608,6 +1664,11 @@ class LibraryRagPanelState:
             dependencies_ready: Whether Search/RAG optional dependencies are available.
             index_ready: Whether the selected source scope has an index.
             provider_ready: Whether a provider/model is ready for RAG-answer mode.
+            provider_name: The provider `resolve_library_rag_answer_provider`
+                resolved (PR-T2 Task 4), threaded to `query_state.ready_
+                answer_provider` for the quiet line's paid-mode notice.
+                `""` (the default -- every call site that predates this
+                parameter) leaves that notice silent.
             selected_source_types: Selected source type IDs. `None` selects all available
                 source types; an empty sequence represents no selected sources.
             history: Prior submitted queries, most recent first.
@@ -1649,6 +1710,7 @@ class LibraryRagPanelState:
             dependencies_ready=dependencies_ready,
             index_ready=index_ready,
             provider_ready=provider_ready,
+            provider_name=provider_name,
         )
         normalized_searched_query, _ = _sanitize_query(
             query if searched_query is None else searched_query
