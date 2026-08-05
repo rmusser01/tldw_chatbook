@@ -421,7 +421,7 @@ def _default_specs(workspace_root: Path) -> list[LocalToolSpec]:
             parameters={
                 "type": "object",
                 "properties": {
-                    "pattern": {"type": "string", "description": "Glob pattern relative to the workspace root (e.g. \"**/*.py\"). Hidden dirs under the root are searched."},
+                    "pattern": {"type": "string", "description": "Glob pattern relative to the workspace root (e.g. \"**/*.py\"). Hidden dirs under the root are searched. \"**\" alone matches no files (directories only) — use \"**/*\" to match everything."},
                     "max_results": {"type": "integer", "description": "Maximum number of paths to return (default 100)."},
                 },
                 "required": ["pattern"],

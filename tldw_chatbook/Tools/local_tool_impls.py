@@ -75,7 +75,8 @@ def read_file(
     Lines are numbered from 1 (matching claude-code's Read). ``offset`` is
     the 1-based first line to return; ``limit`` caps the line count.
     Binary files (NUL byte in the first 8 KiB) and missing files raise
-    LocalToolError with model-actionable messages.
+    LocalToolError with model-actionable messages. UTF-16 files trip the
+    binary sniff; other non-UTF-8 text reads with U+FFFD replacement.
     """
     root = resolve_workspace_path(path, workspace_root)
     if not root.is_file():
@@ -86,8 +87,10 @@ def read_file(
         raise LocalToolError(f"'{path}' appears to be binary; fs_read only reads text files")
     text = root.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines()
+    if not lines:
+        return "(empty file)"
     start = max(offset, 1) - 1
-    if start >= len(lines) and lines:
+    if start >= len(lines):
         return f"(offset {offset} is past end of file; {len(lines)} lines total)"
     window = lines[start:] if limit is None else lines[start:start + max(limit, 0)]
     numbered = "\n".join(f"{i}\t{line}" for i, line in enumerate(window, start=start + 1))
@@ -185,7 +188,12 @@ def glob_files(
         if p.is_file() and Path(os.path.normpath(p)).is_relative_to(root)
     ]
     matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    lines = [str(p.relative_to(root)) for p in matches[:max_results]]
+    # Render from the normpath'd path so `..` re-entry patterns
+    # ("../<wsname>/*.py") stay workspace-relative instead of "../…".
+    lines = [
+        str(Path(os.path.normpath(p)).relative_to(root))
+        for p in matches[:max_results]
+    ]
     if len(matches) > max_results:
         lines.append(f"… ({len(matches) - max_results} more, truncated)")
     return "\n".join(lines) if lines else f"(no files matching {pattern!r})"

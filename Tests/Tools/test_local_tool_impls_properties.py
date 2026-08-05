@@ -2,7 +2,7 @@
 # path confinement), following the repo's Hypothesis style
 # (Tests/Media_DB/test_media_db_properties.py).
 
-from hypothesis import HealthCheck, given, settings, strategies as st
+from hypothesis import HealthCheck, example, given, settings, strategies as st
 
 from tldw_chatbook.Tools.local_tool_impls import (
     LocalToolError,
@@ -20,6 +20,7 @@ _PROPERTY_SETTINGS = settings(
 )
 
 
+@example(prefix="a", needle="aa", suffix="", replacement="R")
 @given(
     prefix=st.text(max_size=50), needle=st.text(min_size=1, max_size=10),
     suffix=st.text(max_size=50), replacement=st.text(max_size=20),
