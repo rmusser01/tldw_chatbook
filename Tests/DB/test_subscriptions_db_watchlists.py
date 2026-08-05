@@ -647,3 +647,79 @@ def test_counts_use_a_single_query_regardless_of_watchlist_count(db, monkeypatch
     db.get_watchlist_item_counts()
 
     assert counting.execute_count == 1
+
+
+# --- TASK-2511: scoped item queries + per-source counts ----------------------
+
+
+@pytest.fixture
+def db_with_memberships(tmp_path):
+    """Two sources with items on both; only one belongs to a watchlist.
+
+    Returns:
+        ``(db, watchlist_id, in_watchlist_source_id, unassigned_source_id)``.
+        The in-watchlist source carries three items (new, new, reviewed) so
+        it doubles as the per-source-counts fixture; the unassigned source
+        carries two (new, new).
+    """
+    db = SubscriptionsDB(str(tmp_path / "subs.db"), client_id="test")
+    in_watchlist = db.add_subscription(
+        name="In List", type="rss", source="https://in.example/f"
+    )
+    unassigned = db.add_subscription(
+        name="Loose", type="rss", source="https://loose.example/f"
+    )
+    with db.transaction() as conn:
+        conn.execute("INSERT INTO watchlists (name) VALUES ('Morning')")
+        watchlist_id = conn.execute("SELECT id FROM watchlists").fetchone()[0]
+        conn.execute(
+            "INSERT INTO watchlist_sources (watchlist_id, subscription_id) VALUES (?, ?)",
+            (watchlist_id, in_watchlist),
+        )
+    for index, status in enumerate(("new", "new", "reviewed")):
+        url = f"https://in.example/{index}"
+        _insert_item(db, in_watchlist, url, f"In {index}", "body")
+        with db.transaction() as conn:
+            conn.execute(
+                "UPDATE subscription_items SET status = ? WHERE url = ?",
+                (status, url),
+            )
+    for index in range(2):
+        _insert_item(db, unassigned, f"https://loose.example/{index}", f"Loose {index}", "body")
+    return db, watchlist_id, in_watchlist, unassigned
+
+
+def test_get_new_items_filters_by_watchlist(db_with_memberships):
+    # Two sources, only one in the watchlist; items on both.
+    db, watchlist_id, in_watchlist, _unassigned = db_with_memberships
+    rows = db.get_new_items(status=None, watchlist_id=watchlist_id)
+    assert rows and all(r["subscription_id"] == in_watchlist for r in rows)
+
+
+def test_get_new_items_unassigned_only(db_with_memberships):
+    db, _watchlist_id, _in_watchlist, unassigned = db_with_memberships
+    rows = db.get_new_items(status=None, unassigned_only=True)
+    assert rows and all(r["subscription_id"] == unassigned for r in rows)
+
+
+def test_get_new_items_statuses_multi(db_with_memberships):
+    db, _watchlist_id, _in_watchlist, _unassigned = db_with_memberships
+    rows = db.get_new_items(status=None, statuses=["new", "ingested"])
+    # The fixture's one reviewed item must be excluded, and four new items
+    # must remain -- an empty or unfiltered result fails one of these.
+    assert rows
+    assert {r["status"] for r in rows} <= {"new", "ingested"}
+    assert len(rows) == 4
+
+
+def test_get_new_items_rejects_status_and_statuses(db_with_memberships):
+    db, _watchlist_id, _in_watchlist, _unassigned = db_with_memberships
+    with pytest.raises(ValueError):
+        db.get_new_items(status="new", statuses=["new"])
+
+
+def test_get_source_item_counts(db_with_memberships):
+    db, _watchlist_id, in_watchlist, unassigned = db_with_memberships
+    counts = db.get_source_item_counts()
+    assert counts[in_watchlist] == {"total": 3, "unread": 2}
+    assert counts[unassigned] == {"total": 2, "unread": 2}

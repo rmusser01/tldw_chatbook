@@ -1097,6 +1097,27 @@ class SubscriptionsDB(BaseDB):
             for row in rows
         }
 
+    def get_source_item_counts(self) -> Dict[int, Dict[str, int]]:
+        """Per-source item totals and unread counts, for rail badges.
+
+        One grouped query, mirroring `get_watchlist_item_counts`: adding
+        sources never adds round-trips. Sources with no items are absent
+        (a missing key renders as no badge, which is the honest state).
+        """
+        rows = self.conn.execute(
+            """
+            SELECT subscription_id,
+                   COUNT(id) AS total,
+                   SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) AS unread
+            FROM subscription_items
+            GROUP BY subscription_id
+            """
+        ).fetchall()
+        return {
+            row[0]: {"total": row[1] or 0, "unread": row[2] or 0}
+            for row in rows
+        }
+
     @property
     def conn(self):
         """Thread-local database connection."""
@@ -1766,6 +1787,9 @@ class SubscriptionsDB(BaseDB):
         status: Optional[str] = "new",
         limit: int = 100,
         run_id: Optional[int] = None,
+        watchlist_id: Optional[int] = None,
+        unassigned_only: bool = False,
+        statuses: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Items for a subscription (or all of them), newest first.
 
@@ -1783,6 +1807,12 @@ class SubscriptionsDB(BaseDB):
         untouched; only a caller that deliberately passes `None` sees the new
         behaviour.
 
+        TASK-2511 adds the rail's scope dimensions: `watchlist_id` and
+        `unassigned_only` filter by watchlist membership (independently of
+        every other predicate, and of each other), and `statuses` is the
+        multi-status form of `status` for a caller that wants more than one
+        bucket without wanting all of them.
+
         Args:
             subscription_id: Restrict to one subscription, or `None` for all.
             status: The single status to return, or `None` for every status.
@@ -1792,16 +1822,31 @@ class SubscriptionsDB(BaseDB):
                 exactly this question, and `subscription_items.run_id` has
                 carried the answer (with its own index) since the column was
                 added; nothing had ever queried it.
+            watchlist_id: Restrict to items whose subscription is a member of
+                this watchlist, or `None` to not scope by membership.
+            unassigned_only: Restrict to items whose subscription belongs to
+                no watchlist at all -- the rail's Unassigned bucket.
+            statuses: Several statuses to include, or `None` to defer to
+                `status`. Requires `status=None` (a caller wanting the unread
+                bucket by name passes `status="new"`, or names `"new"` in
+                `statuses`); passing both is rejected rather than silently
+                intersected.
 
         Returns:
             One dict per item row, joined to its subscription's name and type,
             ordered by `created_at` descending.
+
+        Raises:
+            ValueError: If both `status` and `statuses` are passed.
         """
-        # Built as predicate fragments rather than eight hand-written SELECTs:
-        # the three dimensions (subscription filter, status filter, run filter)
-        # are independent, and enumerating their product is how the "all
-        # statuses" case came to be missing in the first place. Values stay
-        # bound parameters -- only the fixed predicate TEXT is assembled here.
+        if status is not None and statuses is not None:
+            raise ValueError("Pass either status or statuses, not both.")
+        # Built as predicate fragments rather than hand-written SELECTs per
+        # combination: the dimensions (subscription filter, status filter,
+        # run filter, membership scope) are independent, and enumerating
+        # their product is how the "all statuses" case came to be missing in
+        # the first place. Values stay bound parameters -- only the fixed
+        # predicate TEXT is assembled here.
         predicates: List[str] = []
         params: List[Any] = []
         if subscription_id:
@@ -1813,6 +1858,19 @@ class SubscriptionsDB(BaseDB):
         if run_id is not None:
             predicates.append("i.run_id = ?")
             params.append(run_id)
+        if watchlist_id is not None:
+            predicates.append(
+                "i.subscription_id IN (SELECT subscription_id FROM watchlist_sources WHERE watchlist_id = ?)"
+            )
+            params.append(watchlist_id)
+        if unassigned_only:
+            predicates.append(
+                "NOT EXISTS (SELECT 1 FROM watchlist_sources ws WHERE ws.subscription_id = i.subscription_id)"
+            )
+        if statuses is not None:
+            placeholders = ", ".join("?" for _ in statuses)
+            predicates.append(f"i.status IN ({placeholders})")
+            params.extend(statuses)
         where_clause = f"WHERE {' AND '.join(predicates)}" if predicates else ""
         params.append(limit)
 
