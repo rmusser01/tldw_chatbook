@@ -67,10 +67,21 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
             )
 
         if self.state.summary:
+            # PR-T1 final review (I1): the summary is built from a launch
+            # title/source that came from user data (a note title, a media
+            # filename), so it is the same untrusted class as the source
+            # name/status rows below -- and it was the ONLY Static in this
+            # widget rendering such text with markup enabled. A title
+            # containing `[/]` raised `MarkupError` right here in compose;
+            # since staged launches now survive navigation (D3), the
+            # restore succeeded on every subsequent visit and the crash
+            # landed inside `switch_screen`, so Console became permanently
+            # unopenable rather than failing once.
             yield Static(
                 self.state.summary,
                 id="console-staged-context-summary",
                 classes="console-staged-context-summary",
+                markup=False,
             )
 
         if self.state.rows:

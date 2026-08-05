@@ -540,9 +540,21 @@ class ConsoleStagedContextState:
             ConsoleDisplayRow(label=key, value=value)
             for key, value in launch.payload_display_items()
         )
+        # PR-T1 final review (I1): the summary interpolates raw launch
+        # fields that originate in user data (a note title, a media
+        # filename), so it goes through the same normalizer every other
+        # display value in this module uses instead of being the one raw
+        # f-string. This is defence in depth, not the crash fix -- HTML
+        # escaping leaves Rich markup like `[/]` untouched, so the
+        # MarkupError is fixed at the sink (`markup=False` on the staged-
+        # context summary Static); this just stops the summary being the
+        # module's lone unescaped exit.
+        summary_title = _safe_display_text(launch.title, "Untitled source")
+        summary_source = _safe_display_text(launch.source, "unknown")
+        summary_status = _safe_display_text(launch.status, "unknown")
         return cls(
             heading="Staged Context",
-            summary=f"{launch.title} ({launch.source}, {launch.status})",
+            summary=f"{summary_title} ({summary_source}, {summary_status})",
             rows=tuple(rows),
             recovery=launch.recovery,
             source_count=console_staged_source_count(launch),

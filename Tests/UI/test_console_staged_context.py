@@ -181,3 +181,71 @@ async def test_staged_context_tray_counts_zero_when_genuinely_empty() -> None:
         tray = app.query_one(ConsoleStagedContextTray)
         count = tray.query_one("#console-staged-context-count", Static)
         assert str(count.renderable) == "0"
+
+
+@pytest.mark.asyncio
+async def test_staged_context_tray_survives_a_markup_hostile_title() -> None:
+    """PR-T1 I1: a launch title containing Rich markup must not crash compose.
+
+    The summary line interpolates the launch title, and it was the only
+    Static in this widget rendering untrusted text with markup ENABLED
+    (every sibling row already passes ``markup=False``). A title carrying
+    a stray closing tag -- ``[/]`` -- raised ``MarkupError`` from compose,
+    and ``[bold]`` silently swallowed the text into a style.
+
+    That was survivable while a staged launch died on navigation. It is
+    not survivable now that D3 persists it: the restore succeeds on every
+    later visit, so the crash lands in compose INSIDE ``switch_screen``
+    (where ``app.py`` reports it as a navigation failure) and Console
+    becomes permanently unopenable -- a sticky lockout from one badly
+    named note.
+
+    Asserted: compose completes, and the markup renders LITERALLY rather
+    than being interpreted or dropped.
+    """
+    hostile_title = "Rotation [/] runbook [bold]v2"
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title=hostile_title,
+        payload={"query": "rotation"},
+        status="staged",
+    )
+    state = ConsoleStagedContextState.from_live_work(launch)
+    assert hostile_title in state.summary
+
+    class TestApp(App):
+        def compose(self):
+            yield ConsoleStagedContextTray(state)
+
+    app = TestApp()
+    async with app.run_test():
+        tray = app.query_one(ConsoleStagedContextTray)
+        summary = tray.query_one("#console-staged-context-summary", Static)
+        rendered = str(summary.renderable)
+        assert hostile_title in rendered
+        # Not interpreted away: the literal tags are still in the output.
+        assert "[/]" in rendered
+        assert "[bold]" in rendered
+
+
+@pytest.mark.asyncio
+async def test_staged_context_summary_normalizes_launch_text() -> None:
+    """PR-T1 I1 (defence in depth): the summary goes through the module's
+    shared display-text normalizer instead of raw f-string interpolation,
+    so it no longer stands out as this module's one unescaped exit.
+
+    This does NOT fix the markup crash above (HTML escaping leaves ``[/]``
+    untouched -- that is fixed at the sink with ``markup=False``); it is
+    the same treatment every other value in
+    ``ConsoleStagedContextState`` already receives.
+    """
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Q&A <notes>",
+        payload={},
+        status="staged",
+    )
+    state = ConsoleStagedContextState.from_live_work(launch)
+    assert "&amp;" in state.summary
+    assert "&lt;notes&gt;" in state.summary
+    assert "<notes>" not in state.summary
