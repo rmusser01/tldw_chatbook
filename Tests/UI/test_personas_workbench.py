@@ -10840,6 +10840,76 @@ async def test_character_tts_assignment_worker_accepts_unverified_profile(
         ]
 
 
+@pytest.mark.parametrize(
+    ("recovery_action", "expected_tail", "forbidden"),
+    [
+        (
+            "refresh",
+            "Refresh or repair the profile; the assignment is preserved.",
+            (),
+        ),
+        (
+            "none",
+            "This provider has no catalog check; the assignment is preserved.",
+            ("refresh", "retry"),
+        ),
+    ],
+)
+async def test_character_tts_unverified_status_never_promises_an_impossible_refresh(
+    recovery_action: str,
+    expected_tail: str,
+    forbidden: tuple[str, ...],
+) -> None:
+    """The Roleplay status line must follow the availability's own recovery.
+
+    A legacy-provider profile is permanently "unverified" (no catalog to
+    preflight), so telling the user to Refresh names a control that can
+    never change the state -- ADR-031. audio.cpp keeps its refresh copy.
+    """
+
+    profile = _character_tts_profile(1)
+    loaded = LoadedTTSProfile(repository_generation=7, profile=profile)
+    assignment = CharacterTTSAssignment(
+        character_ref=CharacterRef(
+            source="local",
+            authority_id="local-test-authority",
+            character_id="1",
+        ),
+        profile_id=profile.profile_id,
+    )
+    availability = TTSProfileAvailability(
+        profile_id=profile.profile_id,
+        state="unverified",
+        recovery_action=recovery_action,  # type: ignore[arg-type]
+    )
+    snapshot = personas_screen_module._CharacterTTSControlSnapshot(
+        request_generation=1,
+        runtime_source="local",
+        character_id="1",
+        character_ref=assignment.character_ref,
+        repository_generation=7,
+        loaded_profiles=(loaded,),
+        availability=(availability,),
+        current=AssignedTTSProfileSnapshot(
+            assignment=assignment,
+            profile=profile,
+        ),
+        assignment_count=1,
+        configuration_revision=4,
+        catalog_revision=None,
+        expected_server_id=None,
+        server_context_capture=None,
+    )
+
+    state = PersonasScreen._character_tts_presentation_from_snapshot(snapshot)
+
+    assert state.status == (
+        f"{profile.display_name} · Unverified · Used by 1 character. {expected_tail}"
+    )
+    for word in forbidden:
+        assert word not in state.status.casefold()
+
+
 async def test_character_tts_assignment_worker_still_refuses_unavailable_profile(
     mock_app_instance,
     stub_characters,

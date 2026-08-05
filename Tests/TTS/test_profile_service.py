@@ -1516,9 +1516,9 @@ async def test_availability_applies_exact_allowlist_before_capability_lookup() -
     assert tuple(item.recovery_action for item in observed.profiles) == (
         "none",
         "none",
-        "refresh",
-        "refresh",
-        "refresh",
+        "none",
+        "none",
+        "none",
     )
     assert observed.repository_generation == repository.generation
     assert observed.configuration_revision == 3
@@ -1733,12 +1733,38 @@ async def test_availability_all_legacy_page_skips_native_capability_call() -> No
         "unverified",
     )
     assert tuple(item.recovery_action for item in observed.profiles) == (
-        "refresh",
-        "refresh",
+        "none",
+        "none",
     )
     assert observed.catalog_revision is None
     assert observed.repository_generation == repository.generation
     assert observed.configuration_revision == tts_service.revision
+
+
+def test_availability_value_admits_an_inert_recovery_for_unverified() -> None:
+    """ "unverified" now has two honest recoveries, one per provider class."""
+
+    profile_id = _PROFILE_ID
+    refreshable = TTSProfileAvailability(
+        profile_id=profile_id,
+        state="unverified",
+        recovery_action="refresh",
+    )
+    inert = TTSProfileAvailability(
+        profile_id=profile_id,
+        state="unverified",
+        recovery_action="none",
+    )
+
+    assert refreshable.recovery_action == "refresh"
+    assert inert.recovery_action == "none"
+    with pytest.raises(ProfileValidationError) as caught:
+        TTSProfileAvailability(
+            profile_id=profile_id,
+            state="unverified",
+            recovery_action="edit",
+        )
+    assert caught.value.code == "recovery_action"
 
 
 @pytest.mark.asyncio
@@ -1784,9 +1810,12 @@ async def test_availability_mixed_page_probes_only_audio_cpp_models() -> None:
         "available",
         "unverified",
     )
+    # ADR-031: a legacy provider has no catalog to preflight, so its
+    # "unverified" is permanent and Refresh must not be offered as a
+    # recovery it can never perform. audio.cpp keeps "refresh".
     assert tuple(item.recovery_action for item in observed.profiles) == (
         "none",
-        "refresh",
+        "none",
     )
 
 

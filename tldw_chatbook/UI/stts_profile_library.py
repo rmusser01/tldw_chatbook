@@ -1311,7 +1311,15 @@ class STTSProfileLibrary(Widget):
         if availability is not None and availability.state == "unavailable":
             status_line = "Unavailable — Refresh, then Edit."
         elif availability is not None and availability.state == "unverified":
-            status_line = "Unverified — Refresh and retry."
+            # Follow the availability's own recovery action rather than the
+            # state alone: a legacy provider's "unverified" is permanent
+            # (no catalog to preflight), so instructing a refresh would name
+            # a control that can never change it (ADR-031).
+            status_line = (
+                "Unverified — Refresh and retry."
+                if availability.recovery_action == "refresh"
+                else "Unverified — this provider has no catalog check."
+            )
         else:
             status_line = f"{state}."
         status = self.query_one("#stts-profile-status-copy", Static)

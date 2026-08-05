@@ -1777,9 +1777,18 @@ class PersonasScreen(BaseAppScreen):
                 "Repair the profile or remove this assignment."
             )
         else:
+            # Follow the availability's own recovery action, not the state
+            # alone: a legacy-provider profile has no catalog to preflight,
+            # so its "unverified" is permanent and naming Refresh would
+            # promise a recovery that control can never perform (ADR-031).
+            unverified_tail = (
+                "Refresh or repair the profile; the assignment is preserved."
+                if current_availability.recovery_action == "refresh"
+                else "This provider has no catalog check; the assignment is preserved."
+            )
             status = (
                 f"{current.profile.display_name} · Unverified · {count_copy}. "
-                "Refresh or repair the profile; the assignment is preserved."
+                f"{unverified_tail}"
             )
         return CharacterTTSPresentationState(
             profiles=profiles,

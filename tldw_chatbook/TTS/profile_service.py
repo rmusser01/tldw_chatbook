@@ -76,6 +76,24 @@ _AVAILABILITY_RECOVERY: Mapping[
         "unverified": "refresh",
     }
 )
+#: The recovery actions each state may honestly carry.
+#:
+#: "unverified" admits two, one per provider class: audio.cpp is unverified
+#: only until its next capability preflight, so "refresh" is a real recovery;
+#: the legacy providers have no catalog to preflight (`observe_availability`
+#: skips them by design), so their "unverified" is permanent and the only
+#: honest action is the inert one -- ADR-031 forbids a control that claims a
+#: recovery it can never perform.
+_ALLOWED_RECOVERY_ACTIONS: Mapping[
+    ProfileAvailabilityState,
+    frozenset[ProfileRecoveryAction],
+] = MappingProxyType(
+    {
+        "available": frozenset({"none"}),
+        "unavailable": frozenset({"edit"}),
+        "unverified": frozenset({"refresh", "none"}),
+    }
+)
 
 
 @runtime_checkable
@@ -236,7 +254,7 @@ def _validate_recovery_action(
     if type(value) is not str or value not in {"none", "refresh", "edit"}:
         raise ProfileValidationError("recovery_action")
     action = cast(ProfileRecoveryAction, value)
-    if action != _AVAILABILITY_RECOVERY[state]:
+    if action not in _ALLOWED_RECOVERY_ACTIONS[state]:
         raise ProfileValidationError("recovery_action")
     return action
 
@@ -689,14 +707,26 @@ def _profile_is_structurally_supported(profile: TTSGenerationProfile) -> bool:
     )
 
 
+def _recovery_action(
+    provider_id: str,
+    state: ProfileAvailabilityState,
+) -> ProfileRecoveryAction:
+    """Return the only recovery this provider can actually perform."""
+
+    if state == "unverified" and provider_id != _PROFILE_PROVIDER_ID:
+        return "none"
+    return _AVAILABILITY_RECOVERY[state]
+
+
 def _availability(
     profile_id: UUID,
     state: ProfileAvailabilityState,
+    provider_id: str,
 ) -> TTSProfileAvailability:
     return TTSProfileAvailability(
         profile_id=profile_id,
         state=state,
-        recovery_action=_AVAILABILITY_RECOVERY[state],
+        recovery_action=_recovery_action(provider_id, state),
     )
 
 
@@ -1231,7 +1261,11 @@ class TTSProfileService:
                 configuration_revision=revision,
                 catalog_revision=None,
                 profiles=tuple(
-                    _availability(profile.profile_id, "unavailable")
+                    _availability(
+                        profile.profile_id,
+                        "unavailable",
+                        profile.provider_id,
+                    )
                     for profile in page.profiles
                 ),
             )
@@ -1256,6 +1290,7 @@ class TTSProfileService:
                             if _profile_is_structurally_supported(profile)
                             else "unavailable"
                         ),
+                        profile.provider_id,
                     )
                     for profile in page.profiles
                 ),
@@ -2390,7 +2425,7 @@ class TTSProfileService:
             options=profile.options,
             snapshot=snapshot,
         )
-        return _availability(profile.profile_id, state)
+        return _availability(profile.profile_id, state, profile.provider_id)
 
     @staticmethod
     def _classify_selection(
