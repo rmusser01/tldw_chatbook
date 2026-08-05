@@ -58,7 +58,8 @@ class LocalToolProvider:
 
     Args:
         workspace_root: Confinement root for all path-taking tools.
-        specs: Tool specs; defaults to the built-in set (fs_list, fs_read, fs_write, fs_edit).
+        specs: Tool specs; defaults to the built-in set (fs_list, fs_read,
+            fs_write, fs_edit, fs_glob, fs_grep).
         resolve_state: (HubTool) -> EffectiveToolState, injected by the
             controller (owns permission-store access).
         kill_switch: () -> bool master off-switch.
