@@ -628,6 +628,18 @@ class BuiltinToolProvider:
             return ToolResult(ok=False, error=str(exc))
         if isinstance(raw, dict) and raw.get("error"):
             return ToolResult(ok=False, error=str(raw["error"]))
+        if isinstance(raw, dict):
+            # Raw before/after contents captured for UI diff rendering
+            # (TASK-1351) are live-session display state only. This is the
+            # seam where a builtin tool's result dict becomes the JSON text
+            # that feeds BOTH the model history (_append_tool_result) and
+            # the on-disk run log (_emit_record) -- strip here so the raw
+            # contents are never replayed to a provider or persisted.
+            from tldw_chatbook.Tools.file_operation_tools import DIFF_CONTENT_KEYS
+
+            raw = {
+                key: value for key, value in raw.items() if key not in DIFF_CONTENT_KEYS
+            }
         content = json.dumps(raw) if isinstance(raw, (dict, list)) else str(raw)
         return ToolResult(ok=True, content=content)
 

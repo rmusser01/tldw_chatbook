@@ -24,6 +24,10 @@ The `textual-diff-view` package (by Will McGugan, used by the `toad` ACP client)
 - Raw before/after contents are display-only: they are stripped from DB-persisted tool messages and from the LLM continuation payload (`strip_diff_contents`), so diffs render from the in-memory record during the live session only; reloaded conversations show the text result.
 - Lays the foundation for a future notes-sync conflict diff view (adjacent to task-97) using the same widget and split-view pattern.
 
+## Amendment (2026-08-05, salvage onto `feat/toad-console-improvements` / dev)
+
+The original strip sites (`chat_streaming_events.py` / `worker_events.py`) were deleted on dev. In dev's Console agent flow a builtin tool's result dict is stringified at a single seam — `Agents/tool_catalog.py` `BuiltinToolProvider.invoke()` (`json.dumps(raw)`) — which feeds BOTH the model history (`agent_runtime._append_tool_result`) and the on-disk run log (`agent_runtime._emit_record`). The strip therefore lives at that seam (keys shared via `Tools.file_operation_tools.DIFF_CONTENT_KEYS`, used by both the seam and `Widgets/diff_widgets.strip_diff_contents`). `ToolExecutionWidget` DiffView mounting is unchanged; on dev that widget's only surface is the CCP/Personas flow.
+
 ## Alternatives considered
 
 - **Hand-rolled diff rendering**: rejected — significant effort to match hunk folding, split/auto modes, and scalable strip rendering; the package is purpose-built and already proven in `toad`.
