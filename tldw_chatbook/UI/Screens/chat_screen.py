@@ -7677,30 +7677,44 @@ class ChatScreen(BaseAppScreen):
         would teach it that "⏹ interrupted" is part of how the assistant
         speaks. What changed in task-2364 is WHERE the decision comes
         from -- `metadata.interrupted`, a fact the engine recorded, rather
-        than a blind string match on UI copy that also mangled any turn
-        whose words happened to contain the marker text.
+        than an inference drawn from UI copy.
 
-        Rows persisted before the metadata field existed carry the marker
-        with no flag to read; the old unconditional strip is kept for
-        exactly those, so resuming an older conversation does not start
-        seeding chrome again.
+        The marker is trimmed as a SUFFIX regardless of the flag, and that
+        is the whole trick: `_finish_console_realtime_reply_row` only ever
+        APPENDS it (via `append_stream_chunk`), so a suffix trim removes
+        every marker this app has ever written while leaving alone the same
+        characters occurring anywhere else. A user who types "the docs say
+        ⏹ interrupted means cut off" gets their sentence seeded intact.
+
+        The marker-free branch is NOT transitional. Only the realtime loop
+        stamps metadata onto rows, so every ordinary typed turn -- past,
+        present and future -- arrives here with `metadata is None`; a strip
+        that assumed "no metadata means a legacy interrupted reply" would
+        be mangling live user text forever. Trimming the suffix
+        unconditionally also means a reply whose metadata write was
+        swallowed while its marker landed still does not seed chrome.
 
         Args:
             message: A transcript row from the loop's Console session.
 
         Returns:
-            The row's text with any interruption marker removed, stripped.
+            The row's text with a trailing interruption marker removed,
+            stripped.
         """
         raw = str(message.content or "")
+        trimmed = raw.removesuffix(CONSOLE_REALTIME_INTERRUPTED_MARKER)
         metadata = message.metadata
-        if metadata is None:
-            return raw.replace(CONSOLE_REALTIME_INTERRUPTED_MARKER, "").strip()
-        if metadata.interrupted:
-            # The marker is always the LAST thing appended to a cut reply
-            # (`_finish_console_realtime_reply_row`), so a suffix trim is
-            # exact where a global replace was not.
-            return raw.removesuffix(CONSOLE_REALTIME_INTERRUPTED_MARKER).strip()
-        return raw.strip()
+        if trimmed != raw and metadata is not None and not metadata.interrupted:
+            # A row the engine stamped, carrying the marker but NOT the
+            # flag: the append and the metadata write are separate calls,
+            # each independently swallowed on failure, so this is the one
+            # place the divergence is observable. The text is trimmed
+            # either way -- this only names it.
+            logger.debug(
+                "Console realtime: seeded a row whose marker and interrupted "
+                "flag disagree: op=realtime_seed_text"
+            )
+        return trimmed.strip()
 
     def _console_realtime_row_metadata(
         self,
@@ -8573,7 +8587,11 @@ class ChatScreen(BaseAppScreen):
             # STT, not from the realtime provider's transcription, so no
             # transcription model is claimed here (task-2364) -- the row
             # belongs to this realtime session and its text is already
-            # final, and that is all this record asserts.
+            # final, and that is all this record asserts. `set_message_
+            # metadata` replaces a record wholesale, but this row is never
+            # re-stamped: its id is deliberately not kept as
+            # `user_row_id` (that tracks AUDIO turns), so nothing later
+            # overwrites the blank model with the transcription model.
             metadata=self._console_realtime_row_metadata(
                 model="",
                 transcript_status="final",

@@ -171,12 +171,22 @@ handsfree_engine = "auto"     # "auto" | "pipeline" | "realtime"
     realtime model on a reply row and the transcription model on a user row —
     the same attribution its usage gets. An adopted pipeline capture claims no
     transcription model (its words came from local STT).
-  - `interrupted` marks a cut reply. The visible `⏹ interrupted` marker stays
-    in the content for the human reader, but it is no longer what machine
-    consumers read: the reseed builder decides from the flag (and only then
-    trims the marker it wrote), so a turn whose words merely *contain* that
-    text is no longer mangled. Rows persisted before v31 have no flag, so the
-    old unconditional strip is retained for exactly those.
+  - `interrupted` is the recorded FACT that a reply was cut short — what
+    exports, summaries and any later reader consult instead of inferring it
+    from UI copy. The visible `⏹ interrupted` marker stays in the content for
+    the human reader.
+  - Seeding trims that marker as a **suffix**, unconditionally, because
+    `_finish_console_realtime_reply_row` only ever *appends* it: the trim
+    removes every marker this app has written while leaving the same
+    characters alone anywhere else, so a user who types "the docs say
+    ⏹ interrupted means cut off" has their sentence seeded intact (the old
+    global `replace` ate it). This branch is **permanent, not transitional**:
+    only the realtime loop stamps metadata, so every ordinary typed turn
+    reaches the seed builder with no metadata at all — a strip that read
+    "no metadata ⇒ legacy interrupted reply" would mangle live user text
+    forever. Trimming regardless of the flag also covers the case where the
+    marker append succeeded and the metadata write was swallowed; that
+    disagreement is logged rather than acted on.
   - `transcript_status` (`pending` → `final`/`empty`/`failed`) closes the
     empty-user-row strand: a transcript that legitimately came back empty now
     records that it did, instead of leaving a blank row with no explanation.

@@ -2544,3 +2544,86 @@ async def test_a_late_empty_transcript_never_restates_a_filled_row(monkeypatch):
         user = _messages(console)[0]
         assert user.content == "what is the weather"
         assert user.metadata.transcript_status == "final"
+
+
+@pytest.mark.asyncio
+async def test_seed_keeps_marker_text_typed_by_a_user_with_no_metadata(monkeypatch):
+    """F1: only realtime rows are ever stamped with metadata, so every TYPED
+    Console turn takes the no-metadata path -- permanently, not just until
+    pre-v31 rows age out. A global `replace` there ate the marker string out
+    of the middle of text a user actually typed."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        store.append_message(
+            store.active_session_id,
+            role=ConsoleMessageRole.USER,
+            content="the docs say ⏹ interrupted means cut off",
+        )
+
+        await _enter_live_realtime(console, pilot, rig)
+
+        items, _instructions = rig.session.seeds[0]
+        assert items == [("user", "the docs say ⏹ interrupted means cut off")]
+
+
+@pytest.mark.asyncio
+async def test_seed_still_trims_a_marker_suffix_on_a_row_without_metadata(monkeypatch):
+    """The no-metadata path must keep doing its job for rows the engine
+    genuinely cut short before the field existed: the marker is only ever
+    APPENDED, so trimming the suffix covers every one of them."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        store.append_message(
+            store.active_session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=(
+                "Half a sentence"
+                + chat_screen_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
+            ),
+        )
+
+        await _enter_live_realtime(console, pilot, rig)
+
+        items, _instructions = rig.session.seeds[0]
+        assert items == [("assistant", "Half a sentence")]
+
+
+@pytest.mark.asyncio
+async def test_seed_trims_a_marker_suffix_even_when_the_flag_says_otherwise(monkeypatch):
+    """F2: the marker append and the metadata write are separate calls, each
+    independently swallowed on failure. A row carrying the marker but no flag
+    must still not seed chrome into the model."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        store.append_message(
+            store.active_session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=(
+                "Half a sentence"
+                + chat_screen_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
+            ),
+            metadata=MessageMetadata(engine="realtime", interrupted=False),
+        )
+
+        await _enter_live_realtime(console, pilot, rig)
+
+        items, _instructions = rig.session.seeds[0]
+        assert items == [("assistant", "Half a sentence")]
