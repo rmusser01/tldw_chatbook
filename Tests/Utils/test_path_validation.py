@@ -271,3 +271,28 @@ class TestGetSafeRelativePath:
             # Parent directory
             parent = Path(base_dir).parent
             assert get_safe_relative_path(str(parent), base_dir) is None
+
+
+class TestValidatePathAllowHidden:
+    """Test cases for the allow_hidden opt-out on validate_path."""
+
+    def test_validate_path_allow_hidden_permits_dotdirs_under_base(self, tmp_path):
+        from tldw_chatbook.Utils.path_validation import validate_path
+
+        hidden = tmp_path / ".github" / "workflows"
+        hidden.mkdir(parents=True)
+        result = validate_path(".github/workflows", tmp_path, allow_hidden=True)
+        assert result == hidden.resolve()
+
+    def test_validate_path_default_still_rejects_hidden(self, tmp_path):
+        from tldw_chatbook.Utils.path_validation import validate_path
+
+        (tmp_path / ".hidden").mkdir()
+        with pytest.raises(ValueError, match="hidden"):
+            validate_path(".hidden", tmp_path)
+
+    def test_validate_path_allow_hidden_still_blocks_traversal(self, tmp_path):
+        from tldw_chatbook.Utils.path_validation import validate_path
+
+        with pytest.raises(ValueError, match="outside"):
+            validate_path("../escape", tmp_path, allow_hidden=True)
