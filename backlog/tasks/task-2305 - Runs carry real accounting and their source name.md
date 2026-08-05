@@ -1,7 +1,7 @@
 ---
 id: TASK-2305
 title: Runs carry real accounting and their source name
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04'
 labels:
