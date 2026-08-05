@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import os
 import time
+from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -1087,6 +1088,7 @@ def _compose_run_registry_and_allowed(
     builtin_gate: Any | None = None,
     workspace_id: str | None = None,
     ephemeral: bool = False,
+    diff_sink: Any | None = None,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
@@ -1138,6 +1140,9 @@ def _compose_run_registry_and_allowed(
             and MCP tools out of the run's catalog and allow-list so the
             model is never offered them. ``False`` (the default)
             preserves every pre-existing caller's behavior unchanged.
+        diff_sink: TASK-1366 -- this run's UI-side diff channel, threaded
+            into the freshly-constructed ``BuiltinToolProvider`` (see its
+            ``__init__``). ``None`` (the default) means no diff capture.
 
     Returns:
         ``(registry, allowed_tools, builtin_names)`` -- the per-run
@@ -1149,7 +1154,10 @@ def _compose_run_registry_and_allowed(
     """
     registry = ToolCatalogRegistry(ephemeral=ephemeral)
     builtin_provider = BuiltinToolProvider(
-        gate=builtin_gate, workspace_id=workspace_id, ephemeral=ephemeral
+        gate=builtin_gate,
+        workspace_id=workspace_id,
+        ephemeral=ephemeral,
+        diff_sink=diff_sink,
     )
     registry.register_provider(builtin_provider)
     builtin_names = tuple(entry.name for entry in builtin_provider.list_catalog())
@@ -1419,6 +1427,23 @@ class ConsoleAgentBridge:
         registry = self._registry
         allowed_tools = self._allowed_tools
         skill_runner = None
+        # TASK-1366: this run's UI-side diff channel. When this run takes
+        # the fresh-build branch below, the provider's strip seam
+        # (BuiltinToolProvider.invoke) appends
+        # ``(tool_name, file_path, old, new)`` here BEFORE the raw contents
+        # are removed from the LLM/run-log-bound result; the on_step
+        # handler below pairs each capture with its STEP_TOOL_RESULT and
+        # hangs it on the TOOL marker message (session-only ``tool_diff``).
+        # A plain deque: invoke() and on_step both run on this run's worker
+        # thread, dispatch is sequential, and every capture is followed by
+        # exactly one result step before the next dispatch -- FIFO with a
+        # tool-name check is exact. The shared fast path's construction-
+        # time provider has no sink (a cross-run provider must not capture
+        # into one run's queue), so gate-less callers simply get no diff
+        # capture -- their rows render exactly as before. Production always
+        # passes builtin_gate (console_chat_controller), i.e. the
+        # fresh-build branch.
+        pending_diffs: deque[tuple[str, str, str, str]] = deque()
         # task-4 (skills-fork-reachability): one SkillFileBindings per run,
         # handed to BOTH AgentService (the loop's authorization + reader
         # closure -- Task 3) and this run's _BridgeSkillRunner (which grants
@@ -1458,12 +1483,15 @@ class ConsoleAgentBridge:
                     run_is_ephemeral = self._store.session_is_ephemeral(session_id)
                 except KeyError:
                     run_is_ephemeral = False
+            # TASK-1366: wire this run's diff channel (declared above) into
+            # the freshly-built provider.
             registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(
                 context,
                 mcp_provider=mcp_provider,
                 builtin_gate=builtin_gate,
                 workspace_id=run_workspace_id,
                 ephemeral=run_is_ephemeral,
+                diff_sink=pending_diffs.append,
             )
             if self._skills_service is not None:
                 skill_names = frozenset(
@@ -1738,6 +1766,21 @@ class ConsoleAgentBridge:
             live_steps.append(
                 AgentLiveStep(step.kind, self._summarize(step), agent_kind)
             )
+            # TASK-1366: pair this result step with the raw before/after
+            # contents the provider's diff_sink captured at the strip seam,
+            # when this call was a diff-carrying file write. The name check
+            # keeps the FIFO honest: only THIS tool's own result step may
+            # claim its capture. Sub-agent result steps drain the queue too
+            # (their writes ride this run's provider) even though only
+            # primary steps drop markers.
+            tool_diff: tuple[str, str, str] | None = None
+            if (
+                step.kind == STEP_TOOL_RESULT
+                and pending_diffs
+                and pending_diffs[0][0] == step.tool_name
+            ):
+                _diff_tool, diff_path, diff_old, diff_new = pending_diffs.popleft()
+                tool_diff = (diff_path, diff_old, diff_new)
             if agent_kind == AGENT_KIND_PRIMARY:
                 if step.kind == STEP_SPAWN:
                     subagents.append(SubAgentSummary(step.summary or ""))
@@ -1762,6 +1805,7 @@ class ConsoleAgentBridge:
                             summary=step.summary,
                             marker_text=marker_text,
                         ),
+                        tool_diff=tool_diff,
                     )
             # Diagnostic logging for every tool call and result. The actual
             # tool invocation lives inside AgentService, so we observe it
@@ -2436,7 +2480,12 @@ class ConsoleAgentBridge:
         )
 
     def _append_marker(
-        self, session_id: str, text: str, *, full_output: str | None = None
+        self,
+        session_id: str,
+        text: str,
+        *,
+        full_output: str | None = None,
+        tool_diff: tuple[str, str, str] | None = None,
     ) -> None:
         # Kept raw (no escaping): both consumers render markup-off --
         # console_transcript.py's _message_render_text builds a Content via
@@ -2445,12 +2494,18 @@ class ConsoleAgentBridge:
         # markup-parsed). Escaping here for a parser that never runs used to
         # leave literal backslashes in the rendered marker (`fetch [docs]` ->
         # `fetch \[docs]`).
+        # `tool_diff` (TASK-1366) is the raw (path, before, after) capture
+        # for a file-writing marker -- session-only display state for the
+        # transcript's diff row; the store never persists TOOL markers, and
+        # `text`/`full_output` (built from the post-strip result) remain
+        # the only forms the model history and run log ever see.
         try:
             self._store.append_message(
                 session_id,
                 role=ConsoleMessageRole.TOOL,
                 content=text,
                 tool_output_full=full_output,
+                tool_diff=tool_diff,
             )
         except KeyError:
             pass  # session vanished mid-run; the rail still has the live snapshot

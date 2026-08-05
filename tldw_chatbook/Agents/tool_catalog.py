@@ -467,6 +467,7 @@ class BuiltinToolProvider:
         gate: Any | None = None,
         workspace_id: str | None = None,
         ephemeral: bool = False,
+        diff_sink: Any | None = None,
     ) -> None:
         # settings-workspaces-folder-roots spec §3: the run's workspace,
         # bound around every tool execution (see `invoke`) so file tools
@@ -526,6 +527,18 @@ class BuiltinToolProvider:
         # and its per-run registry) passes nothing today, so an ungated
         # default would silently leave the shipping path unprotected.
         self._gate = gate
+        # TASK-1366: optional UI-side channel for raw before/after file
+        # contents, invoked at the strip seam in `invoke()` with a single
+        # ``(tool_name, file_path, old_content, new_content)`` tuple just
+        # BEFORE the raw keys are removed from the LLM/run-log-bound dict.
+        # This is the ONLY way the live Console can render a diff: the
+        # stripped JSON text is all that leaves this method. `None` (the
+        # default) means no UI is listening -- behavior is byte-identical
+        # to pre-diff-channel runs. A sink runs on the caller's thread and
+        # its exceptions are swallowed (a UI failure must never break a
+        # tool call), so it must be cheap and non-blocking -- the bridge
+        # hands in a `deque.append` (single-argument contract).
+        self._diff_sink = diff_sink
 
     def _tool_id(self, name: str) -> str:
         return f"{self.SOURCE}:{name}"
@@ -637,6 +650,27 @@ class BuiltinToolProvider:
             # contents are never replayed to a provider or persisted.
             from tldw_chatbook.Tools.file_operation_tools import DIFF_CONTENT_KEYS
 
+            # TASK-1366: hand the raw contents to the UI diff channel
+            # FIRST, while they still exist -- after the strip below they
+            # are gone from everything this method returns. Only the sink
+            # (an in-memory, live-session channel) ever sees them.
+            if self._diff_sink is not None:
+                old_content = raw.get("old_content")
+                new_content = raw.get("new_content")
+                if isinstance(old_content, str) and isinstance(new_content, str):
+                    try:
+                        self._diff_sink(
+                            (
+                                name,
+                                str(raw.get("file_path") or "file"),
+                                old_content,
+                                new_content,
+                            )
+                        )
+                    except Exception:  # noqa: BLE001 — UI failure never breaks a tool call
+                        logger.opt(exception=True).debug(
+                            "diff_sink raised during tool result capture; continuing"
+                        )
             raw = {
                 key: value for key, value in raw.items() if key not in DIFF_CONTENT_KEYS
             }

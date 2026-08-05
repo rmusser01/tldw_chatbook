@@ -47,6 +47,7 @@ from tldw_chatbook.Widgets.Console.console_generation_card import (
     ConsoleGenerationCardSpec,
     generation_card_signature,
 )
+from tldw_chatbook.Widgets.diff_widgets import make_diff
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
@@ -395,6 +396,7 @@ class _TranscriptRow:
         "rule",
         "banner",
         "message",
+        "diff",
         "citations",
         "original-attempt",
         "image",
@@ -453,6 +455,53 @@ class ConsoleTranscriptMessage(Static):
             transcript = transcript.parent
         if isinstance(transcript, ConsoleTranscript):
             transcript.toggle_message_selection(self.message_id)
+
+
+class ConsoleToolDiffRow(Vertical):
+    """Inline diff row under an expanded file-write TOOL marker (TASK-1366).
+
+    Mounts empty and fills in asynchronously: the diff is computed off the
+    UI thread (``DiffView.prepare``) BEFORE the DiffView mounts, mirroring
+    ``tool_message_widgets.ToolExecutionWidget``'s integration. The row is
+    render-derived view state -- it exists only while its marker message is
+    expanded via the full-output toggle, and disappears with it (or when
+    the message leaves the view window).
+    """
+
+    can_focus = False
+
+    def __init__(self, message_id: str, diff: tuple[str, str, str]) -> None:
+        self.message_id = message_id
+        self._diff = diff
+        super().__init__(
+            id=f"console-tool-diff-{message_id}",
+            classes="console-transcript-tool-diff",
+        )
+
+    def on_mount(self) -> None:
+        path, old_content, new_content = self._diff
+        self.run_worker(
+            self._prepare_and_mount(path, old_content, new_content),
+            thread=False,
+            group="console-tool-diff-mount",
+        )
+
+    async def _prepare_and_mount(
+        self, path: str, old_content: str, new_content: str
+    ) -> None:
+        """Prepare the diff off the UI thread, then mount the DiffView."""
+        try:
+            diff_view = make_diff(path, old_content, new_content)
+            await diff_view.prepare()
+            if not self.is_mounted:
+                # Row was unmounted (collapse/prune/session swap) while the
+                # diff prepared off-thread.
+                return
+            await self.mount(diff_view)
+        except Exception as exc:  # noqa: BLE001 — a render failure never breaks the transcript
+            logger.opt(exception=True).error(
+                f"Failed to render console tool diff for {path}: {exc}"
+            )
 
 
 class ConsoleTranscriptActionButton(Button):
@@ -1490,6 +1539,23 @@ class ConsoleTranscript(VerticalScroll):
                     selected=selected,
                 )
             )
+            if (
+                message.id in self._expanded_tool_output_ids
+                and message.tool_diff is not None
+            ):
+                # TASK-1366: inline diff row for a file-write marker,
+                # directly under its message row so it stays inside the
+                # message group (pruning drops every row derived from a
+                # pruned message id at the top of this loop). Signature is
+                # stable: a marker's tool_diff is fixed at append time.
+                rows.append(
+                    _TranscriptRow(
+                        key=f"diff:{message.id}",
+                        kind="diff",
+                        signature=("diff", message.id),
+                        message=message,
+                    )
+                )
             citation_count = self._citation_counts.get(message.id, 0)
             if citation_count > 0:
                 rows.append(
@@ -1696,6 +1762,12 @@ class ConsoleTranscript(VerticalScroll):
             )
         if row.kind == "message" and row.message is not None:
             return ConsoleTranscriptMessage(row.message, selected=row.selected)
+        if (
+            row.kind == "diff"
+            and row.message is not None
+            and row.message.tool_diff is not None
+        ):
+            return ConsoleToolDiffRow(row.message.id, row.message.tool_diff)
         if row.kind == "citations" and row.message is not None:
             button = Button(
                 row.renderable,
