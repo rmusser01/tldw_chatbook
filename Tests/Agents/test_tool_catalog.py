@@ -76,6 +76,24 @@ def test_pseudo_tool_schemas():
     assert LOAD_TOOLS_SCHEMA.name == LOAD_TOOLS_NAME
 
 
+def test_tool_for_returns_the_real_tool_invoke_would_dispatch():
+    # Minor 7 (final review): every hook test substitutes a fake provider,
+    # so `tool_for` itself -- the only thing standing between "the review
+    # hook reviews built-ins" and "the hook silently reviews nothing" --
+    # had no direct coverage. Assert it returns the SAME object `invoke()`
+    # looks up internally (both read `self._tools`), not merely an
+    # equivalent one.
+    provider = BuiltinToolProvider()
+    tool = provider.tool_for("calculator")
+    assert tool is provider._tools["calculator"]
+    assert tool.name == "calculator"
+
+
+def test_tool_for_returns_none_for_unknown_name():
+    provider = BuiltinToolProvider()
+    assert provider.tool_for("not_a_real_tool") is None
+
+
 class FakeBigProvider:
     """A provider with more tools than the threshold."""
 
@@ -169,3 +187,133 @@ def test_invoke_by_name_returns_error_result_when_owner_vanishes():
     result = reg.invoke_by_name("x", {})
     assert result.ok is False
     assert "x" in result.error
+
+
+def test_builtin_provider_refuses_when_gate_denies():
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
+    class DenyGate:
+        def check(self, tool):
+            return "nope"
+
+    out = BuiltinToolProvider(gate=DenyGate()).invoke(
+        "builtin:calculator", {"expression": "1+1"}
+    )
+    assert out.ok is False
+    assert "nope" in out.error
+
+
+def test_builtin_provider_runs_when_gate_permits():
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
+    class AllowGate:
+        def check(self, tool):
+            return None
+
+    out = BuiltinToolProvider(gate=AllowGate()).invoke(
+        "builtin:calculator", {"expression": "6*7"}
+    )
+    assert out.ok is True
+
+
+def test_gate_none_is_not_ungated(monkeypatch):
+    # Constraint 6: a bare provider must be gated, not open.
+    import tldw_chatbook.Agents.tool_catalog as tc
+
+    class DenyGate:
+        def check(self, tool):
+            return "denied by default gate"
+
+    monkeypatch.setattr(tc, "build_builtin_gate", lambda: DenyGate())
+    out = tc.BuiltinToolProvider().invoke("builtin:calculator", {"expression": "1+1"})
+    assert out.ok is False
+    assert "denied by default gate" in out.error
+
+
+def test_gate_failure_does_not_raise_into_the_loop():
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
+    class BoomGate:
+        def check(self, tool):
+            raise RuntimeError("gate exploded")
+
+    out = BuiltinToolProvider(gate=BoomGate()).invoke(
+        "builtin:calculator", {"expression": "1+1"}
+    )
+    assert out.ok is False  # fail closed, never raise
+
+
+class _OpenGate:
+    """Approval gate that never refuses -- isolates the ephemeral check
+    below from the (separately tested) approval-gate machinery."""
+
+    def check(self, tool):
+        return None
+
+
+class _RecordingWriteTool:
+    """Stub standing in for create_note/update_note/write_file: records
+    whether it actually ran, without touching a real DB or the filesystem."""
+
+    def __init__(self, name):
+        self.name = name
+        self.description = "stub"
+        self.parameters = {"type": "object", "properties": {}}
+        self.called = False
+
+    async def execute(self, **kwargs):
+        self.called = True
+        return {"ok": True}
+
+
+def test_builtin_provider_refuses_write_shaped_tools_in_an_ephemeral_session():
+    """F4 (final-review): agent tool calls are a 9th, ungated sink -- an
+    ordinary Console reply can compose `create_note`/`update_note`/
+    `write_file` (this module's own gateable builtins) exactly like any
+    other reply, independently of the Console UI action-id registry in
+    `Chat/console_ephemeral.py`. Before this fix `BuiltinToolProvider.
+    invoke` never asked whether the running session was temporary.
+    """
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
+    for tool_name in ("create_note", "update_note", "write_file"):
+        stub = _RecordingWriteTool(tool_name)
+        provider = BuiltinToolProvider(gate=_OpenGate(), ephemeral=True)
+        provider._tools[tool_name] = stub
+
+        result = provider.invoke(f"builtin:{tool_name}", {})
+
+        assert result.ok is False, f"{tool_name} must refuse in a temporary chat"
+        assert "temporary chat" in result.error
+        assert stub.called is False, (
+            f"{tool_name} must never execute in a temporary chat"
+        )
+
+
+def test_builtin_provider_write_shaped_tools_run_normally_outside_ephemeral():
+    """Control for the test above: the same tools, same gate, same stub --
+    only `ephemeral` differs -- must run exactly as before this fix."""
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
+    for tool_name in ("create_note", "update_note", "write_file"):
+        stub = _RecordingWriteTool(tool_name)
+        provider = BuiltinToolProvider(gate=_OpenGate(), ephemeral=False)
+        provider._tools[tool_name] = stub
+
+        result = provider.invoke(f"builtin:{tool_name}", {})
+
+        assert result.ok is True, result.error
+        assert stub.called is True
+
+
+def test_builtin_provider_ephemeral_does_not_block_read_only_tools():
+    """The block is targeted at write-shaped tools, not a blanket ephemeral
+    lockout: calculator/get_current_datetime read/compute nothing to disk
+    and must keep working in a temporary chat."""
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
+    out = BuiltinToolProvider(gate=_OpenGate(), ephemeral=True).invoke(
+        "builtin:calculator", {"expression": "6*7"}
+    )
+    assert out.ok is True
+    assert "42" in out.content

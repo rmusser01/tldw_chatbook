@@ -14,9 +14,12 @@ def _labels(result):
     return [s.label for s in result]
 
 
+COMMANDS = ["/prompt", "/system", "/skills", "/prefill", "/generate-image", "/rewind"]
+
+
 def test_bare_slash_lists_commands_then_skills():
     result = suggestions_for_draft("/", default_console_registry(), SKILLS)
-    assert _labels(result) == ["/prompt", "/system", "/skills", "/web-search", "/summarize"]
+    assert _labels(result) == COMMANDS + ["/skills web-search", "/skills summarize"]
 
 
 def test_prefix_filters_case_insensitively():
@@ -24,10 +27,12 @@ def test_prefix_filters_case_insensitively():
     assert _labels(result) == ["/skills"]
 
 
-def test_skill_entries_insert_bare_slash_name():
+def test_skill_entries_complete_to_skills_invocation():
+    # Bare `/skill-name` is not dispatchable (fallback resolver removed), so
+    # skill entries insert the canonical `/skills <name> ` form.
     result = suggestions_for_draft("/w", default_console_registry(), SKILLS)
-    assert _labels(result) == ["/web-search"]
-    assert result[0].insert_text == "/web-search "
+    assert _labels(result) == ["/skills web-search"]
+    assert result[0].insert_text == "/skills web-search "
     assert result[0].description == "Search the web"
 
 
@@ -55,10 +60,21 @@ def test_skills_arg_mode_ends_after_second_argument():
 def test_skill_named_like_a_command_is_deduplicated():
     skills = (SkillCommandCandidate(name="prompt", description="clash"),)
     result = suggestions_for_draft("/", default_console_registry(), skills)
-    assert _labels(result) == ["/prompt", "/system", "/skills"]
+    assert _labels(result) == COMMANDS
 
 
 def test_trailing_newline_leaves_completion_contexts():
     registry = default_console_registry()
     assert suggestions_for_draft("/sy\n", registry, SKILLS) is None
     assert suggestions_for_draft("/skills \n", registry, SKILLS) is None
+
+
+def test_max_results_caps_both_modes():
+    skills = tuple(SkillCommandCandidate(name=f"skill-{i:03d}") for i in range(300))
+    registry = default_console_registry()
+    command_result = suggestions_for_draft("/s", registry, skills)
+    assert len(command_result) == 200  # 2 matching commands + skills, capped
+    arg_result = suggestions_for_draft("/skills skill", registry, skills)
+    assert len(arg_result) == 200
+    capped = suggestions_for_draft("/skills skill", registry, skills, max_results=5)
+    assert len(capped) == 5

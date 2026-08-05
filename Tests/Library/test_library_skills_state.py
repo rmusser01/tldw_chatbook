@@ -1,4 +1,5 @@
 from tldw_chatbook.Library.library_skills_state import (
+    SkillEditorSupportingFile,
     build_skill_editor_state,
     build_skills_list_state,
     classify_skill_save_error,
@@ -74,9 +75,11 @@ def test_query_matches_name_and_description():
 
 
 def test_flags_line_variants():
-    assert skill_flags_line(True, False) == "user · agent"
-    assert skill_flags_line(True, True) == "user"
-    assert skill_flags_line(False, False) == "agent"
+    # task-418 copy pass: spell the invocability out instead of the bare
+    # "user · agent" tokens (no legend existed anywhere in the UI).
+    assert skill_flags_line(True, False) == "invocable: user & agent"
+    assert skill_flags_line(True, True) == "invocable: user only"
+    assert skill_flags_line(False, False) == "invocable: agent only"
     assert skill_flags_line(False, True) == "not invocable"
 
 
@@ -111,8 +114,47 @@ def test_editor_state_splits_frontmatter_and_body():
     assert state.name == "code-review" and state.argument_hint == "[path]"
     assert state.allowed_tools_csv == "calculator"
     assert state.body.strip() == "Review {{args}} now."
-    assert state.supporting_files == (("notes.md", 5),)
+    # No bundle_files on this detail -> falls back to supporting_files
+    # (task-11: nested/binary listing only kicks in when bundle_files is
+    # present), reduced to SkillEditorSupportingFile rows (is_text=True,
+    # the fallback path's default -- it only ever carries decoded text).
+    assert state.supporting_files == (
+        SkillEditorSupportingFile(name="notes.md", size=5, is_text=True),
+    )
     assert state.version == 3
+
+
+def test_editor_lists_nested_and_marks_binary():
+    from tldw_chatbook.Library.library_skills_state import build_skill_editor_state
+
+    detail = {
+        "name": "demo",
+        "content": "body",
+        "version": 1,
+        "supporting_files": {"references/api.md": "# api\n"},
+        "bundle_files": [
+            {
+                "path": "references/api.md",
+                "size": 6,
+                "executable": False,
+                "is_text": True,
+            },
+            {
+                "path": "assets/logo.png",
+                "size": 2048,
+                "executable": False,
+                "is_text": False,
+            },
+        ],
+        "trust_status": "trusted",
+        "trust_blocked": False,
+    }
+    state = build_skill_editor_state(detail)
+    names = [f.name for f in state.supporting_files]
+    assert "references/api.md" in names
+    assert "assets/logo.png" in names  # binary listed
+    binary = next(f for f in state.supporting_files if f.name == "assets/logo.png")
+    assert binary.is_text is False  # view-only marker
 
 
 def test_compose_roundtrips_through_frontmatter_grammar():
@@ -187,17 +229,97 @@ def test_shadow_name_set_stays_in_sync_with_real_sources():
 
     # Assert RUNTIME_TOOL_NAMES (spawn_subagent, find_tools, load_tools) is a subset
     assert RUNTIME_TOOL_NAMES <= _SHADOWED_BUILTIN_NAMES, (
-        f"RUNTIME_TOOL_NAMES not covered: {RUNTIME_TOOL_NAMES - _SHADOWED_BUILTIN_NAMES}"
+        "RUNTIME_TOOL_NAMES not covered: "
+        f"{RUNTIME_TOOL_NAMES - _SHADOWED_BUILTIN_NAMES}. "
+        "Add them to _SHADOWED_BUILTIN_NAMES in "
+        "tldw_chatbook/Library/library_skills_state.py -- do not accept this "
+        "as a baseline failure (task-580)."
     )
 
     # Assert builtin tool names (calculator, get_current_datetime) are a subset
     builtin_names = {e.name for e in BuiltinToolProvider().list_catalog()}
     assert builtin_names <= _SHADOWED_BUILTIN_NAMES, (
-        f"BuiltinToolProvider names not covered: {builtin_names - _SHADOWED_BUILTIN_NAMES}"
+        "BuiltinToolProvider names not covered: "
+        f"{builtin_names - _SHADOWED_BUILTIN_NAMES}. "
+        "Add them to _SHADOWED_BUILTIN_NAMES in "
+        "tldw_chatbook/Library/library_skills_state.py -- do not accept this "
+        "as a baseline failure (task-580)."
     )
 
     # Assert console command names (prompt, system) are a subset
     command_names = set(default_console_registry().available_names())
     assert command_names <= _SHADOWED_BUILTIN_NAMES, (
-        f"ConsoleCommandRegistry names not covered: {command_names - _SHADOWED_BUILTIN_NAMES}"
+        "ConsoleCommandRegistry names not covered: "
+        f"{command_names - _SHADOWED_BUILTIN_NAMES}. "
+        "Add them to _SHADOWED_BUILTIN_NAMES in "
+        "tldw_chatbook/Library/library_skills_state.py -- do not accept this "
+        "as a baseline failure (task-580)."
     )
+
+
+def test_build_editor_state_marks_derived_description_and_keeps_field_empty():
+    """task-419: when the SKILL.md frontmatter has NO description, the
+    service derives one from the first body line for list display -- the
+    editor must not echo that into the Description field as if the user
+    had written it (a later save would ratchet it into the frontmatter)."""
+    from tldw_chatbook.Library.library_skills_state import build_skill_editor_state
+
+    state = build_skill_editor_state(
+        {
+            "name": "demo",
+            "description": "First body line.",
+            "content": "---\nname: demo\n---\nFirst body line.\nMore.",
+        }
+    )
+    assert state.description == ""
+    assert state.description_derived is True
+
+
+def test_build_editor_state_keeps_real_frontmatter_description():
+    from tldw_chatbook.Library.library_skills_state import build_skill_editor_state
+
+    state = build_skill_editor_state(
+        {
+            "name": "demo",
+            "description": "Real description.",
+            "content": "---\nname: demo\ndescription: Real description.\n---\nBody.",
+        }
+    )
+    assert state.description == "Real description."
+    assert state.description_derived is False
+
+
+def test_skill_trust_header_line_maps_postures():
+    from tldw_chatbook.Library.library_skills_state import skill_trust_header_line
+
+    assert skill_trust_header_line("needs_setup", 0)[1] == "setup"
+    assert "isn't set up" in skill_trust_header_line("needs_setup", 0)[0]
+    assert skill_trust_header_line("needs_resetup", 0)[1] == "resetup"
+    assert "again after an update" in skill_trust_header_line("needs_resetup", 0)[0]
+    assert skill_trust_header_line("unavailable", 0)[1] == "retry"
+    assert skill_trust_header_line("locked", 0)[1] == "unlock"
+    # ready + blocked skills -> review; ready + none -> quiet 'ready'
+    assert skill_trust_header_line("ready", 3)[1] == "review"
+    assert "3 skill" in skill_trust_header_line("ready", 3)[0]
+    assert skill_trust_header_line("ready", 0)[1] == ""
+    # error posture (corrupt/tampered manifest) -> still a header, with a
+    # list-level recovery action (reuses "resetup" -- reset-then-bootstrap).
+    assert skill_trust_header_line("error", 0)[1] == "resetup"
+    assert "can't be verified" in skill_trust_header_line("error", 0)[0]
+    # disabled/empty posture -> hidden
+    assert skill_trust_header_line("", 0) is None
+
+
+def test_console_command_names_are_treated_as_shadowing():
+    """task-580 (AC#3): a skill named after a console command shadows it.
+
+    `rewind` and `generate-image` were missing from the set, so a skill by
+    either name was silently NOT recognised as shadowing a built-in, unlike
+    every other command. Pinned by name rather than by re-deriving the
+    registry, so this keeps failing if someone removes them.
+    """
+    from tldw_chatbook.Library.library_skills_state import skill_name_shadows_builtin
+
+    for name in ("rewind", "generate-image"):
+        assert skill_name_shadows_builtin(name) == name
+        assert skill_name_shadows_builtin(f"  {name.upper()} ") == name

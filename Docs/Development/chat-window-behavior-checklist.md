@@ -1,5 +1,7 @@
 # ChatWindowEnhanced Behavior Checklist
 
+> (Describes surfaces retired in task-577, 2026-07; kept as historical record.)
+
 ## Purpose
 This document captures all current behaviors of ChatWindowEnhanced that must be preserved during architectural refactoring. Use this as a manual test checklist before and after refactoring.
 

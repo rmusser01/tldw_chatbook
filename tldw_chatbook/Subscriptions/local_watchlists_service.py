@@ -9,10 +9,24 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
+from loguru import logger
+
 from ..DB.Subscriptions_DB import SubscriptionsDB
+from ..Utils.egress import (
+    MAX_FETCH_BYTES_PAGE,
+    MAX_FETCH_BYTES_SITEMAP,
+    guarded_fetch_httpx_async,
+    origin_set,
+)
+from .item_persist import (
+    CONTENT_FORMAT_TEXT,
+    CONTENT_KIND_ARTICLE,
+    persist_subscription_item,
+)
 from .watchlist_content_alert_service import WatchlistContentAlertService
 from .watchlist_filter_service import WatchlistFilterService
 from .watchlist_normalizers import (
+    build_watchlist_item_id,
     normalize_local_subscription_row,
     normalize_watchlist_alert_rule,
     normalize_watchlist_item,
@@ -29,6 +43,227 @@ _ALERT_CONDITION_TYPES = frozenset(
         "run_failed",
     }
 )
+
+#: The source types `_default_run_executor`'s feed arm handles.
+_FEED_SOURCE_TYPES = frozenset({"rss", "atom", "json_feed", "podcast"})
+
+#: Every source type a local run can execute, i.e. exactly the arms of
+#: `_default_run_executor` below.
+#:
+#: TASK-1383. Exported because the scheduled-check handler
+#: (`Scheduling/scheduler/handlers/watchlist_check_handler.py`) has to decide
+#: whether a subscription is executable *before* it launches a run, and it
+#: used to answer that question from its own private tuples. Those tuples had
+#: drifted: they omitted `sitemap` entirely, so every scheduled sitemap source
+#: took an "unknown subscription type" branch and was never checked. One
+#: definition, read by both callers, is what stops that recurring.
+EXECUTABLE_SOURCE_TYPES = _FEED_SOURCE_TYPES | frozenset(
+    {"url", "url_list", "sitemap", "api"}
+)
+
+#: Every counter `_disposition_counts` can return, in the order the Runs pane
+#: renders them. Named here rather than inline so the zero-fill and the
+#: binding below cannot disagree about which counters exist.
+_DISPOSITION_COUNTERS: tuple[str, ...] = (
+    "changed",
+    "unchanged",
+    "withheld",
+    "baseline",
+    "rebaselined",
+    # TASK-1394. Appended last rather than inserted in "kind order" so nothing
+    # that reads this tuple positionally (none of the current readers do, but
+    # a future one might) sees the existing five counters shift place.
+    "error",
+)
+
+
+def _disposition_count_keys() -> dict[tuple[str, str | None], str]:
+    """`check_url`'s `(kind, reason)` -> the run-stats counter it increments.
+
+    Keyed off `monitoring_engine`'s real ``DISPOSITION_*``/``REASON_*``
+    constants rather than re-spelled string literals, so the two cannot drift
+    apart (TASK-1362 ledgered Minor from Task 3's review: a re-spelled literal
+    here would silently `KeyError` inside a run the moment `monitoring_engine`
+    renamed a kind, discarding every item that run collected). `withheld` is
+    shortened from `DISPOSITION_WITHHELD`'s value for the stats key, which is
+    read by the Runs pane as a one-line summary.
+
+    The key is the `(kind, reason)` PAIR, not the kind alone (whole-branch
+    review, Critical 1). `DISPOSITION_BASELINE_STORED` has two causes and they
+    mean opposite things to the user -- `first_check` discarded nothing,
+    `extraction_settings_changed` threw away a real diff window in which a
+    change could have been lost -- so they get separate counters. Collapsing
+    them back into one leaves the `reason` with no production consumer at all,
+    which is what made spec §3's "the Runs pane says why" untrue.
+
+    Five of the six pairs below are exactly the five `_disposition` call
+    sites in `check_url`; an unlisted pair raises `KeyError` in
+    `_disposition_counts`, deliberately. The sixth, `DISPOSITION_ERROR`, is
+    NOT one of `check_url`'s own outcomes -- it is synthesized by
+    `_default_run_executor`'s `url_list`/`sitemap` loops around a
+    `check_url` call that raised instead of returning (task-1394), so one
+    dead URL is counted rather than failing the whole run.
+
+    The `monitoring_engine` import is deliberately local, not module-level:
+    this module loads unconditionally from `Subscriptions/__init__.py`
+    (its own import is not wrapped in the `try/except` that guards the
+    package's `monitoring_engine` re-export), but `monitoring_engine` carries
+    a hard `beautifulsoup4`/`defusedxml` import that not every install has
+    (see the `websearch` extras group) -- a module-level import here would
+    make importing this module fail on any install that lacks them, exactly
+    like `_default_run_executor`'s existing local import of `URLMonitor`.
+    """
+    from .monitoring_engine import (
+        DISPOSITION_BASELINE_STORED,
+        DISPOSITION_CHANGED,
+        DISPOSITION_ERROR,
+        DISPOSITION_UNCHANGED,
+        DISPOSITION_WITHHELD,
+        REASON_BELOW_CHANGE_THRESHOLD,
+        REASON_EXTRACTION_SETTINGS_CHANGED,
+        REASON_FIRST_CHECK,
+    )
+
+    return {
+        (DISPOSITION_CHANGED, None): "changed",
+        (DISPOSITION_UNCHANGED, None): "unchanged",
+        (DISPOSITION_WITHHELD, REASON_BELOW_CHANGE_THRESHOLD): "withheld",
+        (DISPOSITION_BASELINE_STORED, REASON_FIRST_CHECK): "baseline",
+        (
+            DISPOSITION_BASELINE_STORED,
+            REASON_EXTRACTION_SETTINGS_CHANGED,
+        ): "rebaselined",
+        # task-1394: `reason` is always `None` here, unlike the exception
+        # detail logged at the catch site -- the counter answers "how many
+        # URLs errored", not "which exception", so it needs exactly one
+        # stable pair rather than one per exception type.
+        (DISPOSITION_ERROR, None): "error",
+    }
+
+
+def _disposition_counts(dispositions: list[dict[str, Any]]) -> dict[str, int]:
+    """Aggregate one run's per-URL dispositions into the six counters.
+
+    Spec §4. A run that produced no items used to be indistinguishable from a
+    run that produced no items *because it withheld them*; these counters are
+    what makes the difference visible. All six keys are always present, so the
+    reader never has to distinguish "zero" from "not recorded".
+
+    ``error`` (task-1394) is the odd one out: it does not come from
+    `check_url` completing with an outcome, it comes from `check_url` never
+    returning at all. A `url_list`/`sitemap` run with one dead URL among many
+    still reports `"error": 1` here rather than raising out of the whole run.
+
+    Args:
+        dispositions: One disposition dict per URL checked, in check order.
+
+    Returns:
+        ``{"changed": n, "unchanged": n, "withheld": n, "baseline": n,
+        "rebaselined": n, "error": n}``.
+
+    Raises:
+        KeyError: If a disposition carries a ``(kind, reason)`` pair outside
+            the vocabulary -- deliberately loud, because a silently dropped
+            disposition is exactly the ambiguity this record exists to remove.
+    """
+    count_keys = _disposition_count_keys()
+    counts = {counter: 0 for counter in _DISPOSITION_COUNTERS}
+    for disposition in dispositions:
+        key = (str(disposition.get("kind")), disposition.get("reason"))
+        counts[count_keys[key]] += 1
+    return counts
+
+
+#: The `_DISPOSITION_COUNTERS` entries that mean "this URL's check_url call
+#: actually succeeded" -- every counter except `"error"`. Named as a tuple
+#: comprehension over `_DISPOSITION_COUNTERS` rather than re-spelled here so
+#: the all-error detection below cannot silently drift from the counters it
+#: is reading (same rationale as `_disposition_count_keys`'s docstring).
+_SUCCESS_DISPOSITION_COUNTERS: tuple[str, ...] = tuple(
+    counter for counter in _DISPOSITION_COUNTERS if counter != "error"
+)
+
+
+def _all_error_check_message(
+    dispositions_counts: Mapping[str, Any] | None, item_count: int
+) -> str | None:
+    """A type-only synthetic error for a `url_list`/`sitemap` run where every URL failed.
+
+    Fix wave for the task-1394 whole-branch review (Finding #1, MAJOR): the
+    per-URL isolation in `_check_url_isolated` correctly turns one dead URL
+    among many into a single `"error"` disposition rather than failing the
+    whole run -- but `execute_run`'s success path always called
+    `db.record_check_result(source_id, items=None, stats=stats)` with
+    `error=None`, which hits that method's success branch
+    (`DB/Subscriptions_DB.py:1504-1517`) and unconditionally RESETS the
+    subscription's auto-pause circuit breaker
+    (`consecutive_failures`/`error_count` -> 0), even when every single URL in
+    the run errored and nothing was found. A permanently-broken `url_list`/
+    `sitemap` source could then never reach `auto_pause_threshold`: its
+    failure streak was wiped every run instead of accumulating, exactly the
+    behaviour `record_check_error` (the pre-fix path, reached via
+    `record_run_failure`) used to provide.
+
+    This distinguishes that "every URL errored" case from the ordinary
+    partial-failure case the isolation was written for (some URLs succeed,
+    one or two do not): a partial run made genuine progress on a reachable
+    source and should keep resetting the breaker, exactly as a clean run
+    would. Only when there is not one single successful check in the whole
+    run does the source's own health tracking need to see a failure.
+
+    Args:
+        dispositions_counts: The run's `_disposition_counts()` output (the
+            `stats["dispositions"]` dict), or `None` for source types that
+            carry no dispositions at all (the feed and API arms) -- those are
+            deliberately unaffected and always return `None` here.
+        item_count: How many items the run produced overall (pre-filter), so
+            a run that somehow reported all-error dispositions yet still
+            surfaced an item is never treated as a total failure.
+
+    Returns:
+        A message counting only URLs, e.g. ``"all 2 checked URL(s) failed"``
+        -- no URL, no exception message, matching `_check_url_isolated`'s own
+        type-only logging -- when every disposition in the run was an error
+        and zero items were produced. `None` otherwise (nothing to record, or
+        this is a feed/api run with no dispositions to judge by).
+    """
+    if not isinstance(dispositions_counts, Mapping):
+        return None
+    error_count = int(dispositions_counts.get("error", 0) or 0)
+    if error_count == 0 or item_count:
+        return None
+    successful_count = sum(
+        int(dispositions_counts.get(counter, 0) or 0)
+        for counter in _SUCCESS_DISPOSITION_COUNTERS
+    )
+    if successful_count:
+        return None
+    return f"all {error_count} checked URL(s) failed"
+
+
+def _max_withheld_percentage(dispositions: list[dict[str, Any]]) -> float | None:
+    """The largest change any check in this run held back, display-scaled.
+
+    Spec §1 requires the app to tell the user *what* it is withholding, not
+    merely that it withheld something (whole-branch review, Critical 1): a
+    bare "2 withheld" gives no way to judge whether the threshold is set too
+    high. The maximum is the useful single number -- it is the one the user
+    would have to lower the threshold past to see anything at all.
+
+    Args:
+        dispositions: One disposition dict per URL checked.
+
+    Returns:
+        The largest ``withheld_percentage`` present, or ``None`` when this run
+        withheld nothing (so the key can be omitted from stats entirely rather
+        than fabricating a 0.0 that reads as "withheld 0%").
+    """
+    percentages = [
+        float(disposition["withheld_percentage"])
+        for disposition in dispositions
+        if disposition.get("withheld_percentage") is not None
+    ]
+    return max(percentages) if percentages else None
 
 
 class LocalWatchlistsService:
@@ -95,10 +330,43 @@ class LocalWatchlistsService:
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """List watchlist items from the local subscriptions database."""
+        """List watchlist items from the local subscriptions database.
+
+        TASK-2301. `status=None` used to be collapsed to `"new"` here, so
+        "list every item" was not expressible through this API at all: the
+        Items tab asks with `status=None` and got a new-only list back, which
+        its own "All statuses" filter then had nothing else to filter. An
+        ingested or ignored item was not stale in that result -- it was
+        absent, and therefore unreachable anywhere in the tab. `None` now
+        means what it says and reaches `get_new_items(status=None)`, which
+        drops the status predicate entirely.
+
+        Review wave, Minor 7 -- the empty string changed meaning too, and it
+        is called out here rather than glossed. Before TASK-2301 any falsey
+        `status` (`None` OR `""`) became `"new"`; now any falsey `status`
+        means EVERY status. `""` is deliberately kept on the same side as
+        `None`: it is not a status any row holds, so the alternative would be
+        a query guaranteed to return nothing. Audited at the time of the
+        change -- `WatchlistsCollectionsScreen._load_items` is the only caller
+        in the tree (via `WatchlistScopeService.list_items` /
+        `WatchlistsBackendController.list_items`) and it passes `None` or a
+        real status, never `""` -- so nothing relied on the old default. A
+        future caller that wants the unread bucket must now ask for it by
+        name.
+
+        Args:
+            source_id: Restrict to one source, or `None` for all.
+            status: A single item status. Falsey (`None` or `""`) means every
+                status -- NOT `"new"`, which is what it used to mean.
+            limit: Page size.
+            offset: Page offset.
+
+        Returns:
+            Normalized item dicts for the requested window.
+        """
         db = self._db()
         subscription_id = int(source_id) if source_id is not None else None
-        status_filter = status if status else "new"
+        status_filter = status if status else None
         fetch_limit = int(limit) + int(offset)
         rows = db.get_new_items(
             subscription_id=subscription_id,
@@ -156,6 +424,108 @@ class LocalWatchlistsService:
             db.update_subscription(int(source_id), **changes)
         return normalize_local_subscription_row(db.get_subscription(int(source_id)))
 
+    #: Statuses a watchlist item may be moved to from the UI. Mirrors
+    #: `ItemsPane._STATUS_OPTIONS` minus its "all" filter entry.
+    ITEM_STATUSES = ("new", "reviewed", "ingested", "ignored", "error")
+
+    async def get_item_status(self, item_id: Any) -> str:
+        """Read one item's current status, authoritatively.
+
+        Added for the reader's `Mark unread` guard (PR #1091 review, F1). The
+        guard previously inferred a status by listing each candidate status
+        and looking for the item in the result, which is a paged query: an
+        `ingested` item beyond the page depth simply was not in the list, and
+        "absent from a truncated page" was read as "does not hold this
+        status", so the guard let the destructive write through. This reads
+        the one row instead, so page size cannot enter into it.
+
+        Args:
+            item_id: The item's local row id (bare, not namespaced).
+
+        Returns:
+            The item's current status.
+
+        Raises:
+            ValueError: If `item_id` is not an integer id.
+            KeyError: If no item has that id.
+        """
+        try:
+            row_id = int(item_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
+        return self._db().get_item_status(row_id)
+
+    async def get_url_snapshots(
+        self, source_id: Any, url: str, *, limit: int = 2
+    ) -> list[dict[str, Any]]:
+        """The reader's `[full page]`/`[previous snapshot]` affordances (TASK-1494).
+
+        A thin passthrough to `SubscriptionsDB.get_url_snapshots` -- no
+        normalization needed on the way out; the three columns it returns
+        (`id`, `extracted_content`, `created_at`) are exactly what the
+        screen's `ViewSnapshotRequested` handler and `SnapshotViewModal`
+        read. Not wrapped in `asyncio.to_thread`: no read on this service
+        is (see `list_items`/`get_source`/`get_item_status` above) --
+        `SubscriptionsDB`'s SQLite reads are fast enough that this service
+        has never paid for a thread hop on one, and adding it just for this
+        method would be an inconsistency, not a fix.
+
+        Args:
+            source_id: Owning subscription id (bare, not namespaced) --
+                `normalize_watchlist_item`'s `source_id` field.
+            url: The exact URL the snapshot was captured for --
+                `normalize_watchlist_item`'s `url` field.
+            limit: How many rows to return, newest first.
+
+        Returns:
+            Up to `limit` dicts, newest first; empty when the (source, url)
+            pair has no snapshot yet.
+        """
+        return self._db().get_url_snapshots(int(source_id), str(url), limit=limit)
+
+    async def update_item(self, *, item_id: Any, status: str) -> dict[str, Any]:
+        """Move one watchlist item to a new status.
+
+        TASK-1120 AC#3. `SubscriptionsDB.mark_item_status` has always existed
+        and nothing reached it: no service exposed an item-status method, so
+        `WatchlistsBackendController.update_item_status` fell through its
+        candidate-method loop and raised `NotImplementedError`. `Mark
+        reviewed`, `Ingest` and `Ignore` therefore could not have worked even
+        once the Inspector started offering them.
+
+        Args:
+            item_id: The item's local row id (bare, not namespaced).
+            status: One of `ITEM_STATUSES`.
+
+        Returns:
+            The normalized item id, backend and new status.
+
+        Raises:
+            ValueError: If `status` is not a known item status, or `item_id`
+                is not an integer id.
+            KeyError: If no item has that id.
+        """
+        normalized_status = str(status or "").strip().lower()
+        if normalized_status not in self.ITEM_STATUSES:
+            raise ValueError(
+                f"Unknown watchlist item status: {status!r}. "
+                f"Expected one of {', '.join(self.ITEM_STATUSES)}."
+            )
+        try:
+            row_id = int(item_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
+        if not self._db().mark_item_status(row_id, normalized_status):
+            raise KeyError(f"Watchlist item not found: {item_id}")
+        return {
+            "success": True,
+            "id": build_watchlist_item_id("local", "watchlist_item", row_id),
+            "backend": "local",
+            "entity_kind": "watchlist_item",
+            "item_id": row_id,
+            "status": normalized_status,
+        }
+
     async def delete_source(self, source_id: Any) -> dict[str, Any]:
         success = self._db().delete_subscription(int(source_id))
         return {
@@ -166,6 +536,42 @@ class LocalWatchlistsService:
             "source_id": int(source_id),
         }
 
+    async def resume_source(self, source_id: Any) -> dict[str, Any]:
+        """Clear an auto-paused source's pause and failure counters (task-2050).
+
+        The UI's one-press recourse for a source auto-paused by repeated
+        check failures (task-1410's `_advance_failure_and_maybe_pause`).
+        Delegates to `SubscriptionsDB.reset_subscription_errors`, which
+        already performs exactly this reset (`error_count`,
+        `consecutive_failures`, `last_error`, `is_paused` all cleared) for
+        the success branch of `record_check_result` -- this method is that
+        reset's first caller reachable from outside the DB layer, giving it
+        an explicit trigger instead of only ever firing as a side effect of
+        a successful check.
+
+        Safe to call on a source that is not currently paused: the
+        underlying write zeroes counters that are already zero and clears an
+        already-clear pause flag, so it is a harmless no-op. The UI never
+        offers this action for a non-paused source (see
+        `InspectorPane._is_paused_subscription`), but this method does not
+        need that guard to stay correct on its own.
+
+        Args:
+            source_id: The subscription's raw database id.
+
+        Returns:
+            The resumed source, freshly normalized.
+
+        Raises:
+            KeyError: `source_id` does not name a subscription.
+        """
+        db = self._db()
+        db.reset_subscription_errors(int(source_id))
+        row = db.get_subscription(int(source_id))
+        if row is None:
+            raise KeyError(f"Subscription not found: {source_id}")
+        return normalize_local_subscription_row(row)
+
     async def launch_run(
         self, *, source_id: Any = None, job_id: Any = None
     ) -> dict[str, Any]:
@@ -173,7 +579,6 @@ class LocalWatchlistsService:
         db = self._db()
         if db.get_subscription(resolved_source_id) is None:
             raise KeyError(f"Subscription not found: {resolved_source_id}")
-        self._ensure_run_schema(db)
         now = self._utc_now()
         with db.transaction() as conn:
             cursor = conn.cursor()
@@ -199,7 +604,6 @@ class LocalWatchlistsService:
     async def execute_run(self, run_id: Any) -> dict[str, Any]:
         """Execute a queued local watchlist run and persist its observed result."""
         db = self._db()
-        self._ensure_run_schema(db)
         current = await self.get_run(run_id)
         source_id = int(current.get("source_id") or current.get("job_id"))
         subscription = db.get_subscription(source_id)
@@ -224,29 +628,99 @@ class LocalWatchlistsService:
             stats["new_items_found"] = len(kept_items)
 
             self._upsert_subscription_items(db, source_id, int(run_id), kept_items)
-            db.record_check_result(source_id, items=None, stats=stats)
+            # task-1394 fix wave (review Finding #1): a `url_list`/`sitemap`
+            # run where every URL errored still needs its own failure to
+            # reach the subscription's auto-pause breaker, or a permanently
+            # dead source can never auto-pause. A partial run (>=1 success)
+            # is unaffected -- see `_all_error_check_message`'s docstring.
+            all_error_message = _all_error_check_message(
+                stats.get("dispositions"), len(raw_items)
+            )
+            db.record_check_result(
+                source_id, items=None, stats=stats, error=all_error_message
+            )
+
+            status = str(result.get("status") or "completed")
+            if all_error_message and status == "completed":
+                # More honest than "completed" with zero items: every URL
+                # this run checked failed, so the run itself failed, even
+                # though it did not raise (that is exactly the point of the
+                # per-URL isolation this run status is not undoing).
+                status = "failed"
+
             return await self.record_run_result(
                 run_id,
-                status=str(result.get("status") or "completed"),
+                status=status,
                 stats=stats,
-                error_msg=result.get("error_msg"),
+                error_msg=result.get("error_msg") or all_error_message,
                 log_text=result.get("log_text"),
             )
         except Exception as exc:
-            error_msg = str(exc)
-            db.record_check_error(source_id, error_msg)
-            return await self.record_run_result(
+            return await self.record_run_failure(
                 run_id,
-                status="failed",
-                stats={
-                    "items_found": 0,
-                    "items_ingested": 0,
-                    "error_msg": error_msg,
-                    "response_time_ms": int((time.time() - start_time) * 1000),
-                },
-                error_msg=error_msg,
-                log_text=f"Local watchlist execution failed: {error_msg}",
+                source_id=source_id,
+                error=exc,
+                elapsed_ms=int((time.time() - start_time) * 1000),
             )
+
+    async def record_run_failure(
+        self,
+        run_id: Any,
+        *,
+        source_id: Any = None,
+        error: BaseException | str,
+        elapsed_ms: int = 0,
+    ) -> dict[str, Any]:
+        """Mark a run failed and its source errored, durably.
+
+        TASK-1090. Extracted from `execute_run`'s own `except` branch so the
+        caller that *launched* the run can use it too. `execute_run` only
+        guarded the fetch itself: anything that went wrong around it -- the
+        namespaced-id `ValueError` of TASK-1100, a subscription deleted
+        between launch and execution -- left the row it had just inserted
+        sitting at `queued` forever, with no error on it and nothing written
+        to `subscriptions.last_error` either. The user had no way to find out
+        that a check had failed, or even that one had been attempted.
+
+        Args:
+            run_id: The run to mark failed.
+            source_id: Its source, so `last_error` is written too. Resolved
+                from the run when omitted.
+            error: The exception (or message) that stopped it.
+            elapsed_ms: How long it ran before failing.
+
+        Returns:
+            The recorded run.
+        """
+        error_msg = str(error)
+        db = self._db()
+        if source_id is None:
+            try:
+                current = await self.get_run(run_id)
+                source_id = current.get("source_id") or current.get("job_id")
+            except Exception:
+                # A run we cannot even read cannot name its source; the run
+                # record below is still worth writing. Warned, not debugged --
+                # this whole method exists because a swallowed failure here
+                # left no trace at all.
+                logger.opt(exception=True).warning(
+                    f"Watchlists: could not resolve the source of failed run "
+                    f"{run_id}; subscriptions.last_error will not be updated."
+                )
+        if source_id is not None:
+            db.record_check_error(int(source_id), error_msg)
+        return await self.record_run_result(
+            run_id,
+            status="failed",
+            stats={
+                "items_found": 0,
+                "items_ingested": 0,
+                "error_msg": error_msg,
+                "response_time_ms": elapsed_ms,
+            },
+            error_msg=error_msg,
+            log_text=f"Local watchlist execution failed: {error_msg}",
+        )
 
     async def list_runs(
         self,
@@ -258,7 +732,6 @@ class LocalWatchlistsService:
         **_: Any,
     ) -> list[dict[str, Any]]:
         db = self._db()
-        self._ensure_run_schema(db)
         filters: list[str] = []
         values: list[Any] = []
         resolved_source_id = source_id if source_id is not None else job_id
@@ -285,7 +758,6 @@ class LocalWatchlistsService:
     def list_home_run_snapshot(self, *, limit: int = 20) -> list[dict[str, Any]]:
         """Return recent local watchlist runs from a synchronous Home-safe path."""
         db = self._db()
-        self._ensure_run_schema(db)
         cursor = db.conn.cursor()
         cursor.execute(
             """
@@ -301,7 +773,6 @@ class LocalWatchlistsService:
 
     async def get_run(self, run_id: Any) -> dict[str, Any]:
         db = self._db()
-        self._ensure_run_schema(db)
         cursor = db.conn.cursor()
         cursor.execute(
             "SELECT * FROM local_watchlist_runs WHERE id = ?", (int(run_id),)
@@ -316,7 +787,6 @@ class LocalWatchlistsService:
 
     async def cancel_run(self, run_id: Any) -> dict[str, Any]:
         db = self._db()
-        self._ensure_run_schema(db)
         now = self._utc_now()
         with db.transaction() as conn:
             cursor = conn.cursor()
@@ -344,7 +814,6 @@ class LocalWatchlistsService:
     ) -> dict[str, Any]:
         """Persist a completed local run and emit notifications for matching alert rules."""
         db = self._db()
-        self._ensure_run_schema(db)
         current = await self.get_run(run_id)
         now = self._utc_now()
         stats_payload = dict(stats or {})
@@ -391,7 +860,6 @@ class LocalWatchlistsService:
         self, *, job_id: Any = None, source_id: Any = None
     ) -> list[dict[str, Any]]:
         db = self._db()
-        self._ensure_alert_rule_schema(db)
         resolved_job_id = job_id if job_id is not None else source_id
         cursor = db.conn.cursor()
         if resolved_job_id is None:
@@ -414,7 +882,6 @@ class LocalWatchlistsService:
 
     async def get_alert_rule(self, rule_id: Any) -> dict[str, Any]:
         db = self._db()
-        self._ensure_alert_rule_schema(db)
         cursor = db.conn.cursor()
         cursor.execute(
             "SELECT * FROM local_watchlist_alert_rules WHERE id = ?", (int(rule_id),)
@@ -444,7 +911,6 @@ class LocalWatchlistsService:
         ):
             raise KeyError(f"Subscription not found: {resolved_job_id}")
         db = self._db()
-        self._ensure_alert_rule_schema(db)
         now = self._utc_now()
         with db.transaction() as conn:
             cursor = conn.cursor()
@@ -471,7 +937,6 @@ class LocalWatchlistsService:
 
     async def update_alert_rule(self, rule_id: Any, **fields: Any) -> dict[str, Any]:
         db = self._db()
-        self._ensure_alert_rule_schema(db)
         current = await self.get_alert_rule(rule_id)
         updates: dict[str, Any] = {}
         if "name" in fields:
@@ -516,7 +981,6 @@ class LocalWatchlistsService:
 
     async def delete_alert_rule(self, rule_id: Any) -> dict[str, Any]:
         db = self._db()
-        self._ensure_alert_rule_schema(db)
         with db.transaction() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -637,35 +1101,41 @@ class LocalWatchlistsService:
 
         subscription_config = self._subscription_execution_config(subscription)
         source_type = str(subscription_config.get("type") or "").strip()
-        if source_type in {"rss", "atom", "json_feed", "podcast"}:
+        # `None` for the feed and API arms, which have no dispositions at all
+        # (spec §4) -- distinguished from `[]`, which would record four zeros.
+        dispositions: list[dict[str, Any]] | None = None
+        if source_type in _FEED_SOURCE_TYPES:
             items = await FeedMonitor().check_feed(subscription_config)
         elif source_type == "url":
-            result = await URLMonitor(db).check_url(subscription_config)
+            result, disposition = await URLMonitor(db).check_url(subscription_config)
             items = [result] if result else []
+            dispositions = [disposition]
         elif source_type == "url_list":
             monitor = URLMonitor(db)
             items = []
+            dispositions = []
             for url in self._urls_for_url_list(subscription_config):
-                result = await monitor.check_url(
-                    {
-                        **subscription_config,
-                        "source": url,
-                        "type": "url",
-                    }
+                result, disposition = await self._check_url_isolated(
+                    monitor, subscription_config, url
                 )
+                dispositions.append(disposition)
                 if result:
                     items.append(result)
         elif source_type == "sitemap":
             monitor = URLMonitor(db)
             items = []
+            dispositions = []
+            # The sitemap FETCH that produces this URL list happens above, in
+            # the `await` the `for` iterates -- it is NOT covered by
+            # `_check_url_isolated` and a failure there still fails the whole
+            # run (task-1394's isolation is only for the per-URL loop body;
+            # if the sitemap itself cannot be fetched there is no per-URL
+            # work to isolate).
             for url in await self._urls_for_sitemap(subscription_config):
-                result = await monitor.check_url(
-                    {
-                        **subscription_config,
-                        "source": url,
-                        "type": "url",
-                    }
+                result, disposition = await self._check_url_isolated(
+                    monitor, subscription_config, url
                 )
+                dispositions.append(disposition)
                 if result:
                     items.append(result)
         elif source_type == "api":
@@ -674,10 +1144,79 @@ class LocalWatchlistsService:
             raise ValueError(
                 f"Unsupported local watchlist source type for execution: {source_type}"
             )
-        return {
+        result_payload: dict[str, Any] = {
             "items": items,
             "log_text": f"Local watchlist execution completed with {len(items)} item(s).",
         }
+        if dispositions is not None:
+            # `execute_run` already does `stats = dict(result.get("stats") or {})`
+            # and persists it to the run's `stats_json`, so this reaches the Runs
+            # pane with nothing further to wire.
+            run_stats: dict[str, Any] = {
+                "dispositions": _disposition_counts(dispositions)
+            }
+            # A sibling key rather than a sixth entry inside `dispositions`,
+            # which is a dict of counters and stays one: a float in among the
+            # integers would break every whole-dict comparison of the counts.
+            # Omitted entirely when nothing was withheld (spec §1) -- see
+            # `_max_withheld_percentage`.
+            max_withheld = _max_withheld_percentage(dispositions)
+            if max_withheld is not None:
+                run_stats["max_withheld_pct"] = max_withheld
+            result_payload["stats"] = run_stats
+        return result_payload
+
+    @staticmethod
+    async def _check_url_isolated(
+        monitor: Any,
+        subscription_config: Mapping[str, Any],
+        url: str,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+        """One URL of a `url_list`/`sitemap` run's `check_url`, failure-isolated.
+
+        task-1394: the `url_list`/`sitemap` loops used to call `check_url`
+        with no per-URL `try/except`, so one failing URL (timeout, SSRF
+        block, HTTP error) raised out of the whole loop, failed the entire
+        run via `record_run_failure`, and discarded the items already
+        collected from the URLs that succeeded -- a 50-URL source with one
+        dead link yielded nothing at all.
+
+        A raise here is turned into a `DISPOSITION_ERROR` disposition and a
+        `None` item instead, so the caller's loop can `continue`: the run
+        still completes, the OTHER urls' items and dispositions still
+        persist, and `_disposition_counts` reports how many URLs errored
+        rather than the run reporting clean zeros or failing outright.
+
+        Args:
+            monitor: The `URLMonitor` (or fake, in tests) to check with.
+            subscription_config: The source's execution config; only
+                ``source``/``type`` are overridden per URL, same as the
+                caller did inline before this was extracted.
+            url: The one URL this call checks.
+
+        Returns:
+            Whatever `monitor.check_url` returned, unchanged, on success.
+            ``(None, {"kind": DISPOSITION_ERROR, "reason": None,
+            "withheld_percentage": None})`` if it raised.
+        """
+        from .monitoring_engine import DISPOSITION_ERROR
+
+        try:
+            return await monitor.check_url(
+                {**subscription_config, "source": url, "type": "url"}
+            )
+        except Exception as exc:
+            # Type-only: never the exception message or the URL itself, both
+            # of which can carry fetched page content or a query string with
+            # sensitive data.
+            logger.debug(
+                f"watchlist URL check failed, isolated: {type(exc).__name__}"
+            )
+            return None, {
+                "kind": DISPOSITION_ERROR,
+                "reason": None,
+                "withheld_percentage": None,
+            }
 
     @classmethod
     def _subscription_execution_config(
@@ -719,8 +1258,13 @@ class LocalWatchlistsService:
         if not source:
             return []
 
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            response = await client.get(source)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await guarded_fetch_httpx_async(
+                source,
+                client=client,
+                max_bytes=MAX_FETCH_BYTES_SITEMAP,
+                trusted_origins=origin_set(source),
+            )
             response.raise_for_status()
 
         root = ET.fromstring(response.text)
@@ -781,13 +1325,18 @@ class LocalWatchlistsService:
         request_options = (
             extraction_rules if isinstance(extraction_rules, Mapping) else {}
         )
-        request_kwargs: dict[str, Any] = {"headers": headers}
         params = request_options.get("params") or request_options.get("query")
-        if isinstance(params, Mapping) and params:
-            request_kwargs["params"] = dict(params)
+        request_params = dict(params) if isinstance(params, Mapping) and params else None
 
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            response = await client.get(source, **request_kwargs)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await guarded_fetch_httpx_async(
+                source,
+                client=client,
+                max_bytes=MAX_FETCH_BYTES_PAGE,
+                trusted_origins=origin_set(source),
+                headers=headers,
+                params=request_params,
+            )
             response.raise_for_status()
 
         payload = response.json()
@@ -882,6 +1431,19 @@ class LocalWatchlistsService:
             "published_date": published_date,
             "author": author,
             "extracted_data": item if isinstance(item, Mapping) else {"value": item},
+            # TASK-1343. An API source produces articles, not site changes, so
+            # it must dispatch to `render_article` explicitly rather than rely
+            # on `render_for`'s fallback -- which is what silently rendered
+            # every kind the same way. `content` here is whatever JSON field
+            # the source's `field_map` points at, in whatever format the API
+            # chose; nothing converts it, and `_VALID_PAIRINGS` permits only
+            # "text" or "markdown" for an article, so "text" is the honest
+            # answer. Written even when the API supplied no content at all:
+            # the kind is still `article` (`render_article` then explains the
+            # missing body), and both values are non-None so they survive the
+            # filter below.
+            "content_kind": CONTENT_KIND_ARTICLE,
+            "content_format": CONTENT_FORMAT_TEXT,
         }
         return {key: value for key, value in normalized.items() if value is not None}
 
@@ -944,48 +1506,6 @@ class LocalWatchlistsService:
         if isinstance(value, list):
             return [str(item).strip() for item in value if str(item).strip()]
         return []
-
-    @staticmethod
-    def _ensure_run_schema(db: SubscriptionsDB) -> None:
-        with db.transaction() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS local_watchlist_runs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_id INTEGER NOT NULL,
-                    job_id INTEGER,
-                    status TEXT NOT NULL,
-                    started_at TEXT,
-                    finished_at TEXT,
-                    stats_json TEXT,
-                    error_msg TEXT,
-                    log_text TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    FOREIGN KEY (source_id) REFERENCES subscriptions(id) ON DELETE CASCADE
-                )
-                """
-            )
-
-    @staticmethod
-    def _ensure_alert_rule_schema(db: SubscriptionsDB) -> None:
-        with db.transaction() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS local_watchlist_alert_rules (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    job_id INTEGER,
-                    name TEXT NOT NULL,
-                    enabled INTEGER NOT NULL DEFAULT 1,
-                    condition_type TEXT NOT NULL,
-                    condition_value_json TEXT NOT NULL DEFAULT '{}',
-                    severity TEXT NOT NULL DEFAULT 'warning',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    FOREIGN KEY (job_id) REFERENCES subscriptions(id) ON DELETE CASCADE
-                )
-                """
-            )
 
     @staticmethod
     def _run_row_to_dict(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -1065,7 +1585,6 @@ class LocalWatchlistsService:
         status: str,
     ) -> list[dict[str, Any]]:
         db = self._db()
-        self._ensure_alert_rule_schema(db)
         rules = db.conn.execute(
             """
             SELECT * FROM local_watchlist_alert_rules
@@ -1285,53 +1804,19 @@ class LocalWatchlistsService:
             return
         now = LocalWatchlistsService._utc_now()
         with db.transaction() as conn:
-            cursor = conn.cursor()
             for item in items:
                 url = str(item.get("url") or "")
                 content_hash = str(item.get("content_hash") or "")
                 if not url or not content_hash:
                     continue
-                title = item.get("title")
-                published_date = item.get("published_date")
-                author = item.get("author")
-                categories = item.get("categories")
-                enclosures = item.get("enclosures")
-                extracted_data = item.get("extracted_data")
                 alert_matches = item.get("alert_matches")
-                cursor.execute(
-                    """
-                    INSERT INTO subscription_items (
-                        subscription_id, url, title, content_hash, published_date,
-                        author, categories, enclosures, extracted_data, status,
-                        run_id, alert_matches, created_at, updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(subscription_id, url, content_hash) DO UPDATE SET
-                        title = excluded.title,
-                        published_date = excluded.published_date,
-                        author = excluded.author,
-                        categories = excluded.categories,
-                        enclosures = excluded.enclosures,
-                        extracted_data = excluded.extracted_data,
-                        status = excluded.status,
-                        run_id = excluded.run_id,
-                        alert_matches = excluded.alert_matches,
-                        updated_at = excluded.updated_at
-                    """,
-                    (
-                        source_id,
-                        url,
-                        title,
-                        content_hash,
-                        published_date,
-                        author,
-                        json.dumps(categories) if categories is not None else None,
-                        json.dumps(enclosures) if enclosures is not None else None,
-                        json.dumps(extracted_data) if extracted_data is not None else None,
-                        "new",
-                        run_id,
-                        json.dumps(alert_matches) if alert_matches is not None else None,
-                        now,
-                        now,
-                    ),
+                persist_subscription_item(
+                    conn,
+                    source_id,
+                    {
+                        **item,
+                        "alert_matches": alert_matches,
+                    },
+                    run_id=run_id,
+                    now=now,
                 )

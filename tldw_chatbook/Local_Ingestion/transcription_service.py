@@ -5,6 +5,7 @@ Supports multiple transcription backends including faster-whisper, Qwen2Audio, e
 """
 
 import importlib.util
+import json
 import os
 import subprocess
 import tempfile
@@ -37,7 +38,55 @@ except ImportError:
 
 # Local imports
 from ..config import get_cli_setting
-from contextlib import contextmanager
+from ..STT.legacy_bridge import LegacyTranscriptionBridge
+from ..Utils.path_validation import validate_path_simple
+from .parakeet_v2_artifact import active_managed_parakeet_v2_dir
+from .parakeet_v2_installer import (
+    PARAKEET_V2_REPOSITORY,
+    PARAKEET_V2_REVISION,
+    VERIFICATION_RECEIPT,
+    parakeet_v2_install_dir,
+    verify_parakeet_v2_bundle,
+)
+from .stt_batch_routing import (
+    BatchSTTRoutingError,
+    PARAKEET_V3_MODEL,
+    resolve_batch_stt_route,
+)
+
+_VERIFICATION_RECEIPT_MAX_BYTES = 64 * 1024
+
+
+def _has_known_parakeet_v2_receipt(model_dir: Path) -> bool:
+    """Return whether bounded receipt metadata claims the curated v2 identity."""
+    try:
+        receipt_path = validate_path_simple(
+            model_dir / VERIFICATION_RECEIPT,
+            probe_existing=False,
+        )
+        if receipt_path.is_symlink() or not receipt_path.is_file():
+            return False
+        if receipt_path.stat().st_size > _VERIFICATION_RECEIPT_MAX_BYTES:
+            return False
+        with receipt_path.open("rb") as receipt_file:
+            payload = receipt_file.read(_VERIFICATION_RECEIPT_MAX_BYTES + 1)
+        if len(payload) > _VERIFICATION_RECEIPT_MAX_BYTES:
+            return False
+        receipt = json.loads(payload.decode("utf-8"))
+    except (
+        OSError,
+        RecursionError,
+        TypeError,
+        UnicodeDecodeError,
+        ValueError,
+    ):
+        return False
+    return (
+        isinstance(receipt, dict)
+        and receipt.get("repository") == PARAKEET_V2_REPOSITORY
+        and receipt.get("revision") == PARAKEET_V2_REVISION
+    )
+
 
 # Optional imports with graceful degradation
 try:
@@ -52,41 +101,25 @@ except ImportError:
     )
 
 try:
-    if sys.platform == "darwin":
-        from lightning_whisper_mlx import LightningWhisperMLX
+    ONNX_ASR_AVAILABLE = importlib.util.find_spec("onnx_asr") is not None
+except (ImportError, ValueError, ModuleNotFoundError):
+    ONNX_ASR_AVAILABLE = False
 
-        LIGHTNING_WHISPER_AVAILABLE = True
-    else:
-        LIGHTNING_WHISPER_AVAILABLE = False
-except ImportError:
-    LightningWhisperMLX = None
-    LIGHTNING_WHISPER_AVAILABLE = False
-    if sys.platform == "darwin":
-        logger.warning(
-            "lightning-whisper-mlx not available. Install with: pip install lightning-whisper-mlx"
+
+def _optional_module_available(module_name: str) -> bool:
+    try:
+        return (
+            sys.platform == "darwin"
+            and importlib.util.find_spec(module_name) is not None
         )
-else:
-    if sys.platform != "darwin":
-        LightningWhisperMLX = None
+    except (AttributeError, ImportError, ValueError):
+        return False
 
-try:
-    if sys.platform == "darwin":
-        from parakeet_mlx import from_pretrained as parakeet_from_pretrained
 
-        PARAKEET_MLX_AVAILABLE = True
-        logger.info("parakeet-mlx is available for real-time ASR on Apple Silicon")
-    else:
-        PARAKEET_MLX_AVAILABLE = False
-except ImportError:
-    parakeet_from_pretrained = None
-    PARAKEET_MLX_AVAILABLE = False
-    if sys.platform == "darwin":
-        logger.warning(
-            "parakeet-mlx not available. Install with: pip install parakeet-mlx"
-        )
-else:
-    if sys.platform != "darwin":
-        parakeet_from_pretrained = None
+LIGHTNING_WHISPER_AVAILABLE = _optional_module_available("lightning_whisper_mlx")
+PARAKEET_MLX_AVAILABLE = _optional_module_available("parakeet_mlx")
+LightningWhisperMLX = None
+parakeet_from_pretrained = None
 
 # torch/transformers are heavy optional dependencies (torch alone pulls in
 # ~500 transitive modules). Probe availability cheaply via find_spec instead
@@ -192,90 +225,53 @@ except ImportError:
 # Using loguru logger imported above
 
 
-@contextmanager
-def protect_file_descriptors():
-    """Context manager to protect file descriptors during subprocess operations.
-
-    This fixes the "bad value(s) in fds_to_keep" error on macOS when the
-    transformers library spawns subprocesses for model downloads.
-    """
-    # Save original file descriptors
-    original_stdout = sys.stdout
-    original_stderr = sys.stderr
-    original_stdin = sys.stdin
-
-    # Save original environment
-    env_backup = os.environ.copy()
-
-    # Save original subprocess.Popen to restore later
-    original_popen = subprocess.Popen
-
-    try:
-        # Ensure we have real file descriptors, not wrapped objects
-        # This is crucial for subprocess operations
-        try:
-            # Test if stdout/stderr are real files with valid file descriptors
-            stdout_fd = sys.stdout.fileno()
-            stderr_fd = sys.stderr.fileno()
-            # Verify they're valid by attempting to use them
-            os.fstat(stdout_fd)
-            os.fstat(stderr_fd)
-        except (AttributeError, ValueError, OSError):
-            # stdout/stderr are wrapped/captured or invalid, create new ones
-            # Use the original file descriptors 1 and 2 directly
-            try:
-                sys.stdout = os.fdopen(1, "w")
-                sys.stderr = os.fdopen(2, "w")
-            except OSError:
-                # If that fails, use devnull as a fallback
-                devnull = open(os.devnull, "w")
-                sys.stdout = devnull
-                sys.stderr = devnull
-
-        # Set environment to prevent subprocess issues
-        os.environ["TOKENIZERS_PARALLELISM"] = "false"
-        os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
-
-        # For macOS specifically
-        if sys.platform == "darwin":
-            os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
-            # Ensure subprocess doesn't inherit bad file descriptors
-            os.environ["PYTHONNOUSERSITE"] = "1"
-            # Force subprocess to close all file descriptors except 0,1,2
-            os.environ["PYTHON_SUBPROCESS_CLOSE_FDS"] = "1"
-
-        yield
-
-    finally:
-        # Restore original file descriptors
-        sys.stdout = original_stdout
-        sys.stderr = original_stderr
-        sys.stdin = original_stdin
-
-        # Close any temporary files we created
-        if sys.stdout != original_stdout and hasattr(sys.stdout, "close"):
-            try:
-                sys.stdout.close()
-            except Exception:
-                pass
-        if sys.stderr != original_stderr and hasattr(sys.stderr, "close"):
-            try:
-                sys.stderr.close()
-            except Exception:
-                pass
-
-        # Restore environment
-        os.environ.clear()
-        os.environ.update(env_backup)
-
-        # Restore subprocess.Popen
-        subprocess.Popen = original_popen
+# task-640: consolidated into tldw_chatbook.Utils.fd_protection (was
+# duplicated verbatim here, in Embeddings/Embeddings_Lib.py, and in
+# TTS/backends/higgs.py). Re-exported under this name so existing
+# `from tldw_chatbook.Local_Ingestion.transcription_service import
+# protect_file_descriptors` call sites (including tests) keep working
+# unchanged.
+from ..Utils.fd_protection import protect_file_descriptors  # noqa: E402,F401
 
 
 class TranscriptionError(Exception):
     """Base exception for transcription errors."""
 
     pass
+
+
+def _ensure_lightning_whisper_mlx_import():
+    global LIGHTNING_WHISPER_AVAILABLE, LightningWhisperMLX
+    if LightningWhisperMLX is not None:
+        return LightningWhisperMLX
+    if not LIGHTNING_WHISPER_AVAILABLE:
+        raise TranscriptionError("lightning-whisper-mlx is not installed")
+    try:
+        from ..Utils.optional_deps import require_dependency
+
+        module = require_dependency("lightning_whisper_mlx")
+        LightningWhisperMLX = module.LightningWhisperMLX
+    except Exception as exc:
+        LIGHTNING_WHISPER_AVAILABLE = False
+        raise TranscriptionError("lightning-whisper-mlx could not be loaded") from exc
+    return LightningWhisperMLX
+
+
+def _ensure_parakeet_mlx_import():
+    global PARAKEET_MLX_AVAILABLE, parakeet_from_pretrained
+    if parakeet_from_pretrained is not None:
+        return parakeet_from_pretrained
+    if not PARAKEET_MLX_AVAILABLE:
+        raise TranscriptionError("parakeet-mlx is not installed")
+    try:
+        from ..Utils.optional_deps import require_dependency
+
+        module = require_dependency("parakeet_mlx")
+        parakeet_from_pretrained = module.from_pretrained
+    except Exception as exc:
+        PARAKEET_MLX_AVAILABLE = False
+        raise TranscriptionError("parakeet-mlx could not be loaded") from exc
+    return parakeet_from_pretrained
 
 
 class ConversionError(TranscriptionError):
@@ -300,7 +296,7 @@ def _handle_progress_callback_error(e: Exception) -> None:
     logger.warning(f"Progress callback error (ignored): {e}")
 
 
-class TranscriptionService:
+class _LegacyTranscriptionBackend:
     """Unified service for audio transcription with multiple backend support."""
 
     def __init__(self):
@@ -342,6 +338,10 @@ class TranscriptionService:
             "device": get_cli_setting("transcription.device", "cpu") or "cpu",
             "compute_type": get_cli_setting("transcription.compute_type", "int8")
             or "int8",
+            "parakeet_onnx_model_dir": get_cli_setting(
+                "transcription.parakeet_onnx_model_dir", ""
+            )
+            or "",
             "chunk_length_seconds": get_cli_setting(
                 "transcription.chunk_length_seconds", 40.0
             )
@@ -461,6 +461,7 @@ class TranscriptionService:
         progress_callback: Optional[
             Callable[[float, str, Optional[Dict]], None]
         ] = None,
+        batch_route_resolved: bool = False,
         **kwargs,
     ) -> Dict[str, Any]:
         """
@@ -473,6 +474,8 @@ class TranscriptionService:
             language: Language code (for backward compatibility)
             source_lang: Explicit source language for transcription
             target_lang: Target language for translation (if supported)
+            batch_route_resolved: Preserve the already-normalized batch language
+                and target instead of applying configured language defaults.
             vad_filter: Apply voice activity detection
             diarize: Perform speaker diarization to identify different speakers
             progress_callback: Optional callback for progress updates (progress: 0-100, status: str, data: dict)
@@ -480,25 +483,39 @@ class TranscriptionService:
         Returns:
             Dict with 'text' and 'segments' keys
         """
+        try:
+            audio_path = str(validate_path_simple(audio_path, require_exists=True))
+        except ValueError as exc:
+            raise TranscriptionError("Invalid audio file path") from exc
+
         provider = provider or self.config["default_provider"]
 
         # Handle provider-specific default models
-        if not model:
+        if not model and provider != "parakeet-onnx":
             if provider == "parakeet-mlx":
                 model = "mlx-community/parakeet-tdt-0.6b-v2"
             elif provider == "qwen2audio":
                 model = "Qwen2-Audio-7B-Instruct"
             else:
                 model = self.config["default_model"]
-        # Handle source language - prefer explicit source_lang over language param
-        source_lang = (
-            source_lang
-            or self.config["default_source_language"]
-            or language
-            or self.config["default_language"]
-        )
-        # Handle target language
-        target_lang = target_lang or self.config["default_target_language"] or None
+        if provider == "parakeet-onnx":
+            target_language_alias = kwargs.pop("target_language", None)
+            source_lang = source_lang or language or "en"
+            target_lang = (
+                target_lang if target_lang is not None else target_language_alias
+            )
+        elif batch_route_resolved:
+            source_lang = source_lang or language or "en"
+        else:
+            # Handle source language - prefer explicit source_lang over language param
+            source_lang = (
+                source_lang
+                or self.config["default_source_language"]
+                or language
+                or self.config["default_language"]
+            )
+            # Handle target language
+            target_lang = target_lang or self.config["default_target_language"] or None
         # For backward compatibility, set language to source_lang if not specified
         language = language or source_lang
 
@@ -520,7 +537,16 @@ class TranscriptionService:
             logger.info(f"Starting transcription with {provider} provider")
             transcription_start_time = time.time()
 
-            if provider == "parakeet-mlx":
+            if provider == "parakeet-onnx":
+                result = self._transcribe_with_parakeet_onnx(
+                    wav_path,
+                    model,
+                    source_lang,
+                    target_language=target_lang,
+                    progress_callback=progress_callback,
+                    **kwargs,
+                )
+            elif provider == "parakeet-mlx":
                 if not PARAKEET_MLX_AVAILABLE:
                     if sys.platform != "darwin":
                         logger.error(
@@ -576,7 +602,7 @@ class TranscriptionService:
                     )
                 result = self._transcribe_with_faster_whisper(
                     wav_path,
-                    model,
+                    model or self.config["default_model"],
                     language,
                     vad_filter,
                     source_lang,
@@ -708,6 +734,253 @@ class TranscriptionService:
                         f"Failed to clean up temporary WAV file {wav_path}: {e}"
                     )
 
+    def _transcribe_with_parakeet_onnx(
+        self,
+        audio_path: str,
+        model: str | None,
+        language: str,
+        target_language: str | None = None,
+        progress_callback: Optional[
+            Callable[[float, str, Optional[Dict]], None]
+        ] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Transcribe audio with a compatible local Parakeet INT8 model."""
+        parakeet_model, selected_model, requested_language = (
+            self._load_parakeet_onnx_model(
+                model=model,
+                language=language,
+                target_language=target_language,
+                model_dir=kwargs.get("model_dir"),
+            )
+        )
+
+        if progress_callback:
+            progress_callback(10, "Transcribing with Parakeet ONNX", None)
+
+        text = parakeet_model.recognize(audio_path).strip()
+        with wave.open(audio_path, "rb") as wav_file:
+            duration = wav_file.getnframes() / wav_file.getframerate()
+
+        if progress_callback:
+            progress_callback(100, "Transcription complete", None)
+
+        return self._parakeet_onnx_result(
+            text,
+            duration=duration,
+            model=selected_model,
+            requested_language=requested_language,
+        )
+
+    @staticmethod
+    def _default_parakeet_v2_model_dir() -> str | None:
+        """Managed-first fallback when no model directory was configured.
+
+        TASK-1696: checked only when the caller passed no ``model_dir`` and
+        ``transcription.parakeet_onnx_model_dir`` is unset. Order: the
+        active managed Parakeet v2 artifact (via
+        ``Model_Artifacts.service`` only -- never the async acquisition/HTTP
+        layer, see ``parakeet_v2_artifact``'s module docstring), then the
+        verified legacy ``.tldw-verified.json`` bundle. Either result is
+        still run through this method's caller's own existing
+        ``validate_path_simple``/required-files checks below, exactly like
+        an explicitly configured directory is -- this only supplies a
+        candidate path, it does not skip validation.
+
+        Returns:
+            A candidate model directory as text, or ``None`` if neither a
+            managed nor a verified legacy bundle is available.
+        """
+        managed_dir = active_managed_parakeet_v2_dir()
+        if managed_dir is not None:
+            return str(managed_dir)
+        legacy_dir = parakeet_v2_install_dir()
+        if verify_parakeet_v2_bundle(legacy_dir):
+            return str(legacy_dir)
+        return None
+
+    def _load_parakeet_onnx_model(
+        self,
+        *,
+        model: str | None,
+        language: str,
+        target_language: str | None,
+        model_dir: str | Path | None,
+    ) -> tuple[Any, str, str]:
+        """Validate and load a compatible local Parakeet INT8 model."""
+        try:
+            route = resolve_batch_stt_route(
+                provider="parakeet-onnx",
+                language=language,
+                target_language=target_language,
+            )
+        except BatchSTTRoutingError as exc:
+            raise TranscriptionError(str(exc)) from exc
+
+        expected_model = route.model
+        assert expected_model is not None
+        selected_model = model or expected_model
+        if selected_model != expected_model:
+            raise TranscriptionError(
+                f"Parakeet model {selected_model!r} is incompatible with requested "
+                f"language {route.requested_language!r}; expected {expected_model!r}. "
+                "Retry with faster-whisper."
+            )
+
+        if not ONNX_ASR_AVAILABLE:
+            raise TranscriptionError(
+                "parakeet-onnx is not installed. Install with: "
+                "pip install 'onnx-asr[cpu]==0.12.0'"
+            )
+
+        model_dir = model_dir or self.config["parakeet_onnx_model_dir"]
+        if not model_dir:
+            model_dir = self._default_parakeet_v2_model_dir()
+        if not model_dir:
+            raise TranscriptionError(
+                "parakeet-onnx requires an explicit existing local model directory "
+                "via model_dir or transcription.parakeet_onnx_model_dir; "
+                "no model will be downloaded automatically."
+            )
+        try:
+            model_root = validate_path_simple(model_dir, require_exists=True)
+        except ValueError as exc:
+            raise TranscriptionError(
+                "parakeet-onnx invalid local model directory; choose an existing "
+                "local model folder. No model will be downloaded automatically."
+            ) from exc
+        if not model_root.is_dir():
+            raise TranscriptionError(
+                "parakeet-onnx requires an explicit existing local model directory "
+                "via model_dir or transcription.parakeet_onnx_model_dir; "
+                "no model will be downloaded automatically."
+            )
+        if selected_model == PARAKEET_V3_MODEL and _has_known_parakeet_v2_receipt(
+            model_root
+        ):
+            raise TranscriptionError(
+                "Selected Parakeet v3 cannot use a directory identified as "
+                "Parakeet v2 by receipt metadata. "
+                "Choose a Parakeet v3 folder or Retry with faster-whisper."
+            )
+        required_files = {
+            "config.json",
+            "vocab.txt",
+            "encoder-model.int8.onnx",
+            "decoder_joint-model.int8.onnx",
+        }
+        missing_files = sorted(
+            filename
+            for filename in required_files
+            if not (model_root / filename).is_file()
+        )
+        if missing_files:
+            raise TranscriptionError(
+                "parakeet-onnx model directory is missing required files: "
+                + ", ".join(missing_files)
+            )
+
+        cache_key = ("parakeet-onnx", selected_model, str(model_root), "int8")
+        with self._model_cache_lock:
+            parakeet_model = self._model_cache.get(cache_key)
+            if parakeet_model is None:
+                from onnx_asr import load_model
+
+                parakeet_model = load_model(
+                    selected_model,
+                    path=str(model_root),
+                    quantization="int8",
+                    providers=["CPUExecutionProvider"],
+                    preprocessor_config={
+                        "use_numpy_preprocessors": True,
+                        "max_concurrent_workers": 1,
+                    },
+                )
+                self._model_cache[cache_key] = parakeet_model
+        return parakeet_model, selected_model, route.requested_language
+
+    @staticmethod
+    def _parakeet_onnx_result(
+        text: str, *, duration: float, model: str, requested_language: str
+    ) -> Dict[str, Any]:
+        """Build the common Parakeet ONNX transcription result."""
+        is_v3 = model == PARAKEET_V3_MODEL
+        return {
+            "text": text,
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": duration,
+                    "text": text,
+                    "Time_Start": 0.0,
+                    "Time_End": duration,
+                    "Text": text,
+                }
+            ]
+            if text
+            else [],
+            "language": None if is_v3 else "en",
+            "requested_language": requested_language,
+            "effective_language": "auto" if is_v3 else "en",
+            "detected_language": None,
+            "warnings": ["requested_language_not_enforced"] if is_v3 else [],
+            "provider": "parakeet-onnx",
+            "model": model,
+        }
+
+    def _transcribe_buffer_with_parakeet_onnx(
+        self,
+        audio_data: bytes,
+        sample_rate: int,
+        channels: int,
+        sample_width: int,
+        model: str | None,
+        language: str,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Transcribe raw 16-bit PCM directly from memory with Parakeet ONNX."""
+        if not NUMPY_AVAILABLE or np is None:
+            raise TranscriptionError(
+                "Parakeet ONNX buffer transcription requires NumPy."
+            )
+        if sample_width != 2:
+            raise TranscriptionError(
+                "Parakeet ONNX microphone transcription requires 16-bit PCM audio."
+            )
+        if sample_rate <= 0 or channels <= 0:
+            raise TranscriptionError("Invalid microphone audio format.")
+        frame_bytes = sample_width * channels
+        if not audio_data or len(audio_data) % frame_bytes:
+            raise TranscriptionError("Invalid or incomplete microphone PCM buffer.")
+
+        waveform = np.frombuffer(audio_data, dtype=np.int16)
+        if channels > 1:
+            waveform = waveform.reshape(-1, channels).mean(axis=1)
+        waveform = waveform.astype(np.float32) / 32768.0
+        parakeet_model, selected_model, requested_language = (
+            self._load_parakeet_onnx_model(
+                model=model,
+                language=language,
+                target_language=(
+                    kwargs.get("target_lang")
+                    if "target_lang" in kwargs
+                    else kwargs.get("target_language")
+                ),
+                model_dir=kwargs.get("model_dir"),
+            )
+        )
+        text = parakeet_model.recognize(
+            waveform,
+            sample_rate=sample_rate,
+        ).strip()
+        duration = (len(audio_data) // frame_bytes) / sample_rate
+        return self._parakeet_onnx_result(
+            text,
+            duration=duration,
+            model=selected_model,
+            requested_language=requested_language,
+        )
+
     def transcribe_buffer(
         self,
         audio_data: bytes,
@@ -747,6 +1020,16 @@ class TranscriptionService:
                 sample_width,
                 model,
                 language,
+                **kwargs,
+            )
+        if provider == "parakeet-onnx":
+            return self._transcribe_buffer_with_parakeet_onnx(
+                audio_data,
+                sample_rate,
+                channels,
+                sample_width,
+                model,
+                language or "en",
                 **kwargs,
             )
         # Skip qwen2audio for now - it loads a large model
@@ -928,6 +1211,18 @@ class TranscriptionService:
     ) -> Dict[str, Any]:
         """Transcribe using faster-whisper."""
 
+        if target_lang is not None:
+            if not isinstance(target_lang, str):
+                raise TranscriptionError(
+                    "faster-whisper translation target must be target en."
+                )
+            normalized_target = target_lang.strip().lower()
+            if normalized_target and normalized_target != "en":
+                raise TranscriptionError(
+                    "faster-whisper translation only supports target en."
+                )
+            target_lang = normalized_target or None
+
         if not FASTER_WHISPER_AVAILABLE:
             logger.error("faster-whisper is not installed")
             raise TranscriptionError("faster-whisper is not installed")
@@ -965,13 +1260,27 @@ class TranscriptionService:
             except Exception as e:
                 _handle_progress_callback_error(e)
 
-        # Get or create model instance with thread safety
-        cache_key = (model, self.config["device"], self.config["compute_type"])
+        # Get or create model instance with thread safety. Routed batch calls
+        # can narrow execution to local INT8 without changing direct callers'
+        # configured compute type or existing download behavior.
+        effective_compute_type = (
+            kwargs.get("compute_type") or self.config["compute_type"]
+        )
+        effective_local_files_only = bool(kwargs.get("local_files_only", False))
+        cache_key = (
+            model,
+            self.config["device"],
+            effective_compute_type,
+            effective_local_files_only,
+        )
 
         with self._model_cache_lock:
             if cache_key not in self._model_cache:
                 logger.info(
-                    f"Loading Whisper model: {model} (device: {self.config['device']}, compute_type: {self.config['compute_type']})"
+                    f"Loading Whisper model: {model} "
+                    f"(device: {self.config['device']}, "
+                    f"compute_type: {effective_compute_type}, "
+                    f"local_files_only: {effective_local_files_only})"
                 )
 
                 # Report model loading progress
@@ -979,7 +1288,7 @@ class TranscriptionService:
                     try:
                         # Check if this is likely a first-time download
                         is_huggingface_model = "/" in model
-                        if is_huggingface_model:
+                        if is_huggingface_model and not effective_local_files_only:
                             progress_callback(
                                 0,
                                 f"Downloading model '{model}' from HuggingFace (this may take several minutes on first use)...",
@@ -1011,9 +1320,9 @@ class TranscriptionService:
                         self._model_cache[cache_key] = WhisperModel(
                             model,
                             device=self.config["device"],
-                            compute_type=self.config["compute_type"],
+                            compute_type=effective_compute_type,
                             download_root=None,  # Use default cache directory
-                            local_files_only=False,  # Allow downloading if needed
+                            local_files_only=effective_local_files_only,
                         )
                     model_load_time = time.time() - model_load_start
                     logger.info(
@@ -1102,16 +1411,12 @@ class TranscriptionService:
         # Use source_lang if provided, otherwise fall back to language
         transcribe_language = source_lang or language
 
-        # Determine task - translate if target language is English and source is non-English
-        # For auto-detection cases (None or 'auto'), we need to detect language first
-        if target_lang and target_lang == "en":
-            if transcribe_language and transcribe_language not in ["en", "auto", None]:
-                task = "translate"
-            else:
-                # For auto-detection, we'll decide after language detection
-                task = "transcribe"
-        else:
-            task = "transcribe"
+        # faster-whisper can translate to English while auto-detecting the source.
+        task = (
+            "translate"
+            if target_lang == "en" and transcribe_language != "en"
+            else "transcribe"
+        )
 
         logger.info(f"Transcription task: {task}, language: {transcribe_language}")
 
@@ -1138,7 +1443,7 @@ class TranscriptionService:
                         f"Starting transcription with {model}{device_info}...",
                         {
                             "device": self.config["device"],
-                            "compute_type": self.config["compute_type"],
+                            "compute_type": effective_compute_type,
                             "model": model,
                             "provider": "faster-whisper",
                         },
@@ -1325,7 +1630,11 @@ class TranscriptionService:
             # Add translation info if applicable
             if task == "translate":
                 result["task"] = "translation"
-                result["source_language"] = transcribe_language or info.language
+                result["source_language"] = (
+                    info.language
+                    if transcribe_language in (None, "auto")
+                    else transcribe_language
+                )
                 result["target_language"] = "en"
                 result["translation"] = result["text"]
 
@@ -1942,7 +2251,8 @@ class TranscriptionService:
                     model_load_start = time.time()
 
                     try:
-                        lightning_model = LightningWhisperMLX(
+                        lightning_whisper_cls = _ensure_lightning_whisper_mlx_import()
+                        lightning_model = lightning_whisper_cls(
                             model=model, batch_size=batch_size, quant=quant
                         )
                         # Store config for cache comparison
@@ -2133,9 +2443,9 @@ class TranscriptionService:
             logger.error("[PARAKEET] parakeet-mlx is not installed or not available")
             raise TranscriptionError("parakeet-mlx is not installed")
 
-        if sf is None and not SOUNDFILE_AVAILABLE and not os.path.exists(audio_path):
+        if not os.path.exists(audio_path):
             raise TranscriptionError(
-                f"Parakeet MLX transcription failed: Audio file not found: {audio_path}"
+                "Parakeet MLX transcription failed: Audio file not found"
             )
 
         # Use configured settings or provided parameters
@@ -2159,6 +2469,98 @@ class TranscriptionService:
                 )
             except Exception as e:
                 _handle_progress_callback_error(e)
+
+        if sf is not None:
+            try:
+                audio_info = sf.info(audio_path)
+            except Exception:
+                audio_info = None
+            if audio_info is not None:
+                raw_frames = getattr(audio_info, "frames", None)
+                raw_duration = getattr(audio_info, "duration", None)
+                empty_frames = isinstance(raw_frames, (int, float)) and raw_frames == 0
+                empty_duration = (
+                    isinstance(raw_duration, (int, float))
+                    and float(raw_duration) == 0.0
+                )
+                if empty_frames or empty_duration:
+                    chunk_duration = kwargs.get(
+                        "chunk_duration",
+                        kwargs.get(
+                            "chunk_size",
+                            self._parakeet_mlx_config["chunk_duration"],
+                        ),
+                    )
+                    overlap_duration = kwargs.get(
+                        "overlap_duration",
+                        kwargs.get(
+                            "overlap",
+                            self._parakeet_mlx_config["overlap_duration"],
+                        ),
+                    )
+                    try:
+                        chunk_duration = float(chunk_duration)
+                    except (TypeError, ValueError):
+                        chunk_duration = float(
+                            self._parakeet_mlx_config["chunk_duration"]
+                        )
+                    try:
+                        overlap_duration = float(overlap_duration)
+                    except (TypeError, ValueError):
+                        overlap_duration = float(
+                            self._parakeet_mlx_config["overlap_duration"]
+                        )
+                    if chunk_duration <= 0:
+                        chunk_duration = float(
+                            self._parakeet_mlx_config["chunk_duration"]
+                        )
+                    if overlap_duration < 0:
+                        overlap_duration = 0.0
+                    if overlap_duration >= chunk_duration:
+                        overlap_duration = max(0.0, chunk_duration - 1.0)
+
+                    raw_sample_rate = getattr(audio_info, "samplerate", None)
+                    audio_sample_rate = (
+                        int(raw_sample_rate)
+                        if isinstance(raw_sample_rate, (int, float))
+                        else None
+                    )
+                    result_dict = {
+                        "text": "",
+                        "segments": [],
+                        "language": source_lang or "en",
+                        "provider": "parakeet-mlx",
+                        "model": model,
+                        "precision": precision,
+                        "attention_type": attention_type,
+                        "chunk_size": chunk_duration,
+                        "overlap": overlap_duration,
+                        "sample_rate": (
+                            f"{audio_sample_rate} -> 16000"
+                            if audio_sample_rate and audio_sample_rate != 16000
+                            else str(audio_sample_rate)
+                            if audio_sample_rate
+                            else "16000"
+                        ),
+                        "duration": 0.0,
+                    }
+                    logger.info(
+                        "[PARAKEET] Empty audio metadata detected; skipping model load"
+                    )
+                    if progress_callback:
+                        try:
+                            progress_callback(
+                                100,
+                                "Transcription complete: 0 segments, 0 characters",
+                                {
+                                    "total_segments": 0,
+                                    "total_chars": 0,
+                                    "model": model,
+                                },
+                            )
+                        except Exception as e:
+                            _handle_progress_callback_error(e)
+                    return result_dict
 
         # Lazy load Parakeet MLX model with thread safety
         logger.info("[PARAKEET] Checking if model needs to be loaded...")
@@ -2257,9 +2659,6 @@ class TranscriptionService:
                     # Add detailed logging before the problematic call
                     logger.debug(f"Current working directory: {os.getcwd()}")
                     logger.debug(f"PARAKEET_MLX_AVAILABLE: {PARAKEET_MLX_AVAILABLE}")
-                    logger.debug(
-                        f"parakeet_from_pretrained function: {parakeet_from_pretrained}"
-                    )
 
                     logger.info("[PARAKEET] About to call parakeet_from_pretrained...")
                     logger.info(f"[PARAKEET] Model name: '{model}'")
@@ -2287,9 +2686,8 @@ class TranscriptionService:
 
                     # Note: We cannot use signal-based timeout in worker threads
                     # The model loading will either succeed or fail on its own
-                    self._parakeet_mlx_model = parakeet_from_pretrained(
-                        model, dtype=dtype
-                    )
+                    parakeet_loader = _ensure_parakeet_mlx_import()
+                    self._parakeet_mlx_model = parakeet_loader(model, dtype=dtype)
                     logger.info(
                         "[PARAKEET] parakeet_from_pretrained completed successfully"
                     )
@@ -2567,9 +2965,8 @@ class TranscriptionService:
                     }
                     segments.append(segment_dict)
             else:
-                # No sentence-level timing, create a single segment for any model result.
-                # This preserves short/empty audio as an addressable transcription span.
-                if text or audio_duration is not None:
+                # No sentence-level timing; synthesize a segment only for nonempty text.
+                if text:
                     segment_end = (
                         float(audio_duration)
                         if isinstance(audio_duration, (int, float))
@@ -2944,6 +3341,10 @@ class TranscriptionService:
         logger.debug("Checking available transcription providers...")
         providers = []
 
+        if ONNX_ASR_AVAILABLE:
+            providers.append("parakeet-onnx")
+            logger.debug("parakeet-onnx is available")
+
         if PARAKEET_MLX_AVAILABLE:
             providers.append("parakeet-mlx")
             logger.debug("parakeet-mlx is available (Real-time ASR for Apple Silicon)")
@@ -2978,6 +3379,9 @@ class TranscriptionService:
         logger.debug(f"Listing available models for provider: {provider or 'all'}")
 
         models = {}
+
+        if ONNX_ASR_AVAILABLE:
+            models["parakeet-onnx"] = ["nemo-parakeet-tdt-0.6b-v2"]
 
         if PARAKEET_MLX_AVAILABLE:
             models["parakeet-mlx"] = [
@@ -3418,9 +3822,8 @@ class TranscriptionService:
                     precision = self._parakeet_mlx_config["precision"]
                     dtype = dtype_map.get(precision, mx.bfloat16)
 
-                    self._parakeet_mlx_model = parakeet_from_pretrained(
-                        model_name, dtype=dtype
-                    )
+                    parakeet_loader = _ensure_parakeet_mlx_import()
+                    self._parakeet_mlx_model = parakeet_loader(model_name, dtype=dtype)
                     self._parakeet_mlx_model._model_name = model_name
                     logger.info(f"Loaded Parakeet MLX model: {model_name}")
 
@@ -3428,10 +3831,59 @@ class TranscriptionService:
                     logger.error(f"Failed to load Parakeet MLX model: {e}")
                     raise TranscriptionError(f"Failed to load model: {str(e)}") from e
 
-        # Transcribe
+        # Transcribe. The installed parakeet-mlx package's `transcribe()`
+        # takes a file path -- internally it does `Path(path)` then
+        # `load_audio(...)` -- it does NOT accept a numpy array (confirmed
+        # against the installed package and reproduced live: "argument
+        # should be a str or an os.PathLike object where __fspath__ returns
+        # a str, not 'ndarray'"). `audio_array` above is already float32,
+        # mono, resampled to 16kHz, so it only needs to be written out as a
+        # standard 16-bit PCM WAV; the `astype(int16)` here exactly inverts
+        # the `/ 32768.0` normalization above (both are divisions/
+        # multiplications by an exact power of two, so this round-trip does
+        # not lose precision for real int16 input).
+        tmp_path: Optional[str] = None
         try:
-            # Parakeet MLX can transcribe numpy arrays directly
-            result = self._parakeet_mlx_model.transcribe(audio_array)
+            pcm = np.clip(
+                np.round(audio_array * 32768.0), -32768, 32767
+            ).astype(np.int16)
+            # `prefix` identifies these files as ours in a temp-dir listing;
+            # review Finding 3 (PR #1171): a crash between here and the
+            # `finally` below leaves raw microphone audio on disk, so a
+            # recognizable name is what makes a future stale-file sweep (out
+            # of scope for this fix) possible at all.
+            with tempfile.NamedTemporaryFile(
+                prefix="parakeet_mlx_", suffix=".wav", delete=False
+            ) as tmp_file:
+                tmp_path = tmp_file.name
+                # Best-effort: restrict to owner-only before any audio is
+                # written, not after. POSIX-only concern -- `chmod` can raise
+                # on Windows (no POSIX mode bits), so a failure here must
+                # never abort a transcription that would otherwise succeed.
+                try:
+                    os.chmod(tmp_path, 0o600)
+                except OSError:
+                    logger.debug(
+                        f"Could not chmod temporary Parakeet MLX WAV "
+                        f"{tmp_path} to 0o600 (non-POSIX filesystem?)"
+                    )
+                # Write through the SAME handle the file was created with,
+                # rather than closing it and reopening by path -- the old
+                # code did exactly that (create+close, then a separate
+                # `wave.open(tmp_path, "wb")`), leaving an empty file at a
+                # predictable, default-permission path for the gap between
+                # the two calls. `wave.open` accepts a file object directly
+                # and does not close it (only a path-opened `Wave_write`
+                # does), so this `tmp_file` is still ours to flush and close
+                # via the enclosing `with`.
+                with wave.open(tmp_file, "wb") as wav_file:
+                    wav_file.setnchannels(1)
+                    wav_file.setsampwidth(2)
+                    wav_file.setframerate(16000)
+                    wav_file.writeframes(pcm.tobytes())
+                tmp_file.flush()
+
+            result = self._parakeet_mlx_model.transcribe(tmp_path)
 
             # Extract text
             text = result.text if hasattr(result, "text") else str(result)
@@ -3464,6 +3916,15 @@ class TranscriptionService:
         except Exception as e:
             logger.error(f"Parakeet MLX buffer transcription failed: {e}")
             raise TranscriptionError(f"Buffer transcription failed: {str(e)}") from e
+        finally:
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except OSError as cleanup_error:
+                    logger.warning(
+                        f"Failed to clean up temporary Parakeet MLX WAV "
+                        f"{tmp_path}: {cleanup_error}"
+                    )
 
     def get_device_info(self) -> Dict[str, Any]:
         """Get information about available compute devices."""
@@ -3613,9 +4074,8 @@ class TranscriptionService:
                     }
                     dtype = dtype_map.get(precision, mx.bfloat16)
 
-                    self._parakeet_mlx_model = parakeet_from_pretrained(
-                        model, dtype=dtype
-                    )
+                    parakeet_loader = _ensure_parakeet_mlx_import()
+                    self._parakeet_mlx_model = parakeet_loader(model, dtype=dtype)
                     self._parakeet_mlx_model._model_name = model
                     logger.info("Model loaded successfully")
                 except Exception as e:
@@ -3631,6 +4091,168 @@ class TranscriptionService:
                 f"Streaming transcription not supported for provider: {provider}"
             )
             return None
+
+
+class TranscriptionService:
+    """Explicit compatibility facade over the retained transcription backend."""
+
+    def __init__(self):
+        """Initialize the retained backend bridge without changing defaults."""
+
+        self._bridge = LegacyTranscriptionBridge(_LegacyTranscriptionBackend)
+        # Preserve construction-time configuration and availability probing.
+        _ = self._bridge.config
+
+    @property
+    def config(self) -> Dict[str, Any]:
+        """Return the retained mutable transcription configuration."""
+
+        return self._bridge.config
+
+    @config.setter
+    def config(self, value: Dict[str, Any]) -> None:
+        """Replace the retained transcription configuration."""
+
+        self._bridge.config = value
+
+    def cleanup(self) -> None:
+        """Clean up resources held by the retained backend."""
+
+        self._bridge.cleanup_legacy()
+
+    def transcribe(
+        self,
+        audio_path: str,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        language: Optional[str] = None,
+        source_lang: Optional[str] = None,
+        target_lang: Optional[str] = None,
+        vad_filter: bool = False,
+        diarize: bool = False,
+        progress_callback: Optional[
+            Callable[[float, str, Optional[Dict]], None]
+        ] = None,
+        batch_route_resolved: bool = False,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Transcribe an audio file through the retained backend.
+
+        Args:
+            audio_path: Path to the audio file.
+            provider: Optional retained provider identifier.
+            model: Optional provider model identifier.
+            language: Optional transcription language.
+            source_lang: Optional source language for transcription or translation.
+            target_lang: Optional translation target language.
+            vad_filter: Whether to enable voice activity detection.
+            diarize: Whether to enable speaker diarization.
+            progress_callback: Optional legacy progress callback.
+            batch_route_resolved: Whether batch routing was already resolved.
+            **kwargs: Provider-specific options forwarded unchanged.
+
+        Returns:
+            The retained backend's transcription dictionary.
+
+        Raises:
+            TranscriptionError: If the retained backend cannot transcribe the file.
+            ValueError: If a retained provider option is invalid.
+        """
+
+        return self._bridge.transcribe_legacy(
+            audio_path,
+            provider,
+            model,
+            language,
+            source_lang,
+            target_lang,
+            vad_filter,
+            diarize,
+            progress_callback,
+            batch_route_resolved,
+            **kwargs,
+        )
+
+    def transcribe_buffer(
+        self,
+        audio_data: bytes,
+        sample_rate: int,
+        channels: int = 1,
+        sample_width: int = 2,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        language: Optional[str] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Forward the unchanged public buffer-transcription call."""
+
+        return self._bridge.transcribe_buffer_legacy(
+            audio_data,
+            sample_rate,
+            channels,
+            sample_width,
+            provider,
+            model,
+            language,
+            **kwargs,
+        )
+
+    def get_available_providers(self) -> List[str]:
+        """Return providers reported by the retained backend."""
+
+        return self._bridge.get_available_providers_legacy()
+
+    def list_available_models(
+        self, provider: Optional[str] = None
+    ) -> Dict[str, List[str]]:
+        """Return models reported by the retained backend."""
+
+        return self._bridge.list_available_models_legacy(provider)
+
+    def get_device_info(self) -> Dict[str, Any]:
+        """Return retained backend device information."""
+
+        return self._bridge.get_device_info_legacy()
+
+    def is_diarization_available(self) -> bool:
+        """Return retained backend diarization availability."""
+
+        return self._bridge.is_diarization_available_legacy()
+
+    def get_diarization_requirements(self) -> Dict[str, bool]:
+        """Return retained backend diarization requirements."""
+
+        return self._bridge.get_diarization_requirements_legacy()
+
+    def format_segments_with_timestamps(
+        self,
+        segments: List[Dict[str, Any]],
+        include_timestamps: bool = True,
+        include_speakers: bool = True,
+    ) -> str:
+        """Format segments through the retained backend."""
+
+        return self._bridge.format_segments_with_timestamps_legacy(
+            segments,
+            include_timestamps,
+            include_speakers,
+        )
+
+    def create_streaming_transcriber(
+        self,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        source_lang: Optional[str] = None,
+        **kwargs,
+    ):
+        """Create a retained-provider streaming transcriber when supported."""
+
+        return self._bridge.create_streaming_transcriber_legacy(
+            provider,
+            model,
+            source_lang,
+            **kwargs,
+        )
 
 
 class ParakeetMLXStreamingTranscriber:

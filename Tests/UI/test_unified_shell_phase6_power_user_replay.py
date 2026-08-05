@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Button
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_unified_shell_phase6_first_time_replay import (
     _screen_text,
     _test_cli_setting,
@@ -72,7 +72,7 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
             console_text = _screen_text(app)
             assert "Live work sources" in console_text
             assert "Watchlists: Connected" in console_text
-            assert "More: Ctrl+P" in console_text
+            assert "More ›" in console_text
             assert any(binding.key == "ctrl+p" for binding in TldwCli.BINDINGS)
 
             app.screen.query_one("#nav-library", Button).press()
@@ -93,7 +93,7 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
             # The placeholder Import/Export row itself is retired outright
             # (see the inventory verdict); Import media absorbed its slot.
             library_text = _screen_text(app)
-            assert "Import media" in library_text
+            assert "Add content…" in library_text
             assert "Search / RAG" in library_text
             assert not app.screen.query("#library-row-ingest-import-export")
 

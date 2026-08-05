@@ -136,3 +136,38 @@ async def test_save_alert_rule_update_routes_to_scope_service():
         runtime_backend="local", payload={"id": "7", "name": "Updated Rule"}
     )
     assert result["name"] == "Updated Rule"
+
+
+@pytest.mark.asyncio
+async def test_overview_counts_paused_sources_as_in_error(monkeypatch):
+    """task-2050 Qodo: the Overview's `sources_in_error` card must not DROP
+    when a failing source finally trips auto-pause. A paused source's
+    `status_summary` reads "paused" (not "error (N)"), so a startswith("error")
+    predicate alone would exclude exactly the most-broken sources — the same
+    regression the Sources pane's Error filter bucket fixed. Reds if the
+    paused arm is removed from the count.
+    """
+    ctrl = WatchlistsBackendController(
+        app_instance=None, scope_service=FakeScopeService(), server_service=None
+    )
+
+    async def fake_list_sources(**kwargs):
+        return [
+            {"id": "s1", "status_summary": "active", "active": True},
+            {"id": "s2", "status_summary": "error (3)", "active": True},
+            {"id": "s3", "status_summary": "paused", "active": False},
+        ]
+
+    async def fake_safe_list(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(ctrl, "list_sources", fake_list_sources)
+    monkeypatch.setattr(ctrl, "_safe_list", fake_safe_list)
+
+    data = await ctrl.get_overview_data(runtime_backend="local")
+
+    assert data["sources_in_error"] == 2, (
+        "erroring + paused must both count; a paused source failed past the "
+        "threshold and is the most broken state there is"
+    )
+    assert data["total_sources"] == 3

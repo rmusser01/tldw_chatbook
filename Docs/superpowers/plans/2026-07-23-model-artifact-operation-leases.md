@@ -10,7 +10,7 @@ shared/exclusive API behind Chatbook-owned typed leases. Lock filenames are
 SHA-256 derivations of validated opaque artifact identities, acquisition is
 non-blocking with monotonic timeout/cancellation polling, and multi-artifact
 sets acquire in canonical order with reverse rollback. Spawned native process
-tests are the gate: failure on Windows, macOS, or Linux blocks TASK-507 and
+tests are the gate: failure on Windows, macOS, or Linux blocks TASK-594 and
 requires an ADR-025 amendment instead of a platform-specific fallback.
 
 **Tech Stack:** Python 3.11+, `portalocker==3.2.0`, standard-library
@@ -77,7 +77,7 @@ dataclasses/enums/hashlib/multiprocessing/pathlib/time, pytest, GitHub Actions.
 
 - `backlog/docs/model-artifact-operation-leases.md` — selected primitive,
   supported semantics, evidence commands, limitations, dependency/license, and
-  TASK-507 gate.
+  TASK-594 gate.
 
 ---
 
@@ -107,40 +107,43 @@ dataclasses/enums/hashlib/multiprocessing/pathlib/time, pytest, GitHub Actions.
 # Tests/Model_Artifacts/test_operation_leases.py
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
-from tldw_chatbook.Model_Artifacts.leases import (
-    ArtifactLeaseCancelledError,
-    ArtifactLeaseKey,
-    ArtifactLeaseTimeoutError,
-    ArtifactOperationLease,
-    LeaseMode,
-)
+
+def lease_api() -> ModuleType:
+    """Import the wished-for API inside the test so RED is a test failure."""
+
+    return importlib.import_module("tldw_chatbook.Model_Artifacts.leases")
 
 
 def key(
+    api: ModuleType,
     artifact_id: str = "parakeet-v2",
     revision: str = "rev-a",
     variant: str = "int8",
-) -> ArtifactLeaseKey:
-    return ArtifactLeaseKey(artifact_id, revision, variant)
+):
+    return api.ArtifactLeaseKey(artifact_id, revision, variant)
 
 
 def test_lease_key_rejects_empty_and_reserved_separator() -> None:
+    api = lease_api()
     with pytest.raises(ValueError, match="artifact_id"):
-        ArtifactLeaseKey("", "rev-a", "int8")
+        api.ArtifactLeaseKey("", "rev-a", "int8")
     with pytest.raises(ValueError, match="revision"):
-        ArtifactLeaseKey("model", " ", "int8")
+        api.ArtifactLeaseKey("model", " ", "int8")
     with pytest.raises(ValueError, match="reserved separator"):
-        ArtifactLeaseKey("model", "rev-a", "int8\u001funsafe")
+        api.ArtifactLeaseKey("model", "rev-a", "int8\u001funsafe")
 
 
 def test_lock_filename_is_deterministic_and_opaque(tmp_path: Path) -> None:
-    unsafe = ArtifactLeaseKey("../../model", "refs/rev", "int8/windows")
-    first = ArtifactOperationLease(tmp_path, unsafe, LeaseMode.SHARED)
-    second = ArtifactOperationLease(tmp_path, unsafe, LeaseMode.SHARED)
+    api = lease_api()
+    unsafe = api.ArtifactLeaseKey("../../model", "refs/rev", "int8/windows")
+    first = api.ArtifactOperationLease(tmp_path, unsafe, api.LeaseMode.SHARED)
+    second = api.ArtifactOperationLease(tmp_path, unsafe, api.LeaseMode.SHARED)
 
     assert first.lock_path == second.lock_path
     assert first.lock_path.parent == tmp_path
@@ -151,50 +154,54 @@ def test_lock_filename_is_deterministic_and_opaque(tmp_path: Path) -> None:
 
 
 def test_exclusive_times_out_while_shared_lease_is_open(tmp_path: Path) -> None:
-    with ArtifactOperationLease(tmp_path, key(), LeaseMode.SHARED):
-        with pytest.raises(ArtifactLeaseTimeoutError):
-            ArtifactOperationLease(
+    api = lease_api()
+    with api.ArtifactOperationLease(tmp_path, key(api), api.LeaseMode.SHARED):
+        with pytest.raises(api.ArtifactLeaseTimeoutError):
+            api.ArtifactOperationLease(
                 tmp_path,
-                key(),
-                LeaseMode.EXCLUSIVE,
+                key(api),
+                api.LeaseMode.EXCLUSIVE,
                 timeout_seconds=0.05,
                 check_interval_seconds=0.005,
             ).acquire()
 
 
 def test_context_close_releases_lock(tmp_path: Path) -> None:
-    shared = ArtifactOperationLease(tmp_path, key(), LeaseMode.SHARED)
+    api = lease_api()
+    shared = api.ArtifactOperationLease(tmp_path, key(api), api.LeaseMode.SHARED)
     with shared:
         assert shared.acquired is True
 
     assert shared.acquired is False
-    with ArtifactOperationLease(
+    with api.ArtifactOperationLease(
         tmp_path,
-        key(),
-        LeaseMode.EXCLUSIVE,
+        key(api),
+        api.LeaseMode.EXCLUSIVE,
         timeout_seconds=0.2,
     ) as exclusive:
         assert exclusive.acquired is True
 
 
 def test_cancelled_acquire_closes_unowned_handle(tmp_path: Path) -> None:
-    lease = ArtifactOperationLease(
+    api = lease_api()
+    lease = api.ArtifactOperationLease(
         tmp_path,
-        key(),
-        LeaseMode.SHARED,
+        key(api),
+        api.LeaseMode.SHARED,
         cancelled=lambda: True,
     )
 
-    with pytest.raises(ArtifactLeaseCancelledError):
+    with pytest.raises(api.ArtifactLeaseCancelledError):
         lease.acquire()
 
     assert lease.acquired is False
 
 
 def test_double_acquire_is_rejected(tmp_path: Path) -> None:
-    lease = ArtifactOperationLease(tmp_path, key(), LeaseMode.SHARED)
+    api = lease_api()
+    lease = api.ArtifactOperationLease(tmp_path, key(api), api.LeaseMode.SHARED)
     with lease:
-        with pytest.raises(ArtifactLeaseError, match="already acquired"):
+        with pytest.raises(api.ArtifactLeaseError, match="already acquired"):
             lease.acquire()
 ```
 
@@ -211,7 +218,7 @@ Run:
 pytest Tests/Model_Artifacts/test_operation_leases.py -v
 ```
 
-Expected: collection fails with
+Expected: all six tests collect and fail from `lease_api()` with
 `ModuleNotFoundError: No module named 'tldw_chatbook.Model_Artifacts'`.
 
 - [ ] **Step 3: Pin and install the selected dependency**
@@ -426,6 +433,10 @@ __all__ = [
 
 - [ ] **Step 5: Run the focused tests**
 
+After GREEN, refactor the test module to the direct production imports shown by
+the public interface list above, remove `lease_api()`, and change `key(api, ...)`
+back to `key(...)`. This is test-only cleanup; do not change behavior.
+
 Run:
 
 ```bash
@@ -466,10 +477,16 @@ Append:
 
 ```python
 # Tests/Model_Artifacts/test_operation_leases.py
-from tldw_chatbook.Model_Artifacts.leases import ArtifactOperationLeaseSet
+def lease_set_type():
+    """Resolve the wished-for type inside a test so RED is a test failure."""
+
+    from tldw_chatbook.Model_Artifacts import leases
+
+    return leases.ArtifactOperationLeaseSet
 
 
 def test_lease_set_sorts_and_deduplicates_keys(tmp_path: Path) -> None:
+    ArtifactOperationLeaseSet = lease_set_type()
     keys = [
         ArtifactLeaseKey("vad", "rev-b", "fp32"),
         ArtifactLeaseKey("parakeet", "rev-a", "int8"),
@@ -488,6 +505,7 @@ def test_lease_set_sorts_and_deduplicates_keys(tmp_path: Path) -> None:
 
 
 def test_partial_set_failure_releases_already_acquired_keys(tmp_path: Path) -> None:
+    ArtifactOperationLeaseSet = lease_set_type()
     first = ArtifactLeaseKey("a-root", "rev", "int8")
     blocked = ArtifactLeaseKey("z-vad", "rev", "fp32")
 
@@ -511,6 +529,7 @@ def test_partial_set_failure_releases_already_acquired_keys(tmp_path: Path) -> N
 
 
 def test_empty_lease_set_is_rejected(tmp_path: Path) -> None:
+    ArtifactOperationLeaseSet = lease_set_type()
     with pytest.raises(ValueError, match="at least one"):
         ArtifactOperationLeaseSet(tmp_path, [], LeaseMode.SHARED)
 ```
@@ -523,7 +542,8 @@ Run:
 pytest Tests/Model_Artifacts/test_operation_leases.py -v
 ```
 
-Expected: collection fails because `ArtifactOperationLeaseSet` is not exported.
+Expected: all three new tests collect and fail at runtime with
+`AttributeError` because `ArtifactOperationLeaseSet` does not exist.
 
 - [ ] **Step 3: Implement ordered set acquisition and reverse rollback**
 
@@ -603,6 +623,9 @@ Add `ArtifactOperationLeaseSet` to the import and `__all__` lists in
 `tldw_chatbook/Model_Artifacts/__init__.py`.
 
 - [ ] **Step 4: Run the complete unit file**
+
+After GREEN, replace `lease_set_type()` with a direct
+`ArtifactOperationLeaseSet` import and remove the three local assignments.
 
 Run:
 
@@ -836,7 +859,9 @@ pytest Tests/Model_Artifacts/test_operation_leases.py \
   Tests/Model_Artifacts/test_operation_leases_process.py -v
 ```
 
-Expected: 12 passed.
+Expected: 51 passed, including stable backend/cleanup errors, hard deadline
+enforcement, and both shared-to-exclusive and exclusive-to-shared process
+proofs.
 
 - [ ] **Step 4: Commit native process proofs**
 
@@ -959,7 +984,7 @@ git commit -m "ci: gate model artifact lease semantics"
 
 - Consumes: the committed local tests and successful native CI matrix.
 - Produces: durable primitive documentation and a completed prerequisite that
-  unblocks TASK-507.
+  unblocks TASK-594.
 
 - [ ] **Step 1: Write the selected-primitive documentation**
 
@@ -1002,7 +1027,7 @@ The suite proves:
 4. forced process termination releases the complete lease set; and
 5. partial set acquisition rolls back already acquired leases.
 
-TASK-507 remains blocked unless every native job passes for the same commit.
+TASK-594 remains blocked unless every native job passes for the same commit.
 
 ## Scope and limitations
 
@@ -1043,7 +1068,7 @@ gh pr checks --watch
 ```
 
 Expected: the `artifact-lease-spike` matrix passes on Ubuntu, macOS, and
-Windows. If any matrix entry fails, leave TASK-505 In Progress, keep TASK-507
+Windows. If any matrix entry fails, leave TASK-505 In Progress, keep TASK-594
 blocked, record the failure in the task notes, and amend ADR-025 before trying a
 different primitive.
 
@@ -1055,7 +1080,7 @@ Run:
 backlog task edit 505 \
   --check-ac 1 --check-ac 2 --check-ac 3 \
   --check-ac 4 --check-ac 5 --check-ac 6 \
-  --notes "Implemented the portalocker 3.2.0-backed shared/exclusive lease API, canonical multi-artifact lease sets, timeout and cancellation behavior, partial-acquisition rollback, and native spawn-process proofs. The Ubuntu, macOS, and Windows artifact-lease-spike jobs passed for the same commit. ADR-025 remains the governing decision; TASK-507 may now start." \
+  --notes "Implemented the portalocker 3.2.0-backed shared/exclusive lease API, canonical multi-artifact lease sets, timeout and cancellation behavior, partial-acquisition rollback, and native spawn-process proofs. The Ubuntu, macOS, and Windows artifact-lease-spike jobs passed for the same commit. ADR-025 remains the governing decision; TASK-594 may now start." \
   -s Done
 ```
 
@@ -1072,6 +1097,6 @@ git commit -m "docs: record model artifact lease proof"
 
 ## Execution stop condition
 
-Do not start TASK-507 in the same implementation run merely because local
+Do not start TASK-594 in the same implementation run merely because local
 tests pass. TASK-505 completes only after the three native operating-system
-jobs pass for one commit; TASK-507 receives a separate plan and review gate.
+jobs pass for one commit; TASK-594 receives a separate plan and review gate.

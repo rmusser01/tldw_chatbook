@@ -138,7 +138,38 @@ applied passes today, with the label invisible.
 | `#mcp-hub-rail Button.mcp-rail-row.is-active` | bundle 5906 | OK |
 | MCP audit-mode buttons | none — **deliberate**, documented at `mcp_audit_mode.py:209-212` | Intended |
 | `.workbench-mode.is-active` | bundle 6292 | OK |
-| `.library-collection-row` + `is-active` | **none anywhere** — only `library_collections_panel.py:153` and an `@on` at `library_screen.py:13326` | **SUSPECT** — needs a live look; not fixed blind |
+| `.library-collection-row` + `is-active` | **none anywhere** — only `library_collections_panel.py:153` and an `@on` at `library_screen.py:13326` | **RESOLVED — not the Lab defect.** Investigated live (see below) |
+
+### `.library-collection-row` — investigated, no fix
+
+`LibraryCollectionsPanel` was mounted with the production bundle (`App(CSS_PATH=...)`, size
+`(120, 40)`), with three collections and the middle one `selected=True`. The first measurement
+pass (superseded below) read `widget.styles.border` and `widget.size`. That was a mistake:
+`Widget.size` is the **content** box (inside any border), not the widget's full on-screen extent,
+so it reads `(16, 1)` for every row regardless of whether that row also carries a border — it
+cannot distinguish a 1-row button from a 3-row bordered one. Re-measured with `widget.region`
+(the full outer rectangle, border included) after two `pilot.pause()` calls past the initial
+render:
+
+```
+'Alpha - 1 item'    is-active=False  border=['','','','']                      region=Region(x=0, y=2, width=16, height=1)
+'Bravo - 1 item'    is-active=True   border=['round','round','round','round']  region=Region(x=0, y=3, width=18, height=3)
+'Charlie - 1 item'  is-active=False  border=['','','','']                      region=Region(x=0, y=6, width=18, height=1)
+```
+
+`region.height` shows what `size` could not: the selected row is genuinely 3 rows tall on screen,
+its siblings 1. Reading the actual compositor output (`screen._compositor.render_strips()`)
+confirms the label survives the extra rows — `"Bravo"` is present in the rendered strip text.
+
+The rendered result is **not** the Lab defect. Lab's mode strip is height-constrained to one
+row, so the border's box clipped the label away entirely. The collections list has vertical room,
+so the bordered row simply grows to three rows and its label stays fully readable — it reads as a
+deliberate selection box.
+
+The one real observation is that a selected row is three rows tall while its siblings are one, so
+the list reflows as selection moves. That is a cosmetic inconsistency, not a defect, and changing
+it would alter Library's appearance to fix nothing. **No change made.** If Library's own design
+work later wants uniform row heights, this is where to start.
 
 ## Goals
 
@@ -521,10 +552,27 @@ mode.
 
 ## Sequencing
 
-| PR | Contents |
-|---|---|
-| **PR0** | creates `features/_lab.tcss`, registers it in `CSS_MODULES`, **regenerates and commits the checked-in `tldw_cli_modular.tcss` via `build_css`**; `.lab-mode-chip.is-active` app-tier rule + rendered-label test; live look at `.library-collection-row` |
-| **PR1** | `Widgets/destination_rail.py` pure base; `ConsoleRailHandle` becomes a subclass; no consumer edits |
-| **PR2** | `LabScreen` frame, `LabWorkbench`, `LabRailLayout`, `LabRailStore`, extends `features/_lab.tcss`, focus-based mode keys, lazy body mount + `on_lab_body_ready()`; all three screens inherit |
-| **PR3** | Models rail lift |
-| **PR4** | Speech rail lift, capability panel, IA removals |
+**Every PR must leave the app in a shippable state.** An earlier draft split the frame from the
+rail lifts — PR2 landed the frame on all three screens, PR3 lifted Models' sidebar, PR4 lifted
+Speech's. That intermediate state is not shippable: after PR2 the frame renders an empty left rail
+(first run opens it) while each legacy sidebar is still alive inside its body, so Models and Speech
+would each show **two navigation columns side by side** — worse than today.
+
+Each screen's sidebar lift is therefore folded into that screen's own adoption PR. A screen adopts
+the frame and fills its rail in the same change, or it does not adopt yet.
+
+| PR | Contents | Shippable on its own |
+|---|---|---|
+| **PR0** ✅ | creates `features/_lab.tcss`, registers it in `CSS_MODULES`, regenerates the checked-in bundle via `build_css`; app-tier `.lab-mode-chip.is-active` rule + focus-disambiguation guard + rendered-label test | yes — the active mode label becomes visible |
+| **PR1** ✅ | `Widgets/destination_rail.py` pure base; `ConsoleRailHandle` becomes a subclass; zero consumer edits, zero bundle content diff | yes — pure refactor, no visual change |
+| **PR2** | `LabScreen` frame, `LabWorkbench`, `LabRailLayout`, `LabRailStore`, status row, focus-based mode keys, lazy body mount + `on_lab_body_ready()`, footer shortcuts — **and Models adopts it, lifting its nine-row sidebar into the rail** | yes — Models is fully good; Speech and Evals unchanged |
+| **PR3** | Speech adopts the frame, lifts its sidebar, and moves the capability panel into a status chip; the two IA removals land here | yes |
+| **PR4** | Evals adopts the frame with an empty rail and the honest empty state | yes |
+
+PR0 and PR1 shipped together as PR #940. PR2's tasks should be written against PR1's realised API
+rather than an anticipated one.
+
+Note that PR2 carries the frame *and* one screen's lift, making it the largest of the five. If it
+proves too big in planning, the split to reach for is by frame region (frame + rail, then status
+row + inspector), never frame-without-rail — that is the unshippable seam this section exists to
+prevent.

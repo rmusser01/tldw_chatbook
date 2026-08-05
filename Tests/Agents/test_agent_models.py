@@ -4,14 +4,19 @@ import dataclasses
 
 from tldw_chatbook.Agents.agent_models import (
     DIRECT_DISCLOSE_THRESHOLD,
+    INSTALL_SKILL_TOOL_NAME,
     LOOP_DETECTION_N,
     RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
+    RUN_LOG_SLICE_TOOL_NAME,
+    RUN_LOG_STATS_TOOL_NAME,
     RUN_RUNNING,
+    RUN_SKILL_SCRIPT_TOOL_NAME,
     RUN_STUCK,
     RUN_SUPERSEDED,
     RUNTIME_TOOL_NAMES,
+    SEARCH_RUN_LOG_TOOL_NAME,
     SPAWN_TOOL_NAME,
     TERMINAL_RUN_STATUSES,
     AgentConfig,
@@ -48,8 +53,18 @@ def test_run_status_values_and_terminal_set():
 
 def test_runtime_tool_names():
     assert SPAWN_TOOL_NAME == "spawn_subagent"
-    assert RUNTIME_TOOL_NAMES == {"spawn_subagent", "find_tools", "load_tools"}
-    assert DIRECT_DISCLOSE_THRESHOLD == 8 and LOOP_DETECTION_N == 3
+    assert RUNTIME_TOOL_NAMES == {
+        "spawn_subagent",
+        "find_tools",
+        "load_tools",
+        "skill_file",
+        INSTALL_SKILL_TOOL_NAME,
+        RUN_SKILL_SCRIPT_TOOL_NAME,
+        SEARCH_RUN_LOG_TOOL_NAME,
+        RUN_LOG_STATS_TOOL_NAME,
+        RUN_LOG_SLICE_TOOL_NAME,
+    }
+    assert DIRECT_DISCLOSE_THRESHOLD == 16 and LOOP_DETECTION_N == 3
 
 
 def test_budget_defaults():
@@ -60,21 +75,24 @@ def test_budget_defaults():
         b.max_subagents,
         b.max_active_tools,
         b.max_subagent_result_chars,
-    ) == (8, 240.0, 2, 8, 4000)
+    ) == (8, 240.0, 2, 24, 4000)
 
 
-def test_run_budget_default_model_turns_equal_steps_and_child_clamp_carries():
+def test_run_budget_default_model_turns_unreachable_and_child_clamp_carries():
     """Pin the engine-default unreachability invariant and child passthrough.
 
-    At ``RunBudget()`` the model-turn cap must equal ``max_steps`` (so the
-    new check can never fire before the step check), and
+    At ``RunBudget()`` the model-turn cap must be at least ``max_steps`` (so
+    the model-turn check can never fire before the step check), and
     ``clamp_child_budget`` must carry ``max_model_turns`` through unclamped.
     """
     b = RunBudget()
     # Unreachability invariant: each model turn appends >=1 step, so with
-    # max_model_turns == max_steps the step check always fires first (or
-    # ties) at defaults -> engine-default behavior byte-identical.
-    assert b.max_model_turns == b.max_steps == 8
+    # max_model_turns >= max_steps the step check always fires first (or
+    # ties) at defaults -> engine-default behavior unchanged. The cap was
+    # raised to 30 for callers that raise max_steps to match (the Console
+    # bridge); it must never drop below max_steps here.
+    assert b.max_model_turns >= b.max_steps
+    assert (b.max_model_turns, b.max_steps) == (30, 8)
     child = clamp_child_budget(
         RunBudget(max_model_turns=3), parent_remaining_seconds=30.0
     )
@@ -118,6 +136,43 @@ def test_models_construct_and_are_frozen_where_stated():
         assert frozen.__dataclass_params__.frozen is True
 
 
+def test_modelturn_tokens_defaults_zero():
+    from tldw_chatbook.Agents.agent_models import ModelTurn
+    assert ModelTurn(text="hi").tokens == 0
+    assert ModelTurn(text="hi", tokens=42).tokens == 42
+
+
+def test_runbudget_max_total_tokens_defaults_zero():
+    from tldw_chatbook.Agents.agent_models import RunBudget
+    assert RunBudget().max_total_tokens == 0
+    assert RunBudget(max_total_tokens=5000).max_total_tokens == 5000
+
+
+def test_runoutcome_total_tokens_defaults_zero():
+    from tldw_chatbook.Agents.agent_models import RunOutcome, RUN_DONE
+    assert RunOutcome(RUN_DONE, []).total_tokens == 0
+    assert RunOutcome(RUN_DONE, [], total_tokens=123).total_tokens == 123
+
+
+def test_clamp_child_budget_preserves_max_total_tokens():
+    from tldw_chatbook.Agents.agent_models import RunBudget, clamp_child_budget
+    child = RunBudget(max_total_tokens=7000)
+    assert clamp_child_budget(child, 10.0).max_total_tokens == 7000
+
+
+def test_clamp_child_budget_preserves_max_tool_result_chars():
+    from tldw_chatbook.Agents.agent_models import RunBudget, clamp_child_budget
+    child = RunBudget(max_tool_result_chars=0)
+    assert clamp_child_budget(child, 10.0).max_tool_result_chars == 0
+
+
+def test_clamp_child_budget_propagates_tool_call_seconds():
+    parent = RunBudget(max_tool_call_seconds=45.0)
+    child = clamp_child_budget(parent, 30.0)
+    assert child.max_tool_call_seconds == 45.0   # taken from the child arg (== parent here)
+    assert child.max_subagents == 0              # existing invariant still holds
+
+
 def test_pure_module_has_no_forbidden_imports():
     import tldw_chatbook.Agents.agent_models as mod
 
@@ -131,3 +186,29 @@ def test_pure_module_has_no_forbidden_imports():
         "requests",
     ):
         assert forbidden not in src
+
+
+def test_direct_disclose_threshold_admits_a_three_pack_catalog():
+    """A files+corpus+authoring set is 14 tools; it must disclose directly.
+
+    Below the threshold `initial_disclosure` skips find_tools/load_tools
+    entirely, which is the point: those two round trips are pure overhead
+    repeated on every user message.
+    """
+    from tldw_chatbook.Agents.agent_models import DIRECT_DISCLOSE_THRESHOLD
+
+    assert DIRECT_DISCLOSE_THRESHOLD >= 14
+
+
+def test_max_active_tools_clears_the_disclosure_threshold():
+    """Everything directly disclosed must fit in the active set.
+
+    `initial_disclosure` truncates to `max_active_tools`, so a ceiling below
+    the threshold would silently drop tools it just decided to disclose.
+    """
+    from tldw_chatbook.Agents.agent_models import (
+        DIRECT_DISCLOSE_THRESHOLD,
+        RunBudget,
+    )
+
+    assert RunBudget().max_active_tools >= DIRECT_DISCLOSE_THRESHOLD

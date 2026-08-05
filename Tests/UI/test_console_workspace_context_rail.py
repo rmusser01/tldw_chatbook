@@ -4,18 +4,25 @@ from __future__ import annotations
 
 import inspect
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from rich.cells import cell_len
+from textual.content import Content
 from textual.widgets import Button, Input, Static
 
+from Tests.UI.test_console_workspace_action_row_geometry import StyledConsoleHarness
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
-from tldw_chatbook.Chat.chat_models import ChatSessionData
-from tldw_chatbook.Chat.console_glyphs import GLYPH_ACTIVE
+from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    ConsoleRunState,
+    ConsoleRunStatus,
+)
 from tldw_chatbook.Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
@@ -26,7 +33,10 @@ from tldw_chatbook.Widgets.Console.console_workspace_context import (
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
+from tldw_chatbook.Widgets.destination_rail import GLYPH_COLLAPSED, GLYPH_EXPANDED
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Workspaces import (
+    CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     ConsoleWorkspaceACPHandoffState,
     ConsoleConversationBrowserInputRow,
     DEFAULT_WORKSPACE_ID,
@@ -93,6 +103,21 @@ async def _wait_for_condition(pilot, predicate, *, timeout: float = 1.0) -> None
             return
         await pilot.pause(0.05)
     assert predicate()
+
+
+async def _wait_for_production_chat_screen(
+    app, pilot, *, timeout: float = 6.0
+) -> ChatScreen:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        screen = app.screen
+        if isinstance(screen, ChatScreen) and screen.region.width > 0:
+            await pilot.pause()
+            return screen
+        await pilot.pause(0.01)
+    raise AssertionError(
+        f"Timed out waiting for production ChatScreen; active={type(app.screen).__name__}"
+    )
 
 
 def _assert_status_row(
@@ -174,6 +199,7 @@ def _browser_row(
     source_kind: str = "persisted",
     starred_sort: str = "",
     updated_sort: str = "",
+    run_marker: str = "",
 ) -> ConsoleConversationBrowserInputRow:
     return ConsoleConversationBrowserInputRow(
         row_key=row_key,
@@ -191,6 +217,7 @@ def _browser_row(
         source_kind=source_kind,
         starred_sort=starred_sort,
         updated_sort=updated_sort,
+        run_marker=run_marker,
     )
 
 
@@ -199,7 +226,10 @@ def _grouped_browser_state(
     marks_available: bool = True,
     query: str = "",
     rows: tuple[ConsoleConversationBrowserInputRow, ...] | None = None,
+    group_collapse_preferences: dict[str, bool] | None = None,
 ):
+    preferences = {"section:chats": False}
+    preferences.update(group_collapse_preferences or {})
     return build_console_conversation_browser_state(
         rows=rows
         or (
@@ -228,7 +258,7 @@ def _grouped_browser_state(
             ),
         ),
         active_workspace_id="ws-a",
-        group_collapse_preferences={"section:chats": False},
+        group_collapse_preferences=preferences,
         query=query,
         marks_available=marks_available,
     )
@@ -239,14 +269,18 @@ def _base_grouped_workspace_state(
     marks_available: bool = True,
     query: str = "",
     rows: tuple[ConsoleConversationBrowserInputRow, ...] | None = None,
+    configured_server: bool = False,
+    group_collapse_preferences: dict[str, bool] | None = None,
 ) -> ConsoleWorkspaceContextState:
+    """Build grouped-browser state; ``configured_server`` renders the full
+    Sync/Server/ACP rows instead of the TASK-715 collapsed line."""
     section = _section_state(rows=0)
     state = _base_workspace_state(section)
     return ConsoleWorkspaceContextState(
         heading=state.heading,
         workspace_label=state.workspace_label,
         authority_label=state.authority_label,
-        sync_label=state.sync_label,
+        sync_label="Sync: syncing" if configured_server else state.sync_label,
         runtime_label=state.runtime_label,
         conversation_rows=(),
         conversation_empty_copy=state.conversation_empty_copy,
@@ -255,16 +289,23 @@ def _base_grouped_workspace_state(
             marks_available=marks_available,
             query=query,
             rows=rows,
+            group_collapse_preferences=group_collapse_preferences,
         ),
         change_workspace_enabled=state.change_workspace_enabled,
         change_workspace_recovery=state.change_workspace_recovery,
         new_conversation_enabled=state.new_conversation_enabled,
         new_conversation_recovery=state.new_conversation_recovery,
         recovery_copy=state.recovery_copy,
-        server_readiness_label=state.server_readiness_label,
+        server_readiness_label=(
+            "Server: adapter ready"
+            if configured_server
+            else state.server_readiness_label
+        ),
         server_readiness_detail=state.server_readiness_detail,
         handoff_rows=state.handoff_rows,
-        acp_handoff_label=state.acp_handoff_label,
+        acp_handoff_label=(
+            "ACP task/run: ready" if configured_server else state.acp_handoff_label
+        ),
         acp_handoff_detail=state.acp_handoff_detail,
         acp_handoff_audit=state.acp_handoff_audit,
     )
@@ -293,6 +334,70 @@ def test_console_conversation_status_labels_use_saved_chat_vocabulary() -> None:
     assert status("in-progress") == "saved"
     assert status("active") == "active"
     assert status("open") == "open"
+
+
+def test_conversation_row_secondary_drops_boilerplate_keeps_differentiator() -> None:
+    """TASK-374 AC#2: the row subtitle compresses to just the differentiator.
+
+    Every row previously repeated ``<workspace> - saved chat - <age>``, so only
+    the age digits differed and half the section's vertical space carried no
+    information. The subtitle now keeps the age always and the state ONLY when it
+    is not the default ``saved chat``; the section-level workspace label is dropped.
+    """
+    secondary = ConsoleWorkspaceContextTray._conversation_row_secondary
+
+    # Default saved state -> only the differentiating age remains.
+    assert secondary("saved chat", "2d") == "2d"
+    # A non-default state IS the differentiator and is kept alongside the age.
+    assert secondary("active session", "5m") == "active session - 5m"
+    assert secondary("open session", "1h") == "open session - 1h"
+    # Degenerate inputs stay sane.
+    assert secondary("active session", "") == "active session"
+    assert secondary("saved chat", "") == ""
+    # The repeated workspace label is never part of the compressed grouped subtitle.
+    assert "Workspace" not in secondary("saved chat", "3d")
+
+    # Qodo #812: header-less sections (the cross-workspace Starred section) pass
+    # the workspace explicitly, and it leads the subtitle as the differentiator
+    # so same-titled conversations from different workspaces stay distinguishable.
+    assert secondary("saved chat", "3d", workspace_label="Workspace A") == "Workspace A - 3d"
+    assert (
+        secondary("active session", "5m", workspace_label="Workspace B")
+        == "Workspace B - active session - 5m"
+    )
+
+
+@pytest.mark.asyncio
+async def test_starred_row_keeps_workspace_disambiguation() -> None:
+    """Qodo #812: the Starred section pins conversations across workspaces with no
+    workspace group header, so its rows must still show the owning workspace even
+    though grouped rows drop it as redundant."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 50)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+
+        # Row 0 is the starred conversation (Workspace A) in the header-less
+        # Starred section; its subtitle must name the workspace.
+        starred_label = str(
+            console.query_one("#console-workspace-conversation-0", Button).label
+        )
+        assert "Workspace A" in starred_label
+
+        # The same conversation under its Workspaces group header drops it.
+        grouped_labels = [
+            str(button.label)
+            for button in console.query(".console-workspace-conversation-row")
+            if button.display and "\nWorkspace A" not in str(button.label)
+        ]
+        assert grouped_labels, "expected at least one grouped row without a workspace prefix"
 
 
 def test_console_workspace_conversation_section_state_defaults() -> None:
@@ -362,6 +467,842 @@ async def test_console_workspace_context_renders_grouped_conversation_browser() 
 
 
 @pytest.mark.asyncio
+async def test_collapsed_workspace_group_header_shows_most_urgent_row_marker() -> None:
+    """PA-T8 review fix round 1 (IMPORTANT 2): a collapsed group hides its
+    rows entirely, so a row-level fleet run-marker glyph is otherwise
+    invisible for exactly the user who collapsed the group. The header
+    borrows the single most-urgent glyph from the hidden rows so "which
+    workspace's agents are busy" stays visible at a glance.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=(
+                    # ws-a is the active workspace (see `_grouped_browser_
+                    # state`'s `active_workspace_id="ws-a"`) -- ws-b
+                    # defaults to collapsed, hiding this row and its glyph.
+                    _browser_row(
+                        "conv-a",
+                        "Alpha",
+                        workspace_id="ws-b",
+                        workspace_label="Workspace B",
+                        run_marker="●",
+                    ),
+                ),
+            )
+        )
+        await pilot.pause()
+
+        group = console.query_one(
+            "#console-conversation-browser-group-toggle-0", Button
+        )
+        assert group.group_id == "workspace:ws-b"
+        assert (
+            _static_plain(console, "#console-conversation-browser-group-title-0")
+            == "Workspace B ●"
+        )
+        # The row itself stays unmounted -- the group really is collapsed,
+        # not just visually decorated.
+        assert len(console.query(".console-workspace-conversation-row")) == 0
+
+
+@pytest.mark.asyncio
+async def test_expanded_workspace_group_header_has_no_marker_suffix() -> None:
+    """Expanded groups already show every row's own marker -- the header
+    must stay unchanged (no glyph suffix) so the marker is not duplicated.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=(
+                    # ws-a is the active workspace -> expanded by default.
+                    _browser_row(
+                        "conv-a",
+                        "Alpha",
+                        workspace_id="ws-a",
+                        workspace_label="Workspace A",
+                        run_marker="●",
+                    ),
+                ),
+            )
+        )
+        await pilot.pause()
+
+        group = console.query_one(
+            "#console-conversation-browser-group-toggle-0", Button
+        )
+        assert group.group_id == "workspace:ws-a"
+        assert (
+            _static_plain(console, "#console-conversation-browser-group-title-0")
+            == "Workspace A"
+        )
+        assert len(console.query(".console-workspace-conversation-row")) == 1
+
+
+def _workspace_rows_with_marker_at(index: int, marker: str, *, count: int):
+    """``count`` rows in the active workspace ``ws-a``, newest-first by
+    construction (descending ``updated_sort``) so display order matches
+    ``range(count)`` exactly -- the row at ``index`` carries ``marker``."""
+    return tuple(
+        _browser_row(
+            f"ws-a-{i}",
+            f"Chat {i}",
+            workspace_id="ws-a",
+            workspace_label="Workspace A",
+            updated_sort=f"2026-07-{31 - i:02d}T00:00:00",
+            run_marker=marker if i == index else "",
+        )
+        for i in range(count)
+    )
+
+
+def _rendered_tooltip(widget) -> str:
+    """Return a widget's tooltip as Textual will actually DISPLAY it.
+
+    TASK-1233 review round 1: `Widget.tooltip` is a markup *source*
+    string, not the rendered text -- the `Tooltip` widget parses it the
+    same way `Content.from_markup` does, at display time. Asserting the
+    raw attribute (as round 0 of this task did) passed against a tooltip
+    that was silently broken once rendered: `status_suffix`'s literal
+    ``"[saved]"`` was read as an unrecognized style tag and DROPPED from
+    the rendered text entirely (confirmed via this exact helper against
+    the pre-fix code: rendered to ``"Switch to Alpha "``, the word gone).
+    Render through the same path the app uses before asserting.
+    """
+    return Content.from_markup(widget.tooltip or "").plain
+
+
+@pytest.mark.asyncio
+async def test_conversation_row_tooltip_has_no_marker_suffix_when_unmarked() -> None:
+    """TASK-1233 AC#1 pinned regression: an unmarked row's tooltip renders
+    the pre-task-1233 copy (plus the trailing period every tooltip this
+    module builds now carries, task-1233 review round 1's consistency
+    fix) -- no dangling marker suffix, no stray em dash."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=(
+                    _browser_row(
+                        "conv-a",
+                        "Alpha",
+                        workspace_id="ws-a",
+                        workspace_label="Workspace A",
+                    ),
+                ),
+            )
+        )
+        await pilot.pause()
+
+        row = console.query_one("#console-workspace-conversation-0", Button)
+        assert _rendered_tooltip(row) == "Switch to Alpha [saved]."
+
+
+@pytest.mark.asyncio
+async def test_conversation_row_tooltip_decodes_marker_meaning() -> None:
+    """TASK-1233 AC#1: a sidebar conversation row's tooltip decodes its
+    fleet run-marker glyph in context, same vocabulary as the tab tooltip
+    (`CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH`)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=(
+                    _browser_row(
+                        "conv-a",
+                        "Alpha",
+                        workspace_id="ws-a",
+                        workspace_label="Workspace A",
+                        run_marker="◆",
+                    ),
+                ),
+            )
+        )
+        await pilot.pause()
+
+        row = console.query_one("#console-workspace-conversation-0", Button)
+        assert (
+            _rendered_tooltip(row)
+            == "Switch to Alpha [saved] — waiting for approval."
+        )
+
+
+@pytest.mark.asyncio
+async def test_conversation_row_tooltip_escapes_markup_in_title() -> None:
+    """A conversation title containing bracket tokens must render literally
+    in the tooltip, not be interpreted as Rich markup (Qodo #821 pattern,
+    now pinned for the marker-aware row tooltip too).
+
+    TASK-1233 review round 1: this row's own STATUS badge ("[saved]") is
+    itself bracket-wrapped fixed vocabulary, not user data -- so this test
+    also guards the sibling bug the review caught (an earlier round
+    escaped only the user-supplied title and left that badge's literal
+    "[" unescaped, silently dropping "saved" from the render).
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=(
+                    _browser_row(
+                        "conv-a",
+                        "[b]danger[/b]",
+                        workspace_id="ws-a",
+                        workspace_label="Workspace A",
+                        run_marker="◆",
+                    ),
+                ),
+            )
+        )
+        await pilot.pause()
+
+        row = console.query_one("#console-workspace-conversation-0", Button)
+        assert _rendered_tooltip(row) == (
+            "Switch to [b]danger[/b] [saved] — waiting for approval."
+        )
+
+
+@pytest.mark.asyncio
+async def test_collapsed_section_toggle_tooltip_decodes_aggregate_marker() -> None:
+    """TASK-1233 AC#1: the section-header toggle already carries an Expand/
+    Collapse tooltip -- when the header is also showing an aggregate
+    marker (borrowed from hidden rows/groups beneath it), the tooltip
+    decodes that glyph too, same as the visible header-label suffix."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=(
+                    _browser_row(
+                        "conv-a",
+                        "Alpha",
+                        workspace_id="ws-a",
+                        workspace_label="Workspace A",
+                        run_marker="●",
+                    ),
+                ),
+                group_collapse_preferences={"section:workspaces": True},
+            )
+        )
+        await pilot.pause()
+
+        toggle = console.query_one(
+            "#console-conversation-browser-section-toggle-workspaces", Button
+        )
+        assert _rendered_tooltip(toggle) == "Expand Workspaces — agent running."
+
+
+@pytest.mark.asyncio
+async def test_collapsed_group_toggle_tooltip_decodes_aggregate_marker() -> None:
+    """TASK-1233 AC#1 minor (a): the symmetric case one level down -- a
+    collapsed WORKSPACE GROUP's toggle tooltip decodes the aggregate
+    marker borrowed onto its header from the hidden rows beneath it."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=(
+                    # ws-b is not the active workspace -> defaults collapsed.
+                    _browser_row(
+                        "conv-a",
+                        "Alpha",
+                        workspace_id="ws-b",
+                        workspace_label="Workspace B",
+                        run_marker="●",
+                    ),
+                ),
+            )
+        )
+        await pilot.pause()
+
+        toggle = console.query_one(
+            "#console-conversation-browser-group-toggle-0", Button
+        )
+        assert toggle.group_id == "workspace:ws-b"
+        assert _rendered_tooltip(toggle) == "Expand Workspace B — agent running."
+
+
+@pytest.mark.asyncio
+async def test_expanded_capped_group_toggle_tooltip_decodes_aggregate_marker() -> None:
+    """TASK-1233 AC#1 minor (a): the expanded-but-capped variant -- a marked
+    row pushed past `CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT` borrows
+    its marker onto the (still expanded) group header via
+    `capped_run_marker`; the toggle tooltip must decode that too."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    marked_index = CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 1
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=_workspace_rows_with_marker_at(
+                    marked_index,
+                    "●",
+                    count=CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3,
+                ),
+            )
+        )
+        await pilot.pause()
+
+        toggle = console.query_one(
+            "#console-conversation-browser-group-toggle-0", Button
+        )
+        assert toggle.group_id == "workspace:ws-a"
+        assert _rendered_tooltip(toggle) == "Collapse Workspace A — agent running."
+
+
+@pytest.mark.asyncio
+async def test_collapsed_section_header_shows_aggregate_from_busy_group_beneath() -> None:
+    """TASK-912 AC#1: collapsing the whole Workspaces section hides every
+    group (and every row) beneath it, so the busy group's marker was
+    otherwise invisible. The section header borrows the single most-urgent
+    glyph across all of its groups' full pre-cap rows."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=(
+                    _browser_row(
+                        "conv-a",
+                        "Alpha",
+                        workspace_id="ws-a",
+                        workspace_label="Workspace A",
+                        run_marker="●",
+                    ),
+                ),
+                group_collapse_preferences={"section:workspaces": True},
+            )
+        )
+        await pilot.pause()
+
+        assert (
+            _static_plain(console, "#console-conversation-browser-workspaces-title")
+            == "Workspaces ●"
+        )
+        # The section really is collapsed -- no group header/row mounted.
+        assert len(console.query(".console-conversation-browser-group-header")) == 0
+        assert len(console.query(".console-workspace-conversation-row")) == 0
+
+
+@pytest.mark.asyncio
+async def test_expanded_group_capped_row_marker_surfaces_on_header() -> None:
+    """TASK-912 AC#2: an expanded group with more rows than
+    `CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT` surfaces the marker on a
+    row pushed past the cap -- otherwise it renders nowhere at all."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    marked_index = CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 1
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=_workspace_rows_with_marker_at(
+                    marked_index,
+                    "●",
+                    count=CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3,
+                ),
+            )
+        )
+        await pilot.pause()
+
+        group = console.query_one(
+            "#console-conversation-browser-group-toggle-0", Button
+        )
+        assert group.group_id == "workspace:ws-a"
+        assert (
+            _static_plain(console, "#console-conversation-browser-group-title-0")
+            == "Workspace A ●"
+        )
+        # The marked row itself stays unmounted -- it really is past the cap.
+        assert (
+            len(console.query(".console-workspace-conversation-row"))
+            == CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
+        )
+
+
+@pytest.mark.asyncio
+async def test_expanded_group_visible_row_marker_has_no_header_echo() -> None:
+    """A marked row still within the visible cap already shows its own
+    glyph -- the header must not also echo it (no double marker)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=_workspace_rows_with_marker_at(
+                    2,  # well within the cap
+                    "●",
+                    count=CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3,
+                ),
+            )
+        )
+        await pilot.pause()
+
+        group = console.query_one(
+            "#console-conversation-browser-group-toggle-0", Button
+        )
+        assert group.group_id == "workspace:ws-a"
+        assert (
+            _static_plain(console, "#console-conversation-browser-group-title-0")
+            == "Workspace A"
+        )
+
+
+# TASK-912 review fix round 1 (CRITICAL): the identical cap bug survived in
+# the flat Starred/Chats sections. These mirror the group-cap tests above
+# exactly, against an expanded Chats section instead.
+
+
+def _chat_rows_with_marker_at(index: int, marker: str, *, count: int):
+    """``count`` global Chats-section rows, newest-first by construction
+    (descending ``updated_sort``) so display order matches ``range(count)``
+    exactly -- the row at ``index`` carries ``marker``."""
+    return tuple(
+        _browser_row(
+            f"chat-{i}",
+            f"Chat {i}",
+            scope_type="global",
+            workspace_id=None,
+            workspace_label="Chats",
+            updated_sort=f"2026-07-{31 - i:02d}T00:00:00",
+            run_marker=marker if i == index else "",
+        )
+        for i in range(count)
+    )
+
+
+@pytest.mark.asyncio
+async def test_expanded_chats_section_capped_row_marker_surfaces_on_header() -> None:
+    """TASK-912 review fix round 1: an expanded Chats section (the default
+    once it has rows) with more rows than the cap surfaces the marker on a
+    row pushed past the cap -- otherwise it renders nowhere at all."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    marked_index = CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 1
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=_chat_rows_with_marker_at(
+                    marked_index,
+                    "●",
+                    count=CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3,
+                ),
+            )
+        )
+        await pilot.pause()
+
+        assert (
+            _static_plain(console, "#console-conversation-browser-chats-title")
+            == "Chats ●"
+        )
+        # The marked row itself stays unmounted -- it really is past the cap.
+        assert (
+            len(console.query(".console-workspace-conversation-row"))
+            == CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
+        )
+
+
+@pytest.mark.asyncio
+async def test_expanded_chats_section_visible_row_marker_has_no_header_echo() -> None:
+    """A marked row still within the visible cap already shows its own
+    glyph -- the header must not also echo it (no double marker)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=_chat_rows_with_marker_at(
+                    2,  # well within the cap
+                    "●",
+                    count=CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3,
+                ),
+            )
+        )
+        await pilot.pause()
+
+        assert (
+            _static_plain(console, "#console-conversation-browser-chats-title")
+            == "Chats"
+        )
+
+
+@pytest.mark.asyncio
+async def test_collapsed_chats_section_header_shows_aggregate_unchanged() -> None:
+    """Collapsed-section rendering (`section.run_marker`, the full
+    aggregate) is unchanged by this fix -- it still wins over
+    `capped_run_marker` while collapsed."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    marked_index = CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 1
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=_chat_rows_with_marker_at(
+                    marked_index,
+                    "●",
+                    count=CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3,
+                ),
+                group_collapse_preferences={"section:chats": True},
+            )
+        )
+        await pilot.pause()
+
+        assert (
+            _static_plain(console, "#console-conversation-browser-chats-title")
+            == "Chats ●"
+        )
+        assert len(console.query(".console-workspace-conversation-row")) == 0
+
+
+@pytest.mark.asyncio
+async def test_rail_title_budget_scales_with_terminal_width() -> None:
+    """TASK-374 AC#1: titles get the available width instead of a fixed cap.
+
+    The review saw 17-char titles on a wide terminal (pre-width-aware code). The
+    grouped-browser title budget is now measured from the real rail width, so it
+    grows as the terminal widens -- a wide terminal yields 25+ char titles. This
+    locks that responsiveness so it cannot regress to a fixed cap.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+        narrow_budget = tray._browser_title_budget()
+
+        await pilot.resize_terminal(260, 60)
+        await pilot.pause()
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+        wide_budget = tray._browser_title_budget()
+
+    assert wide_budget > narrow_budget, (
+        f"title budget must grow with rail width, not stay fixed "
+        f"(narrow={narrow_budget}, wide={wide_budget})"
+    )
+    assert wide_budget >= 25, (
+        f"a wide terminal must give titles the available width (25+ cells), "
+        f"got {wide_budget}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_on_resize_alone_regrows_wrap_budget_within_one_pause() -> None:
+    """TASK-1191 fast-follow: `on_resize` must regrow the row-wrap budget on
+    its OWN, isolated from any caller also driving an explicit
+    `sync_state()`.
+
+    `test_rail_title_budget_scales_with_terminal_width` above proves the
+    budget grows with terminal width, but it re-calls `tray.sync_state()`
+    after every resize -- so it cannot tell whether `on_resize`'s own
+    `call_after_refresh(self._fit_height_to_content)` pass (see
+    `ConsoleWorkspaceContextTray.on_resize`) is doing the regrow work by
+    itself, or whether the explicit sync is silently carrying it. This test
+    resizes the mounted tray and reads its measured width/budget back with
+    no `sync_state()` call anywhere in between, single `pilot.pause()`
+    only -- the same one-deferred-pass path TASK-1191 collapsed
+    `_schedule_recomposed_content_fit` down to (`_fit_height_to_content`'s
+    docstring: `on_resize` already used `call_after_refresh` for this job
+    before TASK-1191 and is unchanged by it, but this is still the first
+    test to isolate that on_resize path from a follow-up sync).
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+
+        narrow_row_width = tray._row_content_width
+        narrow_budget = tray._browser_title_budget()
+
+        # Resize only -- deliberately no `tray.sync_state()` call anywhere
+        # below, so any regrow observed here is `on_resize`'s own doing.
+        await pilot.resize_terminal(260, 60)
+        await pilot.pause()  # one pause only: the single fit pass must land here
+
+        wide_row_width = tray._row_content_width
+        wide_budget = tray._browser_title_budget()
+        settled_height = int(tray.region.height)
+
+    assert wide_row_width > narrow_row_width, (
+        "on_resize alone (no sync_state in between) must regrow the "
+        f"measured row content width (narrow={narrow_row_width}, "
+        f"wide={wide_row_width})"
+    )
+    assert wide_budget > narrow_budget, (
+        "on_resize alone (no sync_state in between) must regrow the row "
+        f"wrap budget (narrow={narrow_budget}, wide={wide_budget})"
+    )
+    assert settled_height > 0, (
+        "the tray height must converge within on_resize's single fit pass, "
+        f"got {settled_height}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_state_schedules_exactly_one_deferred_fit_pass(monkeypatch) -> None:
+    """TASK-1191 regression guard for `_schedule_recomposed_content_fit`'s
+    scheduling shape, not just its outcome.
+
+    The other TASK-1191 tests in this file (`test_rail_title_budget_scales_
+    with_terminal_width`, `test_on_resize_alone_regrows_wrap_budget_within_
+    one_pause`) prove the tray still converges within a single
+    `pilot.pause()` -- an outcome that a reintroduced two-`call_later`-hop
+    fan-out could still satisfy by coincidence in a fast test run. This test
+    instead pins the SCHEDULING CALLS `sync_state()` itself makes: exactly
+    one `call_after_refresh` registration for the fit-and-restore-scroll
+    closure, and zero `call_later`/`set_timer` calls from this seam --
+    the old shape `_schedule_recomposed_content_fit`'s docstring describes
+    (two `call_later` hops plus a 0.01s `set_timer` scroll-restore, commit
+    1115fa624, collapsed by TASK-1191's f10c6bcdd).
+
+    `call_after_refresh`/`call_later`/`set_timer` are spied at the INSTANCE
+    level with record-and-forward wrappers, so the tray still settles
+    normally (behavior preserved) while every scheduling call is captured.
+    The fit seam's own callback is a nested closure literally named
+    `fit_and_restore_scroll` inside `_schedule_recomposed_content_fit`, so
+    it is identified by `callback.__name__` -- discriminating it from any
+    other legitimate `call_after_refresh` use on this widget (`on_mount`,
+    `on_resize`) rather than assuming every recorded call belongs to this
+    seam.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        # Settle the tray's own on_mount fit pass first so it cannot leak
+        # into the calls recorded below.
+        await pilot.pause()
+
+        recorded: dict[str, list] = {
+            "call_after_refresh": [],
+            "call_later": [],
+            "set_timer": [],
+        }
+        original_call_after_refresh = tray.call_after_refresh
+        original_call_later = tray.call_later
+        original_set_timer = tray.set_timer
+
+        def _call_after_refresh_spy(callback, *args, **kwargs):
+            recorded["call_after_refresh"].append(callback)
+            return original_call_after_refresh(callback, *args, **kwargs)
+
+        def _call_later_spy(callback, *args, **kwargs):
+            recorded["call_later"].append(callback)
+            return original_call_later(callback, *args, **kwargs)
+
+        def _set_timer_spy(delay, callback=None, *, name=None, pause=False):
+            recorded["set_timer"].append(callback)
+            return original_set_timer(delay, callback, name=name, pause=pause)
+
+        monkeypatch.setattr(tray, "call_after_refresh", _call_after_refresh_spy)
+        monkeypatch.setattr(tray, "call_later", _call_later_spy)
+        monkeypatch.setattr(tray, "set_timer", _set_timer_spy)
+
+        tray.sync_state(_base_grouped_workspace_state())
+
+        # No call_later fan-out and no set_timer scroll-restore hop -- the
+        # old two-hop-plus-timer shape this pins against regressing to.
+        assert recorded["call_later"] == []
+        assert recorded["set_timer"] == []
+
+        # Exactly one deferred fit pass was scheduled via call_after_refresh,
+        # and it is THE fit seam's own callback (by name), not some other
+        # call_after_refresh use miscounted as this seam.
+        fit_callbacks = [
+            callback
+            for callback in recorded["call_after_refresh"]
+            if getattr(callback, "__name__", None) == "fit_and_restore_scroll"
+        ]
+        assert len(fit_callbacks) == 1
+        assert recorded["call_after_refresh"] == fit_callbacks
+
+        # Let the scheduled pass actually run so the tray settles normally
+        # before the harness tears down (spies forward to the real
+        # primitives, so this is unaffected by the patch above).
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_star_uses_recognizable_star_glyphs():
+    """TASK-357: the star toggle must use a recognizable ★/☆ pair, not the
+    near-invisible one-cell '*'/'.' distinction."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+
+        for star in console.query(".console-conversation-star"):
+            label = str(star.label)
+            assert "*" not in label and label.strip() != "."
+            if getattr(star, "starred", False):
+                assert "★" in label
+            else:
+                assert "☆" in label
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_star_press_confirms_the_toggle():
+    """TASK-357: starring must confirm the change ('Starred "<title>"') rather
+    than toggle state silently (the review saw an accidental star go unnoticed)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+
+        star = next(
+            s
+            for s in console.query(".console-conversation-star")
+            if not getattr(s, "starred", False)
+        )
+        # A title with Rich markup must be escaped in the toast, not interpreted.
+        star.conversation_title = "[b]Plan[/b]"
+
+        class _Marks:
+            def is_starred(self, conversation_id):
+                return False
+
+            def star_conversation(self, conversation_id):
+                return None
+
+            def unstar_conversation(self, conversation_id):
+                return None
+
+        console.app_instance.conversation_local_marks_service = _Marks()
+        notes: list[str] = []
+        console.app_instance.notify = lambda message, **kwargs: notes.append(message)
+
+        await console.on_button_pressed(Button.Pressed(star))
+
+        assert any("Starred" in note for note in notes)
+        # The markup is escaped (literal backslash-brackets), never interpreted.
+        assert any(r"\[b]Plan\[/b]" in note for note in notes)
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_context_preserves_duplicate_starred_workspace_row_keys() -> (
     None
 ):
@@ -424,6 +1365,12 @@ async def test_console_workspace_context_keeps_status_rows_below_grouped_browser
         for index in range(16)
     )
     app = _build_test_app()
+    # TASK-715: factory-default sync/server/ACP rows collapse; this test
+    # asserts the full lower status rows' geometry, so configure them.
+    app.workspace_server_adapter_state = ConsoleWorkspaceServerAdapterState(
+        available=False,
+        detail="No tldw_server workspace API configured.",
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(120, 34)) as pilot:
@@ -570,6 +1517,20 @@ def test_console_workspace_context_grouped_browser_styles_are_declared() -> None
         assert "scrollbar-size:" not in list_block
         assert "#console-workspace-conversations:focus {" in css
 
+        # Row lines must size to their explicitly-heighted buttons; Textual's
+        # Horizontal defaults to `height: 1fr`, which divides the list height
+        # equally and breaks mixed wrapped/badge row heights.
+        row_line_block = css.split(
+            ".console-conversation-browser-row-line {", 1
+        )[1].split("}", 1)[0]
+        assert "height: auto" in row_line_block
+        # Reserve the scrollbar cell permanently so row-wrap width does not
+        # depend on scroll state (scrollbar toggle <-> rewrap feedback loop).
+        rail_body_block = css.split("#console-left-rail-body {", 1)[1].split(
+            "}", 1
+        )[0]
+        assert "scrollbar-gutter: stable" in rail_body_block
+
 
 def test_console_workspace_conversation_visible_rows_are_clamped() -> None:
     assert console_workspace_conversation_visible_rows(None) == 4
@@ -619,203 +1580,19 @@ def _configure_native_ready_console(app, model: str = "local-model") -> None:
     app.chat_api_model_value = model
 
 
-@pytest.mark.asyncio
-async def test_console_workspace_conversations_render_bounded_expanded_section() -> (
-    None
-):
-    app = _build_test_app()
-    section = _section_state(collapsed=False, rows=8)
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 44)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one(
-            "#console-workspace-context", ConsoleWorkspaceContextTray
-        )
-        tray.sync_state(_base_workspace_state(section))
-        await pilot.pause()
-
-        assert (
-            _static_plain(console, "#console-workspace-conversations-title")
-            == "Conversations (8)"
-        )
-        assert (
-            _static_plain(console, "#console-workspace-selected-conversation")
-            == "Conversation 2 - saved chat"
-        )
-        assert len(console.query("#console-workspace-conversation-search")) == 1
-        assert len(console.query("#console-workspace-conversation-search-clear")) == 1
-        assert len(console.query("#console-new-workspace-conversation")) == 1
-        conversation_list = console.query_one("#console-workspace-conversations")
-        rows = list(console.query(".console-workspace-conversation-row"))
-        assert len(rows) == 8
-        assert conversation_list.region.height >= len(rows) * 2
-        assert getattr(conversation_list, "max_scroll_y", 0) == 0
-
-
-@pytest.mark.asyncio
-async def test_console_workspace_conversations_collapsed_shows_selected_summary_only() -> (
-    None
-):
-    app = _build_test_app()
-    section = _section_state(collapsed=True, rows=8)
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 44)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one(
-            "#console-workspace-context", ConsoleWorkspaceContextTray
-        )
-        tray.sync_state(_base_workspace_state(section))
-        await pilot.pause()
-
-        assert (
-            _static_plain(console, "#console-workspace-conversations-title")
-            == "Conversations (8)"
-        )
-        assert (
-            _static_plain(console, "#console-workspace-selected-conversation")
-            == "Conversation 2 - saved chat"
-        )
-        assert len(console.query("#console-workspace-conversation-search")) == 0
-        assert len(console.query("#console-workspace-conversations")) == 0
-        assert len(console.query("#console-new-workspace-conversation")) == 0
-
-
-@pytest.mark.asyncio
-async def test_console_workspace_legacy_conversation_toggle_collapses_and_expands() -> (
-    None
-):
-    app = _build_test_app()
-    section = _section_state(collapsed=False, rows=3)
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 44)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one(
-            "#console-workspace-context", ConsoleWorkspaceContextTray
-        )
-        tray.sync_state(_base_workspace_state(section))
-        await pilot.pause()
-
-        toggle = console.query_one("#console-workspace-conversations-toggle", Button)
-        assert toggle.disabled is False
-        assert len(console.query("#console-workspace-conversations")) == 1
-        assert any(
-            "Conversation 0" in text for text in _conversation_row_texts(console)
-        )
-
-        toggle.press()
-        await pilot.pause(0.1)
-        assert len(console.query("#console-workspace-conversations-toggle")) == 1
-        assert len(console.query("#console-workspace-conversations")) == 0
-        assert (
-            _static_plain(
-                console,
-                "#console-workspace-selected-conversation",
-            )
-            == "Conversation 2 - saved chat"
-        )
-        assert (
-            app.app_config["console"]["conversation_section"]["ws-a"]["collapsed"]
-            is True
-        )
-
-        console.query_one("#console-workspace-conversations-toggle", Button).press()
-        await pilot.pause(0.1)
-        assert len(console.query("#console-workspace-conversations")) == 1
-        assert any(
-            "Conversation 0" in text for text in _conversation_row_texts(console)
-        )
-        assert (
-            app.app_config["console"]["conversation_section"]["ws-a"]["collapsed"]
-            is False
-        )
-
-
-@pytest.mark.asyncio
-async def test_console_workspace_conversations_fallback_disables_unowned_controls() -> (
-    None
-):
-    app = _build_test_app()
-    section = _section_state(collapsed=False, rows=3)
-    state = _base_workspace_state(section)
-    legacy_state = ConsoleWorkspaceContextState(
-        heading=state.heading,
-        workspace_label=state.workspace_label,
-        authority_label=state.authority_label,
-        sync_label=state.sync_label,
-        runtime_label=state.runtime_label,
-        conversation_rows=state.conversation_rows,
-        conversation_section=None,
-        conversation_empty_copy=state.conversation_empty_copy,
-        change_workspace_enabled=state.change_workspace_enabled,
-        change_workspace_recovery=state.change_workspace_recovery,
-        new_conversation_enabled=state.new_conversation_enabled,
-        new_conversation_recovery=state.new_conversation_recovery,
-        recovery_copy=state.recovery_copy,
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 44)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one(
-            "#console-workspace-context", ConsoleWorkspaceContextTray
-        )
-        tray.sync_state(legacy_state)
-        await pilot.pause()
-
-        search_input = console.query_one(
-            "#console-workspace-conversation-search", Input
-        )
-        clear_button = console.query_one(
-            "#console-workspace-conversation-search-clear",
-            Button,
-        )
-        toggle_button = console.query_one(
-            "#console-workspace-conversations-toggle",
-            Button,
-        )
-
-        assert search_input.disabled is True
-        assert clear_button.disabled is True
-        assert toggle_button.disabled is True
-
-
-@pytest.mark.asyncio
-async def test_console_workspace_conversations_clear_requires_enabled_search() -> None:
-    app = _build_test_app()
-    section = _section_state(
-        collapsed=False,
-        rows=3,
-        query="research",
-        search_enabled=False,
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 44)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one(
-            "#console-workspace-context", ConsoleWorkspaceContextTray
-        )
-        tray.sync_state(_base_workspace_state(section))
-        await pilot.pause()
-
-        search_input = console.query_one(
-            "#console-workspace-conversation-search", Input
-        )
-        clear_button = console.query_one(
-            "#console-workspace-conversation-search-clear",
-            Button,
-        )
-
-        assert search_input.disabled is True
-        assert clear_button.disabled is True
+# TASK-1190: five tests that pinned `ConsoleWorkspaceContextTray`'s
+# transitional legacy conversation-list compose path (rendered only when
+# `state.conversation_browser is None` -- reached here only by directly
+# calling `sync_state()` with a hand-built legacy-shaped state, never by any
+# production code path, see the reachability note on `compose()` in
+# `console_workspace_context.py`) were removed along with that dead path:
+#   - test_console_workspace_conversations_render_bounded_expanded_section
+#   - test_console_workspace_conversations_collapsed_shows_selected_summary_only
+#   - test_console_workspace_legacy_conversation_toggle_collapses_and_expands
+#   - test_console_workspace_conversations_fallback_disables_unowned_controls
+#   - test_console_workspace_conversations_clear_requires_enabled_search
+# `test_console_workspace_context_renders_grouped_conversation_browser`
+# above already covers the one real path (`conversation_browser` present).
 
 
 @pytest.mark.asyncio
@@ -824,6 +1601,12 @@ async def test_console_workspace_many_conversations_keep_lower_status_reachable(
 ):
     app = _build_test_app()
     _configure_native_ready_console(app)
+    # TASK-715: default sync/server/ACP rows collapse; this test needs the
+    # full lower status rows as scroll anchors, so configure them.
+    app.workspace_server_adapter_state = ConsoleWorkspaceServerAdapterState(
+        available=False,
+        detail="No tldw_server workspace API configured.",
+    )
     service = app.workspace_registry_service
     active_workspace = service.get_active_workspace()
     for index in range(40):
@@ -978,14 +1761,18 @@ async def test_console_workspace_browser_group_collapse_persists_locally() -> No
             is False
         )
         assert len(console.query("#console-workspace-conversations-toggle")) == 0
+        # Row names wrap at the rail budget, so match against the
+        # whitespace-normalized label rather than a single raw line.
         assert any(
-            "Collapse Chat A" in text for text in _conversation_row_texts(console)
+            "Collapse Chat A" in " ".join(text.split())
+            for text in _conversation_row_texts(console)
         )
 
         _browser_group_toggle(console, "section:chats").press()
         await pilot.pause(0.1)
         assert all(
-            "Collapse Chat A" not in text for text in _conversation_row_texts(console)
+            "Collapse Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
         )
         collapsed_groups = app.app_config["console"]["conversation_browser"][
             "collapsed_groups"
@@ -997,7 +1784,8 @@ async def test_console_workspace_browser_group_collapse_persists_locally() -> No
         await pilot.pause(0.1)
         assert len(console.query("#console-workspace-conversations")) == 1
         assert all(
-            "Collapse Chat A" not in text for text in _conversation_row_texts(console)
+            "Collapse Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
         )
 
         service.set_active_workspace(default_workspace.workspace_id)
@@ -1005,8 +1793,462 @@ async def test_console_workspace_browser_group_collapse_persists_locally() -> No
         await pilot.pause(0.1)
         assert len(console.query("#console-workspace-conversations")) == 1
         assert all(
-            "Collapse Chat A" not in text for text in _conversation_row_texts(console)
+            "Collapse Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
         )
+
+
+async def _click_conversation_browser_toggle(console, pilot, selector: str) -> None:
+    """Scroll a browser toggle into view, then drive it via a REAL click at
+    the WIDGET's own center.
+
+    `.press()` (used by every collapse test above this point in the file)
+    calls the Button's own handler directly and never exercises Textual's
+    actual click-routing (`get_widget_at` hit-testing against the
+    compositor). This helper does exercise real click routing, but clicks
+    at the widget's center coordinate, not at the caret glyph's actual
+    rendered screen position -- see `test_section_header_caret_is_
+    clickable_at_its_rendered_screen_coordinates` below for the
+    coordinate-honest version that reproduces TASK-1142/UAT F4 directly
+    (round-1 review: this widget-center approach could not distinguish a
+    real fix from an inert one, since a toggle that's merely present
+    somewhere on screen still centers inside its own region regardless of
+    whether its rendered caret is where a live user would actually click).
+    Scrolling first mirrors what a real user does before clicking anything
+    below the fold; without it, `pilot.click` can silently miss a widget
+    that is currently clipped out of the rail's visible viewport (nothing
+    to do with either defect -- you simply cannot click what is not on
+    screen).
+    """
+    rail_body = console.query_one("#console-left-rail-body")
+
+    # TASK-1191: this used to re-scroll and re-check on every one of up to 10
+    # attempts, compensating for a theorized multi-message-turn settle race in
+    # `_schedule_recomposed_content_fit` (nested `call_later` passes plus a
+    # 0.01s timer). That machinery is gone -- the tray now fits its height in
+    # a single `call_after_refresh` pass, same primitive `on_mount`/
+    # `on_resize` already used -- so one scroll-into-view plus one CPU-idle
+    # pause is enough for `get_widget_at` to agree with the toggle's own
+    # region before clicking.
+    toggle = console.query_one(selector, Button)
+    rail_body.scroll_to_widget(toggle, animate=False)
+    await pilot.pause()  # wait for CPU idle, not a fixed guessed delay
+    toggle = console.query_one(selector, Button)
+    cx = toggle.region.x + toggle.region.width // 2
+    cy = toggle.region.y + toggle.region.height // 2
+    widget_at_center, _ = console.screen.get_widget_at(cx, cy)
+    assert widget_at_center is toggle, (
+        f"{selector!r} did not settle at a hittable on-screen position "
+        f"(got {widget_at_center!r})"
+    )
+
+    landed = await pilot.click(selector)
+    assert landed, f"real click missed {selector!r} (not on screen / not hittable)"
+    await pilot.pause(0.2)
+
+
+async def _seed_console_transcript_message(console) -> None:
+    """Append one message to the active session's transcript.
+
+    Session onboarding renders a full-screen setup card + backdrop
+    (`ConsoleSetupBackdrop`) over an EMPTY transcript, which swallows every
+    click in the harness regardless of where it lands -- a real user with
+    any chat history never sees it. Every real-click test in this file
+    seeds one message first so it is exercising section-toggle click
+    routing, not incidentally re-testing the onboarding card.
+    """
+    store = console._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    await console._sync_native_console_chat_ui()
+    console._sync_console_transcript_guidance()
+
+
+@pytest.mark.asyncio
+async def test_section_header_toggles_via_real_click_and_persists_across_rebuild() -> (
+    None
+):
+    """TASK-1142 (UAT F4): Starred/Workspaces/Chats section headers render a
+    collapse caret that must actually respond to a real mouse click, not
+    just `Button.press()`. Drives the real click path end to end: collapse,
+    persistence across a rail rebuild (the same `_sync_console_workspace_
+    context` seam a workspace switch drives), then expand -- mirroring
+    `test_console_workspace_browser_group_collapse_persists_locally` above
+    but through `pilot.click` instead of `.press()`.
+
+    Collapse and expand are each driven from a freshly rebuilt tray rather
+    than chained back-to-back on one instance -- not required for
+    correctness since TASK-1191 (`ConsoleWorkspaceContextTray.
+    _fit_height_to_content` now fits in a single deferred pass instead of
+    several, so there is no settle window left to catch re-toggling
+    mid-flight), but kept as-is because the rail-rebuild seam this test
+    already needs for persistence conveniently also gives every click a
+    fresh, from-scratch layout to click into.
+    """
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    default_workspace = service.get_active_workspace()
+    service.link_membership(
+        default_workspace.workspace_id,
+        item_type="conversation",
+        item_id="real-click-chat-a",
+        role="workspace-thread",
+        title="Real Click Chat A",
+    )
+    host = StyledConsoleHarness(app)
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _seed_console_transcript_message(console)
+        await pilot.pause(0.2)
+
+        assert any(
+            "Real Click Chat A" in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        )
+        toggle = console.query_one(
+            "#console-conversation-browser-section-toggle-chats", Button
+        )
+        assert str(toggle.label) == GLYPH_EXPANDED
+
+        # Click: collapses -- rows unmount, caret flips.
+        await _click_conversation_browser_toggle(
+            console, pilot, "#console-conversation-browser-section-toggle-chats"
+        )
+        assert all(
+            "Real Click Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        )
+        toggle = console.query_one(
+            "#console-conversation-browser-section-toggle-chats", Button
+        )
+        assert str(toggle.label) == GLYPH_COLLAPSED
+        collapsed_groups = app.app_config["console"]["conversation_browser"][
+            "collapsed_groups"
+        ]
+        assert collapsed_groups["section:chats"] is True
+
+        # Rebuild the rail (a workspace switch forces a fresh
+        # `_build_console_workspace_context_state()` and re-syncs the
+        # mounted tray with a brand-new instance) -- collapsed state must
+        # round-trip.
+        other_workspace = service.create_workspace(
+            workspace_id="ws-rebuild-check", name="Rebuild Check"
+        )
+        service.set_active_workspace(other_workspace.workspace_id)
+        console._sync_console_workspace_context()
+        await pilot.pause(0.2)
+        service.set_active_workspace(default_workspace.workspace_id)
+        console._sync_console_workspace_context()
+        await pilot.pause(0.2)
+
+        assert all(
+            "Real Click Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        )
+        toggle = console.query_one(
+            "#console-conversation-browser-section-toggle-chats", Button
+        )
+        assert str(toggle.label) == GLYPH_COLLAPSED
+
+        # Click on the freshly-rebuilt tray: expands -- rows remount, caret
+        # flips back.
+        await _click_conversation_browser_toggle(
+            console, pilot, "#console-conversation-browser-section-toggle-chats"
+        )
+        assert any(
+            "Real Click Chat A" in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        )
+        toggle = console.query_one(
+            "#console-conversation-browser-section-toggle-chats", Button
+        )
+        assert str(toggle.label) == GLYPH_EXPANDED
+        assert (
+            app.app_config["console"]["conversation_browser"]["collapsed_groups"][
+                "section:chats"
+            ]
+            is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_collapsing_workspaces_via_real_click_reveals_aggregate_marker_from_busy_group() -> (
+    None
+):
+    """TASK-1142 + TASK-912: task-912 taught the Workspaces section header
+    to borrow the most-urgent glyph from a hidden busy group when
+    collapsed, but with the header inert to real clicks that marker was
+    only ever reachable via the empty-Chats default collapse -- never by a
+    user actually collapsing a populated section live. A real background
+    session with a live run in its own workspace group, collapsed via the
+    real click path, must surface the aggregate glyph on the header.
+    """
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    busy_workspace = service.create_workspace(workspace_id="ws-busy", name="Busy")
+    host = StyledConsoleHarness(app)
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        store = console._ensure_console_chat_store()
+        viewed = store.ensure_session()
+        store.append_message(viewed.id, role=ConsoleMessageRole.USER, content="hi")
+        background = store.create_session(
+            title="Busy background chat",
+            workspace_id=busy_workspace.workspace_id,
+        )
+        store.switch_session(viewed.id)  # stay viewing the first session
+
+        controller = console._ensure_console_chat_controller()
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "running"),
+            session_id=background.id,
+        )
+        await console._sync_native_console_chat_ui()
+        console._sync_console_transcript_guidance()
+        await pilot.pause(0.2)
+
+        # Expanded: the row shows its own marker, so the header stays plain.
+        assert (
+            _static_plain(console, "#console-conversation-browser-workspaces-title")
+            == "Workspaces"
+        )
+
+        await _click_conversation_browser_toggle(
+            console, pilot, "#console-conversation-browser-section-toggle-workspaces"
+        )
+
+        assert (
+            _static_plain(console, "#console-conversation-browser-workspaces-title")
+            == "Workspaces ●"
+        )
+
+
+def _render_screen_lines(console) -> list[str]:
+    """Render the full screen to plain text lines -- the same view a human
+    (or a tmux capture, matching the UAT's own flow) would see, not the
+    widget tree."""
+    compositor = console.screen._compositor
+    return [
+        "".join(seg.text for seg in strip._segments)
+        for strip in compositor.render_strips()
+    ]
+
+
+def _find_caret_in_row_with(lines: list[str], label_text: str) -> tuple[int, int]:
+    """Return the (x, y) SCREEN coordinates of the caret glyph on the row
+    containing ``label_text``, using cumulative CELL width up to the glyph
+    (matches how a real terminal/tmux column position works, not a raw
+    Python string index -- some rendered rows carry box-drawing characters
+    ahead of the target text)."""
+    for y, line in enumerate(lines):
+        if label_text in line and (GLYPH_EXPANDED in line or GLYPH_COLLAPSED in line):
+            for glyph in (GLYPH_EXPANDED, GLYPH_COLLAPSED):
+                idx = line.find(glyph)
+                if idx != -1:
+                    return cell_len(line[:idx]), y
+    raise AssertionError(f"No caret found on a rendered row containing {label_text!r}")
+
+
+@pytest.mark.asyncio
+async def test_section_header_caret_is_clickable_at_its_rendered_screen_coordinates() -> (
+    None
+):
+    """TASK-1142 round-1 review: the round-0 fix (an inline width on the
+    toggle `Button`) was INERT. Removing it left every real-click test in
+    this file passing, because `pilot.click(selector)` clicks at the
+    WIDGET's own center -- never at the coordinates a live user's mouse
+    actually lands on, which is the caret GLYPH's position in the rendered
+    pane. This test is coordinate-honest: it locates the caret exactly the
+    way the UAT's tmux flow did (``line.index('▾')`` against the rendered
+    text, not a widget query), then clicks at THOSE screen coordinates via
+    ``pilot.click(offset=...)`` with no selector.
+
+    The reviewer's hypothesis A (the visible caret is painted inside the
+    non-interactive title `Static`, not the `Button`) does not hold: a
+    width-scan across 100-200 column terminals on a freshly-mounted tray
+    found the glyph's rendered position resolving to the toggle `Button`
+    every time. The REAL, reproduced mechanism: ``_conversation_browser_
+    list_height`` (the tray's own auto-height estimate for `#console-
+    workspace-conversations`) assumed every empty-copy line ("No starred
+    conversations." etc.) renders as exactly one row. That Static is NOT
+    reduced by the star-column chrome width the way a row title is, so at
+    the tray's real content width it silently wraps to two lines while the
+    heuristic still counted one -- undercounting the container's explicit
+    height and clipping whatever composed after it out of the tray's own
+    visible bounds. Concretely: collapse "Chats" via its rendered caret,
+    then look for "Chats"'s own (now ▸) caret again in the freshly
+    rendered pane -- on the unfixed code this raises ``AssertionError``
+    (verified directly against 168f61ed8: the header is not merely
+    off-position, it is not painted at all), because "No starred
+    conversations." and "No workspace conversations." both wrap to two
+    rows above it. Fixed in ``_empty_copy_line_count`` /
+    ``_conversation_browser_list_height`` (see their docstrings).
+    """
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    default_workspace = service.get_active_workspace()
+    service.link_membership(
+        default_workspace.workspace_id,
+        item_type="conversation",
+        item_id="real-click-chat-a",
+        role="workspace-thread",
+        title="Real Click Chat A",
+    )
+    host = StyledConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _seed_console_transcript_message(console)
+        await pilot.pause(0.3)
+
+        # Click #1 at the CARET'S rendered screen coordinates: collapse.
+        lines = _render_screen_lines(console)
+        x, y = _find_caret_in_row_with(lines, "Chats")
+        landed = await pilot.click(offset=(x, y))
+        assert landed, "click at the caret's rendered coordinates missed the toggle"
+        await pilot.pause(0.3)
+        assert all(
+            "Real Click Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        ), "collapse via glyph-coordinate click did not take effect"
+
+        # Click #2: re-locate the caret in the FRESHLY rendered pane (not
+        # the widget tree, not a cached position) and click there again.
+        lines2 = _render_screen_lines(console)
+        x2, y2 = _find_caret_in_row_with(lines2, "Chats")
+        landed2 = await pilot.click(offset=(x2, y2))
+        assert landed2, "click at the caret's rendered coordinates missed the toggle"
+        await pilot.pause(0.3)
+        assert any(
+            "Real Click Chat A" in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        ), "expand via glyph-coordinate click did not take effect"
+
+
+@pytest.mark.asyncio
+async def test_empty_copy_estimator_handles_three_plus_line_wrap() -> None:
+    """TASK-1142 round-2 review (Qodo, PR #1050): ``_empty_copy_line_count``
+    called ``wrap_console_conversation_title``, which hard-caps at two
+    lines and ellipsizes -- correct for a row title, wrong for an
+    empty-copy ``Static``, which Rich wraps with no cap at all. The round-1
+    width-probe (100-220 columns) found no divergence only because the
+    CURRENT empty-copy strings ("No starred conversations." etc.) never
+    exceed two lines above the rail's minimum width. This forces a 3+-line
+    wrap through the real render seam -- a deliberately long empty-copy
+    string injected into an otherwise-real, `build_console_conversation_
+    browser_state`-built state and fed through `tray.sync_state()`, exactly
+    like every other state-injection test in this file -- and checks the
+    estimator against the REAL settled `Static` height, plus that a LATER
+    section header ("Chats") is still hittable at its rendered screen
+    coordinates (the round-1 coordinate-honest pattern): not just present,
+    not clipped out of the tray's own box by an undercounted estimate.
+
+    Verified (see TASK-1142's Implementation Notes / report) that reverting
+    ``_empty_copy_line_count`` to the capped ``wrap_console_conversation_
+    title`` makes this test fail: the injected text's true 3rd+ line goes
+    uncounted, `#console-workspace-conversations` is undersized by exactly
+    that many rows, and "Chats"'s header is pushed past the container's own
+    clipped bottom -- the same class of defect round 1 fixed for the
+    2-line case, now caught for 3+.
+    """
+    app = _build_test_app()
+    host = StyledConsoleHarness(app)
+
+    long_empty_copy = (
+        "This workspace currently has no starred conversations saved. Star "
+        "a saved chat from any workspace to pin it here for quick access "
+        "later, even after switching workspaces around."
+    )
+
+    # Tall enough that the injected multi-line empty copy doesn't push
+    # "Chats" below the rail's own scroll fold -- this test is about the
+    # estimator undercounting the tray's OWN box, not about needing to
+    # scroll first (round 1 already covers that: "you cannot click what is
+    # not on screen" is expected, not a bug).
+    async with host.run_test(size=(160, 70)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _seed_console_transcript_message(console)
+        await pilot.pause(0.2)
+
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        base_state = _base_grouped_workspace_state()
+        # All three sections empty (their real default empty_copy), built
+        # through the actual production state builder -- not hand-rolled.
+        empty_browser = build_console_conversation_browser_state(
+            rows=(),
+            active_workspace_id="ws-a",
+            group_collapse_preferences={"section:chats": False},
+        )
+        starred_section = next(
+            section
+            for section in empty_browser.sections
+            if section.section_id == "starred"
+        )
+        long_starred_section = replace(starred_section, empty_copy=long_empty_copy)
+        forced_sections = tuple(
+            long_starred_section if section.section_id == "starred" else section
+            for section in empty_browser.sections
+        )
+        forced_browser = replace(empty_browser, sections=forced_sections)
+        forced_state = replace(base_state, conversation_browser=forced_browser)
+
+        tray.sync_state(forced_state)
+        await pilot.pause()
+        await pilot.pause()
+
+        starred_empty = console.query_one(
+            "#console-conversation-browser-starred-empty", Static
+        )
+        assert starred_empty.region.height >= 3, (
+            "test setup did not force a 3+-line wrap -- widen the injected "
+            f"empty_copy text (rendered height={starred_empty.region.height})"
+        )
+
+        conversation_list = console.query_one("#console-workspace-conversations")
+        empty_copy_widgets = list(
+            conversation_list.query(".console-workspace-empty-copy").results(Static)
+        )
+        empty_copies_height = sum(
+            max(1, widget.region.height) for widget in empty_copy_widgets
+        )
+        row_buttons = list(
+            conversation_list.query(
+                ".console-workspace-conversation-row"
+            ).results(Button)
+        )
+        rows_height = sum(
+            int(button.styles.height.value) + 1 for button in row_buttons
+        )
+        header_count = len(
+            conversation_list.query(".console-conversation-browser-section-header")
+        ) + len(
+            conversation_list.query(".console-conversation-browser-group-header")
+        )
+        assert (
+            int(conversation_list.styles.height.value)
+            == rows_height + header_count + empty_copies_height
+        ), "the estimator disagrees with the real settled Static heights"
+
+        # Coordinate-honest: "Chats" (the LAST section, rendered after the
+        # 3+-line "Starred" empty copy) must still be hittable at its
+        # rendered screen coordinates -- not clipped out of the tray's own
+        # box by an undercounted estimate.
+        lines = _render_screen_lines(console)
+        x, y = _find_caret_in_row_with(lines, "Chats")
+        widget_at, _ = console.screen.get_widget_at(x, y)
+        assert (
+            getattr(widget_at, "id", None)
+            == "console-conversation-browser-section-toggle-chats"
+        ), f"Chats caret at ({x}, {y}) resolved to {widget_at!r}, not its toggle"
 
 
 async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
@@ -1089,17 +2331,12 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
         left_rail = console.query_one("#console-left-rail")
         staged_context = console.query_one("#console-staged-context-tray")
         workspace_context = console.query_one("#console-workspace-context")
-        # Session (workspace context) now precedes Context (staged sources) in
-        # the four-section left rail, so workspace context renders above staged.
-        assert workspace_context.region.y < staged_context.region.y
-        assert staged_context.region.x == workspace_context.region.x
-        assert staged_context.region.x >= left_rail.region.x
-        assert (
-            staged_context.region.x + staged_context.region.width
-            <= left_rail.region.x + left_rail.region.width
-        )
-        assert staged_context.region.width == workspace_context.region.width
-        assert workspace_context.region.height > staged_context.region.height
+        # Task-400: staged sources (Context) split out of the left rail
+        # entirely -- the tray renders in the Inspector rail body while the
+        # workspace context keeps the left rail's Session section.
+        assert workspace_context.parent.id == "console-rail-section-body-session"
+        assert staged_context.parent.id == "console-inspector-rail-body"
+        assert not list(left_rail.query("#console-staged-context-tray"))
         conversations_title = console.query_one(
             "#console-workspace-conversations-title"
         )
@@ -1150,15 +2387,12 @@ async def test_console_workspace_context_exposes_new_conversation_for_default_wo
             label_selector="#console-workspace-runtime-label",
             value_selector="#console-workspace-runtime-value",
             label="File tools",
-            value_contains="Off in Default workspace",
+            value_contains="Off in Default",
         )
-        _assert_status_row(
-            console,
-            label_selector="#console-workspace-server-readiness-label",
-            value_selector="#console-workspace-server-readiness-value",
-            label="Server handoff",
-            value_contains="Not configured",
-        )
+        # TASK-715: unconfigured server features collapse into one line
+        # instead of a Server status row.
+        assert console.query("#console-workspace-server-features-collapsed")
+        assert not console.query("#console-workspace-server-readiness-label")
         assert "local registry" not in text.lower()
         assert "authoritative" not in text.lower()
         assert "Workspace conversation creation lands in a later slice" not in text
@@ -1212,14 +2446,55 @@ async def test_session_tray_shows_workspace_scope_and_new_button() -> None:
             "#console-active-scope .console-workspace-status-label", Static
         )
         assert "Workspace" in str(workspace_label.renderable)
-        assert "Scope" in str(scope_label.renderable)
+        # RAG-45: this pair shows the active CONVERSATION's identity, not a
+        # RAG retrieval scope, so it is labeled "Conversation" -- distinct
+        # from the "RAG Scope" button and the Inspector's item-scope row
+        # ("Scope: everything" / "Scope: N items").
+        assert "Conversation" in str(scope_label.renderable)
 
         new_button = console.query_one("#console-new-workspace", Button)
         assert new_button.disabled is False
 
 
 @pytest.mark.asyncio
-async def test_status_label_width_is_twelve() -> None:
+async def test_conversation_row_shows_placeholder_when_no_active_conversation() -> None:
+    """RAG-45: a fresh session with no active conversation must not render a
+    bare "Conversation" label with an empty value body -- the value falls
+    back to an explicit "—" placeholder."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        # `_base_grouped_workspace_state` leaves `scope_label`/`scope_detail`
+        # at their dataclass defaults (""), matching a fresh session with no
+        # active conversation.
+        state = _base_grouped_workspace_state()
+        assert state.scope_label == ""
+        tray.sync_state(state)
+        await pilot.pause()
+
+        _assert_status_row(
+            console,
+            label_selector="#console-active-scope-label",
+            value_selector="#console-active-scope-value",
+            label="Conversation",
+            value_contains="—",
+        )
+
+
+@pytest.mark.asyncio
+async def test_status_label_width_is_thirteen() -> None:
+    """I1 (final review): "Conversation" is exactly 12 characters -- the old
+    fixed label-column width -- so at `width: 12` the label filled its whole
+    cell with zero gutter before the value column starts. Widened to 13 so
+    every label (the 12-char "Conversation" included) leaves at least one
+    blank cell of separation; see the composited-output pin below for what
+    that actually buys on screen."""
     from textual.app import App
 
     class TestApp(App):
@@ -1231,7 +2506,117 @@ async def test_status_label_width_is_twelve() -> None:
     app = TestApp()
     async with app.run_test():
         label = app.query_one(".console-workspace-status-label")
-        assert label.styles.width.value == 12
+        assert label.styles.width.value == 13
+
+
+def _composited_rows(container) -> list[str]:
+    """`container`'s own row-span exactly as the compositor painted it.
+
+    Source-widget text (label/value `Static.renderable`) is NOT ground
+    truth for what a terminal shows -- Textual packs the two `Static`s of a
+    `ConsoleWorkspaceStatusPair` into one `Horizontal` with no gutter, so a
+    label whose fixed column width exactly matches its text length reads as
+    fused with the adjacent value on the actual painted row even though the
+    two widgets' own `renderable`s are cleanly separate strings (RAG-47
+    lesson: measure the compositor's output, not source labels).
+    """
+    strips = container.screen._compositor.render_strips()
+    region = container.region
+    rows = []
+    for y in range(region.y, region.y + region.height):
+        if 0 <= y < len(strips):
+            row_text = "".join(segment.text for segment in strips[y])
+            rows.append(row_text[region.x : region.x + region.width])
+    return rows
+
+
+@pytest.mark.asyncio
+async def test_conversation_status_row_label_and_value_are_separate_visual_runs() -> None:
+    """I1 (final review): live captures showed `Conversation—` (placeholder
+    value) and `ConversationThis conversation` (real title) rendering as one
+    run-on token on the main rail -- the 12-char "Conversation" label filled
+    its whole fixed-width cell with no separator before the value column.
+    Assert the COMPOSITED row (the RAG-47 lesson) shows the label followed
+    by a literal space before the value starts, for both the placeholder and
+    a real conversation title.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+
+        # Placeholder value ("Conversation—" in the pre-fix report).
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+        scope_pair = console.query_one("#console-active-scope")
+        row_text = _composited_rows(scope_pair)[0]
+        assert "Conversation " in row_text, (
+            "label fused with the placeholder value on the composited row: "
+            f"{row_text!r}"
+        )
+
+        # Real conversation title ("ConversationThis conversation" in the
+        # pre-fix report).
+        state = replace(
+            _base_grouped_workspace_state(),
+            scope_label="This conversation",
+            scope_detail="conv-1",
+        )
+        tray.sync_state(state)
+        await pilot.pause()
+        scope_pair = console.query_one("#console-active-scope")
+        row_text = _composited_rows(scope_pair)[0]
+        assert "Conversation " in row_text, (
+            "label fused with the conversation title on the composited row: "
+            f"{row_text!r}"
+        )
+        assert "ConversationThis" not in row_text
+
+
+@pytest.mark.asyncio
+async def test_status_pair_value_truncates_instead_of_letter_stacking() -> None:
+    """TASK-384: at a narrow rail the value column shrinks to a few cells; the
+    value must nowrap+ellipsize (so "Default" reads "De…") rather than word-wrap
+    into a "Def / aul / t" letter stack, with the full value on hover."""
+    from textual.app import App
+    from textual.widgets import Static
+
+    class TestApp(App):
+        def compose(self):
+            yield ConsoleWorkspaceStatusPair(
+                "Workspace", "Default", label_id="l", value_id="v"
+            )
+
+    app = TestApp()
+    async with app.run_test():
+        value = app.query_one("#v", Static)
+        assert value.styles.text_wrap == "nowrap"
+        assert value.styles.text_overflow == "ellipsis"
+        assert value.tooltip == "Default"
+
+
+@pytest.mark.asyncio
+async def test_status_pair_value_tooltip_escapes_markup() -> None:
+    """Qodo #821: the value tooltip renders Rich markup, so a value with bracket
+    tokens must be escaped (shown literally, not interpreted)."""
+    from textual.app import App
+    from textual.widgets import Static
+
+    class TestApp(App):
+        def compose(self):
+            yield ConsoleWorkspaceStatusPair(
+                "Workspace", "[b]danger[/b]", label_id="l", value_id="v"
+            )
+
+    app = TestApp()
+    async with app.run_test():
+        value = app.query_one("#v", Static)
+        assert value.tooltip == r"\[b]danger\[/b]"
 
 
 @pytest.mark.asyncio
@@ -1358,7 +2743,7 @@ async def test_console_workspace_context_renders_server_readiness_handoff_and_ac
             console,
             label_selector="#console-workspace-server-readiness-label",
             value_selector="#console-workspace-server-readiness-value",
-            label="Server handoff",
+            label="Server",
             value_contains="Unavailable",
         )
         assert "No tldw_server workspace API configured." in text
@@ -1372,12 +2757,14 @@ async def test_console_workspace_context_renders_server_readiness_handoff_and_ac
         assert "Handoff" in text
         assert "Source note - copy" in text
         assert "Conversation package - metadata-only" in text
+        # TASK-715: the ACP status row no longer shares the Handoff section's
+        # label - "ACP" fits the 12-cell column and is unambiguous.
         _assert_status_row(
             console,
             label_selector="#console-workspace-handoff-label",
             value_selector="#console-workspace-handoff-value",
-            label="Handoff",
-            value_contains="ACP handoff: Not configured",
+            label="ACP",
+            value_contains="Not configured",
         )
         assert "Audit: visible only; no package was sent." in text
 
@@ -1393,14 +2780,19 @@ async def test_console_workspace_context_syncs_active_conversation_marker() -> N
     (2) a667ffbd added the grouped conversation browser, which renders a
     *second*, independently-selected native-session placeholder row
     alongside the workspace-membership row. Driving the marker purely
-    through ``sync_shell_bar_from_session_data`` with a ``ChatSessionData``
-    that is not bound to any real native session (as the old test did)
-    leaves that placeholder stuck showing the active glyph too, producing
-    two "active" rows for one conversation -- not a genuine product
-    regression, since ``sync_shell_bar_from_session_data``'s only
-    production caller (``ChatTabContainer.ActiveSessionChanged``) is not
-    reachable from the Console screen (``ChatTabContainer`` is only
-    mounted by the legacy ``Chat_Window``/``Chat_Window_Enhanced``).
+    through detached legacy session data that is not bound to any real
+    native session (as the old test did, via the now-retired
+    ``sync_shell_bar_from_session_data``) leaves that placeholder stuck
+    showing the active glyph too, producing two "active" rows for one
+    conversation -- not a genuine product regression, since
+    ``sync_shell_bar_from_session_data``'s only production caller
+    (``ChatTabContainer.ActiveSessionChanged``) was never reachable from
+    the Console screen (``ChatTabContainer`` was only mounted by the
+    legacy ``Chat_Window``/``Chat_Window_Enhanced``, both retired by
+    task-577). This test now calls ``_sync_console_workspace_context``
+    directly -- the one live, unconditional line
+    ``sync_shell_bar_from_session_data`` used to perform before its own
+    (dead) shell-bar branching.
 
     The real, reachable way Console marks a conversation active is
     ``ConsoleChatStore.restore_persisted_session`` (see
@@ -1410,6 +2802,11 @@ async def test_console_workspace_context_syncs_active_conversation_marker() -> N
     ``test_console_send_after_workspace_switch_persists_to_selected_workspace``
     (Tests/UI/test_console_native_chat_flow.py, the "shared-open-chat"
     case) already locks in. This test now drives the marker the same way.
+
+    Since the flush-left row rework, rows no longer carry a textual
+    ``GLYPH_ACTIVE`` prefix; the active row is marked solely by the
+    ``console-workspace-conversation-row-selected`` class, which is what
+    this test asserts on.
     """
     app = _build_test_app()
     service = app.workspace_registry_service
@@ -1422,10 +2819,8 @@ async def test_console_workspace_context_syncs_active_conversation_marker() -> N
         role="workspace-thread",
         title="Planning thread",
     )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 44)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(160, 44)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-workspace-context")
 
         store = console._ensure_console_chat_store()
@@ -1433,17 +2828,18 @@ async def test_console_workspace_context_syncs_active_conversation_marker() -> N
             title="Planning thread",
             workspace_id="ws-a",
             persisted_conversation_id="conv-1",
-            messages=(),
+            all_nodes=(),
+            active_leaf_persisted_id=None,
         )
 
-        console.sync_shell_bar_from_session_data(
-            ChatSessionData(tab_id="tab-1", conversation_id="conv-1")
-        )
+        console._sync_console_workspace_context()
         await pilot.pause()
 
-        row_texts = _conversation_row_texts(console)
         active_row_texts = [
-            text for text in row_texts if text.startswith(f"{GLYPH_ACTIVE} ")
+            " ".join(str(row.label).split())
+            for row in console.query(".console-workspace-conversation-row")
+            if row.display
+            and row.has_class("console-workspace-conversation-row-selected")
         ]
         assert active_row_texts == [
             text for text in active_row_texts if "Planning thread" in text
@@ -1576,8 +2972,9 @@ def test_console_workspace_aggregate_height_pins_badge_row_cost() -> None:
         ConsoleConversationBrowserRow,
     )
 
-    # Plain row (no subagent_count): costs 3px (base 3 + delta 0).
-    # Badge row (subagent_count > 0): costs 4px (base 3 + delta 1).
+    # At budget 20 every title here is a single name line, so:
+    # Plain row (no subagent_count): costs 3px (1 name + 1 metadata + 1 margin).
+    # Badge row (subagent_count > 0): costs 4px (plus a dedicated badge line).
     plain_rows = tuple(
         ConsoleConversationBrowserRow(
             row_key=f"plain-{i}",
@@ -1619,12 +3016,317 @@ def test_console_workspace_aggregate_height_pins_badge_row_cost() -> None:
     # Expected sum: 3 plain rows * 3px/row + 2 badge rows * 4px/row = 17px.
     expected_height = 3 * 3 + 2 * 4
     actual_height = ConsoleWorkspaceContextTray._conversation_browser_rows_height(
-        mixed_rows
+        mixed_rows, 20
     )
 
     assert actual_height == expected_height == 17
     assert (
         actual_height
-        == ConsoleWorkspaceContextTray._conversation_browser_rows_height(plain_rows)
-        + ConsoleWorkspaceContextTray._conversation_browser_rows_height(badge_rows)
+        == ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+            plain_rows, 20
+        )
+        + ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+            badge_rows, 20
+        )
+    )
+
+
+_LONG_ROW_TITLE = (
+    "A very long conversation title that overflows the rail width easily"
+)
+
+
+def _long_title_grouped_state():
+    return _base_grouped_workspace_state(
+        rows=(
+            _browser_row(
+                "conv-long",
+                _LONG_ROW_TITLE,
+                selected=True,
+                updated_sort="2026-06-27T09:00:00",
+            ),
+        )
+    )
+
+
+def _first_row_name_lines(console) -> list[str]:
+    row_button = console.query_one("#console-workspace-conversation-0", Button)
+    lines = str(row_button.label).splitlines()
+    # Last line is the metadata line; badge rows are not used in this fixture.
+    return lines[:-1]
+
+
+@pytest.mark.asyncio
+async def test_console_rail_titles_wrap_at_measured_width() -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_long_title_grouped_state())
+        await pilot.pause()
+        await pilot.pause()
+
+        # The fit pass replaced the pre-measurement fallback with the real
+        # measured width.
+        assert tray._row_content_width == tray.content_region.width
+        budget = tray._browser_title_budget()
+        name_lines = _first_row_name_lines(console)
+        assert 1 <= len(name_lines) <= 2
+        assert all(cell_len(line) <= budget for line in name_lines)
+        # Flush left: no marker prefix on the name.
+        assert not name_lines[0].startswith(" ")
+
+        # Stability: further fit passes must not flap the labels (guarded
+        # relabel -- no recompose oscillation).
+        settled = str(
+            console.query_one("#console-workspace-conversation-0", Button).label
+        )
+        await pilot.pause()
+        await pilot.pause()
+        assert (
+            str(
+                console.query_one(
+                    "#console-workspace-conversation-0", Button
+                ).label
+            )
+            == settled
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_rail_list_height_matches_rendered_rows() -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_long_title_grouped_state())
+        await pilot.pause()
+        await pilot.pause()
+
+        conversation_list = console.query_one("#console-workspace-conversations")
+        # Scope every query to the list: `console-workspace-empty-copy` is
+        # also used by status statics OUTSIDE the conversation list, which
+        # would overcount the expected height.
+        row_buttons = list(
+            conversation_list.query(
+                ".console-workspace-conversation-row"
+            ).results(Button)
+        )
+        assert row_buttons
+        rows_height = sum(
+            int(button.styles.height.value) + 1 for button in row_buttons
+        )
+        header_count = len(
+            conversation_list.query(".console-conversation-browser-section-header")
+        ) + len(
+            conversation_list.query(".console-conversation-browser-group-header")
+        )
+        # TASK-1142 round 1 review: an empty-copy line ("No starred
+        # conversations." etc.) is NOT always exactly one row -- unlike a
+        # row title it is not reduced by the star-column chrome width, so
+        # at a narrow content width it wraps to two rows while the tray's
+        # own height estimate must still budget for that (see
+        # `_empty_copy_line_count`). Sum each widget's OWN settled rendered
+        # height (ground truth: what Static actually painted) rather than
+        # assuming a flat one row per occurrence.
+        empty_copy_widgets = list(
+            conversation_list.query(".console-workspace-empty-copy").results(Static)
+        )
+        empty_copies_height = sum(
+            max(1, widget.region.height) for widget in empty_copy_widgets
+        )
+        assert (
+            int(conversation_list.styles.height.value)
+            == rows_height + header_count + empty_copies_height
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_rail_wrap_budget_tracks_terminal_width() -> None:
+    """Spec: the same long title must wrap at different budgets at different
+    terminal widths (the rail is 3fr, not fixed)."""
+    budgets: dict[str, int] = {}
+    for label, size in (("wide", (200, 44)), ("narrow", (100, 44))):
+        app = _build_test_app()
+        host = ConsoleHarness(app)
+        async with host.run_test(size=size) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-workspace-context")
+            tray = console.query_one(
+                "#console-workspace-context", ConsoleWorkspaceContextTray
+            )
+            tray.sync_state(_long_title_grouped_state())
+            await pilot.pause()
+            await pilot.pause()
+            budget = tray._browser_title_budget()
+            budgets[label] = budget
+            name_lines = _first_row_name_lines(console)
+            assert all(cell_len(line) <= budget for line in name_lines)
+    assert budgets["narrow"] < budgets["wide"]
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_row_loading_toggles_on_matching_row() -> None:
+    """task-457(b): the rail must be able to flag a conversation row as loading
+    (spinner) so a slow open reads as acknowledged, and clear it, matching by
+    conversation id; an unknown id is a no-op that never raises."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(rows=(_browser_row("conv-x", "Saved chat"),))
+        )
+        await pilot.pause()
+
+        row = console.query_one("#console-workspace-conversation-0", Button)
+        assert getattr(row, "conversation_id", "") == "conv-x"
+        assert row.loading is False
+
+        console._set_console_conversation_row_loading("conv-x", True)
+        assert row.loading is True
+
+        console._set_console_conversation_row_loading("conv-x", False)
+        assert row.loading is False
+
+        # Unknown id must not raise or touch the row.
+        console._set_console_conversation_row_loading("nope", True)
+        assert row.loading is False
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_row_click_shows_loading_until_resume_finishes() -> None:
+    """task-457(b): clicking a not-yet-open persisted conversation awaits the
+    resume inline; the pressed row must show a loading acknowledgment for the
+    duration and clear it once the resume settles, so a slow/failed open no
+    longer reads as a dead click."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(rows=(_browser_row("conv-y", "Saved chat"),))
+        )
+        await pilot.pause()
+
+        row = console.query_one("#console-workspace-conversation-0", Button)
+        assert getattr(row, "conversation_id", "") == "conv-y"
+
+        loading_during_resume: list[bool] = []
+
+        async def _fake_resume(conversation_id, **kwargs):
+            # The pressed row must already read as loading before the slow
+            # resume work runs, and match the clicked conversation.
+            assert conversation_id == "conv-y"
+            loading_during_resume.append(
+                console.query_one(
+                    "#console-workspace-conversation-0", Button
+                ).loading
+            )
+            return False
+
+        console._resume_console_workspace_conversation = _fake_resume
+
+        await console.on_button_pressed(Button.Pressed(row))
+
+        assert loading_during_resume == [True]
+        # Once the resume settles (here: not resumable) the row is not left
+        # stuck spinning.
+        assert (
+            console.query_one("#console-workspace-conversation-0", Button).loading
+            is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_row_loading_cleared_when_resume_raises() -> None:
+    """task-457(b): if the inline resume RAISES, the `finally` must still clear
+    the row's loading spinner so a failed open never leaves it stuck (the error
+    itself still propagates out of the handler)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(rows=(_browser_row("conv-z", "Saved chat"),))
+        )
+        await pilot.pause()
+
+        row = console.query_one("#console-workspace-conversation-0", Button)
+        assert getattr(row, "conversation_id", "") == "conv-z"
+
+        async def _raising_resume(conversation_id, **kwargs):
+            raise RuntimeError("resume boom")
+
+        console._resume_console_workspace_conversation = _raising_resume
+
+        with pytest.raises(RuntimeError):
+            await console.on_button_pressed(Button.Pressed(row))
+
+        assert (
+            console.query_one("#console-workspace-conversation-0", Button).loading
+            is False
+        )
+
+
+def test_conversation_search_input_is_tall_enough_to_show_its_value() -> None:
+    """The rail search box must have room for its text, not just its border.
+
+    Roleplay UAT regression: the app-tier rule styled this Input `height: 1`
+    while it kept Textual's default `tall` border, which needs one row of
+    chrome above and below. The content row was squeezed out, so the compiled
+    bundle rendered only the border's top edge -- typing "Seraphina" filtered
+    the list to "1 match" while the query itself stayed invisible, with no way
+    to see, verify or correct the active filter.
+
+    Asserted against the authored component stylesheet because the compiled
+    bundle is what the running app loads and it outranks widget DEFAULT_CSS;
+    a mounted harness resolves the widget default (height 3) and stays green
+    even when the shipped rule is broken.
+    """
+    css = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "components"
+        / "_agentic_terminal.tcss"
+    ).read_text()
+
+    block_start = css.index("#console-workspace-conversation-search {")
+    block = css[block_start : css.index("}", block_start)]
+    heights = [
+        line.split(":", 1)[1].strip().rstrip(";")
+        for line in block.splitlines()
+        if line.strip().startswith("height:")
+    ]
+
+    assert heights, "search input declares no height"
+    # A bordered Input needs 3 rows: border, content, border.
+    assert heights[0] == "3", (
+        f"search input height {heights[0]!r} leaves no content row for its value"
     )

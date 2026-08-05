@@ -645,33 +645,35 @@ class CharacterPersonaScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._persona_action_id(normalized_mode, "list"))
         backend = self._backend(normalized_mode)
-        if normalized_mode == "local" and not hasattr(backend, "list_persona_profiles"):
-            raise ValueError("Local persona profiles are not available yet.")
-        if not hasattr(backend, "list_persona_profiles"):
-            raise ValueError(
-                "Character/persona backend does not provide list_persona_profiles()."
-            )
-        return await self._maybe_await(
-            backend.list_persona_profiles(
-                active_only=active_only,
-                include_deleted=include_deleted,
-                limit=limit,
-                offset=offset,
-            )
+        missing_message = (
+            "Local personas are not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide list_persona_profiles()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("list_persona_profiles",),
+            missing_message=missing_message,
+            active_only=active_only,
+            include_deleted=include_deleted,
+            limit=limit,
+            offset=offset,
         )
 
-    async def get_persona_profile(self, persona_id: str, mode: str = "local") -> Any:
+    async def get_persona_profile(
+        self, persona_id: str, mode: str = "local"
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._persona_action_id(normalized_mode, "detail"))
         backend = self._backend(normalized_mode)
         missing_message = (
-            "Local persona profiles are not available yet."
+            "Local personas are not available yet."
             if normalized_mode == "local"
             else "Character/persona backend does not provide get_persona_profile()."
         )
         return await self._invoke_backend_method(
             backend,
-            ("get_persona_profile", "fetch_persona_by_id"),
+            ("get_persona_profile",),
             persona_id,
             missing_message=missing_message,
         )
@@ -683,13 +685,13 @@ class CharacterPersonaScopeService:
         self._enforce_policy(self._persona_action_id(normalized_mode, "create"))
         backend = self._backend(normalized_mode)
         missing_message = (
-            "Local persona profiles are not available yet."
+            "Local personas are not available yet."
             if normalized_mode == "local"
             else "Character/persona backend does not provide create_persona_profile()."
         )
         return await self._invoke_backend_method(
             backend,
-            ("create_persona_profile", "create_persona"),
+            ("create_persona_profile",),
             request_data,
             missing_message=missing_message,
         )
@@ -705,7 +707,7 @@ class CharacterPersonaScopeService:
         self._enforce_policy(self._persona_action_id(normalized_mode, "update"))
         backend = self._backend(normalized_mode)
         missing_message = (
-            "Local persona profiles are not available yet."
+            "Local personas are not available yet."
             if normalized_mode == "local"
             else "Character/persona backend does not provide update_persona_profile()."
         )
@@ -714,7 +716,7 @@ class CharacterPersonaScopeService:
             kwargs["expected_version"] = expected_version
         return await self._invoke_backend_method(
             backend,
-            ("update_persona_profile", "update_persona"),
+            ("update_persona_profile",),
             persona_id,
             request_data,
             missing_message=missing_message,
@@ -731,7 +733,7 @@ class CharacterPersonaScopeService:
         self._enforce_policy(self._persona_action_id(normalized_mode, "delete"))
         backend = self._backend(normalized_mode)
         missing_message = (
-            "Local persona profiles are not available yet."
+            "Local personas are not available yet."
             if normalized_mode == "local"
             else "Character/persona backend does not provide delete_persona_profile()."
         )
@@ -740,7 +742,7 @@ class CharacterPersonaScopeService:
             kwargs["expected_version"] = expected_version
         return await self._invoke_backend_method(
             backend,
-            ("delete_persona_profile", "delete_persona"),
+            ("delete_persona_profile",),
             persona_id,
             missing_message=missing_message,
             **kwargs,
@@ -756,13 +758,13 @@ class CharacterPersonaScopeService:
         self._enforce_policy(self._persona_action_id(normalized_mode, "update"))
         backend = self._backend(normalized_mode)
         missing_message = (
-            "Local persona profiles are not available yet."
+            "Local personas are not available yet."
             if normalized_mode == "local"
             else "Character/persona backend does not provide restore_persona_profile()."
         )
         return await self._invoke_backend_method(
             backend,
-            ("restore_persona_profile", "restore_persona"),
+            ("restore_persona_profile",),
             persona_id,
             expected_version,
             missing_message=missing_message,

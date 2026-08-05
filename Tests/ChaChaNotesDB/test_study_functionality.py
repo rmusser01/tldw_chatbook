@@ -4,6 +4,8 @@ Comprehensive tests for study-related functionality in ChaChaNotes_DB.
 Tests flashcards, spaced repetition, learning paths, mindmaps, and study statistics.
 """
 
+import shutil
+
 import pytest
 import sqlite3
 import uuid
@@ -34,7 +36,7 @@ def db_path(tmp_path):
 
 
 @pytest.fixture(scope="function")
-def db_instance(db_path, client_id):
+def db_instance(db_path, client_id, chachanotes_template_db):
     """Creates a DB instance for each test, ensuring a fresh database."""
     current_db_path = Path(db_path)
 
@@ -49,6 +51,7 @@ def db_instance(db_path, client_id):
 
     db = None
     try:
+        shutil.copyfile(chachanotes_template_db, current_db_path)
         db = CharactersRAGDB(current_db_path, client_id)
         yield db
     finally:

@@ -1,5 +1,6 @@
 """Settings destination shell for global app preferences."""
 
+import asyncio
 import copy
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
@@ -10,15 +11,20 @@ import re
 import tomllib
 
 from rich.cells import cell_len
+from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
-from textual.events import DescendantFocus, Key
+from textual.events import DescendantFocus, Key, Resize
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
+from textual.screen import ModalScreen
 from textual.strip import Strip
+from textual.suggester import SuggestFromList
+from textual.validation import ValidationResult, Validator
 from textual.widgets import (
     Button,
     Checkbox,
@@ -31,6 +37,7 @@ from textual.widgets import (
     TextArea,
 )
 
+from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
 from ...Chat.console_provider_endpoints import URL_BASED_PROVIDER_KEYS
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...Chat.console_provider_support import (
@@ -50,6 +57,14 @@ from ...Sync_Interop.sync_readiness import (
 )
 from ...Sync_Interop.manual_sync_control import ManualSyncPreview, ManualSyncRunResult
 from ...Workspaces.display_state import LIBRARY_WORKSPACE_VISIBILITY_COPY
+from ...Workspaces.models import RuntimeBindingStatus
+from ...Workspaces.registry_service import (
+    DEFAULT_WORKSPACE_ID,
+    LocalWorkspaceRegistryService,
+    WorkspaceRegistryServiceError,
+    next_local_workspace_identity,
+)
+from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Chat.provider_catalog import (
     PROVIDER_CUSTOM_GROUP_KEYS,
@@ -60,22 +75,26 @@ from ...Chat.provider_catalog import (
     PROVIDER_GROUP_ORDER,
 )
 from ...config import (
-    BASE_DATA_DIR_CLI,
     DEFAULT_CONFIG_FROM_TOML,
-    DEFAULT_CONFIG_PATH,
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+    _default_base_data_dir,
     coerce_bool_setting,
     coerce_int_setting,
+    get_cli_config_path,
+    get_runtime_config_snapshot,
     load_settings,
-    save_setting_to_cli_config,
     save_settings_to_cli_config,
 )
 from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
     load_model_catalog_settings,
 )
+from ...TTS.adapter_types import TTSNativeCapabilityObservation
 from ...Utils.input_validation import (
     provider_api_key_validation_error,
     sanitize_string,
@@ -94,6 +113,7 @@ from ...Utils.console_background_effects import (
 )
 from ...Utils.path_validation import validate_path_simple
 from ..Navigation.base_app_screen import BaseAppScreen
+from ...UI.Workbench import WorkbenchHelpPanel, WorkbenchHelpState
 from .provider_model_resolution import (
     EffectiveProviderModel,
     resolve_effective_provider_model,
@@ -109,6 +129,40 @@ from .settings_config_models import (
 )
 from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
 from ...Widgets.settings_theme_editor import SettingsThemeEditor
+from ...Widgets.settings_internal_prompts_panel import InternalPromptsPanel
+from ...Widgets.settings_image_gen_panel import (
+    ImageGenSettingsPanel,
+    _key_source_line as _image_gen_key_source_line,
+    _secret_placeholder as _image_gen_secret_placeholder,
+)
+from ...Widgets.Settings_Widgets.speech_tts_settings_panel import (
+    SpeechTTSSettingsPanel,
+)
+from ..Speech.speech_runtime_status import (
+    speech_tts_navigation_target_from_context,
+    speech_tts_runtime_status_store,
+)
+from ..Speech.speech_settings_contracts import (
+    SpeechTTSNavigationIntent,
+    SpeechTTSNavigationTarget,
+)
+from ...Internal_Prompts import authoring as internal_prompts_authoring
+from .settings_image_gen_defaults import (
+    BACKEND_IDS as IMAGE_GEN_BACKEND_IDS,
+    FIELD_SCHEMA as IMAGE_GEN_FIELD_SCHEMA,
+    ImageGenDraftValues,
+    canonical_backend_order as image_gen_canonical_backend_order,
+    diff_to_sections as image_gen_diff_to_sections,
+    effective_placeholder as image_gen_effective_placeholder,
+    effective_secret_value as image_gen_effective_secret_value,
+    key_source_after_clear as image_gen_key_source_after_clear,
+    probe_backend as image_gen_probe_backend,
+    validate_draft as validate_image_gen_draft,
+)
+from ...Image_Generation.config import (
+    get_image_generation_config,
+    reset_image_generation_config_cache,
+)
 from .settings_appearance_defaults import (
     SettingsAppearanceDefaults,
     build_appearance_save_sections,
@@ -117,16 +171,38 @@ from .settings_appearance_defaults import (
 )
 from .settings_library_rag_defaults import (
     SettingsLibraryRagDefaults,
-    build_library_rag_save_sections,
-    load_library_rag_defaults,
+    normalise_library_rag_chunking_method,
     normalise_library_rag_citation_style,
+    normalise_library_rag_distance_metric,
     normalise_library_rag_search_mode,
     validate_library_rag_defaults,
+)
+from .settings_rag_profile_adapter import (
+    activate_profile,
+    active_profile_info,
+    clone_profile_as,
+    delete_user_profile,
+    fetch_index_status,
+    get_profile_defaults,
+    index_change_pending,
+    is_first_run_state,
+    list_profiles_grouped,
+    load_rag_defaults_from_active_profile,
+    rename_user_profile,
+    save_rag_defaults_to_active_profile,
+    soft_config_warnings,
+)
+from ...RAG_Search.ingestion_indexing import (
+    backfill_semantic_index,
+    get_shared_rag_service,
+    semantic_indexing_available,
 )
 from .settings_privacy_security import (
     SettingsPrivacyPosture,
     build_privacy_posture_rows,
     build_settings_privacy_posture,
+    env_var_summary,
+    skill_trust_display,
 )
 from .settings_storage_defaults import (
     STORAGE_FIELD_LABELS,
@@ -136,10 +212,26 @@ from .settings_storage_defaults import (
     load_storage_defaults,
     validate_storage_defaults,
 )
+from .settings_speech_tts import (
+    BUILT_IN_TTS_PROVIDER_ORDER,
+    GlobalSpeechTTSState,
+    load_global_speech_tts_state,
+)
 from ..Navigation.main_navigation import NavigateToScreen
 
 
 logger = logging.getLogger(__name__)
+
+
+def _theme_save_target() -> Path:
+    """Return the active profile's directory for custom theme files."""
+    return get_cli_config_path().parent / "themes"
+
+
+def _internal_prompts_save_target() -> Path:
+    """Return the active config file for internal prompt overrides."""
+    return get_cli_config_path()
+
 
 MAX_CATEGORY_SEARCH_QUERY_CHARS = 80
 PROVIDER_ENDPOINT_KEYS = ("api_base_url", "api_base", "base_url", "api_url", "endpoint")
@@ -235,8 +327,18 @@ CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
     {
         "collapse_large_pastes",
         "paste_collapse_threshold",
+        "max_parallel_runs",
+        "tool_result_display_chars",
     }
 )
+# Parallel-agents spec S4 (task-5): user-adjustable global cap on
+# simultaneous Console runs. Aliases console_chat_models' single source of
+# truth so the settings UI and ConsoleChatController.max_parallel_runs
+# (which reads [console] max_parallel_runs via get_cli_setting with the
+# same default and floor) can never drift apart. No upper bound is
+# deliberate (user-owned trade-off).
+DEFAULT_CONSOLE_MAX_PARALLEL_RUNS = CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
+MIN_CONSOLE_MAX_PARALLEL_RUNS = 1
 CONSOLE_BACKGROUND_EFFECT_KEYS = frozenset(
     {
         "background_effects.enabled",
@@ -256,6 +358,17 @@ CONSOLE_BACKGROUND_EFFECT_SAVE_ORDER = (
 CONSOLE_BACKGROUND_WORKBENCH_UNAVAILABLE_COPY = (
     "Workbench scope is not available in this build; using Transcript scope."
 )
+# Task 4 (SP3): shared honest re-index warning, appended to BOTH triggers that
+# can re-point the active profile at a fresh (empty) fingerprinted vector
+# collection -- saving an index-determining field (settings_rag_profile_adapter
+# .index_change_pending) and switching the active profile itself
+# (handle_library_rag_profile_set_active / _rag_after_set_active). See
+# Docs/superpowers/specs/2026-07-21-rag-index-isolation-design.md.
+RAG_INDEX_CHANGE_WARNING = (
+    "This change re-points to a new (empty) index — run Backfill."
+)
+RAG_INDEX_ABSENT_STATUS_TEXT = "Index: absent — will be created on next backfill"
+RAG_INDEX_STATUS_CHECKING_TEXT = "Index: checking…"
 TEXTUAL_WEB_URL_AUTOLINK_BREAK = "\u200b"
 TEXTUAL_WEB_URL_SCHEME_RE = re.compile(r"\b(https?)://", re.IGNORECASE)
 CONSOLE_BEHAVIOR_CHAT_DEFAULT_KEYS = frozenset(
@@ -279,6 +392,8 @@ CONSOLE_BEHAVIOR_CHAT_DEFAULT_KEYS = frozenset(
 CONSOLE_BEHAVIOR_SAVE_ORDER = (
     "collapse_large_pastes",
     "paste_collapse_threshold",
+    "max_parallel_runs",
+    "tool_result_display_chars",
     "streaming",
     "temperature",
     "top_p",
@@ -296,10 +411,12 @@ CONSOLE_BEHAVIOR_SAVE_ORDER = (
     *CONSOLE_BACKGROUND_EFFECT_SAVE_ORDER,
 )
 ADVANCED_CONFIG_GUIDED_PATHS = (
-    (SettingsCategoryId.PROVIDERS_MODELS, "Providers"),
-    (SettingsCategoryId.CONSOLE_BEHAVIOR, "Console"),
+    # task-1565: labels mirror the sidebar's category names exactly so the
+    # guided chips and the rail never disagree about what a place is called.
+    (SettingsCategoryId.PROVIDERS_MODELS, "Providers & Models"),
+    (SettingsCategoryId.CONSOLE_BEHAVIOR, "Console Behavior"),
     (SettingsCategoryId.STORAGE, "Storage"),
-    (SettingsCategoryId.PRIVACY_SECURITY, "Privacy"),
+    (SettingsCategoryId.PRIVACY_SECURITY, "Privacy & Security"),
     (SettingsCategoryId.DIAGNOSTICS, "Diagnostics"),
 )
 ADVANCED_CONFIG_GUIDED_PATH_BUTTONS = {
@@ -324,9 +441,13 @@ API_URL_PROVIDER_KEYS = {
     "vllm",
 }
 SETTINGS_SOURCE_LABELS = {
+    # Keys mirror the source values resolve_effective_provider_model can
+    # return (Provider/provider_model_resolution.py) -- task-648 renamed
+    # console_control to console_session and deleted app_reactive; TASK-1310's
+    # review caught the stale keys here rendering a raw "console session"
+    # fallback label in Settings > Providers.
     "settings_draft": "Unsaved Settings draft",
-    "console_control": "Console runtime override",
-    "app_reactive": "Current app selection",
+    "console_session": "Console runtime override",
     "chat_defaults": "Saved chat defaults",
     "default": "Default fallback",
 }
@@ -337,8 +458,8 @@ PROVIDER_ENDPOINT_PLACEHOLDERS = {
     "google": "https://generativelanguage.googleapis.com",
     "groq": "https://api.groq.com/openai/v1",
     "koboldcpp": "http://127.0.0.1:5001",
-    "llama_cpp": "http://127.0.0.1:9099/v1",
-    "local_llamacpp": "http://127.0.0.1:9099/v1",
+    "llama_cpp": "http://127.0.0.1:9099",
+    "local_llamacpp": "http://127.0.0.1:9099",
     "local_ollama": "http://127.0.0.1:11434",
     "local_vllm": "http://127.0.0.1:8000/v1",
     "mistral": "https://api.mistral.ai/v1",
@@ -355,6 +476,7 @@ PROVIDER_CREDENTIAL_ENV_VAR_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}
 GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
     {
         SettingsCategoryId.PROVIDERS_MODELS,
+        SettingsCategoryId.SPEECH_TTS,
         SettingsCategoryId.APPEARANCE,
         SettingsCategoryId.CONSOLE_BEHAVIOR,
         SettingsCategoryId.LIBRARY_RAG,
@@ -400,7 +522,7 @@ SETTINGS_SERVER_SYNC_WORKSPACE_SOURCE_CONTRACTS = (
 SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.LIBRARY_RAG,
-        title="Library & RAG",
+        title="RAG",
         owner_destination="Library",
         source_of_truth=(
             "Library source services",
@@ -418,11 +540,11 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
             ),
             (
                 "Retrieval defaults",
-                "AppRAGSearchConfig.rag.search and .retriever own result limits and blend defaults",
+                "the active RAG profile (rag_profiles/<id>.json) owns result limits and blend defaults",
             ),
             (
                 "Citation/snippet defaults",
-                "AppRAGSearchConfig.rag.search owns citations, snippets, and context budget defaults",
+                "the active RAG profile (rag_profiles/<id>.json) owns citations, snippets, and context budget defaults",
             ),
         ),
         settings_can_mutate=True,
@@ -449,27 +571,27 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
                 "show defaults/status only; do not move artifact operations here",
             ),
         ),
-        follow_up="Follow-up: add artifact export/default controls only after Artifacts exposes a persisted preference contract.",
+        follow_up="add artifact export/default controls only after Artifacts exposes a persisted preference contract.",
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.PERSONAS,
-        title="Personas",
-        owner_destination="Personas",
+        title="Roleplay",
+        owner_destination="Roleplay",
         source_of_truth=(
-            "Character/persona scope service",
-            "Personas destination runtime handoff",
+            "Your saved characters and user profiles",
+            "Whatever's currently open in Roleplay",
         ),
         rows=(
             (
-                "Runtime selection",
-                "Personas owns character/profile selection and Console attach payloads",
+                "What Roleplay controls",
+                "Picking a character or user profile, and sending it to Console",
             ),
             (
-                "Settings role",
-                "future defaults may choose discovery/display preferences, not active persona runtime",
+                "What Settings might add later",
+                "Browsing or display preferences - never which user profile is active",
             ),
         ),
-        follow_up="Follow-up: add persona display/default controls after Personas exposes a persisted category source.",
+        follow_up="Add user profile display/browsing preferences once Roleplay can hand Settings a saved preference to edit.",
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.SKILLS,
@@ -489,7 +611,7 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
                 "future defaults can cover trust/display preferences only",
             ),
         ),
-        follow_up="Follow-up: add Skills defaults after import/attach policy has a persisted source contract.",
+        follow_up="add Skills defaults after import/attach policy has a persisted source contract.",
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.SCHEDULES,
@@ -506,7 +628,7 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
                 "future defaults may cover timezone/notification preferences only",
             ),
         ),
-        follow_up="Follow-up: add schedule defaults after Schedules exposes a dedicated settings adapter.",
+        follow_up="add schedule defaults after Schedules exposes a dedicated settings adapter.",
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.WATCHLISTS,
@@ -520,7 +642,7 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
                 "future defaults may cover polling and notification preferences only",
             ),
         ),
-        follow_up="Follow-up: add watchlist defaults after Watchlists exposes persisted polling/notification settings.",
+        follow_up="add watchlist defaults after Watchlists exposes persisted polling/notification settings.",
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.WORKFLOWS,
@@ -540,7 +662,7 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
                 "future defaults may cover execution safety preferences only",
             ),
         ),
-        follow_up="Follow-up: add workflow defaults after Workflows exposes a persisted execution-safety contract.",
+        follow_up="add workflow defaults after Workflows exposes a persisted execution-safety contract.",
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.MCP_DEFAULTS,
@@ -557,7 +679,7 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
                 "show global defaults/status only; server operations stay in MCP",
             ),
         ),
-        follow_up="Follow-up: add MCP defaults only after server-first settings are exposed without flattening tools into Settings.",
+        follow_up="add MCP defaults only after server-first settings are exposed without flattening tools into Settings.",
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.ACP_DEFAULTS,
@@ -574,7 +696,35 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
             ),
             ("Settings role", "show defaults/status only; ACP setup stays in ACP"),
         ),
-        follow_up="Follow-up: add ACP defaults after ACP exposes a persisted runtime/session preference contract.",
+        follow_up="add ACP defaults after ACP exposes a persisted runtime/session preference contract.",
+    ),
+    SettingsDomainCategoryContract(
+        category=SettingsCategoryId.IMAGE_GENERATION,
+        title="Image Gen",
+        owner_destination="Console",
+        source_of_truth=(
+            "config.toml [image_generation] (+ nested backend sections)",
+            "Image_Generation engine (adapters/worker)",
+        ),
+        rows=(
+            (
+                "Generation actions",
+                "Console owns /generate-image, cards, variants",
+            ),
+            (
+                "Settings role",
+                "Settings edits persisted backend/config defaults only",
+            ),
+            (
+                "Style templates",
+                "config/templates dir own definitions; management UI planned",
+            ),
+        ),
+        settings_can_mutate=True,
+        follow_up=(
+            "Follow-up: add a dedicated style-template create/edit/delete UI (v2); "
+            "v1 shows a read-only count only."
+        ),
     ),
 )
 
@@ -598,6 +748,482 @@ DOMAIN_CONTRACT_BY_CATEGORY = _build_domain_contract_by_category(
 DOMAIN_SETTINGS_CATEGORY_IDS = frozenset(DOMAIN_CONTRACT_BY_CATEGORY)
 _WORKSPACE_RECORD_UNSET = object()
 
+# Task 3 (541 v2 UX AC3): RAG widget id -> guidance-group key. Mirrors the
+# ids `_library_rag_field_selector` and the LIBRARY_RAG compose branch mint
+# (search around "settings-library-rag-" in this file). Used by
+# `_rag_field_guidance_rows()` so the Scope Inspector follows the focused
+# field; falls back to `_active_rag_scope_group` (the last-expanded
+# Collapsible) when the focused widget isn't one of these.
+_RAG_FIELD_GROUP_BY_ID: dict[str, str] = {
+    "settings-library-rag-search-mode": "search",
+    "settings-library-rag-default-top-k": "search",
+    "settings-library-rag-fts-top-k": "search",
+    "settings-library-rag-vector-top-k": "search",
+    "settings-library-rag-hybrid-alpha": "search",
+    "settings-library-rag-score-threshold": "search",
+    "settings-library-rag-include-citations": "search",
+    "settings-library-rag-citation-style": "search",
+    "settings-library-rag-snippet-max-chars": "search",
+    "settings-library-rag-max-context-size": "search",
+    "settings-library-rag-embedding-model": "embedding",
+    "settings-library-rag-embedding-device": "embedding",
+    "settings-library-rag-embedding-batch-size": "embedding",
+    "settings-library-rag-embedding-max-length": "embedding",
+    "settings-library-rag-chunk-size": "chunking",
+    "settings-library-rag-chunk-overlap": "chunking",
+    "settings-library-rag-chunking-method": "chunking",
+    "settings-library-rag-distance-metric": "vector_store",
+    "settings-library-rag-enable-reranking": "reranking",
+    "settings-library-rag-reranker-model": "reranking",
+    "settings-library-rag-reranker-top-k": "reranking",
+    "settings-library-rag-profile-select": "profile",
+    "settings-library-rag-profile-set-active": "profile",
+    "settings-library-rag-profile-clone": "profile",
+    "settings-library-rag-profile-rename": "profile",
+    "settings-library-rag-profile-delete": "profile",
+    "settings-library-rag-index-backfill": "index",
+}
+
+
+def _rag_field_search_label(field_id: str) -> str:
+    """Human label for a RAG field id (task-1715 field-level search).
+
+    Args:
+        field_id: A ``settings-library-rag-*`` widget id.
+
+    Returns:
+        The id suffix as a spaced title, e.g. "hybrid alpha".
+    """
+    return field_id.removeprefix("settings-library-rag-").replace("-", " ")
+
+
+#: task-1715: field-level search index -- "/" previously matched only
+#: category names/descriptions/owned keys, so "threshold" found nothing
+#: on a 23-category screen (critique r4 P1). Labels mirror the visible
+#: row labels; Enter focuses the matched field.
+FIELD_SEARCH_INDEX: dict["SettingsCategoryId", tuple[tuple[str, str], ...]] = {}
+
+
+def _build_field_search_index() -> None:
+    from .settings_storage_defaults import STORAGE_FIELD_LABELS as _labels
+
+    FIELD_SEARCH_INDEX.update(
+        {
+            SettingsCategoryId.CONSOLE_BEHAVIOR: (
+                ("settings-console-paste-collapse-threshold", "Threshold (chars)"),
+                ("settings-console-max-parallel-runs", "Max parallel agent runs"),
+                ("settings-console-tool-result-display-chars", "Display cap (chars)"),
+            ),
+            SettingsCategoryId.APPEARANCE: (
+                ("settings-appearance-theme", "Theme"),
+                ("settings-appearance-palette-theme-limit", "Palette limit (themes)"),
+                ("settings-appearance-font-size", "Web font size (px)"),
+                ("settings-appearance-density", "Density"),
+                ("settings-appearance-animations-enabled", "Animations"),
+                ("settings-appearance-smooth-scrolling", "Smooth scrolling"),
+            ),
+            SettingsCategoryId.PROVIDERS_MODELS: (
+                ("settings-provider-value", "Provider"),
+                ("settings-model-value", "Model"),
+                ("settings-provider-endpoint-value", "Endpoint"),
+                ("settings-provider-api-key", "API key"),
+                ("settings-provider-credential-env-var", "Credential env var"),
+            ),
+            SettingsCategoryId.SPEECH_TTS: (
+                ("settings-speech-default-provider", "Default TTS Provider"),
+                ("settings-speech-model-value", "TTS model"),
+                ("settings-speech-voice-value", "TTS voice"),
+                ("settings-speech-configure-provider", "audio.cpp audio_cpp"),
+                ("settings-speech-configure-provider", "OpenAI"),
+                ("settings-speech-configure-provider", "ElevenLabs"),
+                ("settings-speech-configure-provider", "Kokoro"),
+                ("settings-speech-configure-provider", "Chatterbox"),
+                ("settings-speech-configure-provider", "Higgs"),
+                ("settings-speech-configure-provider", "AllTalk"),
+            ),
+            SettingsCategoryId.STORAGE: tuple(
+                (f"settings-storage-{name.replace('_', '-')}", label)
+                for name, label in _labels.items()
+            ),
+            SettingsCategoryId.LIBRARY_RAG: tuple(
+                (field_id, _rag_field_search_label(field_id))
+                for field_id in _RAG_FIELD_GROUP_BY_ID
+            ),
+        }
+    )
+
+
+_build_field_search_index()
+
+
+# Task 4 (541 v2 UX AC1): the Library/RAG editor field keys whose disabled
+# state is driven PURELY by a read-only lock (builtin/active read_only, or a
+# profile-picker PREVIEW) -- reranker_model/reranker_top_k are deliberately
+# excluded here (their disabled state ALSO depends on whether reranking is
+# enabled; see `_apply_library_rag_rerank_field_state`). Shared by
+# `_sync_library_rag_profile_widgets` and `_sync_library_rag_widgets`'s
+# `field_disabled` override so the two never drift out of sync with each
+# other.
+_LIBRARY_RAG_READ_LOCK_FIELD_KEYS: tuple[str, ...] = (
+    "default_search_mode",
+    "default_top_k",
+    "fts_top_k",
+    "vector_top_k",
+    "hybrid_alpha",
+    "score_threshold",
+    "citation_style",
+    "snippet_max_chars",
+    "max_context_size",
+    "embedding_model",
+    "embedding_device",
+    "embedding_batch_size",
+    "embedding_max_length",
+    "chunk_size",
+    "chunk_overlap",
+    "chunking_method",
+    "distance_metric",
+)
+# The two Checkbox fields (Task 1) alongside the read-lock field keys above --
+# also read-only-lock driven only, never rerank-enabled driven.
+_LIBRARY_RAG_READ_LOCK_CHECKBOX_SELECTORS: tuple[str, ...] = (
+    "#settings-library-rag-include-citations",
+    "#settings-library-rag-enable-reranking",
+)
+
+# Collapsible id -> the same group keys. `@on(Collapsible.Toggled)` uses this
+# so expanding a group (e.g. "Chunking") already switches the inspector's
+# context even before any field inside it is focused. Textual 8.2.7: focus
+# on Tab lands on the inner CollapsibleTitle, not the Collapsible itself, and
+# `.collapsible--header` is a dead CSS class -- neither is used here; this
+# keys off `event.collapsible.id`/`.collapsed` instead (see
+# handle_settings_library_rag_collapsible_toggled).
+_RAG_GROUP_BY_COLLAPSIBLE_ID: dict[str, str] = {
+    "settings-library-rag-search-group": "search",
+    "settings-library-rag-embedding-group": "embedding",
+    "settings-library-rag-chunking-group": "chunking",
+    "settings-library-rag-vector-store-group": "vector_store",
+    "settings-library-rag-reranking-group": "reranking",
+}
+
+# Fleet-UX expert review F6 (task-1234): every guided category's "Focused
+# field guide" rows share the SAME symptom task-1140 already fixed once for
+# the fleet line -- the content updates in place (`_refresh_*_field_
+# guidance`, no recompose) but focus never moves the Scope Inspector's
+# scroll position, so the guide can sit below the pane's fold with only a
+# thin scrollbar sliver hinting at it (worst case: only "Purpose:" visible,
+# Consequences/Saved-as/Validation all clipped). Maps each guided category
+# to its guide block's FIRST row id -- every id below already exists (see
+# `_render_impact_pane`'s per-category "Focused field guide" loops) and is
+# rendered unconditionally (the fallback rows use the same ids when no
+# specific field is focused), so scrolling to it is meaningful even when
+# `_active_settings_field_id` resolves to the generic fallback.
+_FIELD_GUIDE_FIRST_ROW_ID: dict[SettingsCategoryId, str] = {
+    SettingsCategoryId.APPEARANCE: "settings-appearance-field-guide-0",
+    SettingsCategoryId.STORAGE: "settings-storage-field-guide-0",
+    SettingsCategoryId.LIBRARY_RAG: "settings-library-rag-field-guide-0",
+    SettingsCategoryId.CONSOLE_BEHAVIOR: "settings-console-behavior-field-guide-0",
+    SettingsCategoryId.PROVIDERS_MODELS: "settings-provider-field-guide-0",
+}
+
+# One concise, fixed-length (5-row) entry per group (Task 3, 541 AC3).
+# Fixed-length matters: `_refresh_rag_field_guidance` updates existing rows
+# in place by index (`_set_static_text`, no recompose) the same way
+# `_refresh_provider_field_guidance` does for Providers -- a variable row
+# count would leave stale rows behind when switching groups. The "index-
+# determining" facts (embedding model, embedding max length, every chunking
+# field, distance metric) mirror
+# RAG_Search/simplified/collection_fingerprint.py's `_index_fields()` --
+# exactly what `index_change_pending()` (settings_rag_profile_adapter.py)
+# fingerprints. Strings kept within the rail width (SP3 fit lesson, UX
+# review item 9) -- no mid-sentence clipping at the QA viewport.
+#
+# Fallback when no RAG field is focused and no group has ever been expanded
+# this session -- UNCHANGED from the terse rows the UX review (item 9)
+# shortened this to; regression-locked by
+# test_settings_library_rag_inspector_uses_shortened_terse_guidance. Defined
+# ahead of `_RAG_GROUP_GUIDANCE` because the "search" entry below reuses it
+# verbatim: Textual's Collapsible posts its own `Expanded` message from
+# inside `__init__` whenever constructed with `collapsed=False` (the
+# reactive's default is `True`, so the explicit `False` is a real change,
+# queued and delivered once the widget starts running) -- which is exactly
+# how the "Search" group (collapsed=False, expanded-by-default) composes.
+# That message reaches `handle_settings_library_rag_collapsible_toggled`
+# before the first `_render_impact_pane` pass finishes, so
+# `_active_rag_scope_group` is ALREADY "search" at first paint, not None.
+# Reusing the fallback tuple for "search" makes that a no-op: first paint
+# reads identically whether the resolved group is None or "search".
+_RAG_GROUP_GUIDANCE_FALLBACK: tuple[tuple[str, str], ...] = (
+    ("Search mode", "plain=keyword, semantic=embeddings, hybrid=blend"),
+    ("Result limits", "bounds default/keyword/vector result counts"),
+    ("Hybrid balance", "0.0=keyword, 1.0=semantic"),
+    ("Citations", "adds source markers to answers when supported"),
+    ("Snippet/context", "snippet length + context budget for retrieved text"),
+)
+_RAG_GROUP_GUIDANCE: dict[str, tuple[tuple[str, str], ...]] = {
+    "search": _RAG_GROUP_GUIDANCE_FALLBACK,
+    "embedding": (
+        ("Focused group", "Embedding"),
+        ("Fields", "model, device, batch size, max length"),
+        ("Purpose", "what the vector index is built from"),
+        ("Impact", "⚠ model + max length rebuild the index -- Backfill after"),
+        ("Saved as", "the profile's embedding settings"),
+    ),
+    "chunking": (
+        ("Focused group", "Chunking"),
+        ("Fields", "chunk size, overlap, method"),
+        ("Purpose", "how source text is split before embedding"),
+        ("Impact", "⚠ every field here rebuilds the index -- Backfill after"),
+        ("Saved as", "the profile's chunking settings"),
+    ),
+    "vector_store": (
+        ("Focused group", "Vector store"),
+        ("Fields", "distance metric"),
+        ("Purpose", "how embeddings are compared during retrieval"),
+        ("Impact", "⚠ rebuilds the index -- Backfill after saving"),
+        ("Saved as", "the profile's vector store settings"),
+    ),
+    "reranking": (
+        ("Focused group", "Reranking"),
+        ("Fields", "enable, reranker model, rerank results"),
+        ("Purpose", "optional post-retrieval reordering of results"),
+        ("Impact", "no index rebuild -- toggling adds/removes config"),
+        ("Saved as", "the profile's reranking settings"),
+    ),
+    "profile": (
+        ("Focused group", "Profiles"),
+        ("Fields", "select, set active, clone, rename, delete"),
+        ("Purpose", "switch which profile these fields edit"),
+        ("Impact", "Set active is immediate; built-ins are read-only"),
+        ("Saved as", "the [rag.service].profile pointer"),
+    ),
+    "index": (
+        ("Focused group", "Index"),
+        ("Fields", "Backfill"),
+        ("Purpose", "rebuild the active profile's vector index"),
+        ("Impact", "⚠ run after saving any warning field; safe to re-run"),
+        ("Saved as", "not a config field -- runs Library ingestion"),
+    ),
+}
+
+# Impact-pane guidance rows keyed by non-domain Settings category. Domain
+# categories (DOMAIN_SETTINGS_CATEGORY_IDS) derive their guidance from their
+# ownership contract instead and are intentionally absent here. Every other
+# SettingsCategoryId MUST have an entry: this table is read inside compose, so
+# a missing key would otherwise take down the whole app (see PR #713 / #742).
+_INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
+    SettingsCategoryId.OVERVIEW: (
+        ("Affected config", "all Settings categories summarized for readiness"),
+        ("Recovery", "open the specific category before changing values"),
+        (
+            "Boundary",
+            "runtime MCP, ACP, and tool control stay in their own destinations",
+        ),
+    ),
+    SettingsCategoryId.PROVIDERS_MODELS: (
+        (
+            "Affected config",
+            "provider, model, endpoint, and credential source defaults",
+        ),
+        (
+            "Recovery",
+            "test provider readiness before saving provider-backed Console defaults",
+        ),
+        (
+            "Boundary",
+            "Sampling and transport defaults are routed to Console Defaults",
+        ),
+    ),
+    SettingsCategoryId.SPEECH_TTS: (
+        (
+            "Affected config",
+            "application-wide Speech & TTS defaults and selected provider setup",
+        ),
+        (
+            "Recovery",
+            "revert the local draft or open Speech Lab for explicit runtime checks",
+        ),
+        (
+            "Boundary",
+            "Studio preferences and runtime test, discovery, generation, and playback stay in Speech Lab",
+        ),
+    ),
+    SettingsCategoryId.APPEARANCE: (
+        ("Affected config", "theme, density, font size, and motion defaults"),
+        (
+            "Recovery",
+            "open Theme for full theme editing; use Settings for persisted defaults",
+        ),
+        ("Boundary", "visual preferences do not change runtime or data access"),
+    ),
+    SettingsCategoryId.STORAGE: (
+        (
+            "Affected config",
+            "config file path, local database paths, media storage roots",
+        ),
+        (
+            "Recovery",
+            "verify paths, reload config, then restart only if storage roots changed",
+        ),
+        (
+            "Boundary",
+            "server handoff does not move local source content unless explicitly requested",
+        ),
+    ),
+    SettingsCategoryId.WORKSPACES: (
+        (
+            "Affected config",
+            "workspace lifecycle records and their bound folders",
+        ),
+        (
+            "Recovery",
+            "switch/rename/archive in Console (Alt+W); create a workspace in Library",
+        ),
+        (
+            "Boundary",
+            "lifecycle and folder bindings apply immediately; there is no draft state here",
+        ),
+    ),
+    SettingsCategoryId.PRIVACY_SECURITY: (
+        (
+            "Affected config",
+            "encryption posture, credential-source status, and redaction status",
+        ),
+        (
+            "Credential source",
+            "Environment variables are preferred for provider credentials.",
+        ),
+        (
+            "Recovery",
+            "open Providers & Models for provider defaults or Advanced Config for expert repair",
+        ),
+        (
+            "Boundary",
+            "raw secret values are never displayed; encryption mutation needs a password-gated flow",
+        ),
+    ),
+    SettingsCategoryId.CONSOLE_BEHAVIOR: (
+        (
+            "Affected config",
+            "chat_defaults fallbacks plus Console composer paste behavior",
+        ),
+        (
+            "Recovery",
+            "revert unsaved changes or disable paste collapse if composer flow is disrupted",
+        ),
+        (
+            "Boundary",
+            "active sessions and provider+model profiles override these global fallbacks",
+        ),
+    ),
+    SettingsCategoryId.LIBRARY_RAG: (
+        (
+            "Affected config",
+            "the active RAG profile (rag_profiles/<id>.json) and the [rag.service].profile pointer",
+        ),
+        (
+            "Recovery",
+            "revert unsaved defaults or open Library to validate retrieval behavior",
+        ),
+        (
+            "Boundary",
+            "Library owns indexing, query execution, source browse, Collections, and staging",
+        ),
+    ),
+    SettingsCategoryId.DIAGNOSTICS: (
+        (
+            "Affected config",
+            "read-only validation, reload status, and troubleshooting output",
+        ),
+        (
+            "Recovery",
+            "validate first, reload only after confirming the config source is correct",
+        ),
+        (
+            "Boundary",
+            "diagnostics redact secrets and should not mutate advanced config",
+        ),
+    ),
+    SettingsCategoryId.ADVANCED_CONFIG: (
+        ("Affected config", "raw TOML for every loaded configuration section"),
+        (
+            "Recovery",
+            "validate current text, save atomically, then restore from backup if needed",
+        ),
+        ("Boundary", "save is blocked until the exact current text validates"),
+    ),
+    SettingsCategoryId.THEME: (
+        (
+            "Affected config",
+            "custom theme files in the active profile",
+        ),
+        (
+            "Recovery",
+            "use the editor's Apply/Save/Reset buttons; delete a theme file to remove it",
+        ),
+        (
+            "Boundary",
+            "launch visual defaults stay in Appearance; theme edits never touch config.toml",
+        ),
+    ),
+    SettingsCategoryId.SPLASH_SCREEN: (
+        (
+            "Affected config",
+            "splash_screen section defaults and card selection",
+        ),
+        (
+            "Recovery",
+            "reset defaults from this category or edit splash_screen values in Advanced Config",
+        ),
+        ("Boundary", "changes are saved immediately; no shared Settings draft state"),
+    ),
+    SettingsCategoryId.INTERNAL_PROMPTS: (
+        (
+            "Affected config",
+            "config.toml [internal_prompts] overrides for built-in system prompts",
+        ),
+        (
+            "Recovery",
+            "use each prompt's own Save/Reset buttons to restore the packaged default",
+        ),
+        (
+            "Boundary",
+            "edits apply to internal tooling prompts only; no shared Settings draft state",
+        ),
+    ),
+    # NOTE: unreachable via _inspector_guidance() -- IMAGE_GENERATION has
+    # its own explicit branch there (checked before this dict), same as
+    # LIBRARY_RAG's identical pre-existing shadowing. Kept accurate anyway
+    # as a safety net for the dict-lookup fallback path.
+    SettingsCategoryId.IMAGE_GENERATION: (
+        (
+            "Affected config",
+            "[image_generation] backend enable/default, per-backend fields, and "
+            "generation defaults",
+        ),
+        (
+            "Recovery",
+            "Revert discards unsaved edits; Console's /generate-image keeps "
+            "working off the last saved config.toml regardless",
+        ),
+        (
+            "Boundary",
+            "Edits backend, key, and generation defaults here; Save applies "
+            "to config.toml",
+        ),
+    ),
+}
+# Generic guidance for a category with no explicit entry. Kept as a runtime
+# safety net only; test_inspector_guidance_covers_every_settings_category fails
+# CI before an uncovered category can reach a user.
+_INSPECTOR_GUIDANCE_FALLBACK: tuple[tuple[str, str], ...] = (
+    ("Affected config", "this category manages its own settings"),
+    ("Recovery", "use the controls in the category detail pane"),
+    ("Boundary", "no shared Settings draft state is affected"),
+)
+# Categories already warned about, so the fallback logs once per run per
+# category instead of on every compose pass.
+_WARNED_MISSING_GUIDANCE_CATEGORIES: set[SettingsCategoryId] = set()
+
 
 def _textual_web_safe_url_display(value: str) -> str:
     """Break URL schemes in rendered input text without changing the stored value."""
@@ -614,6 +1240,111 @@ def _textual_web_safe_url_display_index(value: str, index: int) -> int:
         if index >= insertion_index:
             display_index += len(TEXTUAL_WEB_URL_AUTOLINK_BREAK)
     return display_index
+
+
+class ProviderEndpointURLValidator(Validator):
+    """TASK-367: inline endpoint URL validation, run on blur/submit.
+
+    An empty endpoint is allowed (not every provider needs one); a non-empty
+    value must be a well-formed http/https URL. Surfacing this on blur flags a
+    malformed URL (e.g. a dropped scheme character) at the field itself instead
+    of only when the user later saves or runs Discover.
+    """
+
+    def validate(self, value: str) -> ValidationResult:
+        """Validate a provider endpoint URL for the field's blur check.
+
+        Args:
+            value: The endpoint text currently in the field.
+
+        Returns:
+            ``success()`` for an empty value (endpoint optional) or a
+            well-formed http/https URL; otherwise ``failure()`` with a
+            corrective message.
+        """
+        text = str(value or "").strip()
+        if not text or validate_url(text):
+            return self.success()
+        return self.failure(
+            "Enter a full http:// or https:// URL, e.g. http://127.0.0.1:9099/v1."
+        )
+
+
+#: task-1583: widest token the ~26-34 cell Scope Inspector column shows
+#: without folding mid-word.
+_FOLD_TOKEN_LIMIT = 26
+
+
+def _fold_long_tokens(text: str, limit: int = _FOLD_TOKEN_LIMIT) -> str:
+    """Break over-long dotted keys and slashed paths at their separators.
+
+    Rich wraps at spaces and folds longer tokens mid-word, so the narrow
+    Scope Inspector rendered "crede/ntial_source" and "config.tom/l"
+    (critique rescore P2). Tokens beyond ``limit`` that contain ``.`` or
+    ``/`` separators gain newline break points after separators instead,
+    continuation-indented; tokens without separators pass through.
+
+    Args:
+        text: The detail-row value, possibly multi-token or multi-line.
+        limit: Maximum kept token length before folding.
+
+    Returns:
+        The text with pathological tokens folded at separator boundaries.
+    """
+
+    def pack(segments: list[str]) -> list[str]:
+        lines: list[str] = []
+        current = ""
+        for segment in segments:
+            if current and len(current) + len(segment) > limit:
+                lines.append(current)
+                current = segment
+            else:
+                current += segment
+        if current:
+            lines.append(current)
+        return lines
+
+    def fold_token(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if len(token) <= limit or not re.search(r"[./]", token):
+            return token
+        # task-1623: break at "/" boundaries first so a path never splits
+        # its filename at the extension dot ("config." / "toml" read as a
+        # mid-filename break in the critique); fall back to "." breaks
+        # only for slash-free chunks that still exceed the limit.
+        slash_chunks = re.split(r"(?<=/)", token)
+        segments: list[str] = []
+        for chunk in slash_chunks:
+            if len(chunk) > limit:
+                segments.extend(re.split(r"(?<=\.)", chunk))
+            else:
+                segments.append(chunk)
+        return "\n  ".join(pack(segments))
+
+    return re.sub(r"\S+", fold_token, text)
+
+
+class SettingsCategorySearchInput(Input):
+    """Category filter input where "/" re-arms the query instead of typing.
+
+    "/" is the screen-wide focus-the-filter key; once the filter itself has
+    focus the screen's on_key never sees printable keys, so a second "/"
+    would insert a literal slash into the query (task-1584's live trap).
+    Intercept it here: select-all so the next keystroke replaces the stale
+    text. Every other Input keeps literal "/" typing (endpoint URLs).
+    """
+
+    async def _on_key(self, event: Key) -> None:
+        # Same slash representations the screen-level handler accepts --
+        # some platforms/layouts emit key="slash" without character="/"
+        # (Qodo review; the Playwright driver hit the "slash" name too).
+        if event.key in {"/", "slash"} or event.character == "/":
+            self.select_all()
+            event.stop()
+            event.prevent_default()
+            return
+        await super()._on_key(event)
 
 
 class SettingsURLInput(Input):
@@ -722,13 +1453,209 @@ class SettingsURLInput(Input):
         return strip.apply_style(self.rich_style)
 
 
+def _mask_url_userinfo(url: object) -> str:
+    """Mask a password embedded in a URL's userinfo before display.
+
+    ``redact_secret_text`` is assignment-name based and misses credentials in
+    ``scheme://user:pass@host`` form, so mask them positionally here. Non-URL
+    or password-less input is returned unchanged.
+
+    Args:
+        url: A candidate endpoint string.
+
+    Returns:
+        The URL with any userinfo password replaced by ``***``.
+    """
+    from urllib.parse import urlsplit, urlunsplit
+
+    text = str(url or "")
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return text
+    # Reconstruct from the raw netloc substring rather than the lazy
+    # ``.hostname``/``.port`` properties: ``.port`` raises ValueError on a
+    # malformed/out-of-range port (crashing the Test on a typo'd endpoint), and
+    # ``.hostname`` strips IPv6 brackets. Keep host:port verbatim; only the
+    # userinfo password is masked. (Never fall back to returning ``text`` with
+    # the password intact -- redact_secret_text can't catch ``user:pass@host``.)
+    netloc = parts.netloc
+    userinfo, at, hostport = netloc.rpartition("@")
+    if not at or ":" not in userinfo:
+        # No userinfo, or a username with no password -> nothing to mask.
+        return text
+    user = userinfo.partition(":")[0]
+    masked = f"{user}:***@{hostport}" if user else f"***@{hostport}"
+    return urlunsplit((parts.scheme, masked, parts.path, parts.query, parts.fragment))
+
+
+def overlay_provider_draft_config(
+    app_config,
+    *,
+    provider_save_key: str,
+    endpoint_key: str,
+    draft_endpoint: str | None,
+    draft_env_var: str | None,
+    draft_api_key: str | None,
+) -> dict:
+    """Return a deep copy of ``app_config`` with unsaved draft provider fields overlaid.
+
+    Args:
+        app_config: The loaded application configuration.
+        provider_save_key: The ``api_settings`` section key to overlay onto.
+        endpoint_key: The endpoint setting key for this provider (e.g. ``api_url``).
+        draft_endpoint: Draft endpoint, or ``None`` to leave the saved endpoint.
+        draft_env_var: Draft credential env-var name, or ``None`` to leave saved.
+        draft_api_key: Draft API key (``""`` models an explicit clear), or ``None``.
+
+    Returns:
+        A new config dict; ``app_config`` is never mutated.
+    """
+    merged = copy.deepcopy(dict(app_config)) if isinstance(app_config, Mapping) else {}
+    api_settings = merged.get("api_settings")
+    if not isinstance(api_settings, dict):
+        api_settings = {}
+        merged["api_settings"] = api_settings
+    section = api_settings.get(provider_save_key)
+    if not isinstance(section, dict):
+        section = {}
+        api_settings[provider_save_key] = section
+    if draft_endpoint is not None:
+        section[endpoint_key] = draft_endpoint
+    if draft_env_var is not None:
+        section["api_key_env_var"] = draft_env_var
+    if draft_api_key is not None:
+        section["api_key"] = draft_api_key
+    return merged
+
+
+class RagProfileNameModal(ModalScreen[str | None]):
+    """Minimal name-prompt modal for the RAG profile-manager Clone/Rename actions.
+
+    No existing text-prompt modal precedent lives in this screen (task-2
+    brief) -- this follows the same dismiss-with-a-value + push_screen(modal,
+    callback) shape as ``ConsoleSystemPromptModal``. Dismisses with the
+    trimmed name, or ``None`` on Cancel/Escape/a blank submission.
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+
+    def __init__(
+        self, *, title: str, initial: str = "", confirm_label: str = "Save"
+    ) -> None:
+        super().__init__()
+        self._modal_title = title
+        self._initial = initial
+        self._confirm_label = confirm_label
+
+    def compose(self) -> ComposeResult:
+        with Vertical(
+            id="settings-rag-profile-name-modal", classes="settings-rag-profile-modal"
+        ):
+            yield Static(self._modal_title, classes="destination-section")
+            yield Input(value=self._initial, id="settings-rag-profile-name-input")
+            with Horizontal(classes="settings-action-row"):
+                yield Button("Cancel", id="settings-rag-profile-name-cancel")
+                yield Button(
+                    self._confirm_label,
+                    id="settings-rag-profile-name-confirm",
+                    variant="primary",
+                )
+
+    def on_mount(self) -> None:
+        try:
+            self.query_one("#settings-rag-profile-name-input", Input).focus()
+        except QueryError:
+            pass
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#settings-rag-profile-name-cancel")
+    def _handle_cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#settings-rag-profile-name-confirm")
+    def _handle_confirm(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._submit_current_value()
+
+    @on(Input.Submitted, "#settings-rag-profile-name-input")
+    def _handle_submit(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._submit_current_value()
+
+    def _submit_current_value(self) -> None:
+        try:
+            value = self.query_one("#settings-rag-profile-name-input", Input).value
+        except QueryError:
+            value = ""
+        self.dismiss(value.strip() or None)
+
+
+class RagProfileSwitchConfirmModal(ModalScreen[str]):
+    """Unsaved-Library/RAG-draft prompt before switching the active profile.
+
+    Dismisses with ``"save"``, ``"discard"``, or ``"cancel"`` (also the
+    Escape/no-choice outcome) -- never raises, never silently drops the
+    caller's draft.
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(
+            id="settings-rag-profile-switch-modal", classes="settings-rag-profile-modal"
+        ):
+            yield Static("Unsaved Library/RAG changes", classes="destination-section")
+            yield Static(
+                "Save your changes before switching the active profile, or discard them?",
+                classes="settings-detail-row",
+            )
+            with Horizontal(classes="settings-action-row"):
+                yield Button("Cancel", id="settings-rag-profile-switch-cancel")
+                yield Button("Discard", id="settings-rag-profile-switch-discard")
+                yield Button(
+                    "Save", id="settings-rag-profile-switch-save", variant="primary"
+                )
+
+    def action_cancel(self) -> None:
+        self.dismiss("cancel")
+
+    @on(Button.Pressed, "#settings-rag-profile-switch-cancel")
+    def _handle_cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss("cancel")
+
+    @on(Button.Pressed, "#settings-rag-profile-switch-discard")
+    def _handle_discard(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss("discard")
+
+    @on(Button.Pressed, "#settings-rag-profile-switch-save")
+    def _handle_save(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss("save")
+
+
 class SettingsScreen(BaseAppScreen):
-    """Global preferences, appearance, accounts, storage, and app behavior."""
+    """Global preferences, appearance, storage, and app behavior."""
 
     BINDINGS = [
         ("s", "settings_save_category", "Save Settings category"),
         ("r", "settings_revert_category", "Revert Settings category"),
         ("t", "settings_test_category", "Test Settings category"),
+        # Task 6 (541 AC6): RAG profile-workflow accelerators. Real Textual
+        # bindings (so they're inert, by design, while an Input/TextArea has
+        # focus -- those widgets consume printable keys before they bubble
+        # here), but each action ALSO self-guards to the LIBRARY_RAG
+        # category (see action_settings_rag_*) since this BINDINGS list is
+        # shared by every Settings category, unlike s/r/t which dispatch
+        # per-category internally.
+        ("a", "settings_rag_set_active", "Set active RAG profile"),
+        ("c", "settings_rag_clone", "Clone RAG profile"),
+        ("b", "settings_rag_backfill", "Backfill RAG index"),
     ]
 
     #: Footer hint set — mirrors the show=True bindings the retired Textual
@@ -739,16 +1666,78 @@ class SettingsScreen(BaseAppScreen):
         ("t", "test category"),
     )
 
+    #: task-1564: categories whose `t` binding performs a real test action --
+    #: everywhere else action_settings_test_category answers with the "No
+    #: test action is available" toast, so the footer must not advertise it.
+    TESTABLE_SETTINGS_CATEGORIES = frozenset(
+        {
+            SettingsCategoryId.PROVIDERS_MODELS,
+            SettingsCategoryId.DIAGNOSTICS,
+            SettingsCategoryId.STORAGE,
+            SettingsCategoryId.PRIVACY_SECURITY,
+            SettingsCategoryId.APPEARANCE,
+            SettingsCategoryId.LIBRARY_RAG,
+        }
+    )
+
+    #: task-1714: the footer's generic "t test category" named an
+    #: abstraction while the on-page buttons say Check/Validate/Test --
+    #: the hint now uses each category's real verb.
+    TEST_ACTION_LABELS = {
+        SettingsCategoryId.PROVIDERS_MODELS: "test provider",
+        SettingsCategoryId.DIAGNOSTICS: "validate config",
+        SettingsCategoryId.STORAGE: "check storage",
+        SettingsCategoryId.PRIVACY_SECURITY: "check privacy",
+        SettingsCategoryId.APPEARANCE: "preview appearance",
+        SettingsCategoryId.LIBRARY_RAG: "check index",
+    }
+
+    #: Task 6 (541 AC6): RAG-only accelerator hints, appended to
+    #: SETTINGS_SHORTCUTS whenever LIBRARY_RAG is the active category -- the
+    #: a/c/b bindings above are no-ops everywhere else, so they're only
+    #: advertised in the footer while they actually do something.
+    LIBRARY_RAG_SHORTCUTS = (
+        ("a", "set active"),
+        ("c", "clone"),
+        ("b", "backfill"),
+    )
+
+    #: Task 6 review (Important): action names of the RAG profile-workflow
+    #: accelerators within BINDINGS -- action_show_workbench_help uses this
+    #: to keep the app-level F1 help panel honest, mirroring the footer's
+    #: LIBRARY_RAG gating above (the a/c/b bindings are guarded no-ops (see
+    #: action_settings_rag_*) in every other category, so advertising them
+    #: there would be a lie).
+    _RAG_ACCELERATOR_ACTION_NAMES = frozenset(
+        {
+            "settings_rag_set_active",
+            "settings_rag_clone",
+            "settings_rag_backfill",
+        }
+    )
+
     active_category = reactive(SettingsCategoryId.OVERVIEW.value, recompose=True)
     category_search_query = reactive("")
     server_sync_workspace_handoff_rows = reactive((), recompose=True)
     manual_sync_rows = reactive((), recompose=True)
-    theme_editor_modified = reactive(False, recompose=True)
+    # Deliberately NOT recompose=True (Qodo review of PR #1125): a recompose
+    # here remounts the theme editor on the FIRST real user edit, discarding
+    # the in-progress input and leaving the flag stale-True against a clean
+    # editor. The two displays that read it (rail dirty marker, inspector
+    # row) refresh in place via _refresh_theme_modified_widgets, mirroring
+    # the InternalPromptsPanel.Modified idiom.
+    theme_editor_modified = reactive(False)
+
+    #: TASK-366: sentinel copies for the provider Test result row.
+    _PROVIDER_TEST_NOT_RUN_COPY = "Provider test has not run."
+    _PROVIDER_TEST_STALE_COPY = (
+        "Provider settings changed since the last test — re-run Test Provider."
+    )
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "settings", **kwargs)
         self._settings_drafts: dict[SettingsCategoryId, SettingsDraft] = {}
-        self._provider_test_result = "Provider test has not run."
+        self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
         self._provider_save_result = (
             "Provider settings have not been saved this session."
         )
@@ -763,15 +1752,116 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_manual = False
         self._syncing_provider_selection = False
         self._syncing_console_threshold = False
+        self._syncing_console_max_parallel_runs = False
+        self._syncing_console_tool_result_display_chars = False
         self._syncing_console_defaults = False
         self._syncing_console_background_effects = False
         self._syncing_library_rag_defaults = False
+        #: A profile id set by the "Save then switch" branch of the unsaved-
+        #: changes prompt (RagProfileSwitchConfirmModal): remembered here so
+        #: _apply_library_rag_save_result can dispatch the deferred set-active
+        #: once the save worker reports back, then always self-clears.
+        self._rag_profile_pending_activate: str | None = None
         self._syncing_appearance_defaults = False
         self._syncing_storage_defaults = False
         self._active_settings_field_id: str | None = None
+        self._domain_group_expanded = False
+        #: Task 3 (541 v2 UX AC3): the last-expanded Library/RAG Collapsible
+        #: group (a key into `_RAG_GROUP_GUIDANCE`, e.g. "chunking"), used by
+        #: `_rag_field_guidance_rows()` as the fallback scope when no RAG
+        #: field is currently focused. Set by
+        #: handle_settings_library_rag_collapsible_toggled; reset to None on
+        #: any category switch away from LIBRARY_RAG (see _select_category).
+        self._active_rag_scope_group: str | None = None
+        #: Task 4 (541 v2 UX AC1): non-None while the profile Select is
+        #: showing a DIFFERENT profile than the active one (browsed via the
+        #: picker, never "Set active"'d) -- the editor renders THAT
+        #: profile's values read-only and every
+        #: handle_library_rag_*_changed handler early-returns before any
+        #: draft staging (see _library_rag_edits_suppressed). None means
+        #: "showing the active profile" (ordinary, draft-aware editing).
+        #: Reset on any category switch away from LIBRARY_RAG (see
+        #: _select_category) and cleared by _rag_after_set_active /
+        #: _rag_after_profile_action.
+        self._rag_preview_profile_id: str | None = None
+        #: 541-v2 final review item 1: FIFO queue of the Select value(s)
+        #: `_sync_library_rag_profile_widgets`'s OWN `set_options`/`value =`
+        #: writes are about to cause the profile Select to post a
+        #: `Select.Changed` for. A prior boolean-flag approach here
+        #: (`_syncing_library_rag_profile_select`, set True around the
+        #: writes, reset in a `finally`) could NOT actually suppress
+        #: anything: Textual's `Select._watch_value` posts `Changed`
+        #: through the widget's own async message queue, so
+        #: handle_library_rag_profile_select_changed only receives it AFTER
+        #: this resync has already returned and reset the flag (verified
+        #: empirically with a mounted-pilot probe -- both the transient
+        #: `Select.NULL` reset `set_options()` causes and the final
+        #: resolved value arrive as separate deferred messages). Recording
+        #: the actual value(s) a resync will cause Select to post here --
+        #: and having the handler consume-and-ignore exactly those, in
+        #: arrival order, popping each once matched -- suppresses them for
+        #: real without swallowing a genuine user browse that later happens
+        #: to land on the same value. Cleared on any category switch away
+        #: from LIBRARY_RAG too (see _select_category): leaving the
+        #: category recomposes the detail pane, minting a brand-new Select
+        #: instance no stale expectation could ever legitimately match.
+        self._rag_select_suppress_queue: list = []
+        #: Same idiom as `_rag_select_suppress_queue`, applied to the
+        #: Image Gen default-backend Select: constructing a Select with a
+        #: non-blank `value=` fires `Select.Changed` the moment it mounts
+        #: (verified empirically -- unlike Checkbox/Input, a fresh Select's
+        #: reactive default IS blank, so any non-blank initial value is a
+        #: real change from Select's own point of view). Every category
+        #: (re)compose/recompose of `ImageGenSettingsPanel` -- initial
+        #: category open, and the panel.recompose() after a successful
+        #: Save or after Revert -- mints a brand-new Select instance that
+        #: refires exactly once, re-staging its own already-current value
+        #: into the draft as a spurious "edit" if left unguarded. Queued
+        #: right before each (re)compose with the value that compose() is
+        #: about to construct the Select with; the handler consumes and
+        #: ignores exactly one matching entry per message. Cleared on any
+        #: category switch away from IMAGE_GENERATION (see _select_category).
+        self._image_gen_select_suppress_queue: list = []
+        #: Task 6: guards the single-in-flight backend Test probe. Set
+        #: True for the duration of one `_image_gen_probe_worker` run
+        #: (Test buttons disabled meanwhile); a re-entrant Test click is a
+        #: no-op while True (belt-and-suspenders alongside the disabled
+        #: buttons themselves).
+        self._image_gen_probe_in_flight: bool = False
+        #: Bumped every time the user navigates AWAY from IMAGE_GENERATION
+        #: (see _select_category). A probe result callback captures the
+        #: session value at dispatch time; if it no longer matches when
+        #: the callback lands (the category was left -- and possibly
+        #: re-entered, minting a brand-new panel with fresh "Configured"/
+        #: "Not configured" badges -- since dispatch), the stale result is
+        #: dropped rather than clobbering an unrelated, freshly (re)opened
+        #: panel's badge or in-flight state.
+        self._image_gen_probe_session: int = 0
+        #: Qodo PR #901 fix 3: `_image_gen_raw_section()`'s merged
+        #: `[image_generation]` baseline, cached for the duration of one
+        #: category "session" -- reached from every keystroke's staging
+        #: handler (`Input.Changed` et al.), and `SettingsConfigAdapter
+        #: ().load()` deepcopies the ENTIRE merged app config, making a
+        #: fresh call per keystroke needlessly expensive. Invalidated
+        #: (`None`) at exactly the three moments the on-disk truth can
+        #: change: entering IMAGE_GENERATION (`_select_category`, so a
+        #: stale cache from a PRIOR visit -- e.g. after an Advanced
+        #: Config hand-edit in between -- is never reused), and after a
+        #: successful Save or Revert (`_apply_image_gen_save_result` /
+        #: `_handle_image_gen_revert`). `None` also means "not yet
+        #: populated this session" -- lazily filled on first access, so
+        #: merely opening the category (never editing anything) never
+        #: triggers a load at all.
+        self._image_gen_raw_section_cache: Mapping[str, object] | None = None
         self._navigation_provider: str | None = None
         self._navigation_model: str | None = None
         self._navigation_field: str | None = None
+        self._speech_tts_configure_provider: str | None = None
+        self._speech_tts_navigation_target: SpeechTTSNavigationTarget | None = None
+        self._speech_tts_draft_state: GlobalSpeechTTSState | None = None
+        self._speech_tts_original_state: GlobalSpeechTTSState | None = None
+        self._speech_tts_leave_in_progress = False
+        self._speech_tts_leave_bypass = False
         #: One-shot focus intent (task-290): `Widget.focus()` defers its
         #: set_focus via call_later, so a storm recompose can destroy the
         #: target between intent and processing. Recorded when navigation
@@ -798,13 +1888,83 @@ class SettingsScreen(BaseAppScreen):
         self._library_rag_result = (
             "Library/RAG defaults have not been saved this session."
         )
+        self._library_rag_profile_result = "No RAG profile action taken this session."
+        # Task 4 (SP3): index status readout + Backfill. The Static renders
+        # this placeholder text at compose time -- the real state is fetched
+        # off-thread (touches on-disk Chroma) on category show, after
+        # set-active, and after a successful save; never during compose.
+        self._library_rag_index_status_text = RAG_INDEX_STATUS_CHECKING_TEXT
+        #: Task 2 (541 v2 UX): the raw dict behind `_library_rag_index_status_text`,
+        #: kept in lockstep by `_apply_library_rag_index_status` (the single
+        #: funnel every fetch trigger already goes through -- category show,
+        #: post-save, post-set-active, 't' test). The pre-commit re-index
+        #: confirm gate (`_confirm_reindex_then_save`) reads this to avoid
+        #: an extra off-thread status fetch on every Save click; None until
+        #: the first fetch completes.
+        self._library_rag_index_status_cache: Mapping[str, object] | None = None
+        #: Task 2 review (Important): debounces the cache-miss branch of
+        #: `_confirm_reindex_then_save` against a second Save click landing
+        #: before the first off-thread status fetch completes. Without this,
+        #: a second click while `_library_rag_index_status_cache` is still
+        #: None dispatches a SECOND `_rag_reindex_confirm_status_worker` in
+        #: the same `exclusive=True` `@work` group as the first -- which
+        #: CANCELS the first call, silently dropping ITS `pending_activate`
+        #: (held only as a function-local inside the now-cancelled call,
+        #: never handed back to anything). Set right before that dispatch,
+        #: cleared once the flow's decision is made (worker callback, both
+        #: the direct-dispatch and modal outcomes) or the modal resolves;
+        #: see `_rag_reindex_confirm_status_worker` and
+        #: `_handle_reindex_confirmation_result`.
+        self._rag_reindex_confirm_in_flight = False
+        self._library_rag_backfill_in_flight = False
+        #: Task 5 review (541 v2 UX AC5, Important): tracks whether the LAST
+        #: `_refresh_rag_first_run_panel_state` evaluation found the
+        #: first-run starter panel active -- lets that method detect the
+        #: actual first-run -> not-first-run TRANSITION (clone completes /
+        #: backfill completes) rather than reacting to every ordinary status
+        #: refresh. Without this, the fix that re-expands the Search group
+        #: on first-run exit would fire unconditionally on every trigger
+        #: (category show / Save / set-active), forcibly reopening Search
+        #: even for a user in normal (non-first-run) state who deliberately
+        #: collapsed it. False at construction to match the optimistic
+        #: "not first-run" compose (`_render_library_rag_detail`, cache
+        #: cold): the entering-first-run transition then fires correctly
+        #: the first time a genuinely first-run status lands.
+        self._rag_first_run_active = False
         self._appearance_result = (
             "Appearance defaults have not been saved this session."
         )
         self._storage_result = "Storage defaults have not been saved this session."
+        #: Task 9 (workspace lifecycle card): the workspace row currently
+        #: selected in the list, or None when nothing is selected -- the
+        #: card renders nothing in that case. Reset whenever the user
+        #: navigates away from WORKSPACES (see _select_category) and
+        #: whenever a workspace is archived (its row disappears from the
+        #: default, not-showing-archived list).
+        self._settings_selected_workspace_id: str | None = None
+        #: Task 9: mirrors the "Show archived" checkbox; read directly by
+        #: `_render_workspaces_detail` on every (re)compose rather than
+        #: cached separately, so there is no stale-watcher state to wipe.
+        self._settings_show_archived_workspaces: bool = False
+        self._settings_workspaces_result = ""
         self._advanced_config_result = "Advanced config validation: not run"
         self._advanced_config_validated_text: str | None = None
         self._ownership_by_category_cache = self._build_ownership_by_category()
+        # Lazily-memoized cache, NOT a recompose=True reactive (P3 whole-branch
+        # review Fix 1 + Fix 2): InternalPromptsPanel.Modified fires on every
+        # prompt Save/Reset, and authoring.customized_count() iterates all
+        # CATALOG entries with a config read each (~2.5ms). A recompose=True
+        # reactive here would (a) unmount/remount the whole detail pane on
+        # every save, wiping the panel's search text and scroll -- defeating
+        # its own targeted _refresh_row design -- and (b) get recomputed live
+        # on every Settings sidebar category-search keystroke via
+        # _category_summaries(). Initialized to None and computed on first
+        # DISPLAY (never in __init__): the count reads config, and reading
+        # config during construction can force a config-file load/creation
+        # before the app is ready (breaking storage-readiness checks). Kept
+        # fresh afterward by _on_internal_prompts_modified via the panel's own
+        # computed count (no extra live call).
+        self._internal_prompts_customized_count: int | None = None
         # set_reactive, NOT plain assignment: assigning a recompose=True
         # reactive here fires refresh(recompose=True) on the not-yet-mounted
         # screen; the flag survives into mount and forces a full recompose of
@@ -880,18 +2040,154 @@ class SettingsScreen(BaseAppScreen):
         Persistence matters here: this screen's `recompose=True` reactives
         (`active_category`, the sync-row tuples) replace the footer widget on
         every category switch; the registration must survive that.
+
+        Task 6 (541 AC6): the rendered set is category-aware -- LIBRARY_RAG
+        additionally advertises the a/c/b profile-workflow accelerators.
+        Recomputed from `self.active_category` on every call, so re-calling
+        this after a category switch (see `_select_category`) keeps the
+        footer in sync without waiting for a recompose.
         """
-        self.register_footer_shortcuts(
-            source="settings", shortcuts=self.SETTINGS_SHORTCUTS
+        shortcuts = self._footer_shortcut_entries()
+        self.register_footer_shortcuts(source="settings", shortcuts=shortcuts)
+
+    def _footer_shortcut_entries(self) -> tuple[tuple[str, str], ...]:
+        """Category- and focus-aware footer hints (task-1564/1560).
+
+        Drops the ``s``/``r`` hints for categories outside the guided draft
+        model (read-only pages, autosave Splash, immediate-apply Workspaces,
+        the editor-owned Theme -- everywhere action_settings_save_category
+        answers with an informational toast), drops the ``t`` hint for
+        categories whose test action is the "No test action is available"
+        toast, appends the RAG accelerators only where they act, and
+        prefixes keys with "Esc, " while a text-entry widget owns focus
+        (printable keys feed the field until Esc).
+        """
+        shortcuts = self.SETTINGS_SHORTCUTS
+        active = self._active_category_id()
+        if active not in GUIDED_SETTINGS_MUTATION_CATEGORIES:
+            shortcuts = tuple(
+                entry for entry in shortcuts if entry[0] not in {"s", "r"}
+            )
+        if active not in self.TESTABLE_SETTINGS_CATEGORIES:
+            shortcuts = tuple(entry for entry in shortcuts if entry[0] != "t")
+        else:
+            test_label = self.TEST_ACTION_LABELS.get(active, "test category")
+            shortcuts = tuple(
+                (key, test_label if key == "t" else description)
+                for key, description in shortcuts
+            )
+        if self._text_entry_focused():
+            # task-1560: s/r/t are real bindings and therefore inert while an
+            # Input/TextArea consumes printable keys -- advertising the bare
+            # key would be a silent no-op (the critique's Alex trap). Tell
+            # the truth about the escape hatch instead.
+            shortcuts = tuple(
+                (f"Esc, {key}", description) for key, description in shortcuts
+            )
+        if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
+            shortcuts = shortcuts + self.LIBRARY_RAG_SHORTCUTS
+        return shortcuts
+
+    def _text_entry_focused(self) -> bool:
+        """Whether a printable-key-consuming widget owns focus right now."""
+        try:
+            focused = getattr(self.app, "focused", None)
+        except Exception:
+            # No active app (bare-screen tests / teardown) -- nothing focused.
+            return False
+        return isinstance(focused, (Input, TextArea))
+
+    def on_descendant_focus(self, event) -> None:
+        self._register_footer_shortcuts()
+
+    def on_descendant_blur(self, event) -> None:
+        self._register_footer_shortcuts()
+
+    @staticmethod
+    def _binding_entry_key_action_description(
+        entry: object,
+    ) -> tuple[str, str, str] | None:
+        """(key, action, description) for a BINDINGS entry, or ``None`` if
+        ``entry`` isn't a recognized shape.
+
+        task-567: this used to only handle the tuple/list shape
+        (``(key, action, description=...)``); a ``Binding(...)`` instance --
+        Textual's OTHER valid BINDINGS entry shape -- silently vanished from
+        the flattened help output below.
+        """
+        if isinstance(entry, Binding):
+            return str(entry.key), str(entry.action), str(entry.description)
+        if isinstance(entry, (tuple, list)) and entry:
+            return (
+                str(entry[0]),
+                str(entry[1]),
+                str(entry[2]) if len(entry) > 2 else "",
+            )
+        return None
+
+    async def action_show_workbench_help(self) -> None:
+        """F1 help, scoped to bindings that actually do something right now.
+
+        `TldwCli.action_show_workbench_help` (app.py) delegates to this hook
+        when it's present instead of falling back to its own generic
+        BINDINGS flattener (`_show_generic_screen_help`), so this mirrors
+        that fallback's output shape (same title/route id/shortcuts) except
+        it drops the RAG profile-workflow accelerators (a/c/b) unless
+        LIBRARY_RAG is the active category -- those bindings are guarded
+        no-ops everywhere else (see action_settings_rag_*), same gating the
+        footer already applies via LIBRARY_RAG_SHORTCUTS (task 6, 541 AC6
+        review, Important).
+        """
+        show_rag_accelerators = (
+            self._active_category_id() is SettingsCategoryId.LIBRARY_RAG
         )
+        parsed_entries = (
+            parts
+            for entry in self.BINDINGS
+            if (parts := self._binding_entry_key_action_description(entry)) is not None
+        )
+        shortcuts = tuple(
+            (key, description)
+            for key, action, description in parsed_entries
+            if show_rag_accelerators or action not in self._RAG_ACCELERATOR_ACTION_NAMES
+        )
+        screen_name = type(self).__name__
+        state = WorkbenchHelpState(
+            route_id=str(getattr(self.app, "current_tab", "") or screen_name),
+            title=f"{screen_name} Shortcuts",
+            shortcuts=shortcuts,
+        )
+        self.app.push_screen(WorkbenchHelpPanel(state))
 
     def on_mount(self) -> None:
         super().on_mount()
         self._register_footer_shortcuts()
         self._queue_sync_rows_refresh()
+        # Task 4 (SP3): covers restored state (`restore_state` can set
+        # `active_category` to LIBRARY_RAG before this screen is even
+        # mounted) -- `_select_category` alone only covers a later in-session
+        # switch INTO the category.
+        self._maybe_refresh_rag_index_status_on_show()
+        self.call_after_refresh(self._update_inspector_overflow_hint)
 
     def on_screen_resume(self) -> None:
         self._queue_sync_rows_refresh()
+        self._maybe_refresh_rag_index_status_on_show()
+        self._maybe_refresh_workspaces_pane_on_show()
+
+    def _maybe_refresh_rag_index_status_on_show(self) -> None:
+        if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
+            self._refresh_library_rag_index_status()
+
+    def _maybe_refresh_workspaces_pane_on_show(self) -> None:
+        """Task 11: pick up registry changes made while this screen was
+        suspended (e.g. a workspace created/archived from Console) as soon
+        as the user resumes back into the WORKSPACES category -- mirrors
+        `_maybe_refresh_rag_index_status_on_show`'s per-category resume
+        guard above.
+        """
+        if self._active_category_id() is SettingsCategoryId.WORKSPACES:
+            self._refresh_settings_workspaces_pane()
 
     def _queue_sync_rows_refresh(self) -> None:
         if not getattr(self, "is_mounted", False):
@@ -938,6 +2234,13 @@ class SettingsScreen(BaseAppScreen):
                 "Shared",
             ),
             SettingsCategorySummary(
+                SettingsCategoryId.SPEECH_TTS,
+                "Speech & TTS",
+                "Application-wide speech, TTS, voice, audio.cpp, audio_cpp, OpenAI, "
+                "ElevenLabs, Kokoro, Chatterbox, Higgs, and AllTalk defaults and setup.",
+                "Global",
+            ),
+            SettingsCategorySummary(
                 SettingsCategoryId.APPEARANCE,
                 "Appearance",
                 "Theme, density, and visual defaults shared with the app shell.",
@@ -962,6 +2265,12 @@ class SettingsScreen(BaseAppScreen):
                 "Guided",
             ),
             SettingsCategorySummary(
+                SettingsCategoryId.WORKSPACES,
+                "Workspaces",
+                "Create, rename, archive, and bind folders for agent file tools.",
+                "Immediate actions",
+            ),
+            SettingsCategorySummary(
                 SettingsCategoryId.PRIVACY_SECURITY,
                 "Privacy & Security",
                 "Secrets, encryption, redaction, and local privacy boundaries.",
@@ -975,7 +2284,7 @@ class SettingsScreen(BaseAppScreen):
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.LIBRARY_RAG,
-                "Library & RAG",
+                "RAG",
                 "Source search, retrieval, citations, snippets, and Console evidence defaults.",
                 "Guided",
             ),
@@ -987,8 +2296,8 @@ class SettingsScreen(BaseAppScreen):
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.PERSONAS,
-                "Personas",
-                "Character/persona discovery and Console attach defaults.",
+                "Roleplay",
+                "Character and user profile browsing, plus how they attach to Console chats.",
                 "Read-only",
             ),
             SettingsCategorySummary(
@@ -1028,6 +2337,13 @@ class SettingsScreen(BaseAppScreen):
                 "Read-only",
             ),
             SettingsCategorySummary(
+                SettingsCategoryId.IMAGE_GENERATION,
+                "Image Gen",
+                "Image generation backend defaults for SwarmUI, OpenRouter, and "
+                "other backend models.",
+                "Guided",
+            ),
+            SettingsCategorySummary(
                 SettingsCategoryId.DIAGNOSTICS,
                 "Diagnostics",
                 "Config validation, logs, and troubleshooting signals.",
@@ -1039,7 +2355,39 @@ class SettingsScreen(BaseAppScreen):
                 "Raw TOML view and expert configuration editing.",
                 "Advanced",
             ),
+            SettingsCategorySummary(
+                SettingsCategoryId.INTERNAL_PROMPTS,
+                "Internal Prompts",
+                "View and edit the system prompts tldw_chatbook uses internally "
+                "(RAG, web search, agents, summarization, more).",
+                self._internal_prompts_status(),
+            ),
         )
+
+    def _get_internal_prompts_customized_count(self) -> int:
+        """Memoized customized-prompt count for display.
+
+        Computes the live count (authoring.customized_count(), ~2.5ms over all
+        CATALOG entries with a config read each) only on the FIRST call, then
+        caches it. Deferred to first display (never __init__) so it never
+        forces a config load/creation during construction; recomputed at most
+        once per screen since _on_internal_prompts_modified refreshes the cache
+        directly from the panel's own event. Safe on a per-keystroke path
+        (_category_summaries()) because every call after the first is a plain
+        attribute read (task-P3 review Fix 2).
+        """
+        if self._internal_prompts_customized_count is None:
+            try:
+                self._internal_prompts_customized_count = (
+                    internal_prompts_authoring.customized_count()
+                )
+            except Exception:
+                self._internal_prompts_customized_count = 0
+        return self._internal_prompts_customized_count
+
+    def _internal_prompts_status(self) -> str:
+        n = self._get_internal_prompts_customized_count()
+        return f"{n} customized" if n else "Defaults"
 
     def _category_groups(
         self,
@@ -1050,6 +2398,7 @@ class SettingsScreen(BaseAppScreen):
                 (
                     SettingsCategoryId.OVERVIEW,
                     SettingsCategoryId.PROVIDERS_MODELS,
+                    SettingsCategoryId.SPEECH_TTS,
                 ),
             ),
             (
@@ -1065,11 +2414,18 @@ class SettingsScreen(BaseAppScreen):
                 "Data & Privacy",
                 (
                     SettingsCategoryId.STORAGE,
+                    SettingsCategoryId.WORKSPACES,
                     SettingsCategoryId.PRIVACY_SECURITY,
                 ),
             ),
             ("Troubleshooting", (SettingsCategoryId.DIAGNOSTICS,)),
-            ("Expert", (SettingsCategoryId.ADVANCED_CONFIG,)),
+            (
+                "Expert",
+                (
+                    SettingsCategoryId.INTERNAL_PROMPTS,
+                    SettingsCategoryId.ADVANCED_CONFIG,
+                ),
+            ),
             (
                 "Domain Defaults",
                 (
@@ -1082,6 +2438,7 @@ class SettingsScreen(BaseAppScreen):
                     SettingsCategoryId.WORKFLOWS,
                     SettingsCategoryId.MCP_DEFAULTS,
                     SettingsCategoryId.ACP_DEFAULTS,
+                    SettingsCategoryId.IMAGE_GENERATION,
                 ),
             ),
         )
@@ -1112,16 +2469,8 @@ class SettingsScreen(BaseAppScreen):
                     SettingsOwnershipRecord(
                         category=contract.category,
                         owns_config_sections=(
-                            "AppRAGSearchConfig.rag.search.default_search_mode",
-                            "AppRAGSearchConfig.rag.search.default_top_k",
-                            "AppRAGSearchConfig.rag.search.score_threshold",
-                            "AppRAGSearchConfig.rag.search.include_citations",
-                            "AppRAGSearchConfig.rag.search.citation_style",
-                            "AppRAGSearchConfig.rag.search.snippet_max_chars",
-                            "AppRAGSearchConfig.rag.search.max_context_size",
-                            "AppRAGSearchConfig.rag.retriever.fts_top_k",
-                            "AppRAGSearchConfig.rag.retriever.vector_top_k",
-                            "AppRAGSearchConfig.rag.retriever.hybrid_alpha",
+                            "the active RAG profile (rag_profiles/<id>.json)",
+                            "the [rag.service].profile pointer",
                         ),
                         reads_runtime_state_from=contract.source_of_truth,
                         writes_allowed=True,
@@ -1132,6 +2481,34 @@ class SettingsScreen(BaseAppScreen):
                         ),
                         recovery_copy=(
                             "Revert unsaved defaults or open Library to validate query behavior."
+                        ),
+                    )
+                )
+                continue
+            if contract.category is SettingsCategoryId.IMAGE_GENERATION:
+                records.append(
+                    SettingsOwnershipRecord(
+                        category=contract.category,
+                        owns_config_sections=(
+                            "image_generation.default_backend",
+                            "image_generation.enabled_backends",
+                            "image_generation.<backend>.*",
+                            "image_generation.default_batch",
+                            "image_generation.max_variants_per_message",
+                            "image_generation.context_llm_enabled",
+                            "image_generation.context_llm_turns",
+                            "image_generation.context_llm_timeout_seconds",
+                        ),
+                        reads_runtime_state_from=contract.source_of_truth,
+                        writes_allowed=True,
+                        runtime_owner="Settings persisted defaults; Console /generate-image",
+                        boundary_copy=(
+                            "Settings owns persisted backend and generation-default config; "
+                            "Console owns /generate-image, cards, and variant actions."
+                        ),
+                        recovery_copy=(
+                            "Revert unsaved edits, or edit image_generation values "
+                            "directly in Advanced Config."
                         ),
                     )
                 )
@@ -1175,8 +2552,9 @@ class SettingsScreen(BaseAppScreen):
                     value for _, value in SETTINGS_OVERVIEW_BOUNDARY_ROWS
                 ),
                 recovery_copy=(
-                    "Open the matching Settings category or destination to change behavior; "
-                    "sync and workspace status here is read-only."
+                    "Sync status here is read-only - manage workspaces in "
+                    "Settings > Workspaces; switch in Console (Alt+W); run "
+                    "sync from the owning sync surfaces."
                 ),
                 read_only_reason="Overview summarizes status and ownership only.",
             ),
@@ -1200,6 +2578,28 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 recovery_copy=(
                     "Test provider readiness, then use Console Defaults for sampling and transport settings."
+                ),
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.SPEECH_TTS,
+                owns_config_sections=(
+                    "app_tts global defaults",
+                    "app_tts provider connection and initialization",
+                    "API OpenAI and ElevenLabs credentials",
+                    "HiggsSettings initialization",
+                ),
+                reads_runtime_state_from=("TTS service configuration revisions",),
+                writes_allowed=True,
+                runtime_owner=(
+                    "Settings persisted global defaults; Speech Lab runtime operations"
+                ),
+                boundary_copy=(
+                    "Settings is the durable owner for global Speech & TTS setup; "
+                    "Studio preferences remain separate."
+                ),
+                recovery_copy=(
+                    "Revert the draft or open Speech Lab for explicit test, discovery, "
+                    "generation, and playback."
                 ),
             ),
             SettingsOwnershipRecord(
@@ -1235,8 +2635,8 @@ class SettingsScreen(BaseAppScreen):
                     "use the editor's Apply/Save/Reset buttons."
                 ),
                 recovery_copy=(
-                    "Themes are saved to ~/.config/tldw_cli/themes/; reset or delete files there "
-                    "to recover."
+                    f"Themes are saved to {_theme_save_target()}{os.sep}; reset or delete "
+                    "files there to recover."
                 ),
             ),
             SettingsOwnershipRecord(
@@ -1282,6 +2682,19 @@ class SettingsScreen(BaseAppScreen):
                 ),
             ),
             SettingsOwnershipRecord(
+                category=SettingsCategoryId.WORKSPACES,
+                owns_config_sections=(),
+                reads_runtime_state_from=("workspace registry",),
+                writes_allowed=True,
+                runtime_owner="Workspace registry (immediate actions)",
+                boundary_copy=(
+                    "Lifecycle and folder bindings apply immediately; no draft state."
+                ),
+                recovery_copy=(
+                    "Quick actions: switch/rename/archive in Console (Alt+W); create in Library."
+                ),
+            ),
+            SettingsOwnershipRecord(
                 category=SettingsCategoryId.PRIVACY_SECURITY,
                 owns_config_sections=(
                     "encryption",
@@ -1302,6 +2715,7 @@ class SettingsScreen(BaseAppScreen):
                 owns_config_sections=(
                     "console.collapse_large_pastes",
                     "console.paste_collapse_threshold",
+                    "console.max_parallel_runs",
                     "console.background_effects.*",
                     "chat_defaults.streaming",
                     "chat_defaults.temperature",
@@ -1335,6 +2749,20 @@ class SettingsScreen(BaseAppScreen):
                 runtime_owner="Settings advanced editor",
                 boundary_copy="Advanced Config bypasses guided category controls.",
                 recovery_copy="Validate exact current TOML before save; restore from backup if needed.",
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.INTERNAL_PROMPTS,
+                owns_config_sections=("internal_prompts.<prompt id>",),
+                reads_runtime_state_from=("packaged internal prompt registry",),
+                writes_allowed=True,
+                runtime_owner="Internal Prompts panel",
+                boundary_copy=(
+                    "Settings Internal Prompts panel owns internal-tooling prompt overrides; "
+                    "use each prompt's own Save/Reset buttons."
+                ),
+                recovery_copy=(
+                    "Reset a prompt from its editor to restore the packaged default text."
+                ),
             ),
             *self._domain_category_ownership_records(),
         )
@@ -1425,6 +2853,32 @@ class SettingsScreen(BaseAppScreen):
             DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
             minimum=MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
             maximum=MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+        )
+
+    def _loaded_console_max_parallel_runs(self) -> int:
+        # No maximum -- deliberately unbounded (user-owned trade-off), see
+        # DEFAULT_CONSOLE_MAX_PARALLEL_RUNS's docstring.
+        return coerce_int_setting(
+            self._console_settings().get(
+                "max_parallel_runs",
+                DEFAULT_CONSOLE_MAX_PARALLEL_RUNS,
+            ),
+            DEFAULT_CONSOLE_MAX_PARALLEL_RUNS,
+            minimum=MIN_CONSOLE_MAX_PARALLEL_RUNS,
+        )
+
+    def _loaded_tool_result_display_chars(self) -> int:
+        # TASK-870: how much of an agent tool result the Console DISPLAYS --
+        # distinct from [agents]/RunBudget.max_tool_result_chars, which
+        # governs how much the MODEL saw and is not user-configurable here.
+        return coerce_int_setting(
+            self._console_settings().get(
+                "tool_result_display_chars",
+                DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+            ),
+            DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+            minimum=MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+            maximum=MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
         )
 
     @staticmethod
@@ -1530,6 +2984,8 @@ class SettingsScreen(BaseAppScreen):
         return {
             "collapse_large_pastes": self._loaded_collapse_large_pastes_enabled(),
             "paste_collapse_threshold": self._loaded_paste_collapse_threshold(),
+            "max_parallel_runs": self._loaded_console_max_parallel_runs(),
+            "tool_result_display_chars": self._loaded_tool_result_display_chars(),
             "streaming": self._loaded_console_default_streaming(),
             "temperature": self._loaded_console_default_temperature(),
             "top_p": self._loaded_console_default_top_p(),
@@ -1666,6 +3122,47 @@ class SettingsScreen(BaseAppScreen):
     def _collapse_large_pastes_button_label(self) -> str:
         return "Enabled" if self._collapse_large_pastes_enabled() else "Disabled"
 
+    def _remote_images_enabled(self) -> bool:
+        """Return the live [chat.images].render_remote_images value."""
+        from ...Chat.console_image_view import resolve_render_remote_images
+
+        return resolve_render_remote_images(
+            getattr(self.app_instance, "app_config", {}) or {}
+        )
+
+    def _remote_images_button_label(self) -> str:
+        return "Enabled" if self._remote_images_enabled() else "Disabled"
+
+    def _toggle_remote_images(self) -> bool:
+        """Flip render_remote_images: persist it AND poke the live config.
+
+        ADR-020-style immediate write (no category draft): the toggle is a
+        single security-relevant boolean. The App captures ``app_config``
+        once at startup, so persisting alone would not take effect until
+        restart -- the raw in-memory tree the transcript gate reads is
+        updated in place too.
+
+        Returns:
+            The new (post-toggle) enabled value.
+        """
+        next_value = not self._remote_images_enabled()
+        save_settings_to_cli_config(
+            {"chat.images": {"render_remote_images": next_value}}
+        )
+        app_config = getattr(self.app_instance, "app_config", None)
+        if isinstance(app_config, dict):
+            raw = app_config.get("COMPREHENSIVE_CONFIG_RAW")
+            if isinstance(raw, dict):
+                raw.setdefault("chat", {}).setdefault("images", {})[
+                    "render_remote_images"
+                ] = next_value
+            chat_section = app_config.get("chat")
+            if isinstance(chat_section, dict) and isinstance(
+                chat_section.get("images"), dict
+            ):
+                chat_section["images"]["render_remote_images"] = next_value
+        return next_value
+
     def _paste_collapse_threshold_value(self) -> int | str:
         draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
         if draft is not None and "paste_collapse_threshold" in draft.values:
@@ -1679,6 +3176,26 @@ class SettingsScreen(BaseAppScreen):
         except ValueError:
             return f"Invalid threshold: {value}"
         return f"{threshold} characters"
+
+    def _console_max_parallel_runs_value(self) -> int | str:
+        draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        if draft is not None and "max_parallel_runs" in draft.values:
+            return draft.values["max_parallel_runs"]
+        return self._loaded_console_max_parallel_runs()
+
+    def _tool_result_display_chars_value(self) -> int | str:
+        draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        if draft is not None and "tool_result_display_chars" in draft.values:
+            return draft.values["tool_result_display_chars"]
+        return self._loaded_tool_result_display_chars()
+
+    def _tool_result_display_chars_label(self) -> str:
+        value = self._tool_result_display_chars_value()
+        try:
+            chars = self._normalise_tool_result_display_chars(value)
+        except ValueError:
+            return f"Invalid value: {value}"
+        return f"{chars} characters"
 
     def _update_console_paste_summary(self) -> None:
         try:
@@ -1727,7 +3244,7 @@ class SettingsScreen(BaseAppScreen):
         return self._appearance_validation_result().valid
 
     def _library_rag_loaded_defaults(self) -> SettingsLibraryRagDefaults:
-        return load_library_rag_defaults(self._app_config_mapping())
+        return load_rag_defaults_from_active_profile()
 
     def _library_rag_loaded_values(self) -> dict[str, object]:
         return asdict(self._library_rag_loaded_defaults())
@@ -1751,7 +3268,20 @@ class SettingsScreen(BaseAppScreen):
     def _library_rag_validation_result(self):
         return validate_library_rag_defaults(self._library_rag_current_defaults())
 
+    def _library_rag_soft_warnings(self) -> list[str]:
+        """Advisory-only warnings (e.g. reranker top-k vs default results)
+        for the current draft/loaded values. NEVER gates Save -- see
+        _library_rag_save_enabled, which only consults
+        _library_rag_validation_result (hard errors)."""
+        return soft_config_warnings(self._library_rag_current_defaults())
+
     def _library_rag_save_enabled(self) -> bool:
+        # Task 4 (541 v2 UX AC1): Save/Revert must be unavailable while the
+        # editor is merely PREVIEWING a browsed (non-active) profile -- the
+        # active profile's own draft (if any) is untouched and unaffected,
+        # but nothing on screen right now is even editable.
+        if self._rag_preview_profile_id is not None:
+            return False
         if not self._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG):
             return False
         return self._library_rag_validation_result().valid
@@ -1786,6 +3316,597 @@ class SettingsScreen(BaseAppScreen):
             return False
         return self._storage_validation_result().valid
 
+    # ------------------------------------------------------------------
+    # Image Gen (task 5): draft/dirty editing + Save/Revert.
+    #
+    # Unlike APPEARANCE/LIBRARY_RAG/STORAGE (flat scalar fields), Image Gen
+    # stages edits into `self._settings_drafts[IMAGE_GENERATION]` using
+    # namespaced string keys so the ONE generic `SettingsDraft` still drives
+    # the shared dirty-marker mechanism (`_category_has_unsaved_changes`,
+    # the rail `*`, `settings-dirty-category`) -- no parallel draft
+    # mechanism. Keys: "default_backend", "enabled_backends",
+    # "context_llm_enabled", "default_batch", "max_variants_per_message",
+    # "context_llm_turns", "context_llm_timeout_seconds",
+    # "field::<backend_id>::<toml_key>" (per edited backend field), and
+    # "cleared::<backend_id>::<toml_key>" (per Clear action).
+    #
+    # The diff/save baseline is ALWAYS `SettingsConfigAdapter().load()`'s
+    # MERGED `[image_generation]` view -- never `load_user_image_generation_
+    # table()`, which is display-only (see that helper's and
+    # `diff_to_sections`'s docstrings). Using the merged view as the
+    # "original" for dirty-tracking is what makes the Enabled checkboxes,
+    # the default-backend Select, and `context_llm_enabled` safe to stage
+    # straight from LIVE widget state on every change and at save time:
+    # unlike free-text Inputs, Checkboxes/Select have no "blank value means
+    # deferred to placeholder" ambiguity, and they're initialized from that
+    # SAME merged config -- so an untouched widget's value always equals
+    # its own "original" (never a spurious diff), while a genuinely toggled
+    # one always differs.
+    def _image_gen_raw_section(self) -> Mapping[str, object]:
+        # Qodo PR #901 fix 3: cached per category session -- see
+        # `_image_gen_raw_section_cache`'s docstring at its `__init__`
+        # declaration for the exact three invalidation points.
+        if self._image_gen_raw_section_cache is None:
+            raw = SettingsConfigAdapter().load().get("image_generation")
+            self._image_gen_raw_section_cache = raw if isinstance(raw, Mapping) else {}
+        return self._image_gen_raw_section_cache
+
+    def _image_gen_overlay_values(self) -> dict[str, object]:
+        draft = self._settings_drafts.get(SettingsCategoryId.IMAGE_GENERATION)
+        return dict(draft.values) if draft is not None else {}
+
+    def _image_gen_expected_default_backend_select_value(
+        self, overlay: Mapping[str, object]
+    ) -> object:
+        """The exact value `ImageGenSettingsPanel.compose()` is about to
+        construct `#settings-imagegen-default_backend` with, for `overlay`
+        -- must mirror that compose() logic exactly (see
+        `_queue_image_gen_select_suppression`'s docstring)."""
+        cfg = get_image_generation_config(reload=True)
+        effective_default_backend = overlay.get("default_backend", cfg.default_backend)
+        return (
+            effective_default_backend
+            if effective_default_backend in IMAGE_GEN_BACKEND_IDS
+            else Select.NULL
+        )
+
+    def _queue_image_gen_select_suppression(
+        self, overlay: Mapping[str, object]
+    ) -> None:
+        """Record the value the about-to-(re)compose default-backend
+        `Select` will mount with, if that value is non-blank -- a fresh
+        `Select` only posts `Changed` on mount when constructed with a
+        non-`Select.NULL` value (verified empirically; unlike Checkbox,
+        which never refires on construction regardless of value). Call
+        this immediately before every `ImageGenSettingsPanel` (re)compose:
+        the initial category-open `_render_detail_pane` branch, and the
+        `panel.recompose()` calls in `_apply_image_gen_save_result` /
+        `_handle_image_gen_revert`. See `_rag_select_suppress_queue` for
+        the sibling idiom this mirrors (a boolean in-progress flag cannot
+        suppress a deferred `Select.Changed` message)."""
+        expected_value = self._image_gen_expected_default_backend_select_value(overlay)
+        if expected_value is not Select.NULL:
+            self._image_gen_select_suppress_queue.append(expected_value)
+
+    def _image_gen_stage(self, key: str, original: object, value: object) -> None:
+        category = SettingsCategoryId.IMAGE_GENERATION
+        draft = self._settings_drafts.setdefault(
+            category, SettingsDraft(category=category)
+        )
+        draft.set_value(key, original, value)
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+        self._update_draft_status_widgets(category)
+
+    def _image_gen_unstage(self, key: str) -> None:
+        """Remove one staged key without touching any other (e.g. a fresh
+        edit cancelling a pending Clear on the SAME field)."""
+        category = SettingsCategoryId.IMAGE_GENERATION
+        draft = self._settings_drafts.get(category)
+        if draft is None:
+            return
+        draft.values.pop(key, None)
+        draft.originals.pop(key, None)
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+
+    def _stage_image_gen_field(
+        self, backend_id: str, toml_key: str, raw_value: str
+    ) -> None:
+        raw_backend = self._image_gen_raw_section().get(backend_id) or {}
+        original = (
+            raw_backend.get(toml_key) if isinstance(raw_backend, Mapping) else None
+        )
+        original_str = "" if original is None else str(original)
+        self._image_gen_stage(
+            f"field::{backend_id}::{toml_key}", original_str, raw_value
+        )
+        # Typing into a field cancels a pending Clear on that SAME field --
+        # otherwise diff_to_sections' documented "cleared wins" rule would
+        # silently delete a key the user just retyped.
+        self._image_gen_unstage(f"cleared::{backend_id}::{toml_key}")
+        self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
+
+    @staticmethod
+    def _image_gen_coerce_int(raw_value: str) -> int | None:
+        try:
+            return int(raw_value.strip())
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _image_gen_coerce_float(raw_value: str) -> float | None:
+        try:
+            return float(raw_value.strip())
+        except ValueError:
+            return None
+
+    def _refresh_image_gen_default_markers(
+        self, effective_default_backend: str
+    ) -> None:
+        for backend_id in IMAGE_GEN_BACKEND_IDS:
+            try:
+                marker = self.query_one(
+                    f"#settings-imagegen-default-marker-{backend_id}", Static
+                )
+            except QueryError:
+                continue
+            marker.update(
+                "★ Default" if backend_id == effective_default_backend else ""
+            )
+
+    def _image_gen_draft_values_for_save(
+        self, panel: ImageGenSettingsPanel
+    ) -> ImageGenDraftValues:
+        draft = self._settings_drafts.get(SettingsCategoryId.IMAGE_GENERATION)
+        values = draft.values if draft is not None else {}
+        backend_fields: dict[str, dict[str, str]] = {}
+        cleared_fields: dict[str, list[str]] = {}
+        for key, value in values.items():
+            if key.startswith("field::"):
+                _prefix, backend_id, toml_key = key.split("::", 2)
+                backend_fields.setdefault(backend_id, {})[toml_key] = value
+            elif key.startswith("cleared::"):
+                _prefix, backend_id, toml_key = key.split("::", 2)
+                cleared_fields.setdefault(backend_id, []).append(toml_key)
+
+        # enabled_backends/default_backend/context_llm_enabled are ALWAYS
+        # read live off the mounted widgets (never from `values`) -- see
+        # the class-comment above for why this is safe and required (an
+        # untouched checkbox/select must still be reflected, since it's
+        # never staged unless the user actually toggles it).
+        enabled_backends = [
+            backend_id
+            for backend_id in IMAGE_GEN_BACKEND_IDS
+            if panel.query_one(
+                f"#settings-imagegen-enabled-{backend_id}", Checkbox
+            ).value
+        ]
+        default_backend_widget_value = panel.query_one(
+            "#settings-imagegen-default_backend", Select
+        ).value
+        default_backend = (
+            default_backend_widget_value
+            if isinstance(default_backend_widget_value, str)
+            else None
+        )
+        context_llm_enabled = bool(
+            panel.query_one("#settings-imagegen-context_llm_enabled", Checkbox).value
+        )
+
+        return ImageGenDraftValues(
+            default_backend=default_backend,
+            enabled_backends=enabled_backends,
+            default_batch=values.get("default_batch"),
+            max_variants_per_message=values.get("max_variants_per_message"),
+            context_llm_enabled=context_llm_enabled,
+            context_llm_turns=values.get("context_llm_turns"),
+            context_llm_timeout_seconds=values.get("context_llm_timeout_seconds"),
+            backend_fields=backend_fields,
+            cleared_fields=cleared_fields,
+        )
+
+    @on(Select.Changed, "#settings-imagegen-default_backend")
+    def handle_image_gen_default_backend_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        # A brand-new Select instance refires Changed with its OWN initial
+        # value the moment it mounts (every category open + every post-
+        # Save/Revert recompose) -- consume-and-ignore that expected
+        # arrival rather than re-staging the value it's already showing as
+        # a spurious "edit". See _queue_image_gen_select_suppression.
+        queue = self._image_gen_select_suppress_queue
+        if queue and event.value == queue[0]:
+            queue.pop(0)
+            return
+        value = event.value if isinstance(event.value, str) else None
+        if value is None:
+            self._image_gen_unstage("default_backend")
+            self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
+            # Qodo PR #901 fix 1: clearing the Select to blank must clear
+            # every row's "★ Default" marker too -- left unrefreshed, the
+            # OLD default's marker keeps showing, now inconsistent with
+            # the Select itself showing nothing selected.
+            self._refresh_image_gen_default_markers("")
+            return
+        original = self._image_gen_raw_section().get("default_backend")
+        self._image_gen_stage("default_backend", original, value)
+        self._refresh_image_gen_default_markers(value)
+
+    @on(Checkbox.Changed)
+    def handle_image_gen_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        checkbox_id = str(getattr(event.checkbox, "id", "") or "")
+        if not checkbox_id.startswith("settings-imagegen-"):
+            return
+        event.stop()
+        from ...Widgets.settings_image_gen_panel import switch_word, toggle_label
+
+        if checkbox_id == "settings-imagegen-context_llm_enabled":
+            event.checkbox.label = toggle_label("Context LLM", bool(event.value))
+            original = bool(self._image_gen_raw_section().get("context_llm_enabled"))
+            self._image_gen_stage("context_llm_enabled", original, bool(event.value))
+            return
+        prefix = "settings-imagegen-enabled-"
+        if not checkbox_id.startswith(prefix):
+            return
+        event.checkbox.label = switch_word(bool(event.value))
+        try:
+            panel = self.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        except QueryError:
+            return
+        enabled_backends = [
+            backend_id
+            for backend_id in IMAGE_GEN_BACKEND_IDS
+            if panel.query_one(
+                f"#settings-imagegen-enabled-{backend_id}", Checkbox
+            ).value
+        ]
+        # Normalized to canonical order (Minor 1, final review) -- `enabled_
+        # backends` is already canonical (built by iterating IMAGE_GEN_
+        # BACKEND_IDS above); without normalizing `original` the SAME way,
+        # a config file whose list happens to be in a different order would
+        # spuriously stage a "dirty" edit even when nothing actually
+        # changed, and the rail marker would never clear on its own.
+        original = image_gen_canonical_backend_order(
+            self._image_gen_raw_section().get("enabled_backends")
+        )
+        self._image_gen_stage("enabled_backends", original, enabled_backends)
+
+    _IMAGE_GEN_INT_GLOBAL_KEYS = {
+        "settings-imagegen-default_batch": "default_batch",
+        "settings-imagegen-max_variants_per_message": "max_variants_per_message",
+        "settings-imagegen-context_llm_turns": "context_llm_turns",
+    }
+
+    @on(Input.Changed)
+    def handle_image_gen_input_changed(self, event: Input.Changed) -> None:
+        input_id = str(getattr(event.input, "id", "") or "")
+        if not input_id.startswith("settings-imagegen-"):
+            return
+        prefix = "settings-imagegen-field-"
+        if input_id.startswith(prefix):
+            event.stop()
+            remainder = input_id[len(prefix) :]
+            for backend_id in IMAGE_GEN_BACKEND_IDS:
+                backend_prefix = f"{backend_id}-"
+                if remainder.startswith(backend_prefix):
+                    toml_key = remainder[len(backend_prefix) :]
+                    self._stage_image_gen_field(backend_id, toml_key, event.value)
+                    return
+            return
+        global_key = self._IMAGE_GEN_INT_GLOBAL_KEYS.get(input_id)
+        if global_key is not None:
+            event.stop()
+            original = self._image_gen_raw_section().get(global_key)
+            # An unparseable edit is staged as the raw string rather than
+            # silently dropped -- it still marks dirty, and validate_draft
+            # (settings_image_gen_defaults.py) is what actually catches it
+            # at Save time with an inline error, matching the per-backend
+            # "int"-kind fields' treatment exactly instead of the edit
+            # just vanishing with no feedback at all.
+            coerced = self._image_gen_coerce_int(event.value)
+            staged_value = coerced if coerced is not None else event.value
+            self._image_gen_stage(global_key, original, staged_value)
+            return
+        if input_id == "settings-imagegen-context_llm_timeout_seconds":
+            event.stop()
+            original = self._image_gen_raw_section().get("context_llm_timeout_seconds")
+            coerced_float = self._image_gen_coerce_float(event.value)
+            staged_value = coerced_float if coerced_float is not None else event.value
+            self._image_gen_stage("context_llm_timeout_seconds", original, staged_value)
+
+    def _handle_image_gen_clear(self, backend_id: str, toml_key: str) -> None:
+        self._image_gen_stage(f"cleared::{backend_id}::{toml_key}", False, True)
+        if backend_id == "swarmui" and toml_key == "swarm_token":
+            # The loader also resolves the legacy `api_key` spelling as a
+            # back-compat fallback; Clear must delete BOTH or a stale
+            # hand-edited api_key resurrects the credential with no in-UI
+            # recovery (deleting an absent key is a no-op, so this is free).
+            self._image_gen_stage("cleared::swarmui::api_key", False, True)
+        self._image_gen_unstage(f"field::{backend_id}::{toml_key}")
+        new_source = image_gen_key_source_after_clear(backend_id)
+        try:
+            secret_input = self.query_one(
+                f"#settings-imagegen-field-{backend_id}-{toml_key}", Input
+            )
+            secret_input.value = ""
+            secret_input.placeholder = _image_gen_secret_placeholder(new_source)
+        except QueryError:
+            pass
+        try:
+            source_static = self.query_one(
+                f"#settings-imagegen-key-source-{backend_id}", Static
+            )
+            source_static.update(_image_gen_key_source_line(new_source))
+            secret_optional = backend_id == "swarmui"
+            source_static.set_class(
+                secret_optional and new_source == "missing",
+                "settings-imagegen-key-source-neutral",
+            )
+        except QueryError:
+            pass
+        self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
+
+    # ------------------------------------------------------------------
+    # Image Gen (task 6): backend "Test" probes.
+    #
+    # A probe never persists anything -- it's a short live/filesystem
+    # reachability check (`probe_backend`, settings_image_gen_defaults.py)
+    # run against the CURRENT (possibly-unsaved) form values for one
+    # backend. `probe_backend` is BLOCKING (a plain HTTP GET or filesystem
+    # stat), so it always runs off the UI thread via `@work(thread=True)`;
+    # any exception it fails to catch itself degrades to a safe closed-set
+    # badge here rather than ever propagating exception text into a badge
+    # or a notify(). Only one probe may be in flight at a time
+    # (`_image_gen_probe_in_flight` + all six Test buttons disabled
+    # meanwhile) -- see `_image_gen_probe_session`'s docstring (near its
+    # declaration) for how a stale callback from a since-left-and-
+    # reentered category is safely dropped instead of clobbering an
+    # unrelated, freshly (re)opened panel.
+
+    def _image_gen_test_form_values(
+        self, panel: ImageGenSettingsPanel, backend_id: str
+    ) -> dict[str, str]:
+        """Gather the CURRENT non-secret form values for `backend_id`'s Test
+        probe -- an edited-but-unsaved Input wins; a blank (untouched)
+        Input falls back to the resolved effective value it's currently
+        showing as its own placeholder (see `effective_placeholder`),
+        never a blank string `probe_backend` could mistake for
+        "explicitly cleared"."""
+        cfg = get_image_generation_config(reload=True)
+        form_values: dict[str, str] = {}
+        for spec in IMAGE_GEN_FIELD_SCHEMA[backend_id]:
+            if spec.kind == "secret":
+                continue
+            try:
+                current = panel.query_one(
+                    f"#settings-imagegen-field-{backend_id}-{spec.toml_key}", Input
+                ).value.strip()
+            except QueryError:
+                current = ""
+            form_values[spec.toml_key] = current or image_gen_effective_placeholder(
+                cfg, backend_id, spec.toml_key
+            )
+        return form_values
+
+    def _image_gen_test_secret(
+        self, panel: ImageGenSettingsPanel, backend_id: str
+    ) -> str | None:
+        """The secret to probe with: this session's pasted-but-unsaved
+        value if present, else the effective resolved secret (env/config/
+        keyring) -- see `probe_backend`'s `secret` parameter docstring."""
+        secret_spec = next(
+            (
+                spec
+                for spec in IMAGE_GEN_FIELD_SCHEMA[backend_id]
+                if spec.kind == "secret"
+            ),
+            None,
+        )
+        if secret_spec is None:
+            return None
+        try:
+            pasted = panel.query_one(
+                f"#settings-imagegen-field-{backend_id}-{secret_spec.toml_key}", Input
+            ).value.strip()
+        except QueryError:
+            pasted = ""
+        if pasted:
+            return pasted
+        cfg = get_image_generation_config(reload=True)
+        return image_gen_effective_secret_value(cfg, backend_id)
+
+    def _image_gen_set_test_buttons_disabled(self, disabled: bool) -> None:
+        for backend_id in IMAGE_GEN_BACKEND_IDS:
+            try:
+                self.query_one(
+                    f"#settings-imagegen-test-{backend_id}", Button
+                ).disabled = disabled
+            except QueryError:
+                continue
+
+    def _handle_image_gen_test(self, backend_id: str) -> None:
+        if self._image_gen_probe_in_flight:
+            return
+        try:
+            panel = self.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        except QueryError:
+            return
+        form_values = self._image_gen_test_form_values(panel, backend_id)
+        secret = self._image_gen_test_secret(panel, backend_id)
+        self._image_gen_probe_in_flight = True
+        self._image_gen_set_test_buttons_disabled(True)
+        self._image_gen_probe_worker(
+            backend_id, form_values, secret, self._image_gen_probe_session
+        )
+
+    @work(thread=True, exclusive=False, exit_on_error=False)
+    def _image_gen_probe_worker(
+        self,
+        backend_id: str,
+        form_values: dict[str, str],
+        secret: str | None,
+        session: int,
+    ) -> None:
+        try:
+            badge = image_gen_probe_backend(backend_id, form_values, secret).badge
+        except Exception as exc:  # noqa: BLE001 - any escape must degrade safely
+            # Qodo PR #901 fix 2: this probe builds Authorization headers
+            # from a pasted-or-effective secret -- the spec's keys-never-
+            # enter-logs contract forbids logging the raw exception text
+            # (it could echo a header, URL, or secret embedded in some
+            # library's error message). Log only the exception TYPE name
+            # and the backend id, never str(exc).
+            logger.debug(
+                f"Image Gen probe for {backend_id!r} raised {type(exc).__name__}"
+            )
+            badge = "Unreachable: probe error"
+        finally:
+            self.app.call_from_thread(
+                self._apply_image_gen_probe_result, backend_id, badge, session
+            )
+
+    def _apply_image_gen_probe_result(
+        self, backend_id: str, badge: str, session: int
+    ) -> None:
+        if session != self._image_gen_probe_session:
+            # Stale: the category was left (and possibly re-entered, minting
+            # a brand-new panel) since this probe was dispatched. Dropping
+            # it here -- rather than clearing `_image_gen_probe_in_flight`
+            # or touching any widget -- is what keeps a leftover result from
+            # a PREVIOUS visit from ever re-enabling buttons for (or
+            # overwriting a badge on) an unrelated, currently active probe
+            # or freshly (re)opened panel.
+            return
+        self._image_gen_probe_in_flight = False
+        self._image_gen_set_test_buttons_disabled(False)
+        try:
+            self.query_one(f"#settings-imagegen-status-{backend_id}", Static).update(
+                badge
+            )
+        except QueryError:
+            pass
+
+    def _handle_image_gen_save(self) -> None:
+        try:
+            panel = self.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        except QueryError:
+            return
+        draft_values = self._image_gen_draft_values_for_save(panel)
+        errors, warnings = validate_image_gen_draft(draft_values)
+        if errors:
+            message = " ".join(errors)
+            self._set_static_text("#settings-imagegen-save-result", message)
+            self.app.notify(message, severity="error")
+            return
+        self._set_static_text(
+            "#settings-imagegen-save-result", "Saving Image Gen defaults..."
+        )
+        self._settings_save_image_gen_worker(draft_values, warnings)
+
+    @work(exclusive=True, thread=True)
+    def _settings_save_image_gen_worker(
+        self, draft_values: ImageGenDraftValues, warnings: list[str]
+    ) -> None:
+        raw_config = SettingsConfigAdapter().load()
+        sections, deletions = image_gen_diff_to_sections(draft_values, raw_config)
+        adapter = SettingsConfigAdapter()
+        ok = True
+        if sections:
+            ok = adapter.save_sections(sections) and ok
+        for section, keys in deletions.items():
+            if keys:
+                ok = adapter.delete_values(section, keys) and ok
+        if ok:
+            reset_image_generation_config_cache()
+        self.app.call_from_thread(self._apply_image_gen_save_result, ok, warnings)
+
+    async def _apply_image_gen_save_result(
+        self, saved: bool, warnings: list[str]
+    ) -> None:
+        if not saved:
+            message = "Failed to save Image Gen defaults."
+            self._set_static_text("#settings-imagegen-save-result", message)
+            self.app.notify(message, severity="error")
+            return
+        self._settings_drafts.pop(SettingsCategoryId.IMAGE_GENERATION, None)
+        # Qodo PR #901 fix 3: the save just changed the on-disk truth --
+        # invalidate the cached raw-section baseline (see
+        # `_image_gen_raw_section_cache`'s docstring).
+        self._image_gen_raw_section_cache = None
+        message = "Image Gen defaults saved."
+        if warnings:
+            message = f"{message} {' '.join(warnings)}"
+        try:
+            panel = self.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        except QueryError:
+            panel = None
+        if panel is not None:
+            panel.overlay = {}
+            self._queue_image_gen_select_suppression({})
+            await panel.recompose()
+            self._set_static_text("#settings-imagegen-save-result", message)
+            # A fresh panel mounts its Test buttons enabled by default; if a
+            # probe is still in flight (Save clicked mid-probe), re-assert
+            # the disabled state on the newly-mounted buttons rather than
+            # letting them render as clickable while ignored.
+            if self._image_gen_probe_in_flight:
+                self._image_gen_set_test_buttons_disabled(True)
+        self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
+        self.app.notify(message, severity="warning" if warnings else "information")
+
+    async def _handle_image_gen_revert(self) -> None:
+        self._settings_drafts.pop(SettingsCategoryId.IMAGE_GENERATION, None)
+        # Qodo PR #901 fix 3: revert is the third of the exactly-three
+        # invalidation points (see `_image_gen_raw_section_cache`'s
+        # docstring) -- the file itself doesn't change on revert, but
+        # this keeps the cache's lifetime scoped strictly to "since the
+        # last time the draft was known-consistent with disk" rather
+        # than silently spanning across a discard-and-restart edit.
+        self._image_gen_raw_section_cache = None
+        try:
+            panel = self.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
+        except QueryError:
+            panel = None
+        if panel is not None:
+            panel.overlay = {}
+            self._queue_image_gen_select_suppression({})
+            await panel.recompose()
+            self._set_static_text("#settings-imagegen-save-result", "")
+            # See the matching comment in _apply_image_gen_save_result.
+            if self._image_gen_probe_in_flight:
+                self._image_gen_set_test_buttons_disabled(True)
+        self._update_draft_status_widgets(SettingsCategoryId.IMAGE_GENERATION)
+
+    @on(Button.Pressed)
+    async def handle_image_gen_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = str(getattr(event.button, "id", "") or "")
+        if button_id == "settings-imagegen-save":
+            event.stop()
+            self._handle_image_gen_save()
+            return
+        if button_id == "settings-imagegen-revert":
+            event.stop()
+            await self._handle_image_gen_revert()
+            return
+        test_prefix = "settings-imagegen-test-"
+        if button_id.startswith(test_prefix):
+            backend_id = button_id[len(test_prefix) :]
+            if backend_id in IMAGE_GEN_BACKEND_IDS:
+                event.stop()
+                self._handle_image_gen_test(backend_id)
+            return
+        prefix = "settings-imagegen-clear-"
+        if not button_id.startswith(prefix):
+            return
+        event.stop()
+        remainder = button_id[len(prefix) :]
+        for backend_id in IMAGE_GEN_BACKEND_IDS:
+            backend_prefix = f"{backend_id}-"
+            if remainder.startswith(backend_prefix):
+                toml_key = remainder[len(backend_prefix) :]
+                self._handle_image_gen_clear(backend_id, toml_key)
+                return
+
     def _category_has_unsaved_changes(self, category: SettingsCategoryId) -> bool:
         draft = self._settings_drafts.get(category)
         return bool(draft and draft.is_dirty)
@@ -1809,6 +3930,17 @@ class SettingsScreen(BaseAppScreen):
             return "Use the editor's Apply/Save/Reset buttons to manage themes."
         if category == SettingsCategoryId.SPLASH_SCREEN:
             return "Splash defaults are saved automatically."
+        if category == SettingsCategoryId.WORKSPACES:
+            return (
+                "Immediate actions: workspace changes apply as you make them; "
+                "there is no draft to save or revert."
+            )
+        if category == SettingsCategoryId.INTERNAL_PROMPTS:
+            return "Use each prompt's Save / Reset buttons in the editor to manage overrides."
+        if category == SettingsCategoryId.IMAGE_GENERATION:
+            if self._category_has_unsaved_changes(category):
+                return "Guided edits: use the panel's own Save/Revert controls below."
+            return "Guided edits: change a backend or generation default first."
         if category is SettingsCategoryId.STORAGE:
             if self._category_has_unsaved_changes(category):
                 validation = self._storage_validation_result()
@@ -1828,7 +3960,7 @@ class SettingsScreen(BaseAppScreen):
         }
         if category in DOMAIN_SETTINGS_CATEGORY_IDS:
             contract = self._domain_category_contract(category)
-            return f"Guided edits: read-only/WIP; open {contract.owner_destination}."
+            return f"Guided edits: read-only here; open {contract.owner_destination}."
         return messages.get(category, "Guided edits: read-only.")
 
     def _guided_actions_enabled(self, category: SettingsCategoryId) -> bool:
@@ -1843,17 +3975,41 @@ class SettingsScreen(BaseAppScreen):
             and self._category_has_unsaved_changes(category)
         )
 
+    @staticmethod
+    def _guided_action_label(base: str, *, dirty: bool) -> str:
+        """Save/Revert label with a text-carried inert-state annotation.
+
+        Disabled buttons differed from enabled ones only by dimming
+        (task-1582); in the clean state the label itself says why the pair
+        is inert. A dirty-but-invalid draft keeps the plain label -- the
+        guided-action state row explains the validation block there.
+
+        Args:
+            base: The plain label, e.g. "Save (s)".
+            dirty: Whether the active category has unsaved changes.
+
+        Returns:
+            The plain label when dirty, otherwise the annotated form.
+        """
+        return base if dirty else f"{base} — no changes"
+
     def _update_guided_action_widgets(self) -> None:
         category = self._active_category_id()
         actions_enabled = self._guided_actions_enabled(category)
+        dirty = self._category_has_unsaved_changes(category)
         self._set_static_text(
             "#settings-guided-action-state", self._guided_action_message(category)
         )
-        for selector in ("#settings-save-category", "#settings-revert-category"):
+        for selector, base in (
+            ("#settings-save-category", "Save (s)"),
+            ("#settings-revert-category", "Revert (r)"),
+        ):
             try:
-                self.query_one(selector, Button).disabled = not actions_enabled
+                button = self.query_one(selector, Button)
             except QueryError:
-                pass
+                continue
+            button.disabled = not actions_enabled
+            button.label = self._guided_action_label(base, dirty=dirty)
 
     def _category_status(self, summary: SettingsCategorySummary) -> str:
         if self._category_has_unsaved_changes(summary.category):
@@ -1874,9 +4030,20 @@ class SettingsScreen(BaseAppScreen):
         dirty_marker = ""
         if self._category_has_unsaved_changes(summary.category):
             dirty_marker = " *"
-        elif summary.category == SettingsCategoryId.THEME and self.theme_editor_modified:
+        elif (
+            summary.category == SettingsCategoryId.THEME and self.theme_editor_modified
+        ):
             dirty_marker = " *"
-        return f"{'> ' if active else '  '}{summary.title}{dirty_marker}"
+        # task-1563: view-only stub categories are full nav peers whose whole
+        # page says "edit elsewhere" -- badge them in the rail so a third of
+        # the navigation stops masquerading as editable surface.
+        view_marker = ""
+        try:
+            if not self._ownership_record(summary.category).writes_allowed:
+                view_marker = " (view)"
+        except Exception:
+            view_marker = ""
+        return f"{'> ' if active else '  '}{summary.title}{view_marker}{dirty_marker}"
 
     def _refresh_category_button_label(self, category: SettingsCategoryId) -> None:
         try:
@@ -1918,6 +4085,19 @@ class SettingsScreen(BaseAppScreen):
         self._refresh_category_button_label(category)
         if category is self._active_category_id():
             self._update_guided_action_widgets()
+        if category is SettingsCategoryId.IMAGE_GENERATION:
+            # Image Gen's Save/Revert live INSIDE the panel (not the generic
+            # top guided-action bar, excluded above like THEME/INTERNAL_
+            # PROMPTS) -- toggle them here so every staging path updates
+            # them through this one shared draft-status refresh, matching
+            # the sibling idiom rather than a parallel mechanism.
+            for button_id in ("settings-imagegen-save", "settings-imagegen-revert"):
+                try:
+                    self.query_one(
+                        f"#{button_id}", Button
+                    ).disabled = not has_unsaved_changes
+                except QueryError:
+                    pass
 
     def _category_summary_by_id(
         self, category: SettingsCategoryId
@@ -1955,7 +4135,13 @@ class SettingsScreen(BaseAppScreen):
             return 0
         primary_haystack = " ".join((summary.category.value, summary.title)).lower()
         if query in primary_haystack:
-            return 0
+            # task-1584: a match starting at a word boundary outranks a
+            # mid-word substring hit -- "rag" must surface Library/RAG
+            # before Storage (sto-RAG-e), which previously tied on tier
+            # and won on list index.
+            if re.search(rf"(?<![a-z0-9]){re.escape(query)}", primary_haystack):
+                return 0
+            return 1
         secondary_haystack = " ".join(
             (
                 summary.description,
@@ -1963,7 +4149,44 @@ class SettingsScreen(BaseAppScreen):
             )
         ).lower()
         if query in secondary_haystack:
-            return 1
+            return 2
+        # task-1715: field labels -- typing a setting's visible name
+        # ("threshold") surfaces its category with an Enter-focuses-field
+        # promise (see _top_field_match / _submit_category_search).
+        if self._top_field_match(query, summary.category) is not None:
+            return 3
+        # task-1564: last tier -- the category's owned config keys. The Scope
+        # Inspector already publishes them; indexing them lets "/" find the
+        # category that OWNS a setting instead of forcing a 23-item scan.
+        try:
+            owned = " ".join(
+                self._ownership_record(summary.category).owns_config_sections
+            ).lower()
+        except Exception:
+            owned = ""
+        if owned and query in owned:
+            return 4
+        return None
+
+    @staticmethod
+    def _top_field_match(
+        query_text: str, category: SettingsCategoryId
+    ) -> tuple[str, str] | None:
+        """First indexed field of ``category`` whose label matches the query.
+
+        Args:
+            query_text: The lowercased-or-raw filter text.
+            category: The category whose field index to search.
+
+        Returns:
+            ``(field_id, label)`` for the first matching field, or None.
+        """
+        query = query_text.strip().lower()
+        if not query:
+            return None
+        for field_id, label in FIELD_SEARCH_INDEX.get(category, ()):
+            if query in label.lower():
+                return (field_id, label)
         return None
 
     def _category_matches_search(
@@ -1997,7 +4220,15 @@ class SettingsScreen(BaseAppScreen):
         matches = self._filtered_category_summaries(query)
         match_label = "match" if len(matches) == 1 else "matches"
         if matches:
-            return f"Filter: {query} | {len(matches)} {match_label} | Enter opens {matches[0].title}"
+            target = matches[0].title
+            # task-1715: when the top hit is (or contains) a matching
+            # field, promise the field-level landing in the echo line.
+            field = self._top_field_match(query, matches[0].category)
+            if field is not None:
+                target = f"{target} › {field[1]}"
+            return (
+                f"Filter: {query} | {len(matches)} {match_label} | Enter opens {target}"
+            )
         return f"Filter: {query} | 0 matches | Esc clears"
 
     @staticmethod
@@ -2012,11 +4243,16 @@ class SettingsScreen(BaseAppScreen):
         query = self._category_search_text()
         for group_title, category_ids in self._category_groups():
             group_visible = False
+            is_domain_group = group_title == self.DOMAIN_DEFAULTS_GROUP_TITLE
+            group_expanded = (
+                not is_domain_group or bool(query) or self._domain_group_is_expanded()
+            )
             for category_id in category_ids:
                 summary = summaries_by_id[category_id]
                 rank = self._category_search_rank(summary)
-                is_visible = rank is not None
-                group_visible = group_visible or is_visible
+                matches = rank is not None
+                group_visible = group_visible or matches
+                is_visible = matches and group_expanded
                 visible_count += int(is_visible)
                 try:
                     button = self.query_one(
@@ -2025,16 +4261,21 @@ class SettingsScreen(BaseAppScreen):
                     button.display = is_visible
                     button.remove_class("settings-primary-search-match")
                     button.remove_class("settings-secondary-search-match")
-                    if query and rank == 0:
+                    # task-1584 rescaled tiers: 0/1 are both primary
+                    # (word-boundary vs substring); 2 is description/status.
+                    if query and rank in (0, 1):
                         button.add_class("settings-primary-search-match")
-                    elif query and rank == 1:
+                    elif query and rank == 2:
                         button.add_class("settings-secondary-search-match")
                 except QueryError:
                     pass
             try:
-                self.query_one(
-                    f"#{self._category_group_dom_id(group_title)}", Static
-                ).display = group_visible
+                group_heading = self.query_one(
+                    f"#{self._category_group_dom_id(group_title)}"
+                )
+                group_heading.display = group_visible
+                if is_domain_group and isinstance(group_heading, Button):
+                    group_heading.label = self._domain_group_toggle_label()
             except QueryError:
                 pass
 
@@ -2055,13 +4296,64 @@ class SettingsScreen(BaseAppScreen):
         empty_state.update(f"No Settings categories match: {query}")
         empty_state.display = bool(query and visible_count == 0)
 
+    @staticmethod
+    def _speech_tts_provider_from_search(query_text: str) -> str | None:
+        """Return a canonical built-in TTS provider named by a search query."""
+        query = query_text.strip().lower()
+        aliases = {
+            "audio.cpp": "audio_cpp",
+            "audio_cpp": "audio_cpp",
+            "openai": "openai",
+            "elevenlabs": "elevenlabs",
+            "kokoro": "kokoro",
+            "chatterbox": "chatterbox",
+            "higgs": "higgs",
+            "alltalk": "alltalk",
+        }
+        for alias, provider_id in aliases.items():
+            if alias in query:
+                return provider_id
+        return None
+
     def _submit_category_search(self, query_text: str) -> None:
         query_text = self._sanitize_category_search_query(query_text)
         self.category_search_query = query_text
         self._apply_category_search_filter()
         category_values = self._filtered_category_values(query_text)
         if category_values:
+            speech_target: SpeechTTSNavigationTarget | None = None
+            if category_values[0] == SettingsCategoryId.SPEECH_TTS.value:
+                provider_id = self._speech_tts_provider_from_search(query_text)
+                if provider_id in BUILT_IN_TTS_PROVIDER_ORDER:
+                    speech_target = SpeechTTSNavigationTarget(provider_id)
+                    self._stage_speech_tts_navigation_target(speech_target)
             self._select_category(category_values[0], restore_focus=True)
+            if speech_target is not None:
+                self.call_after_refresh(self._apply_speech_tts_navigation_context)
+            # task-1715: if the query named a field, land ON the field --
+            # focusing it also fires its inspector guidance.
+            opened = SettingsCategoryId(category_values[0])
+            field = self._top_field_match(query_text, opened)
+            if field is not None:
+                field_id = field[0]
+
+                def _focus_matched_field() -> None:
+                    try:
+                        self.query_one(f"#{field_id}").focus()
+                    except QueryError:
+                        pass
+
+                self.call_after_refresh(_focus_matched_field)
+            # task-1712: the filter has done its job -- clear it so the
+            # rail returns to the full category map. Residue used to prune
+            # the rail to the last search's matches for the rest of the
+            # session, with no clear-filter affordance advertised.
+            self.category_search_query = ""
+            try:
+                self.query_one("#settings-category-search", Input).value = ""
+            except QueryError:
+                pass
+            self._apply_category_search_filter()
 
     def _category_state_banner_text(self, category: SettingsCategoryId) -> str:
         if (
@@ -2086,35 +4378,74 @@ class SettingsScreen(BaseAppScreen):
             if not validation.valid:
                 return f"State: Needs correction | {validation.message}"
         if self._category_has_unsaved_changes(category):
-            return (
-                "State: Unsaved changes | Save or Revert before leaving this category."
-            )
+            return "State: Unsaved changes | Save (s) or Revert (r) — switching categories keeps this draft."
+        # task-1717: lead with the persistence badge -- the footer hints
+        # already honestly come and go with each category's save model,
+        # but nothing NAMED the model, so users trained on Save/Revert got
+        # silent contract changes (five models coexist on this screen).
+        badge = self._persistence_badge(category)
+        return f"State: {badge} | {self._category_state_scope_text(category)}"
+
+    def _persistence_badge(self, category: SettingsCategoryId) -> str:
+        """Name the save model the active category uses (task-1717).
+
+        Args:
+            category: The active Settings category.
+
+        Returns:
+            A short badge such as "Draft — save with s" that leads the
+            State banner in the same position on every category.
+        """
+        if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
+            return "Draft — save with s"
+        if category is SettingsCategoryId.IMAGE_GENERATION:
+            return "Draft — save/revert below"
+        if category is SettingsCategoryId.SPLASH_SCREEN:
+            return "Auto-saved"
+        if category is SettingsCategoryId.WORKSPACES:
+            return "Applies immediately"
+        if category is SettingsCategoryId.THEME:
+            return "Managed in editor"
+        if category is SettingsCategoryId.INTERNAL_PROMPTS:
+            return "Per-item Save/Reset"
         if category is SettingsCategoryId.ADVANCED_CONFIG:
-            return "State: Guarded | Save blocked until the current text validates; backup created before overwrite."
+            return "Validate, then Save"
+        return "Read-only here"
+
+    def _category_state_scope_text(self, category: SettingsCategoryId) -> str:
+        """The category-scope half of the State banner (after the badge)."""
+        if category is SettingsCategoryId.ADVANCED_CONFIG:
+            return "Save blocked until the text validates; backup before overwrite."
         if category is SettingsCategoryId.PROVIDERS_MODELS:
-            return "State: Shared with Console"
+            return "Shared with Console"
+        if category is SettingsCategoryId.SPEECH_TTS:
+            return "Application-wide defaults; Studio preferences remain separate."
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
-            return "State: Console scoped | Changes affect global Console fallbacks after save."
+            return "Changes affect global Console fallbacks after save."
         if category is SettingsCategoryId.LIBRARY_RAG:
-            return "State: Library scoped | Defaults affect future Library/RAG retrieval and display."
+            return "Defaults affect future Library/RAG retrieval and display."
+        if category is SettingsCategoryId.IMAGE_GENERATION:
+            return "Defaults affect future Console image generations."
         if category is SettingsCategoryId.DIAGNOSTICS:
-            return "State: Safe to run | Validation and reload expose status without writing raw TOML."
+            return "Validation and reload expose status without writing raw TOML."
         if category is SettingsCategoryId.APPEARANCE:
-            return "State: Visual defaults | Settings owns launch and web display defaults."
+            return "Settings owns launch and web display defaults."
         if category is SettingsCategoryId.STORAGE:
-            return (
-                "State: Storage defaults | Changes apply on next launch; "
-                "active handles stay unchanged."
-            )
+            return "Changes apply on next launch; active handles stay unchanged."
         if category is SettingsCategoryId.PRIVACY_SECURITY:
-            return "State: Local privacy | Secrets stay redacted in validation and diagnostics."
+            return "Secrets stay redacted in validation and diagnostics."
+        if category is SettingsCategoryId.SPLASH_SCREEN:
+            return "Splash changes take effect as you make them."
+        if category is SettingsCategoryId.WORKSPACES:
+            return "Each action reversible: unarchive, rename again, or set active."
+        if category is SettingsCategoryId.THEME:
+            return "Use the editor's Apply/Save/Reset buttons below."
+        if category is SettingsCategoryId.INTERNAL_PROMPTS:
+            return "Each prompt saves and resets on its own."
         if category in DOMAIN_SETTINGS_CATEGORY_IDS:
             contract = self._domain_category_contract(category)
-            return (
-                "State: Read-only contract | "
-                f"{contract.owner_destination} owns workflow actions and setup."
-            )
-        return "State: Active | Review readiness across Settings categories."
+            return f"Manage this in {contract.owner_destination}."
+        return "Review readiness across Settings categories."
 
     def _render_category_state_banner(self, category: SettingsCategoryId) -> Static:
         banner = Static(
@@ -2312,6 +4643,176 @@ class SettingsScreen(BaseAppScreen):
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
 
+    def _normalise_console_max_parallel_runs(self, value: object) -> int:
+        # Parallel-agents spec S4 (task-5): integer, >= 1, no upper bound --
+        # mirrors ConsoleChatController.max_parallel_runs' own floor.
+        text_value = str(value).strip()
+        if not text_value.isdigit() or int(text_value) < MIN_CONSOLE_MAX_PARALLEL_RUNS:
+            raise ValueError(
+                "Max parallel agent runs must be an integer of at least "
+                f"{MIN_CONSOLE_MAX_PARALLEL_RUNS}."
+            )
+        return int(text_value)
+
+    def _stage_console_max_parallel_runs_value(self, value: object) -> None:
+        category = SettingsCategoryId.CONSOLE_BEHAVIOR
+        draft = self._settings_drafts.setdefault(
+            category, SettingsDraft(category=category)
+        )
+        try:
+            staged_value: object = self._normalise_console_max_parallel_runs(value)
+        except ValueError:
+            staged_value = str(value)
+        draft.set_value(
+            "max_parallel_runs",
+            self._loaded_console_max_parallel_runs(),
+            staged_value,
+        )
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+
+    def _normalise_tool_result_display_chars(self, value: object) -> int:
+        # TASK-870: same bounded-integer shape as
+        # _normalise_paste_collapse_threshold, with this setting's own
+        # documented min/max (see config.DEFAULT_CONSOLE_TOOL_RESULT_
+        # DISPLAY_CHARS's docstring for why 2000 is the ceiling).
+        text_value = str(value).strip()
+        if not text_value or not text_value.isdigit():
+            raise ValueError("Tool result display cap must be a whole number.")
+        if not validate_number_range(
+            text_value,
+            min_val=MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+            max_val=MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        ):
+            raise ValueError(
+                "Tool result display cap must be between "
+                f"{MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS} and "
+                f"{MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS}."
+            )
+        return int(text_value)
+
+    def _stage_tool_result_display_chars_value(self, value: object) -> None:
+        category = SettingsCategoryId.CONSOLE_BEHAVIOR
+        draft = self._settings_drafts.setdefault(
+            category, SettingsDraft(category=category)
+        )
+        try:
+            staged_value: object = self._normalise_tool_result_display_chars(value)
+        except ValueError:
+            staged_value = str(value)
+        draft.set_value(
+            "tool_result_display_chars",
+            self._loaded_tool_result_display_chars(),
+            staged_value,
+        )
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+
+    def _console_behavior_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
+        """Focused-field guidance for Console Behavior (task-5/870/1612).
+
+        Every Console Behavior Input now has a dedicated entry; the
+        fallback rows render only while no field owns focus, so the
+        "Focus a field for guidance" promise is kept.
+        """
+        if (
+            self._active_settings_field_id
+            == "settings-console-paste-collapse-threshold"
+        ):
+            return (
+                (
+                    "Purpose",
+                    "Smallest pasted chunk, in characters, that the composer "
+                    "collapses into a compact expandable block.",
+                ),
+                (
+                    "Consequences",
+                    "Pastes below the threshold stay inline exactly as typed; "
+                    "larger ones collapse with an expand control. The canonical "
+                    "message payload always keeps the full text either way.",
+                ),
+                ("Saved as", "console.paste_collapse_threshold"),
+                (
+                    "Applies",
+                    "Next paste immediately on save; already rendered pastes "
+                    "keep their current display.",
+                ),
+            )
+        if self._active_settings_field_id == "settings-console-max-parallel-runs":
+            return (
+                (
+                    "Purpose",
+                    "How many agent runs may be in flight at once, across all tabs.",
+                ),
+                (
+                    "Consequences",
+                    "Each concurrent run holds a provider generation, its own tool "
+                    "activity, and memory for its transcript. Local providers "
+                    "(llama.cpp) typically serialize or slow under concurrent "
+                    "generations; high values can exhaust provider slots, rate "
+                    "limits, or RAM. Raise it as far as you like - the app "
+                    "enforces no ceiling.",
+                ),
+                ("Saved as", "console.max_parallel_runs"),
+                (
+                    "Applies",
+                    "New sends on save; running agents are never stopped by "
+                    "lowering it.",
+                ),
+            )
+        if (
+            self._active_settings_field_id
+            == "settings-console-tool-result-display-chars"
+        ):
+            return (
+                (
+                    "Purpose",
+                    "How much of an agent tool result the Console SHOWS you -- in "
+                    "the live run rail, the transcript's tool-call markers, and a "
+                    "resumed/historical run's step summaries.",
+                ),
+                (
+                    "Consequences",
+                    "This is NOT the same limit as max_tool_result_chars ([agents] "
+                    "config, default 16,000), which caps what the MODEL saw and "
+                    "stays fixed regardless of this setting. Raising this display "
+                    f"cap past {MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS} cannot show "
+                    "more -- the engine itself only records up to that many "
+                    'characters per step. Use "View full log" on a run (Agent '
+                    "rail) to read everything the model actually saw, beyond any "
+                    "cap here.",
+                ),
+                ("Saved as", "console.tool_result_display_chars"),
+                (
+                    "Applies",
+                    "Newly rendered steps immediately on save -- no "
+                    "restart needed. Steps already on screen keep their rendered "
+                    "text until the transcript next redraws them.",
+                ),
+            )
+        return (
+            (
+                "Purpose",
+                "Focus a Console Behavior field for setting-specific guidance.",
+            ),
+            ("Consequences", "No field-specific guidance is active right now."),
+            ("Saved as", "varies by field"),
+            ("Applies", "varies by field"),
+        )
+
+    def _refresh_console_behavior_field_guidance(self) -> None:
+        if self._active_category_id() is not SettingsCategoryId.CONSOLE_BEHAVIOR:
+            return
+        for index, (label, value) in enumerate(
+            self._console_behavior_field_guidance_rows()
+        ):
+            self._set_static_text(
+                f"#settings-console-behavior-field-guide-{index}",
+                # task-1716: compose-time rows fold via _detail_row; this
+                # in-place path must fold too or dotted keys break mid-word.
+                f"{label}: {_fold_long_tokens(value)}",
+            )
+
     @staticmethod
     def _normalise_library_rag_int(value: object) -> int | str:
         text_value = str(value).strip()
@@ -2326,6 +4827,22 @@ class SettingsScreen(BaseAppScreen):
             return float(text_value)
         except ValueError:
             return text_value
+
+    def _library_rag_edits_suppressed(self) -> bool:
+        """Whether every `handle_library_rag_*_changed` handler must
+        early-return WITHOUT staging a draft.
+
+        Two independent reasons: (1) `_syncing_library_rag_defaults` -- a
+        programmatic widget resync is currently writing values, not the
+        user; (2) Task 4 (541 v2 UX AC1) -- the editor is showing a
+        profile-picker PREVIEW (`_rag_preview_profile_id` is not None),
+        which is READ-ONLY by design: drafts belong to the active profile
+        only, and preview must never create or mutate one.
+        """
+        return (
+            self._syncing_library_rag_defaults
+            or self._rag_preview_profile_id is not None
+        )
 
     def _stage_library_rag_value(self, key: str, value: object) -> None:
         category = SettingsCategoryId.LIBRARY_RAG
@@ -2355,10 +4872,39 @@ class SettingsScreen(BaseAppScreen):
         )
         self._update_library_rag_preview()
         self._update_library_rag_validation_classes()
+        self._update_library_rag_soft_warning()
         self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
 
-    def _sync_library_rag_widgets(self) -> None:
-        values = self._library_rag_loaded_values()
+    def _sync_library_rag_widgets(
+        self,
+        values: Mapping[str, object] | None = None,
+        *,
+        field_disabled: bool | None = None,
+    ) -> None:
+        """Refresh the editor fields (Search/Embedding/Chunking/Vector
+        store/Reranking) imperatively (no recompose).
+
+        Args:
+            values: Explicit field values to render. Defaults to the ACTIVE
+                profile's raw loaded values (pre-task-4 behaviour, still
+                what every set-active/clone/rename/delete/save resync below
+                relies on) -- pass `self._library_rag_setting_values()` for
+                a DRAFT-AWARE render (Task 4: restoring the active
+                profile's editor after a profile-picker preview, where a
+                staged draft must survive the round-trip).
+            field_disabled: When given, forces EVERY editor field's
+                disabled state, not just the reranker Inputs (which always
+                follow `_library_rag_rerank_field_state`). Task 4 uses
+                `True` for a profile PREVIEW (always read-only regardless
+                of the previewed profile's own read_only flag) and the
+                ACTIVE profile's `read_only` flag when restoring the
+                ordinary editor after a preview. `None` (default) leaves
+                those fields' disabled state untouched -- every pre-task-4
+                caller already relies on that (driven separately by
+                `_sync_library_rag_profile_widgets`).
+        """
+        if values is None:
+            values = self._library_rag_loaded_values()
         self._syncing_library_rag_defaults = True
         try:
             try:
@@ -2371,8 +4917,8 @@ class SettingsScreen(BaseAppScreen):
                     "#settings-library-rag-citation-style", Select
                 ).value = normalise_library_rag_citation_style(values["citation_style"])
                 self.query_one(
-                    "#settings-library-rag-include-citations", Button
-                ).label = "Enabled" if bool(values["include_citations"]) else "Disabled"
+                    "#settings-library-rag-include-citations", Checkbox
+                ).value = bool(values["include_citations"])
                 for selector, key in (
                     ("#settings-library-rag-default-top-k", "default_top_k"),
                     ("#settings-library-rag-fts-top-k", "fts_top_k"),
@@ -2383,6 +4929,53 @@ class SettingsScreen(BaseAppScreen):
                     ("#settings-library-rag-max-context-size", "max_context_size"),
                 ):
                     self.query_one(selector, Input).value = str(values[key])
+                self.query_one(
+                    "#settings-library-rag-chunking-method", Select
+                ).value = normalise_library_rag_chunking_method(
+                    values["chunking_method"]
+                )
+                self.query_one(
+                    "#settings-library-rag-distance-metric", Select
+                ).value = normalise_library_rag_distance_metric(
+                    values["distance_metric"]
+                )
+                self.query_one(
+                    "#settings-library-rag-enable-reranking", Checkbox
+                ).value = bool(values["enable_reranking"])
+                for selector, key in (
+                    ("#settings-library-rag-embedding-model", "embedding_model"),
+                    ("#settings-library-rag-embedding-device", "embedding_device"),
+                    (
+                        "#settings-library-rag-embedding-batch-size",
+                        "embedding_batch_size",
+                    ),
+                    (
+                        "#settings-library-rag-embedding-max-length",
+                        "embedding_max_length",
+                    ),
+                    ("#settings-library-rag-chunk-size", "chunk_size"),
+                    ("#settings-library-rag-chunk-overlap", "chunk_overlap"),
+                    ("#settings-library-rag-reranker-model", "reranker_model"),
+                    ("#settings-library-rag-reranker-top-k", "reranker_top_k"),
+                ):
+                    self.query_one(selector, Input).value = str(values[key])
+                resolved_field_disabled = (
+                    field_disabled
+                    if field_disabled is not None
+                    else bool(active_profile_info()["read_only"])
+                )
+                self._apply_library_rag_rerank_field_state(
+                    rerank_enabled=bool(values["enable_reranking"]),
+                    field_disabled=resolved_field_disabled,
+                )
+                if field_disabled is not None:
+                    for key in _LIBRARY_RAG_READ_LOCK_FIELD_KEYS:
+                        selector = self._library_rag_field_selector(key)
+                        if selector is None:
+                            continue
+                        self.query_one(selector).disabled = field_disabled
+                    for selector in _LIBRARY_RAG_READ_LOCK_CHECKBOX_SELECTORS:
+                        self.query_one(selector, Checkbox).disabled = field_disabled
             except QueryError:
                 pass
         finally:
@@ -2392,6 +4985,7 @@ class SettingsScreen(BaseAppScreen):
         )
         self._update_library_rag_preview()
         self._update_library_rag_validation_classes()
+        self._update_library_rag_soft_warning()
 
     def _library_rag_invalid_field_key(self) -> str | None:
         validation = self._library_rag_validation_result()
@@ -2416,6 +5010,40 @@ class SettingsScreen(BaseAppScreen):
             return "default_search_mode"
         if message.startswith("Citation style"):
             return "citation_style"
+        if message.startswith("Embedding model"):
+            return "embedding_model"
+        if message.startswith("Embedding max length"):
+            return "embedding_max_length"
+        if message.startswith("Chunking method"):
+            return "chunking_method"
+        if message.startswith("Rerank results"):
+            return "reranker_top_k"
+        # M3 (SP3 final review): chunk_size, chunk_overlap, distance_metric,
+        # and embedding_batch_size are validated by RAGConfig.validate()
+        # (simplified/config.py), routed through the adapter's
+        # hard_config_errors() (see settings_library_rag_defaults.py's
+        # validate_library_rag_defaults) -- so `message` here is RAGConfig's
+        # own literal, lowercase/snake_case prose ("chunk_overlap must be
+        # less than chunk_size", "embedding batch_size must be positive",
+        # "Unknown distance metric: ..."), NOT this function's Title Case
+        # field-label convention. The four startswith() checks this replaced
+        # (`"Chunk size"`, `"Chunk overlap"`, `"Distance metric"`, `"Embedding
+        # batch size"`) never matched that wording, so a hard error on any of
+        # these fields blocked Save without ever highlighting the field red.
+        # Matched by case-insensitive substring against RAGConfig's actual
+        # wording instead, since that message can't be reworded here without
+        # drifting from the single source of truth. Order matters: "chunk_overlap
+        # must be less than chunk_size" contains BOTH substrings, so
+        # chunk_overlap must be checked first.
+        lowered = message.lower()
+        if "chunk_overlap" in lowered:
+            return "chunk_overlap"
+        if "chunk_size" in lowered:
+            return "chunk_size"
+        if "batch_size" in lowered:
+            return "embedding_batch_size"
+        if "distance metric" in lowered:
+            return "distance_metric"
         return None
 
     def _library_rag_field_selector(self, key: str) -> str | None:
@@ -2429,10 +5057,30 @@ class SettingsScreen(BaseAppScreen):
             "citation_style": "#settings-library-rag-citation-style",
             "snippet_max_chars": "#settings-library-rag-snippet-max-chars",
             "max_context_size": "#settings-library-rag-max-context-size",
+            "embedding_model": "#settings-library-rag-embedding-model",
+            "embedding_device": "#settings-library-rag-embedding-device",
+            "embedding_batch_size": "#settings-library-rag-embedding-batch-size",
+            "embedding_max_length": "#settings-library-rag-embedding-max-length",
+            "chunk_size": "#settings-library-rag-chunk-size",
+            "chunk_overlap": "#settings-library-rag-chunk-overlap",
+            "chunking_method": "#settings-library-rag-chunking-method",
+            "distance_metric": "#settings-library-rag-distance-metric",
+            "reranker_model": "#settings-library-rag-reranker-model",
+            "reranker_top_k": "#settings-library-rag-reranker-top-k",
         }.get(key)
 
     def _update_library_rag_validation_classes(self) -> None:
-        invalid_key = self._library_rag_invalid_field_key()
+        # Task 4 (541 v2 UX AC1): the fields currently on screen may be
+        # showing a PREVIEWED (different) profile's values while this
+        # method's own validation is always computed from the ACTIVE
+        # profile's draft -- highlighting a previewed field red over an
+        # unrelated active-profile draft error would be misleading, so
+        # nothing is ever highlighted while merely browsing a preview.
+        invalid_key = (
+            None
+            if self._rag_preview_profile_id is not None
+            else self._library_rag_invalid_field_key()
+        )
         for key in (
             "default_search_mode",
             "default_top_k",
@@ -2443,6 +5091,16 @@ class SettingsScreen(BaseAppScreen):
             "citation_style",
             "snippet_max_chars",
             "max_context_size",
+            "embedding_model",
+            "embedding_device",
+            "embedding_batch_size",
+            "embedding_max_length",
+            "chunk_size",
+            "chunk_overlap",
+            "chunking_method",
+            "distance_metric",
+            "reranker_model",
+            "reranker_top_k",
         ):
             selector = self._library_rag_field_selector(key)
             if selector is None:
@@ -2452,6 +5110,19 @@ class SettingsScreen(BaseAppScreen):
             except QueryError:
                 continue
             widget.set_class(key == invalid_key, "settings-invalid-input")
+
+    def _update_library_rag_soft_warning(self) -> None:
+        """Refresh the Reranking advisory Static (never gates Save --
+        see _library_rag_soft_warnings)."""
+        warnings = self._library_rag_soft_warnings()
+        try:
+            warning_widget = self.query_one(
+                "#settings-library-rag-reranker-warning", Static
+            )
+        except QueryError:
+            return
+        warning_widget.update(" / ".join(warnings))
+        warning_widget.display = bool(warnings)
 
     def _stage_storage_value(self, key: str, value: object) -> None:
         category = SettingsCategoryId.STORAGE
@@ -2555,7 +5226,7 @@ class SettingsScreen(BaseAppScreen):
             f"{mode_label} search | {values['default_top_k']} results | {citation_label}",
             (
                 f"Keyword {values['fts_top_k']} | Vector {values['vector_top_k']} | "
-                f"Hybrid alpha {values['hybrid_alpha']} | Min score {values['score_threshold']}"
+                f"Hybrid balance {values['hybrid_alpha']} | Min score {values['score_threshold']}"
             ),
             (
                 f"Snippet: {values['snippet_max_chars']} chars | "
@@ -2729,9 +5400,8 @@ class SettingsScreen(BaseAppScreen):
         return text or fallback
 
     def _runtime_source_state(self) -> object | None:
-        return getattr(
-            getattr(self.app_instance, "runtime_policy", None), "state", None
-        )
+        runtime_policy = getattr(self.app_instance, "runtime_policy", None)
+        return runtime_policy.state if runtime_policy is not None else None
 
     def _active_server_profile_label(self) -> str:
         state = self._runtime_source_state()
@@ -2793,8 +5463,12 @@ class SettingsScreen(BaseAppScreen):
             return (
                 "Sync: unavailable; owning sync surfaces control dry-run and recovery"
             )
+        # TASK-719: each surface's sync_label already begins with "Sync:";
+        # joining them verbatim produced "Collections: Sync: dry-run only".
         return "; ".join(
-            f"{state.surface_label}: {state.sync_label}" for state in sync_states
+            f"{state.surface_label}: "
+            f"{str(state.sync_label).removeprefix('Sync:').strip() or state.sync_label}"
+            for state in sync_states
         )
 
     def _sync_recovery_label(
@@ -2854,9 +5528,12 @@ class SettingsScreen(BaseAppScreen):
                 "not-configured",
             )
             if workspace_id:
+                # TASK-719: the row label already says "Workspace default";
+                # repeating "Workspace:"/"Authority:"/"Sync:" as value
+                # prefixes read like debug output.
                 return (
-                    f"Workspace: {workspace_name} ({workspace_id}); "
-                    f"Authority: {authority}; Sync: {sync_status}"
+                    f"{workspace_name} ({workspace_id}); "
+                    f"authority {authority}; sync {sync_status}"
                 )
         store = getattr(self.app_instance, "console_chat_store", None)
         context = getattr(store, "workspace_context", None)
@@ -2865,10 +5542,13 @@ class SettingsScreen(BaseAppScreen):
         ).strip()
         if active_workspace_id and active_workspace_id != "global":
             return (
-                f"Workspace: {active_workspace_id}; Console context active; "
+                f"{active_workspace_id}; Console context active; "
                 "Library browse/search remains global"
             )
-        return "Workspace: Local Default; Console/Home/Library own workspace switching"
+        # TASK-719: name the concrete owning surfaces instead of a vague list.
+        return (
+            "Local Default; switch in Console (Alt+W), manage in Settings > Workspaces"
+        )
 
     def _acp_runtime_session_state(self) -> ACPRuntimeSessionState:
         get_state = getattr(self.app_instance, "get_acp_runtime_session_state", None)
@@ -3077,6 +5757,11 @@ class SettingsScreen(BaseAppScreen):
             self.call_after_refresh(self._restore_focus_after_sync_rows, focused_id)
 
     def _restore_focus_after_sync_rows(self, widget_id: str | None) -> None:
+        # task-1716 (critique r4): the sync-rows recompose mints a fresh,
+        # hidden fold indicator AFTER on_mount's evaluation ran -- Overview
+        # (the only category whose pane recomposes on these rows) showed a
+        # mid-sentence inspector cut with no indicator.
+        self.call_after_refresh(self._update_inspector_overflow_hint)
         pending = self._pending_navigation_focus_selector
         self._pending_navigation_focus_selector = None
         if self.app.focused is not None:
@@ -3162,9 +5847,18 @@ class SettingsScreen(BaseAppScreen):
         return divider
 
     def _config_path(self) -> Path:
-        override = os.environ.get("TLDW_CONFIG_PATH")
-        candidate = Path(override).expanduser() if override else DEFAULT_CONFIG_PATH
-        return validate_path_simple(candidate, require_exists=False).resolve()
+        """Return the active CLI config path.
+
+        Thin wrapper kept only so call sites in this module read naturally
+        (``self._config_path()``); it must delegate to the shared effective-
+        path resolver rather than re-spell the override/validate logic,
+        since a second hand-copy would drift the moment either
+        implementation changed -- see task-851 review finding 5.
+        """
+        return validate_path_simple(
+            get_cli_config_path(),
+            require_exists=False,
+        )
 
     def _config_writable_status(self) -> str:
         try:
@@ -3188,19 +5882,17 @@ class SettingsScreen(BaseAppScreen):
             "Override config" if os.environ.get("TLDW_CONFIG_PATH") else "User config"
         )
         filename = config_path.name or "config.toml"
-        return f"{source}: {filename} ({self._config_writable_status()})"
+        return f"{filename} — {source.lower()}, {self._config_writable_status()}"
 
     def _raw_config_text(self) -> str:
         try:
-            config_path = self._config_path()
+            self._config_path()
         except (OSError, RuntimeError, ValueError) as exc:
             return f"# Unable to use config path: {redact_secret_text(str(exc))}\n"
-        if config_path.exists():
-            try:
-                return config_path.read_text(encoding="utf-8")
-            except OSError as exc:
-                return f"# Unable to read {config_path}: {type(exc).__name__}"
-        return "# Config file does not exist yet.\n"
+        try:
+            return SettingsConfigAdapter().read_serialized()
+        except OSError as exc:
+            return f"# Unable to read config: {type(exc).__name__}"
 
     @staticmethod
     def _deep_merge_config_values(base: dict, update: Mapping) -> dict:
@@ -3215,21 +5907,14 @@ class SettingsScreen(BaseAppScreen):
         return merged
 
     def _read_cli_config_without_writes(self) -> dict:
-        loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
         try:
-            config_path = self._config_path()
+            self._config_path()
         except (OSError, RuntimeError, ValueError):
-            return loaded_config
-        if not config_path.exists():
-            return loaded_config
+            return copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
         try:
-            with open(config_path, "rb") as config_file:
-                user_config = tomllib.load(config_file)
+            return SettingsConfigAdapter().load()
         except (OSError, tomllib.TOMLDecodeError):
-            return loaded_config
-        if not isinstance(user_config, Mapping):
-            return loaded_config
-        return self._deep_merge_config_values(loaded_config, user_config)
+            return copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
 
     def _read_cli_config_value_without_writes(
         self,
@@ -3253,6 +5938,13 @@ class SettingsScreen(BaseAppScreen):
         return safe_user_name if safe_user_name else "default_user"
 
     def _configured_user_data_dir_path(self) -> Path:
+        """Read-only mirror of get_user_data_dir()'s resolution logic (minus
+        the mkdir side effect), so the Settings display never diverges from
+        the path the app actually uses. Uses _default_base_data_dir() (the
+        same call-time HOME resolution as get_user_data_dir()'s fallback)
+        rather than the import-time-frozen BASE_DATA_DIR_CLI constant --
+        those two can disagree, e.g. under test-isolated HOME (task-519
+        review)."""
         configured_data_dir = self._read_cli_config_value_without_writes(
             "paths", "data_dir", None
         )
@@ -3263,7 +5955,7 @@ class SettingsScreen(BaseAppScreen):
         base_data_dir = (
             Path(str(configured_data_dir)).expanduser()
             if configured_data_dir
-            else BASE_DATA_DIR_CLI
+            else _default_base_data_dir()
         )
         return validate_path_simple(
             base_data_dir / self._configured_user_folder_name(),
@@ -3713,46 +6405,35 @@ class SettingsScreen(BaseAppScreen):
             return "Advanced config save: blocked - validate current TOML before save"
 
         try:
-            config_path = self._config_path()
+            self._config_path()
         except ValueError as exc:
             return f"Advanced config save: failed - {redact_secret_text(str(exc))}"
-        tmp_path = config_path.with_suffix(config_path.suffix + ".tmp")
-        backup_path = config_path.with_suffix(config_path.suffix + ".bak")
-        backup_created = False
         try:
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            if config_path.exists():
-                backup_path.write_text(
-                    config_path.read_text(encoding="utf-8"), encoding="utf-8"
-                )
-                backup_created = True
-            tmp_path.write_text(text, encoding="utf-8")
-            tmp_path.replace(config_path)
+            _loaded, backup_path = SettingsConfigAdapter().replace_serialized(text)
             backup_message = (
-                f"backup: {backup_path}"
-                if backup_created
+                "backup: created"
+                if backup_path is not None
                 else "backup: none (new file)"
             )
             return f"Advanced config save: saved; {backup_message}"
-        except OSError as exc:
+        except (OSError, TypeError, ValueError, tomllib.TOMLDecodeError) as exc:
             return f"Advanced config save: failed - {redact_secret_text(str(exc))}"
 
     def _read_advanced_backup_preview(self) -> tuple[str, str | None]:
         try:
-            config_path = self._config_path()
+            self._config_path()
         except (OSError, RuntimeError, ValueError) as exc:
             return (
                 f"Advanced config recovery: failed - {redact_secret_text(str(exc))}",
                 None,
             )
-        backup_path = config_path.with_suffix(config_path.suffix + ".bak")
-        if not backup_path.exists():
+        try:
+            backup_text = SettingsConfigAdapter().read_backup_serialized()
+        except FileNotFoundError:
             return (
-                f"Advanced config recovery: unavailable - no backup found at {backup_path}",
+                "Advanced config recovery: unavailable - no backup found",
                 None,
             )
-        try:
-            backup_text = backup_path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             return (
                 f"Advanced config recovery: failed - {redact_secret_text(str(exc))}",
@@ -3887,7 +6568,7 @@ class SettingsScreen(BaseAppScreen):
             else None
         )
         resolved = resolve_effective_provider_model(
-            self.app_instance,
+            self._chat_defaults(),
             settings_provider=settings_provider,
             settings_model=settings_model,
         )
@@ -3905,7 +6586,7 @@ class SettingsScreen(BaseAppScreen):
         return resolved
 
     def _provider_loaded_setting_values(self) -> dict[str, object]:
-        resolved = resolve_effective_provider_model(self.app_instance)
+        resolved = resolve_effective_provider_model(self._chat_defaults())
         provider = str(resolved.provider or "").strip()
         model = str(resolved.model or "").strip()
         profile = self._provider_model_profile(provider, model)
@@ -4330,6 +7011,8 @@ class SettingsScreen(BaseAppScreen):
         draft.set_value(key, original, value)
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
+        # TASK-366: any edit to a provider field outdates the last Test result.
+        self._mark_provider_test_result_stale()
 
     def _provider_config_entry(
         self, provider: str
@@ -4517,7 +7200,10 @@ class SettingsScreen(BaseAppScreen):
 
     @staticmethod
     def _select_value_text(value: object) -> str:
-        if value is None or value is Select.BLANK:
+        # task-565: `Select.NULL` is the real blank sentinel on this Textual
+        # version -- `Select.BLANK` doesn't exist, it silently resolves to
+        # the unrelated `Widget.BLANK` (`False`), so it never matched here.
+        if value is None or value is Select.NULL:
             return ""
         return str(value).strip()
 
@@ -4584,15 +7270,6 @@ class SettingsScreen(BaseAppScreen):
         key_required = sum(1 for entry in entries if entry.requires_api_key)
         keyless = sum(1 for entry in entries if not entry.requires_api_key)
         return f"Credential policy: {key_required} require keys; {keyless} local/keyless providers"
-
-    def _sync_provider_runtime_defaults(self, provider: str, model: str) -> None:
-        """Keep Console-facing app defaults aligned after a Settings save."""
-        if hasattr(self.app_instance, "chat_api_provider_value"):
-            self.app_instance.chat_api_provider_value = provider
-        if hasattr(self.app_instance, "chat_api_model_value"):
-            self.app_instance.chat_api_model_value = model
-        if hasattr(self.app_instance, "chat_model_value"):
-            self.app_instance.chat_model_value = model
 
     def _provider_model_defaults(self, provider: str) -> Mapping[str, object]:
         model_defaults = self._provider_config(provider).get("model_defaults", {})
@@ -4893,6 +7570,49 @@ class SettingsScreen(BaseAppScreen):
             is not None
         )
 
+    def _provider_test_staged_config(self, provider: str) -> Mapping[str, object]:
+        """Return app_config with the unsaved draft provider fields overlaid.
+
+        Only dirty fields are overlaid, so a provider with no unsaved edits tests
+        exactly the saved config (task-432).
+
+        Args:
+            provider: The provider whose Test is running (the draft widget value).
+
+        Returns:
+            A config mapping the Test's readiness check can evaluate.
+        """
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        draft = self._provider_draft()
+        dirty = draft.dirty_keys if draft is not None else set()
+        if not ({"endpoint", "credential_env_var", "api_key"} & dirty):
+            return app_config
+        provider_save_key, _config = self._provider_config_entry(provider)
+        provider_save_key = provider_save_key or provider_config_key(provider)
+        if not provider_save_key:
+            return app_config
+        try:
+            endpoint = self.query_one(
+                "#settings-provider-endpoint-value", Input
+            ).value.strip()
+            env_var = self.query_one(
+                "#settings-provider-credential-env-var", Input
+            ).value.strip()
+            api_key = self.query_one("#settings-provider-api-key", Input).value.strip()
+        except QueryError:
+            values = self._provider_setting_values_mapping()
+            endpoint = str(values.get("endpoint") or "").strip()
+            env_var = str(values.get("credential_env_var") or "").strip()
+            api_key = str(values.get("api_key") or "").strip()
+        return overlay_provider_draft_config(
+            app_config,
+            provider_save_key=provider_save_key,
+            endpoint_key=self._provider_endpoint_setting_key(provider),
+            draft_endpoint=endpoint if "endpoint" in dirty else None,
+            draft_env_var=env_var if "credential_env_var" in dirty else None,
+            draft_api_key=api_key if "api_key" in dirty else None,
+        )
+
     def _provider_discovery_staged_settings(self, provider: str) -> dict[str, object]:
         provider_key = provider_config_key(provider)
         if not provider_key:
@@ -4928,10 +7648,18 @@ class SettingsScreen(BaseAppScreen):
                 continue
             source = str(getattr(model, "source", "runtime_discovered"))
             capability = str(getattr(model, "capability_status", "unknown"))
-            persisted = (
-                "saved" if bool(getattr(model, "persisted", False)) else "runtime"
+            # TASK-387: humanize the row so a first-run user can read it instead
+            # of decoding internal enum names (runtime_discovered / capability=…).
+            saved_label = (
+                "saved" if bool(getattr(model, "persisted", False)) else "session"
             )
-            label = f"{model_id} | {persisted} | {source} | capability={capability}"
+            source_label = {
+                "runtime_discovered": "discovered",
+                "persisted_discovered": "discovered (cached)",
+                "saved": "saved",
+            }.get(source, source.replace("_", " "))
+            capability_label = f"capabilities {capability}"
+            label = f"{model_id} · {saved_label} · {source_label} · {capability_label}"
             options.append(
                 (
                     label,
@@ -4955,10 +7683,15 @@ class SettingsScreen(BaseAppScreen):
         kind = str(getattr(error, "kind", "") or "")
         if kind == "ambiguous_provider_key":
             return MODEL_DISCOVERY_AMBIGUOUS_PROVIDER_COPY
-        if kind == "unsupported_endpoint":
-            return MODEL_DISCOVERY_UNSUPPORTED_ENDPOINT_COPY
         message = str(getattr(error, "message", "") or "").strip()
         recovery = str(getattr(error, "recovery_hint", "") or "").strip()
+        # TASK-367: surface the discovery client's DISTINCT message for endpoint
+        # problems — a malformed URL and a valid-but-unsupported path now read
+        # differently instead of collapsing into the single generic /v1 copy.
+        if kind in {"unsupported_endpoint", "malformed_endpoint"}:
+            if message or recovery:
+                return redact_secret_text(f"{message} {recovery}".strip())
+            return MODEL_DISCOVERY_UNSUPPORTED_ENDPOINT_COPY
         if recovery:
             return redact_secret_text(f"{message} {recovery}".strip())
         if message:
@@ -5082,6 +7815,7 @@ class SettingsScreen(BaseAppScreen):
                 f"Discovered {len(models)} model(s) from {provider_list_key}."
             )
             self._refresh_model_discovery_widgets()
+            self._refresh_model_field_suggester()  # TASK-369: enable typeahead
             self.app.notify(
                 "Provider model discovery finished.", severity="information"
             )
@@ -5096,6 +7830,66 @@ class SettingsScreen(BaseAppScreen):
     @work(exclusive=True, group="settings-model-discovery")
     async def _save_selected_discovered_provider_models_worker(self) -> None:
         await self._save_selected_discovered_provider_models()
+
+    def _model_field_suggester(self) -> SuggestFromList | None:
+        """TASK-369: typeahead of discovered model ids for the Model field.
+
+        Recognition over recall — while a discovery result is on screen, typing a
+        prefix (e.g. ``gemma``) completes to the full gguf id instead of forcing
+        the user to recall a 56-character filename. Returns ``None`` when there
+        is nothing to suggest.
+        """
+        ids = sorted(
+            {
+                str(getattr(model, "model_id", "") or "").strip()
+                for model in self._model_discovery_models
+                if str(getattr(model, "model_id", "") or "").strip()
+            }
+        )
+        return SuggestFromList(ids, case_sensitive=False) if ids else None
+
+    def _refresh_model_field_suggester(self) -> None:
+        """Point the Model field's suggester at the current discovered models."""
+        try:
+            self.query_one(
+                "#settings-model-value", Input
+            ).suggester = self._model_field_suggester()
+        except (QueryError, AttributeError):
+            pass
+
+    @staticmethod
+    def _model_to_activate_after_save(
+        current_model: object, saved_model_ids: tuple[str, ...]
+    ) -> str:
+        """TASK-369: the Model value to set after saving discovered models.
+
+        An empty field is filled with the first saved model (so readiness can
+        pass without retyping a long gguf name); a field the user already set is
+        left untouched.
+        """
+        current = str(current_model or "").strip()
+        if current:
+            return current
+        for model_id in saved_model_ids:
+            candidate = str(model_id or "").strip()
+            if candidate:
+                return candidate
+        return ""
+
+    def _activate_saved_model_if_field_empty(
+        self, saved_model_ids: tuple[str, ...]
+    ) -> None:
+        """Populate the empty Model field with a just-saved model (TASK-369)."""
+        try:
+            model_input = self.query_one("#settings-model-value", Input)
+        except QueryError:
+            return
+        next_value = self._model_to_activate_after_save(
+            model_input.value, saved_model_ids
+        )
+        if next_value and next_value != model_input.value:
+            # Setting .value fires Input.Changed, which stages the model draft.
+            model_input.value = next_value
 
     async def _save_selected_discovered_provider_models(self) -> None:
         provider = self._provider_widget_value()
@@ -5153,10 +7947,16 @@ class SettingsScreen(BaseAppScreen):
         if status == "saved":
             provider_list_key = getattr(result, "provider_list_key", None)
             self._append_saved_discovered_models(provider_list_key, saved_model_ids)
+            # TASK-369: recognition over recall — offer the saved model for
+            # activation instead of leaving an empty Model field the user must
+            # retype from memory of a name the cleared discovery list no longer
+            # shows.
+            self._activate_saved_model_if_field_empty(saved_model_ids)
             self._model_discovery_status = (
                 message or f"Saved {len(saved_model_ids)} discovered model(s)."
             )
             self._refresh_model_discovery_widgets()
+            self._refresh_model_field_suggester()
             self.app.notify("Discovered models saved.", severity="information")
             return
 
@@ -5254,7 +8054,7 @@ class SettingsScreen(BaseAppScreen):
         save_settings_to_cli_config(section_values)
 
     def _provider_readiness_test_report(self) -> tuple[str, str, bool]:
-        """Run the local provider readiness test.
+        """Run the local provider readiness test against the DRAFT config.
 
         Returns:
             Tuple of (detail line for the results row, toast summary stating
@@ -5263,39 +8063,113 @@ class SettingsScreen(BaseAppScreen):
         try:
             provider = self._provider_widget_value()
             model = self.query_one("#settings-model-value", Input).value.strip()
+            draft_endpoint = self.query_one(
+                "#settings-provider-endpoint-value", Input
+            ).value.strip()
         except QueryError:
             values = self._provider_setting_values()
             provider = str(values.get("provider") or "").strip()
             model = str(values.get("model") or "").strip()
-
+            draft_endpoint = str(values.get("endpoint") or "").strip()
+        draft = self._provider_draft()
+        dirty = (
+            draft.dirty_keys if draft is not None else set()
+        )  # dirty_keys is a @property
         readiness = get_provider_readiness(
-            provider,
-            getattr(self.app_instance, "app_config", {}) or {},
+            provider, self._provider_test_staged_config(provider)
+        )
+        return self._build_provider_readiness_findings(
+            provider, model, readiness, draft_endpoint=draft_endpoint, dirty=dirty
         )
 
-        findings: list[str] = ["Provider test"]
-        findings.append(readiness.user_message)
+    def _build_provider_readiness_findings(
+        self,
+        provider: str,
+        model: str,
+        readiness,
+        *,
+        draft_endpoint: str,
+        dirty: set[str],
+    ) -> tuple[str, str, bool]:
+        """Assemble the Test evidence line + toast from resolved inputs.
+
+        Reads only ``app_config`` (via helpers) and ``os.environ`` -- never widgets
+        -- so it is unit-testable on a bare screen instance.
+
+        Args:
+            provider: Provider under test (draft widget value).
+            model: Model under test (draft widget value).
+            readiness: ``ProviderReadiness`` from the draft-overlaid config.
+            draft_endpoint: The endpoint the test used (draft widget, may be empty).
+            dirty: The provider draft's dirty field keys.
+
+        Returns:
+            Tuple of (redacted detail line, redacted toast summary, passed).
+        """
+        provider_key = provider_config_key(provider)
+        passed = bool(readiness.ready and model)
+        display_name = self._provider_display_name(provider) if provider else "Provider"
+        # TASK-366: lead with ONE verdict consistent with the status line below.
+        # A config-ready provider with no default model is still blocked, so it
+        # must not read "<provider> is ready" next to "status=blocked".
+        if readiness.ready and not model:
+            verdict_message = (
+                f"{display_name} is configured, but no default model is set."
+            )
+        else:
+            verdict_message = readiness.user_message
+        findings: list[str] = ["Provider test", verdict_message]
+
         if not model:
             findings.append("model=missing")
         else:
-            findings.append(f"model={model}")
+            findings.append(f"model={model}{' (draft)' if 'model' in dirty else ''}")
 
+        # This literal marker holds no secret material (just a provenance
+        # label). redact_secret_text() pattern-matches on "...key...=value",
+        # so if it were run through the same redaction pass as the other
+        # findings it would truncate the word "draft" right after "=". It is
+        # therefore excluded from redaction below (see `api_key_relabelled`).
+        draft_api_key_label = "api_key_source=draft api_key (unsaved)"
+        api_key_relabelled = False
         if readiness.api_key_source:
-            findings.append(f"api_key_source={readiness.api_key_source}")
+            if (
+                "api_key" in dirty
+                and readiness.api_key_source
+                == f"config:api_settings.{provider_key}.api_key"
+            ):
+                findings.append(draft_api_key_label)
+                api_key_relabelled = True
+            else:
+                findings.append(f"api_key_source={readiness.api_key_source}")
         if readiness.env_var:
-            raw_value = os.environ.get(readiness.env_var)
+            # Report presence only, never the raw value. ``redact_secret_text``
+            # is name-pattern based (it redacts only ``*_API_KEY``/``TOKEN``/...),
+            # so a custom-named credential env var (e.g. ``MY_LLAMA_CRED``) would
+            # otherwise print its secret verbatim into this screenshot-able UI.
+            # Emitting the established ``<redacted>`` marker for any set value
+            # keeps the standard-name output identical while closing that gap
+            # (folds in task-483).
+            env_present = bool(os.environ.get(readiness.env_var))
+            env_tag = " (draft env var)" if "credential_env_var" in dirty else ""
             findings.append(
-                f"{readiness.env_var}={raw_value if raw_value else 'missing'}"
+                f"{readiness.env_var}={'<redacted>' if env_present else 'missing'}{env_tag}"
             )
         elif not readiness.requires_api_key:
             findings.append("api_key=not required")
-        findings.append(self._provider_endpoint_summary(provider))
 
-        passed = bool(readiness.ready and model)
+        # Mask any password embedded in the endpoint's userinfo before display
+        # (name-pattern redaction misses ``scheme://user:pass@host``).
+        endpoint_summary = self._provider_endpoint_summary(
+            provider, endpoint=_mask_url_userinfo(draft_endpoint)
+        )
+        if "endpoint" in dirty:
+            endpoint_summary = f"{endpoint_summary} (draft)"
+        findings.append(endpoint_summary)
+
         findings.append(f"status={'ready' if passed else 'blocked'}")
 
         # task-185: the toast must state the outcome, not just "finished".
-        display_name = self._provider_display_name(provider) if provider else "Provider"
         if passed:
             summary = f"Provider test passed: {display_name} is ready; model {model}."
         elif not readiness.ready:
@@ -5304,8 +8178,17 @@ class SettingsScreen(BaseAppScreen):
                 summary += " Also set a default model."
         else:
             summary = f"Provider test failed: {display_name} is ready but no default model is set."
+        if api_key_relabelled:
+            detail = " | ".join(
+                finding
+                if finding == draft_api_key_label
+                else redact_secret_text(finding)
+                for finding in findings
+            )
+        else:
+            detail = redact_secret_text(" | ".join(findings))
         return (
-            redact_secret_text(" | ".join(findings)),
+            detail,
             redact_secret_text(summary),
             passed,
         )
@@ -5373,8 +8256,29 @@ class SettingsScreen(BaseAppScreen):
             self.query_one("#settings-provider-test-result", Static).update(
                 self._provider_test_result
             )
-        except QueryError:
+        except (QueryError, AttributeError):
+            # QueryError: widget not mounted yet. AttributeError: called on an
+            # unmounted screen (no DOM) — the state is still updated for the next
+            # render either way.
             pass
+
+    def _mark_provider_test_result_stale(self) -> None:
+        """Invalidate a prior Test Provider result when provider inputs change.
+
+        TASK-366: a stale ``ready``/``blocked`` verdict that no longer reflects
+        the draft in the form is misleading (the review saw a ``blocked`` line
+        persist after a successful save until Test was re-run). Once any provider
+        field is edited or saved, the last result is replaced with a re-run
+        prompt. A no-op when nothing has run yet or it is already marked stale, so
+        it never clobbers the not-run sentinel or thrashes on every keystroke.
+        """
+        if self._provider_test_result in (
+            self._PROVIDER_TEST_NOT_RUN_COPY,
+            self._PROVIDER_TEST_STALE_COPY,
+        ):
+            return
+        self._provider_test_result = self._PROVIDER_TEST_STALE_COPY
+        self._update_provider_test_result()
 
     def _update_provider_dynamic_widgets(self) -> None:
         try:
@@ -5432,6 +8336,9 @@ class SettingsScreen(BaseAppScreen):
     def _detail_row(
         self, label: str, value: object, *, identifier: str | None = None
     ) -> Static:
+        if isinstance(value, str):
+            # task-1583: dotted keys/paths fold at separators, never mid-word.
+            value = _fold_long_tokens(value)
         return Static(
             f"{label}: {value}",
             id=identifier,
@@ -5671,7 +8578,7 @@ class SettingsScreen(BaseAppScreen):
         for index, (label, value) in enumerate(self._provider_field_guidance_rows()):
             self._set_static_text(
                 f"#settings-provider-field-guide-{index}",
-                f"{label}: {value}",
+                f"{label}: {_fold_long_tokens(value)}",
             )
 
     def _appearance_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
@@ -5743,7 +8650,7 @@ class SettingsScreen(BaseAppScreen):
         for index, (label, value) in enumerate(self._appearance_field_guidance_rows()):
             self._set_static_text(
                 f"#settings-appearance-field-guide-{index}",
-                f"{label}: {value}",
+                f"{label}: {_fold_long_tokens(value)}",
             )
 
     def _storage_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
@@ -5793,7 +8700,31 @@ class SettingsScreen(BaseAppScreen):
         for index, (label, value) in enumerate(self._storage_field_guidance_rows()):
             self._set_static_text(
                 f"#settings-storage-field-guide-{index}",
-                f"{label}: {value}",
+                f"{label}: {_fold_long_tokens(value)}",
+            )
+
+    def _rag_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
+        """Task 3 (541 v2 UX AC3): context-sensitive Library/RAG guidance.
+
+        Mirrors `_provider_field_guidance_rows` / `_storage_field_guidance_rows`:
+        keyed first on the focused field (`_active_settings_field_id`, via
+        `_RAG_FIELD_GROUP_BY_ID`), then on the last-expanded Collapsible
+        group (`_active_rag_scope_group`), then the unchanged static
+        fallback so a first-ever visit (nothing focused, nothing expanded
+        beyond the default "Search" group) reads exactly as before this
+        task.
+        """
+        field_id = self._active_settings_field_id or ""
+        group = _RAG_FIELD_GROUP_BY_ID.get(field_id) or self._active_rag_scope_group
+        return _RAG_GROUP_GUIDANCE.get(group or "", _RAG_GROUP_GUIDANCE_FALLBACK)
+
+    def _refresh_rag_field_guidance(self) -> None:
+        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+            return
+        for index, (label, value) in enumerate(self._rag_field_guidance_rows()):
+            self._set_static_text(
+                f"#settings-library-rag-field-guide-{index}",
+                f"{label}: {_fold_long_tokens(value)}",
             )
 
     def _split_detail_row(self, text: str) -> Static:
@@ -5805,159 +8736,152 @@ class SettingsScreen(BaseAppScreen):
     def _inspector_guidance(
         self, category: SettingsCategoryId
     ) -> tuple[tuple[str, str], ...]:
-        guidance: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
-            SettingsCategoryId.OVERVIEW: (
-                ("Affected config", "all Settings categories summarized for readiness"),
-                ("Recovery", "open the specific category before changing values"),
-                (
-                    "Boundary",
-                    "runtime MCP, ACP, and tool control stay in their own destinations",
-                ),
-            ),
-            SettingsCategoryId.PROVIDERS_MODELS: (
+        if category is SettingsCategoryId.THEME:
+            return (
                 (
                     "Affected config",
-                    "provider, model, endpoint, and credential source defaults",
+                    f"custom theme files under {_theme_save_target()}{os.sep}",
                 ),
                 (
                     "Recovery",
-                    "test provider readiness before saving provider-backed Console defaults",
+                    "use the editor's Apply/Save/Reset buttons; delete a theme file to remove it",
                 ),
                 (
                     "Boundary",
-                    "Sampling and transport defaults are routed to Console Defaults",
+                    "launch visual defaults stay in Appearance; theme edits never touch config.toml",
                 ),
-            ),
-            SettingsCategoryId.APPEARANCE: (
-                ("Affected config", "theme, density, font size, and motion defaults"),
-                (
-                    "Recovery",
-                    "open Theme for full theme editing; use Settings for persisted defaults",
-                ),
-                ("Boundary", "visual preferences do not change runtime or data access"),
-            ),
-            SettingsCategoryId.STORAGE: (
+            )
+        if category is SettingsCategoryId.IMAGE_GENERATION:
+            # Final review Important 2: IMAGE_GENERATION sits in the
+            # "Domain Defaults" rail group (needed for that grouping + the
+            # settings_can_mutate=True domain contract test) but, unlike a
+            # pure view-only delegation card, Settings genuinely owns and
+            # writes this config -- an explicit branch here (mirroring
+            # _guided_action_message's/_category_state_banner_text's own
+            # IMAGE_GENERATION branches, both of which already win over the
+            # generic domain fallback below) keeps this page from showing
+            # the generic "nothing on this page is editable" copy that's
+            # true for every OTHER domain category but not this one.
+            return (
                 (
                     "Affected config",
-                    "config file path, local database paths, media storage roots",
+                    "[image_generation] backend enable/default, per-backend "
+                    "fields (base URL, model, timeout, key), and generation "
+                    "defaults",
                 ),
                 (
                     "Recovery",
-                    "verify paths, reload config, then restart only if storage roots changed",
+                    "Revert discards unsaved edits; Console's /generate-image "
+                    "keeps working off the last saved config.toml regardless",
                 ),
                 (
                     "Boundary",
-                    "server handoff does not move local source content unless explicitly requested",
+                    "Edits backend, key, and generation defaults here; Save "
+                    "applies to config.toml",
                 ),
-            ),
-            SettingsCategoryId.PRIVACY_SECURITY: (
-                (
-                    "Affected config",
-                    "encryption posture, credential-source status, and redaction status",
-                ),
-                (
-                    "Credential source",
-                    "Environment variables are preferred for provider credentials.",
-                ),
-                (
-                    "Recovery",
-                    "open Providers & Models for provider defaults or Advanced Config for expert repair",
-                ),
-                (
-                    "Boundary",
-                    "raw secret values are never displayed; encryption mutation needs a password-gated flow",
-                ),
-            ),
-            SettingsCategoryId.CONSOLE_BEHAVIOR: (
-                (
-                    "Affected config",
-                    "chat_defaults fallbacks plus Console composer paste behavior",
-                ),
-                (
-                    "Recovery",
-                    "revert unsaved changes or disable paste collapse if composer flow is disrupted",
-                ),
-                (
-                    "Boundary",
-                    "active sessions and provider+model profiles override these global fallbacks",
-                ),
-            ),
-            SettingsCategoryId.LIBRARY_RAG: (
-                (
-                    "Affected config",
-                    "AppRAGSearchConfig.rag.search and AppRAGSearchConfig.rag.retriever defaults",
-                ),
-                (
-                    "Recovery",
-                    "revert unsaved defaults or open Library to validate retrieval behavior",
-                ),
-                (
-                    "Boundary",
-                    "Library owns indexing, query execution, source browse, Collections, and staging",
-                ),
-            ),
-            SettingsCategoryId.DIAGNOSTICS: (
-                (
-                    "Affected config",
-                    "read-only validation, reload status, and troubleshooting output",
-                ),
-                (
-                    "Recovery",
-                    "validate first, reload only after confirming the config source is correct",
-                ),
-                (
-                    "Boundary",
-                    "diagnostics redact secrets and should not mutate advanced config",
-                ),
-            ),
-            SettingsCategoryId.ADVANCED_CONFIG: (
-                ("Affected config", "raw TOML for every loaded configuration section"),
-                (
-                    "Recovery",
-                    "validate current text, save atomically, then restore from backup if needed",
-                ),
-                ("Boundary", "save is blocked until the exact current text validates"),
-            ),
-        }
+            )
         if category in DOMAIN_SETTINGS_CATEGORY_IDS:
             contract = self._domain_category_contract(category)
             return (
                 (
                     "Affected config",
-                    "none yet - this category is an ownership/status contract",
+                    "none yet - nothing on this page is editable",
                 ),
                 (
                     "Recovery",
-                    f"open {contract.owner_destination} for workflow actions and setup",
+                    f"go to {contract.owner_destination} to make changes",
                 ),
                 (
                     "Boundary",
-                    f"{contract.owner_destination} remains the runtime owner; Settings cannot mutate it yet",
+                    f"{contract.owner_destination} owns this; Settings only shows it",
                 ),
             )
-        return guidance[category]
+        guidance = _INSPECTOR_GUIDANCE.get(category)
+        if guidance is not None:
+            return guidance
+        # A missing entry must degrade gracefully: this runs inside compose,
+        # where an uncaught exception takes down the whole app. Warn once per
+        # category so the coverage gap is visible in logs without spamming
+        # every rebuild.
+        if category not in _WARNED_MISSING_GUIDANCE_CATEGORIES:
+            _WARNED_MISSING_GUIDANCE_CATEGORIES.add(category)
+            logger.warning(
+                "No inspector guidance entry for Settings category %r; using "
+                "generic fallback. Add an entry to _INSPECTOR_GUIDANCE.",
+                category,
+            )
+        return _INSPECTOR_GUIDANCE_FALLBACK
+
+    DOMAIN_DEFAULTS_GROUP_TITLE = "Domain Defaults"
+
+    def _domain_group_is_expanded(self) -> bool:
+        """Domain Defaults rail group visibility.
+
+        Expanded when the user toggled it open or when the active category is
+        itself a domain category (navigation, restored state, deep links).
+        """
+        if self._domain_group_expanded:
+            return True
+        try:
+            active = SettingsCategoryId(self.active_category)
+        except ValueError:
+            return False
+        return active in DOMAIN_SETTINGS_CATEGORY_IDS
+
+    def _domain_group_toggle_label(self) -> str:
+        summaries = self._category_summaries()
+        count = sum(
+            1
+            for summary in summaries
+            if summary.category in DOMAIN_SETTINGS_CATEGORY_IDS
+        )
+        # Search force-shows matching domain categories, so the indicator
+        # must reflect the EFFECTIVE visibility, not just the toggle flag.
+        expanded = self._domain_group_is_expanded() or bool(
+            self._category_search_text()
+        )
+        indicator = "▾" if expanded else "▸"
+        return f"{self.DOMAIN_DEFAULTS_GROUP_TITLE} {indicator} ({count})"
 
     def _render_category_buttons(self) -> ComposeResult:
         summaries_by_id = {
             summary.category: summary for summary in self._category_summaries()
         }
         visible_count = 0
+        search_active = bool(self._category_search_text())
         for group_title, category_ids in self._category_groups():
             visible_categories = tuple(
                 category_id
                 for category_id in category_ids
                 if self._category_matches_search(summaries_by_id[category_id])
             )
-            group_heading = Static(
-                group_title,
-                id=self._category_group_dom_id(group_title),
-                classes="settings-category-group-title",
-            )
+            is_domain_group = group_title == self.DOMAIN_DEFAULTS_GROUP_TITLE
+            if is_domain_group:
+                group_heading = Button(
+                    self._domain_group_toggle_label(),
+                    id=self._category_group_dom_id(group_title),
+                    classes="settings-category-group-title settings-category-group-toggle",
+                    tooltip=(
+                        "Show or hide the Domain Defaults categories "
+                        "(read-only ownership contracts)."
+                    ),
+                )
+            else:
+                group_heading = Static(
+                    group_title,
+                    id=self._category_group_dom_id(group_title),
+                    classes="settings-category-group-title",
+                )
             group_heading.display = bool(visible_categories)
             yield group_heading
+            group_expanded = (
+                not is_domain_group
+                or search_active
+                or self._domain_group_is_expanded()
+            )
             for category_id in category_ids:
                 summary = summaries_by_id[category_id]
-                is_visible = category_id in visible_categories
+                is_visible = category_id in visible_categories and group_expanded
                 visible_count += int(is_visible)
                 is_active = summary.category.value == self.active_category
                 button = Button(
@@ -5970,9 +8894,10 @@ class SettingsScreen(BaseAppScreen):
                     button.add_class("settings-active-section")
                 if self._category_search_text() and is_visible:
                     rank = self._category_search_rank(summary)
-                    if rank == 0:
+                    # task-1584 rescaled tiers: 0/1 primary, 2 secondary.
+                    if rank in (0, 1):
                         button.add_class("settings-primary-search-match")
-                    elif rank == 1:
+                    elif rank == 2:
                         button.add_class("settings-secondary-search-match")
                 button.display = is_visible
                 yield button
@@ -5999,10 +8924,9 @@ class SettingsScreen(BaseAppScreen):
         # sync and the ownership summary sit at the bottom of the card.
         yield Static("Overview", classes="destination-section settings-column-title")
         with Vertical(id="settings-overview-card", classes="settings-focus-card"):
-            yield self._render_category_state_banner(SettingsCategoryId.OVERVIEW)
             yield Static("Provider readiness", classes="destination-section")
             yield self._detail_row(
-                "Provider readiness",
+                "Active",
                 self._provider_readiness_label().removeprefix("Provider readiness: "),
                 identifier="settings-overview-provider-readiness",
             )
@@ -6070,9 +8994,6 @@ class SettingsScreen(BaseAppScreen):
         with Vertical(
             id="settings-providers-models-card", classes="settings-focus-card"
         ):
-            yield self._render_category_state_banner(
-                SettingsCategoryId.PROVIDERS_MODELS
-            )
             # task-189: the Connect block (provider, model, endpoint,
             # credentials, readiness/test) leads; sampling and tuning live in
             # the collapsed "Generation defaults" disclosure below it.
@@ -6121,6 +9042,7 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-model-value",
                     classes="settings-compact-input",
                     placeholder="Model name",
+                    suggester=self._model_field_suggester(),
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Endpoint", classes="settings-input-label")
@@ -6129,6 +9051,8 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-provider-endpoint-value",
                     classes="settings-compact-input",
                     placeholder=self._provider_endpoint_placeholder(provider),
+                    validators=[ProviderEndpointURLValidator()],
+                    validate_on={"blur", "submitted"},
                 )
             yield Static("Credentials", classes="destination-section")
             yield Static(
@@ -6179,6 +9103,15 @@ class SettingsScreen(BaseAppScreen):
                     "Run a local readiness check for this provider configuration; "
                     "URL-based local providers also get a short live endpoint probe."
                 ),
+            )
+            # TASK-386 (AC#2): the readiness / live-probe explanation must also
+            # exist as visible static text -- a hover tooltip is invisible to
+            # keyboard users and self-occludes the result line below it.
+            yield Static(
+                "Runs a local readiness check; URL-based local providers also get "
+                "a short live endpoint probe.",
+                id="settings-test-provider-guidance",
+                classes="settings-status-row",
             )
             yield Static(self._provider_test_result, id="settings-provider-test-result")
             yield Static(
@@ -6265,7 +9198,9 @@ class SettingsScreen(BaseAppScreen):
             # inline from the saved config (the Connect block pattern) and
             # persist immediately on change via the handlers below.
             model_catalog_settings = load_model_catalog_settings(load_settings())
-            yield Static("Automatic refresh (ADR-020)", classes="destination-section")
+            # TASK-387: keep the internal decision-record id (ADR-020) out of the
+            # user-facing heading; it survives in the code comment above.
+            yield Static("Automatic refresh", classes="destination-section")
             yield Checkbox(
                 "Auto-refresh model lists on startup",
                 value=model_catalog_settings.auto_refresh_enabled,
@@ -6584,8 +9519,8 @@ class SettingsScreen(BaseAppScreen):
         with Vertical(
             id="settings-console-behavior-card", classes="settings-secondary-card"
         ):
-            title = "Console paste collapse" if compact else "Console Behavior"
-            yield Static(title, classes="destination-section")
+            if compact:
+                yield Static("Console paste collapse", classes="destination-section")
             yield Static("Composer paste handling", classes="destination-section")
             yield Static(
                 "Collapse large pasted chunks only when they exceed the threshold.",
@@ -6597,7 +9532,7 @@ class SettingsScreen(BaseAppScreen):
                 tooltip="Toggle compact display for large pasted Console chunks.",
             )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Threshold", classes="settings-input-label")
+                yield Static("Threshold (chars)", classes="settings-input-label")
                 yield Input(
                     value=str(self._paste_collapse_threshold_value()),
                     id="settings-console-paste-collapse-threshold",
@@ -6608,6 +9543,53 @@ class SettingsScreen(BaseAppScreen):
             yield Static(
                 "Normal typing stays literal. The canonical message payload is preserved.",
                 id="settings-console-collapse-large-pastes-help",
+            )
+            yield Static("Chat images", classes="destination-section")
+            yield Static(
+                "Render images linked in assistant replies (remote fetch).",
+                id="settings-console-remote-images-label",
+            )
+            yield Button(
+                self._remote_images_button_label(),
+                id="settings-console-remote-images-toggle",
+                tooltip=(
+                    "Fetch and render http(s) image links found in replies. "
+                    "Applies immediately; fetches go through the egress SSRF "
+                    "policy with size caps."
+                ),
+            )
+            yield Static(
+                "Off by default: fetching a model-suggested link reveals your "
+                "IP address to that host.",
+                id="settings-console-remote-images-help",
+            )
+            yield Static("Parallel agent runs", classes="destination-section")
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Max parallel agent runs", classes="settings-input-label")
+                yield Input(
+                    value=str(self._console_max_parallel_runs_value()),
+                    id="settings-console-max-parallel-runs",
+                    classes="settings-compact-input",
+                    placeholder=str(DEFAULT_CONSOLE_MAX_PARALLEL_RUNS),
+                    restrict=r"^[0-9]*$",
+                )
+            yield Static("Agent tool-result display cap", classes="destination-section")
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Display cap (chars)", classes="settings-input-label")
+                yield Input(
+                    value=str(self._tool_result_display_chars_value()),
+                    id="settings-console-tool-result-display-chars",
+                    classes="settings-compact-input",
+                    placeholder=str(DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS),
+                    restrict=r"^[0-9]*$",
+                )
+            yield Static(
+                "How much of an agent tool result the Console shows you here -- "
+                "distinct from max_tool_result_chars, which caps what the model "
+                'itself saw. Open a run\'s "View full log" (Agent rail) to read '
+                "everything beyond this cap.",
+                id="settings-console-tool-result-display-chars-help",
+                classes="settings-detail-row",
             )
             yield Static("Global fallback defaults", classes="destination-section")
             yield Static(
@@ -6857,24 +9839,918 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-status-row",
             )
 
-    def _library_rag_include_citations_label(self) -> str:
-        return (
-            "Enabled"
-            if bool(self._library_rag_setting_values()["include_citations"])
-            else "Disabled"
+    # Task 1 (RAG settings v2 UX, AC #4): the citations/reranking toggles
+    # used to be Buttons whose label just said "Enabled"/"Disabled" -- an
+    # honest control here is a real Checkbox (label describes WHAT it does,
+    # `.value` IS the state). The rerank model/results Inputs are dimmed
+    # (never hidden) whenever reranking itself is off, distinct from the
+    # builtin read-only lock: `_library_rag_rerank_field_state` computes
+    # BOTH the shared `disabled` bool and the label suffix, so compose (which
+    # can't query not-yet-mounted widgets) and the post-mount sync/handler
+    # paths below can never drift from each other.
+    @staticmethod
+    def _library_rag_rerank_field_state(
+        *, rerank_enabled: bool, field_disabled: bool
+    ) -> tuple[bool, str]:
+        disabled = (not rerank_enabled) or field_disabled
+        # Review fix (AC #4): the suffix names reranking-off as the reason
+        # ONLY when that's the actual, user-actionable reason -- not when a
+        # builtin read-only lock is ALSO in play (the Enable-reranking
+        # checkbox is itself disabled then, so "enable reranking to edit"
+        # would be an unactionable instruction pointing at the wrong cause).
+        suffix = (
+            " (enable reranking to edit)"
+            if (not rerank_enabled and not field_disabled)
+            else ""
         )
+        return disabled, suffix
+
+    def _apply_library_rag_rerank_field_state(
+        self, *, rerank_enabled: bool, field_disabled: bool
+    ) -> None:
+        """Post-mount refresh of the rerank model/results Inputs' disabled
+        state and label suffix -- called after the checkbox is toggled and
+        from ``_sync_library_rag_widgets``/``_sync_library_rag_profile_widgets``
+        so a profile switch or revert can never leave a stale suffix/disabled
+        combination behind."""
+        disabled, suffix = self._library_rag_rerank_field_state(
+            rerank_enabled=rerank_enabled, field_disabled=field_disabled
+        )
+        for input_selector, label_selector, base_label in (
+            (
+                "#settings-library-rag-reranker-model",
+                "#settings-library-rag-reranker-model-label",
+                "Reranker model",
+            ),
+            (
+                "#settings-library-rag-reranker-top-k",
+                "#settings-library-rag-reranker-top-k-label",
+                "Rerank results",
+            ),
+        ):
+            try:
+                self.query_one(input_selector, Input).disabled = disabled
+            except QueryError:
+                pass
+            self._set_static_text(label_selector, f"{base_label}{suffix}")
+
+    @staticmethod
+    def _library_rag_profile_select_options(grouped: dict) -> list[tuple[str, str]]:
+        return [(f"{p['name']} (built-in)", p["id"]) for p in grouped["builtin"]] + [
+            (p["name"], p["id"]) for p in grouped["user"]
+        ]
+
+    def _library_rag_selected_profile_id(self) -> str | None:
+        try:
+            select = self.query_one("#settings-library-rag-profile-select", Select)
+        except QueryError:
+            return None
+        value = select.value
+        # task-565: `Select.NULL` is the real blank sentinel on this Textual
+        # version -- `Select.BLANK` doesn't exist, it silently resolves to
+        # the unrelated `Widget.BLANK` (`False`), so it never matched here,
+        # letting the stringified sentinel escape as a bogus profile id.
+        if value is None or value is Select.NULL:
+            return None
+        return str(value)
+
+    def _library_rag_profile_name(self, profile_id: str) -> str:
+        grouped = list_profiles_grouped()
+        for entry in grouped["builtin"] + grouped["user"]:
+            if entry["id"] == profile_id:
+                return entry["name"]
+        return profile_id
+
+    def _library_rag_index_status_line(self, status: Mapping[str, object]) -> str:
+        """Render ``fetch_index_status()``'s dict as the status-row text.
+
+        Graceful when the store is non-persistent or the collection hasn't
+        been created yet (``state == "absent"``, ``provenance`` always
+        empty in that case -- see ``collection_indexes.index_status``): a
+        dedicated, friendlier line rather than "absent · 0 vectors". UX
+        review item 3 (first-run Backfill nudge): when the active profile's
+        ``default_search_mode`` actually NEEDS the vector index (semantic or
+        hybrid), that friendlier line names the concrete consequence
+        (results are keyword-only until Backfill runs) instead of the
+        generic notice -- a brand-new install otherwise looks like search
+        already works fully when only keyword search does. A `plain`-mode
+        profile never needs the vector index, so it keeps the plain notice.
+        When provenance is present (built/empty), append the "built with
+        <model> / chunk <size>·<overlap>" tail; omit it when provenance is
+        missing so a legacy/unstamped collection still renders sensibly.
+        """
+        state = str(status.get("state") or "unknown")
+        if state == "absent":
+            search_mode = normalise_library_rag_search_mode(
+                self._library_rag_loaded_defaults().default_search_mode
+            )
+            if search_mode in ("semantic", "hybrid"):
+                mode_label = "Hybrid" if search_mode == "hybrid" else "Semantic"
+                return (
+                    "Semantic index not built — "
+                    f"{mode_label} search is keyword-only until you Backfill."
+                )
+            return RAG_INDEX_ABSENT_STATUS_TEXT
+        count = status.get("count", 0)
+        provenance = status.get("provenance") or {}
+        model = provenance.get("embedding_model")
+        chunk_size = provenance.get("chunk_size")
+        chunk_overlap = provenance.get("chunk_overlap")
+        base = f"Index: {state} · {count} vectors"
+        if model is None or chunk_size is None or chunk_overlap is None:
+            return base
+        return f"{base} · built with {model} / chunk {chunk_size}·{chunk_overlap}"
+
+    def _library_rag_backfill_progress_line(self, update: Mapping[str, object]) -> str:
+        """Render one ``progress_callback`` update from
+        ``backfill_semantic_index`` (``RAG_Search/ingestion_indexing.py``,
+        invoked after every processed batch with ``{"item_type", "indexed",
+        "skipped", "failed"}`` -- counts cumulative per item type) as the
+        status-row text during a live backfill.
+
+        Task 3 (RAG UX v2 PR1): the retired Search screen's Maintenance tab
+        was the only place this per-batch signal ever reached the UI
+        (``search_rag_window.py``'s ``_update_indexing_progress``) -- same
+        wording, re-homed here so Settings' Backfill button stops going
+        silent for minutes at a time. The single formatting seam for both
+        this live progress line and ``_apply_library_rag_backfill_progress``
+        below.
+        """
+        return (
+            f"Indexing {update.get('item_type', '?')}: "
+            f"{update.get('indexed', 0)} indexed, "
+            f"{update.get('skipped', 0)} up-to-date, "
+            f"{update.get('failed', 0)} failed"
+        )
+
+    def _apply_library_rag_backfill_progress(self, update: Mapping[str, object]) -> None:
+        """Imperatively update the index-status Static with a live per-batch
+        backfill progress line -- called off-thread (via ``call_from_thread``)
+        from ``_rag_backfill_worker``'s ``progress_callback``.
+
+        Same active-category guard as ``_apply_library_rag_index_status``: a
+        backfill started before the user navigated away must not write to a
+        Static that now belongs to a different category.
+        """
+        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+            return
+        self._set_static_text(
+            "#settings-library-rag-index-status",
+            self._library_rag_backfill_progress_line(update),
+        )
+
+    def _apply_library_rag_index_status(self, status: Mapping[str, object]) -> None:
+        """Imperatively update the index-status Static from a freshly fetched
+        status dict -- called from off-thread worker callbacks, never during
+        compose (see ``_library_rag_index_status_text`` init comment).
+
+        Also refreshes ``_library_rag_index_status_cache`` (Task 2, 541 v2
+        UX) -- every caller of this method already has a fresh status in
+        hand, so this is the one place that needs to remember it for the
+        Save-path re-index confirm gate to read later.
+        """
+        # task-566: a `settings-rag-index-status` worker (category show /
+        # 't' test / Save-path reindex confirm) that was already running
+        # when the user navigated away still completes and still calls
+        # back -- `_select_category`'s `cancel_group` is best-effort, not a
+        # guarantee. Skip entirely rather than write a status Static / cache
+        # entry that belongs to a category no longer on screen.
+        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+            return
+        self._library_rag_index_status_cache = status
+        self._library_rag_index_status_text = self._library_rag_index_status_line(
+            status
+        )
+        self._set_static_text(
+            "#settings-library-rag-index-status", self._library_rag_index_status_text
+        )
+        # Task 5 (541 v2 UX AC5): every trigger that lands a fresh index
+        # status (category show / 't' test / backfill completion /
+        # set-active) is exactly the set of moments the first-run starter
+        # panel's predicate could have flipped -- funnel through here rather
+        # than duplicating a second fetch-and-toggle path.
+        self._refresh_rag_first_run_panel_state()
+        # task-629: these SAME moments are also exactly when the active
+        # profile identity itself could have silently changed underneath
+        # this screen -- Backfill's get_shared_rag_service() call, on its
+        # first-ever invocation in the process, imports-and-activates the
+        # "Imported settings" profile as a side effect
+        # (ensure_imported_profile). Without this, the "Active: .../
+        # Editing: ..." rows and the editor card's border_title kept
+        # showing whatever was active at mount (e.g. "Hybrid Basic") until
+        # some UNRELATED direct profile action (Clone/Set active) next
+        # happened to resync them -- surfacing a profile name ("Imported
+        # settings") the user had never seen introduced, apparently out of
+        # nowhere.
+        self._refresh_library_rag_active_profile_identity_text()
+
+    def _library_rag_cached_index_state(self) -> str:
+        """The index-status row's OWN cached state string, or "unknown" when
+        nothing has been fetched yet -- shared by the first-run predicate so
+        it never triggers a fetch of its own (Task 5, 541 v2 UX AC5)."""
+        cache = self._library_rag_index_status_cache
+        if cache is None:
+            return "unknown"
+        return str(cache.get("state") or "unknown")
+
+    def _library_rag_first_run_active(
+        self,
+        *,
+        info: Mapping[str, object] | None = None,
+        grouped: Mapping[str, object] | None = None,
+    ) -> bool:
+        """Whether the Library/RAG editor is currently in the first-run
+        state (Task 5, 541 v2 UX AC5) -- ``info``/``grouped`` may be passed
+        in by a caller that already fetched them this pass (compose) to
+        avoid a redundant adapter call; omitted, both are fetched fresh."""
+        return is_first_run_state(
+            info if info is not None else active_profile_info(),
+            grouped if grouped is not None else list_profiles_grouped(),
+            self._library_rag_cached_index_state(),
+        )
+
+    @staticmethod
+    def _library_rag_starter_panel_copy(info: Mapping[str, object]) -> str:
+        return (
+            f"Search already works on {escape_markup(str(info['name']))}. Clone it "
+            "to tune retrieval, or run Backfill to enable semantic results."
+        )
+
+    def _refresh_rag_first_run_panel_state(self) -> None:
+        """Re-evaluate the first-run starter panel's visibility against the
+        CURRENT active profile / profile list / cached index status, and
+        reflect it onto the mounted widgets imperatively (no recompose) --
+        Task 5 (541 v2 UX AC5). Called after anything that could flip the
+        predicate: an index-status fetch landing (see
+        ``_apply_library_rag_index_status``) and any completed profile
+        action (clone/rename/delete, see ``_rag_after_profile_action``) --
+        a clone is exactly how a first-run install gets its first user
+        profile, which is what ends the first-run state without ever
+        touching the index. Swallows ``QueryError``: this runs from
+        off-thread worker callbacks and a not-yet-mounted or already-
+        navigated-away-from screen must never crash it.
+
+        Task 5 review (Important): the Search group's ``collapsed`` state is
+        only ever touched on the actual first-run <-> not-first-run
+        TRANSITION (tracked via ``_rag_first_run_active``), never on every
+        ordinary re-evaluation. Before this, exiting first-run (clone
+        completes / backfill completes) hid the starter panel but left
+        Search collapsed behind it -- the user who just did what the panel
+        told them saw editable fields hidden until an unrelated recompose
+        self-healed it. Gating on the transition (rather than forcing
+        ``collapsed`` unconditionally every time this runs) keeps a
+        DIFFERENT user's deliberate collapse of Search, in ordinary
+        already-not-first-run state, from being forcibly reopened by an
+        unrelated status refresh (category show / Save / set-active).
+        """
+        try:
+            panel = self.query_one("#settings-library-rag-starter-panel")
+        except QueryError:
+            return
+        info = active_profile_info()
+        first_run = self._library_rag_first_run_active(info=info)
+        was_first_run = self._rag_first_run_active
+        self._rag_first_run_active = first_run
+        if not first_run:
+            panel.display = False
+            if was_first_run:
+                # First-run just ENDED -- restore the Search group to its
+                # ordinary expanded default so the newly-cloned/backfilled
+                # profile's fields are immediately visible, not hidden
+                # behind a collapse this predicate itself imposed on entry.
+                try:
+                    self.query_one(
+                        "#settings-library-rag-search-group", Collapsible
+                    ).collapsed = False
+                except QueryError:
+                    pass
+            return
+        self._set_static_text(
+            "#settings-library-rag-starter-copy",
+            self._library_rag_starter_panel_copy(info),
+        )
+        panel.display = True
+        if not was_first_run:
+            # The starter panel, not the disabled wall, is the first
+            # impression while first-run -- collapse the Search group too
+            # (the only one that composes expanded by default; Embedding/
+            # Chunking/Vector store/Reranking already compose collapsed).
+            # Symmetric with the exit branch above: only on the ENTERING
+            # transition, never re-forced on every already-first-run
+            # re-evaluation.
+            try:
+                self.query_one(
+                    "#settings-library-rag-search-group", Collapsible
+                ).collapsed = True
+            except QueryError:
+                pass
+
+    @work(exclusive=True, thread=True, group="settings-rag-index-status")
+    def _rag_index_status_worker(self) -> None:
+        status = fetch_index_status()
+        self.app.call_from_thread(self._apply_library_rag_index_status, status)
+
+    def _refresh_library_rag_index_status(self) -> None:
+        """Dispatch the off-thread index-status fetch (category show / after
+        save). Guarded so a not-yet-mounted or already-navigated-away screen
+        never queues pointless work."""
+        if not getattr(self, "is_mounted", False):
+            return
+        self._rag_index_status_worker()
+
+    def _apply_rag_test_category_result(self, status: Mapping[str, object]) -> None:
+        """UX review item 8: 't test category' completion for RAG -- refresh
+        the same index-status Static the other triggers do, then notify a
+        one-line honest summary (index state + current preview defaults)
+        instead of silently doing nothing."""
+        self._apply_library_rag_index_status(status)
+        state = str(status.get("state") or "unknown")
+        preview_summary, _preview_retrieval, _preview_context = (
+            self._library_rag_preview_rows()
+        )
+        # task-566 review (Important): a stale 't' test-category worker can
+        # land after the user has already navigated away from Library/RAG --
+        # `_apply_library_rag_index_status` above already no-ops in that
+        # case, but this toast was still unconditional, surfacing "RAG
+        # check: ..." over whatever category the user is now on.
+        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+            return
+        self.app.notify(
+            f"RAG check: {state} index · {preview_summary}", severity="information"
+        )
+
+    @work(exclusive=True, thread=True, group="settings-rag-index-status")
+    def _rag_test_category_worker(self) -> None:
+        status = fetch_index_status()
+        self.app.call_from_thread(self._apply_rag_test_category_result, status)
+
+    def _clear_library_rag_backfill_in_flight(self) -> None:
+        """Main-thread flip of the in-flight flag -- see
+        ``_rag_backfill_worker``'s ``finally`` block."""
+        self._library_rag_backfill_in_flight = False
+
+    @work(exclusive=True, thread=True, group="settings-rag-backfill")
+    def _rag_backfill_worker(self) -> None:
+        """Bulk-index existing media/notes/conversations into the active
+        profile's resolved vector collection.
+
+        Task 4 review (Finding 1): this originally shipped as a genuinely
+        ``async`` worker, awaiting ``backfill_semantic_index`` directly on
+        the UI event loop. That function has long *synchronous* stretches
+        between its awaits (sync sqlite pagination generators, per-entry
+        needs_reindexing/delete_document N+1 lookups), so a real backfill
+        starved the Textual heartbeat and froze the whole TUI. Runs on a
+        worker thread instead now, exactly like
+        ``SearchRAGWindow._run_index_backfill``: a transient ``asyncio.run``
+        loop keeps ALL of that sync work off the UI event loop, and every UI
+        touch (notify, the in-flight flag, the status-row refresh) is
+        marshalled back with ``call_from_thread``. Same default
+        ``item_types`` covering media/notes/conversations, DBs sourced the
+        same way from ``self.app_instance``, same start/finish/failure
+        notify contract as before. Never crashes the screen: any exception
+        is caught and reported via notify rather than propagating out of
+        the worker.
+        """
+        try:
+            if not semantic_indexing_available():
+                self.app.call_from_thread(
+                    self.app.notify,
+                    "Semantic indexing is unavailable (missing embeddings "
+                    "extras, or disabled in config).",
+                    severity="warning",
+                )
+                return
+            media_db = getattr(self.app_instance, "media_db", None)
+            chachanotes_db = getattr(self.app_instance, "chachanotes_db", None)
+            if media_db is None and chachanotes_db is None:
+                self.app.call_from_thread(
+                    self.app.notify,
+                    "No local databases are available to backfill.",
+                    severity="error",
+                )
+                return
+            # M5 (SP3 final review): pre-resolve the shared RAG service
+            # OUTSIDE the transient asyncio.run loop below -- mirrors
+            # SearchRAGWindow._run_index_backfill's PR #700-hardened pattern.
+            # backfill_semantic_index's own default (`rag_service or
+            # get_shared_rag_service()`) would otherwise construct it for the
+            # FIRST time from inside that loop, and the loop closes the
+            # instant this run finishes.
+            rag_service = get_shared_rag_service()
+            if rag_service is None:
+                # task-641 review: get_shared_rag_service() can return None
+                # not only on a genuine construction failure but also when a
+                # concurrent reset/set-active discarded an in-flight build
+                # (the two-lock construction in ingestion_indexing.py). Never
+                # fall through to backfill_semantic_index's own default arg
+                # here -- that would retry construction for the FIRST time
+                # INSIDE the transient asyncio.run loop below, exactly the
+                # PR #700 hazard the pre-resolution above exists to prevent.
+                # Mirrors SearchRAGWindow._run_index_backfill's explicit None
+                # guard.
+                self.app.call_from_thread(
+                    self.app.notify,
+                    "RAG backfill could not start: the shared RAG service "
+                    "is unavailable right now. Try again shortly.",
+                    severity="error",
+                )
+                return
+
+            def _progress(update: Mapping[str, object]) -> None:
+                # Task 3 (RAG UX v2 PR1): live per-batch counts into the
+                # index-status row, exactly like SearchRAGWindow's own
+                # _progress -> _update_indexing_progress did on the now-
+                # retired Search screen. Never let a UI-side failure here
+                # abort the backfill itself.
+                try:
+                    self.app.call_from_thread(
+                        self._apply_library_rag_backfill_progress, dict(update)
+                    )
+                except Exception as e:
+                    logger.debug(f"Backfill progress update failed: {e}")
+
+            summary = asyncio.run(
+                backfill_semantic_index(
+                    media_db=media_db,
+                    chachanotes_db=chachanotes_db,
+                    rag_service=rag_service,
+                    progress_callback=_progress,
+                )
+            )
+        except Exception as e:
+            logger.error(f"RAG index backfill crashed: {e}")
+            self.app.call_from_thread(
+                self.app.notify, f"Backfill failed: {e}", severity="error"
+            )
+            return
+        finally:
+            self.app.call_from_thread(self._clear_library_rag_backfill_in_flight)
+        status = summary.get("status")
+        errors = summary.get("errors") or []
+        if status in ("unavailable", "error") or errors:
+            last_error = str(errors[-1]) if errors else None
+            detail = f" Last error: {last_error}" if last_error else ""
+            self.app.call_from_thread(
+                self.app.notify,
+                f"Backfill finished with problems: {summary.get('indexed', 0)} "
+                f"indexed, {summary.get('failed', 0)} failed.{detail}",
+                severity="error" if status == "error" else "warning",
+            )
+        else:
+            self.app.call_from_thread(
+                self.app.notify,
+                f"Backfill complete: {summary.get('indexed', 0)} indexed, "
+                f"{summary.get('skipped', 0)} already up-to-date.",
+                severity="information",
+            )
+        self.app.call_from_thread(self._refresh_library_rag_index_status)
+
+    def _render_library_rag_profile_block(self) -> ComposeResult:
+        info = active_profile_info()
+        grouped = list_profiles_grouped()
+        options = self._library_rag_profile_select_options(grouped)
+        valid_ids = {value for _, value in options}
+        active_id = grouped["active_id"]
+        # PR #863 review: fall back to `Select.NULL`, NOT `Select.BLANK` --
+        # the latter doesn't exist on this Textual version's `Select`
+        # (resolves to `Widget.BLANK` == False) and composing
+        # `Select(value=False)` raises `InvalidSelectValueError`, breaking
+        # the whole Settings screen the one time this fallback is hit (a
+        # stale/deleted active-profile pointer -> synthetic "(missing)"
+        # active id absent from the options).
+        select_value = active_id if active_id in valid_ids else Select.NULL
+        active_label = (
+            f"{info['name']} (built-in)" if info["read_only"] else info["name"]
+        )
+
+        # Task 4 (541 v2 UX AC1): the "Profiles" heading is now the
+        # enclosing container's border title (see `_render_library_rag_detail`)
+        # instead of an inline Static -- avoids a doubled label.
+        yield Static(
+            f"Active: {active_label}",
+            id="settings-library-rag-active-profile",
+            classes="settings-detail-row",
+        )
+        # UX review item 6 (provenance): the active profile's own
+        # description, most useful for a first-run "Imported settings"
+        # snapshot -- hidden entirely (not just blank) when there's none.
+        description_row = Static(
+            info["description"],
+            id="settings-library-rag-active-profile-description",
+            classes="settings-status-row",
+        )
+        description_row.display = bool(info["description"])
+        yield description_row
+        with Horizontal(classes="settings-input-row settings-select-row"):
+            yield Static("Profile", classes="settings-input-label")
+            yield Select(
+                options,
+                value=select_value,
+                id="settings-library-rag-profile-select",
+                classes="settings-compact-select",
+                allow_blank=True,
+                compact=True,
+            )
+        # UX review item 2 (decoupling caption): the Select above lets a
+        # user BROWSE profiles without editing them -- only "Set active"
+        # actually switches which profile the fields below edit. Without
+        # this line, picking a different profile in the dropdown reads as
+        # "now editing that one" even though nothing has happened yet.
+        # Always names the ACTIVE profile (never the Select's current
+        # highlight); refreshed by _sync_library_rag_profile_widgets.
+        yield Static(
+            f"Editing: {info['name']}. Pick a profile and press 'Set active' "
+            "to edit a different one.",
+            id="settings-library-rag-editing-caption",
+            classes="settings-status-row",
+        )
+        with Horizontal(classes="settings-action-row"):
+            yield Button("Set active", id="settings-library-rag-profile-set-active")
+            yield Button("Clone…", id="settings-library-rag-profile-clone")
+            yield Button("Rename…", id="settings-library-rag-profile-rename")
+            # UX review item 7 (delete danger styling): destructive action,
+            # visually separated from the other three (margin-left, see
+            # .settings-library-rag-profile-delete-button) and given the
+            # repo's standard destructive-button variant (see e.g.
+            # settings_theme_editor.py's own "Delete" button).
+            # task-1643 (critique r4): a full-red, live-looking Delete sat
+            # directly under the "Built-in profile — read-only" banner --
+            # inert destructive actions carry their reason in text.
+            delete_button = Button(
+                "Delete — built-in" if info["read_only"] else "Delete",
+                id="settings-library-rag-profile-delete",
+                variant="error",
+                classes="settings-library-rag-profile-delete-button",
+            )
+            delete_button.disabled = bool(info["read_only"])
+            yield delete_button
+        readonly_banner = Static(
+            "Built-in profile — read-only. Clone it, then press Set active to edit the clone.",
+            id="settings-library-rag-profile-readonly-banner",
+            classes="settings-status-row settings-library-rag-readonly-banner",
+        )
+        readonly_banner.display = bool(info["read_only"])
+        yield readonly_banner
+        yield Static(
+            self._library_rag_profile_result,
+            id="settings-library-rag-profile-result",
+            classes="settings-status-row",
+        )
+        # Task 4 (SP3): index status readout. Compose ALWAYS renders the
+        # "checking…" placeholder -- the real state is fetched off-thread
+        # (touches on-disk Chroma) by the category-show/set-active/save
+        # triggers, never here.
+        #
+        # Deliberately NOT a `Static` + `Button` sharing one
+        # `.settings-action-row` Horizontal: `.settings-detail-row`/
+        # `.settings-status-row` are `width: 100%`, which -- inside a
+        # Horizontal -- claims the whole row and pushes/clips a sibling
+        # Button past the visible edge (the same class of bug already hit
+        # once in this program, RAG-Scope-button-clipped-off-rail). Own
+        # full-width row for the Static, Button in its own
+        # `.settings-action-row` right below it, exactly like the
+        # Set active/Clone/Rename/Delete row above.
+        yield Static(
+            self._library_rag_index_status_text,
+            id="settings-library-rag-index-status",
+            classes="settings-detail-row",
+        )
+        with Horizontal(classes="settings-action-row"):
+            yield Button("Backfill", id="settings-library-rag-index-backfill")
+
+    def _queue_rag_select_suppression(
+        self, select: Select, expected_value: object
+    ) -> None:
+        """Record ``expected_value`` as a ``Select.Changed`` value the NEXT
+        (about-to-happen) programmatic mutation of ``select`` is expected to
+        post -- see ``_rag_select_suppress_queue``'s docstring for why this
+        replaces a boolean in-progress flag. Only queues an expectation when
+        the mutation will actually change ``select.value`` (mirrors
+        ``Reactive._set``'s own "only fires when the value differs" gate,
+        which is what decides whether Textual posts a Changed at all): an
+        unconditional queue entry a mutation never triggers a Changed for
+        would sit there forever and wrongly swallow a LATER, unrelated
+        genuine user selection that happens to land on that same value.
+        """
+        if select.value != expected_value:
+            self._rag_select_suppress_queue.append(expected_value)
+
+    def _set_library_rag_editing_caption_visible(self, visible: bool) -> None:
+        """541-v2 final review item 2: the decoupling caption ("Editing: X.
+        Pick a profile and press 'Set active' to edit a different one.")
+        always names the ACTIVE profile -- directly contradictory sitting
+        right above the editor's "Previewing: Y" title while a
+        profile-picker PREVIEW is active. Hidden entirely during preview
+        rather than reworded: the preview banner just below the Select
+        already carries the equivalent "Previewing '<name>' (read-only) —
+        press Set active to edit it" message.
+        """
+        try:
+            caption = self.query_one("#settings-library-rag-editing-caption", Static)
+        except QueryError:
+            return
+        caption.display = visible
+
+    def _refresh_library_rag_active_profile_identity_text(self) -> None:
+        """Refresh ONLY the active-profile-NAME-bearing text (the "Active:
+        .../Editing: ..." rows and the editor card's border_title), without
+        touching the profile Select's value/options or the editor's field
+        values -- task-629.
+
+        Extracted out of ``_sync_library_rag_profile_widgets`` (which still
+        calls this first, preserving identical behaviour for its own
+        callers) so it can ALSO be called from completion paths that never
+        touch the Select but can still leave this text stale: specifically
+        ``_apply_library_rag_index_status`` (category-show / 't' test /
+        Backfill completion / set-active's index-status hop). Backfill in
+        particular calls ``get_shared_rag_service()``, whose first-ever call
+        in the process silently imports-and-activates the "Imported
+        settings" profile (``ensure_imported_profile``, see
+        ``RAG_Search/simplified/active_config.py``) as a side effect -- an
+        active-profile-pointer flip this screen previously had NO resync
+        path for until the user's NEXT direct profile action (e.g. Clone)
+        incidentally called ``_sync_library_rag_profile_widgets`` and
+        exposed the new name for the first time, out of nowhere.
+
+        Guarded by ``_rag_preview_profile_id`` for the caption/border_title
+        half only (never fights an in-progress PREVIEW's own "Previewing:
+        ..." title/banner) -- the "Active: ..." summary row and its
+        description are not preview-dependent and always reflect the true
+        active profile.
+        """
+        info = active_profile_info()
+        active_label = (
+            f"{info['name']} (built-in)" if info["read_only"] else info["name"]
+        )
+        self._set_static_text(
+            "#settings-library-rag-active-profile", f"Active: {active_label}"
+        )
+        try:
+            description_row = self.query_one(
+                "#settings-library-rag-active-profile-description", Static
+            )
+            description_row.update(info["description"])
+            description_row.display = bool(info["description"])
+        except QueryError:
+            pass
+        if self._rag_preview_profile_id is not None:
+            return
+        # UX review item 2 (decoupling caption): always names the ACTIVE
+        # profile, independent of select_override / whatever the Select is
+        # currently showing.
+        self._set_static_text(
+            "#settings-library-rag-editing-caption",
+            f"Editing: {info['name']}. Pick a profile and press 'Set active' "
+            "to edit a different one.",
+        )
+        # 541-v2 final review item 2: this resync always runs OUTSIDE a
+        # preview (see class docstring on `_rag_select_suppress_queue`), so
+        # unconditionally un-hide the caption here too -- covers the
+        # set-active/clone/rename/delete exit-preview paths, which clear
+        # `_rag_preview_profile_id` and call this method directly rather
+        # than routing back through `_sync_rag_editor_display` (which
+        # handles the "browsed back to the active profile" exit path).
+        self._set_library_rag_editing_caption_visible(True)
+        self._update_library_rag_editor_title()
+
+    def _sync_library_rag_profile_widgets(
+        self, *, select_override: str | None = None
+    ) -> None:
+        """Refresh the Profiles block imperatively (no recompose) after any
+        set-active/clone/rename/delete action, and after a category revert.
+
+        Mirrors ``_sync_library_rag_widgets``: query-and-update each widget,
+        swallowing ``QueryError`` so a not-yet-mounted region never crashes a
+        call from an off-thread worker's main-thread callback.
+
+        Args:
+            select_override: UX review item 1 (clone flow) -- when given (a
+                valid profile id), the profile Select is left pointed at
+                THIS profile rather than snapped back to the active one, so
+                a just-cloned profile stays highlighted/selected for the
+                user's next click ("Set active"). Callers that don't pass it
+                keep the pre-existing "always show the active profile"
+                behaviour (set-active/rename/delete/revert).
+        """
+        self._refresh_library_rag_active_profile_identity_text()
+        info = active_profile_info()
+        grouped = list_profiles_grouped()
+
+        options = self._library_rag_profile_select_options(grouped)
+        valid_ids = {value for _, value in options}
+        active_id = grouped["active_id"]
+        target_id = (
+            select_override
+            if select_override is not None and select_override in valid_ids
+            else active_id
+        )
+        try:
+            select = self.query_one("#settings-library-rag-profile-select", Select)
+            # 541-v2 final review item 1: `set_options` alone resets the
+            # selection to `Select.NULL` (posting a transient Changed, see
+            # `Select._init_selected_option`), then the explicit assignment
+            # below posts a second one -- both are recorded as expected
+            # BEFORE the write that causes them so
+            # handle_library_rag_profile_select_changed can consume and
+            # ignore each once it actually arrives (see
+            # `_rag_select_suppress_queue`'s docstring for why a boolean
+            # flag here cannot work). NOTE: the resolved-value fallback
+            # deliberately uses `Select.NULL`, not `Select.BLANK` --
+            # `Select.BLANK` doesn't exist on this Textual version's
+            # `Select`; the attribute lookup silently resolves to the
+            # unrelated `Widget.BLANK` (`False`), and assigning that to
+            # `.value` would raise `InvalidSelectValueError` the one time
+            # this fallback (active id no longer a valid option) is ever
+            # actually hit.
+            resolved_target = target_id if target_id in valid_ids else Select.NULL
+            self._queue_rag_select_suppression(select, Select.NULL)
+            select.set_options(options)
+            self._queue_rag_select_suppression(select, resolved_target)
+            select.value = resolved_target
+        except QueryError:
+            pass
+
+        try:
+            self.query_one(
+                "#settings-library-rag-profile-readonly-banner", Static
+            ).display = bool(info["read_only"])
+        except QueryError:
+            pass
+
+        # reranker_model/reranker_top_k are handled below via
+        # _apply_library_rag_rerank_field_state instead of the blanket
+        # read-only-only treatment `_LIBRARY_RAG_READ_LOCK_FIELD_KEYS` covers:
+        # their disabled state also depends on whether reranking itself is
+        # enabled, and this method runs AFTER _sync_library_rag_widgets on
+        # every set-active/clone/rename/delete resync, so a naive
+        # `disabled = read_only` here would silently re-enable them whenever
+        # the active (non-builtin) profile just switched to has reranking off.
+        for key in _LIBRARY_RAG_READ_LOCK_FIELD_KEYS:
+            selector = self._library_rag_field_selector(key)
+            if selector is None:
+                continue
+            try:
+                self.query_one(selector).disabled = bool(info["read_only"])
+            except QueryError:
+                pass
+        self._apply_library_rag_rerank_field_state(
+            rerank_enabled=bool(self._library_rag_loaded_values()["enable_reranking"]),
+            field_disabled=bool(info["read_only"]),
+        )
+        for selector in _LIBRARY_RAG_READ_LOCK_CHECKBOX_SELECTORS:
+            try:
+                self.query_one(selector, Checkbox).disabled = bool(info["read_only"])
+            except QueryError:
+                pass
 
     def _render_library_rag_detail(self) -> ComposeResult:
         values = self._library_rag_setting_values()
         search_mode = normalise_library_rag_search_mode(values["default_search_mode"])
         citation_style = normalise_library_rag_citation_style(values["citation_style"])
-
-        yield Static(
-            "Library & RAG", classes="destination-section settings-column-title"
+        chunking_method = normalise_library_rag_chunking_method(
+            values["chunking_method"]
         )
+        distance_metric = normalise_library_rag_distance_metric(
+            values["distance_metric"]
+        )
+        # A built-in active profile is read-only: the editor fields render
+        # disabled from the very first paint (not just after a later
+        # set-active/clone/rename/delete action re-syncs them) -- this is the
+        # state a brand-new install starts in (active = the "hybrid_basic"
+        # builtin).
+        info = active_profile_info()
+        field_disabled = info["read_only"]
+        rerank_enabled = bool(values["enable_reranking"])
+        rerank_field_disabled, rerank_suffix = self._library_rag_rerank_field_state(
+            rerank_enabled=rerank_enabled, field_disabled=field_disabled
+        )
+        # Task 5 (541 v2 UX AC5): whether to show the first-run starter
+        # panel INSTEAD of the "wall of disabled fields" as the first
+        # impression -- computed from whatever index status is already
+        # cached (never a fresh fetch of its own; see
+        # `_library_rag_first_run_active`). On the very first-ever compose
+        # (nothing fetched yet) this reads False -- compose optimistically
+        # WITHOUT the panel, exactly like the index-status row itself
+        # always composes its "checking…" placeholder; the real state
+        # lands imperatively once the off-thread fetch resolves (see
+        # `_apply_library_rag_index_status` -> `_refresh_rag_first_run_panel_state`,
+        # which flips this same panel + collapses Search below, without a
+        # recompose). A revisit within the same session, where the cache is
+        # already warm, composes the correct first-run appearance from the
+        # very first paint -- no flicker either way.
+        first_run = self._library_rag_first_run_active(info=info)
+        # Task 5 review (Important): keep `_rag_first_run_active` -- the
+        # transition tracker `_refresh_rag_first_run_panel_state` uses to
+        # decide whether to force Search's collapsed state -- in lockstep
+        # with whatever THIS compose actually rendered. Without this, a
+        # recompose that lands with a warm cache (composing the correct
+        # first-run appearance directly, per the comment above, entirely
+        # bypassing `_refresh_rag_first_run_panel_state`) would leave the
+        # tracker stale at its pre-compose value, so the NEXT first-run-exit
+        # trigger (clone/backfill completing) could wrongly see "no
+        # transition" and skip re-expanding Search.
+        self._rag_first_run_active = first_run
+
+        yield Static("RAG", classes="destination-section settings-column-title")
         with Vertical(id="settings-library-rag-card", classes="settings-focus-card"):
-            yield self._render_category_state_banner(SettingsCategoryId.LIBRARY_RAG)
-            yield Static("Search defaults", classes="destination-section")
+            # Task 4 (541 v2 UX AC1): manage-vs-edit split -- the picker
+            # (browse/Set active/Clone/Rename/Delete) and the editor
+            # (Search/Embedding/Chunking/Vector store/Reranking fields) each
+            # get their OWN titled container, rather than one undifferentiated
+            # card. The editor's title flips to "Previewing: <name>" while
+            # browsing a non-active profile (see `_update_library_rag_editor_title`).
+            profiles_card = Vertical(
+                id="settings-library-rag-profiles-card",
+                classes="settings-secondary-card",
+            )
+            profiles_card.border_title = "Profiles"
+            with profiles_card:
+                yield from self._render_library_rag_profile_block()
+            # Task 5 (541 v2 UX AC5): ALWAYS composed (never conditionally
+            # mounted) so the post-fetch toggle is a plain `.display` flip,
+            # never a dynamic mount/unmount -- see
+            # `_refresh_rag_first_run_panel_state`.
+            starter_panel = Vertical(
+                id="settings-library-rag-starter-panel",
+                classes="settings-secondary-card settings-library-rag-starter-panel",
+            )
+            starter_panel.display = first_run
+            with starter_panel:
+                yield Static(
+                    self._library_rag_starter_panel_copy(info),
+                    id="settings-library-rag-starter-copy",
+                    classes="settings-detail-row",
+                )
+                with Horizontal(classes="settings-action-row"):
+                    yield Button(
+                        "Clone to tune…", id="settings-library-rag-starter-clone"
+                    )
+                    yield Button(
+                        "Backfill now", id="settings-library-rag-starter-backfill"
+                    )
+            editor_card = Vertical(
+                id="settings-library-rag-editor-card",
+                classes="settings-secondary-card",
+            )
+            editor_card.border_title = f"Editing: {escape_markup(info['name'])}"
+            with editor_card:
+                yield from self._render_library_rag_editor_fields(
+                    values=values,
+                    search_mode=search_mode,
+                    citation_style=citation_style,
+                    chunking_method=chunking_method,
+                    distance_metric=distance_metric,
+                    field_disabled=field_disabled,
+                    rerank_enabled=rerank_enabled,
+                    rerank_field_disabled=rerank_field_disabled,
+                    rerank_suffix=rerank_suffix,
+                    search_group_collapsed=first_run,
+                )
+
+    def _render_library_rag_editor_fields(
+        self,
+        *,
+        values: dict[str, object],
+        search_mode: str,
+        citation_style: str,
+        chunking_method: str,
+        distance_metric: str,
+        field_disabled: bool,
+        rerank_enabled: bool,
+        rerank_field_disabled: bool,
+        rerank_suffix: str,
+        search_group_collapsed: bool = False,
+    ) -> ComposeResult:
+        # Task 4 (541 v2 UX AC1): read-only preview banner -- hidden at
+        # first paint (the Select always starts pinned to the active
+        # profile, see `_render_library_rag_profile_block`); shown by
+        # `_set_library_rag_preview_banner` while browsing another profile.
+        preview_banner = Static(
+            "",
+            id="settings-library-rag-preview-banner",
+            classes="settings-status-row settings-library-rag-preview-banner",
+        )
+        preview_banner.display = False
+        yield preview_banner
+        # UX review item 5 (⚠ legend): the ⚠ markers on individual field
+        # labels below (Embedding model, Max length, Chunk size/overlap/
+        # method, Distance metric) are otherwise unexplained the first
+        # time a user sees one.
+        yield Static(
+            "⚠ = changing this field rebuilds the index — run Backfill after saving.",
+            id="settings-library-rag-warning-legend",
+            classes="settings-status-row",
+        )
+        with Collapsible(
+            title="Search",
+            # Task 5 (541 v2 UX AC5): the ONLY group that composes expanded
+            # by default (Embedding/Chunking/Vector store/Reranking already
+            # compose collapsed) -- collapsed too while first-run, so the
+            # starter panel above, not this wall of disabled fields, is the
+            # first impression.
+            collapsed=search_group_collapsed,
+            id="settings-library-rag-search-group",
+        ):
             yield Static(
                 "Used by future Library-native Search/RAG and Console evidence handoff defaults.",
                 classes="settings-detail-row",
@@ -6892,6 +10768,7 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-select",
                     allow_blank=False,
                     compact=True,
+                    disabled=field_disabled,
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Default results", classes="settings-input-label")
@@ -6901,6 +10778,7 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder="1 - 100",
                     restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
                 )
             yield Static("Retriever balance", classes="destination-section")
             with Horizontal(classes="settings-input-row"):
@@ -6911,6 +10789,7 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder="1 - 100",
                     restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Vector results", classes="settings-input-label")
@@ -6920,14 +10799,16 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder="1 - 100",
                     restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Hybrid alpha", classes="settings-input-label")
+                yield Static("Hybrid balance", classes="settings-input-label")
                 yield Input(
                     value=str(values["hybrid_alpha"]),
                     id="settings-library-rag-hybrid-alpha",
                     classes="settings-compact-input",
                     placeholder="0.0 - 1.0",
+                    disabled=field_disabled,
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Min score", classes="settings-input-label")
@@ -6936,12 +10817,15 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-library-rag-score-threshold",
                     classes="settings-compact-input",
                     placeholder="0.0 - 1.0",
+                    disabled=field_disabled,
                 )
             yield Static("Citation and snippets", classes="destination-section")
-            yield Button(
-                self._library_rag_include_citations_label(),
+            yield Checkbox(
+                "Include citations",
+                value=bool(values["include_citations"]),
                 id="settings-library-rag-include-citations",
                 tooltip="Toggle citation metadata in future RAG answers where supported.",
+                disabled=field_disabled,
             )
             with Horizontal(classes="settings-input-row settings-select-row"):
                 yield Static("Citation style", classes="settings-input-label")
@@ -6956,6 +10840,7 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-select",
                     allow_blank=False,
                     compact=True,
+                    disabled=field_disabled,
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Snippet chars", classes="settings-input-label")
@@ -6965,6 +10850,7 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder="50 - 10000",
                     restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Context budget", classes="settings-input-label")
@@ -6974,34 +10860,210 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder="1000 - 1000000",
                     restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
                 )
-            yield Static("Preview defaults", classes="destination-section")
-            preview_summary, preview_retrieval, preview_context = (
-                self._library_rag_preview_rows()
-            )
+        with Collapsible(
+            title="Embedding",
+            collapsed=True,
+            id="settings-library-rag-embedding-group",
+        ):
             yield Static(
-                preview_summary,
-                id="settings-library-rag-preview-summary",
+                "Changing this changes what the index is built from -- the "
+                "index must be rebuilt (run Backfill).",
                 classes="settings-detail-row",
             )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Embedding model ⚠", classes="settings-input-label")
+                yield Input(
+                    value=str(values["embedding_model"]),
+                    id="settings-library-rag-embedding-model",
+                    classes="settings-compact-input",
+                    placeholder="e.g. mxbai-embed-large-v1",
+                    disabled=field_disabled,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Device", classes="settings-input-label")
+                yield Input(
+                    value=str(values["embedding_device"]),
+                    id="settings-library-rag-embedding-device",
+                    classes="settings-compact-input",
+                    placeholder="auto, cpu, cuda, mps",
+                    disabled=field_disabled,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Batch size", classes="settings-input-label")
+                yield Input(
+                    value=str(values["embedding_batch_size"]),
+                    id="settings-library-rag-embedding-batch-size",
+                    classes="settings-compact-input",
+                    placeholder="> 0",
+                    restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Max length ⚠", classes="settings-input-label")
+                yield Input(
+                    value=str(values["embedding_max_length"]),
+                    id="settings-library-rag-embedding-max-length",
+                    classes="settings-compact-input",
+                    placeholder="> 0",
+                    restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
+                )
+        with Collapsible(
+            title="Chunking",
+            collapsed=True,
+            id="settings-library-rag-chunking-group",
+        ):
             yield Static(
-                preview_retrieval,
-                id="settings-library-rag-preview-retrieval",
+                "Changing this changes what the index is built from -- the "
+                "index must be rebuilt (run Backfill).",
                 classes="settings-detail-row",
             )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Chunk size ⚠", classes="settings-input-label")
+                yield Input(
+                    value=str(values["chunk_size"]),
+                    id="settings-library-rag-chunk-size",
+                    classes="settings-compact-input",
+                    placeholder="> 0 words",
+                    restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Chunk overlap ⚠", classes="settings-input-label")
+                yield Input(
+                    value=str(values["chunk_overlap"]),
+                    id="settings-library-rag-chunk-overlap",
+                    classes="settings-compact-input",
+                    placeholder="0 - chunk size",
+                    restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
+                )
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static("Method ⚠", classes="settings-input-label")
+                yield Select(
+                    [
+                        ("Words", "words"),
+                        ("Sentences", "sentences"),
+                        ("Paragraphs", "paragraphs"),
+                    ],
+                    value=chunking_method,
+                    id="settings-library-rag-chunking-method",
+                    classes="settings-compact-select",
+                    allow_blank=False,
+                    compact=True,
+                    disabled=field_disabled,
+                )
+        with Collapsible(
+            title="Vector store",
+            collapsed=True,
+            id="settings-library-rag-vector-store-group",
+        ):
             yield Static(
-                preview_context,
-                id="settings-library-rag-preview-context",
+                "Changing this changes what the index is built from -- the "
+                "index must be rebuilt (run Backfill).",
                 classes="settings-detail-row",
             )
-            yield Static("Save targets", classes="destination-section")
-            yield self._detail_row("Search", "AppRAGSearchConfig.rag.search")
-            yield self._detail_row("Retriever", "AppRAGSearchConfig.rag.retriever")
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static(
+                    "Distance metric ⚠",
+                    classes="settings-input-label",
+                )
+                yield Select(
+                    [
+                        ("Cosine", "cosine"),
+                        ("Euclidean (L2)", "l2"),
+                        ("Inner product", "ip"),
+                    ],
+                    value=distance_metric,
+                    id="settings-library-rag-distance-metric",
+                    classes="settings-compact-select",
+                    allow_blank=False,
+                    compact=True,
+                    disabled=field_disabled,
+                )
+        with Collapsible(
+            title="Reranking",
+            collapsed=True,
+            id="settings-library-rag-reranking-group",
+        ):
             yield Static(
-                self._library_rag_result,
-                id="settings-library-rag-save-result",
-                classes="settings-status-row",
+                "Enabling reranking creates the profile's reranker config; "
+                "disabling it removes that config entirely.",
+                classes="settings-detail-row",
             )
+            yield Checkbox(
+                "Enable reranking",
+                value=rerank_enabled,
+                id="settings-library-rag-enable-reranking",
+                tooltip="Toggle LLM-based reranking of retrieved results for this profile.",
+                disabled=field_disabled,
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Static(
+                    f"Reranker model{rerank_suffix}",
+                    id="settings-library-rag-reranker-model-label",
+                    classes="settings-input-label",
+                )
+                yield Input(
+                    value=str(values["reranker_model"]),
+                    id="settings-library-rag-reranker-model",
+                    classes="settings-compact-input",
+                    placeholder="blank = reranker default",
+                    disabled=rerank_field_disabled,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static(
+                    f"Rerank results{rerank_suffix}",
+                    id="settings-library-rag-reranker-top-k-label",
+                    classes="settings-input-label",
+                )
+                yield Input(
+                    value=str(values["reranker_top_k"]),
+                    id="settings-library-rag-reranker-top-k",
+                    classes="settings-compact-input",
+                    placeholder=">= 1",
+                    restrict=r"^[0-9]*$",
+                    disabled=rerank_field_disabled,
+                )
+            soft_warnings = self._library_rag_soft_warnings()
+            reranker_warning = Static(
+                " / ".join(soft_warnings),
+                id="settings-library-rag-reranker-warning",
+                classes="settings-status-row settings-library-rag-soft-warning",
+            )
+            reranker_warning.display = bool(soft_warnings)
+            yield reranker_warning
+        yield Static("Preview defaults", classes="destination-section")
+        preview_summary, preview_retrieval, preview_context = (
+            self._library_rag_preview_rows()
+        )
+        yield Static(
+            preview_summary,
+            id="settings-library-rag-preview-summary",
+            classes="settings-detail-row",
+        )
+        yield Static(
+            preview_retrieval,
+            id="settings-library-rag-preview-retrieval",
+            classes="settings-detail-row",
+        )
+        yield Static(
+            preview_context,
+            id="settings-library-rag-preview-context",
+            classes="settings-detail-row",
+        )
+        yield Static("Save targets", classes="destination-section")
+        yield self._detail_row(
+            "Profile", "the active RAG profile (rag_profiles/<id>.json)"
+        )
+        yield self._detail_row("Pointer", "the [rag.service].profile pointer")
+        yield Static(
+            self._library_rag_result,
+            id="settings-library-rag-save-result",
+            classes="settings-status-row",
+        )
 
     def _render_domain_category_detail(
         self, category: SettingsCategoryId
@@ -7013,15 +11075,14 @@ class SettingsScreen(BaseAppScreen):
         with Vertical(
             id=f"settings-{category.value}-card", classes="settings-focus-card"
         ):
-            yield self._render_category_state_banner(category)
-            yield Static("Domain ownership contract", classes="destination-section")
+            yield Static("How this page works", classes="destination-section")
             yield self._detail_row("Owner destination", contract.owner_destination)
             yield self._detail_row(
-                "Settings mode", "read-only defaults/status contract"
+                "Settings mode", "View only - shows current defaults and status"
             )
             yield self._detail_row(
                 "Writes allowed",
-                "No - destination ownership must be implemented before mutation",
+                f"No - change this in {contract.owner_destination} instead",
             )
             yield Static("Source of truth", classes="destination-section")
             for index, source in enumerate(contract.source_of_truth, start=1):
@@ -7031,12 +11092,358 @@ class SettingsScreen(BaseAppScreen):
                 yield self._detail_row(label, value)
             yield self._detail_row("Follow-up", contract.follow_up)
 
+    def _render_workspaces_detail(self) -> ComposeResult:
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        yield Static("Workspace management", classes="destination-section")
+        if registry is None:
+            yield Static(
+                "Workspace service is not ready. Restart Chatbook and retry.",
+                id="settings-workspaces-result",
+                classes="settings-status-row",
+            )
+            return
+        show_archived = bool(self._settings_show_archived_workspaces)
+        active = registry.get_active_workspace()
+        active_id = active.workspace_id if active is not None else None
+        with Horizontal(classes="settings-input-row"):
+            yield Input(
+                placeholder="New workspace name",
+                id="settings-workspace-create-name",
+                classes="settings-compact-input",
+            )
+            yield Button("Create", id="settings-workspace-create", compact=True)
+        yield Checkbox(
+            "Show archived", show_archived, id="settings-workspaces-show-archived"
+        )
+        with Vertical(id="settings-workspaces-list"):
+            for record in registry.list_workspaces(include_archived=show_archived):
+                marker = " (active)" if record.workspace_id == active_id else ""
+                archived_suffix = " [archived]" if record.archived else ""
+                folders = (
+                    len(registry.list_folder_bindings(record.workspace_id))
+                    if record.workspace_id != DEFAULT_WORKSPACE_ID
+                    else 0
+                )
+                yield Button(
+                    f"{record.name}{marker}{archived_suffix} - {folders} folders",
+                    id=f"settings-workspace-row-{record.workspace_id}",
+                    classes="settings-workspace-row",
+                    compact=True,
+                )
+        yield Static(
+            self._settings_workspaces_result,
+            id="settings-workspaces-result",
+            classes="settings-status-row",
+        )
+        yield from self._render_workspace_card(registry, active_id)
+
+    def _render_workspace_card(
+        self,
+        registry: LocalWorkspaceRegistryService,
+        active_id: str | None,
+    ) -> ComposeResult:
+        """Render the selected workspace's lifecycle card, if any (Task 9).
+
+        Renders nothing when no workspace is selected. The built-in Default
+        workspace gets ONLY the protection notice -- it keeps its identity
+        (no rename/archive) and stays tool-less (no folder bindings, see
+        Task 10). An archived workspace (final review Finding 3) gets ONLY
+        an explanatory note + Unarchive -- rename/set-active/archive/folder
+        controls are withheld since they act on a workspace_id that is
+        currently archived. Every other workspace gets rename + set-active
+        (or a Static when it is already active -- never a disabled Button
+        expected to explain itself) + archive + folder bindings.
+        """
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            # task-1585: rendering nothing here left the center pane a
+            # near-empty box -- say what selecting does instead.
+            yield Static(
+                "Select a workspace above to rename it, set it active, "
+                "archive it, or bind folders.",
+                id="settings-workspace-card-hint",
+                classes="settings-detail-row",
+            )
+            return
+        record = registry.get_workspace(workspace_id)
+        if record is None:
+            # The selection outlived its workspace (e.g. removed by another
+            # session) -- render nothing rather than a card for a ghost id.
+            return
+        yield Static("Selected workspace", classes="destination-section")
+        with Vertical(id="settings-workspace-card", classes="settings-focus-card"):
+            if record.workspace_id == DEFAULT_WORKSPACE_ID:
+                yield Static(
+                    "The built-in Default workspace keeps its identity and "
+                    "stays tool-less; create a workspace to bind folders.",
+                    classes="settings-detail-row",
+                )
+                return
+            if record.archived:
+                # Finding 3 (final review): rename/set-active/archive/folder
+                # controls all require an ACTIVE workspace_id underneath --
+                # offering them here let a user hit a bare-id error acting
+                # on a workspace that is currently invisible everywhere
+                # else. Unarchive first restores it to normal editing.
+                yield Static(
+                    "Archived workspace. Unarchive it to rename, activate, "
+                    "or edit folders.",
+                    id="settings-workspace-archived-note",
+                    classes="settings-status-row",
+                )
+                yield Button(
+                    "Unarchive", id="settings-workspace-unarchive", compact=True
+                )
+                return
+            with Horizontal(classes="settings-input-row"):
+                yield Input(
+                    value=record.name,
+                    id="settings-workspace-rename-input",
+                    classes="settings-compact-input",
+                )
+                yield Button(
+                    "Rename", id="settings-workspace-rename-apply", compact=True
+                )
+            if record.workspace_id == active_id:
+                yield Static("This workspace is active.", classes="settings-detail-row")
+            else:
+                yield Button(
+                    "Set active", id="settings-workspace-set-active", compact=True
+                )
+            yield Button("Archive", id="settings-workspace-archive", compact=True)
+            yield from self._render_workspace_folder_bindings(
+                registry, record.workspace_id
+            )
+            yield from self._render_workspace_change_review(
+                registry, record.workspace_id
+            )
+
+    def _render_workspace_change_review(
+        self,
+        registry: LocalWorkspaceRegistryService,
+        workspace_id: str,
+    ) -> ComposeResult:
+        """Render the per-workspace change-review toggle (TASK-1979).
+
+        Honest availability: without a git binary the feature is absent,
+        so the row states the reason instead of offering a dead toggle.
+        Copy stays monochrome per the pane's conventions.
+        """
+        yield Static(
+            "Change review (post-run diffs)", classes="destination-section"
+        )
+        from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
+
+        if not ShadowRepoService().available:
+            yield Static(
+                "Change review needs git — install git to enable.",
+                id="settings-workspace-change-review-unavailable",
+                classes="settings-detail-row",
+            )
+            return
+        from tldw_chatbook.Workspaces.change_bounds import (
+            change_review_enabled_globally,
+        )
+
+        if not change_review_enabled_globally():
+            # Qodo #1264: the per-workspace toggle is moot under the
+            # global kill switch — say so instead of claiming tracking.
+            yield Static(
+                "Change review is disabled globally "
+                "([change_review] enabled = false).",
+                id="settings-workspace-change-review-global-off",
+                classes="settings-detail-row",
+            )
+            return
+        enabled = registry.change_review_enabled(workspace_id)
+        yield Static(
+            "Tracking enabled: agent runs record per-turn diffs for this "
+            "workspace's folders."
+            if enabled
+            else "Tracking disabled for this workspace: runs record no "
+            "diffs and offer no review.",
+            id="settings-workspace-change-review-state",
+            classes="settings-detail-row",
+        )
+        yield Button(
+            "Disable change review" if enabled else "Enable change review",
+            id="settings-workspace-change-review-toggle",
+            compact=True,
+        )
+
+    def _render_workspace_folder_bindings(
+        self,
+        registry: LocalWorkspaceRegistryService,
+        workspace_id: str,
+    ) -> ComposeResult:
+        """Render the folder-bindings editor for the selected workspace (task 10).
+
+        One row per bound folder with its access level and freshness
+        (recomputed from disk by `list_folder_bindings`), a per-row
+        ro/rw toggle and remove button, then an add row. Toggle/remove
+        buttons stash `binding_id` as a plain attribute at compose time
+        (mirrors the conversation browser's `conversation_id` stash) so
+        the handler never has to parse a uuid out of the button id.
+        """
+        yield Static("Folders (agent file-tool access)", classes="destination-section")
+        for binding in registry.list_folder_bindings(workspace_id):
+            access = binding.metadata.get("access", "ro")
+            freshness = (
+                "ready" if binding.status == RuntimeBindingStatus.READY else "missing"
+            )
+            yield Static(
+                f"{binding.locator} [{access}] {freshness}",
+                id=f"settings-workspace-folder-{binding.binding_id}",
+                classes="settings-detail-row",
+            )
+            with Horizontal(classes="settings-input-row"):
+                toggle_button = Button(
+                    "Allow write" if access != "rw" else "Read-only",
+                    id=f"settings-workspace-folder-toggle-{binding.binding_id}",
+                    classes="settings-workspace-folder-toggle",
+                    compact=True,
+                )
+                toggle_button.binding_id = binding.binding_id
+                yield toggle_button
+                remove_button = Button(
+                    "Remove",
+                    id=f"settings-workspace-folder-remove-{binding.binding_id}",
+                    classes="settings-workspace-folder-remove",
+                    compact=True,
+                )
+                remove_button.binding_id = binding.binding_id
+                yield remove_button
+        with Horizontal(classes="settings-input-row"):
+            yield Input(
+                placeholder="~/path/to/folder",
+                id="settings-workspace-folder-path",
+                classes="settings-compact-input",
+            )
+            yield Button("Add folder", id="settings-workspace-folder-add", compact=True)
+
+    def _set_settings_workspaces_result(self, text: str) -> None:
+        self._settings_workspaces_result = text
+        self._set_static_text("#settings-workspaces-result", text)
+
+    def _refresh_settings_workspaces_pane(self) -> None:
+        """Re-render the Workspaces category via the screen's existing
+        category-recompose path (task 9).
+
+        `active_category` is a `recompose=True` reactive that already
+        drives every category switch (`_select_category`); forcing it here
+        with `mutate_reactive` reuses that same, already-proven path
+        instead of recomposing a bespoke nested container (Textual only
+        regenerates a widget's children from ITS OWN `compose()` -- a
+        generic `Vertical` yielded inline here has none, so recomposing it
+        directly would just wipe it). `_render_workspaces_detail` reads
+        the registry plus the plain `_settings_selected_workspace_id` /
+        `_settings_show_archived_workspaces` attributes fresh on every
+        call, so there is no separate watcher-populated cache that could
+        go stale or get wiped by the recompose.
+        """
+        self.mutate_reactive(SettingsScreen.active_category)
+
+    def _speech_tts_cached_runtime_state(
+        self,
+    ) -> tuple[
+        TTSNativeCapabilityObservation | None,
+        dict[str, int],
+        dict[str, int],
+        dict[str, int],
+    ]:
+        """Read all provider revisions without initializing or contacting them."""
+        service = getattr(self.app_instance, "tts_service", None)
+        observation_reader = getattr(
+            service,
+            "latest_native_capability_observation",
+            None,
+        )
+        revision_reader = getattr(service, "configuration_revision", None)
+        saved_revision_reader = getattr(
+            service,
+            "saved_configuration_revision",
+            None,
+        )
+        applied_revision_reader = getattr(
+            service,
+            "applied_configuration_revision",
+            None,
+        )
+        if not callable(revision_reader):
+            return None, {}, {}, {}
+        observation = None
+        if callable(observation_reader):
+            try:
+                observation = observation_reader("audio_cpp")
+            except (KeyError, RuntimeError, TypeError, ValueError):
+                observation = None
+        if (
+            observation is not None
+            and type(observation) is not TTSNativeCapabilityObservation
+        ):
+            observation = None
+        runtime_revisions: dict[str, int] = {}
+        saved_revisions: dict[str, int] = {}
+        applied_revisions: dict[str, int] = {}
+        for provider_id in BUILT_IN_TTS_PROVIDER_ORDER:
+            try:
+                runtime_revision = revision_reader(provider_id)
+                saved_revision = (
+                    saved_revision_reader(provider_id)
+                    if callable(saved_revision_reader)
+                    else runtime_revision
+                )
+                applied_revision = (
+                    applied_revision_reader(provider_id)
+                    if callable(applied_revision_reader)
+                    else saved_revision
+                )
+            except (KeyError, RuntimeError, TypeError, ValueError):
+                continue
+            if type(runtime_revision) is int and runtime_revision >= 0:
+                runtime_revisions[provider_id] = runtime_revision
+            if type(saved_revision) is int and saved_revision >= 0:
+                saved_revisions[provider_id] = saved_revision
+            if type(applied_revision) is int and applied_revision >= 0:
+                applied_revisions[provider_id] = applied_revision
+        return observation, saved_revisions, runtime_revisions, applied_revisions
+
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
         if category is SettingsCategoryId.OVERVIEW:
             yield from self._render_overview_detail()
         elif category is SettingsCategoryId.PROVIDERS_MODELS:
             yield from self._render_provider_detail()
+        elif category is SettingsCategoryId.SPEECH_TTS:
+            (
+                audio_cpp_observation,
+                provider_configuration_revisions,
+                provider_runtime_revisions,
+                provider_applied_configuration_revisions,
+            ) = self._speech_tts_cached_runtime_state()
+            try:
+                app_config = get_runtime_config_snapshot().values
+                speech_tts_state = load_global_speech_tts_state(
+                    app_config if isinstance(app_config, Mapping) else {}
+                )
+            except (OSError, TypeError, ValueError):
+                speech_tts_state = load_global_speech_tts_state({})
+            yield SpeechTTSSettingsPanel(
+                state=self._speech_tts_draft_state or speech_tts_state,
+                original_state=self._speech_tts_original_state,
+                configure_provider=self._speech_tts_configure_provider,
+                audio_cpp_observation=audio_cpp_observation,
+                audio_cpp_configuration_revision=provider_runtime_revisions.get(
+                    "audio_cpp"
+                ),
+                provider_configuration_revisions=provider_configuration_revisions,
+                provider_runtime_revisions=provider_runtime_revisions,
+                provider_applied_configuration_revisions=(
+                    provider_applied_configuration_revisions
+                ),
+                runtime_status_store=speech_tts_runtime_status_store(self.app_instance),
+                id="settings-speech-tts-panel",
+            )
         elif category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             yield Static(
                 "Console Behavior", classes="destination-section settings-column-title"
@@ -7044,9 +11451,6 @@ class SettingsScreen(BaseAppScreen):
             with Vertical(
                 id="settings-console-behavior-detail", classes="settings-focus-card"
             ):
-                yield self._render_category_state_banner(
-                    SettingsCategoryId.CONSOLE_BEHAVIOR
-                )
                 yield from self._render_console_behavior_card(compact=False)
                 yield Static("Composer behavior", classes="destination-section")
                 yield self._detail_row(
@@ -7092,7 +11496,6 @@ class SettingsScreen(BaseAppScreen):
                 "Appearance", classes="destination-section settings-column-title"
             )
             with Vertical(id="settings-appearance-card", classes="settings-focus-card"):
-                yield self._render_category_state_banner(SettingsCategoryId.APPEARANCE)
                 yield Static("Global visual defaults", classes="destination-section")
                 yield Static(
                     "Settings owns launch visual defaults. "
@@ -7110,7 +11513,9 @@ class SettingsScreen(BaseAppScreen):
                         compact=True,
                     )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Palette limit", classes="settings-input-label")
+                    yield Static(
+                        "Palette limit (themes)", classes="settings-input-label"
+                    )
                     yield Input(
                         value=str(values["palette_theme_limit"]),
                         id="settings-appearance-palette-theme-limit",
@@ -7119,7 +11524,7 @@ class SettingsScreen(BaseAppScreen):
                         restrict=r"^[0-9]*$",
                     )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Web font size", classes="settings-input-label")
+                    yield Static("Web font size (px)", classes="settings-input-label")
                     yield Input(
                         value=str(values["font_size"]),
                         id="settings-appearance-font-size",
@@ -7150,7 +11555,7 @@ class SettingsScreen(BaseAppScreen):
                         tooltip="Toggle optional UI animation defaults.",
                     )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Smooth scroll", classes="settings-input-label")
+                    yield Static("Smooth scrolling", classes="settings-input-label")
                     yield Button(
                         self._appearance_bool_label("smooth_scrolling"),
                         id="settings-appearance-smooth-scrolling",
@@ -7187,8 +11592,25 @@ class SettingsScreen(BaseAppScreen):
             yield Static("Theme", classes="destination-section settings-column-title")
             yield SettingsThemeEditor(id="settings-theme-editor")
         elif category is SettingsCategoryId.SPLASH_SCREEN:
-            yield Static("Splash Screen", classes="destination-section settings-column-title")
+            yield Static(
+                "Splash Screen", classes="destination-section settings-column-title"
+            )
             yield SettingsSplashScreenViewer(id="settings-splash-screen-viewer")
+        elif category is SettingsCategoryId.INTERNAL_PROMPTS:
+            yield Static(
+                "Internal Prompts", classes="destination-section settings-column-title"
+            )
+            yield InternalPromptsPanel(id="settings-internal-prompts-panel")
+        elif category is SettingsCategoryId.IMAGE_GENERATION:
+            yield Static(
+                "Image Gen", classes="destination-section settings-column-title"
+            )
+            image_gen_overlay = self._image_gen_overlay_values()
+            self._queue_image_gen_select_suppression(image_gen_overlay)
+            yield ImageGenSettingsPanel(
+                id="settings-imagegen-panel",
+                overlay=image_gen_overlay,
+            )
         elif category is SettingsCategoryId.STORAGE:
             values = self._storage_setting_values()
             try:
@@ -7197,7 +11619,6 @@ class SettingsScreen(BaseAppScreen):
                 config_path = f"invalid - {redact_secret_text(str(exc))}"
             yield Static("Storage", classes="destination-section settings-column-title")
             with Vertical(id="settings-storage-card", classes="settings-focus-card"):
-                yield self._render_category_state_banner(SettingsCategoryId.STORAGE)
                 yield Static("Storage defaults", classes="destination-section")
                 yield self._detail_row(
                     "Scope", "persisted local database path defaults"
@@ -7234,7 +11655,22 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-storage-save-result",
                     classes="settings-status-row",
                 )
-                yield Static("Database paths", classes="destination-section")
+                yield Static(
+                    "Database paths (configured)", classes="destination-section"
+                )
+                # TASK-720: the inputs edit config.toml values; the files a
+                # session actually uses are resolved at runtime (a profile
+                # from [general].users_name relocates defaults under a
+                # per-profile directory). Without this note the configured
+                # default and the resolved path read as two conflicting
+                # current locations.
+                yield Static(
+                    "These are the configured config.toml values. The files "
+                    "actually in use this session are listed under Active "
+                    "files below and can differ when a user profile is set.",
+                    id="settings-storage-configured-note",
+                    classes="settings-status-row",
+                )
                 for key, label in STORAGE_FIELD_LABELS.items():
                     selector = self._storage_field_selector(key)
                     if selector is None:
@@ -7247,7 +11683,10 @@ class SettingsScreen(BaseAppScreen):
                             classes="settings-compact-input",
                             placeholder="~/path/to/database.db",
                         )
-                yield Static("Runtime local paths", classes="destination-section")
+                yield Static(
+                    "Active files (resolved this session)",
+                    classes="destination-section",
+                )
                 for path_summary in self._known_storage_paths():
                     yield self._split_detail_row(path_summary)
                 yield self._detail_row(
@@ -7257,6 +11696,8 @@ class SettingsScreen(BaseAppScreen):
                     "Handoff boundary",
                     "database and media paths remain local unless a server handoff is explicit",
                 )
+        elif category is SettingsCategoryId.WORKSPACES:
+            yield from self._render_workspaces_detail()
         elif category is SettingsCategoryId.PRIVACY_SECURITY:
             posture = self._settings_privacy_posture()
             yield Static(
@@ -7266,9 +11707,6 @@ class SettingsScreen(BaseAppScreen):
             with Vertical(
                 id="settings-privacy-security-card", classes="settings-focus-card"
             ):
-                yield self._render_category_state_banner(
-                    SettingsCategoryId.PRIVACY_SECURITY
-                )
                 yield Static("Privacy posture", classes="destination-section")
                 yield self._detail_row(
                     "Config encryption",
@@ -7289,10 +11727,10 @@ class SettingsScreen(BaseAppScreen):
                 yield Static("Credential sources", classes="destination-section")
                 yield self._detail_row(
                     "Provider env vars",
-                    (
-                        f"{posture.provider_env_present} present / "
-                        f"{posture.provider_env_missing} missing / "
-                        f"{posture.provider_env_configured} configured"
+                    env_var_summary(
+                        present=posture.provider_env_present,
+                        missing=posture.provider_env_missing,
+                        configured=posture.provider_env_configured,
                     ),
                 )
                 yield self._detail_row("Preferred source", "environment variables")
@@ -7305,7 +11743,7 @@ class SettingsScreen(BaseAppScreen):
                 )
                 yield self._detail_row(
                     "Skill trust",
-                    posture.skill_trust_status
+                    skill_trust_display(posture.skill_trust_status)
                     if posture.skill_trust_enabled
                     else "disabled",
                 )
@@ -7344,7 +11782,7 @@ class SettingsScreen(BaseAppScreen):
                 yield self._detail_row("Server tokens", posture.server_boundary)
                 yield self._detail_row(
                     "Credential mutation",
-                    "unavailable/WIP - password-gated flow required",
+                    "not available yet - password-gated flow required",
                 )
                 yield Static(
                     self._privacy_check_text(),
@@ -7358,7 +11796,6 @@ class SettingsScreen(BaseAppScreen):
             with Vertical(
                 id="settings-diagnostics-card", classes="settings-focus-card"
             ):
-                yield self._render_category_state_banner(SettingsCategoryId.DIAGNOSTICS)
                 yield Static("Validate config", classes="destination-section")
                 yield self._detail_row("Config path", self._config_path())
                 yield self._detail_row(
@@ -7371,7 +11808,7 @@ class SettingsScreen(BaseAppScreen):
                 yield self._detail_row("Write safety", "validation is read-only")
                 yield self._detail_row(
                     "Diagnostics writes",
-                    "unavailable/WIP - raw edits remain gated in Advanced Config",
+                    "not available yet - raw edits remain gated in Advanced Config",
                 )
                 with Horizontal(
                     id="settings-diagnostics-actions", classes="settings-action-row"
@@ -7385,6 +11822,11 @@ class SettingsScreen(BaseAppScreen):
                         "Reload Config",
                         id="settings-reload-config",
                         tooltip="Reload the current Settings config into the running app.",
+                    )
+                    yield Button(
+                        "Run Setup Wizard",
+                        id="settings-run-setup-wizard",
+                        tooltip="Re-run the guided first-run setup with current values.",
                     )
                 yield Static(
                     self._diagnostics_validation_result,
@@ -7406,9 +11848,6 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-advanced-config-card", classes="settings-focus-card"
             ):
                 raw_config_text = self._raw_config_text()
-                yield self._render_category_state_banner(
-                    SettingsCategoryId.ADVANCED_CONFIG
-                )
                 yield Static("Raw TOML", classes="destination-section")
                 yield self._detail_row(
                     "Risk level", "expert-only raw configuration editing"
@@ -7478,9 +11917,32 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-advanced-config-editor",
                 )
 
-    def _render_impact_pane(self) -> ComposeResult:
+    def _mode_line_text(self, summary: SettingsCategorySummary) -> str:
+        """Mode-line text for the category strip.
+
+        The MCP/ACP runtime disclaimer orients once on Overview; repeating
+        it verbatim on all 17 categories made it standing noise the eye
+        learns to skip (rescore P3).
+
+        Args:
+            summary: The active category's summary.
+
+        Returns:
+            "Mode: <title>", with the runtime disclaimer only on Overview.
+        """
+        if summary.category is SettingsCategoryId.OVERVIEW:
+            return f"Mode: {summary.title} | Runtime controls stay in MCP and ACP"
+        return f"Mode: {summary.title}"
+
+    def _render_impact_pane_header(self) -> ComposeResult:
+        """Fixed (non-scrolling) inspector header (task-1560/task-1562).
+
+        Identity, draft status, guided-action state, and the Save/Revert
+        pair are pinned above the scrollable body so the commit affordance
+        can never scroll out of sight -- the critique's live dirty-state
+        capture showed the rail scrolled with no visible Save anywhere.
+        """
         summary = self._active_summary()
-        ownership = self._ownership_record(summary.category)
         yield Static(
             "Scope Inspector", classes="destination-section settings-column-title"
         )
@@ -7499,21 +11961,54 @@ class SettingsScreen(BaseAppScreen):
             id="settings-guided-action-state",
             classes="settings-status-row",
         )
-        if summary.category not in (SettingsCategoryId.THEME, SettingsCategoryId.SPLASH_SCREEN):
+        # task-1585: render the pair ONLY where the draft model acts --
+        # previously read-only categories showed it permanently disabled
+        # (dim-on-dim noise) while five own-persistence categories omitted
+        # it, with no stated rule. Mirrors the task-1580 footer gating.
+        if summary.category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
+            dirty = self._category_has_unsaved_changes(summary.category)
             save_button = Button(
-                "Save",
+                self._guided_action_label("Save (s)", dirty=dirty),
                 id="settings-save-category",
                 tooltip="Save changes for the selected Settings category.",
             )
             save_button.disabled = not self._guided_actions_enabled(summary.category)
             yield save_button
             revert_button = Button(
-                "Revert",
+                self._guided_action_label("Revert (r)", dirty=dirty),
                 id="settings-revert-category",
                 tooltip="Discard unsaved changes for the selected Settings category.",
             )
             revert_button.disabled = not self._guided_actions_enabled(summary.category)
             yield revert_button
+        elif summary.category is SettingsCategoryId.OVERVIEW:
+            # task-1714 (critique r4 P1): this was a bare "Theme" noun-chip
+            # whose verb lived in a mouse-only tooltip; the label now names
+            # the action. It stays in the pinned header because the 32-row
+            # compact contract requires a painted recovery action
+            # (test_compact_overview_keeps_a_painted_recovery_action).
+            yield Button(
+                "Open Theme editor",
+                id="settings-open-appearance",
+                tooltip="Open the dedicated Theme editor.",
+            )
+        # task-181 copy, task-1583 placement, task-1714 length: the full
+        # reassurance paragraph reads once on Overview; everywhere else a
+        # single line keeps the promise without eating three pinned rows
+        # on all 23 categories (critique r4: "the cozy reassurance decays
+        # into noise by the third category").
+        yield Static(
+            "Saves apply to your local config file. Nothing is sent to a "
+            "server unless you run Manual sync yourself."
+            if summary.category is SettingsCategoryId.OVERVIEW
+            else "Local-only: saves write your config file.",
+            id="settings-local-scope-note",
+        )
+
+    def _render_impact_pane_body(self) -> ComposeResult:
+        """Scrollable inspector remainder: guides, ownership, boundaries."""
+        summary = self._active_summary()
+        ownership = self._ownership_record(summary.category)
         if summary.category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             yield Static("Control guide", classes="destination-section")
             yield self._detail_row(
@@ -7542,6 +12037,15 @@ class SettingsScreen(BaseAppScreen):
                 "Threshold",
                 "Minimum pasted chunk size before collapse",
             )
+            yield Static("Focused field guide", classes="destination-section")
+            for index, (label, value) in enumerate(
+                self._console_behavior_field_guidance_rows()
+            ):
+                yield self._detail_row(
+                    label,
+                    value,
+                    identifier=f"settings-console-behavior-field-guide-{index}",
+                )
             yield Static("Override rules", classes="destination-section")
             yield self._detail_row(
                 "Priority",
@@ -7572,41 +12076,43 @@ class SettingsScreen(BaseAppScreen):
                     identifier=f"settings-provider-field-guide-{index}",
                 )
         elif summary.category is SettingsCategoryId.LIBRARY_RAG:
+            # UX review item 9 (Scope Inspector clipping): a blank spacer
+            # ahead of the RAG-specific guidance, separating it from the
+            # shared Save/Revert buttons yielded just above (this branch is
+            # the only content that changes per category; the Button pair
+            # itself is shared plumbing rendered for every category and is
+            # left alone -- see the report for why).
+            yield Static("")
             yield Static(
                 "Affects Library search defaults and future RAG answers.",
                 classes="destination-section",
             )
             yield Static("Control guide", classes="destination-section")
-            yield self._detail_row(
-                "Search mode",
-                "plain uses keyword search, semantic uses embeddings, hybrid blends both",
-            )
-            yield self._detail_row(
-                "Result limits",
-                "default, keyword, and vector result counts bound retrieval fan-out",
-            )
-            yield self._detail_row(
-                "Hybrid balance",
-                "0.0 favors keyword results; 1.0 favors semantic results",
-            )
-            yield self._detail_row(
-                "Citations",
-                "sets whether future RAG answers include source markers when supported",
-            )
-            yield self._detail_row(
-                "Snippet/context",
-                "snippet length controls preview text; context budget limits staged evidence",
-            )
+            # Task 3 (541 v2 UX AC3): context-sensitive -- follows the
+            # focused field or the last-expanded Collapsible group instead
+            # of always showing the same static blurb (see
+            # _rag_field_guidance_rows, refreshed by handle_descendant_focus
+            # and handle_settings_library_rag_collapsible_toggled). Guidance
+            # values are intentionally terse (UX review item 9): the
+            # original prose wrapped across enough lines in this narrow rail
+            # that the "Citations" row clipped mid-sentence ("...source
+            # markers when") at the pane's unscrolled fold.
+            for index, (label, value) in enumerate(self._rag_field_guidance_rows()):
+                yield self._detail_row(
+                    label,
+                    value,
+                    identifier=f"settings-library-rag-field-guide-{index}",
+                )
             yield Static("Boundary", classes="destination-section")
             yield self._detail_row(
                 "Library owns",
-                "indexing, query execution, source browse, Collections, and Console staging",
+                "indexing, query, source browse, Collections, Console staging",
             )
             yield self._detail_row("Runtime owner", ownership.runtime_owner)
             yield self._detail_row("Writes allowed", "Yes")
             yield self._detail_row(
                 "Config keys",
-                "10 editable defaults under AppRAGSearchConfig",
+                "10 editable defaults in the active RAG profile",
             )
             yield self._detail_row("Recovery", ownership.recovery_copy)
             return
@@ -7634,22 +12140,49 @@ class SettingsScreen(BaseAppScreen):
                 "full theme editing, custom colors, and deeper preview",
             )
             yield Button(
-                "Open Theme",
+                "Open Theme editor",
                 id="settings-open-appearance",
                 tooltip="Open the dedicated Theme editor.",
             )
         elif summary.category is SettingsCategoryId.THEME:
-            yield Static("Affects app colors and saved custom themes.", classes="destination-section")
+            yield Static(
+                "Affects app colors and saved custom themes.",
+                classes="destination-section",
+            )
             yield Static("Focused field guide", classes="destination-section")
-            yield self._detail_row("Save target", "~/.config/tldw_cli/themes/")
-            yield self._detail_row("Note", "Use the editor's own Apply/Save/Reset buttons.")
+            yield self._detail_row("Save target", f"{_theme_save_target()}{os.sep}")
+            yield self._detail_row(
+                "Note", "Use the editor's own Apply/Save/Reset buttons."
+            )
             modified = "Yes" if self.theme_editor_modified else "No"
-            yield self._detail_row("Unsaved theme changes", modified)
+            yield self._detail_row(
+                "Unsaved theme changes",
+                modified,
+                identifier="settings-theme-unsaved-note",
+            )
         elif summary.category is SettingsCategoryId.SPLASH_SCREEN:
-            yield Static("Affects startup splash screen behavior.", classes="destination-section")
+            yield Static(
+                "Affects startup splash screen behavior.", classes="destination-section"
+            )
             yield Static("Focused field guide", classes="destination-section")
             yield self._detail_row("Config section", "splash_screen")
             yield self._detail_row("Note", "Splash defaults are saved automatically.")
+        elif summary.category is SettingsCategoryId.INTERNAL_PROMPTS:
+            yield Static(
+                "Edit the prompts used by internal tooling.",
+                classes="destination-section",
+            )
+            yield self._detail_row(
+                "Save target", f"{_internal_prompts_save_target()}  [internal_prompts]"
+            )
+            yield self._detail_row(
+                "Note", "Use each prompt's own Save / Reset buttons."
+            )
+            yield self._detail_row(
+                "Customized prompts",
+                str(self._get_internal_prompts_customized_count()),
+                identifier="settings-internal-prompts-customized-count",
+            )
         elif summary.category is SettingsCategoryId.STORAGE:
             yield Static(
                 "Affects local database path defaults after restart.",
@@ -7690,35 +12223,22 @@ class SettingsScreen(BaseAppScreen):
         if ownership.owns_config_sections:
             yield self._detail_row(
                 "Owns",
-                ", ".join(ownership.owns_config_sections),
+                "\n".join(ownership.owns_config_sections),
             )
         if ownership.read_only_reason:
-            yield self._detail_row("Read-only/WIP", ownership.read_only_reason)
+            yield self._detail_row("Read-only", ownership.read_only_reason)
         for label, value in self._inspector_guidance(summary.category):
             yield self._detail_row(
                 label,
                 value,
                 identifier="settings-boundary-note" if label == "Boundary" else None,
             )
-        # task-181: keep this in user language and consistent with the
-        # "Writes allowed" row above; saves are local-config only.
-        yield Static(
-            "Saves apply to your local config file. Nothing is sent to a server "
-            "unless you run Manual sync yourself.",
-            id="settings-local-scope-note",
-        )
-        if summary.category is SettingsCategoryId.OVERVIEW:
-            yield Button(
-                "Open Theme",
-                id="settings-open-appearance",
-                tooltip="Open the dedicated Theme editor.",
-            )
 
     def compose_content(self) -> ComposeResult:
         active_summary = self._active_summary()
         with Vertical(id="settings-shell"):
             yield Static(
-                "Settings | Global preferences, appearance, accounts, storage | Local",
+                "Settings | Global preferences, appearance, storage | Local",
                 id="settings-title",
                 classes="ds-destination-header",
             )
@@ -7726,7 +12246,7 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-category-strip", classes="destination-mode-strip"
             ):
                 yield Static(
-                    f"Mode: {active_summary.title} | Runtime controls stay in MCP and ACP",
+                    self._mode_line_text(active_summary),
                     id="settings-category-label",
                     classes="destination-section",
                 )
@@ -7736,20 +12256,11 @@ class SettingsScreen(BaseAppScreen):
                 with Vertical(
                     id="settings-category-pane", classes="destination-workbench-pane"
                 ):
-                    yield Static(
-                        "Settings Sections",
-                        classes="destination-section settings-column-title",
-                    )
-                    yield Input(
+                    yield SettingsCategorySearchInput(
                         value=self.category_search_query,
-                        placeholder="Filter settings (/)",
+                        placeholder="Filter categories (/)",
                         id="settings-category-search",
                         classes="settings-category-search",
-                    )
-                    yield Static(
-                        "/ filter | Enter open | Esc clear",
-                        id="settings-category-search-help",
-                        classes="settings-category-search-help",
                     )
                     yield Static(
                         self._category_search_status_text(),
@@ -7768,20 +12279,56 @@ class SettingsScreen(BaseAppScreen):
                     if active_summary.category is SettingsCategoryId.ADVANCED_CONFIG
                     else VerticalScroll
                 )
-                with detail_pane_container(
+                detail_pane = Vertical(
                     id="settings-detail-pane", classes="destination-workbench-pane"
-                ):
-                    yield Static(
-                        "Preference Detail",
-                        classes="destination-section settings-column-title",
-                    )
-                    yield from self._render_detail_pane()
+                )
+                # Inline height: same bundle-collapse guard as the impact
+                # pane below.
+                detail_pane.styles.height = "100%"
+                with detail_pane:
+                    # task-1716 (critique r4): ONE pinned State banner --
+                    # previously each category composed its own inside the
+                    # scrollable content, so the persistence badge (the
+                    # save-contract carrier) scrolled away mid-task (RAG
+                    # showed no State line at all in evidence).
+                    yield self._render_category_state_banner(active_summary.category)
+                    detail_body = detail_pane_container(id="settings-detail-pane-body")
+                    detail_body.styles.height = "1fr"
+                    detail_body.styles.scrollbar_size_vertical = 1
+                    with detail_body:
+                        yield from self._render_detail_pane()
                 yield self._column_divider("settings-detail-impact-divider")
-                with VerticalScroll(
+                impact_pane = Vertical(
                     id="settings-impact-pane",
                     classes="destination-workbench-pane ds-inspector",
-                ):
-                    yield from self._render_impact_pane()
+                )
+                # Explicit height: under the real CSS bundle the pane class
+                # sizes a scroll container, not a plain Vertical -- without
+                # this the 1fr body below collapses to zero (StyledSettings
+                # harness caught it; the plain harness cannot).
+                impact_pane.styles.height = "100%"
+                with impact_pane:
+                    yield from self._render_impact_pane_header()
+                    impact_body = VerticalScroll(id="settings-impact-pane-body")
+                    # Inline styles, not CSS: the app-tier bundle outranks
+                    # screen CSS and a 100%-height default would collapse
+                    # inside the auto-flow wrapper (same guard as the image
+                    # viewer modal).
+                    impact_body.styles.height = "1fr"
+                    impact_body.styles.scrollbar_size_vertical = 1
+                    with impact_body:
+                        yield from self._render_impact_pane_body()
+                    # task-1623: reserved fold-indicator row -- 8 of 26
+                    # critique captures ended the inspector mid-sentence
+                    # with nothing saying more content exists.
+                    overflow_hint = Static(
+                        "▼ more — scroll the inspector",
+                        id="settings-impact-overflow-hint",
+                    )
+                    overflow_hint.styles.height = 1
+                    overflow_hint.styles.color = "gray"
+                    overflow_hint.display = False
+                    yield overflow_hint
 
     def _category_value_from_button(self, button: Button) -> str | None:
         if not button.id or not button.has_class("settings-category-button"):
@@ -7817,9 +12364,15 @@ class SettingsScreen(BaseAppScreen):
 
     def _focus_category_search(self) -> None:
         try:
-            self.query_one("#settings-category-search", Input).focus()
+            search = self.query_one("#settings-category-search", Input)
         except QueryError:
             logger.debug("Unable to focus Settings category search")
+            return
+        search.focus()
+        # task-1584: refocusing must not resume the stale query -- select it
+        # so the next keystroke starts fresh (repeat searches concatenated
+        # before, silently poisoning the next filter).
+        search.select_all()
 
     def _focus_category(self, category_value: str) -> None:
         try:
@@ -7866,6 +12419,26 @@ class SettingsScreen(BaseAppScreen):
                 "Ignoring unknown Settings navigation category: %s", category_value
             )
             return
+        if category_value == SettingsCategoryId.SPEECH_TTS.value:
+            allowed_keys = {"category", "provider", "intent"}
+            if not set(context).issubset(allowed_keys):
+                logger.debug("Ignoring unsafe Speech Settings navigation context")
+                return
+            navigation_target: SpeechTTSNavigationTarget | None = None
+            if "provider" in context or "intent" in context:
+                navigation_target = speech_tts_navigation_target_from_context(
+                    {key: value for key, value in context.items() if key != "category"}
+                )
+                if navigation_target is None:
+                    logger.debug("Ignoring invalid Speech Settings navigation target")
+                    return
+                self._stage_speech_tts_navigation_target(navigation_target)
+            else:
+                self._speech_tts_navigation_target = None
+            self._clear_navigation_provider_context()
+            self._select_category(category_value, restore_focus=True)
+            self.call_after_refresh(self._apply_speech_tts_navigation_context)
+            return
         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
             self._clear_navigation_provider_context()
             self._select_category(category_value, restore_focus=True)
@@ -7893,6 +12466,48 @@ class SettingsScreen(BaseAppScreen):
         self.call_after_refresh(
             self._apply_navigation_provider_context, provider, model, field
         )
+
+    def _stage_speech_tts_navigation_target(
+        self,
+        target: SpeechTTSNavigationTarget,
+    ) -> None:
+        """Cache a target only when no mounted panel can guard the switch."""
+
+        self._speech_tts_navigation_target = target
+        try:
+            self.query_one(
+                "#settings-speech-tts-panel",
+                SpeechTTSSettingsPanel,
+            )
+        except QueryError:
+            self._speech_tts_configure_provider = target.provider_id
+
+    def _apply_speech_tts_navigation_context(self) -> None:
+        """Restore a bounded Speech provider/intent without invoking work."""
+
+        target = self._speech_tts_navigation_target
+        if (
+            target is None
+            or self.active_category != SettingsCategoryId.SPEECH_TTS.value
+        ):
+            return
+        try:
+            provider_select = self.query_one(
+                "#settings-speech-configure-provider",
+                Select,
+            )
+            if provider_select.value != target.provider_id:
+                provider_select.value = target.provider_id
+            focus_selector = (
+                "#settings-speech-audio_cpp-base-url"
+                if target.provider_id == "audio_cpp"
+                and target.intent is SpeechTTSNavigationIntent.CONFIGURE
+                else "#settings-speech-configure-provider"
+            )
+            self.query_one(focus_selector).focus()
+        except QueryError:
+            return
+        self._speech_tts_navigation_target = None
 
     def _apply_navigation_provider_context(
         self,
@@ -7950,16 +12565,189 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return
 
+    async def flush_pending_work(self) -> bool:
+        """Protect a mounted global Speech/TTS draft before dismissal."""
+
+        if self.active_category != SettingsCategoryId.SPEECH_TTS.value:
+            return True
+        try:
+            panel = self.query_one(
+                "#settings-speech-tts-panel",
+                SpeechTTSSettingsPanel,
+            )
+        except QueryError:
+            return True
+        allowed = await panel.confirm_leave()
+        if allowed:
+            self._clear_speech_tts_draft_cache()
+        return allowed
+
+    def _clear_speech_tts_draft_cache(self) -> None:
+        """Forget a logically resolved Speech draft before its pane is removed."""
+
+        category = SettingsCategoryId.SPEECH_TTS
+        self._speech_tts_draft_state = None
+        self._speech_tts_original_state = None
+        self._settings_drafts.pop(category, None)
+        self._update_draft_status_widgets(category)
+
+    async def _confirm_speech_tts_category_leave(
+        self,
+        category_value: str,
+        restore_focus: bool,
+    ) -> None:
+        """Resolve the Speech draft before replacing its category pane."""
+
+        try:
+            panel = self.query_one(
+                "#settings-speech-tts-panel",
+                SpeechTTSSettingsPanel,
+            )
+        except QueryError:
+            self._speech_tts_leave_in_progress = False
+            return
+        try:
+            if not await panel.confirm_leave():
+                return
+            self._clear_speech_tts_draft_cache()
+            self._speech_tts_leave_bypass = True
+            self._select_category(category_value, restore_focus=restore_focus)
+        finally:
+            self._speech_tts_leave_bypass = False
+            self._speech_tts_leave_in_progress = False
+
     def _select_category(
         self, category_value: str, *, restore_focus: bool = False
     ) -> None:
+        if (
+            self.active_category == SettingsCategoryId.SPEECH_TTS.value
+            and category_value != SettingsCategoryId.SPEECH_TTS.value
+            and getattr(self, "is_mounted", False)
+            and not self._speech_tts_leave_bypass
+        ):
+            try:
+                panel = self.query_one(
+                    "#settings-speech-tts-panel",
+                    SpeechTTSSettingsPanel,
+                )
+            except QueryError:
+                panel = None
+            if panel is not None and panel.has_unsaved_changes():
+                if not self._speech_tts_leave_in_progress:
+                    self._speech_tts_leave_in_progress = True
+                    self.run_worker(
+                        self._confirm_speech_tts_category_leave(
+                            category_value,
+                            restore_focus,
+                        ),
+                        group="settings-speech-category-leave",
+                        exclusive=True,
+                        exit_on_error=False,
+                    )
+                return
         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
             self._active_settings_field_id = None
+        # Task 3 (541 v2 UX AC3): the remembered "last-expanded RAG group"
+        # scope must not leak into a later LIBRARY_RAG visit -- e.g. leaving
+        # with "Chunking" expanded and coming back to a freshly recomposed
+        # (all-collapsed-but-Search) detail pane should start at the same
+        # fallback guidance a first-ever visit shows.
+        if category_value != SettingsCategoryId.LIBRARY_RAG.value:
+            self._active_rag_scope_group = None
+            # Task 4 (541 v2 UX AC1): a profile-picker PREVIEW is a purely
+            # visual browse of the mounted editor widgets -- leaving the
+            # category recomposes the detail pane from scratch (the Select
+            # rebuilds pinned to the ACTIVE profile, see
+            # `_render_library_rag_profile_block`), so the in-memory
+            # "previewing X" flag must not survive to a later visit and
+            # silently mismatch what's actually on screen.
+            self._rag_preview_profile_id = None
+            # 541-v2 final review item 1: same reasoning -- a still-pending
+            # suppression expectation was queued against THIS (about to be
+            # destroyed) Select instance's next Changed message(s); the
+            # recomposed detail pane mints a brand-new Select that owes
+            # nothing to it, so a leftover entry here would incorrectly
+            # swallow that new instance's own first genuine Changed.
+            self._rag_select_suppress_queue.clear()
+            # task-566: the exclusive `settings-rag-index-status` worker
+            # group (index-status fetch on category show / 't' test /
+            # Save-path reindex confirm) must not be left running once the
+            # user has navigated away -- its callback would otherwise land
+            # later and pop a re-index confirm modal, or write a status
+            # line, over a now-unrelated category. Cancellation is
+            # best-effort (a thread already running still completes and
+            # still calls back -- see the guards in
+            # `_apply_library_rag_index_status` and
+            # `_decide_reindex_confirmation`, which are what actually
+            # matter), but it does stop a not-yet-started fetch from ever
+            # landing at all. `is_mounted` guards `self.workers` (routes
+            # through `self.app`, unavailable on a not-yet-mounted screen)
+            # -- same guard shape as `_refresh_library_rag_index_status`.
+            if getattr(self, "is_mounted", False):
+                self.workers.cancel_group(self, "settings-rag-index-status")
+        if category_value != SettingsCategoryId.IMAGE_GENERATION.value:
+            # Same reasoning as the RAG queue clear immediately above: a
+            # still-pending suppression expectation belongs to the (about
+            # to be destroyed) default-backend Select instance; the
+            # recomposed detail pane mints a brand-new one that owes it
+            # nothing.
+            self._image_gen_select_suppress_queue.clear()
+            # Task 6: bump the probe session and drop the in-flight guard
+            # -- see `_image_gen_probe_session`'s docstring. A probe
+            # already running keeps running (best-effort only, matching
+            # the RAG index-status precedent above -- an in-flight thread
+            # worker can't be interrupted mid-blocking-call), but its
+            # eventual callback will find this session stale and no-op
+            # instead of touching a since-recomposed, unrelated panel.
+            self._image_gen_probe_session += 1
+            self._image_gen_probe_in_flight = False
+        # Task 2 review (Important): a stale re-index-confirm in-flight
+        # guard must never survive navigating away from (or back into) the
+        # category -- e.g. the user backs out mid-fetch. Unconditional
+        # reset; a no-op for every category but LIBRARY_RAG.
+        self._rag_reindex_confirm_in_flight = False
+        if category_value != SettingsCategoryId.WORKSPACES.value:
+            # Task 9: leaving the category recomposes the detail pane from
+            # scratch -- a selection that survived would point the freshly
+            # (re)composed card at a workspace id a later visit's list may
+            # not even show (e.g. after an archive elsewhere).
+            self._settings_selected_workspace_id = None
         self.active_category = category_value
+
+        # task-1565: keep the selection visible -- the rail does not follow
+        # the active category on its own, so deep categories (Schedules,
+        # Image Gen) could be selected while entirely off-viewport.
+        def _reveal_active_button() -> None:
+            try:
+                self.query_one(
+                    f"#settings-category-{category_value}", Button
+                ).scroll_visible(animate=False)
+            except Exception:
+                pass
+
+        if getattr(self, "is_mounted", False):
+            self.call_after_refresh(_reveal_active_button)
+        # Task 6 (541 AC6): keep the footer's a/c/b hint in sync with a
+        # live in-session category switch (on_mount's call alone only
+        # covers the initial/restored-state paint -- see
+        # _register_footer_shortcuts' docstring).
+        self._register_footer_shortcuts()
         if category_value == SettingsCategoryId.OVERVIEW.value:
             self._queue_sync_rows_refresh()
+        if category_value == SettingsCategoryId.LIBRARY_RAG.value:
+            self._refresh_library_rag_index_status()
+        if category_value == SettingsCategoryId.IMAGE_GENERATION.value:
+            # Qodo PR #901 fix 3: entering the category invalidates the
+            # cached raw-section baseline (see `_image_gen_raw_section_
+            # cache`'s docstring) -- a PRIOR visit's cache must never
+            # survive into a new one (e.g. an Advanced Config hand-edit
+            # to [image_generation] made while away).
+            self._image_gen_raw_section_cache = None
         if restore_focus:
             self.call_after_refresh(self._focus_category, category_value)
+        # task-1623: the recompose minted a fresh (hidden) fold indicator;
+        # re-evaluate it against the new category's inspector content.
+        self.call_after_refresh(self._update_inspector_overflow_hint)
 
     @on(DescendantFocus)
     def handle_descendant_focus(self, event: DescendantFocus) -> None:
@@ -7986,6 +12774,7 @@ class SettingsScreen(BaseAppScreen):
                 widget_id if widget_id in appearance_field_ids else None
             )
             self._refresh_appearance_field_guidance()
+            self._scroll_impact_pane_to_field_guide(active_category)
             return
         if active_category is SettingsCategoryId.STORAGE:
             storage_field_ids = {
@@ -8002,6 +12791,30 @@ class SettingsScreen(BaseAppScreen):
                 widget_id if widget_id in storage_field_ids else None
             )
             self._refresh_storage_field_guidance()
+            self._scroll_impact_pane_to_field_guide(active_category)
+            return
+        if active_category is SettingsCategoryId.LIBRARY_RAG:
+            # Task 3 (541 v2 UX AC3): membership uses the shared
+            # _RAG_FIELD_GROUP_BY_ID table (also read by
+            # _rag_field_guidance_rows and the Collapsible.Toggled handler
+            # below) instead of a locally-duplicated id set.
+            self._active_settings_field_id = (
+                widget_id if widget_id in _RAG_FIELD_GROUP_BY_ID else None
+            )
+            self._refresh_rag_field_guidance()
+            self._scroll_impact_pane_to_field_guide(active_category)
+            return
+        if active_category is SettingsCategoryId.CONSOLE_BEHAVIOR:
+            console_behavior_field_ids = {
+                "settings-console-paste-collapse-threshold",
+                "settings-console-max-parallel-runs",
+                "settings-console-tool-result-display-chars",
+            }
+            self._active_settings_field_id = (
+                widget_id if widget_id in console_behavior_field_ids else None
+            )
+            self._refresh_console_behavior_field_guidance()
+            self._scroll_impact_pane_to_field_guide(active_category)
             return
         if active_category is not SettingsCategoryId.PROVIDERS_MODELS:
             self._active_settings_field_id = None
@@ -8033,6 +12846,118 @@ class SettingsScreen(BaseAppScreen):
             widget_id if widget_id in provider_field_ids else None
         )
         self._refresh_provider_field_guidance()
+        self._scroll_impact_pane_to_field_guide(active_category)
+
+    def _scroll_impact_pane_to_field_guide(self, category: SettingsCategoryId) -> None:
+        """Scroll the Scope Inspector so the Focused field guide is visible.
+
+        Fleet-UX expert review F6 (task-1234): focusing a guided field
+        already refreshes the guide row TEXT in place (the ``_refresh_*_
+        field_guidance`` methods above, no recompose) but never moved the
+        pane's own scroll position, so the guide block could sit below
+        ``#settings-impact-pane``'s fold with only a thin scrollbar sliver
+        hinting at it -- reported live as "focusing Max parallel shows only
+        Purpose:". Same disease task-1140 fixed for the fleet line, in a
+        second location.
+
+        Qodo PR #1074 finding 2: scrolling to only the FIRST row was
+        insufficient on its own -- ``scroll_to_widget`` no-ops once its
+        target is already fully inside the viewport, so a prior scroll
+        position that happens to leave the first row sitting flush with
+        the pane's own bottom edge (fully visible, technically) short-
+        circuits the whole call, leaving every row after it (Consequences/
+        Saved as/Applies, etc.) below the fold. Two passes fix this:
+        first reveal the LAST row (pulls the whole guide into view when it
+        fits the viewport), then re-target the FIRST row with ``top=True``
+        to force-pin it to the pane's top edge regardless of whether
+        anything actually needed to move. When the guide is short enough
+        to fit the viewport this second pass is a no-op in effect (the
+        first pass already made the whole block visible); when the guide
+        is TALLER than the viewport, it deliberately re-prioritizes the
+        first rows -- Purpose/Focused setting, the most load-bearing
+        content -- over the tail, maximizing visible coverage starting
+        from the top rather than the bottom.
+
+        ``call_after_refresh`` + ``force=True`` mirrors the pattern proven
+        in ``library_screen.LibraryScreen._preserve_library_rail_scroll``:
+        an unforced ``scroll_to_widget`` clamps to 0 when a container's
+        scroll bounds haven't been (re)computed yet -- relevant here
+        because a CATEGORY switch recomposes ``#settings-impact-pane``
+        from scratch (``_render_impact_pane``), and focus can land on the
+        new category's first field before that layout has settled.
+
+        Args:
+            category: The Settings category whose "Focused field guide"
+                block (if any -- see ``_FIELD_GUIDE_FIRST_ROW_ID``) should
+                be scrolled into view.
+        """
+        row_id = _FIELD_GUIDE_FIRST_ROW_ID.get(category)
+        if row_id is None:
+            return
+        row_prefix = row_id.rsplit("-", 1)[0]
+
+        def _scroll() -> None:
+            try:
+                pane = self.query_one("#settings-impact-pane-body")
+                first_row = self.query_one(f"#{row_id}")
+            except Exception:
+                return
+            # Guide rows are a fixed-length, contiguous block of Static
+            # widgets rendered unconditionally (see the per-category
+            # ``*_field_guidance_rows`` methods) -- find the last one by
+            # probing sequential ids rather than hardcoding a row count a
+            # future guidance edit would silently drift out of sync with.
+            last_row = first_row
+            index = 1
+            while True:
+                try:
+                    last_row = self.query_one(f"#{row_prefix}-{index}")
+                except Exception:
+                    break
+                index += 1
+            # Pass 1: reveal the guide's tail. If the whole guide fits the
+            # viewport this already brings every row into view.
+            pane.scroll_to_widget(last_row, animate=False, force=True)
+            # Pass 2: force the first row to the pane's top edge -- see the
+            # docstring above for why this must run unconditionally (not
+            # only when pass 1 left it hidden) and why ``top=True`` beats a
+            # plain minimal-scroll re-target.
+            pane.scroll_to_widget(first_row, animate=False, force=True, top=True)
+
+        self.call_after_refresh(_scroll)
+        # Qodo PR #1139: focus-driven guidance refreshes change the body's
+        # height in place (a real entry's wrapped Consequences vs the short
+        # fallback), so the fold indicator must be re-evaluated here too --
+        # mount/resize/category-switch alone leave it stale.
+        self.call_after_refresh(self._update_inspector_overflow_hint)
+
+    @on(Collapsible.Toggled)
+    def handle_settings_library_rag_collapsible_toggled(
+        self, event: Collapsible.Toggled
+    ) -> None:
+        """Task 3 (541 v2 UX AC3): expanding a Library/RAG group already
+        switches the Scope Inspector's context, even before any field
+        inside it is focused. Collapsing the currently-active group falls
+        back to whatever `_active_settings_field_id` would otherwise
+        resolve to (typically the static fallback, since focus can't land
+        on a hidden collapsed field).
+
+        Args:
+            event: The Collapsible toggle whose widget id names the group
+                this handler maps to a Scope Inspector context.
+        """
+        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+            return
+        collapsible_id = str(getattr(event.collapsible, "id", "") or "")
+        group = _RAG_GROUP_BY_COLLAPSIBLE_ID.get(collapsible_id)
+        if group is None:
+            return
+        if event.collapsible.collapsed:
+            if self._active_rag_scope_group == group:
+                self._active_rag_scope_group = None
+        else:
+            self._active_rag_scope_group = group
+        self._refresh_rag_field_guidance()
 
     @on(Button.Pressed, "#settings-open-appearance")
     def open_appearance_settings(self) -> None:
@@ -8044,7 +12969,100 @@ class SettingsScreen(BaseAppScreen):
     def handle_theme_modified_status(
         self, event: SettingsThemeEditor.ThemeModifiedStatus
     ) -> None:
+        if self.theme_editor_modified == event.is_modified:
+            return
         self.theme_editor_modified = event.is_modified
+        self._refresh_theme_modified_widgets()
+
+    @on(SpeechTTSSettingsPanel.DraftModified)
+    def handle_speech_tts_draft_modified(
+        self,
+        event: SpeechTTSSettingsPanel.DraftModified,
+    ) -> None:
+        """Mirror the self-contained Speech panel's dirty state in the shell."""
+        event.stop()
+        category = SettingsCategoryId.SPEECH_TTS
+        self._speech_tts_configure_provider = event.configure_provider
+        if event.is_modified:
+            self._speech_tts_draft_state = event.state
+            self._speech_tts_original_state = event.original_state
+            draft = self._settings_drafts.setdefault(
+                category,
+                SettingsDraft(category=category),
+            )
+            draft.set_value("speech_tts_panel", False, True)
+        else:
+            self._speech_tts_draft_state = None
+            self._speech_tts_original_state = None
+            self._settings_drafts.pop(category, None)
+        self._update_draft_status_widgets(category)
+
+    def _update_inspector_overflow_hint(self) -> None:
+        """Show the fold indicator only while the inspector body overflows.
+
+        Safe to call any time; queries are guarded and sizes are read from
+        the laid-out scroll container, so callers should route through
+        ``call_after_refresh`` when a recompose is in flight.
+        """
+        try:
+            body = self.query_one("#settings-impact-pane-body", VerticalScroll)
+            hint = self.query_one("#settings-impact-overflow-hint", Static)
+        except QueryError:
+            return
+        hint.display = body.virtual_size.height > body.container_size.height
+
+    def on_resize(self, event: Resize) -> None:
+        """Re-evaluate the inspector fold indicator on viewport changes.
+
+        Args:
+            event: The resize event; sizes are re-read after the refresh
+                completes, so only the notification matters here.
+        """
+        self.call_after_refresh(self._update_inspector_overflow_hint)
+
+    def _refresh_theme_modified_widgets(self) -> None:
+        """In-place refresh of the Theme dirty displays (rail marker, inspector row).
+
+        Targeted updates, never a recompose -- a recompose would remount the
+        theme editor and wipe the very in-progress edit that raised this
+        notification (see the theme_editor_modified reactive's comment).
+        """
+        self._refresh_category_button_label(SettingsCategoryId.THEME)
+        try:
+            row = self.query_one("#settings-theme-unsaved-note", Static)
+        except QueryError:
+            pass
+        else:
+            modified = "Yes" if self.theme_editor_modified else "No"
+            row.update(f"Unsaved theme changes: {modified}")
+
+    @on(InternalPromptsPanel.Modified)
+    def _on_internal_prompts_modified(
+        self, event: InternalPromptsPanel.Modified
+    ) -> None:
+        # Deliberately NOT a recompose=True reactive assignment (P3
+        # whole-branch review Fix 1): the panel already computed this count
+        # for us, so we just cache it and push a TARGETED refresh into
+        # whichever widgets currently show it. A recompose here would
+        # unmount/remount the panel on every save/reset, wiping its search
+        # text and scroll position.
+        self._internal_prompts_customized_count = event.customized_count
+        self._refresh_internal_prompts_customized_widgets()
+
+    def _refresh_internal_prompts_customized_widgets(self) -> None:
+        """In-place refresh of every Internal Prompts customized-count display.
+
+        Safe to call whether or not the sidebar status row / impact-pane row
+        are currently mounted (different active category, or impact pane not
+        yet composed) -- each query is independently guarded.
+        """
+        self._update_draft_status_widgets(SettingsCategoryId.INTERNAL_PROMPTS)
+        try:
+            row = self.query_one("#settings-internal-prompts-customized-count", Static)
+        except QueryError:
+            pass
+        else:
+            row.update(f"Customized prompts: {self._internal_prompts_customized_count}")
 
     @on(Select.Changed, "#settings-appearance-theme")
     def handle_appearance_theme_changed(self, event: Select.Changed) -> None:
@@ -8149,7 +13167,9 @@ class SettingsScreen(BaseAppScreen):
         """Apply the modal decision: persist, rebind, switch, enroll Sync v2."""
         app = self.app_instance
         if result.get("action") == "local":
-            await app.handle_runtime_backend_changed("local")
+            switched = await app.handle_runtime_backend_changed("local")
+            if not switched:
+                return
             self.app.notify("Runtime source set to local.", severity="information")
             self._refresh_manual_sync_rows()
             return
@@ -8157,8 +13177,6 @@ class SettingsScreen(BaseAppScreen):
         base_url = str(result.get("base_url") or "").strip()
         if not base_url:
             return
-        from tldw_chatbook.config import load_settings, save_setting_to_cli_config
-        from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
 
         from tldw_chatbook.Utils.input_validation import validate_url
 
@@ -8167,14 +13185,43 @@ class SettingsScreen(BaseAppScreen):
                 "Rejected server URL; nothing was changed.", severity="error"
             )
             return
-        save_setting_to_cli_config("tldw_api", "base_url", base_url)
-        # Persist the token unconditionally so clearing it in the modal
-        # actually removes the stored credential.
         auth_token = str(result.get("auth_token") or "").strip()
-        save_setting_to_cli_config("tldw_api", "auth_token", auth_token)
-        app.app_config = load_settings(force_reload=True)
-        load_runtime_policy_for_app(app)
-        await app.handle_runtime_backend_changed("server")
+        saved = save_settings_to_cli_config(
+            {
+                "tldw_api": {
+                    "base_url": base_url,
+                    "auth_token": auth_token,
+                }
+            }
+        )
+        if not saved:
+            self.app.notify(
+                "Server settings could not be saved; "
+                "the previous source remains active.",
+                severity="error",
+            )
+            return
+
+        try:
+            refreshed_config = load_settings(force_reload=True)
+        except Exception as exc:
+            logger.warning(
+                "Saved server settings could not be loaded (exception_category=%s).",
+                type(exc).__name__,
+            )
+            self.app.notify(
+                "Server settings were saved but could not be activated; "
+                "the previous source remains active.",
+                severity="error",
+            )
+            return
+
+        switched = await app.handle_runtime_backend_changed(
+            "server",
+            app_config_override=refreshed_config,
+        )
+        if not switched:
+            return
 
         state = self._runtime_source_state()
         server_id = str(getattr(state, "active_server_id", "") or "").strip()
@@ -8197,12 +13244,12 @@ class SettingsScreen(BaseAppScreen):
                 )
             except Exception as exc:
                 logger.warning(
-                    "Sync v2 profile preparation failed (server_profile_id={}, mode=local_first_sync).",
-                    server_id,
-                    exc_info=True,
+                    "Sync v2 profile preparation failed "
+                    "(mode=local_first_sync, exception_category=%s).",
+                    type(exc).__name__,
                 )
                 self.app.notify(
-                    f"Server activated, but Sync v2 setup failed: {exc}",
+                    "Server activated, but Sync v2 setup could not be completed.",
                     severity="warning",
                 )
             else:
@@ -8248,6 +13295,265 @@ class SettingsScreen(BaseAppScreen):
         if category_value is not None:
             self._select_category(category_value, restore_focus=event.button.has_focus)
 
+    @on(Button.Pressed, "#settings-category-group-domain-defaults")
+    def handle_domain_group_toggle_pressed(self, event: Button.Pressed) -> None:
+        """Expand or collapse the Domain Defaults rail group.
+
+        Args:
+            event: The toggle button press; stopped so the press never
+                reaches category-selection handling.
+        """
+        event.stop()
+        self._domain_group_expanded = not self._domain_group_expanded
+        self._apply_category_search_filter()
+
+    @on(Button.Pressed, ".settings-workspace-row")
+    def handle_workspace_row_pressed(self, event: Button.Pressed) -> None:
+        """Select a workspace row, then refresh so its card renders (task 9)."""
+        event.stop()
+        button_id = str(getattr(event.button, "id", "") or "")
+        prefix = "settings-workspace-row-"
+        if not button_id.startswith(prefix):
+            return
+        workspace_id = button_id.removeprefix(prefix)
+        if not workspace_id:
+            return
+        self._settings_selected_workspace_id = workspace_id
+        self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
+
+    @on(Checkbox.Changed, "#settings-workspaces-show-archived")
+    def handle_workspaces_show_archived_changed(self, event: Checkbox.Changed) -> None:
+        event.stop()
+        self._settings_show_archived_workspaces = event.value
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, "#settings-workspace-create")
+    def handle_workspace_create(self, event: Button.Pressed) -> None:
+        """Create a workspace from the typed name, or a generated one when
+        left blank -- the id always comes from `next_local_workspace_identity`
+        (task 9)."""
+        event.stop()
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        try:
+            name_input = self.query_one("#settings-workspace-create-name", Input)
+        except QueryError:
+            return
+        typed_name = name_input.value.strip()
+        workspace_id, generated_name = next_local_workspace_identity(registry)
+        try:
+            registry.create_workspace(
+                workspace_id=workspace_id, name=typed_name or generated_name
+            )
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, "#settings-workspace-rename-apply")
+    def handle_workspace_rename_apply(self, event: Button.Pressed) -> None:
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        try:
+            rename_input = self.query_one("#settings-workspace-rename-input", Input)
+        except QueryError:
+            return
+        try:
+            registry.rename_workspace(workspace_id, rename_input.value)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, "#settings-workspace-set-active")
+    def handle_workspace_set_active(self, event: Button.Pressed) -> None:
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        try:
+            registry.set_active_workspace(workspace_id)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, "#settings-workspace-archive")
+    def handle_workspace_archive(self, event: Button.Pressed) -> None:
+        """Confirm, then archive (task 9).
+
+        Mirrors `ChatScreen._confirm_console_workspace_archive` (Console's
+        own archive flow): the SAME verbatim copy, and the SAME shape --
+        an async closure passed as `confirm_callback`, since
+        `ConfirmationDialog.on_button_pressed` `await`s that callback and a
+        plain sync function would raise there instead of archiving.
+        """
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        record = registry.get_workspace(workspace_id)
+        if record is None:
+            return
+
+        async def _archive() -> None:
+            try:
+                registry.archive_workspace(workspace_id)
+            except WorkspaceRegistryServiceError as exc:
+                self._set_settings_workspaces_result(str(exc))
+                return
+            # The row disappears from the default (not-showing-archived)
+            # list -- a selection surviving would point the card at a
+            # workspace no longer in view.
+            self._settings_selected_workspace_id = None
+            self._settings_workspaces_result = ""
+            self._refresh_settings_workspaces_pane()
+
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Archive workspace?",
+                message=(
+                    f"Archive {record.name}? Its conversations stay saved and "
+                    "remain visible in Library; the workspace disappears from "
+                    "the switcher and the Console browser."
+                ),
+                confirm_label="Archive",
+                confirm_callback=_archive,
+            )
+        )
+
+    @on(Button.Pressed, "#settings-workspace-unarchive")
+    def handle_workspace_unarchive(self, event: Button.Pressed) -> None:
+        """Restore a workspace to the default listing without activating it
+        (spec: never auto-activate on unarchive, task 9)."""
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        try:
+            registry.unarchive_workspace(workspace_id)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, "#settings-workspace-change-review-toggle")
+    def _settings_workspace_toggle_change_review(self, event: Button.Pressed) -> None:
+        """Flip the selected workspace's change-review toggle (TASK-1979).
+
+        Takes effect on the NEXT run without restart — the tracker's root
+        source reads the registry fresh per turn.
+        """
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        try:
+            enabled = registry.change_review_enabled(workspace_id)
+            registry.set_change_review_enabled(workspace_id, not enabled)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, "#settings-workspace-folder-add")
+    def _settings_workspace_add_folder(self, event: Button.Pressed) -> None:
+        """Bind a folder as a read-only file-tool access root (task 10)."""
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        raw = self.query_one("#settings-workspace-folder-path", Input).value
+        try:
+            registry.add_folder_binding(workspace_id, raw)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._set_settings_workspaces_result("Folder added (read-only).")
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, ".settings-workspace-folder-toggle")
+    def _settings_workspace_toggle_folder_access(self, event: Button.Pressed) -> None:
+        """Flip a folder binding between read-only and read-write (task 10).
+
+        The binding id is read from `event.button.binding_id`, stashed at
+        compose time -- never parsed out of the button's dom id, which
+        would split a uuid on its own hyphens.
+        """
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        binding_id = str(getattr(event.button, "binding_id", "") or "")
+        if not binding_id:
+            return
+        current = next(
+            (
+                binding
+                for binding in registry.list_folder_bindings(workspace_id)
+                if binding.binding_id == binding_id
+            ),
+            None,
+        )
+        if current is None:
+            return
+        allow_write = current.metadata.get("access") != "rw"
+        try:
+            registry.set_folder_binding_access(binding_id, allow_write=allow_write)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, ".settings-workspace-folder-remove")
+    def _settings_workspace_remove_folder(self, event: Button.Pressed) -> None:
+        """Unbind a folder from the selected workspace (task 10)."""
+        event.stop()
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        binding_id = str(getattr(event.button, "binding_id", "") or "")
+        if not binding_id:
+            return
+        try:
+            registry.remove_runtime_binding(binding_id)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
+
     @on(Input.Changed, "#settings-category-search")
     def handle_category_search_changed(self, event: Input.Changed) -> None:
         event.stop()
@@ -8273,6 +13579,19 @@ class SettingsScreen(BaseAppScreen):
         self._update_console_paste_summary()
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
+    @on(Button.Pressed, "#settings-console-remote-images-toggle")
+    def handle_console_remote_images_toggle(self, event: Button.Pressed) -> None:
+        """Flip the remote-images toggle: immediate write, no category draft."""
+        event.stop()
+        enabled = self._toggle_remote_images()
+        event.button.label = self._remote_images_button_label()
+        self.app.notify(
+            "Linked images in replies will now render."
+            if enabled
+            else "Linked images in replies will stay ignored.",
+            severity="information",
+        )
+
     @on(Input.Changed, "#settings-console-paste-collapse-threshold")
     def handle_console_paste_threshold_changed(self, event: Input.Changed) -> None:
         if self._syncing_console_threshold:
@@ -8283,6 +13602,30 @@ class SettingsScreen(BaseAppScreen):
             "#settings-console-behavior-result", self._console_behavior_result_text()
         )
         self._update_console_paste_summary()
+        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    @on(Input.Changed, "#settings-console-max-parallel-runs")
+    def handle_console_max_parallel_runs_changed(self, event: Input.Changed) -> None:
+        if self._syncing_console_max_parallel_runs:
+            return
+        self._stage_console_max_parallel_runs_value(event.value)
+        self._console_behavior_result = "Console behavior settings staged."
+        self._set_static_text(
+            "#settings-console-behavior-result", self._console_behavior_result_text()
+        )
+        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    @on(Input.Changed, "#settings-console-tool-result-display-chars")
+    def handle_console_tool_result_display_chars_changed(
+        self, event: Input.Changed
+    ) -> None:
+        if self._syncing_console_tool_result_display_chars:
+            return
+        self._stage_tool_result_display_chars_value(event.value)
+        self._console_behavior_result = "Console behavior settings staged."
+        self._set_static_text(
+            "#settings-console-behavior-result", self._console_behavior_result_text()
+        )
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
     @on(Input.Changed, "#settings-console-default-streaming")
@@ -8540,7 +13883,7 @@ class SettingsScreen(BaseAppScreen):
     @on(Select.Changed, "#settings-library-rag-search-mode")
     def handle_library_rag_search_mode_changed(self, event: Select.Changed) -> None:
         event.stop()
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "default_search_mode", str(event.value or "semantic")
@@ -8549,7 +13892,7 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-library-rag-default-top-k")
     def handle_library_rag_default_top_k_changed(self, event: Input.Changed) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "default_top_k",
@@ -8559,7 +13902,7 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-library-rag-fts-top-k")
     def handle_library_rag_fts_top_k_changed(self, event: Input.Changed) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "fts_top_k",
@@ -8569,7 +13912,7 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-library-rag-vector-top-k")
     def handle_library_rag_vector_top_k_changed(self, event: Input.Changed) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "vector_top_k",
@@ -8579,7 +13922,7 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-library-rag-hybrid-alpha")
     def handle_library_rag_hybrid_alpha_changed(self, event: Input.Changed) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "hybrid_alpha",
@@ -8589,7 +13932,7 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-library-rag-score-threshold")
     def handle_library_rag_score_threshold_changed(self, event: Input.Changed) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "score_threshold",
@@ -8597,20 +13940,20 @@ class SettingsScreen(BaseAppScreen):
         )
         self._mark_library_rag_settings_staged()
 
-    @on(Button.Pressed, "#settings-library-rag-include-citations")
+    @on(Checkbox.Changed, "#settings-library-rag-include-citations")
     def handle_library_rag_include_citations_changed(
-        self, event: Button.Pressed
+        self, event: Checkbox.Changed
     ) -> None:
         event.stop()
-        next_value = not bool(self._library_rag_setting_values()["include_citations"])
-        self._stage_library_rag_value("include_citations", next_value)
-        event.button.label = "Enabled" if next_value else "Disabled"
+        if self._library_rag_edits_suppressed():
+            return
+        self._stage_library_rag_value("include_citations", bool(event.value))
         self._mark_library_rag_settings_staged()
 
     @on(Select.Changed, "#settings-library-rag-citation-style")
     def handle_library_rag_citation_style_changed(self, event: Select.Changed) -> None:
         event.stop()
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value("citation_style", str(event.value or "inline"))
         self._mark_library_rag_settings_staged()
@@ -8619,7 +13962,7 @@ class SettingsScreen(BaseAppScreen):
     def handle_library_rag_snippet_max_chars_changed(
         self, event: Input.Changed
     ) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "snippet_max_chars",
@@ -8629,13 +13972,594 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-library-rag-max-context-size")
     def handle_library_rag_max_context_size_changed(self, event: Input.Changed) -> None:
-        if self._syncing_library_rag_defaults:
+        if self._library_rag_edits_suppressed():
             return
         self._stage_library_rag_value(
             "max_context_size",
             self._normalise_library_rag_int(event.value),
         )
         self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-embedding-model")
+    def handle_library_rag_embedding_model_changed(self, event: Input.Changed) -> None:
+        if self._library_rag_edits_suppressed():
+            return
+        self._stage_library_rag_value("embedding_model", str(event.value))
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-embedding-device")
+    def handle_library_rag_embedding_device_changed(self, event: Input.Changed) -> None:
+        if self._library_rag_edits_suppressed():
+            return
+        self._stage_library_rag_value("embedding_device", str(event.value))
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-embedding-batch-size")
+    def handle_library_rag_embedding_batch_size_changed(
+        self, event: Input.Changed
+    ) -> None:
+        if self._library_rag_edits_suppressed():
+            return
+        self._stage_library_rag_value(
+            "embedding_batch_size",
+            self._normalise_library_rag_int(event.value),
+        )
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-embedding-max-length")
+    def handle_library_rag_embedding_max_length_changed(
+        self, event: Input.Changed
+    ) -> None:
+        if self._library_rag_edits_suppressed():
+            return
+        self._stage_library_rag_value(
+            "embedding_max_length",
+            self._normalise_library_rag_int(event.value),
+        )
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-chunk-size")
+    def handle_library_rag_chunk_size_changed(self, event: Input.Changed) -> None:
+        if self._library_rag_edits_suppressed():
+            return
+        self._stage_library_rag_value(
+            "chunk_size",
+            self._normalise_library_rag_int(event.value),
+        )
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-chunk-overlap")
+    def handle_library_rag_chunk_overlap_changed(self, event: Input.Changed) -> None:
+        if self._library_rag_edits_suppressed():
+            return
+        self._stage_library_rag_value(
+            "chunk_overlap",
+            self._normalise_library_rag_int(event.value),
+        )
+        self._mark_library_rag_settings_staged()
+
+    @on(Select.Changed, "#settings-library-rag-chunking-method")
+    def handle_library_rag_chunking_method_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        if self._library_rag_edits_suppressed():
+            return
+        self._stage_library_rag_value("chunking_method", str(event.value or "words"))
+        self._mark_library_rag_settings_staged()
+
+    @on(Select.Changed, "#settings-library-rag-distance-metric")
+    def handle_library_rag_distance_metric_changed(self, event: Select.Changed) -> None:
+        """Stage a distance-metric change on the active profile's draft.
+
+        Args:
+            event: The Select change; ``event.value`` is the metric name
+                (falls back to ``"cosine"`` when blank).
+        """
+        event.stop()
+        if self._library_rag_edits_suppressed():
+            return
+        self._stage_library_rag_value("distance_metric", str(event.value or "cosine"))
+        self._mark_library_rag_settings_staged()
+
+    @on(Checkbox.Changed, "#settings-library-rag-enable-reranking")
+    def handle_library_rag_enable_reranking_changed(
+        self, event: Checkbox.Changed
+    ) -> None:
+        """Stage the reranking toggle and live-update the rerank fields.
+
+        Task 1 (541 v2 UX AC4): flipping the checkbox immediately dims or
+        re-enables the reranker model / rerank results Inputs.
+
+        Args:
+            event: The Checkbox change; ``event.value`` is the new
+                enable-reranking state to stage.
+        """
+        event.stop()
+        if self._library_rag_edits_suppressed():
+            return
+        next_value = bool(event.value)
+        self._stage_library_rag_value("enable_reranking", next_value)
+        self._apply_library_rag_rerank_field_state(
+            rerank_enabled=next_value,
+            field_disabled=bool(active_profile_info()["read_only"]),
+        )
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-reranker-model")
+    def handle_library_rag_reranker_model_changed(self, event: Input.Changed) -> None:
+        if self._library_rag_edits_suppressed():
+            return
+        self._stage_library_rag_value("reranker_model", str(event.value))
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-reranker-top-k")
+    def handle_library_rag_reranker_top_k_changed(self, event: Input.Changed) -> None:
+        if self._library_rag_edits_suppressed():
+            return
+        self._stage_library_rag_value(
+            "reranker_top_k",
+            self._normalise_library_rag_int(event.value),
+        )
+        self._mark_library_rag_settings_staged()
+
+    @on(Select.Changed, "#settings-library-rag-profile-select")
+    def handle_library_rag_profile_select_changed(self, event: Select.Changed) -> None:
+        """Task 4 (541 v2 UX AC1): browsing the profile picker PREVIEWS that
+        profile's values read-only -- it never stages a draft (only "Set
+        active" does that, via the existing dirty-prompt flow below).
+        Selecting the ACTIVE profile's own id exits preview and restores
+        the ordinary, draft-aware editor.
+
+        541-v2 final review item 1: a message whose value matches the head
+        of `_rag_select_suppress_queue` is `_sync_library_rag_profile_widgets`'s
+        OWN imperative resync arriving (Textual delivers `Select.Changed`
+        asynchronously, so this can land well after that resync call has
+        returned) -- consumed and ignored rather than treated as a user
+        browsing the dropdown. Only the ONE matching queued expectation is
+        popped per message: a later genuine selection that happens to reuse
+        the same value is never mistaken for a leftover resync.
+        """
+        event.stop()
+        queue = self._rag_select_suppress_queue
+        if queue and event.value == queue[0]:
+            queue.pop(0)
+            return
+        selected = event.value
+        active_id = active_profile_info()["id"]
+        # PR #863 review: `Select.NULL` is the real blank sentinel on this
+        # Textual version (`Select.BLANK` doesn't exist -- it silently
+        # resolves to the unrelated `Widget.BLANK`). The picker is
+        # `allow_blank=True`, so a user CAN pick the blank row: treat it as
+        # "exit preview", never as a profile id to preview.
+        if selected is None or selected is Select.NULL or str(selected) == active_id:
+            self._rag_preview_profile_id = None
+        else:
+            self._rag_preview_profile_id = str(selected)
+        self._sync_rag_editor_display()
+
+    def _sync_rag_editor_display(self) -> None:
+        """The ONE place that decides whether the Library/RAG editor
+        renders the active profile (draft-aware, editable) or a PREVIEW of
+        a different, browsed profile (read-only, draft-untouched) -- Task 4
+        (541 v2 UX AC1). Called after every profile-Select change and
+        after any completed action that could change which profile is
+        active or must clear a stale preview
+        (`_rag_after_set_active`, `_rag_after_profile_action`).
+        """
+        if self._rag_preview_profile_id is not None:
+            self._render_rag_profile_preview(self._rag_preview_profile_id)
+            return
+        self._sync_library_rag_widgets(
+            self._library_rag_setting_values(),
+            field_disabled=bool(active_profile_info()["read_only"]),
+        )
+        self._update_library_rag_editor_title()
+        self._set_library_rag_preview_banner(None)
+        # 541-v2 final review item 2: restore the decoupling caption --
+        # covers the "browsed back to the active profile" exit-preview path,
+        # which reaches here without going through
+        # `_sync_library_rag_profile_widgets` (that method's own exit-preview
+        # paths -- set-active/clone/rename/delete -- restore it themselves).
+        self._set_library_rag_editing_caption_visible(True)
+
+    def _render_rag_profile_preview(self, profile_id: str) -> None:
+        """Render `profile_id`'s OWN values into the editor, all disabled,
+        with a banner naming it -- never touches `_settings_drafts` (the
+        hard invariant: drafts belong to the active profile only)."""
+        defaults = get_profile_defaults(profile_id)
+        if defaults is None:
+            # The previewed profile vanished mid-browse (e.g. deleted by
+            # another action) -- fall back to exiting preview rather than
+            # rendering a preview of nothing.
+            self._rag_preview_profile_id = None
+            self._sync_rag_editor_display()
+            return
+        self._sync_library_rag_widgets(asdict(defaults), field_disabled=True)
+        name = self._library_rag_profile_name(profile_id)
+        self._update_library_rag_editor_title(preview_name=name)
+        self._set_library_rag_preview_banner(name)
+        # 541-v2 final review item 2: the decoupling caption always names
+        # the ACTIVE profile ("Editing: X...") -- directly contradictory
+        # sitting right above this "Previewing: Y" title. The banner above
+        # already carries the equivalent messaging, so hide it rather than
+        # reword it.
+        self._set_library_rag_editing_caption_visible(False)
+
+    def _update_library_rag_editor_title(
+        self, *, preview_name: str | None = None
+    ) -> None:
+        """Task 4 (541 v2 UX AC1): the editor container's border title --
+        "Editing: <active name>" ordinarily, "Previewing: <selected name>"
+        while browsing a different profile. Names are escaped: profile
+        names can contain markup-significant characters (repo lesson)."""
+        if preview_name is not None:
+            title = f"Previewing: {escape_markup(preview_name)}"
+        else:
+            title = f"Editing: {escape_markup(active_profile_info()['name'])}"
+        try:
+            self.query_one("#settings-library-rag-editor-card").border_title = title
+        except QueryError:
+            pass
+
+    def _set_library_rag_preview_banner(self, name: str | None) -> None:
+        try:
+            banner = self.query_one("#settings-library-rag-preview-banner", Static)
+        except QueryError:
+            return
+        if name is None:
+            banner.display = False
+            return
+        banner.update(
+            f"Previewing '{escape_markup(name)}' (read-only) — press Set active to edit it"
+        )
+        banner.display = True
+
+    @on(Button.Pressed, "#settings-library-rag-profile-set-active")
+    def handle_library_rag_profile_set_active(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._trigger_library_rag_profile_set_active()
+
+    # Task 6 (541 v2 UX AC6): factored out so the 'a' keyboard accelerator
+    # shares this SAME trigger -- identical dirty-draft switch-confirm modal
+    # + preview-clear behavior as clicking the button (mirrors how Task 5
+    # factored _trigger_library_rag_profile_clone/_index_backfill).
+    def _trigger_library_rag_profile_set_active(self) -> None:
+        profile_id = self._library_rag_selected_profile_id()
+        if profile_id is None:
+            self.app.notify("Choose a profile first.", severity="warning")
+            return
+        info = active_profile_info()
+        if profile_id == info["id"]:
+            self.app.notify(
+                f"'{info['name']}' is already active.", severity="information"
+            )
+            return
+        if self._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG):
+            self.app.push_screen(
+                RagProfileSwitchConfirmModal(),
+                lambda result: self._handle_rag_profile_switch_confirm(
+                    result, profile_id
+                ),
+            )
+            return
+        self._dispatch_rag_set_active(profile_id)
+
+    def _handle_rag_profile_switch_confirm(
+        self, result: str | None, profile_id: str
+    ) -> None:
+        # Task 4 review (Critical fix): reaching THIS modal at all required
+        # `_library_rag_selected_profile_id()` (the Select's current value)
+        # to differ from the active profile -- which is exactly what
+        # entering a profile-picker PREVIEW means (handle_library_rag_
+        # profile_select_changed fires on every such browse). "discard" and
+        # "save" both act on the ACTIVE profile's own draft (discard pops
+        # it, save persists it) -- a still-armed preview must never survive
+        # into either: `action_settings_save_category`'s LIBRARY_RAG guard
+        # would otherwise silently no-op the save AND leak
+        # `_rag_profile_pending_activate` (its capture-and-clear sits BELOW
+        # that guard), and a bare `_sync_library_rag_widgets()` alone would
+        # leave the fields showing the previewed profile's stale,
+        # forced-disabled values under a stale "Previewing: ..." banner/
+        # title during the async gap before the set-active worker (discard)
+        # or save worker (save) completes. "cancel"/None deliberately does
+        # NOT clear it here -- the user chose to keep browsing/editing
+        # exactly as they left it.
+        if result == "discard":
+            self._rag_preview_profile_id = None
+            self._sync_rag_editor_display()
+            self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
+            self._sync_library_rag_widgets()
+            self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
+            self._dispatch_rag_set_active(profile_id)
+        elif result == "save":
+            self._rag_preview_profile_id = None
+            self._sync_rag_editor_display()
+            self._rag_profile_pending_activate = profile_id
+            self.action_settings_save_category(allow_text_entry_focus=True)
+        # "cancel"/None (Escape): leave the draft, active profile, and any
+        # in-progress preview untouched.
+
+    def _dispatch_rag_set_active(self, profile_id: str) -> None:
+        self._library_rag_profile_result = "Setting active profile..."
+        self._set_static_text(
+            "#settings-library-rag-profile-result", self._library_rag_profile_result
+        )
+        self._rag_set_active_worker(profile_id)
+
+    @work(exclusive=True, thread=True, group="settings-rag-set-active")
+    def _rag_set_active_worker(self, profile_id: str) -> None:
+        ok, reason = activate_profile(profile_id)
+        # Task 4 (SP3): fetch the newly-active profile's index status in the
+        # SAME off-thread hop that flips the pointer -- both touch the
+        # profile/config store off the UI thread already, so this reuses that
+        # trip instead of a second worker round-trip right after. `None` on
+        # failure (nothing to report) preserves the pre-task-4 2-arg call
+        # shape for `_rag_after_set_active`'s "no warning known" branch.
+        new_status = fetch_index_status() if ok else None
+        self.app.call_from_thread(self._rag_after_set_active, ok, reason, new_status)
+
+    def _rag_after_set_active(
+        self,
+        ok: bool,
+        reason: str,
+        new_index_status: Mapping[str, object] | None = None,
+    ) -> None:
+        # Task 4 (541 v2 UX AC1): either outcome ends any in-progress
+        # profile-picker PREVIEW -- on success the active profile itself
+        # changed (a stale preview reference is meaningless); on failure
+        # the Select snaps back to the real active id below, so a lingering
+        # "previewing <failed target>" flag would mismatch what's on
+        # screen. Explicit rather than relying on the Select.Changed
+        # cascade: `_sync_library_rag_profile_widgets` deliberately
+        # suppresses that cascade (see `_rag_select_suppress_queue`), and
+        # even without suppression a same-value reassignment (Set active on
+        # the profile already being previewed) posts no Changed message at
+        # all.
+        self._rag_preview_profile_id = None
+        if ok:
+            self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
+            info = active_profile_info()
+            message = f"Active profile: {info['name']}"
+            # Honest re-index warning (SP3 spec §3, trigger (b)): only when we
+            # actually KNOW the new profile's fingerprinted collection is
+            # genuinely absent/empty -- never noisy-by-default when the
+            # caller didn't supply a status (e.g. pre-task-4 callers/tests)
+            # or when it's already built (switching to a profile whose
+            # collection was indexed before). Task 4 review (Finding 2):
+            # a status-read failure ("unknown", see fetch_index_status's
+            # exception fallback) used to fall into this same "not built"
+            # branch and claim the switch "re-points to a new (empty)
+            # index" -- a false claim, since an unreadable status says
+            # nothing about whether the index actually changed. That case
+            # now gets its own honest, distinct notice instead.
+            state = (
+                new_index_status.get("state") if new_index_status is not None else None
+            )
+            index_empty = state in ("absent", "empty")
+            status_unknown = state == "unknown"
+            if index_empty:
+                message = f"{message} {RAG_INDEX_CHANGE_WARNING}"
+            elif status_unknown:
+                message = f"{message} Index status unavailable — check the Index row."
+            self._library_rag_profile_result = message
+            self._set_static_text("#settings-library-rag-profile-result", message)
+            self._sync_library_rag_widgets()
+            self._sync_library_rag_profile_widgets()
+            self._update_library_rag_editor_title()
+            self._set_library_rag_preview_banner(None)
+            self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
+            if new_index_status is not None:
+                self._apply_library_rag_index_status(new_index_status)
+            self.app.notify(
+                message,
+                severity="warning"
+                if (index_empty or status_unknown)
+                else "information",
+            )
+            return
+        message = f"Couldn't switch active profile: {reason}"
+        self._library_rag_profile_result = message
+        self._set_static_text("#settings-library-rag-profile-result", message)
+        # TASK-2 review (Finding 4): the profile Select was already showing
+        # the user's (failed) target selection -- snap it back to the real
+        # active profile rather than leaving a stale value on screen.
+        self._sync_library_rag_profile_widgets()
+        # Task 4: nothing actually changed about which profile is active,
+        # but the editor was possibly showing a forced-disabled PREVIEW of
+        # the failed target -- restore the real (still-active) values, not
+        # just the disabled-state fix `_sync_library_rag_profile_widgets`
+        # already applies above.
+        self._sync_library_rag_widgets()
+        self._update_library_rag_editor_title()
+        self._set_library_rag_preview_banner(None)
+        self.app.notify(message, severity="error")
+
+    @on(Button.Pressed, "#settings-library-rag-index-backfill")
+    def handle_library_rag_index_backfill(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._trigger_library_rag_index_backfill()
+
+    # Task 5 (541 v2 UX AC5): the first-run starter panel's "Backfill now"
+    # shares this SAME trigger -- never a bespoke reimplementation of the
+    # in-flight guard/notify/dispatch.
+    @on(Button.Pressed, "#settings-library-rag-starter-backfill")
+    def handle_library_rag_starter_backfill(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._trigger_library_rag_index_backfill()
+
+    def _trigger_library_rag_index_backfill(self) -> None:
+        if self._library_rag_backfill_in_flight:
+            self.app.notify("Backfill is already running.", severity="warning")
+            return
+        self._library_rag_backfill_in_flight = True
+        self.app.notify(
+            "Backfill started — this may take a while for large libraries.",
+            severity="information",
+        )
+        self._rag_backfill_worker()
+
+    @on(Button.Pressed, "#settings-library-rag-profile-clone")
+    def handle_library_rag_profile_clone(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._trigger_library_rag_profile_clone()
+
+    # Task 5 (541 v2 UX AC5): the first-run starter panel's "Clone to
+    # tune…" shares this SAME trigger -- opens the identical name-modal,
+    # seeded from whatever the profile Select currently shows (the active
+    # builtin, at first-run compose time).
+    @on(Button.Pressed, "#settings-library-rag-starter-clone")
+    def handle_library_rag_starter_clone(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._trigger_library_rag_profile_clone()
+
+    def _trigger_library_rag_profile_clone(self) -> None:
+        source_id = (
+            self._library_rag_selected_profile_id() or active_profile_info()["id"]
+        )
+        self.app.push_screen(
+            RagProfileNameModal(title="Clone profile", confirm_label="Clone"),
+            lambda name: self._handle_rag_profile_clone_result(name, source_id),
+        )
+
+    def _handle_rag_profile_clone_result(
+        self, name: str | None, source_id: str
+    ) -> None:
+        if not name:
+            return
+        self._dispatch_rag_profile_action("clone", source_id, name)
+
+    @on(Button.Pressed, "#settings-library-rag-profile-rename")
+    def handle_library_rag_profile_rename(self, event: Button.Pressed) -> None:
+        event.stop()
+        profile_id = self._library_rag_selected_profile_id()
+        if profile_id is None:
+            self.app.notify("Choose a profile first.", severity="warning")
+            return
+        current_name = self._library_rag_profile_name(profile_id)
+        self.app.push_screen(
+            RagProfileNameModal(
+                title="Rename profile", initial=current_name, confirm_label="Rename"
+            ),
+            lambda name: self._handle_rag_profile_rename_result(name, profile_id),
+        )
+
+    def _handle_rag_profile_rename_result(
+        self, name: str | None, profile_id: str
+    ) -> None:
+        if not name:
+            return
+        self._dispatch_rag_profile_action("rename", profile_id, name)
+
+    @on(Button.Pressed, "#settings-library-rag-profile-delete")
+    def handle_library_rag_profile_delete(self, event: Button.Pressed) -> None:
+        event.stop()
+        profile_id = self._library_rag_selected_profile_id()
+        if profile_id is None:
+            self.app.notify("Choose a profile first.", severity="warning")
+            return
+        name = self._library_rag_profile_name(profile_id)
+        modal = ConfirmationDialog(
+            title="Delete profile",
+            message=f'Delete the "{name}" RAG profile? This cannot be undone.',
+            confirm_label="Delete",
+            cancel_label="Cancel",
+        )
+        self.app.push_screen(
+            modal,
+            lambda confirmed: self._handle_rag_profile_delete_result(
+                confirmed, profile_id
+            ),
+        )
+
+    def _handle_rag_profile_delete_result(
+        self, confirmed: bool | None, profile_id: str
+    ) -> None:
+        if not confirmed:
+            return
+        self._dispatch_rag_profile_action("delete", profile_id, "")
+
+    def _dispatch_rag_profile_action(
+        self, action: str, profile_id: str, arg: str
+    ) -> None:
+        self._library_rag_profile_result = f"{action.capitalize()} profile..."
+        self._set_static_text(
+            "#settings-library-rag-profile-result", self._library_rag_profile_result
+        )
+        self._rag_profile_action_worker(action, profile_id, arg)
+
+    @work(exclusive=True, thread=True, group="settings-rag-profile-crud")
+    def _rag_profile_action_worker(
+        self, action: str, profile_id: str, arg: str
+    ) -> None:
+        if action == "clone":
+            ok, result = clone_profile_as(profile_id, arg)
+        elif action == "rename":
+            ok, result = rename_user_profile(profile_id, arg)
+        elif action == "delete":
+            ok, result = delete_user_profile(profile_id)
+        else:
+            ok, result = False, "unknown-action"
+        self.app.call_from_thread(self._rag_after_profile_action, action, ok, result)
+
+    def _rag_after_profile_action(self, action: str, ok: bool, result: str) -> None:
+        if ok:
+            # Task 4 (541 v2 UX AC1): a successful clone/rename/delete can
+            # change the active profile's own name (rename) or identity
+            # (delete-the-active-profile's hybrid_basic fallback), or move
+            # the Select onto a brand-new id (clone) -- any lingering
+            # PREVIEW reference is stale either way. A FAILED action
+            # changes nothing, so an unrelated in-progress preview is left
+            # alone (not cleared) below.
+            self._rag_preview_profile_id = None
+            # UX review item 1 (P0, clone flow): clone_profile_as returns
+            # (True, new_profile_id) on success -- `result` IS that id here.
+            # Land the user ON the new clone (picker selection) with an
+            # actionable next step, instead of the generic "Profile cloned."
+            # that silently snapped the Select back to whatever was active
+            # (the id was discarded entirely pre-fix).
+            new_clone_id = result if action == "clone" else None
+            if action == "clone":
+                clone_name = self._library_rag_profile_name(new_clone_id)
+                message = f"Cloned to '{clone_name}'. Select 'Set active' to edit it."
+            else:
+                messages = {
+                    "rename": "Profile renamed.",
+                    "delete": "Profile deleted.",
+                }
+                message = messages.get(action, "Done.")
+            # I1 (SP3 final review): delete_user_profile's success `result` is
+            # normally "" (nothing to add), but carries a human-readable note
+            # when the delete just fell back the active-profile pointer to
+            # the hybrid_basic builtin (it deleted the profile that WAS
+            # active) -- surface that alongside the plain "Profile deleted."
+            # so the user knows their active profile changed too. `result`
+            # means something different for clone/rename on success (the new
+            # profile id / nothing), so this is delete-only.
+            if action == "delete" and result:
+                message = f"{message} {result}"
+            self._library_rag_profile_result = message
+            self._set_static_text("#settings-library-rag-profile-result", message)
+            self._sync_library_rag_widgets()
+            if new_clone_id:
+                self._sync_library_rag_profile_widgets(select_override=new_clone_id)
+            else:
+                self._sync_library_rag_profile_widgets()
+            self._update_library_rag_editor_title()
+            self._set_library_rag_preview_banner(None)
+            self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
+            # Task 5 (541 v2 UX AC5): a clone is exactly how a first-run
+            # install gets its first user profile -- this is the one
+            # first-run-ending trigger that never touches the index status,
+            # so it needs its own explicit re-evaluation (rename/delete
+            # never flip the predicate in practice, but recomputing is
+            # cheap and keeps every successful profile action consistent).
+            self._refresh_rag_first_run_panel_state()
+            self.app.notify(message, severity="information")
+            return
+        reason = result or "failed"
+        message = f"Couldn't {action} profile: {reason}"
+        self._library_rag_profile_result = message
+        self._set_static_text("#settings-library-rag-profile-result", message)
+        self.app.notify(message, severity="error")
 
     @on(Input.Changed, "#settings-storage-user-db-base-dir")
     def handle_storage_user_db_base_dir_changed(self, event: Input.Changed) -> None:
@@ -9090,6 +15014,19 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self._run_diagnostics_reload()
 
+    @on(Button.Pressed, "#settings-run-setup-wizard")
+    def handle_run_setup_wizard(self, event: Button.Pressed) -> None:
+        event.stop()
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import FirstRunSetupWizard
+
+        # Wire the app-level result callback so a truthy exit_route off the
+        # Summary step ("Go to Chat") still navigates -- without it, the
+        # exit_route is silently dropped and re-run's "Go to Chat" is dead.
+        self.app.push_screen(
+            FirstRunSetupWizard(self.app_instance, rerun=True),
+            self.app_instance.handle_first_run_wizard_result,
+        )
+
     @on(Button.Pressed, "#settings-advanced-validate-config")
     def handle_advanced_validate_config(self, event: Button.Pressed) -> None:
         event.stop()
@@ -9148,6 +15085,20 @@ class SettingsScreen(BaseAppScreen):
             self.app.notify(
                 self._guided_action_message(category), severity="information"
             )
+            return
+        if category is SettingsCategoryId.SPEECH_TTS:
+            try:
+                panel = self.query_one(
+                    "#settings-speech-tts-panel",
+                    SpeechTTSSettingsPanel,
+                )
+            except QueryError:
+                self.app.notify(
+                    "Speech & TTS Settings are not available.",
+                    severity="warning",
+                )
+                return
+            panel.request_save()
             return
         if category is SettingsCategoryId.PROVIDERS_MODELS:
             try:
@@ -9336,11 +15287,6 @@ class SettingsScreen(BaseAppScreen):
             if saved:
                 defaults = self._chat_defaults()
                 defaults.update(dirty_values)
-                if dirty_values:
-                    self._sync_provider_runtime_defaults(
-                        str(values.get("provider") or "").strip(),
-                        str(values.get("model") or "").strip(),
-                    )
                 if (
                     endpoint_dirty
                     or credential_dirty
@@ -9368,6 +15314,9 @@ class SettingsScreen(BaseAppScreen):
                 self._set_static_text(
                     "#settings-provider-save-result", self._provider_save_result
                 )
+                # TASK-366: the last Test verdict described the pre-save draft;
+                # don't let a stale ready/blocked line persist after saving.
+                self._mark_provider_test_result_stale()
                 self._sync_provider_credential_widget(provider)
                 self._update_provider_dynamic_widgets()
                 self._update_draft_status_widgets(category)
@@ -9411,6 +15360,32 @@ class SettingsScreen(BaseAppScreen):
             return
 
         if category is SettingsCategoryId.LIBRARY_RAG:
+            # Task 4 (541 v2 UX AC1): Save is blocked (no-op + notify)
+            # while the editor is showing a profile-picker PREVIEW -- the
+            # Save/Revert buttons already disable via
+            # `_library_rag_save_enabled`, but this action can be reached
+            # directly (keybinding, a test calling it, a stale enabled
+            # button from a race), so it must be safe standing alone too.
+            # Nothing in this branch below may run: staging is never
+            # possible while previewing (see `_library_rag_edits_suppressed`),
+            # so `_library_rag_current_defaults()` here would only ever
+            # reflect the ACTIVE profile's own (unrelated) state anyway.
+            if self._rag_preview_profile_id is not None:
+                self.app.notify(
+                    "Return to the active profile to save.", severity="warning"
+                )
+                return
+            # TASK-2 review (Finding 2): a "Save" choice from
+            # RagProfileSwitchConfirmModal arms `_rag_profile_pending_activate`
+            # then calls back in here -- but `_apply_library_rag_save_result`
+            # (the only clearing site) only runs once the save worker
+            # dispatches below. Capture-and-clear up front so EVERY early
+            # return in this branch (no-unsaved-changes, validation failure)
+            # drops the stale pending id instead of leaking it into a later,
+            # unrelated successful save; re-arm it only right before the
+            # worker dispatch that will actually consume it.
+            pending_activate = self._rag_profile_pending_activate
+            self._rag_profile_pending_activate = None
             if not self._category_has_unsaved_changes(category):
                 self.app.notify("No Settings changes to save.", severity="information")
                 return
@@ -9424,15 +15399,15 @@ class SettingsScreen(BaseAppScreen):
                 self._update_draft_status_widgets(category)
                 self.app.notify(validation.message, severity="error")
                 return
-            section_values = build_library_rag_save_sections(
-                self._app_config_mapping(),
-                values,
-            )
-            self._library_rag_result = "Saving Library/RAG defaults..."
-            self._set_static_text(
-                "#settings-library-rag-save-result", self._library_rag_result
-            )
-            self._settings_save_library_rag_worker(section_values)
+            # Task 2 (541 v2 UX): gate behind a pre-commit re-index confirm
+            # when this save would re-point the active profile at a fresh,
+            # EMPTY collection while the CURRENT one is actually built (see
+            # _confirm_reindex_then_save's docstring). `pending_activate`
+            # travels through the whole gate/confirm chain as a plain
+            # argument -- `_rag_profile_pending_activate` stays cleared
+            # (from the capture-and-clear above) until the save actually
+            # dispatches, so a Cancel never re-arms it.
+            self._confirm_reindex_then_save(values, pending_activate)
             return
 
         if category is SettingsCategoryId.APPEARANCE:
@@ -9477,6 +15452,18 @@ class SettingsScreen(BaseAppScreen):
                     dirty_values["paste_collapse_threshold"] = (
                         self._normalise_paste_collapse_threshold(
                             dirty_values["paste_collapse_threshold"]
+                        )
+                    )
+                if "max_parallel_runs" in dirty_values:
+                    dirty_values["max_parallel_runs"] = (
+                        self._normalise_console_max_parallel_runs(
+                            dirty_values["max_parallel_runs"]
+                        )
+                    )
+                if "tool_result_display_chars" in dirty_values:
+                    dirty_values["tool_result_display_chars"] = (
+                        self._normalise_tool_result_display_chars(
+                            dirty_values["tool_result_display_chars"]
                         )
                     )
                 if "streaming" in dirty_values:
@@ -9626,9 +15613,67 @@ class SettingsScreen(BaseAppScreen):
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         category = self._active_category_id()
-        if category in (SettingsCategoryId.THEME, SettingsCategoryId.SPLASH_SCREEN):
+        if category is SettingsCategoryId.SPEECH_TTS:
+            try:
+                panel = self.query_one(
+                    "#settings-speech-tts-panel",
+                    SpeechTTSSettingsPanel,
+                )
+            except QueryError:
+                self.app.notify(
+                    "Speech & TTS Settings are not available.",
+                    severity="warning",
+                )
+                return
+            if not panel.has_unsaved_changes():
+                self.app.notify(
+                    "No Settings changes to revert.",
+                    severity="information",
+                )
+                return
+            self.run_worker(panel.revert_to_saved(), exclusive=False)
+            return
+        if category is SettingsCategoryId.IMAGE_GENERATION:
+            # Unlike THEME/SPLASH_SCREEN/INTERNAL_PROMPTS below (which have
+            # no unified revert this action could drive at all), Image Gen
+            # DOES have one -- `_handle_image_gen_revert` (the same coroutine
+            # the panel's own Revert button calls). Routing the footer `r`
+            # shortcut through the generic draft-pop-only path further down
+            # would have popped the draft/cleared the `*` marker without
+            # ever recomposing the panel, leaving its Input widgets stuck
+            # showing the just-discarded unsaved text until the category was
+            # re-entered. `run_worker` schedules the coroutine since this
+            # action itself is sync (mirrors the Button.Pressed handler,
+            # which is async and awaits it directly instead).
+            if not self._category_has_unsaved_changes(category):
+                self.app.notify(
+                    "No Settings changes to revert.", severity="information"
+                )
+                return
+            self.run_worker(self._handle_image_gen_revert(), exclusive=False)
+            return
+        if category in (
+            SettingsCategoryId.THEME,
+            SettingsCategoryId.SPLASH_SCREEN,
+            SettingsCategoryId.INTERNAL_PROMPTS,
+            SettingsCategoryId.WORKSPACES,
+        ):
             self.app.notify(
                 "Use the editor's own buttons for this category", severity="information"
+            )
+            return
+        # Task 4 review (Important): Revert is blocked (no-op + notify)
+        # while the Library/RAG editor is showing a profile-picker PREVIEW
+        # -- MUST run before the generic draft pop below, which would
+        # otherwise silently discard the ACTIVE profile's own (unrelated
+        # to whatever is being previewed) staged draft. Mirrors the Save
+        # guard in action_settings_save_category.
+        if (
+            category is SettingsCategoryId.LIBRARY_RAG
+            and self._rag_preview_profile_id is not None
+        ):
+            self.app.notify(
+                "Return to the active profile to revert.", severity="warning"
             )
             return
         if not self._category_has_unsaved_changes(category):
@@ -9788,10 +15833,83 @@ class SettingsScreen(BaseAppScreen):
             )
             self.app.notify("Appearance preview complete.", severity="information")
             return
+        if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
+            # UX review item 8: 't test category' previously fell all the
+            # way through to the generic "No test action..." toast for RAG
+            # even though there's a cheap, honest check available -- refetch
+            # the active profile's index status (same off-thread worker
+            # pattern as category-show/set-active/save) and report it
+            # alongside the current preview defaults.
+            self.app.notify("RAG check started.", severity="information")
+            self._rag_test_category_worker()
+            return
         self.app.notify(
             "No test action is available for this Settings category yet.",
             severity="warning",
         )
+
+    # --- Task 6 (541 AC6): RAG profile-workflow keyboard accelerators ---
+    #
+    # Unlike s/r/t (dispatched per-category from within one shared action),
+    # these three are RAG-only: the guard lives in each action rather than a
+    # branch inside a shared method, since there is no cross-category
+    # meaning for "set active"/"clone"/"backfill". Each delegates to the
+    # EXACT SAME trigger its corresponding button uses, so a key press
+    # behaves identically to a click in every state (dirty-draft
+    # switch-confirm modal, preview clear, first-run starter panel, the
+    # backfill in-flight guard) -- no bespoke reimplementation here.
+
+    def action_settings_rag_set_active(
+        self, *, allow_text_entry_focus: bool = False
+    ) -> None:
+        """'a' -- Set active for whatever profile the picker currently
+        shows. No-op outside LIBRARY_RAG or while an Input/TextArea has
+        focus (same guard shape as s/r/t; matters for direct callers, since
+        a real keypress while typing is already swallowed by the focused
+        widget before it would reach this binding).
+
+        Args:
+            allow_text_entry_focus: Skip the focused-text-entry no-op guard
+                (for direct callers such as buttons/tests; a real keypress
+                never arrives with a text entry focused).
+        """
+        if not allow_text_entry_focus and self._settings_text_entry_has_focus():
+            return
+        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+            return
+        self._trigger_library_rag_profile_set_active()
+
+    def action_settings_rag_clone(
+        self, *, allow_text_entry_focus: bool = False
+    ) -> None:
+        """'c' -- Clone the profile the picker currently shows. Same guard
+        as action_settings_rag_set_active.
+
+        Args:
+            allow_text_entry_focus: Skip the focused-text-entry no-op guard
+                (for direct callers; see action_settings_rag_set_active).
+        """
+        if not allow_text_entry_focus and self._settings_text_entry_has_focus():
+            return
+        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+            return
+        self._trigger_library_rag_profile_clone()
+
+    def action_settings_rag_backfill(
+        self, *, allow_text_entry_focus: bool = False
+    ) -> None:
+        """'b' -- Backfill the active profile's index. Same guard as
+        action_settings_rag_set_active.
+
+        Args:
+            allow_text_entry_focus: Skip the focused-text-entry no-op guard
+                (for direct callers; see action_settings_rag_set_active).
+        """
+        if not allow_text_entry_focus and self._settings_text_entry_has_focus():
+            return
+        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+            return
+        self._trigger_library_rag_index_backfill()
 
     @staticmethod
     def _save_console_behavior_values(
@@ -9809,10 +15927,6 @@ class SettingsScreen(BaseAppScreen):
 
     @staticmethod
     def _save_appearance_sections(section_values: Mapping[str, object]) -> bool:
-        return SettingsConfigAdapter().save_sections(section_values)
-
-    @staticmethod
-    def _save_library_rag_sections(section_values: Mapping[str, object]) -> bool:
         return SettingsConfigAdapter().save_sections(section_values)
 
     @staticmethod
@@ -9858,20 +15972,206 @@ class SettingsScreen(BaseAppScreen):
             dict(section_values),
         )
 
+    def _confirm_reindex_then_save(
+        self,
+        values: SettingsLibraryRagDefaults,
+        pending_activate: str | None,
+    ) -> None:
+        """Task 2 (541 v2 UX): pre-commit gate for the LIBRARY_RAG save.
+
+        A save that would re-point the active profile at a fresh, EMPTY
+        vector collection while the CURRENT collection is actually BUILT
+        (has vectors worth losing) must be confirmed by the user BEFORE the
+        save worker dispatches -- silently saving straight into "search
+        returns nothing" is a trap. When the current index has nothing to
+        lose (absent/empty/unknown, or the save doesn't change the
+        collection at all), this proceeds straight through: the existing
+        post-save ``RAG_INDEX_CHANGE_WARNING`` notice already covers that
+        case honestly.
+
+        ``index_change_pending`` is pure/fast (in-memory fingerprint
+        compare), so it's always computed inline. The index STATUS check,
+        by contrast, touches on-disk Chroma -- prefer the Static's last
+        cached fetch (``_library_rag_index_status_cache``, kept fresh by
+        every trigger that already calls ``_apply_library_rag_index_status``:
+        category show, post-save, post-set-active, 't' test) to avoid
+        adding save-click latency; only when nothing has been cached yet
+        does this dispatch its own off-thread fetch before deciding.
+        """
+        if not index_change_pending(values):
+            self._dispatch_library_rag_save(values, False, pending_activate)
+            return
+        cached_status = self._library_rag_index_status_cache
+        if cached_status is not None:
+            self._decide_reindex_confirmation(values, pending_activate, cached_status)
+            return
+        if self._rag_reindex_confirm_in_flight:
+            # Debounce (Task 2 review, Important): a status fetch for an
+            # earlier Save click's cache-miss window is already running --
+            # dispatching a SECOND worker in the same exclusive @work group
+            # would CANCEL the first one, silently dropping ITS
+            # pending_activate. No-op instead; the in-flight fetch will
+            # still complete and dispatch save for the FIRST click once it
+            # lands.
+            return
+        self._rag_reindex_confirm_in_flight = True
+        self._rag_reindex_confirm_status_worker(values, pending_activate)
+
+    def _decide_reindex_confirmation(
+        self,
+        values: SettingsLibraryRagDefaults,
+        pending_activate: str | None,
+        status: Mapping[str, object],
+    ) -> None:
+        """Given a (cached or freshly fetched) index status, either push the
+        re-index confirm modal (state == "built") or proceed straight to
+        dispatch (absent/empty/unknown -- nothing built to lose)."""
+        if str(status.get("state") or "unknown") != "built":
+            self._dispatch_library_rag_save(values, True, pending_activate)
+            return
+        # task-566: this decision can be reached by a `settings-rag-index-
+        # status` worker callback that was already in flight when the user
+        # navigated away from Library/RAG (`_select_category`'s
+        # `cancel_group` is best-effort, not a guarantee for an
+        # already-running thread). Never surface the destructive "Re-index
+        # required" modal over an unrelated category -- there's no one left
+        # to confirm it, so the save attempt is dropped here rather than
+        # auto-confirmed or shown out of context.
+        if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
+            return
+        count = status.get("count", 0)
+        # 541-v2 final review item 3: thousands separator -- a large library
+        # can easily have a 6-7 digit vector count, unreadable at a glance
+        # as a bare run of digits.
+        modal = ConfirmationDialog(
+            title="Re-index required",
+            message=(
+                "This change re-points to a new EMPTY index — the current "
+                f"index ({count:,} vectors) stops being used and search "
+                "returns nothing until you run Backfill. Save anyway?"
+            ),
+            confirm_label="Save anyway",
+            cancel_label="Cancel",
+        )
+        self.app.push_screen(
+            modal,
+            lambda confirmed: self._handle_reindex_confirmation_result(
+                confirmed, values, pending_activate
+            ),
+        )
+
+    def _handle_reindex_confirmation_result(
+        self,
+        confirmed: bool | None,
+        values: SettingsLibraryRagDefaults,
+        pending_activate: str | None,
+    ) -> None:
+        # Task 2 review (Important): defensive clear -- by the time this
+        # modal resolves the in-flight guard is normally already cleared
+        # (the worker callback below clears it right after the decision
+        # that pushed this very modal), but clearing it again here too,
+        # unconditionally, on BOTH the Confirm and Cancel branches, means
+        # this handler can never be the reason a future Save stays
+        # debounced.
+        self._rag_reindex_confirm_in_flight = False
+        if not confirmed:
+            # Cancel: the draft stays staged (never popped on this path) and
+            # `_rag_profile_pending_activate` stays cleared (never re-armed
+            # -- see the capture-and-clear comment at the LIBRARY_RAG save
+            # branch) -- no save dispatched, nothing lost, nothing leaked.
+            return
+        self._dispatch_library_rag_save(values, True, pending_activate)
+
+    def _clear_rag_reindex_confirm_in_flight(self) -> None:
+        """Main-thread flip of the in-flight guard -- see
+        ``_rag_reindex_confirm_status_worker``'s ``finally`` block."""
+        self._rag_reindex_confirm_in_flight = False
+
+    @work(exclusive=True, thread=True, group="settings-rag-index-status")
+    def _rag_reindex_confirm_status_worker(
+        self,
+        values: SettingsLibraryRagDefaults,
+        pending_activate: str | None,
+    ) -> None:
+        try:
+            status = fetch_index_status()
+            self.app.call_from_thread(self._apply_library_rag_index_status, status)
+            self.app.call_from_thread(
+                self._decide_reindex_confirmation, values, pending_activate, status
+            )
+        finally:
+            # Task 2 review (Important): ALWAYS clears the in-flight guard,
+            # even if something above raises -- fetch_index_status() itself
+            # never raises (see its own except-fallback), but this is a
+            # belt-and-suspenders net: without it, a failure here would
+            # leave the flag stuck True forever, silently no-op-ing every
+            # future Save on this category ("Save bricks"). `call_from_thread`
+            # is synchronous from this (background) thread's point of view,
+            # so this runs only AFTER `_decide_reindex_confirmation` above
+            # has already returned -- covers both the direct-dispatch and
+            # the modal-pushed outcome in this one place.
+            self.app.call_from_thread(self._clear_rag_reindex_confirm_in_flight)
+
+    def _dispatch_library_rag_save(
+        self,
+        values: SettingsLibraryRagDefaults,
+        index_will_change: bool,
+        pending_activate: str | None,
+    ) -> None:
+        self._library_rag_result = "Saving Library/RAG defaults..."
+        self._set_static_text(
+            "#settings-library-rag-save-result", self._library_rag_result
+        )
+        self._rag_profile_pending_activate = pending_activate
+        self._settings_save_library_rag_worker(values, index_will_change)
+
     def _apply_library_rag_save_result(
         self,
         saved: bool,
-        section_values: Mapping[str, object],
+        reason: str,
+        index_will_change: bool = False,
     ) -> None:
+        # A "Save" choice from RagProfileSwitchConfirmModal defers the profile
+        # switch until this save completes; consumed (and cleared) exactly
+        # once here regardless of outcome, so a later unrelated save never
+        # replays a stale switch.
+        pending_activate = self._rag_profile_pending_activate
+        self._rag_profile_pending_activate = None
         if saved:
-            self._app_config_update_target().update(copy.deepcopy(dict(section_values)))
             self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
-            self._library_rag_result = "Library/RAG defaults saved."
+            message = "Library/RAG defaults saved."
+            # Task 4 (SP3), save-path trigger (a): honest re-index warning
+            # when the just-saved fields re-point the fingerprinted
+            # collection -- computed pre-save by index_change_pending, see
+            # the dispatch site above.
+            if index_will_change:
+                message = f"{message} {RAG_INDEX_CHANGE_WARNING}"
+            self._library_rag_result = message
+            self._set_static_text(
+                "#settings-library-rag-save-result", self._library_rag_result
+            )
+            self._sync_library_rag_widgets()
+            self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
+            self.app.notify(
+                message, severity="warning" if index_will_change else "information"
+            )
+            if pending_activate:
+                # The deferred set-active worker fetches its own fresh index
+                # status for the NEW active profile -- refreshing here first
+                # would just be immediately-stale, wasted off-thread work.
+                self._dispatch_rag_set_active(pending_activate)
+            else:
+                self._refresh_library_rag_index_status()
+            return
+        if reason == "builtin":
+            self._library_rag_result = "Built-in profile is read-only — Clone to edit."
             self._set_static_text(
                 "#settings-library-rag-save-result", self._library_rag_result
             )
             self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
-            self.app.notify("Library/RAG defaults saved.", severity="information")
+            self.app.notify(
+                "Built-in profile is read-only — Clone to edit", severity="warning"
+            )
             return
         self._library_rag_result = "Failed to save Library/RAG defaults."
         self._set_static_text(
@@ -9881,13 +16181,14 @@ class SettingsScreen(BaseAppScreen):
 
     @work(exclusive=True, thread=True)
     def _settings_save_library_rag_worker(
-        self, section_values: Mapping[str, object]
+        self, values: SettingsLibraryRagDefaults, index_will_change: bool = False
     ) -> None:
-        saved = self._save_library_rag_sections(section_values)
+        saved, reason = save_rag_defaults_to_active_profile(values)
         self.app.call_from_thread(
             self._apply_library_rag_save_result,
             saved,
-            dict(section_values),
+            reason,
+            index_will_change,
         )
 
     def _apply_storage_save_result(
@@ -9990,6 +16291,26 @@ class SettingsScreen(BaseAppScreen):
                 ).value = str(self._paste_collapse_threshold_value())
             finally:
                 self._syncing_console_threshold = False
+        except QueryError:
+            pass
+        try:
+            self._syncing_console_max_parallel_runs = True
+            try:
+                self.query_one(
+                    "#settings-console-max-parallel-runs", Input
+                ).value = str(self._console_max_parallel_runs_value())
+            finally:
+                self._syncing_console_max_parallel_runs = False
+        except QueryError:
+            pass
+        try:
+            self._syncing_console_tool_result_display_chars = True
+            try:
+                self.query_one(
+                    "#settings-console-tool-result-display-chars", Input
+                ).value = str(self._tool_result_display_chars_value())
+            finally:
+                self._syncing_console_tool_result_display_chars = False
         except QueryError:
             pass
         input_values = {
@@ -10130,10 +16451,34 @@ class SettingsScreen(BaseAppScreen):
 
     def on_key(self, event: Key) -> None:
         focused = self._focused_widget()
-        if (
+        is_slash = (
             event.key in {"/", "slash"} or getattr(event, "character", None) == "/"
-        ) and not isinstance(focused, (Input, TextArea)):
+        )
+        if is_slash and self._category_search_has_focus():
+            # task-1584: "/" on the already-focused filter re-arms it
+            # (select-all so typing replaces) instead of inserting a
+            # literal slash into the query.
             self._focus_category_search()
+            event.stop()
+            event.prevent_default()
+            return
+        if is_slash and not isinstance(focused, (Input, TextArea)):
+            self._focus_category_search()
+            event.stop()
+            event.prevent_default()
+            return
+        if (
+            event.key == "escape"
+            and isinstance(focused, (Input, TextArea))
+            and not self._category_search_has_focus()
+        ):
+            # task-1560: Esc releases field focus so the footer's advertised
+            # "Esc, s save category" chain is true for EVERY text-entry
+            # field -- previously only the filter input handled Esc, so
+            # keys after Esc kept feeding the field (the critique's silent
+            # no-op trap, one level deeper).
+            self.set_focus(None)
+            self._register_footer_shortcuts()
             event.stop()
             event.prevent_default()
             return
@@ -10176,6 +16521,7 @@ class SettingsScreen(BaseAppScreen):
                 "settings-check-storage",
                 "settings-validate-config",
                 "settings-reload-config",
+                "settings-run-setup-wizard",
                 "settings-advanced-validate-config",
                 "settings-advanced-save-config",
             }:

@@ -3,9 +3,16 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, cast
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CONVERSATION_SCOPE_ALL
+
+_ASSISTANT_AUTHORITY_UNSET = cast(str | None, object())
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.citation_legacy_migration import (
+        CitationLegacyMigrationService,
+    )
 
 
 def _clean_text(value: Any) -> str | None:
@@ -179,6 +186,7 @@ def normalize_message_row(
         "ranking": message_row.get("ranking"),
         "image_data": message_row.get("image_data"),
         "image_mime_type": message_row.get("image_mime_type"),
+        "usage_json": message_row.get("usage_json"),
         "topology": topology,
         "variant": variant,
     }
@@ -223,6 +231,9 @@ def normalize_conversation_row(
         "character_id": character_id,
         "assistant_kind": assistant_kind,
         "assistant_id": assistant_id,
+        "assistant_authority_id": _clean_text(
+            conversation_row.get("assistant_authority_id")
+        ),
         "runtime_backend": _normalize_runtime_backend(
             conversation_row.get("runtime_backend")
         ),
@@ -253,17 +264,33 @@ def normalize_conversation_row(
         "source": _clean_text(conversation_row.get("source")),
         "external_ref": _clean_text(conversation_row.get("external_ref")),
         "system_prompt": _clean_text(conversation_row.get("system_prompt")),
+        "metadata": conversation_row.get("metadata"),
         "version": conversation_row.get("version"),
     }
 
 
 class ChatConversationService:
-    def __init__(self, db: Any, *, rag_context_store_path: str | Path | None = None):
+    def __init__(
+        self,
+        db: Any,
+        *,
+        rag_context_store_path: str | Path | None = None,
+        citation_legacy_migration: "CitationLegacyMigrationService | None" = None,
+    ):
         self.db = db
         self.rag_context_store_path = (
             Path(rag_context_store_path) if rag_context_store_path else None
         )
         self._rag_context_store: dict[str, Any] | None = None
+        self.citation_legacy_migration = citation_legacy_migration
+
+    def set_citation_legacy_migration(
+        self,
+        migration: "CitationLegacyMigrationService | None",
+    ) -> None:
+        """Attach the canonical/legacy read boundary after repository wiring."""
+
+        self.citation_legacy_migration = migration
 
     @staticmethod
     def _now() -> str:
@@ -337,6 +364,7 @@ class ChatConversationService:
         character_id: int | None = None,
         assistant_kind: str | None = None,
         assistant_id: str | None = None,
+        assistant_authority_id: str | None = _ASSISTANT_AUTHORITY_UNSET,
         persona_memory_mode: str | None = None,
         runtime_backend: str | None = None,
         discovery_owner: str | None = None,
@@ -349,6 +377,41 @@ class ChatConversationService:
         external_ref: str | None = None,
         **extra_fields: Any,
     ) -> str:
+        """Create and persist a conversation.
+
+        Args:
+            title: Secondary title candidate used only when raw
+                ``conversation_title`` is falsey.
+            conversation_title: Raw truthy value selected by
+                ``conversation_title or title``, including whitespace. Downstream
+                cleaning can discard it and derive an assistant title without
+                falling back to ``title``.
+            character_id: Local character identifier associated with the conversation.
+            assistant_kind: Kind of assistant that owns the conversation.
+            assistant_id: Stable assistant identifier.
+            assistant_authority_id: Provenance authority identifier. Omitting it
+                leaves the field absent so eligible DB-owned local inference may
+                apply; passing ``None`` explicitly preserves unproven authority.
+            persona_memory_mode: Memory behavior for a persona conversation.
+            runtime_backend: Backend selected to run the assistant.
+            discovery_owner: Owner of the assistant discovery record.
+            discovery_entity_id: Discovery record identifier for the assistant.
+            scope_type: Scope classification for the conversation.
+            workspace_id: Workspace identifier when the scope requires one.
+            state: Initial conversation state.
+            topic_label: Optional topic label.
+            source: Origin that created the conversation.
+            external_ref: External source reference.
+            **extra_fields: Additional database-supported fields. Explicit named
+                fields are assigned after this mapping; recognized keyword names
+                bind to the signature rather than this mapping.
+
+        Returns:
+            Persisted conversation ID as a string.
+
+        Raises:
+            ValueError: If the database cannot create the conversation.
+        """
         resolved_title = derive_conversation_title(
             assistant_kind=assistant_kind,
             assistant_name=None,
@@ -372,6 +435,8 @@ class ChatConversationService:
             "source": source,
             "external_ref": external_ref,
         }
+        if assistant_authority_id is not _ASSISTANT_AUTHORITY_UNSET:
+            conversation_data["assistant_authority_id"] = assistant_authority_id
         conversation_id = self.db.add_conversation(conversation_data)
         if conversation_id is None:
             raise ValueError("Unable to create chat conversation.")
@@ -492,6 +557,8 @@ class ChatConversationService:
         for key, value in update_data.items():
             if key == "assistant_kind":
                 normalized_update[key] = _normalize_assistant_kind(value)
+            elif key == "assistant_authority_id":
+                normalized_update[key] = value
             elif key in {
                 "assistant_id",
                 "persona_memory_mode",
@@ -688,6 +755,11 @@ class ChatConversationService:
         rag_context: Mapping[str, Any] | None = None,
         citations: Iterable[Mapping[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        """Deprecated compatibility writer available only in recovery mode."""
+
+        migration = self.citation_legacy_migration
+        if migration is not None and migration.writes_enabled:
+            raise RuntimeError("legacy_rag_context_writes_disabled")
         if hasattr(self.db, "get_message_by_id"):
             message_row = self.db.get_message_by_id(message_id)
             if not message_row:
@@ -716,6 +788,40 @@ class ChatConversationService:
         self._save_rag_context_store()
         return dict(record)
 
+    def record_imported_legacy_citation_context(
+        self,
+        conversation_id: str,
+        message_id: str,
+        *,
+        rag_context: Mapping[str, Any] | None = None,
+        citations: Iterable[Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Persist package-era citations without portable-import semantics."""
+
+        normalized_citations = [dict(item) for item in citations or ()]
+        migration = self.citation_legacy_migration
+        if migration is None or not migration.writes_enabled:
+            return self.record_message_rag_context(
+                conversation_id,
+                message_id,
+                rag_context=rag_context,
+                citations=normalized_citations,
+            )
+        record = {
+            "conversation_id": conversation_id,
+            "message_id": message_id,
+            "rag_context": dict(rag_context or {}),
+            "citations": normalized_citations,
+        }
+        result = migration.persist_package_record(
+            conversation_id=conversation_id,
+            message_id=message_id,
+            record=record,
+        )
+        if result.state.value != "complete":
+            raise ValueError(result.reason_code or "legacy_package_citation_failed")
+        return record
+
     def get_messages_with_context(
         self,
         conversation_id: str,
@@ -734,11 +840,21 @@ class ChatConversationService:
             offset=offset,
             order_by_timestamp=order_by_timestamp,
         )
-        conversation_store = (
-            self._load_rag_context_store()
-            .get("conversations", {})
-            .get(str(conversation_id), {})
-        )
+        migration = self.citation_legacy_migration
+        provenance_state = "legacy_fallback"
+        if migration is not None:
+            view = migration.read_conversation(
+                str(conversation_id),
+                verify_canonical=True,
+            )
+            conversation_store = view.records
+            provenance_state = view.state.value
+        else:
+            conversation_store = (
+                self._load_rag_context_store()
+                .get("conversations", {})
+                .get(str(conversation_id), {})
+            )
         messages: list[dict[str, Any]] = []
         for row in rows:
             normalized = normalize_message_row(row)
@@ -746,28 +862,49 @@ class ChatConversationService:
                 continue
             adjunct = conversation_store.get(str(normalized["id"]), {})
             if include_rag_context:
-                normalized["rag_context"] = adjunct.get("rag_context")
+                rag_context = adjunct.get("rag_context")
+                if rag_context is None:
+                    rag_context = {
+                        key: adjunct[key]
+                        for key in ("citation_validation", "evidence_bundle")
+                        if key in adjunct
+                    }
+                normalized["rag_context"] = rag_context or None
             normalized["citations"] = list(adjunct.get("citations") or [])
+            normalized["citation_provenance_state"] = provenance_state
             messages.append(normalized)
         return messages
 
     def get_citations(self, conversation_id: str) -> dict[str, Any]:
-        conversation_store = (
-            self._load_rag_context_store()
-            .get("conversations", {})
-            .get(str(conversation_id), {})
-        )
+        migration = self.citation_legacy_migration
+        state = "legacy_fallback"
+        if migration is not None:
+            view = migration.read_conversation(
+                str(conversation_id),
+                verify_canonical=True,
+            )
+            conversation_store = view.records
+            state = view.state.value
+        else:
+            conversation_store = (
+                self._load_rag_context_store()
+                .get("conversations", {})
+                .get(str(conversation_id), {})
+            )
         citations: list[dict[str, Any]] = []
         for message_id, adjunct in conversation_store.items():
             for citation in adjunct.get("citations") or []:
                 item = dict(citation)
                 item.setdefault("message_id", message_id)
                 citations.append(item)
-        return {
+        result = {
             "conversation_id": conversation_id,
             "citations": citations,
             "total_count": len(citations),
         }
+        if migration is not None:
+            result["state"] = state
+        return result
 
     def _build_message_tree(
         self,

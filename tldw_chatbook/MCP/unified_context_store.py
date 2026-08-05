@@ -7,18 +7,31 @@ from typing import Any
 
 from loguru import logger
 
-from tldw_chatbook.config import DEFAULT_CONFIG_PATH
-
 from .unified_control_models import UnifiedMCPContext
 
-DEFAULT_UNIFIED_MCP_CONTEXT_PATH = (
-    DEFAULT_CONFIG_PATH.parent / "unified_mcp_context.json"
-)
+_UNIFIED_MCP_CONTEXT_FILENAME = "unified_mcp_context.json"
+
+
+def _default_unified_mcp_context_path() -> Path:
+    """Return this store's path when constructed with no explicit argument.
+
+    Derives from ``config.get_user_data_dir()`` -- the same directory every
+    real construction site (``app.py``) already passes explicitly -- rather
+    than a stale, eagerly-computed module constant. See
+    ``local_store._default_local_mcp_store_path`` for why this is resolved
+    lazily instead of baked in at import time (TASK-855).
+
+    Returns:
+        ``get_user_data_dir() / "unified_mcp_context.json"``.
+    """
+    from tldw_chatbook.config import get_user_data_dir
+
+    return get_user_data_dir() / _UNIFIED_MCP_CONTEXT_FILENAME
 
 
 class UnifiedMCPContextStore:
     def __init__(self, path: str | Path | None = None) -> None:
-        self.path = Path(path or DEFAULT_UNIFIED_MCP_CONTEXT_PATH)
+        self.path = Path(path) if path else _default_unified_mcp_context_path()
 
     def load(self) -> UnifiedMCPContext:
         payload = self._read_payload()

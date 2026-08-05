@@ -1,0 +1,153 @@
+# Watchlists — Monitored sources, runs, alerts, and recovery
+
+> 🚧 **This page is a stub.** The full write-up is planned; the sections
+> below cover orientation only. See the [guide index](index.md).
+
+## What this screen is for
+
+Watchlists tracks monitored sources, their runs, alerts, and recovery. The
+header shows "Watchlists | Monitored sources, runs, alerts, recovery |
+Mixed | Local/Server". This screen was previously called "Subscriptions."
+
+## Getting there
+
+- Click **Watchlists** in the nav bar, or press **Ctrl+P** → "Switch to
+  Watchlists". (Or press **Ctrl+6** from anywhere.)
+
+## Exporting briefings and podcast feeds
+
+The **Artifacts** section of a watchlist holds its briefings — text digests
+of what its sources did — along with any scripts cast from them and any
+audio synthesized from those scripts. Two export actions live on that
+section's top toolbar, and both write to a location you pick:
+
+- **Export** saves the selected briefing as a Markdown file. It is enabled
+  once you have selected a briefing that has finished generating — a
+  finished briefing that isn't selected, or nothing selected at all, leaves
+  the button disabled.
+- **Export Feed** writes a **podcast feed directory**: a `feed.xml` plus a
+  copy of every finished audio episode in the watchlist. It is enabled once
+  at least one episode exists.
+
+If some episodes cannot be exported — a file has been moved or deleted
+since it was synthesized — the rest are still written and the app tells you
+how many of how many succeeded, and why the others were skipped.
+
+### Listening to an exported feed
+
+The exported folder is self-contained: `feed.xml` refers to the audio files
+beside it by name, never by absolute path, so you can copy, sync, or zip the
+whole directory and it keeps working on another machine.
+
+Some podcast clients accept a local folder or a `file://` URL directly. For
+clients that require HTTP, the Artifacts toolbar has two more buttons next
+to Export Feed:
+
+- **Serve Feed** starts a small, built-in server for the directory you most
+  recently exported, and shows a toast with the URL to point your podcast
+  client at (e.g. `http://127.0.0.1:54231/feed.xml`). It is disabled until
+  you have exported a feed, and disabled again while a feed is already
+  being served.
+- **Stop Serving** stops it. Switching away from Watchlists, or closing the
+  app, also stops it — serving never outlives the screen it started on.
+
+This is unrelated to the app's `[web_server]` setting: that runs the whole
+chatbook UI in a browser instead of your terminal, and it has no way to
+serve a directory you choose at all. If you would rather not use the
+built-in server, serving the folder yourself works exactly as before — from
+a terminal, in the exported directory:
+
+```bash
+python3 -m http.server 8000
+```
+
+Then point the client at `http://localhost:8000/feed.xml` (or your machine's
+LAN address, if the client runs on another device). Stop the server with
+Ctrl+C when you are done.
+
+#### Security posture
+
+The built-in Serve Feed server is opt-in and session-only: nothing is ever
+served until you press **Serve Feed**, and it stops the moment you press
+**Stop Serving**, switch away from Watchlists, or close the app — it never
+starts on its own, and no setting can make it start on its own.
+
+- **No authentication.** Anyone who can reach the served address can read
+  every file in the exported directory **and every subdirectory beneath
+  it** — serving is recursive, not limited to `feed.xml` and the episodes
+  next to it — for as long as it is running. The toast that appears when
+  you press Serve Feed states this every time, not just here. Point Serve
+  Feed at a dedicated export folder, not a general-purpose directory like
+  your home folder, for exactly this reason: everything under whatever
+  folder you export into becomes reachable while serving is on.
+- **No directory browsing.** The server refuses to render a listing of the
+  served folder (or any subfolder) — only a file whose exact name a client
+  already knows (from `feed.xml`, or a URL you typed yourself) is
+  fetchable. This narrows the exposure above; it does not remove it, since
+  every filename in the tree is still fetchable if it is known.
+- **Loopback by default.** The server binds `127.0.0.1` (this machine
+  only) unless you change `bind` under `[briefings_feed_server]` in
+  `config.toml` to something wider (e.g. `0.0.0.0`, to reach it from
+  another device on your network). A blank or otherwise invalid `bind`
+  value can never silently widen this — it falls back to `127.0.0.1`
+  instead — and whenever the server does end up bound to a non-loopback
+  address, a warning is logged and the Serve Feed toast says so plainly.
+  Only widen this if you understand that doing so removes the one thing
+  standing between "only this machine" and "anyone who can reach it" —
+  there is still no authentication either way. Note that a wildcard IPv6
+  bind (`::`) is usually dual-stack: it accepts plain IPv4 connections as
+  well, so the reachable surface can be wider than the address suggests.
+- **Confined to the exported directory.** The server refuses (with a plain
+  404) any request that would read a file outside the directory you
+  exported to, including through a symlink planted inside it that points
+  elsewhere on disk.
+- **One directory at a time.** Serve Feed refuses (naming the URL already
+  in use) rather than switching directories out from under a client that
+  might still be connected. Press Stop Serving first to serve a different
+  export.
+
+## Scheduled briefings
+
+By default, a briefing is written only when you press **Generate** in the
+Artifacts section — nothing runs unless you ask for it. The **cadence**
+picker next to the selection-mode and default-preset pickers in that same
+toolbar turns this into a recurring job for one watchlist: choose **Every
+12h**, **Daily**, or **Weekly**, and a new briefing is written on that
+schedule without you pressing anything. Choose **Off** — the default — to
+turn scheduling back off.
+
+A few things worth knowing before turning it on:
+
+- **It runs only while the app is open.** There is no background service —
+  a scheduled briefing fires from inside this app's own process, so closing
+  the app pauses the schedule. It picks back up, on the same rhythm, the
+  next time you open the app; nothing is generated while it is closed.
+- **It is opt-in, per watchlist, and off by default.** Generating a briefing
+  spends the LLM tokens your briefing preset is configured to use, so
+  turning scheduling on for one watchlist never turns it on for any other.
+- **A failed run is retried at the next scheduled time, not immediately.**
+  If a scheduled briefing fails, the schedule doesn't skip ahead to the
+  next period — but it also doesn't retry right away. The next attempt
+  lands one cadence period after the failure, the same timing a normal
+  run would have used.
+- **A freshly picked cadence can take up to ~30 minutes to start.** The
+  running scheduler only re-reads watchlists' cadences periodically, not
+  the instant you change one, so a cadence you just picked can sit inert
+  for up to one reload cycle before the schedule actually takes effect.
+- **An app-level setting can turn scheduling off entirely.** The
+  `[scheduling] briefing_schedules_enabled` setting in `config.toml` (`true`
+  by default, hand-edit only today — there is no in-app control for it)
+  gates whether this app ever fires ANY scheduled briefing, for every
+  watchlist at once. Turning it off does not clear a watchlist's stored
+  cadence: the cadence picker in Artifacts still shows what is stored, but
+  greys out, and the schedule resumes exactly where it left off the moment
+  the setting is turned back on.
+
+The Artifacts section's scope line states plainly which of these applies:
+"on request" when no cadence is stored, the actual cadence — "scheduled
+daily while the app is open", for example — when one is stored and
+scheduling is enabled for the app, or, when a cadence is stored but
+`briefing_schedules_enabled` is off, a third line naming the stored cadence
+and stating plainly that it will not fire — "stored to run daily, but
+scheduled briefings are turned off for this app — this schedule will not
+fire", for example.

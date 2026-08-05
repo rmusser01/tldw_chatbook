@@ -18,18 +18,16 @@ assumed from the spec):
   schema shape - ``parse_v2_card`` copies ``data['extensions']`` straight to
   the top-level ``extensions`` key); it is NOT nested under a ``data`` key on
   the imported side.
-- ``chara_card_v2`` validation (``validate_v2_card``) requires ``name``,
-  ``description``, ``personality``, ``scenario``, ``first_mes`` and
-  ``mes_example`` to all be present *and be strings* in the exported
-  ``data`` node, with ``name``/``first_mes`` additionally non-blank.
-  ``export_character_card_to_json`` passes DB column values through with
-  only a partial ``... or ''`` guard (``scenario``/``first_mes`` only, not
-  ``description``/``personality``), so a character created with only
-  ``{"name": ...}`` round-trips DB ``None`` straight into those fields and
-  V2 validation - and therefore the whole import - fails. This is a
-  pre-existing quirk of the general export/import path unrelated to P1f, so
-  the fixture below supplies real string values for every required V2 field
-  (matching the pattern already used by
+- ``chara_card_v2`` validation (``validate_v2_card``) is lenient: only a
+  missing/blank ``name`` (or a non-dict ``data`` node) is fatal; missing
+  ``description``/``personality``/``scenario``/``first_mes``/``mes_example``
+  are tolerated and default to ``""`` on import. ``export_character_card_to_json``
+  passes DB column values through with only a partial ``... or ''`` guard
+  (``scenario``/``first_mes`` only, not ``description``/``personality``), so a
+  character created with only ``{"name": ...}`` round-trips DB ``None`` into
+  those fields - which the lenient importer now coerces to ``""`` instead of
+  rejecting the card. The fixture below still supplies real string values for
+  every field (matching the pattern already used by
   ``Tests/Character_Chat/test_character_export_no_image.py``) to isolate the
   assertion under test: does the embedded dictionary block survive.
 """

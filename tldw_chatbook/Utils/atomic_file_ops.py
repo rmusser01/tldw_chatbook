@@ -6,6 +6,7 @@ from partial writes due to crashes, power failures, or other interruptions.
 """
 
 import os
+import stat
 import tempfile
 from pathlib import Path
 from typing import Union, Optional
@@ -13,11 +14,37 @@ import shutil
 from loguru import logger
 
 
+def _resolve_target_mode(
+    file_path: Path, mode: int, preserve_existing_mode: bool
+) -> int:
+    """Resolve the permission mode to apply to a rewritten file.
+
+    Args:
+        file_path: Path to the file being (re)written.
+        mode: Caller-supplied fallback mode, used verbatim when
+            ``preserve_existing_mode`` is False or the file does not exist yet.
+        preserve_existing_mode: When True and ``file_path`` already exists,
+            reuse its current permission bits instead of ``mode`` -- this is
+            what stops a rewrite from silently widening a secrets file that a
+            user (or a previous write) had tightened, e.g. to 0o600.
+
+    Returns:
+        The permission mode to ``os.chmod`` the replacement file to.
+    """
+    if preserve_existing_mode:
+        try:
+            return stat.S_IMODE(file_path.stat().st_mode)
+        except FileNotFoundError:
+            pass
+    return mode
+
+
 def atomic_write_text(
     file_path: Union[str, Path],
     content: str,
     encoding: str = "utf-8",
     mode: int = 0o644,
+    preserve_existing_mode: bool = False,
 ) -> None:
     """
     Write text content to a file atomically.
@@ -30,7 +57,13 @@ def atomic_write_text(
         file_path: Path to the target file
         content: Text content to write
         encoding: Text encoding (default: utf-8)
-        mode: File permissions (default: 0o644)
+        mode: File permissions applied when the target does not already exist,
+            or when ``preserve_existing_mode`` is False (default: 0o644)
+        preserve_existing_mode: When True and the target file already exists,
+            carry its current permission bits forward instead of applying
+            ``mode``. Use this for secrets-bearing files (e.g. the app config)
+            so a rewrite never widens permissions a user has tightened.
+            Defaults to False to keep existing callers' behavior unchanged.
 
     Raises:
         OSError: If the write or rename operation fails
@@ -41,6 +74,8 @@ def atomic_write_text(
 
     # Ensure parent directory exists
     parent_dir.mkdir(parents=True, exist_ok=True)
+
+    target_mode = _resolve_target_mode(file_path, mode, preserve_existing_mode)
 
     # Create temporary file in the same directory (for atomic rename)
     fd = None
@@ -60,7 +95,7 @@ def atomic_write_text(
             os.fsync(f.fileno())
 
         # Set file permissions
-        os.chmod(temp_path, mode)
+        os.chmod(temp_path, target_mode)
 
         # Atomic rename (on POSIX) or replace (cross-platform)
         # os.replace is atomic on POSIX and does best-effort on Windows

@@ -1,0 +1,43 @@
+name: CSS Bundle Guard
+
+# TASK-395: a source .tcss edited without regenerating the bundle (or the bundle
+# hand-edited directly) silently ships broken styling -- every rebuild, including
+# the app's boot-time rebuild, strips the hand-edit. This guard fails any change
+# under tldw_chatbook/css/** whose committed bundle does not reproduce from its
+# sources. Like backlog-guard, it is a standalone workflow so it runs even while
+# the general CI suite is left in the intentionally-cancelled state.
+
+on:
+  pull_request:
+    paths:
+      - 'tldw_chatbook/css/**'
+  push:
+    branches: [dev, main]
+    paths:
+      - 'tldw_chatbook/css/**'
+
+# One run per workflow per ref: a new push supersedes the previous run instead of
+# queueing another alongside it. Without this, every push to `dev` stacked a full
+# run - 50+ obsolete runs accumulated, all competing for scarce macOS runners.
+# The event name is part of the group so different trigger types (push,
+# pull_request, schedule) never cancel each other, and `main` is never cancelled
+# so its history stays complete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  css-bundle-reproducible:
+    name: CSS bundle reproduces from its sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Bundle must match its source modules
+        run: |
+          # check_bundle_sync rebuilds the bundle into a temp file and diffs it
+          # against the committed one, ignoring only the `Generated:` timestamp;
+          # it names any drifted MODULE block. Stdlib-only, no install needed.
+          python tldw_chatbook/css/check_bundle_sync.py

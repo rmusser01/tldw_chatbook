@@ -47,6 +47,7 @@ from ..LLM_Calls.LLM_API_Calls_Local import (
     chat_with_mlx_lm,
 )
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
+from ..Internal_Prompts import get_internal_prompt
 from .Chat_Deps import ChatAPIError
 
 # Configure logger
@@ -137,13 +138,33 @@ class DocumentGenerator:
             List of message dictionaries
         """
         try:
-            messages = self.db.get_messages_by_conversation_id(
-                conversation_id, limit=limit
+            # DESC so LIMIT keeps the most RECENT `limit` messages (the method
+            # promises "recent messages"); ASC would keep the oldest.
+            messages = self.db.get_messages_for_conversation(
+                conversation_id,
+                limit=limit,
+                order_by_timestamp="DESC",
+                include_image_data=False,
             )
-            return [msg.to_dict() for msg in messages]
         except Exception as e:
             logger.error(f"Failed to get conversation context: {e}")
             return []
+        # Restore chronological order for display (DESC gave newest-first).
+        messages.reverse()
+        # Normalize to the {role, content, timestamp} shape
+        # format_context_for_llm() reads. Prefer the DB's normalized 'role'
+        # column (derived from 'sender' at insert) over the raw 'sender', which
+        # may be a character/display name. (format_context_for_llm looked up a
+        # non-existent 'role' before, which — with the wrong DB method name —
+        # made generated documents silently contextless.)
+        return [
+            {
+                "role": msg.get("role") or msg.get("sender", "unknown"),
+                "content": msg.get("content", ""),
+                "timestamp": msg.get("timestamp", ""),
+            }
+            for msg in messages
+        ]
 
     def format_context_for_llm(
         self, messages: List[Dict[str, Any]], specific_message: Optional[str] = None
@@ -216,9 +237,9 @@ class DocumentGenerator:
         context = self.format_context_for_llm(messages, specific_message)
 
         # Build prompt
-        system_prompt = "You are an expert at creating clear, chronological timelines from conversations and content."
+        system_prompt = get_internal_prompt("document_generation.timeline_system")
         user_prompt = (
-            f"{self.timeline_config['prompt']}\n\nConversation Context:\n{context}"
+            f"{get_internal_prompt('document_generation.timeline_user')}\n\nConversation Context:\n{context}"
         )
 
         # Call LLM
@@ -314,9 +335,9 @@ class DocumentGenerator:
         context = self.format_context_for_llm(messages, specific_message)
 
         # Build prompt
-        system_prompt = "You are an educational expert specializing in creating comprehensive study guides."
+        system_prompt = get_internal_prompt("document_generation.study_guide_system")
         user_prompt = (
-            f"{self.study_guide_config['prompt']}\n\nConversation Context:\n{context}"
+            f"{get_internal_prompt('document_generation.study_guide_user')}\n\nConversation Context:\n{context}"
         )
 
         # Call LLM
@@ -412,9 +433,9 @@ class DocumentGenerator:
         context = self.format_context_for_llm(messages, specific_message)
 
         # Build prompt
-        system_prompt = "You are an expert at creating executive briefing documents with actionable insights."
+        system_prompt = get_internal_prompt("document_generation.briefing_system")
         user_prompt = (
-            f"{self.briefing_config['prompt']}\n\nConversation Context:\n{context}"
+            f"{get_internal_prompt('document_generation.briefing_user')}\n\nConversation Context:\n{context}"
         )
 
         # Call LLM

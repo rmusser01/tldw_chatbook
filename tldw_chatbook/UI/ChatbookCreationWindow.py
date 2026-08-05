@@ -19,6 +19,10 @@ from textual.widgets import Static, Button, Input, TextArea, Label, Checkbox, Tr
 from loguru import logger
 
 from ..Chatbooks.chatbook_creator import ChatbookCreator
+from ..Chatbooks.database_paths import (
+    get_chatbook_database_paths,
+    get_private_chatbooks_dir,
+)
 from ..Chatbooks.chatbook_models import ContentType
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Prompts_DB import PromptsDatabase
@@ -113,32 +117,17 @@ class ChatbookCreationWindow(ModalScreen):
             ContentType.CHARACTER: set(),
             ContentType.PROMPT: set(),
             ContentType.MEDIA: set(),
+            ContentType.KEPT_BRIEFING: set(),
         }
 
-        # Get database paths from config
-        db_config = self.app.config_data.get("database", {})
+        chatbook_db_paths = get_chatbook_database_paths()
         self.db_paths = {
-            "chachanotes": Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                )
-            ).expanduser(),
-            "prompts": Path(
-                db_config.get(
-                    "prompts_db_path", "~/.local/share/tldw_cli/tldw_prompts_db.db"
-                )
-            ).expanduser(),
-            "media": Path(
-                db_config.get(
-                    "media_db_path", "~/.local/share/tldw_cli/tldw_media_db.db"
-                )
-            ).expanduser(),
+            "chachanotes": Path(chatbook_db_paths["ChaChaNotes"]),
+            "prompts": Path(chatbook_db_paths["Prompts"]),
+            "media": Path(chatbook_db_paths["Media"]),
         }
 
-        self.creator = ChatbookCreator(
-            {name: str(path) for name, path in self.db_paths.items()}
-        )
+        self.creator = ChatbookCreator(chatbook_db_paths)
 
     def compose(self) -> ComposeResult:
         """Compose the UI."""
@@ -247,6 +236,32 @@ class ChatbookCreationWindow(ModalScreen):
                 )
                 node.allow_expand = False
 
+            # Add kept briefings node. Kept scripts are not independently
+            # selectable -- they ride along with their parent briefing (see
+            # ContentType.KEPT_BRIEFING) -- so the subtitle just reports how
+            # many will come along.
+            kept_node = tree.root.add("📰 Kept Briefings", expand=False)
+            kept_briefings = db.list_kept_briefings(limit=200)
+            # A grouped COUNT, not a per-briefing len(list_kept_scripts(...))
+            # -- the latter materialized every kept script's full
+            # turns_json/roster_snapshot_json (a complete cast transcript) on
+            # the UI thread purely to discard it and keep the length
+            # (task-1870 fix-wave F3).
+            kept_script_counts = db.kept_script_counts(
+                [kept["id"] for kept in kept_briefings]
+            )
+
+            for kept in kept_briefings:
+                script_count = kept_script_counts.get(kept["id"], 0)
+                label = kept.get("watchlist_name") or f"Kept briefing {kept['id']}"
+                if script_count:
+                    label += f" ({script_count} script{'s' if script_count != 1 else ''})"
+                node = kept_node.add(
+                    label,
+                    data={"type": ContentType.KEPT_BRIEFING, "id": str(kept["id"])},
+                )
+                node.allow_expand = False
+
         # Load prompts
         if self.db_paths["prompts"].exists():
             db = PromptsDatabase(str(self.db_paths["prompts"]), "chatbook_ui")
@@ -295,6 +310,7 @@ class ChatbookCreationWindow(ModalScreen):
             + note_count
             + char_count
             + len(self.selected_content[ContentType.PROMPT])
+            + len(self.selected_content[ContentType.KEPT_BRIEFING])
         )
 
         self.query_one("#stat-conversations", Static).update(str(conv_count))
@@ -339,8 +355,7 @@ class ChatbookCreationWindow(ModalScreen):
         # Generate output path
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_name = "".join(c for c in name if c.isalnum() or c in " -_").strip()
-        output_dir = Path.home() / ".local" / "share" / "tldw_cli" / "chatbooks"
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = get_private_chatbooks_dir()
         output_path = output_dir / f"{safe_name}_{timestamp}.zip"
 
         # Convert selected content to list format

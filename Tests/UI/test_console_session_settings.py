@@ -161,7 +161,7 @@ def test_groq_console_default_uses_current_catalog_model() -> None:
 
 def test_console_remote_defaults_use_smoke_verified_models() -> None:
     expected_defaults = {
-        "anthropic": ("Anthropic", "claude-sonnet-4-20250514"),
+        "anthropic": ("Anthropic", "claude-sonnet-5"),
         "cohere": ("Cohere", "command-a-03-2025"),
         "google": ("Google", "gemini-2.5-flash"),
         "huggingface": ("HuggingFace", "openai/gpt-oss-120b"),
@@ -262,7 +262,7 @@ def _select_values(select: Select) -> set[str]:
         value = getattr(option, "value", None)
         if value is None and isinstance(option, tuple) and len(option) >= 2:
             value = option[1]
-        if value is not None:
+        if value is not None and value is not Select.NULL:
             values.add(str(value))
     return values
 
@@ -292,7 +292,7 @@ async def test_console_settings_summary_renders_rows_and_button() -> None:
         model_row="Model: model-a",
         context_row="Context: 12 / 4k",
         sampling_row="Sampling: T 0.70, P 0.95",
-        identity_row="Persona: General",
+        identity_row="Assistant: General",
         readiness_label="Ready",
     )
 
@@ -306,7 +306,7 @@ async def test_console_settings_summary_renders_rows_and_button() -> None:
         assert "Model: model-a" in text
         assert "Context: 12 / 4k" in text
         assert "Sampling: T 0.70, P 0.95" in text
-        assert "Persona: General" in text
+        assert "Assistant: General" in text
         header = app.query_one("#console-settings-header", Horizontal)
         title = app.query_one("#console-settings-title", Static)
         button = app.query_one("#console-settings-open", Button)
@@ -326,7 +326,7 @@ async def test_console_settings_summary_uses_direct_choose_model_action_when_set
         model_row="Model: Missing",
         context_row="Context: unavailable",
         sampling_row="Sampling: T 0.70, P 0.95",
-        identity_row="Persona: General",
+        identity_row="Assistant: General",
         readiness_label="Missing model",
         action_label="Choose Model",
         action_tooltip="Choose a model for this Console session",
@@ -351,7 +351,7 @@ async def test_console_settings_summary_treats_missing_provider_row_as_blank() -
         model_row="Model: model-a",
         context_row="Context: 12 / 4k",
         sampling_row="Sampling: T 0.70, P 0.95",
-        identity_row="Persona: General",
+        identity_row="Assistant: General",
         readiness_label="Ready",
     )
 
@@ -798,12 +798,11 @@ def test_summary_state_normalizes_unknown_context_label() -> None:
     assert state.context_row == "Context: unavailable"
 
 
-def test_summary_state_prefers_character_label_over_persona_label() -> None:
+def test_summary_state_renders_character_or_generic_assistant_identity() -> None:
     character = build_console_settings_summary_state(
         ConsoleSessionSettings(
             provider="llama_cpp",
             model="model-a",
-            persona_label="General",
             character_label="Ada",
         ),
         ConsoleSettingsContextEstimate(
@@ -813,19 +812,8 @@ def test_summary_state_prefers_character_label_over_persona_label() -> None:
             label="Ready", detail="Ready.", native_send_supported=True
         ),
     )
-    persona = build_console_settings_summary_state(
-        ConsoleSessionSettings(
-            provider="llama_cpp", model="model-a", persona_label="Mentor"
-        ),
-        ConsoleSettingsContextEstimate(
-            used_tokens=12, token_limit=4096, label="12 / 4k"
-        ),
-        ConsoleSettingsReadiness(
-            label="Ready", detail="Ready.", native_send_supported=True
-        ),
-    )
-    fallback = build_console_settings_summary_state(
-        ConsoleSessionSettings(provider="llama_cpp", model="model-a", persona_label=""),
+    generic = build_console_settings_summary_state(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
         ConsoleSettingsContextEstimate(
             used_tokens=12, token_limit=4096, label="12 / 4k"
         ),
@@ -835,8 +823,27 @@ def test_summary_state_prefers_character_label_over_persona_label() -> None:
     )
 
     assert character.identity_row == "Character: Ada"
-    assert persona.identity_row == "Persona: Mentor"
-    assert fallback.identity_row == "Persona: General"
+    assert generic.identity_row == "Assistant: General"
+
+
+def test_legacy_identity_settings_helper_ignores_unknown_keys_without_mutation() -> (
+    None
+):
+    source = {
+        "provider": "llama_cpp",
+        "model": "model-a",
+        "persona_label": "Legacy A",
+        "user_profile_label": "Legacy B",
+    }
+    source_before = dict(source)
+    restored = ChatScreen._restore_console_settings(source)
+
+    assert restored is not None
+    assert source == source_before
+    assert not hasattr(restored, "user_profile_label")
+    serialized = ChatScreen._serialize_console_settings(restored)
+    assert serialized is not None
+    assert {"persona_label", "user_profile_label"}.isdisjoint(serialized)
 
 
 def test_choose_model_action_label_normalization() -> None:
@@ -859,13 +866,9 @@ async def test_console_model_resolution_includes_runtime_discovered_models() -> 
             _merged_model("gpt-4.1"),
         )
     )
-    app = SimpleNamespace(
-        providers_models={"openai": ["gpt-4.1"]},
-        llm_provider_catalog_scope_service=scope,
-    )
-
     options = await provider_model_resolution.resolve_provider_model_options(
-        app,
+        {"openai": ["gpt-4.1"]},
+        scope,
         provider="OpenAI",
     )
 
@@ -1023,6 +1026,60 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
     assert app.saved_settings.model == "model-a"
     assert app.saved_settings.temperature == 0.42
     assert app.saved_settings.top_p == 0.88
+
+
+@pytest.mark.asyncio
+async def test_console_settings_validation_error_clears_on_edit() -> None:
+    """TASK-363: a validation error must clear as soon as the user edits any
+    field, not linger stale until the next Save."""
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = ConsoleSettingsModal(
+            settings=settings,
+            app_config=app.app_config,
+            providers_models={"llama_cpp": ["model-a"]},
+            context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+            can_save=True,
+        )
+        await app.push_screen(modal, callback=app.capture_saved_settings)
+        await pilot.pause()
+
+        temperature = app.screen.query_one("#console-settings-temperature", Input)
+        temperature.value = ""
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+        error = app.screen.query_one("#console-settings-error", Static)
+        assert "Temperature is required" in str(error.renderable)
+
+        # Editing the field invalidates the stale summary immediately.
+        temperature.value = "0.5"
+        await pilot.pause()
+        assert str(error.renderable).strip() == ""
+
+
+@pytest.mark.asyncio
+async def test_console_settings_error_summary_is_visually_distinct() -> None:
+    """TASK-363: the validation summary must read as an error (bold, error
+    colour), not near-body-text salience."""
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = ConsoleSettingsModal(
+            settings=settings,
+            app_config=app.app_config,
+            providers_models={"llama_cpp": ["model-a"]},
+            context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+            can_save=True,
+        )
+        await app.push_screen(modal, callback=app.capture_saved_settings)
+        await pilot.pause()
+
+        error = app.screen.query_one("#console-settings-error", Static)
+        assert "bold" in str(error.styles.text_style)
 
 
 @pytest.mark.asyncio
@@ -1749,14 +1806,11 @@ async def test_console_settings_modal_inputs_keep_visible_content_row_when_unfoc
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_renders_context_and_identity_read_only_rows() -> (
-    None
-):
+async def test_console_settings_modal_renders_context_and_single_identity_row() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(
         provider="llama_cpp",
         model="model-a",
-        persona_label="Planner",
         character_label="Ada",
     )
 
@@ -1789,21 +1843,15 @@ async def test_console_settings_modal_renders_context_and_identity_read_only_row
         assert "Estimate only; no truncation changes in this version." in str(
             app.screen.query_one("#console-settings-context-note", Static).renderable
         )
-        assert "Planner / Ada" in str(
+        assert "Character: Ada" in str(
             app.screen.query_one(
                 "#console-settings-identity-current", Static
             ).renderable
         )
-        assert "Planner [read-only]" in str(
-            app.screen.query_one(
-                "#console-settings-persona-readonly", Static
-            ).renderable
-        )
-        assert "Ada [read-only]" in str(
-            app.screen.query_one(
-                "#console-settings-character-readonly", Static
-            ).renderable
-        )
+        assert not app.screen.query("#console-settings-persona-readonly")
+        assert not app.screen.query("#console-settings-character-readonly")
+        assert "User Profile" not in text
+        assert "As:" not in text
         assert not app.screen.query("#console-settings-persona-input")
         assert not app.screen.query("#console-settings-character-input")
 
@@ -2893,7 +2941,14 @@ async def test_console_settings_modal_restores_freeform_model_after_provider_rou
 
 
 @pytest.mark.asyncio
-async def test_console_left_rail_orders_session_before_staged_context() -> None:
+async def test_console_inspector_hosts_staged_context_above_source_readiness() -> None:
+    """Task-400: the Context section tops the Inspector, not the left rail.
+
+    The tray is the FIRST child of the Inspector rail body so it is visible
+    without scrolling and reads above the run inspector's "Source Readiness"
+    section; the bottom "Live work sources" card keeps its pre-move slot
+    after the run-inspector block.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2903,15 +2958,41 @@ async def test_console_left_rail_orders_session_before_staged_context() -> None:
 
         staged_context = console.query_one("#console-staged-context-tray")
         settings = console.query_one("#console-settings-summary")
-        workspace_context = console.query_one("#console-workspace-context")
+        rail_body = console.query_one("#console-inspector-rail-body")
+        run_inspector = console.query_one("#console-run-inspector")
+        readiness = console.query_one("#console-live-work-source-readiness")
+        left_rail = console.query_one("#console-left-rail")
 
-        # Phase 1 rail restructure: the rail is four sections in order
-        # Session (workspace context), Context (staged context), Model,
-        # Details -- so workspace context renders above staged context.
-        assert workspace_context.region.y < staged_context.region.y
+        # DOM order: tray first, then the run-inspector block (which renders
+        # the Source Readiness section), then the bottom readiness card.
         assert settings.parent.id == "console-run-inspector"
-        assert workspace_context.parent.id == "console-rail-section-body-session"
-        assert staged_context.parent.id == "console-rail-section-body-context"
+        assert staged_context.parent is rail_body
+        assert readiness.parent is rail_body
+        children = list(rail_body.children)
+        assert children.index(staged_context) == 0
+        assert children.index(staged_context) < children.index(run_inspector)
+        assert children.index(run_inspector) < children.index(readiness)
+
+        # The left rail no longer hosts a Context section (header, body, or
+        # tray): only Session, Model, Agent, and Details remain.
+        assert not list(left_rail.query("#console-staged-context-tray"))
+        assert not list(console.query("#console-rail-section-header-context"))
+        assert not list(console.query("#console-rail-section-body-context"))
+
+        # With the Inspector opened, the tray measures at the top of the rail
+        # body, above the run inspector's "Source Readiness" heading (the
+        # section the user sees) and above the bottom readiness card.
+        await pilot.click("#console-inspector-rail-open")
+        readiness_heading = console.query_one(
+            "#console-inspector-source-readiness-heading"
+        )
+        for _ in range(40):
+            if staged_context.region.height > 0 and readiness_heading.region.height > 0:
+                break
+            await pilot.pause(0.05)
+        assert staged_context.region.y == rail_body.region.y
+        assert staged_context.region.y < readiness_heading.region.y
+        assert staged_context.region.y < readiness.region.y
 
 
 @pytest.mark.asyncio
@@ -2929,8 +3010,6 @@ async def test_console_left_rail_body_scrolls_below_fixed_header_without_setting
         header = console.query_one(".console-rail-header")
         body = console.query_one("#console-left-rail-body")
         session_body = console.query_one("#console-rail-section-body-session")
-        context_body = console.query_one("#console-rail-section-body-context")
-        staged_context = console.query_one("#console-staged-context-tray")
         settings = console.query_one("#console-settings-summary")
         workspace_context = console.query_one("#console-workspace-context")
 
@@ -2939,12 +3018,10 @@ async def test_console_left_rail_body_scrolls_below_fixed_header_without_setting
         assert body.region.height <= left_rail.region.height - header.region.height
         assert settings.parent.id == "console-run-inspector"
         # Phase 1 nests each tray inside its own rail-section body, which is
-        # itself a direct child of the scrolling rail body.
+        # itself a direct child of the scrolling rail body. (Task-400: the
+        # staged-context tray moved to the Inspector rail.)
         assert workspace_context.parent is session_body
-        assert staged_context.parent is context_body
         assert session_body.parent is body
-        assert context_body.parent is body
-        assert staged_context.region.width == workspace_context.region.width
         assert workspace_context.region.width <= body.region.width
         assert body.region.width - workspace_context.region.width <= 2
 
@@ -3217,8 +3294,8 @@ async def test_console_settings_modal_save_disabled_during_active_run() -> None:
         )
         await console._sync_native_console_chat_ui()
         controller = console._ensure_console_chat_controller()
-        controller.run_state = ConsoleRunState(
-            ConsoleRunStatus.STREAMING, "Streaming response."
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
         )
 
         settings_button = await _visible_console_settings_button(console, pilot)
@@ -3260,7 +3337,7 @@ async def test_console_settings_save_clears_stale_terminal_run_status() -> None:
 
         controller = console._ensure_console_chat_controller()
         stale_copy = "Provider blocked: old llama.cpp failure."
-        controller.run_state = ConsoleRunState.blocked(stale_copy)
+        controller._set_run_state(ConsoleRunState.blocked(stale_copy))
         console._sync_console_mode_bar()
         assert stale_copy in str(
             console.query_one("#console-mode-bar", Static).renderable
@@ -3489,6 +3566,34 @@ def test_console_readiness_uses_saved_session_settings_over_stale_global_provide
     assert provider_row.recovery == ""
 
 
+def test_console_control_state_reads_persona_label_without_storing_it_on_session(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    monkeypatch.setattr(
+        screen,
+        "_active_native_console_session",
+        lambda: SimpleNamespace(
+            assistant_kind="persona",
+            assistant_name="Guide",
+            assistant_id="persona-7",
+        ),
+    )
+
+    state = screen._build_console_control_state(None)
+
+    assert state.assistant_label == "Persona: Guide"
+    assert session.assistant_kind == "generic"
+    assert session.assistant_id == "console"
+    assert session.assistant_authority_id is None
+    assert "assistant_kind" in session.__dataclass_fields__
+    assert "assistant_id" in session.__dataclass_fields__
+    assert "assistant_name" not in session.__dataclass_fields__
+
+
 def test_console_saved_openai_with_key_shows_ready_readiness() -> None:
     app = _build_test_app()
     app.app_config["api_settings"] = {
@@ -3570,7 +3675,7 @@ def test_console_unsaved_generic_endpoint_blocks_inspector_with_endpoint_details
     assert "save the endpoint in Settings" in screen._console_provider_blocker_copy()
     assert label == "Configure endpoint"
     assert target == "settings"
-    assert tooltip == "Save the ollama endpoint in Settings"
+    assert tooltip == "Save the Ollama endpoint in Settings"
     assert screen._console_provider_recovery_field() == "endpoint"
     assert (
         screen._console_setup_blocked_reason()
@@ -4018,14 +4123,28 @@ async def test_console_settings_modal_save_as_default_writes_through_config(
     assert provider_section["model"] == "model-a"
     # llama_cpp already persists its endpoint under api_url in ModalHarness config.
     assert provider_section["api_url"] == "http://127.0.0.1:9099"
-    assert provider_section["temperature"] == 0.6
+    # TASK-342: sampling values land in the Console-saved-defaults section the
+    # boot builder ranks above chat_defaults; writing them into api_settings
+    # was inert (chat_defaults deliberately outranks it, f14d22dc3).
+    assert "temperature" not in provider_section
+    saved_section = sections["console.provider_defaults.llama_cpp"]
+    assert saved_section["temperature"] == 0.6
     # Streaming persists on the canonical chat_defaults key (bridged legacy key),
     # and the provider itself becomes the default (PR #606 review finding:
     # chat_defaults.provider is the ONLY source of the default provider).
-    assert sections["chat_defaults"] == {"streaming": False, "provider": "llama_cpp"}
+    # The model is written here as well as into api_settings: chat_defaults.model
+    # is what `resolve_effective_provider_model` feeds to the session builder as
+    # an explicit override, so omitting it left a stale model winning in every
+    # new session (roleplay UAT: character "Chat now" silently reverted to the
+    # model onboarding had auto-picked).
+    assert sections["chat_defaults"] == {
+        "streaming": False,
+        "provider": "llama_cpp",
+        "model": "model-a",
+    }
     # Never persist None-valued optionals.
-    assert "min_p" not in provider_section
-    assert "seed" not in provider_section
+    assert "min_p" not in saved_section
+    assert "seed" not in saved_section
 
 
 @pytest.mark.asyncio
@@ -4096,7 +4215,9 @@ def _build_live_config_test_app():
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
-    user_data_dir = Path(tempfile.mkdtemp(prefix="tldw-chatbook-live-config-test-"))
+    user_data_dir = Path(
+        tempfile.mkdtemp(prefix="tldw-chatbook-live-config-test-")
+    ).resolve(strict=True)
 
     def fake_runtime_policy(app):
         context = SimpleNamespace(
@@ -4104,8 +4225,7 @@ def _build_live_config_test_app():
             persist=lambda: None,
         )
         app.runtime_policy = context
-        app.current_runtime_source = "local"
-        app.current_runtime_backend = "local"
+        app._publish_runtime_policy_projection(context.state)
         return context
 
     with ExitStack() as stack:
@@ -4163,13 +4283,18 @@ def _build_live_config_test_app():
         )
         for db_path_getter in (
             "get_notifications_db_path",
-            "get_subscriptions_db_path",
             "get_research_db_path",
             "get_writing_db_path",
         ):
             stack.enter_context(
                 patch(f"tldw_chatbook.app.{db_path_getter}", return_value=":memory:")
             )
+        stack.enter_context(
+            patch(
+                "tldw_chatbook.app.get_subscriptions_db_path",
+                return_value=user_data_dir / "subscriptions.sqlite",
+            )
+        )
         stack.enter_context(
             patch("tldw_chatbook.app.get_user_data_dir", return_value=user_data_dir)
         )
@@ -4213,6 +4338,9 @@ async def test_real_journey_settings_save_unblocks_console_without_restart(
     # Prime the sandbox template config and keep the boot fast/deterministic.
     config_module.load_cli_config_and_ensure_existence(force_reload=True)
     assert config_module.save_setting_to_cli_config("splash_screen", "enabled", False)
+    assert config_module.save_setting_to_cli_config(
+        "first_run", "setup_completed", True
+    )
     config_module.load_settings(force_reload=True)
 
     app = _build_live_config_test_app()
@@ -4265,34 +4393,6 @@ async def test_real_journey_settings_save_unblocks_console_without_restart(
         assert not console.query_one(
             "#console-setup-modal", ConsoleSetupModal
         ).is_blocking
-
-
-def test_console_resolution_view_suppresses_boot_echo_reactives(monkeypatch) -> None:
-    """Post-save, reactives echoing the boot template defaults must not win."""
-    from tldw_chatbook.Chat.provider_readiness import provider_config_key
-
-    app = _build_test_app()
-    app.app_config = _disk_loaded_snapshot(
-        chat_defaults={"provider": "OpenAI", "model": "gpt-4o"}
-    )
-    app.chat_api_provider_value = "OpenAI"
-    app.chat_api_model_value = "gpt-4o"
-    console = ChatScreen(app)
-    fresh = _disk_loaded_snapshot(
-        chat_defaults={"provider": "llama_cpp", "model": "Qwen3-Test.gguf"},
-        api_settings={"llama_cpp": {"api_url": "http://127.0.0.1:9099"}},
-    )
-    monkeypatch.setattr(chat_screen_module, "load_settings", lambda: fresh)
-
-    provider, model = console._effective_console_provider_model()
-    assert provider_config_key(str(provider)) == "llama_cpp"
-    assert str(model) == "Qwen3-Test.gguf"
-
-    # A reactive value the user actually changed (differs from the boot echo)
-    # still wins over fresh chat_defaults.
-    app.chat_api_provider_value = "Anthropic"
-    provider_after_user_pick, _model = console._effective_console_provider_model()
-    assert provider_config_key(str(provider_after_user_pick)) == "anthropic"
 
 
 def test_console_stale_default_refresh_respects_user_marked_settings() -> None:
@@ -4584,3 +4684,116 @@ async def test_console_settings_modal_discover_rejects_invalid_endpoint_url() ->
         await _wait_for_discover_status(app, pilot, MODEL_DISCOVER_INVALID_URL_COPY)
 
     assert prober.calls == []
+
+
+# --- Roleplay UAT regression: Save as default must not leave a stale model ---
+# Live repro (origin/dev @ f384a2807): onboarding auto-selected a wrong model and
+# wrote it to [chat_defaults].model. Correcting the model in Console Settings and
+# pressing "Save as default" wrote the new model ONLY to
+# [api_settings.<provider>].model, leaving [chat_defaults].model stale. Because
+# `resolve_effective_provider_model` reads chat_defaults.model and passes it as an
+# explicit override into `build_default_console_session_settings` (where it
+# outranks api_settings), every NEW session -- new tab, character "Chat now",
+# app relaunch -- silently reverted to the old model.
+
+
+def test_save_as_default_persists_model_to_chat_defaults() -> None:
+    """The chosen model must land in chat_defaults, the section Console reads."""
+    modal = ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="good-model"),
+        app_config={},
+        providers_models={"llama_cpp": ["good-model"]},
+        context_estimate=ConsoleSettingsContextEstimate(
+            used_tokens=10, token_limit=16384, label="10 / 16k"
+        ),
+        can_save=True,
+    )
+    sections = modal._default_persist_sections(
+        ConsoleSessionSettings(provider="llama_cpp", model="good-model")
+    )
+
+    assert sections["chat_defaults"]["model"] == "good-model"
+
+
+def test_save_as_default_model_agrees_across_config_sections() -> None:
+    """chat_defaults and api_settings must not disagree about the active model."""
+    modal = ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="good-model"),
+        app_config={},
+        providers_models={"llama_cpp": ["good-model"]},
+        context_estimate=ConsoleSettingsContextEstimate(
+            used_tokens=10, token_limit=16384, label="10 / 16k"
+        ),
+        can_save=True,
+    )
+    sections = modal._default_persist_sections(
+        ConsoleSessionSettings(provider="llama_cpp", model="good-model")
+    )
+
+    assert (
+        sections["chat_defaults"]["model"]
+        == sections["api_settings.llama_cpp"]["model"]
+    )
+
+
+# --- Roleplay UAT: model discovery looked like it did nothing ---
+# Live repro (origin/dev @ f384a2807): pressing "Discover models" produced no
+# visible change. The status line ("Found 1 model at http://127.0.0.1:9099.")
+# was composed BELOW the unrelated Base URL field, four rows from the button
+# that produced it, and the discovered model was not selected -- the
+# known-broken model stayed in the box. It read as a dead button.
+
+
+def test_discovery_status_renders_next_to_the_discover_button() -> None:
+    """Feedback must sit with the control that produced it, not below another field."""
+    source = (
+        Path(chat_screen_module.__file__).resolve().parents[2]
+        / "Widgets"
+        / "Console"
+        / "console_settings_modal.py"
+    )
+    text = source.read_text()
+
+    status_pos = text.index("id=MODEL_DISCOVER_STATUS_ID,")
+    base_url_pos = text.index('id="console-settings-base-url"')
+
+    assert status_pos < base_url_pos, (
+        "discovery status is composed after the Base URL row, so it renders "
+        "detached from the button that produced it"
+    )
+
+
+@pytest.mark.asyncio
+async def test_discovery_selects_the_model_when_exactly_one_is_found() -> None:
+    """One discovered model must be selected, not left for the user to notice.
+
+    Leaving the previous (often wrong) model selected after a successful
+    discovery is what let a TTS model stay active on a chat endpoint.
+    """
+    app = ModalHarness()
+    modal = ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp", model="stale-model", base_url="http://127.0.0.1:9099"
+        ),
+        app_config=app.app_config,
+        providers_models={"llama_cpp": ["stale-model"]},
+        context_estimate=ConsoleSettingsContextEstimate(
+            used_tokens=10, token_limit=16384, label="10 / 16k"
+        ),
+        can_save=True,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal._apply_model_discovery_result(
+            "llama_cpp",
+            LocalModelProbeResult(
+                ok=True,
+                base_url="http://127.0.0.1:9099",
+                model_ids=("only-real-model",),
+            ),
+        )
+        await pilot.pause()
+
+        assert modal._current_model_value() == "only-real-model"

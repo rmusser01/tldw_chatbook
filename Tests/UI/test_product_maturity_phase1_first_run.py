@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Button, Static
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
@@ -136,11 +136,12 @@ async def test_clean_first_run_launches_home_and_exposes_setup_orientation(
 
             home_title = app.screen.query_one("#home-canvas-title", Static)
             primary_action = app.screen.query_one("#home-primary-action", Button)
-            nav_overflow_hint = app.screen.query_one("#nav-overflow-hint", Static)
+            nav_overflow_hint = app.screen.query_one("#nav-overflow-hint", Button)
             assert str(home_title.renderable).strip() == "Set up Console model"
             assert str(primary_action.label).strip() == "Set up Console model"
             assert str(primary_action.label).strip() != "Start in Console"
-            assert "Ctrl+P" in str(nav_overflow_hint.renderable)
+            assert "More" in str(nav_overflow_hint.label)
+            assert "Ctrl+P" in str(nav_overflow_hint.tooltip)
 
             for button_id, current_tab, screen_name, required_copy in (
                 (
@@ -208,11 +209,49 @@ async def test_clean_first_run_home_survives_supported_terminal_sizes(
             )
 
             primary_action = app.screen.query_one("#home-primary-action", Button)
-            nav_overflow_hint = app.screen.query_one("#nav-overflow-hint", Static)
+            nav_overflow_hint = app.screen.query_one("#nav-overflow-hint", Button)
             assert app.current_tab == "home"
             assert app.screen.__class__.__name__ == "HomeScreen"
             assert str(primary_action.label).strip() == "Set up Console model"
-            assert "Ctrl+P" in str(nav_overflow_hint.renderable)
+            assert "More" in str(nav_overflow_hint.label)
+            assert "Ctrl+P" in str(nav_overflow_hint.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_fresh_config_auto_offers_wizard_over_initial_screen(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Pins the task-11 app-level contract this file's other tests
+    deliberately opt OUT of: on a truly fresh config (no configured
+    provider, no first_run state at all), the setup wizard must be
+    auto-offered on top of whatever the initial screen is -- not silently
+    skipped. Every other test in this file builds via
+    _build_test_app()'s default (first_run_setup_completed=True, task-11's
+    fix for the regression this auto-offer caused here) so they can assert
+    against Home's content directly, exactly as they did before the wizard
+    existed; this is the one test in the file that intentionally leaves
+    the auto-offer live, so the new contract stays pinned at the real App
+    level rather than only at the pure-function level
+    (first_run_setup_state.should_offer_wizard, covered separately in
+    Tests/Wizards/test_first_run_setup_wizard.py::TestAppOfferGating).
+    """
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config["_first_run"] = True
+    app._initial_tab_value = "chat"
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: type(app.screen).__name__ == "FirstRunSetupWizard",
+            )
+            assert type(app.screen).__name__ == "FirstRunSetupWizard"
+            # The initial screen is still there, underneath -- the wizard is
+            # pushed ON TOP of it (per the approved design), not swapped in
+            # place of it.
+            assert app.current_tab == "home"
 
 
 @pytest.mark.parametrize("prefix", LOCAL_PATH_PREFIXES)

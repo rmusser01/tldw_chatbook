@@ -1,7 +1,7 @@
 # Provider Default Model Refresh — Design
 
 **Date:** 2026-07-26
-**Backlog:** [TASK-519](../../../backlog/tasks/task-519%20-%20Refresh-default-models-for-DeepSeek-Anthropic-and-OpenAI.md)
+**Backlog:** [TASK-869](../../../backlog/tasks/task-869%20-%20Refresh-default-models-for-DeepSeek-Anthropic-and-OpenAI.md)
 **ADR required:** No
 **ADR path:** [ADR-020](../../../backlog/decisions/020-automatic-model-catalog-refresh.md)
 **Reason:** This refresh changes bundled provider defaults and model-aware request
@@ -245,8 +245,8 @@ already available.
 
 ## Documentation and Task Closeout
 
-- Link this design and ADR-020 from TASK-519's implementation plan.
+- Link this design and ADR-020 from TASK-869's implementation plan.
 - Record exact changed files, compatibility decisions, and verification evidence
-  in TASK-519 implementation notes.
-- Mark acceptance criteria complete and move TASK-519 to Done only after all
+  in TASK-869 implementation notes.
+- Mark acceptance criteria complete and move TASK-869 to Done only after all
   required tests and static checks pass.

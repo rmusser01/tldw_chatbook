@@ -18,7 +18,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.reactive import reactive
 from textual.timer import Timer
-from textual.widgets import Button, Input, Label, ListItem, ListView, Static
+from textual.widgets import Button, Input, Label, ListItem, ListView, OptionList, Static
 
 from ..Third_Party.textual_fspicker import Filters
 from ..Third_Party.textual_fspicker.base_dialog import FileSystemPickerScreen
@@ -26,7 +26,7 @@ from ..Third_Party.textual_fspicker.file_dialog import BaseFileDialog
 from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
 from ..Third_Party.textual_fspicker.parts.directory_navigation import DirectoryEntry
 from ..Third_Party.textual_fspicker.path_maker import MakePath
-from ..Third_Party.textual_fspicker.safe_tests import is_dir
+from ..Third_Party.textual_fspicker.safe_tests import is_dir, is_file
 from ..Utils.path_validation import validate_path_simple
 from ..config import get_cli_setting, save_setting_to_cli_config
 
@@ -501,7 +501,19 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
     - Type-ahead jumping to the next entry whose name starts with the typed
       prefix.
     - Optional multi-select rendering via :class:`MultiSelectDirectoryEntry`.
+    - Uniform activation model (task-430 AC#2): a single-click / OptionList
+      ``Selected`` event only highlights (and, for a file, fills the
+      filename input) -- it never auto-navigates a directory. Opening
+      (descending a directory, or confirming a file) is a separate action,
+      ``action_open_highlighted``, triggered by Enter, a double-click, or
+      the dialog's Go/Select button.
     """
+
+    BINDINGS = [
+        # Overrides OptionList's default Enter -> action_select binding so
+        # Enter opens the highlighted entry instead of merely selecting it.
+        Binding("enter", "open_highlighted", "Open", show=False),
+    ]
 
     search_filter = reactive("")
     """Free-text filter applied to entry names."""
@@ -514,11 +526,44 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
             self.query = query
             super().__init__()
 
+    class FilterHiddenCountChanged(Message):
+        """Posted when the number of entries excluded by the active
+        ``file_filter`` (task-431 AC#2) changes. This is distinct from
+        entries hidden by the dotfile/show-hidden rule -- see the counting
+        logic in ``_repopulate_display``.
+        """
+        def __init__(self, navigation: DirectoryNavigation, count: int) -> None:
+            self.navigation = navigation
+            self.count = count
+            super().__init__()
+
     class ToggleSelection(Message):
         """Posted when the user asks to toggle the highlighted entry."""
         def __init__(self, navigation: DirectoryNavigation) -> None:
             self.navigation = navigation
             super().__init__()
+
+    class OpenFile(DirectoryNavigation._PathMessage):
+        """Posted when a file is opened (Enter / double-click / Go)."""
+
+    # The vendored ``DirectoryNavigation._on_option_list_option_selected``
+    # navigates directories and posts ``Selected`` for files on every
+    # OptionSelected event. Textual's naming-convention dispatch walks the
+    # *entire* MRO and invokes a same-named handler defined on every class
+    # that defines it -- unlike normal Python method resolution, overriding
+    # the method here does NOT stop the base implementation from also
+    # firing. It must be explicitly suppressed the same way
+    # ``EnhancedFileDialog`` suppresses its own base handlers below.
+    _SUPPRESSED_BASE_HANDLERS = {
+        DirectoryNavigation._on_option_list_option_selected,
+    }
+
+    def _get_dispatch_methods(self, method_name: str, message: Message):
+        """Yield dispatch methods, skipping base handlers we replace."""
+        for cls, method in super()._get_dispatch_methods(method_name, message):
+            if method.__func__ in self._SUPPRESSED_BASE_HANDLERS:
+                continue
+            yield cls, method
 
     def __init__(self, location: Path | str = ".") -> None:
         super().__init__(location)
@@ -652,6 +697,71 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
                     break
 
         self.post_message(self.SearchCountChanged(self, self.option_count, query))
+
+        # Count entries excluded *specifically* by the active file_filter
+        # (task-431 AC#2) -- a real file that passes the show-hidden/dotfile
+        # check but fails the filter. Reuses the same filter-check condition
+        # as the vendored ``DirectoryNavigation.hide()`` (directory_navigation.py)
+        # rather than reinventing it, guarded by an explicit "not already
+        # dotfile-hidden" check so dotfiles aren't double-counted as
+        # filter-hidden.
+        filter_hidden = sum(
+            1
+            for entry in self._entries
+            if is_file(entry.location)
+            and not (self.is_hidden(entry.location) and not self.show_hidden)
+            and self.file_filter is not None
+            and not self.file_filter(entry.location)
+        )
+        self.post_message(self.FilterHiddenCountChanged(self, filter_hidden))
+
+    def _on_option_list_option_selected(
+        self, event: OptionList.OptionSelected
+    ) -> None:
+        """Select-only (task-430 AC#2): a single-click / OptionSelected
+        highlights and, for a file, fills the filename input; it never
+        auto-navigates a directory (opening is a separate action).
+        """
+        event.stop()
+        option = event.option
+        if not isinstance(option, DirectoryEntry):
+            return
+        if not is_dir(option.location):
+            # File: keep the existing fill-filename behavior.
+            self.post_message(self.Selected(self, option.location))
+        # Directory: do nothing here -- highlight already moved; opening is
+        # action_open_highlighted (Enter / double-click / Go).
+
+    def action_open_highlighted(self) -> None:
+        """Open the highlighted entry: descend a directory, or return a file."""
+        if self.highlighted is None:
+            return
+        try:
+            option = self.get_option_at_index(self.highlighted)
+        except Exception:
+            # ``highlighted`` can be stale (non-None but out of range) while the
+            # option list repopulates asynchronously; Textual's OptionList then
+            # raises ``OptionDoesNotExist`` (an ``OptionListError``, NOT an
+            # ``IndexError``/``LookupError``). A mistimed Enter / double-click
+            # must be a no-op, not crash the picker -- match the broad guard the
+            # same lookup uses in ``_repopulate_display``.
+            return
+        if not isinstance(option, DirectoryEntry):
+            return
+        if is_dir(option.location):
+            self._location = option.location.resolve()  # descend (vendored path)
+        else:
+            self.post_message(self.OpenFile(self, option.location))
+
+    def on_click(self, event: events.Click) -> None:
+        """Open the highlighted entry on a double-click (mouse roughly equals Enter).
+
+        Args:
+            event: The click event; ``event.chain`` distinguishes a single click
+                (1) from a double click (>= 2).
+        """
+        if getattr(event, "chain", 1) >= 2:
+            self.action_open_highlighted()
 
 
 class EnhancedFileDialog(BaseFileDialog):
@@ -893,6 +1003,14 @@ class EnhancedFileDialog(BaseFileDialog):
         text-align: center;
     }
 
+    EnhancedFileDialog #filter-hidden-notice {
+        height: auto;
+        padding: 1;
+        color: $text-muted;
+        text-style: italic;
+        text-align: center;
+    }
+
     EnhancedFileDialog #multi-select-info {
         height: auto;
         min-height: 1;
@@ -906,6 +1024,15 @@ class EnhancedFileDialog(BaseFileDialog):
     BINDINGS = [
         Binding("ctrl+b", "toggle_bookmarks", "Show bookmarks"),
         Binding("question_mark", "toggle_hints", "Toggle shortcuts"),
+        # Overrides FileSystemPickerScreen's default Escape -> dismiss(None)
+        # binding (base_dialog.py) so Escape closes the topmost open overlay
+        # first (path bar / search / recent / bookmarks) and only dismisses
+        # the picker once none are open (task-430 AC#4). Textual's binding
+        # merge walks the MRO base-to-derived and lets the most-derived
+        # class's binding for a given key win, so this fully replaces the
+        # base binding -- no handler suppression needed (unlike message
+        # dispatch, see ``_SUPPRESSED_BASE_HANDLERS`` below).
+        Binding("escape", "smart_dismiss", "Close", show=False),
         *[Binding(str(n), f"jump_bookmark('{n}')", f"Bookmark {n}", show=False) for n in range(1, 10)],
     ]
 
@@ -921,6 +1048,7 @@ class EnhancedFileDialog(BaseFileDialog):
         BaseFileDialog._confirm_file,
         FileSystemPickerScreen._on_clear_search,
         FileSystemPickerScreen._on_directory_changed,
+        FileSystemPickerScreen._on_path_input_submit,
     }
 
     def _get_dispatch_methods(self, method_name: str, message: Message):
@@ -1063,6 +1191,9 @@ class EnhancedFileDialog(BaseFileDialog):
 
                     # Shown when a search returns no results.
                     yield Static("", id="search-no-match", classes="hidden")
+
+                    # Shown when the active file filter excludes entries (task-431 AC#2).
+                    yield Static("", id="filter-hidden-notice", classes="hidden")
 
                     # Multi-select status (visible only in multi-select mode).
                     yield Static("", id="multi-select-info")
@@ -1229,6 +1360,110 @@ class EnhancedFileDialog(BaseFileDialog):
         except Exception as e:
             self.notify(f"Error toggling path input: {e}", severity="error", timeout=2)
 
+    @on(Button.Pressed, "#go-to-path")
+    @on(Input.Submitted, "#path-input")
+    def _on_path_input_submit(self, event=None) -> None:
+        """Handle Ctrl+L path-bar submission (task-430 AC#3).
+
+        The vendored ``FileSystemPickerScreen._on_path_input_submit``
+        (``base_dialog.py``, suppressed via ``_SUPPRESSED_BASE_HANDLERS``
+        above -- Textual dispatches ``@on``-decorated handlers from every
+        class in the MRO, so overriding this method alone would not stop
+        the base implementation from also firing) always navigates to a
+        typed path's *parent* directory, silently dropping the filename for
+        files. This override keeps that "cd" behavior for directories but,
+        for an existing file, confirms and returns it instead.
+        """
+        try:
+            path_input = self.query_one("#path-input", Input)
+            path_str = path_input.value.strip()
+
+            if not path_str:
+                return
+
+            # This is a *local* file picker: the user navigates their own
+            # filesystem, so ``~/`` (home), ``../`` (parent), and filenames
+            # containing shell metacharacters (``;``, ``|``, ``$(`` ...) are all
+            # legitimate here -- ``validate_path_simple`` would reject every one
+            # of them and break navigation. The one input that is never a valid
+            # path is a NUL byte, so reject that explicitly (before any ``Path``
+            # call, which would otherwise raise a bare ValueError).
+            if "\x00" in path_str:
+                self.notify(
+                    "Path cannot contain null characters.",
+                    severity="error",
+                    timeout=3,
+                )
+                return
+
+            if path_str.startswith("~"):
+                path = Path(path_str).expanduser()
+            else:
+                path = Path(path_str)
+
+            if not path.is_absolute():
+                path = self.query_one(SearchableDirectoryNavigation).location / path
+
+            path = path.resolve()
+
+            if not path.exists():
+                self.notify(f"Path does not exist: {path}", severity="error", timeout=3)
+                return
+
+            if path.is_dir():
+                # Directory: keep the vendored "cd" behavior.
+                self.query_one(SearchableDirectoryNavigation).location = path
+                self.action_focus_path_input()  # close the bar; refocuses the nav
+                return
+
+            # Existing file: confirm/return it (task-430 AC#3) instead of
+            # cd'ing to its parent and dropping the filename.
+            self.action_focus_path_input()  # close the bar first
+
+            if self.multi_select:
+                self._toggle_path_selection(path)
+                return
+
+            try:
+                file_name = self.query_one("#filename-input", Input)
+            except Exception:
+                return
+            file_name.value = str(path)
+            self._confirm_single()
+
+        except Exception as e:
+            self.notify(f"Error navigating to path: {e}", severity="error", timeout=3)
+
+    def action_smart_dismiss(self) -> None:
+        """Close the topmost open overlay; dismiss the picker only when none
+        are open (task-430 AC#4).
+
+        Priority: path bar -> search -> recent -> bookmarks -> dismiss. Each
+        branch reuses the overlay's real close path rather than duplicating
+        its logic.
+        """
+        try:
+            path_open = self.query_one("#path-input-container").styles.display != "none"
+        except Exception:
+            path_open = False
+        if path_open:
+            self.action_focus_path_input()
+            return
+
+        if self.search_active:
+            self._close_search_overlay()
+            return
+
+        if self.show_recent:
+            self.show_recent = False
+            return
+
+        if self.show_bookmarks:
+            self.show_bookmarks = False
+            return
+
+        self.dismiss(None)
+
     def _select_file(self, event: DirectoryNavigation.Selected) -> None:
         """No-op override of ``BaseFileDialog._select_file``.
 
@@ -1258,6 +1493,28 @@ class EnhancedFileDialog(BaseFileDialog):
         file_name.value = str(event.path.name)
         file_name.focus()
 
+    @on(SearchableDirectoryNavigation.OpenFile)
+    def _on_open_file(self, event: "SearchableDirectoryNavigation.OpenFile") -> None:
+        """Handle a file being opened (Enter / double-click / Go on a file).
+
+        Unlike ``_on_select_file`` (select-only, fills the filename input),
+        opening a file confirms/returns it immediately -- routed through the
+        existing single-file confirm path so ``must_exist``/filter checks
+        still apply.
+        """
+        event.stop()
+
+        if self.multi_select:
+            self._toggle_path_selection(event.path)
+            return
+
+        try:
+            file_name = self.query_one("#filename-input", Input)
+        except Exception:
+            return
+        file_name.value = str(event.path.name)
+        self._confirm_single()
+
     def _confirm_file(self, event: Input.Submitted | Button.Pressed) -> None:
         """No-op override of ``BaseFileDialog._confirm_file``.
 
@@ -1277,6 +1534,26 @@ class EnhancedFileDialog(BaseFileDialog):
 
         # Only even try and process this if there's some input.
         if not file_name.value:
+            # No filename typed: if an entry is highlighted, treat Go/Select
+            # like "open" (task-430 AC#2) -- descend a highlighted directory,
+            # or confirm/return a highlighted file -- instead of erroring or
+            # no-op'ing. ``action_open_highlighted`` already routes a file
+            # through ``OpenFile`` -> ``_on_open_file`` -> this method again
+            # (this time with the filename filled in), so both cases are
+            # handled without duplicating the must_exist/filter checks here.
+            try:
+                nav = self.query_one(SearchableDirectoryNavigation)
+                highlighted = nav.highlighted
+                option = (
+                    nav.get_option_at_index(highlighted)
+                    if highlighted is not None
+                    else None
+                )
+            except Exception:
+                option = None
+            if isinstance(option, DirectoryEntry):
+                nav.action_open_highlighted()
+                return
             self._set_error(self.ERROR_A_FILE_MUST_BE_CHOSEN)
             return
 
@@ -1719,6 +1996,15 @@ class EnhancedFileDialog(BaseFileDialog):
     def _on_clear_search_enhanced(self, event: Button.Pressed) -> None:
         """Clear the search input and reset the directory filter."""
         event.stop()
+        self._close_search_overlay()
+
+    def _close_search_overlay(self) -> None:
+        """Clear and close the search overlay.
+
+        Shared by the Clear-search button (``_on_clear_search_enhanced``)
+        and ``action_smart_dismiss`` (task-430 AC#4) so Esc closes search
+        the same way the button does.
+        """
         try:
             search_input = self.query_one("#search-input", Input)
             search_input.value = ""
@@ -1746,6 +2032,22 @@ class EnhancedFileDialog(BaseFileDialog):
             else:
                 status.update("")
                 no_match.styles.display = "none"
+        except Exception:
+            pass
+
+    @on(SearchableDirectoryNavigation.FilterHiddenCountChanged)
+    def _on_filter_hidden_count_changed(
+        self, event: SearchableDirectoryNavigation.FilterHiddenCountChanged
+    ) -> None:
+        """Update the 'N hidden by filter' notice (task-431 AC#2)."""
+        try:
+            notice = self.query_one("#filter-hidden-notice", Static)
+            if event.count:
+                notice.update(f"{event.count} hidden by filter")
+                notice.styles.display = "block"
+            else:
+                notice.update("")
+                notice.styles.display = "none"
         except Exception:
             pass
 

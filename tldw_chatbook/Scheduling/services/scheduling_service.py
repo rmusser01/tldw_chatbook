@@ -17,6 +17,7 @@ from loguru import logger
 
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind, ScheduledTask
+from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.services.server_client import (
     SchedulingServerClient,
     ServerUnavailableError,
@@ -66,12 +67,14 @@ class SchedulingService:
         server_client: SchedulingServerClient | None = None,
         runtime_source: str = "local",
         watchlist_projection: WatchlistProjection | None = None,
+        briefing_projection: BriefingProjection | None = None,
     ) -> None:
         self.db = db
         self.server_client = server_client or SchedulingServerClient()
         self.runtime_source = runtime_source
         self.owner_id = runtime_source
         self.watchlist_projection = watchlist_projection
+        self.briefing_projection = briefing_projection
         self.sync_engine = SyncEngine(db, self.server_client, self.owner_id)
 
     def set_owner(self, owner_id: str) -> None:
@@ -134,10 +137,12 @@ class SchedulingService:
         return [self._row_to_reminder(row) for row in rows]
 
     async def list_tasks(self) -> list[ReminderTask | ScheduledTask]:
-        """Return reminders plus watchlist projections for the current owner."""
+        """Return reminders plus watchlist/briefing projections for the current owner."""
         tasks: list[ReminderTask | ScheduledTask] = list(await self.list_reminders())
         if self.watchlist_projection is not None:
             tasks.extend(self.watchlist_projection.list_jobs(owner_id=self.owner_id))
+        if self.briefing_projection is not None:
+            tasks.extend(self.briefing_projection.list_jobs(owner_id=self.owner_id))
         # Sort by next_run_at (None sorts last)
         tasks.sort(
             key=lambda t: t.next_run_at or datetime.max.replace(tzinfo=timezone.utc)

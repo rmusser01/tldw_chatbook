@@ -4,6 +4,12 @@ The panel renders what the screen feeds via ``load_character_dictionaries`` and
 posts intent messages; the screen owns all service/DB work. Each embedded
 dictionary is a snapshot (an embedded copy — editing the source dictionary does
 not update it).
+
+task-2231: the panel is a collapsible section (the preview pane's disclosure
+idiom - a full-width toggle button doubling as the section header, carrying the
+live count). Collapsed by default so an empty section costs exactly one line;
+the collapsed state is widget state that ``load_character_dictionaries`` never
+resets, so the user's choice survives attach/detach refreshes for the session.
 """
 
 from __future__ import annotations
@@ -13,7 +19,7 @@ from typing import Any
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal
+from textual.containers import Container, Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, DataTable, Static
 
@@ -37,7 +43,35 @@ class CharacterDictionaryDetachRequested(Message):
 class PersonasCharacterDictionariesWidget(Container):
     """List + attach/detach a character's embedded dictionaries (snapshots)."""
 
+    # Structure only (no $ds-* tokens: they do not resolve in bare-App
+    # harnesses). ``height: auto`` everywhere is load-bearing: the button row
+    # is a Horizontal (Textual default ``height: 1fr``), and a 1fr descendant
+    # of an auto-height container makes the measurement resolve to "fill all
+    # available space" instead of "sum of children" - the old bottom-dock CSS
+    # hid that behind an explicit wrapper max-height.
     DEFAULT_CSS = """
+    PersonasCharacterDictionariesWidget {
+        height: auto;
+        width: 100%;
+    }
+
+    PersonasCharacterDictionariesWidget #personas-char-dicts-toggle {
+        width: 100%;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        border: none;
+    }
+
+    PersonasCharacterDictionariesWidget #personas-char-dicts-body {
+        height: auto;
+    }
+
+    PersonasCharacterDictionariesWidget .personas-dict-form-row {
+        height: auto;
+    }
+
     PersonasCharacterDictionariesWidget #personas-char-dicts-table { height: auto; max-height: 8; }
     """
 
@@ -45,32 +79,50 @@ class PersonasCharacterDictionariesWidget(Container):
         kwargs.setdefault("id", "personas-character-dictionaries")
         super().__init__(**kwargs)
         self._rows: list[dict[str, Any]] = []
+        # Session-persistent disclosure state; load_character_dictionaries
+        # updates the count but never this flag.
+        self._collapsed: bool = True
 
     def compose(self) -> ComposeResult:
-        yield Static("Dictionaries (embedded copies)", classes="destination-section")
-        yield Static(
-            "No dictionaries attached to this character yet.",
-            id="personas-char-dicts-empty",
-            markup=False,
+        # The toggle doubles as the section header (count included), so the
+        # old standalone "Dictionaries (copied into this character)" descriptor
+        # line is folded into its tooltip.
+        yield Button(
+            self._toggle_label(),
+            id="personas-char-dicts-toggle",
+            classes="console-action-subdued",
+            tooltip="Dictionaries are copied into this character as snapshots.",
         )
-        yield DataTable(id="personas-char-dicts-table", cursor_type="row")
-        with Horizontal(classes="personas-dict-form-row"):
-            yield Button(
-                "Attach dictionary…",
-                id="personas-char-dicts-add",
-                classes="console-action-secondary",
+        with Vertical(id="personas-char-dicts-body"):
+            yield Static(
+                "No dictionaries attached to this character yet.",
+                id="personas-char-dicts-empty",
+                markup=False,
             )
-            yield Button(
-                "Detach",
-                id="personas-char-dicts-detach",
-                classes="console-action-secondary",
-            )
+            yield DataTable(id="personas-char-dicts-table", cursor_type="row")
+            with Horizontal(classes="personas-dict-form-row"):
+                yield Button(
+                    "Attach dictionary…",
+                    id="personas-char-dicts-add",
+                    classes="console-action-secondary",
+                )
+                yield Button(
+                    "Detach",
+                    id="personas-char-dicts-detach",
+                    classes="console-action-secondary",
+                )
 
     def on_mount(self) -> None:
+        self.query_one("#personas-char-dicts-body").display = False
         self.query_one("#personas-char-dicts-table", DataTable).add_columns(
             "dictionary", "entries"
         )
         self.load_character_dictionaries([])
+
+    def _toggle_label(self) -> str:
+        """Header line: disclosure arrow plus the live row count."""
+        arrow = "▸" if self._collapsed else "▾"
+        return f"{arrow} Dictionaries ({len(self._rows)})"
 
     def load_character_dictionaries(self, rows: list[dict[str, Any]]) -> None:
         """Render the character's embedded dictionaries.
@@ -113,6 +165,11 @@ class PersonasCharacterDictionariesWidget(Container):
         empty = self.query_one("#personas-char-dicts-empty", Static)
         empty.display = not self._rows
         table.display = bool(self._rows)
+        # The count lives in the section header; the collapsed state does not
+        # (a data refresh must not re-collapse what the user expanded).
+        self.query_one("#personas-char-dicts-toggle", Button).label = (
+            self._toggle_label()
+        )
 
     def _selected_name(self) -> str | None:
         table = self.query_one("#personas-char-dicts-table", DataTable)
@@ -124,6 +181,15 @@ class PersonasCharacterDictionariesWidget(Container):
             )
         except Exception:
             return None
+
+    @on(Button.Pressed, "#personas-char-dicts-toggle")
+    def _toggle_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._collapsed = not self._collapsed
+        self.query_one("#personas-char-dicts-body").display = not self._collapsed
+        self.query_one("#personas-char-dicts-toggle", Button).label = (
+            self._toggle_label()
+        )
 
     @on(Button.Pressed, "#personas-char-dicts-add")
     def _attach_pressed(self, event: Button.Pressed) -> None:

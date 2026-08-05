@@ -19,17 +19,66 @@
 - Keep the existing `.console-rail-*` CSS class names. Renaming them is a deliberate deferral; PR1 must produce a **zero-diff** bundle.
 - Textual 8.2.7 has no `App.export_text()`. Assert rendered styling via `widget.styles`, not by scraping text.
 - Every test must be **mutation-checked**: revert the fix, confirm the test goes red, restore.
+- Run pytest from the worktree with `PYTHONPATH=$(pwd)` so imports cannot silently resolve to the main checkout's editable install.
+
+## Known baseline failures — do NOT try to fix these
+
+Measured on this worktree at `origin/dev` + docs only, before any code change:
+
+```
+Tests/UI/test_lab_mode_strip.py, test_console_rail_sections.py, test_console_rail_title.py,
+test_console_persistent_rails.py, test_console_agent_rail.py,
+test_console_workspace_context_rail.py, test_home_triage_rail.py
+    -> 1 failed, 168 passed
+```
+
+The one failure is **pre-existing and unrelated to this work**:
+
+`test_console_persistent_rails.py::test_generated_console_stylesheet_includes_rail_rules`
+asserts *globally* over the entire stylesheet that `"border: thick $ds-action-focus;"` appears
+nowhere (line 278). Unrelated RAG-settings work (`e619c4d81`, `ffc5959cb`) later added exactly that
+declaration to `.settings-rag-profile-modal` and `.settings-library-rag-starter-panel`
+(`components/_agentic_terminal.tcss:4029` and `:4066`). It is an over-broad Console rail test
+tripped by Settings, not a Console regression.
+
+**Your job is to keep this at exactly 1 failure.** If the count rises, you broke something. Do not
+"fix" this test, do not weaken its assertion, and do not remove the Settings rules — that is a
+separate concern with its own owner. Note that PR0 also writes to the bundle; its rules use
+`border: none` and must not trip this assertion.
+
+`Tests/UI/test_library_shell.py` additionally carries **3** recorded baseline failures (measured
+directly on this worktree, `-p no:randomly`, reproduced twice for determinism — not 4 as previously
+recorded here):
+
+```
+Tests/UI/test_library_shell.py::test_library_shell_search_history_prefers_app_config_over_cli_config
+Tests/UI/test_library_shell.py::test_library_shell_rail_preferences_prefers_app_config_over_cli_config
+Tests/UI/test_library_shell.py::test_library_shell_ingest_nav_context_deeplink_reentry_resets_stale_form
+
+3 failed, 254 passed
+```
+
+Confirm the count is unchanged rather than expecting zero.
+
+**Caveat — this file's count is not a reliable gate.** Independent re-runs found the three above
+fail deterministically, but 3 of 4 runs showed a *fourth* failure that rotated between
+`test_library_shell_export_registry_failure_warns_it_wont_appear_in_artifacts` and
+`test_library_shell_ingest_canvas_different_canvas_isolation` — both self-documented in the test
+file as order/global-state and CPU-contention flakes, and both sensitive to machine load. Treat the
+three named tests as the floor and investigate only *new* failure names, never a raw count.
 
 ---
 
-## Sequencing correction (read before planning PR2+)
+## Sequencing correction — CONFIRMED, folded into the spec
 
 The spec sequences PR2 as "frame + all three screens inherit", with the rail lifts following in PR3
 (Models) and PR4 (Speech). **That intermediate state is not shippable.** After PR2 the frame would
 render an empty left rail (spec: "first run: left rail open") while each legacy sidebar is still
 alive inside its body — two navigation columns side by side, worse than today.
 
-Recommended restructure for the remaining work, to be confirmed before PR2 is planned:
+**Confirmed and adopted** — the spec's Sequencing section now carries this as the plan of record.
+Each screen's sidebar lift is folded into that screen's own adoption PR: a screen adopts the frame
+and fills its rail in one change, or it does not adopt yet.
 
 | PR | Contents | Shippable? |
 |---|---|---|
@@ -309,9 +358,14 @@ git add -A && git commit -m "fix(library): <or> docs: resolve the .library-colle
       def _display_label(self) -> str      # override point
       def _display_badge(self) -> str      # override point
   ```
-  Task 5 subclasses this. The Lab frame (PR2) constructs it directly.
+  Task 4 subclasses this. The Lab frame (PR2) constructs it directly.
 
-**Background.** `ConsoleRailHandle` already has six consumers — `chat_screen`, `home_screen`, `library_screen`, `personas_screen`, `Widgets/Home/home_rail`, `Widgets/Library/library_rail` — while living in a Console-private namespace and importing `CONSOLE_RAIL_INSPECTOR_LABEL` from `tldw_chatbook.Chat.console_rail_state`. The base extracted here carries no Chat import and no Console vocabulary; Console's specifics move to the subclass in Task 5.
+**Background.** `ConsoleRailHandle` already has six consumers — `chat_screen`, `home_screen`, `library_screen`, `personas_screen`, `Widgets/Home/home_rail`, `Widgets/Library/library_rail` — while living in a Console-private namespace and importing `CONSOLE_RAIL_INSPECTOR_LABEL` from `tldw_chatbook.Chat.console_rail_state`. The base extracted here carries no Chat import and no Console vocabulary; Console's specifics move to the subclass in Task 4.
+
+**Expect transitional duplication.** This task adds a `compose()` body closely matching the one still
+living in `console_rail_handle.py`; Task 4 deletes that original and reduces `ConsoleRailHandle` to a
+subclass. The overlap exists only between Tasks 3 and 4 and is inherent to a two-step extract. Do not
+try to resolve it inside Task 3 by editing the Console file — that is Task 4's diff.
 
 The `.console-rail-handle*` class names are kept deliberately, so the CSS bundle sees no diff. The TCSS contains no type selectors for these widgets — only class selectors — so renaming the Python types is invisible to CSS.
 
@@ -836,9 +890,9 @@ This is the whole point of subclassing rather than migrating. Run every suite th
   -v
 ```
 
-Expected: PASS, **with no edits to any of those files**. Note the four pre-existing
-`test_library_shell` failures recorded as baseline — confirm the count is unchanged rather than
-assuming zero.
+Expected: PASS, **with no edits to any of those files**. Note the three pre-existing
+`test_library_shell` failures recorded as baseline (see the corrected count above) — confirm the
+count is unchanged rather than assuming zero.
 
 If any of these need changing, the subclass approach failed; stop and report rather than editing
 the tests.
@@ -870,6 +924,35 @@ consumers and the generated CSS bundle are unchanged."
 ```
 
 ---
+
+## Follow-ups surfaced by the final review (not done here, not yet filed)
+
+None of these block this branch. They need a backlog-ID scan and a decision on whether they fold
+into PR2, so they are recorded rather than filed.
+
+**(a) `Tests/UI/test_console_persistent_rails.py:278` is the only unscoped assertion** in a function
+whose every neighbour uses `_css_block(css, selector)`. Scoping it the same way is a one-line change
+and would clear the known-red test that this branch had to work around. Worth doing before PR2
+leans on that suite again.
+
+**(b) `personas_screen.py:989-998` `_sync_personas_rail_tooltips()` is now obsolete.** It exists only
+to overwrite Console's hard-coded `"Open Context rail"` after compose. The `open_tooltip` parameter
+this branch added makes it redundant — switching Personas' two handles to `DestinationRailHandle`
+deletes the method and yields correct tooltips for free. The extraction paid off and was not cashed
+in.
+
+**(c) The glyph constants are a real trade-off, not a settled call.** `destination_rail.py`
+re-declares `"▾"` / `"▸"` rather than importing them, guarded by an equality test. The final
+reviewer argued this installs a hidden *bidirectional* lockstep — neither module can change its
+glyphs without a test in a third file going red — and preferred inverting it (define in
+`destination_rail.py`, re-export from `console_glyphs.py`). The counter-argument is that inverting
+makes the Chat layer import from `Widgets/`, which is the worse direction. Decide before a second
+destination adopts the base.
+
+**(d) Four consumers still import the section header from Console's namespace** — `home_rail.py`,
+`library_rail.py`, `home_screen.py`, `library_screen.py` — via the `console_rail_section.py` shim.
+Migrating them is a textual swap with no behaviour change, and would let the shim carry a real
+deprecation horizon. Until then, "extracted out of Console's private namespace" is true only for Lab.
 
 ## Self-Review
 

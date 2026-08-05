@@ -11,9 +11,16 @@
     height: 1fr;
 }
 
+SchedulesWorkbench TabbedContent,
+SchedulesWorkbench TabbedContent ContentSwitcher,
+SchedulesWorkbench TabbedContent TabPane {
+    height: 1fr;
+    min-height: 0;
+}
+
 #scheduling-workbench {
     layout: horizontal;
-    height: 1fr;
+    height: 100%;
     min-height: 10;
     padding: 1;
     margin: 0;
@@ -47,6 +54,25 @@
  * exactly one spare row; without this the queue shows only the filter). */
 #scheduling-workbench.compact #scheduling-queue-filter {
     margin: 0;
+}
+
+SchedulesWorkbench.schedules-workbench-compact #scheduling-workbench {
+    padding: 0;
+}
+
+SchedulesWorkbench.schedules-workbench-compact #scheduling-list-pane {
+    width: 24;
+    min-width: 20;
+}
+
+SchedulesWorkbench.schedules-workbench-compact #scheduling-detail-pane {
+    width: 1fr;
+    min-width: 32;
+}
+
+SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
+    width: 20;
+    min-width: 16;
 }
 
 /* Pane headers */

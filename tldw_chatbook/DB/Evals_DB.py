@@ -27,16 +27,43 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Dict, Optional, Any, Union, Tuple
+from typing import TYPE_CHECKING, List, Dict, Optional, Any, Union, Tuple, Sequence
 from loguru import logger
 
 if TYPE_CHECKING:
     from tldw_chatbook.Evals.ab_testing import ABTestResult
 
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+from tldw_chatbook.DB.sql_validation import validate_identifier
 
 # Database Schema Version
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
+
+#: SQLite's own host-parameter limit varies by build -- as low as 999 on
+#: older versions, tens of thousands on newer ones -- so a single
+#: ``DELETE ... WHERE x IN (?, ?, ...)`` with one parameter per id can
+#: overflow it once a bench has enough run groups (TASK-1691 phase 3a
+#: finding 1). 500 stays comfortably under the lowest of those while still
+#: batching in large, efficient chunks.
+_PROBE_ANNOTATION_CASCADE_BATCH_SIZE = 500
+
+#: The two tables ``delete_probe_annotations_for_run_groups`` cascades a
+#: hard delete into. A bare table name can never be a bind parameter, so
+#: this literal, module-level tuple -- never caller-reachable -- is the
+#: identifier source; each name is still run through
+#: ``sql_validation.validate_identifier`` before being interpolated
+#: (TASK-1691 phase 3a finding 2), matching this project's "SQL identifiers
+#: through sql_validation.py" rule even though the source here is already a
+#: trusted literal. ``sql_validation.validate_table_name`` was not used
+#: instead: it whitelists against ``VALID_TABLES``, which is keyed by
+#: ``chachanotes``/``media``/``prompts`` and has no entry (or maintained
+#: test coverage, see that module's TASK-864 comment) for EvalsDB's own
+#: tables -- adding one is a larger, separate change than this fix.
+_PROBE_ANNOTATION_CASCADE_TABLES: Tuple[str, str] = (
+    "eval_probe_turn_annotations",
+    "eval_probe_review_state",
+)
 
 
 class EvalsDBError(Exception):
@@ -71,6 +98,56 @@ class ConflictError(EvalsDBError):
         self.entity_id = entity_id
 
 
+def _clean_task_name(name: str) -> str:
+    """Strip control characters and surrounding whitespace from a task name.
+
+    Shared by ``create_task`` and ``update_task`` so the two paths can never
+    drift apart again: before this helper, ``update_task`` only ``.strip()``
+    ed its ``name`` argument -- silently admitting control characters
+    ``create_task`` filters out, and applying no blank-name rejection at all
+    (task-1482 hygiene parity; ``eval_tasks.name`` is ``NOT NULL UNIQUE`` and
+    a bare-whitespace value would previously round-trip through ``update_task``
+    only to break every other caller expecting a real name).
+
+    Raises:
+        InputError: If the cleaned name is empty.
+    """
+    cleaned = "".join(c for c in name if c.isprintable() and ord(c) != 0).strip()
+    if not cleaned:
+        raise InputError("Task name cannot be empty")
+    return cleaned
+
+
+def _clean_task_description(description: Optional[str]) -> Optional[str]:
+    """Strip control characters from a task description.
+
+    Shared by ``create_task`` and ``update_task`` (task-1614 hygiene
+    parity, mirroring ``_clean_task_name``'s own task-1482 history) --
+    before this helper, ``update_task``'s ``description`` parameter
+    passed straight through completely unfiltered while ``create_task``
+    already stripped control characters from it.
+
+    Unlike ``_clean_task_name``, a falsy (``None``/``""``) description is
+    returned unchanged rather than rejected -- ``eval_tasks.description``
+    carries no ``NOT NULL`` constraint, an empty description is a normal,
+    valid value (including an explicit "clear the description" update),
+    and no surrounding-whitespace strip is applied either, matching
+    ``create_task``'s own pre-existing behavior exactly (control-character
+    filter only).
+
+    Args:
+        description: The raw description as supplied by a caller, or
+            ``None``/``""`` when the task carries no description.
+
+    Returns:
+        Optional[str]: The description with non-printable characters and
+        NULs removed; a falsy input is returned unchanged.
+    """
+    if not description:
+        return description
+    return "".join(c for c in description if c.isprintable() and ord(c) != 0)
+
+
 class EvalsDB:
     """Database manager for LLM evaluation data and results."""
 
@@ -89,8 +166,6 @@ class EvalsDB:
             self.db_path = db_path
         else:
             self.db_path = Path(db_path)
-            # Ensure database directory exists
-            self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         self.client_id = client_id
         self._local = threading.local()
@@ -107,7 +182,11 @@ class EvalsDB:
             db_path_str = (
                 self.db_path if isinstance(self.db_path, str) else str(self.db_path)
             )
-            conn = sqlite3.connect(db_path_str, check_same_thread=False)
+            conn = connect_private_sqlite(
+                "db.evals",
+                db_path_str,
+                check_same_thread=False,
+            )
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA journal_mode = WAL")
@@ -209,6 +288,7 @@ class EvalsDB:
                 total_samples INTEGER,
                 completed_samples INTEGER DEFAULT 0,
                 config_overrides TEXT, -- JSON overrides for task config
+                run_group_id TEXT,
                 error_message TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
@@ -254,15 +334,60 @@ class EvalsDB:
             )
         """)
 
+        # Character probe review tables (task-1691 phase 1): per-turn
+        # annotations and per-conversation review state are two separate
+        # homes -- see EvalsDB.upsert_probe_turn_annotation/
+        # upsert_probe_review_state for why they must not be merged.
+        conn.execute("""
+            CREATE TABLE eval_probe_turn_annotations (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                run_group_id TEXT NOT NULL,
+                card_id INTEGER NOT NULL,
+                probe_index INTEGER NOT NULL,
+                sample_index INTEGER NOT NULL,
+                target_id TEXT NOT NULL,
+                turn_index INTEGER NOT NULL,
+                tags TEXT NOT NULL,          -- JSON list of tag slugs
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+                client_id TEXT NOT NULL,
+                UNIQUE(run_group_id, card_id, probe_index, sample_index, target_id, turn_index)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE eval_probe_review_state (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                run_group_id TEXT NOT NULL,
+                card_id INTEGER NOT NULL,
+                probe_index INTEGER NOT NULL,
+                sample_index INTEGER NOT NULL,
+                target_id TEXT NOT NULL,
+                note TEXT NOT NULL DEFAULT '',
+                reviewed_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+                client_id TEXT NOT NULL,
+                UNIQUE(run_group_id, card_id, probe_index, sample_index, target_id)
+            )
+        """)
+
         # Create indexes for performance
         conn.execute("CREATE INDEX idx_eval_tasks_type ON eval_tasks (task_type)")
         conn.execute("CREATE INDEX idx_eval_tasks_deleted ON eval_tasks (deleted_at)")
         conn.execute("CREATE INDEX idx_eval_runs_status ON eval_runs (status)")
         conn.execute("CREATE INDEX idx_eval_runs_task ON eval_runs (task_id)")
         conn.execute("CREATE INDEX idx_eval_runs_model ON eval_runs (model_id)")
+        conn.execute("CREATE INDEX idx_eval_runs_group ON eval_runs (run_group_id)")
         conn.execute("CREATE INDEX idx_eval_results_run ON eval_results (run_id)")
         conn.execute(
             "CREATE INDEX idx_eval_run_metrics_run ON eval_run_metrics (run_id)"
+        )
+        conn.execute(
+            "CREATE INDEX idx_probe_annotations_group "
+            "ON eval_probe_turn_annotations (run_group_id)"
+        )
+        conn.execute(
+            "CREATE INDEX idx_probe_review_group "
+            "ON eval_probe_review_state (run_group_id)"
         )
 
         # Create FTS5 tables for search
@@ -517,6 +642,63 @@ class EvalsDB:
                 END
             """)
 
+        if current_version < 4 and SCHEMA_VERSION >= 4:
+            logger.info("Migrating to version 4: Adding eval_runs.run_group_id")
+
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(eval_runs)")}
+            if "run_group_id" not in existing:
+                conn.execute("ALTER TABLE eval_runs ADD COLUMN run_group_id TEXT")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_eval_runs_group "
+                "ON eval_runs (run_group_id)"
+            )
+
+        if current_version < 5 and SCHEMA_VERSION >= 5:
+            logger.info(
+                "Migrating to version 5: Adding character probe annotation "
+                "and review-state tables"
+            )
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS eval_probe_turn_annotations (
+                    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                    run_group_id TEXT NOT NULL,
+                    card_id INTEGER NOT NULL,
+                    probe_index INTEGER NOT NULL,
+                    sample_index INTEGER NOT NULL,
+                    target_id TEXT NOT NULL,
+                    turn_index INTEGER NOT NULL,
+                    tags TEXT NOT NULL,
+                    note TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+                    client_id TEXT NOT NULL,
+                    UNIQUE(run_group_id, card_id, probe_index, sample_index, target_id, turn_index)
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS eval_probe_review_state (
+                    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                    run_group_id TEXT NOT NULL,
+                    card_id INTEGER NOT NULL,
+                    probe_index INTEGER NOT NULL,
+                    sample_index INTEGER NOT NULL,
+                    target_id TEXT NOT NULL,
+                    note TEXT NOT NULL DEFAULT '',
+                    reviewed_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+                    client_id TEXT NOT NULL,
+                    UNIQUE(run_group_id, card_id, probe_index, sample_index, target_id)
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_probe_annotations_group "
+                "ON eval_probe_turn_annotations (run_group_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_probe_review_group "
+                "ON eval_probe_review_state (run_group_id)"
+            )
+
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     # --- Task Management ---
@@ -534,14 +716,8 @@ class EvalsDB:
         start_time = time.time()
 
         # Clean control characters from name and description
-        name = "".join(c for c in name if c.isprintable() and ord(c) != 0)
-        if description:
-            description = "".join(
-                c for c in description if c.isprintable() and ord(c) != 0
-            )
-
-        if not name or not name.strip():
-            raise InputError("Task name cannot be empty")
+        name = _clean_task_name(name)
+        description = _clean_task_description(description)
 
         if task_type not in [
             "question_answer",
@@ -574,7 +750,7 @@ class EvalsDB:
                 """,
                     (
                         task_id,
-                        name.strip(),
+                        name,
                         description,
                         task_type,
                         config_format,
@@ -640,17 +816,35 @@ class EvalsDB:
         description: str = None,
         config_data: Dict[str, Any] = None,
     ) -> bool:
-        """Update an existing task."""
+        """Update an existing task.
+
+        ``name`` is cleaned through the same ``_clean_task_name`` helper
+        ``create_task`` uses (control-char filter + strip + blank rejection)
+        so the two paths cannot drift again -- this used to only ``.strip()``
+        and never rejected a blank name (task-1482 hygiene parity).
+        ``description`` is likewise cleaned through the same
+        ``_clean_task_description`` helper ``create_task`` uses
+        (control-char filter, no strip, no blank rejection) -- this used
+        to pass ``description`` straight through with no cleaning at all
+        (task-1614 hygiene parity).
+
+        Raises:
+            InputError: If ``name`` is given and, once cleaned, is empty.
+            ConflictError: If the cleaned ``name`` collides with another
+                task's name -- ``eval_tasks.name`` is ``UNIQUE`` with no
+                ``deleted_at`` exemption, so this includes a soft-deleted
+                task's name, not only a live one.
+        """
         updates = []
         params = []
 
         if name is not None:
             updates.append("name = ?")
-            params.append(name.strip())
+            params.append(_clean_task_name(name))
 
         if description is not None:
             updates.append("description = ?")
-            params.append(description)
+            params.append(_clean_task_description(description))
 
         if config_data is not None:
             updates.append("config_data = ?")
@@ -680,13 +874,66 @@ class EvalsDB:
             raise EvalsDBError(f"Failed to update task: {e}")
 
     def delete_task(self, task_id: str) -> bool:
-        """Soft delete a task."""
+        """Soft delete a task and hard-delete its character-probe annotations.
+
+        The task row itself is soft-deleted (``deleted_at`` set), matching
+        every other delete in this table. Any character-probe turn
+        annotations and review state belonging to the task's run groups are
+        hard-deleted in the same transaction: those two tables carry no
+        ``deleted_at`` column and nothing reads them for an "undeleted"
+        view, so a soft delete would just leave them permanently orphaned.
+        This asymmetry is intentional -- do not "fix" it into a soft delete
+        to match ``eval_tasks``.
+
+        Args:
+            task_id: The task (bench) to delete.
+
+        Returns:
+            bool: True if a live task matched and was deleted, False if no
+            such live task existed (already deleted, or never existed).
+
+        Raises:
+            EvalsDBError: If the delete failed for a reason other than "no
+                matching row".
+        """
         conn = self._get_connection()
+
         try:
             with conn:
+                # Resolve the task's run groups BEFORE the soft-delete below.
+                # This is not read-after-write squeamishness: eval_runs.
+                # task_id points at eval_tasks.id directly and does not care
+                # about eval_tasks.deleted_at, so the lookup would still work
+                # after the soft-delete too. It runs first anyway so "gather
+                # everything this task owns, then remove the task and what it
+                # owns" is one clear, ordered operation rather than something
+                # that happens to work because of an unrelated table's lack
+                # of a filter. It is inside this `try` (not before it) so a
+                # failure here -- e.g. the `eval_runs` table being
+                # unavailable -- raises `EvalsDBError` like every other
+                # failure in this method, rather than leaking sqlite3's own
+                # driver exception past this method's documented contract.
+                #
+                # It is also inside this `with conn:` (not just the `try`),
+                # sharing one transaction with the UPDATE and the cascade
+                # below: a run group whose `eval_runs` row this SELECT
+                # already read is guaranteed to still be resolvable to the
+                # same task by the time the UPDATE runs, and a failure
+                # anywhere in this method -- including in the cascade --
+                # rolls back the soft-delete too, rather than leaving a task
+                # marked deleted with a run group this SELECT never saw.
+                run_group_ids = [
+                    row["run_group_id"]
+                    for row in conn.execute(
+                        "SELECT DISTINCT run_group_id FROM eval_runs "
+                        "WHERE task_id = ? AND run_group_id IS NOT NULL",
+                        (task_id,),
+                    ).fetchall()
+                ]
+
                 cursor = conn.execute(
                     """
-                    UPDATE eval_tasks 
+                    UPDATE eval_tasks
                     SET deleted_at = datetime('now', 'utc'),
                         updated_at = datetime('now', 'utc')
                     WHERE id = ? AND deleted_at IS NULL
@@ -696,11 +943,77 @@ class EvalsDB:
 
                 if cursor.rowcount > 0:
                     logger.info(f"Deleted eval task: {task_id}")
+                    # Cascades the task's character-probe annotations in
+                    # the same transaction (nested `with conn:` blocks on
+                    # one sqlite3 connection share the current transaction
+                    # rather than opening a separate one, so a failure here
+                    # rolls back the soft-delete above too).
+                    self.delete_probe_annotations_for_run_groups(run_group_ids)
                     return True
                 return False
 
         except Exception as e:
             raise EvalsDBError(f"Failed to delete task: {e}")
+
+    def delete_probe_annotations_for_run_groups(
+        self, run_group_ids: Sequence[str]
+    ) -> int:
+        """Hard-delete every character-probe annotation for these run groups.
+
+        Annotations and review state describe one run's answers and mean
+        nothing without them, so they are removed with the run rather than
+        left orphaned -- see ``delete_task``, the only caller today.
+
+        The id list is deleted in batches of
+        ``_PROBE_ANNOTATION_CASCADE_BATCH_SIZE`` rather than one
+        ``IN (?, ?, ...)`` per id: a bench with more run groups than
+        SQLite's host-parameter limit would otherwise make this call raise
+        and leave the bench undeletable (TASK-1691 phase 3a finding 1).
+
+        Args:
+            run_group_ids: The run groups whose annotations and review
+                state should be removed. Falsy entries (``None``, ``""``)
+                are ignored; an empty sequence is a no-op.
+
+        Returns:
+            int: Rows removed across both tables. Zero is a normal result
+            -- a run group nobody reviewed has no annotations.
+
+        Raises:
+            EvalsDBError: If a cascade table name fails
+                ``sql_validation.validate_identifier``. Both names are
+                literals defined in this module and this should never
+                happen in practice; the check is defense-in-depth against
+                that assumption changing later.
+        """
+        ids = [str(rg) for rg in run_group_ids if rg]
+        if not ids:
+            return 0
+
+        for table in _PROBE_ANNOTATION_CASCADE_TABLES:
+            if not validate_identifier(table, "table name"):
+                raise EvalsDBError(
+                    f"Refusing to cascade-delete probe annotations: "
+                    f"{table!r} failed SQL identifier validation."
+                )
+
+        removed = 0
+        conn = self._get_connection()
+        with conn:
+            # Table names come from the literal tuple above, never from a
+            # caller; only the run_group_id values are bind parameters.
+            for table in _PROBE_ANNOTATION_CASCADE_TABLES:
+                for start in range(
+                    0, len(ids), _PROBE_ANNOTATION_CASCADE_BATCH_SIZE
+                ):
+                    batch = ids[start : start + _PROBE_ANNOTATION_CASCADE_BATCH_SIZE]
+                    placeholders = ",".join("?" for _ in batch)
+                    cursor = conn.execute(
+                        f"DELETE FROM {table} WHERE run_group_id IN ({placeholders})",
+                        batch,
+                    )
+                    removed += cursor.rowcount
+        return removed
 
     def get_task(
         self, task_id: str, include_deleted: bool = False
@@ -1245,6 +1558,8 @@ class EvalsDB:
                 "end_time",
                 "metrics_summary",
                 "config_overrides",
+                "run_group_id",
+                "total_samples",
             ]
             fields_to_update = []
             values = []
@@ -1298,10 +1613,28 @@ class EvalsDB:
         status: str = None,
         task_id: str = None,
         model_id: str = None,
+        run_group_id: str = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
-        """List evaluation runs with optional filtering."""
+        """List evaluation runs with optional filtering.
+
+        Args:
+            status: Restrict to runs with this status.
+            task_id: Restrict to runs belonging to this task.
+            model_id: Restrict to runs belonging to this model.
+            run_group_id: Restrict to runs sharing this run_group_id (see
+                idx_eval_runs_group). Filtering here in SQL -- rather than
+                fetching a page and filtering in Python -- is what lets a
+                caller find a run group regardless of how many newer runs
+                exist ahead of it.
+            limit: Maximum rows to return.
+            offset: Rows to skip, for paging.
+
+        Returns:
+            Matching eval_runs rows (newest first), each with config_overrides
+            parsed from JSON.
+        """
         conn = self._get_connection()
 
         query = """
@@ -1322,6 +1655,9 @@ class EvalsDB:
         if model_id:
             query += " AND r.model_id = ?"
             params.append(model_id)
+        if run_group_id:
+            query += " AND r.run_group_id = ?"
+            params.append(run_group_id)
 
         query += " ORDER BY r.created_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
@@ -1472,6 +1808,60 @@ class EvalsDB:
                     (run_id, metric_name, value, metric_type, self.client_id),
                 )
 
+    def run_group_cell_failure_counts(self) -> Dict[str, Tuple[int, int]]:
+        """Per-run-group cell totals, for the library rail's "all cells in
+        this completed run failed" glyph (TASK-1480 amendment).
+
+        Neither ``eval_runs.total_samples`` nor ``completed_samples`` can
+        answer "did every cell fail": ``total_samples`` is the snippet
+        count a target was ASKED to run (``word_bench.storage.
+        create_run_group`` sets it once, up front), and
+        ``completed_samples`` is incremented on every ``store_result``
+        call regardless of outcome -- a failed cell is still a stored
+        result (``word_bench.storage.save_cell`` writes a ``CellError`` as
+        a real ``eval_results`` row precisely so "failed" and "not yet
+        run" stay distinguishable, per that function's own docstring).
+        Whether a given row IS that failure is encoded only inside its
+        ``logprobs`` JSON -- ``"error"`` is the discriminator key
+        ``word_bench.storage._cell_from_payload`` already uses to tell a
+        ``CellError`` payload (``{"schema": ..., "error": {...}}``) apart
+        from a ``CellCapture`` one. This mirrors that exact check via
+        SQLite's ``json_extract`` rather than introducing a second
+        definition of "is this cell an error" alongside the Python one.
+
+        One query for every run group in the database, not one query per
+        group: the rail composes on every selection change, and
+        ``EvalsViewModel.run_groups()`` calls this once per compose,
+        regardless of how many groups it pivots -- a per-group query loop
+        would turn an O(1) DB round trip into O(groups).
+
+        Returns:
+            ``{run_group_id: (total_cells, errored_cells)}``. A run group
+            with zero stored cells (nothing captured yet) has no entry
+            here at all -- callers should treat a missing key as
+            ``(0, 0)``, never as "all failed".
+        """
+        conn = self._get_connection()
+        cursor = conn.execute(
+            """
+            SELECT
+                r.run_group_id AS group_id,
+                COUNT(*) AS total_cells,
+                SUM(
+                    CASE WHEN json_extract(res.logprobs, '$.error') IS NOT NULL
+                         THEN 1 ELSE 0 END
+                ) AS errored_cells
+            FROM eval_results res
+            JOIN eval_runs r ON res.run_id = r.id
+            WHERE r.run_group_id IS NOT NULL AND r.deleted_at IS NULL
+            GROUP BY r.run_group_id
+            """
+        )
+        return {
+            row["group_id"]: (row["total_cells"], row["errored_cells"])
+            for row in cursor.fetchall()
+        }
+
     def get_run_results(
         self, run_id: str, limit: int = 1000, offset: int = 0
     ) -> List[Dict[str, Any]]:
@@ -1552,6 +1942,145 @@ class EvalsDB:
             }
 
         return metrics
+
+    # --- Character Probe Review Management (task-1691 phase 1) ---
+    #
+    # Two separate homes, deliberately not merged:
+    #   eval_probe_turn_annotations -- keyed down to turn_index, holds tags
+    #     + a note about ONE turn ("it broke character on the third turn").
+    #   eval_probe_review_state -- keyed one level up (no turn_index), holds
+    #     reviewed_at + an optional note about a WHOLE conversation. This is
+    #     the only home for "I read this and nothing was notable", which
+    #     must be recordable with zero turn annotations.
+    # Both use INSERT OR REPLACE against their UNIQUE key, the same
+    # replace-on-conflict convention store_run_metrics already uses above:
+    # re-annotating a turn, or re-marking a conversation reviewed, replaces
+    # the prior row (a fresh id, created_at, and updated_at/reviewed_at)
+    # rather than erroring or accumulating duplicates.
+
+    def upsert_probe_turn_annotation(
+        self,
+        run_group_id: str,
+        card_id: int,
+        probe_index: int,
+        sample_index: int,
+        target_id: str,
+        turn_index: int,
+        tags: List[str],
+        note: str = "",
+    ) -> None:
+        """Create or replace one conversation turn's annotation.
+
+        Args:
+            run_group_id: The run group the conversation belongs to.
+            card_id: The character card's ``character_cards.id``.
+            probe_index: The probe's zero-based index within its probe set.
+            sample_index: The zero-based sample number for this cell.
+            target_id: The target's ``eval_models.id``.
+            turn_index: The zero-based turn within the conversation.
+            tags: Tag slugs describing this turn. Stored as a JSON list.
+            note: Free-text reviewer note for this turn.
+        """
+        conn = self._get_connection()
+        with conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO eval_probe_turn_annotations
+                (run_group_id, card_id, probe_index, sample_index, target_id,
+                 turn_index, tags, note, client_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_group_id,
+                    card_id,
+                    probe_index,
+                    sample_index,
+                    target_id,
+                    turn_index,
+                    json.dumps(list(tags)),
+                    note,
+                    self.client_id,
+                ),
+            )
+
+    def list_probe_turn_annotations(self, run_group_id: str) -> List[Dict[str, Any]]:
+        """Every turn annotation recorded for one run group.
+
+        Args:
+            run_group_id: The run group to read.
+
+        Returns:
+            Matching ``eval_probe_turn_annotations`` rows, each with ``tags``
+            parsed from JSON into a list.
+        """
+        conn = self._get_connection()
+        cursor = conn.execute(
+            "SELECT * FROM eval_probe_turn_annotations WHERE run_group_id = ?",
+            (run_group_id,),
+        )
+        rows = []
+        for row in cursor.fetchall():
+            data = dict(row)
+            data["tags"] = json.loads(data["tags"])
+            rows.append(data)
+        return rows
+
+    def upsert_probe_review_state(
+        self,
+        run_group_id: str,
+        card_id: int,
+        probe_index: int,
+        sample_index: int,
+        target_id: str,
+        note: str = "",
+    ) -> None:
+        """Mark one conversation reviewed, creating or replacing its state.
+
+        Args:
+            run_group_id: The run group the conversation belongs to.
+            card_id: The character card's ``character_cards.id``.
+            probe_index: The probe's zero-based index within its probe set.
+            sample_index: The zero-based sample number for this cell.
+            target_id: The target's ``eval_models.id``.
+            note: Free-text reviewer note for the whole conversation. Empty
+                is a normal value -- "reviewed, nothing notable" carries no
+                note at all.
+        """
+        conn = self._get_connection()
+        with conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO eval_probe_review_state
+                (run_group_id, card_id, probe_index, sample_index, target_id,
+                 note, client_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_group_id,
+                    card_id,
+                    probe_index,
+                    sample_index,
+                    target_id,
+                    note,
+                    self.client_id,
+                ),
+            )
+
+    def list_probe_review_state(self, run_group_id: str) -> List[Dict[str, Any]]:
+        """Every conversation's review state for one run group.
+
+        Args:
+            run_group_id: The run group to read.
+
+        Returns:
+            Matching ``eval_probe_review_state`` rows.
+        """
+        conn = self._get_connection()
+        cursor = conn.execute(
+            "SELECT * FROM eval_probe_review_state WHERE run_group_id = ?",
+            (run_group_id,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
 
     # --- Analysis Methods ---
 

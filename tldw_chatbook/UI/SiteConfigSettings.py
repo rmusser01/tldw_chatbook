@@ -299,7 +299,7 @@ class SiteConfigSettings(Container):
 
             yield self.form_builder.create_form_field(
                 "Change threshold (0-1)",
-                Input(value="0.1", id="change-threshold", type="number"),
+                Input(value="0.0", id="change-threshold", type="number"),
             )
 
     def _compose_advanced_settings(self) -> ComposeResult:
@@ -351,7 +351,7 @@ class SiteConfigSettings(Container):
             return
         try:
             configs = self.config_manager.list_configs()
-            self.call_from_thread(self.update_site_table, configs)
+            self.app.call_from_thread(self.update_site_table, configs)
         except Exception as e:
             logger.error(f"Error loading site configs: {str(e)}")
 
@@ -389,7 +389,7 @@ class SiteConfigSettings(Container):
             return
         try:
             config = self.config_manager.get_config(f"https://{domain}")
-            self.call_from_thread(self.display_config, config)
+            self.app.call_from_thread(self.display_config, config)
         except Exception as e:
             logger.error(f"Error loading config for {domain}: {str(e)}")
 

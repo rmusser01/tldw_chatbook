@@ -9,7 +9,7 @@ import time
 import json
 import uuid
 from pathlib import Path
-from typing import List, Dict, Optional, Any, Union
+from typing import List, Dict, Optional, Any, Sequence, Union
 
 #
 # Third-Party Imports
@@ -21,6 +21,10 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     SchemaError,
 )
 from tldw_chatbook.config import chachanotes_db as global_db_from_config
+from tldw_chatbook.Utils.private_paths import (
+    lexical_path,
+    verify_trusted_directory,
+)
 from ..Metrics.metrics_logger import log_counter, log_histogram
 #
 #######################################################################################################################
@@ -38,7 +42,7 @@ class NotesInteropService:
         global_db_to_use: Optional[CharactersRAGDB] = None,
     ):
 
-        self.base_db_directory = Path(base_db_directory).resolve()
+        self.base_db_directory = lexical_path(base_db_directory)
         # self.api_client_id is not directly used if _get_db uses user_id as client_id
         # It's good to have it for context or if some methods need a generic app client_id.
         self.api_client_id = api_client_id
@@ -49,16 +53,19 @@ class NotesInteropService:
         self._db_lock = threading.Lock()
 
         try:
-            self.base_db_directory.mkdir(parents=True, exist_ok=True)
+            verify_trusted_directory(
+                self.base_db_directory,
+                allow_shared_sticky=False,
+            )
             logger.info(
-                f"NotesInteropService: Ensured base directory exists: {self.base_db_directory}"
+                f"NotesInteropService: Verified base directory: {self.base_db_directory}"
             )
         except OSError as e:
             logger.error(
-                f"Failed to create base DB directory {self.base_db_directory}: {e}"
+                f"Failed to verify base DB directory {self.base_db_directory}: {e}"
             )
             raise CharactersRAGDBError(
-                f"Failed to create base DB directory {self.base_db_directory}: {e}"
+                f"Failed to verify base DB directory {self.base_db_directory}: {e}"
             ) from e
 
         # Store the global DB instance
@@ -377,7 +384,25 @@ class NotesInteropService:
         search_term: str,
         limit: int = 10,
         fts_match_query: Optional[str] = None,
+        *,
+        id_allowlist: Optional[Sequence[str]] = None,
     ) -> List[Dict[str, Any]]:
+        """Search notes, optionally restricted to a caller-provided id allowlist.
+
+        Args:
+            user_id: Owning user id (resolves the per-user DB instance).
+            search_term: Plain user search text.
+            limit: Maximum number of notes to return.
+            fts_match_query: Optional pre-built FTS5 MATCH expression.
+            id_allowlist: Optional note ids to restrict results to
+                (rag-scope narrowing, task-6). ``None`` (the default) is
+                unrestricted -- forwarded only when provided so existing
+                callers (and test fakes) without the parameter keep working
+                unchanged.
+
+        Returns:
+            Matching note rows.
+        """
         start_time = time.time()
         log_counter(
             "notes_library_search_notes_attempt",
@@ -386,13 +411,15 @@ class NotesInteropService:
         try:
             db = self._get_db(user_id)
             # Similar to list_notes, if search should be user-specific, CharactersRAGDB.search_notes needs adjustment.
-            # Forward the caller-built MATCH expression only when provided so
-            # plain callers keep the exact legacy call shape.
+            # Forward the caller-built MATCH expression / id allowlist only
+            # when provided so plain callers keep the exact legacy call shape.
             fts_kwargs = (
                 {"fts_match_query": fts_match_query}
                 if fts_match_query is not None
                 else {}
             )
+            if id_allowlist is not None:
+                fts_kwargs["id_allowlist"] = id_allowlist
             results = db.search_notes(
                 search_term=search_term, limit=limit, **fts_kwargs
             )

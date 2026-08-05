@@ -191,6 +191,10 @@ class CustomTokenizerManager:
 
         return None
 
+    def has_tokenizers(self) -> bool:
+        """Cheap availability check (no metrics, no I/O) — are any mappings loaded?"""
+        return bool(self._model_mappings)
+
     def count_tokens(self, text: str, model: str, provider: str) -> Optional[int]:
         """
         Count tokens using a custom tokenizer if available.
@@ -419,6 +423,20 @@ def get_tokenizer_manager() -> CustomTokenizerManager:
     if _tokenizer_manager is None:
         _tokenizer_manager = CustomTokenizerManager()
     return _tokenizer_manager
+
+
+def custom_tokenizers_available() -> bool:
+    """Report whether a custom tokenizer could actually resolve a model.
+
+    Cheap gate for the token estimator: avoids invoking the metrics-logging
+    count path unless BOTH the ``tokenizers`` library is importable AND tokenizer
+    mappings are installed. Either one missing means the custom tier can only
+    return ``None``, so it is skipped.
+
+    Returns:
+        ``True`` only when the library is present and mappings are loaded.
+    """
+    return TOKENIZERS_AVAILABLE and get_tokenizer_manager().has_tokenizers()
 
 
 def count_tokens_with_custom(text: str, model: str, provider: str) -> Optional[int]:

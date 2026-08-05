@@ -15,6 +15,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, DataTable, Input, Static, TabbedContent, TabPane
 
 from ...Navigation.base_app_screen import BaseAppScreen
+from ...Navigation.screen_state_store import RuntimeIdentity
 from ...Workbench.workbench_state import RecoveryState, WorkbenchHeaderState, WorkbenchStatus
 from ...Workbench.workbench_widgets import DestinationHeader, RecoveryCallout
 from ....runtime_policy.bootstrap import set_authoritative_runtime_source
@@ -46,6 +47,8 @@ if TYPE_CHECKING:
 
 
 logger = logger.bind(module="SchedulesWorkbench")
+
+SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH = 120
 
 
 class SchedulesWorkbench(BaseAppScreen):
@@ -89,20 +92,25 @@ class SchedulesWorkbench(BaseAppScreen):
         self._latest_console_context_loaded = False
 
     def _active_server_id(self) -> str | None:
-        runtime_state = getattr(
-            getattr(self.app_instance, "runtime_policy", None), "state", None
-        )
+        runtime_policy = getattr(self.app_instance, "runtime_policy", None)
+        runtime_state = runtime_policy.state if runtime_policy is not None else None
         return getattr(runtime_state, "active_server_id", None)
+
+    @staticmethod
+    def _server_available(service: Any, active_server_id: str | None) -> bool:
+        """Return whether Schedules can switch ownership to a live server."""
+        return (
+            service is not None
+            and bool(active_server_id)
+            and service.server_client.notifications_service is not None
+        )
 
     def compose_content(self) -> ComposeResult:
         """Build the three-pane scheduling workbench layout."""
         service = self._service()
         owner_id = service.owner_id if service else "local"
         active_server_id = self._active_server_id()
-        server_available = (
-            service is not None
-            and service.server_client.notifications_service is not None
-        )
+        server_available = self._server_available(service, active_server_id)
         yield DestinationHeader(
             WorkbenchHeaderState(
                 title="Schedules",
@@ -127,29 +135,37 @@ class SchedulesWorkbench(BaseAppScreen):
                 ),
                 id="scheduling-recovery",
             )
-        yield SyncStatusWidget(
-            id="scheduling-sync-status",
-            current_owner=owner_id,
-            active_server_id=active_server_id,
-            server_available=server_available,
-        )
-        with TabbedContent(id="scheduling-tabs"):
-            with TabPane("Queue", id="scheduling-queue-tab"):
-                with Horizontal(id="scheduling-workbench"):
-                    with Vertical(id="scheduling-list-pane"):
-                        yield Static("Schedule Queue", id="scheduling-list-title")
-                        yield Input(
-                            placeholder="Filter: title, type, or status…",
-                            id="scheduling-queue-filter",
-                        )
-                        yield DataTable(id="scheduling-task-table", cursor_type="row")
-                        yield Static("", id="scheduling-pane-notice")
-                    with Vertical(id="scheduling-detail-pane"):
-                        yield TaskDetail(id="scheduling-task-detail")
-                    with Vertical(id="scheduling-inspector-pane"):
-                        yield TaskInspector(id="scheduling-task-inspector")
-            with TabPane("Conflicts", id="scheduling-conflicts-tab"):
-                yield ConflictsTab(id="scheduling-conflicts", sync_engine=service.sync_engine if service else None)
+        with Vertical(id="schedules-shell"):
+            yield SyncStatusWidget(
+                id="scheduling-sync-status",
+                current_owner=owner_id,
+                active_server_id=active_server_id,
+                server_available=server_available,
+            )
+            with TabbedContent(id="scheduling-tabs"):
+                with TabPane("Queue", id="scheduling-queue-tab"):
+                    with Horizontal(id="scheduling-workbench"):
+                        with Vertical(id="scheduling-list-pane"):
+                            yield Static(
+                                "Schedule Queue",
+                                id="scheduling-list-title",
+                                classes="scheduling-column-title",
+                            )
+                            yield Input(
+                                placeholder="Filter: title, type, or status…",
+                                id="scheduling-queue-filter",
+                            )
+                            yield DataTable(id="scheduling-task-table", cursor_type="row")
+                            yield Static("", id="scheduling-pane-notice")
+                        with Vertical(id="scheduling-detail-pane"):
+                            yield TaskDetail(id="scheduling-task-detail")
+                        with Vertical(id="scheduling-inspector-pane"):
+                            yield TaskInspector(id="scheduling-task-inspector")
+                with TabPane("Conflicts", id="scheduling-conflicts-tab"):
+                    yield ConflictsTab(
+                        id="scheduling-conflicts",
+                        sync_engine=service.sync_engine if service else None,
+                    )
 
     def _service(self) -> "SchedulingService | None":
         """Return the app's scheduling service, if available."""
@@ -163,12 +179,24 @@ class SchedulesWorkbench(BaseAppScreen):
 
     def on_mount(self) -> None:
         super().on_mount()
+        self._sync_responsive_workbench()
         self._register_footer_shortcuts()
         self._refresh_owner_select()
         self._refresh_conflicts_tab()
         table = self.query_one("#scheduling-task-table", DataTable)
         table.add_columns("Title", "Type", "Status", "Next Run")
         self.run_worker(self.load_tasks, exclusive=True)  # type: ignore[arg-type]
+
+    def on_resize(self, event: Any) -> None:
+        """Compact the three-pane layout when its normal minima cannot fit."""
+        self._sync_responsive_workbench()
+
+    def _sync_responsive_workbench(self) -> None:
+        """Keep the primary queue and detail action visible at narrow widths."""
+        self.set_class(
+            self.size.width <= SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH,
+            "schedules-workbench-compact",
+        )
 
     async def load_tasks(self) -> None:
         """Fetch reminders from the scheduling service and populate the table."""
@@ -282,7 +310,12 @@ class SchedulesWorkbench(BaseAppScreen):
             return None
         try:
             providers = getattr(self.app_instance, "providers_models", {}) or {}
-            has_recent_work = bool(getattr(self.app_instance, "_screen_states", {}))
+            runtime_identity = RuntimeIdentity.from_state(
+                self.app_instance.runtime_policy.state
+            )
+            has_recent_work = self.app_instance.screen_state_store.has_snapshots(
+                runtime_identity
+            )
             dashboard_input = build_dashboard_input(
                 providers_models=providers,
                 has_recent_work=has_recent_work,
@@ -478,10 +511,14 @@ class SchedulesWorkbench(BaseAppScreen):
             try:
                 if task_id is None:
                     await service.create_reminder(form_data)
-                    self.app_instance.notify("Reminder created.", severity="information")
+                    self.app_instance.notify(
+                        "Reminder created.", severity="information"
+                    )
                 else:
                     await service.update_reminder(task_id, form_data)
-                    self.app_instance.notify("Reminder updated.", severity="information")
+                    self.app_instance.notify(
+                        "Reminder updated.", severity="information"
+                    )
             except Exception:  # noqa: BLE001
                 logger.exception("Failed to save reminder")
                 self.app_instance.notify(
@@ -498,7 +535,9 @@ class SchedulesWorkbench(BaseAppScreen):
         event.stop()
         self.app.push_screen(
             ReminderForm(event.task),
-            callback=lambda result: self._on_reminder_form_result(result, event.task.id),
+            callback=lambda result: self._on_reminder_form_result(
+                result, event.task.id
+            ),
         )
 
     @on(EnableTaskRequested)
@@ -549,10 +588,8 @@ class SchedulesWorkbench(BaseAppScreen):
             self._sync_header_status("blocked", "Scheduling unavailable")
             return
         active_server_id = self._active_server_id()
-        server_available = service.server_client.notifications_service is not None
-        status.set_owner_state(
-            service.owner_id, active_server_id, server_available
-        )
+        server_available = self._server_available(service, active_server_id)
+        status.set_owner_state(service.owner_id, active_server_id, server_available)
         state = service.db.get_sync_state(service.owner_id) or {}
         sync_errors = state.get("sync_errors") or []
         status.update_status(
@@ -626,7 +663,7 @@ class SchedulesWorkbench(BaseAppScreen):
         if service is None:
             return
         active_server_id = self._active_server_id()
-        if active_server_id is None or service.server_client.notifications_service is None:
+        if not self._server_available(service, active_server_id):
             self.app_instance.notify("No server connection", severity="warning")
             return
         self._set_owner(f"server:{active_server_id}")
@@ -637,7 +674,11 @@ class SchedulesWorkbench(BaseAppScreen):
             return
         service.set_owner(new_owner)
         runtime_source = "server" if new_owner.startswith("server:") else "local"
-        set_authoritative_runtime_source(self.app_instance, runtime_source)
+        set_authoritative_runtime_source(
+            self.app_instance.runtime_policy,
+            runtime_source,
+            app_config=self.app_instance.app_config,
+        )
         self._refresh_owner_select()
         self.run_worker(self.load_tasks, exclusive=True)
         self._refresh_conflicts_tab()
@@ -676,7 +717,9 @@ class SchedulesWorkbench(BaseAppScreen):
         if service is None:
             return
         conflicts_tab = self.query_one("#scheduling-conflicts", ConflictsTab)
-        conflicts = service.db.get_conflicts(service.owner_id, primitive="reminder_task")
+        conflicts = service.db.get_conflicts(
+            service.owner_id, primitive="reminder_task"
+        )
         conflicts_tab.populate(conflicts)
         # Surface the conflict count on the tab label itself (UX-063).
         try:

@@ -10,9 +10,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button, Checkbox, Static
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
 
@@ -213,14 +213,75 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
                 ),
             )
             mcp_text = _screen_text(app)
+            # task-2241: the plain-English explainer leads the header (the
+            # old jargon purpose line is deleted; the mode chips already
+            # enumerate what the screen manages).
             assert (
-                "Manage MCP servers, scoped tools, permissions, and audit readiness."
+                "MCP (Model Context Protocol) lets chatbook use external "
+                "tools — most people never need to change anything here."
                 in mcp_text
             )
-            # The legacy panel's "Select Section: Inventory ..." line was
-            # retired with the MCP Hub workbench; the Unified MCP Overview
-            # section's next-step line is the surviving guidance copy.
-            assert "Next: select Inventory to inspect tools and actions." in mcp_text
+            assert "scoped tools" not in mcp_text
+            assert (
+                "Next: select Inventory to inspect tools and actions." not in mcp_text
+            )
+
+            # The legacy Inventory section was retired with the MCP Hub
+            # workbench. Recovery now starts in Servers mode: on a fresh
+            # install the lone built-in row is pre-selected (task-2240), so
+            # its detail view offers the turned-off built-in's opt-in
+            # Enabled checkbox directly (F-051) -- not a problem callout --
+            # and the overview's primary Add server action is one
+            # "← All servers" click away.
+            def mcp_recovery_controls_are_ready() -> bool:
+                enabled_boxes = list(app.screen.query("#mcp-builtin-enabled"))
+                return bool(
+                    enabled_boxes
+                    and enabled_boxes[0].region.width > 0
+                    and enabled_boxes[0].region.height > 0
+                )
+
+            await _wait_until(
+                pilot,
+                mcp_recovery_controls_are_ready,
+            )
+            builtin_enabled = app.screen.query_one("#mcp-builtin-enabled", Checkbox)
+            assert builtin_enabled.display is True
+            assert builtin_enabled.disabled is False
+            assert builtin_enabled.value is False
+
+            # The overview (Add server + the Enable affordance row) is one
+            # breadcrumb click away from the pre-selected detail view.
+            def mcp_overview_recovery_controls_are_ready() -> bool:
+                add_servers = list(app.screen.query("#mcp-add-server"))
+                enable_affordances = list(app.screen.query("#mcp-builtin-enable"))
+                return bool(
+                    add_servers
+                    and enable_affordances
+                    and add_servers[0].region.width > 0
+                    and add_servers[0].region.height > 0
+                    and enable_affordances[0].region.width > 0
+                    and enable_affordances[0].region.height > 0
+                )
+
+            await pilot.click("#mcp-detail-back")
+            await _wait_until(
+                pilot,
+                mcp_overview_recovery_controls_are_ready,
+            )
+            add_server = app.screen.query_one("#mcp-add-server", Button)
+            builtin_enable = app.screen.query_one("#mcp-builtin-enable", Button)
+            assert str(add_server.label).strip() == "Add server"
+            assert add_server.display is True
+            assert add_server.disabled is False
+            assert add_server.region.width > 0
+            assert add_server.region.height > 0
+            assert builtin_enable.display is True
+            assert builtin_enable.disabled is False
+            assert builtin_enable.region.width > 0
+            assert builtin_enable.region.height > 0
+            assert "turned off" in str(builtin_enable.label).lower()
+            assert "Enable" in str(builtin_enable.label)
 
             await app.handle_screen_navigation(NavigateToScreen("library"))
             await _wait_until(
@@ -247,5 +308,20 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             # landing copy is the surviving empty/no-source cue (design: the
             # canvas empty state carries the landing-page guidance).
             assert (
-                "Search, pick a content type, or ingest something new." in library_text
+                "Search everything, pick a section on the left, or add something new." in library_text
             )
+
+
+def test_phase6_mcp_recovery_doc_matches_current_hub_workflow() -> None:
+    mcp_row = _markdown_table_row(
+        _text(RECOVERY_DOC),
+        "MCP server management",
+    )
+
+    assert len(mcp_row) == 4
+    assert "`MCP: Not wired - MCP servers.`" in mcp_row[1]
+    assert "`Add server`" in mcp_row[1]
+    assert "`Import…`" in mcp_row[1]
+    assert "Open MCP → Servers" in mcp_row[2]
+    assert "then use Tools" in mcp_row[2]
+    assert "Inventory" not in " ".join(mcp_row)

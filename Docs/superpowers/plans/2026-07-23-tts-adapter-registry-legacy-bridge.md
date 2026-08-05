@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - This plan implements only delivery slice 1 from the approved design: registry authority, legacy containment, compatibility generation, and progress delivery.
-- Do not implement audio.cpp HTTP discovery, synthesis, configuration, process supervision, or STTS catalog-driven controls in TASK-402.
+- Do not implement audio.cpp HTTP discovery, synthesis, configuration, process supervision, or STTS catalog-driven controls in TASK-561.
 - Canonical provider IDs are exactly `openai`, `elevenlabs`, `kokoro`, `chatterbox`, `higgs`, and `alltalk` for this slice; `audio_cpp` is added by the next ordered slice.
 - The initial provider alias map is empty. Display labels never determine provider identity.
 - Runtime provider registration is sealed. The retained class-global wildcard registry is private to the legacy bridge and closed to new providers.
@@ -19,8 +19,13 @@
 - The default service concurrency limit remains four and is instance-scoped.
 - Existing callers retain `generate_audio_stream(request: OpenAISpeechRequest, internal_model_id: str)`.
 - Progress callbacks are operation-scoped. Sink exceptions are isolated and never fail synthesis.
+- Tests verify lazy materialization and lease release through observable
+  factory, retirement, and cleanup effects; do not add production
+  introspection methods used only by tests.
+- Architecture-boundary tests parse Python syntax rather than matching raw
+  source text. The final independent `rg` check remains required.
 - New registry, bridge, and service diagnostics may not log configuration
-  values or synthesis text; TASK-402 also removes the existing OpenAI
+  values or synthesis text; TASK-561 also removes the existing OpenAI
   API-key-fragment disclosure.
 - No new dependency is added.
 - ADR required: yes
@@ -764,19 +769,6 @@ class TTSAdapterRegistry:
             )
         return canonical_id
 
-    def materialized_provider_ids(self) -> tuple[str, ...]:
-        return tuple(
-            provider_id
-            for provider_id, slot in self._slots.items()
-            if slot.active is not None
-        )
-
-    def active_lease_count(self, provider_id: str) -> int:
-        slot = self._slots[self._resolve_id(provider_id)]
-        records = ([slot.active] if slot.active is not None else [])
-        records.extend(slot.retired)
-        return sum(record.leases for record in records)
-
     def configuration_revision(self, provider_id: str) -> int:
         return self._slots[self._resolve_id(provider_id)].revision
 
@@ -979,34 +971,74 @@ git commit -m "feat(tts): add sealed adapter registry"
 
 **Interfaces:**
 - Consumes: existing backend classes and `TTSBackendManager`.
-- Produces: bridge-only `BackendRegistry.ensure_builtins()`, `get()`, `list_backends()`, and `_reset_for_tests()`. Public `register()` rejects new runtime registrations.
+- Produces: bridge-only, thread-safe `BackendRegistry.ensure_builtins()`,
+  `get()`, and `list_backends()`. Public `register()` rejects new runtime
+  registrations. Tests reset private class state from a fixture; production
+  exposes no test-only reset hook.
 
-- [ ] **Step 1: Write quarantine and deterministic-reset tests**
+- [ ] **Step 1: Write quarantine, exact-route, manager, and concurrency tests**
 
 ```python
+EXPECTED_LEGACY_IDS = {
+    "openai_official_*",
+    "local_kokoro_*",
+    "elevenlabs_*",
+    "local_chatterbox_*",
+    "alltalk_*",
+    "local_higgs_*",
+}
+
+
+@pytest.fixture(autouse=True)
+def reset_legacy_registry_state():
+    BackendRegistry._registry.clear()
+    BackendRegistry._builtins_loaded = False
+    yield
+    BackendRegistry._registry.clear()
+    BackendRegistry._builtins_loaded = False
+
+
 def test_legacy_registry_is_closed_to_new_providers() -> None:
-    BackendRegistry._reset_for_tests()
     BackendRegistry.ensure_builtins()
 
     with pytest.raises(RuntimeError, match="sealed legacy registry"):
         BackendRegistry.register("new_provider_*", object)  # type: ignore[arg-type]
 
 
-def test_legacy_registry_reset_is_deterministic() -> None:
-    BackendRegistry._reset_for_tests()
+def test_legacy_registry_has_exact_routes_and_manager_lookup() -> None:
+    manager = TTSBackendManager({})
     first = tuple(BackendRegistry.ensure_builtins())
     second = tuple(BackendRegistry.ensure_builtins())
 
     assert first == second
     assert len(first) == len(set(first))
-    assert set(first) <= {
-        "openai_official_*",
-        "local_kokoro_*",
-        "elevenlabs_*",
-        "local_chatterbox_*",
-        "alltalk_*",
-        "local_higgs_*",
-    }
+    assert set(first) == EXPECTED_LEGACY_IDS
+    assert manager is not None
+    assert BackendRegistry.get("openai_official_tts-1") is OpenAITTSBackend
+
+
+def test_concurrent_manager_construction_loads_builtins_once(
+    monkeypatch,
+) -> None:
+    load_calls = 0
+    original = BackendRegistry._load_builtin_classes.__func__
+
+    def counted_load(cls):
+        nonlocal load_calls
+        load_calls += 1
+        original(cls)
+
+    monkeypatch.setattr(
+        BackendRegistry,
+        "_load_builtin_classes",
+        classmethod(counted_load),
+    )
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        managers = list(pool.map(lambda _: TTSBackendManager({}), range(16)))
+
+    assert len(managers) == 16
+    assert load_calls == 1
+    assert set(BackendRegistry.list_backends()) == EXPECTED_LEGACY_IDS
 ```
 
 - [ ] **Step 2: Run the focused tests and observe registration remains open**
@@ -1021,6 +1053,7 @@ Expected: the new-provider test fails because `BackendRegistry.register()` curre
 class BackendRegistry:
     _registry: dict[str, type[TTSBackendBase]] = {}
     _builtins_loaded = False
+    _load_lock = threading.Lock()
     _builtin_ids = frozenset({
         "openai_official_*",
         "local_kokoro_*",
@@ -1051,9 +1084,12 @@ class BackendRegistry:
 
     @classmethod
     def ensure_builtins(cls) -> tuple[str, ...]:
-        if not cls._builtins_loaded:
-            cls._load_builtin_classes()
-            cls._builtins_loaded = True
+        if cls._builtins_loaded:
+            return tuple(cls._registry)
+        with cls._load_lock:
+            if not cls._builtins_loaded:
+                cls._load_builtin_classes()
+                cls._builtins_loaded = True
         return tuple(cls._registry)
 
     @classmethod
@@ -1100,10 +1136,6 @@ class BackendRegistry:
                     "Legacy TTS backend is unavailable: {}", backend_id
                 )
 
-    @classmethod
-    def _reset_for_tests(cls) -> None:
-        cls._registry.clear()
-        cls._builtins_loaded = False
 ```
 
 Make `TTSBackendManager.__init__()` call `BackendRegistry.ensure_builtins()`.
@@ -1866,7 +1898,8 @@ async def test_compatibility_generator_closes_after_partial_consumption() -> Non
     await stream.aclose()
 
     assert adapter.response_close_calls == 1
-    assert service.registry.active_lease_count("openai") == 0
+    await service.registry.reconfigure_provider("openai", {"revision": 2})
+    assert adapter.close_calls == 1
 
 
 @pytest.mark.asyncio
@@ -1914,7 +1947,8 @@ async def test_compatibility_generator_releases_response_on_cancellation() -> No
         await task
     assert cancelled.is_set()
     assert adapter.response_close_calls == 1
-    assert service.registry.active_lease_count("openai") == 0
+    await service.registry.reconfigure_provider("openai", {"revision": 2})
+    assert adapter.close_calls == 1
 
 
 @pytest.mark.asyncio
@@ -1963,7 +1997,22 @@ def test_bootstrap_preserves_nested_raw_provider_configuration() -> None:
     }
 
 
-def test_default_bootstrap_has_six_exact_ids_and_no_aliases() -> None:
+def test_default_bootstrap_has_six_exact_ids_no_aliases_and_is_lazy(
+    monkeypatch,
+) -> None:
+    adapter_calls: list[str] = []
+
+    def factory_builder(provider_id: str):
+        def build(_config):
+            adapter_calls.append(provider_id)
+            return FakeAdapter(provider_id)
+
+        return build
+
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.adapter_bootstrap.make_legacy_adapter_factory",
+        factory_builder,
+    )
     service = build_default_tts_service({})
 
     assert tuple(
@@ -1977,8 +2026,12 @@ def test_default_bootstrap_has_six_exact_ids_and_no_aliases() -> None:
         "alltalk",
     )
     assert service.registry.aliases() == {}
-    assert service.registry.materialized_provider_ids() == ()
+    assert adapter_calls == []
 ```
+
+The concrete test may instead observe zero adapter-factory calls through a
+small test-side factory harness. Do not add a production materialization
+introspection method merely to support this assertion.
 
 - [ ] **Step 2: Write explicit application-binding tests**
 
@@ -2225,7 +2278,7 @@ git commit -m "refactor(tts): route service through adapters"
 
 **Interfaces:**
 - Consumes: `build_default_tts_service()`, `bind_tts_service()`,
-  `reset_tts_service_binding()`, and the
+  `close_tts_resources()`, and the
   `TTSService.generate_audio_stream(request, internal_model_id,
   progress_sink)` compatibility method.
 - Produces: `TldwCli.tts_service`, `_bind_tts_service()`, and
@@ -2234,21 +2287,19 @@ git commit -m "refactor(tts): route service through adapters"
 - [ ] **Step 1: Write application-ownership and boundary tests**
 
 ```python
-class FakeOwnedRegistry:
-    def materialized_provider_ids(self) -> tuple[str, ...]:
-        return ()
-
-
 class FakeOwnedService:
     def __init__(self) -> None:
-        self.registry = FakeOwnedRegistry()
         self.close_calls = 0
+        self.wait_closed_calls = 0
 
     async def close(self) -> None:
         self.close_calls += 1
 
+    async def wait_closed(self) -> None:
+        self.wait_closed_calls += 1
 
-def test_app_constructs_one_tts_service_without_materializing_adapters(
+
+def test_app_constructs_one_tts_service(
     monkeypatch,
 ) -> None:
     service = FakeOwnedService()
@@ -2259,7 +2310,6 @@ def test_app_constructs_one_tts_service_without_materializing_adapters(
 
     assert app.tts_service is service
     builder.assert_called_once_with(app.app_config)
-    assert service.registry.materialized_provider_ids() == ()
 
 
 @pytest.mark.asyncio
@@ -2272,18 +2322,25 @@ async def test_app_binding_and_close_are_explicit() -> None:
 
     await TldwCli._close_tts_service(owner)
     assert service.close_calls == 1
+    assert service.wait_closed_calls == 1
     with pytest.raises(RuntimeError, match="not bound"):
         await get_tts_service()
 
 
 def test_application_and_stts_do_not_reach_through_to_backend_manager() -> None:
-    app_source = Path("tldw_chatbook/app.py").read_text(encoding="utf-8")
-    stts_source = Path(
-        "tldw_chatbook/Event_Handlers/STTS_Events/stts_events.py"
-    ).read_text(encoding="utf-8")
-
-    assert ".backend_manager" not in app_source
-    assert ".backend_manager" not in stts_source
+    paths = (
+        Path("tldw_chatbook/app.py"),
+        Path("tldw_chatbook/Event_Handlers/STTS_Events/stts_events.py"),
+    )
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        accesses = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute)
+            and node.attr == "backend_manager"
+        ]
+        assert accesses == [], f"{path} reaches through to backend_manager"
 ```
 
 - [ ] **Step 2: Run the ownership tests and confirm direct access remains**
@@ -2291,7 +2348,7 @@ def test_application_and_stts_do_not_reach_through_to_backend_manager() -> None:
 Run: `pytest Tests/TTS/test_tts_app_ownership.py -q`
 
 Expected: tests fail because the app does not own a registry-backed service and
-both source files inspect `backend_manager`.
+both syntax trees contain direct `backend_manager` attribute access.
 
 - [ ] **Step 3: Construct and bind the service before screen work**
 
@@ -2314,18 +2371,21 @@ def _bind_tts_service(self) -> None:
 
 async def _close_tts_service(self) -> None:
     try:
-        await self.tts_service.close()
+        await close_tts_resources()
     finally:
-        reset_tts_service_binding(expected=self.tts_service)
         self._tts_binding_active = False
 
 
-async def on_mount(self) -> None:
+def on_mount(self) -> None:
     self._bind_tts_service()
 ```
 
-The current `TldwCli` class has no `on_mount()` method, so TASK-402 adds the
-single method above.
+Add the binding call at the start of the existing `TldwCli.on_mount()` method;
+do not add a second lifecycle method.
+
+`close_tts_resources()` retains and joins the service's definitive
+`wait_closed()` path before it clears the binding, including when the shutdown
+caller is cancelled. Do not duplicate that lifecycle logic in `TldwCli`.
 
 - [ ] **Step 4: Replace handler-owned progress callback mutation**
 
@@ -2349,6 +2409,11 @@ async for chunk in self._stts_service.generate_audio_stream(
     total_size = len(audio_data)
 ```
 
+Update the callback boundary to accept `TTSProgress` rather than the legacy
+progress dictionary. Translate its `status`, `fraction`, `processed`, `total`,
+and `metrics` fields into the existing widget updates without assuming that
+processed units are always chunks.
+
 Keep the existing UI scheduling inside `progress_callback`; do not move Textual
 widget references into the service or bridge.
 
@@ -2370,6 +2435,20 @@ their own managers through `TTSService.close()`. Also delete the
 `action_quit()` block labeled “Force cleanup Higgs backends immediately”;
 `on_unmount()` is the sole async TTS resource owner and already runs after quit
 is requested.
+
+Make the retained STTS handler cleanup real rather than leaving the existing
+`hasattr(..., "cleanup_tts_resources")` guard as a no-op. Track its
+fire-and-forget event tasks, cancel and join them idempotently, await the
+per-generation waiting-status task after cancellation, and remove only
+handler-created temporary playground audio. Generated audiobook paths are
+user-owned output and must never be deleted by handler cleanup.
+
+The handler cleanup must be retained and joined before propagating caller
+cancellation. Register a conversion destination as owned before awaiting
+ffmpeg, and terminate/join ffmpeg on cancellation so partial output cannot
+escape cleanup. Place the application-owned `_close_tts_service()` call in an
+outer `finally` so cancellation or failure in earlier handler cleanup cannot
+skip service shutdown.
 
 - [ ] **Step 6: Run ownership, service, STTS, and startup tests**
 
@@ -2479,8 +2558,9 @@ Add a “TTS adapter service” section to the module guide containing:
 
 ```markdown
 The application owns one sealed `TTSAdapterRegistry` and one `TTSService`.
-New callers use canonical provider IDs and `TTSService.synthesize()`. Existing
-callers may temporarily use `generate_audio_stream()` with an enumerated legacy
+Native adapters use canonical provider IDs and `TTSService.synthesize()`.
+Until `audio_cpp` lands, all currently registered providers are compatibility
+adapters and callers use `generate_audio_stream()` with an enumerated legacy
 internal model ID.
 
 The six legacy providers are separate adapter entries. Each adapter lazily owns
@@ -2507,14 +2587,32 @@ git commit -m "docs(tts): publish adapter service boundary"
 
 ---
 
-### Task 8: Verify compatibility and close TASK-402
+### Task 8: Verify compatibility and close TASK-561
 
 **Files:**
-- Modify: `backlog/tasks/task-402 - Establish-TTS-adapter-registry-authority-and-legacy-bridge.md`
+- Modify: `backlog/tasks/task-561 - Establish-TTS-adapter-registry-authority-and-legacy-bridge.md`
 
 **Interfaces:**
-- Consumes: all TASK-402 production and test changes.
+- Consumes: all TASK-561 production and test changes.
 - Produces: verified task notes, checked acceptance criteria, and Done status.
+
+- [x] **Step 0: Close final-review lifecycle and privacy regressions**
+
+Before repeating closeout verification, add failing tests and fixes proving:
+
+- cancelling `TTSAdapterLease.release()` while its registry callback is blocked
+  retains one definitive release task, permits later callers to join it, and
+  does not strand a retired adapter lease;
+- application shutdown first allows the legacy host's configured drain
+  interval, then cancels and joins any still-active legacy operation before
+  closing its manager, so `TTSService.wait_closed()` has a terminal bound even
+  when a stream consumer never drains normally; reconfiguration continues to
+  preserve in-flight operations;
+- saving STTS credentials logs only setting names and destinations, never the
+  submitted values, prefixes, suffixes, lengths, or hashes.
+
+Run the focused regression tests for each change before the full suites below,
+and obtain fresh correctness and quality review after they pass.
 
 - [ ] **Step 1: Run focused registry and bridge suites**
 
@@ -2581,7 +2679,7 @@ Confirm:
 
 ```bash
 rg -n "ADR-023|023-tts-adapter" \
-  "backlog/tasks/task-402 - Establish-TTS-adapter-registry-authority-and-legacy-bridge.md" \
+  "backlog/tasks/task-561 - Establish-TTS-adapter-registry-authority-and-legacy-bridge.md" \
   Docs/Development/TTS/TTS_MODULE_GUIDE.md
 rg -n "audio_cpp|audiocpp|AudioCpp" \
   tldw_chatbook/TTS Tests/TTS
@@ -2596,13 +2694,13 @@ slice.
 Use:
 
 ```bash
-backlog task edit 402 --notes "Implemented the app-owned sealed TTS adapter registry, operation leases and targeted provider retirement, six provider-scoped legacy adapters, enumerated compatibility routing, operation-scoped progress delivery, explicit application binding/shutdown, and the OpenAI key-prefix logging fix. Added focused registry, bridge, lifecycle, concurrency, privacy, and compatibility coverage. ADR-023 remains the governing architecture decision; audio.cpp native transport and supervision remain in later ordered tasks."
+backlog task edit 561 --notes "Implemented the app-owned sealed TTS adapter registry, operation leases and targeted provider retirement, six provider-scoped legacy adapters, enumerated compatibility routing, operation-scoped progress delivery, explicit application binding/shutdown, and the OpenAI key-prefix logging fix. Added focused registry, bridge, lifecycle, concurrency, privacy, and compatibility coverage. ADR-023 remains the governing architecture decision; audio.cpp native transport and supervision remain in later ordered tasks."
 ```
 
 After the verification evidence passes, check all eight criteria and set Done:
 
 ```bash
-backlog task edit 402 \
+backlog task edit 561 \
   --check-ac 1 \
   --check-ac 2 \
   --check-ac 3 \
@@ -2611,22 +2709,22 @@ backlog task edit 402 \
   --check-ac 6 \
   --check-ac 7 \
   --check-ac 8
-backlog task edit 402 \
+backlog task edit 561 \
   --check-dod 1 \
   --check-dod 2 \
   --check-dod 3 \
   --check-dod 4 \
   --check-dod 5
-backlog task edit 402 -s Done
-backlog task 402 --plain
+backlog task edit 561 -s Done
+backlog task 561 --plain
 ```
 
-Expected: TASK-402 shows status `Done`, all acceptance criteria checked, the
+Expected: TASK-561 shows status `Done`, all acceptance criteria checked, the
 implementation plan and notes present, and links to ADR-023 and this plan.
 
 - [ ] **Step 6: Commit task completion metadata**
 
 ```bash
-git add "backlog/tasks/task-402 - Establish-TTS-adapter-registry-authority-and-legacy-bridge.md"
+git add "backlog/tasks/task-561 - Establish-TTS-adapter-registry-authority-and-legacy-bridge.md"
 git commit -m "chore(tts): complete registry bridge task"
 ```

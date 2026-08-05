@@ -3,12 +3,94 @@
 
 import asyncio
 import json
-from typing import Dict, List, Optional, Any
+from typing import TYPE_CHECKING, Dict, List, Optional, Any
 from datetime import datetime, timedelta
-import aiohttp
 from loguru import logger
 
 from ..config import load_settings
+
+if TYPE_CHECKING:  # pragma: no cover - typing only, never imported at runtime
+    import aiohttp
+
+
+def _require_aiohttp():
+    """Import `aiohttp` on demand, with an actionable message when absent.
+
+    `aiohttp` is an OPTIONAL dependency -- it ships in the
+    ``[image_generation]``/``[all-tools]`` extras and is registered
+    ``"aiohttp": False`` in ``Utils/optional_deps.py``. Importing it at
+    module scope put it on the
+    mandatory startup path (this module <- ImageGenerationService <-
+    console_generate_image <- the default chat screen), so a plain install
+    without an extra died on boot with ``RuntimeError: Unable to resolve
+    default chat screen`` -- ``ScreenRoute.load_screen_class()`` swallows the
+    ModuleNotFoundError and returns None. Root-caused 2026-07-27.
+
+    Returns:
+        The imported ``aiohttp`` module.
+
+    Raises:
+        ImportError: If aiohttp is not installed. `ImageGenerationService.
+            initialize()` catches this and reports the service unavailable,
+            so SwarmUI image generation degrades instead of blocking startup.
+    """
+    aiohttp = _safe_import_aiohttp()
+    if aiohttp is None:
+        raise ImportError(
+            "SwarmUI image generation requires the optional 'aiohttp' package. "
+            "Install it with: pip install 'tldw_chatbook[image_generation]'"
+        )
+    return aiohttp
+
+
+def _safe_import_aiohttp():
+    """Import aiohttp through the shared optional-dependency helper.
+
+    Routes through ``Utils/optional_deps.get_safe_import`` rather than a
+    bare ``import aiohttp`` so the result is registered centrally in
+    ``DEPENDENCIES_AVAILABLE`` (per CLAUDE.md: "check with optional_deps.py
+    before importing"). The helper is imported lazily here to keep this
+    module's own import cost unchanged.
+
+    Note the deliberate ``feature_name`` choice: the default keys the result
+    as ``"aiohttp"``, the existing entry in ``DEPENDENCIES_AVAILABLE``. It must
+    not be keyed as ``"websearch"`` -- aiohttp also ships in that extra for the
+    article scraper, but ``check_websearch_deps()`` owns that key and derives
+    it from lxml/bs4/trafilatura/langdetect, so writing it here would report
+    web search as available on an aiohttp-only install.
+
+    ``"image_generation"`` (added in task-1262) would be collision-free, but
+    keying on the package rather than the feature keeps one entry accurate for
+    every consumer of aiohttp instead of one per feature. Nothing currently
+    reads either key; the extra a user should install is named in
+    `_require_aiohttp()`'s message.
+
+    Returns:
+        The ``aiohttp`` module, or ``None`` when it is not installed.
+    """
+    from ..Utils.optional_deps import get_safe_import
+
+    return get_safe_import("aiohttp")
+
+
+def _client_error_types() -> tuple:
+    """Return the aiohttp client-error types for use in an `except` clause.
+
+    `except` expressions are evaluated only when an exception is actually
+    raised, so this defers the aiohttp import to error-handling time. When
+    aiohttp is absent it returns an empty tuple, which matches nothing --
+    letting the ImportError raised by `_require_aiohttp()` fall through to
+    each caller's pre-existing generic handler (`health_check` -> False,
+    `generate_image` -> error dict) instead of being shadowed by a NameError
+    on an unbound `aiohttp`.
+
+    Returns:
+        ``(aiohttp.ClientError,)``, or ``()`` when aiohttp is not installed.
+    """
+    aiohttp = _safe_import_aiohttp()
+    if aiohttp is None:
+        return ()
+    return (aiohttp.ClientError,)
 
 
 class SwarmUIClient:
@@ -33,7 +115,7 @@ class SwarmUIClient:
         # Session management
         self._session_id: Optional[str] = None
         self._session_expires: Optional[datetime] = None
-        self._http_session: Optional[aiohttp.ClientSession] = None
+        self._http_session: Optional["aiohttp.ClientSession"] = None
 
         # Configuration
         self.timeout = media_config.get("timeout", 60)
@@ -53,6 +135,7 @@ class SwarmUIClient:
     async def connect(self):
         """Initialize HTTP session."""
         if not self._http_session:
+            aiohttp = _require_aiohttp()
             connector = aiohttp.TCPConnector(limit=10)
             timeout = aiohttp.ClientTimeout(total=self.timeout)
             self._http_session = aiohttp.ClientSession(
@@ -88,7 +171,7 @@ class SwarmUIClient:
                     )
                     return False
 
-        except aiohttp.ClientError as e:
+        except _client_error_types() as e:
             logger.error(f"SwarmUI health check failed: {e}")
             return False
         except Exception as e:
@@ -137,7 +220,7 @@ class SwarmUIClient:
                         f"Failed to get session: {response.status} - {error_text}"
                     )
 
-        except aiohttp.ClientError as e:
+        except _client_error_types() as e:
             logger.error(f"Connection error getting session: {e}")
             raise ConnectionError(f"Unable to connect to SwarmUI server: {e}")
 
@@ -284,7 +367,7 @@ class SwarmUIClient:
                             else:
                                 raise RuntimeError(error_msg)
 
-                except aiohttp.ClientError as e:
+                except _client_error_types() as e:
                     if attempt < self.max_retries - 1:
                         logger.warning(
                             f"Connection error on attempt {attempt + 1}: {e}"

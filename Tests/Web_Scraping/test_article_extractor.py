@@ -131,7 +131,11 @@ class TestURLValidation:
                 )
                 mock_browser.new_context = AsyncMock(return_value=mock_context)
                 mock_context.new_page = AsyncMock(return_value=mock_page)
-                mock_page.goto = AsyncMock()
+                # page.goto returns Optional[Response]; None (a real Playwright
+                # possibility for same-document nav) means "no redirect chain to
+                # validate" -- keeps this mock decoupled from the egress
+                # navigation-chain check, which has dedicated coverage elsewhere.
+                mock_page.goto = AsyncMock(return_value=None)
                 mock_page.content = AsyncMock(
                     return_value="<html><body>Test content</body></html>"
                 )
@@ -148,7 +152,11 @@ class TestPageTitleExtraction:
 
     def test_get_page_title_success(self):
         """Test successful page title extraction."""
-        with patch("requests.get") as mock_get:
+        # get_page_title now fetches through the egress guard, so patch that
+        # seam rather than requests.get (which it no longer calls directly).
+        with patch(
+            "tldw_chatbook.Web_Scraping.Article_Extractor_Lib.guarded_fetch_requests"
+        ) as mock_get:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_response.text = "<html><head><title>Test Title</title></head></html>"
@@ -159,7 +167,9 @@ class TestPageTitleExtraction:
 
     def test_get_page_title_no_title_tag(self):
         """Test page without title tag."""
-        with patch("requests.get") as mock_get:
+        with patch(
+            "tldw_chatbook.Web_Scraping.Article_Extractor_Lib.guarded_fetch_requests"
+        ) as mock_get:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_response.text = "<html><head></head></html>"
@@ -175,7 +185,9 @@ class TestPageTitleExtraction:
 
     def test_get_page_title_network_error(self):
         """Test get_page_title with network error."""
-        with patch("requests.get") as mock_get:
+        with patch(
+            "tldw_chatbook.Web_Scraping.Article_Extractor_Lib.guarded_fetch_requests"
+        ) as mock_get:
             import requests
 
             mock_get.side_effect = requests.RequestException("Network error")
@@ -326,7 +338,11 @@ class TestConcurrentOperations:
                 )
                 mock_browser.new_context = AsyncMock(return_value=mock_context)
                 mock_context.new_page = AsyncMock(return_value=mock_page)
-                mock_page.goto = AsyncMock()
+                # page.goto returns Optional[Response]; None (a real Playwright
+                # possibility for same-document nav) means "no redirect chain to
+                # validate" -- keeps this mock decoupled from the egress
+                # navigation-chain check, which has dedicated coverage elsewhere.
+                mock_page.goto = AsyncMock(return_value=None)
                 mock_page.content = AsyncMock(
                     return_value="<html><body>Test</body></html>"
                 )

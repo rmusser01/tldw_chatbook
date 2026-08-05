@@ -10,10 +10,15 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Library.library_media_state import LibraryMediaCanvasState
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
+    LIBRARY_EXPORT_SELECTED_TOOLTIP,
+)
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
-class LibraryMediaCanvas(Vertical):
+class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
     """Render the Library media list with a type filter and preview.
 
     Attributes:
@@ -115,6 +120,12 @@ class LibraryMediaCanvas(Vertical):
                     compact=True,
                 )
                 export_selected.disabled = self.canvas.selected_count == 0
+                # F-018: a disabled action says why.
+                export_selected.tooltip = (
+                    LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
+                    if export_selected.disabled
+                    else LIBRARY_EXPORT_SELECTED_TOOLTIP
+                )
                 yield export_selected
 
         status_text = self.canvas.status_copy or self.canvas.empty_copy

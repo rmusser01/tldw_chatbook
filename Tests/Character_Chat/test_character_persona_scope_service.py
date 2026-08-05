@@ -921,6 +921,22 @@ async def test_scope_service_routes_to_server_backend_when_mode_is_server():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_rejects_backend_with_only_retired_persona_list_method():
+    backend = type("RetiredPersonaBackend", (), {})()
+    retired_list = Mock(return_value=[{"id": "legacy-only"}])
+    setattr(backend, "_".join(("list", "user", "profiles")), retired_list)
+    scope_service = CharacterPersonaScopeService(
+        local_service=backend,
+        server_service=Mock(),
+    )
+
+    with pytest.raises(ValueError, match="Local personas are not available yet"):
+        await scope_service.list_persona_profiles(mode="local")
+
+    retired_list.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_character_persona_scope_service_denies_server_persona_listing_in_local_mode():
     scope_service = CharacterPersonaScopeService(
         local_service=Mock(),
@@ -2160,14 +2176,10 @@ async def test_scope_service_raises_when_local_backend_lacks_persona_method():
         server_service=Mock(),
     )
 
-    with pytest.raises(
-        ValueError, match="Local persona profiles are not available yet"
-    ):
+    with pytest.raises(ValueError, match="Local personas are not available yet"):
         await scope_service.list_persona_profiles(mode="local")
 
-    with pytest.raises(
-        ValueError, match="Local persona profiles are not available yet"
-    ):
+    with pytest.raises(ValueError, match="Local personas are not available yet"):
         await scope_service.get_persona_profile("persona-1", mode="local")
 
 

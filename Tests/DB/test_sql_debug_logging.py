@@ -12,6 +12,7 @@ These tests prove:
   * it is *still* never stringified in full even with a DEBUG sink attached
     (lazy logging only defers the *decision*; once made, the preview helper
     must summarize bytes rather than repr() them);
+  * message INSERT parameters are replaced by one fixed redaction marker;
   * the shared ``preview_params`` helper produces the documented shapes.
 """
 
@@ -111,6 +112,54 @@ class TestNoStringifyAtDefaultLevel:
             logger.remove(sink_id)
         captured = capsys.readouterr()
         assert "Executing SQL" in captured.err
+
+
+def test_add_message_debug_log_redacts_sensitive_insert_params(db):
+    conversation_id = db.add_conversation(
+        {
+            "title": "SQL logging privacy",
+            "character_id": None,
+        }
+    )
+    body_sentinel = "PRIVATE_MESSAGE_BODY_SENTINEL"
+    message_id_sentinel = "private-message-id-sentinel"
+    sender_sentinel = "private-sender-identity-sentinel"
+    client_id_sentinel = "private-client-identity-sentinel"
+    captured_messages = []
+    sink_id = logger.add(
+        captured_messages.append,
+        level="DEBUG",
+        format="{message}",
+        filter=lambda record: record["level"].name == "DEBUG",
+    )
+    try:
+        db.add_message(
+            {
+                "id": message_id_sentinel,
+                "conversation_id": conversation_id,
+                "sender": sender_sentinel,
+                "content": body_sentinel,
+                "client_id": client_id_sentinel,
+            }
+        )
+    finally:
+        logger.remove(sink_id)
+
+    insert_logs = [
+        str(message)
+        for message in captured_messages
+        if "INSERT INTO messages" in str(message)
+    ]
+    assert len(insert_logs) == 1
+    insert_log = insert_logs[0]
+    assert "Params: <redacted>" in insert_log
+    for sentinel in (
+        body_sentinel,
+        message_id_sentinel,
+        sender_sentinel,
+        client_id_sentinel,
+    ):
+        assert sentinel not in insert_log
 
 
 class TestPreviewParamsHelperShapes:

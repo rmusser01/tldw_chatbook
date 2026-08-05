@@ -23,10 +23,13 @@ from tldw_chatbook.Home.dashboard_state import (
     HomeDashboardInput,
 )
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+    HandoffChannel,
+)
 from tldw_chatbook.UI.Screens import home_screen as home_screen_module
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 
 HOME_TEST_SIZE = (160, 40)
@@ -545,7 +548,7 @@ async def test_home_screen_renders_unread_notification_snapshot_without_controls
 
 
 @pytest.mark.asyncio
-async def test_home_notification_primary_action_opens_notifications_inbox_context():
+async def test_home_notification_primary_action_opens_watchlists_notifications_context():
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
         model_ready=True,
@@ -561,7 +564,7 @@ async def test_home_notification_primary_action_opens_notifications_inbox_contex
         await pilot.pause(HOME_MOUNT_PAUSE)
 
     assert seen[-1] == "subscriptions"
-    assert app.pending_subscription_initial_tab == "notifications"
+    assert host.seen_contexts[-1] == {"section": "notifications"}
 
 
 @pytest.mark.asyncio
@@ -589,7 +592,7 @@ async def test_home_failed_watchlist_primary_action_opens_watchlist_runs_context
         await pilot.pause(HOME_MOUNT_PAUSE)
 
     assert seen[-1] == "subscriptions"
-    assert app.pending_subscription_initial_tab == "watchlist-runs"
+    assert host.seen_contexts[-1] == {"section": "runs"}
 
 
 @pytest.mark.asyncio
@@ -909,10 +912,48 @@ def test_app_detail_hook_stages_watchlist_runs_context_for_handled_watchlist_det
     )
 
     assert result.status is HomeControlResultStatus.HANDLED
-    assert app.pending_subscription_initial_tab == "watchlist-runs"
-    assert app.pending_subscription_watchlist_run_id == "local:watchlist_run:5"
     app.post_message.assert_called_once()
-    assert app.post_message.call_args.args[0].screen_name == "subscriptions"
+    navigation = app.post_message.call_args.args[0]
+    assert navigation.screen_name == "watchlists_collections"
+    assert navigation.screen_context == {
+        "section": "runs",
+        "backend": "local",
+        "run_id": "local:watchlist_run:5",
+    }
+    assert not hasattr(app, "pending_watchlists_section")
+    assert not hasattr(app, "pending_watchlists_run_id")
+
+
+def test_app_detail_hook_preserves_context_for_canonical_watchlists_route():
+    app = _build_test_app()
+    adapter = RecordingHomeActiveWorkAdapter(
+        responses={
+            HomeControlAction.OPEN_DETAILS: HomeControlResult(
+                action=HomeControlAction.OPEN_DETAILS,
+                status=HomeControlResultStatus.HANDLED,
+                message="Opening server Watchlists run.",
+                target_id="server:watchlist_run:8",
+                target_route="watchlists_collections",
+            ),
+        }
+    )
+    app.home_active_work_adapter = adapter
+    app.notify = Mock()
+    app.post_message = Mock()
+
+    result = app.open_active_home_item_details(
+        target_id="server:watchlist_run:8",
+        target_route="watchlists_collections",
+    )
+
+    assert result.status is HomeControlResultStatus.HANDLED
+    navigation = app.post_message.call_args.args[0]
+    assert navigation.screen_name == "watchlists_collections"
+    assert navigation.screen_context == {
+        "section": "runs",
+        "backend": "server",
+        "run_id": "server:watchlist_run:8",
+    }
 
 
 def test_app_console_hook_requires_adapter_launch_payload():
@@ -1074,10 +1115,10 @@ async def test_home_flashcards_due_row_and_control_route_one_hop_to_study():
         await pilot.click("#home-review-flashcards")
         await pilot.pause(HOME_MOUNT_PAUSE)
 
-    # open_home_flashcards_review() calls app.open_study_screen(initial_section=...),
-    # which is verified directly (app_instance is not the running harness App, so
-    # its own post_message() does not bubble into host.on_navigate_to_screen here).
-    assert app.pending_study_initial_section == "flashcards"
+    # The app instance is not the running harness App, so its navigation message
+    # does not bubble into host.on_navigate_to_screen. The one-hop action must
+    # still stage the memory-only Study section handoff for the real consumer.
+    assert app.pending_handoffs.has_pending(HandoffChannel.STUDY_INITIAL_SECTION)
 
 
 @pytest.mark.asyncio
@@ -1210,11 +1251,14 @@ async def test_home_flashcards_due_snapshot_reads_in_memory_db_via_real_worker()
 @pytest.mark.asyncio
 async def test_pending_console_launch_does_not_create_home_live_work_controls():
     app = _build_test_app()
-    app.pending_console_launch = {
-        "source": "workflows",
-        "title": "Daily digest",
-        "payload": {},
-    }
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "workflows",
+            "title": "Daily digest",
+            "payload": {},
+        },
+    )
     host = HomeHarness(app)
 
     async with host.run_test(size=HOME_TEST_SIZE) as pilot:
@@ -1223,6 +1267,7 @@ async def test_pending_console_launch_does_not_create_home_live_work_controls():
 
         assert len(home.query("#home-pause")) == 0
         assert len(home.query("#home-open-in-console")) == 0
+        assert app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
 
 # --- Library ingest jobs -> Home Running / Needs Attention (L3b Task 6) ---

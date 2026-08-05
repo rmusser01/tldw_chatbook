@@ -38,7 +38,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from math import ceil
 from pathlib import Path
-from typing import List, Tuple, Dict, Any, Optional, Union
+from typing import List, Tuple, Dict, Any, Iterator, Optional, Union
 
 #
 # Third-Party Libraries
@@ -49,7 +49,9 @@ from loguru import logger as logging
 # Local Imports
 from .sql_validation import validate_table_name, validate_column_name
 from .sql_logging import preview_params
+from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
 #
 ########################################################################################################################
 #
@@ -100,7 +102,7 @@ class ConflictError(DatabaseError):
 
 # --- Database Class ---
 class PromptsDatabase:
-    _CURRENT_SCHEMA_VERSION = 2
+    _CURRENT_SCHEMA_VERSION = 3
     # task-261: idle window within which the per-call `SELECT 1` liveness
     # ping is skipped for a recently-used thread-local connection (see
     # `_get_thread_connection`).
@@ -244,14 +246,14 @@ class PromptsDatabase:
             ValueError: If client_id is empty or None.
             DatabaseError: If database initialization or schema setup fails.
         """
-        # Determine if it's an in-memory DB and resolve the path
+        # Determine if it's an in-memory DB and normalize the path lexically.
         if isinstance(db_path, Path):
             self.is_memory_db = False
-            self.db_path = db_path.resolve()
+            self.db_path = lexical_path(db_path)
         else:  # Treat as string
             self.is_memory_db = db_path == ":memory:"
             if not self.is_memory_db:
-                self.db_path = Path(db_path).resolve()
+                self.db_path = lexical_path(db_path)
             else:
                 # For in-memory DB, we don't need a Path object
                 self.db_path = None
@@ -263,16 +265,6 @@ class PromptsDatabase:
         if not client_id:
             raise ValueError("Client ID cannot be empty or None.")
         self.client_id = client_id
-
-        # Ensure parent directory exists if it's a file-based DB
-        if not self.is_memory_db and self.db_path:
-            try:
-                self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            except OSError as e:
-                # Catch potential errors creating the directory (e.g., permissions)
-                raise DatabaseError(
-                    f"Failed to create database directory {self.db_path.parent}: {e}"
-                ) from e
 
         logging.info(
             f"Initializing PromptsDatabase object for path: {self.db_path_str} [Client ID: {self.client_id}]"
@@ -377,7 +369,8 @@ class PromptsDatabase:
 
         if is_closed:
             try:
-                conn = sqlite3.connect(
+                conn = connect_private_sqlite(
+                    "db.prompts.primary",
                     self.db_path_str,
                     detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
                     check_same_thread=False,  # Required for threading.local
@@ -391,7 +384,7 @@ class PromptsDatabase:
                 logging.debug(
                     f"Opened/Reopened SQLite connection to {self.db_path_str} [Client: {self.client_id}, Thread: {threading.current_thread().name}]"
                 )
-            except sqlite3.Error as e:
+            except (sqlite3.Error, PrivatePathError) as e:
                 logging.opt(exception=True).error(
                     f"Failed to connect to database at {self.db_path_str}: {e}"
                 )
@@ -433,36 +426,17 @@ class PromptsDatabase:
         logger.info(
             f"Starting database backup from '{self.db_path_str}' to '{backup_file_path}'"
         )
-        backup_conn: Optional[sqlite3.Connection] = None
         try:
-            # Ensure the backup file path is not the same as the source for file-based DBs
-            if (
-                not self.is_memory_db
-                and self.db_path.resolve() == Path(backup_file_path).resolve()
-            ):
-                logger.error(
-                    "Backup path cannot be the same as the source database path."
-                )
-                raise ValueError(
-                    "Backup path cannot be the same as the source database path."
-                )
-
             src_conn = self.get_connection()
-
-            backup_db_path_obj = Path(backup_file_path)
-            backup_db_path_obj.parent.mkdir(parents=True, exist_ok=True)
-
-            backup_conn = sqlite3.connect(str(backup_db_path_obj))
-
-            logger.debug(f"Source DB connection: {src_conn}")
-            logger.debug(
-                f"Backup DB connection: {backup_conn} to file {str(backup_db_path_obj)}"
+            backup_connection_to_private(
+                "db.prompts.backup",
+                src_conn,
+                self.db_path_str,
+                backup_file_path,
             )
 
-            src_conn.backup(backup_conn, pages=0, progress=None)
-
             logger.info(
-                f"Database backup successful from '{self.db_path_str}' to '{str(backup_db_path_obj)}'"
+                f"Database backup successful from '{self.db_path_str}' to '{backup_file_path}'"
             )
             return True
         except ValueError as ve:
@@ -478,14 +452,6 @@ class PromptsDatabase:
                 f"Unexpected error during database backup: {e}"
             )
             return False
-        finally:
-            if backup_conn:
-                try:
-                    backup_conn.close()
-                    logger.debug("Closed backup database connection.")
-                except sqlite3.Error as e:
-                    logger.warning(f"Error closing backup database connection: {e}")
-            # Source connection (src_conn) is managed by the thread-local mechanism.
 
     def check_integrity(self) -> bool:
         """
@@ -584,12 +550,23 @@ class PromptsDatabase:
 
     # --- Transaction Context ---
     @contextmanager
-    def transaction(self):
+    def transaction(self, immediate: bool = False) -> Iterator[sqlite3.Connection]:
+        """Run database work in a transaction.
+
+        Args:
+            immediate: Reserve SQLite's writer slot before yielding when true.
+
+        Yields:
+            The active SQLite connection.
+
+        Raises:
+            Exception: Re-raises the database operation error after rollback.
+        """
         conn = self.get_connection()
         in_outer = conn.in_transaction
         try:
             if not in_outer:
-                conn.execute("BEGIN")
+                conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
                 logging.debug("Started transaction.")
             yield conn  # yield connection
             if not in_outer:
@@ -633,6 +610,11 @@ class PromptsDatabase:
             "to_version": 2,
             "function": "_apply_migration_v1_to_v2",
             "description": "Add structured prompt metadata columns",
+        },
+        2: {
+            "to_version": 3,
+            "function": "_apply_migration_v2_to_v3",
+            "description": "Add prompt artifact type",
         },
     }
 
@@ -746,6 +728,41 @@ class PromptsDatabase:
             )
             raise DatabaseError(f"Migration v1->v2 failed: {e}") from e
 
+    def _apply_migration_v2_to_v3(self, conn: sqlite3.Connection):
+        """Add the first-class Prompt/Recipe discriminator atomically."""
+        logging.info(
+            f"Applying prompts migration from version 2 to 3 for DB: {self.db_path_str}..."
+        )
+        try:
+            with self.transaction():
+                conn.execute(
+                    """
+                    ALTER TABLE Prompts
+                    ADD COLUMN artifact_type TEXT NOT NULL DEFAULT 'prompt'
+                    CHECK(artifact_type IN ('prompt', 'recipe'))
+                    """
+                )
+                conn.execute("UPDATE schema_version SET version = 3 WHERE version = 2")
+                columns = {
+                    row["name"] for row in conn.execute("PRAGMA table_info(Prompts)")
+                }
+                if "artifact_type" not in columns:
+                    raise SchemaError(
+                        "Validation Error: Prompts table missing artifact_type column."
+                    )
+                version_in_tx = conn.execute(
+                    "SELECT version FROM schema_version LIMIT 1"
+                ).fetchone()
+                if not version_in_tx or version_in_tx["version"] != 3:
+                    raise SchemaError(
+                        "Schema version update to 3 did not take effect within transaction."
+                    )
+        except sqlite3.Error as e:
+            logging.opt(exception=True).error(
+                f"[Migration v2->v3] Failed during migration: {e}"
+            )
+            raise DatabaseError(f"Migration v2->v3 failed: {e}") from e
+
     def _initialize_schema(self):
         conn = self.get_connection()
         try:
@@ -831,6 +848,32 @@ class PromptsDatabase:
         if prompt_format not in {"legacy", "structured"}:
             raise InputError("Prompt format must be either 'legacy' or 'structured'.")
         return prompt_format
+
+    def _normalize_artifact_type(self, artifact_type: Optional[str]) -> str:
+        """Validate the durable Prompt/Recipe discriminator at the DB boundary."""
+        if artifact_type is None:
+            return "prompt"
+        if not isinstance(artifact_type, str) or artifact_type not in {
+            "prompt",
+            "recipe",
+        }:
+            raise InputError("artifact_type must be either 'prompt' or 'recipe'.")
+        return artifact_type
+
+    @staticmethod
+    def _normalize_expected_version(expected_version: Optional[int]) -> Optional[int]:
+        if expected_version is None:
+            return None
+        if type(expected_version) is not int or expected_version < 1:
+            raise InputError("expected_version must be a positive integer or None.")
+        return expected_version
+
+    @staticmethod
+    def _is_busy_snapshot_error(error: BaseException) -> bool:
+        """Identify SQLite's WAL stale-snapshot error without masking other I/O errors."""
+        return isinstance(error, sqlite3.OperationalError) and getattr(
+            error, "sqlite_errorcode", None
+        ) == getattr(sqlite3, "SQLITE_BUSY_SNAPSHOT", 517)
 
     def _serialize_prompt_definition(self, prompt_definition: Any) -> Optional[str]:
         if prompt_definition is None:
@@ -1150,6 +1193,8 @@ class PromptsDatabase:
         prompt_format: Optional[str] = None,
         prompt_schema_version: Optional[int] = None,
         prompt_definition: Optional[Any] = None,
+        artifact_type: Optional[str] = None,
+        serialize_create: bool = False,
     ) -> Tuple[Optional[int], Optional[str], str]:
         start_time = time.time()
 
@@ -1169,13 +1214,15 @@ class PromptsDatabase:
             if prompt_format is not None
             else None
         )
+        normalized_artifact_type = self._normalize_artifact_type(artifact_type)
 
         try:
-            with self.transaction() as conn:
+            with self.transaction(immediate=serialize_create) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    SELECT id, uuid, version, deleted, prompt_format, prompt_schema_version, prompt_definition
+                    SELECT id, uuid, version, deleted, prompt_format, prompt_schema_version,
+                           prompt_definition, artifact_type
                     FROM Prompts
                     WHERE name = ?
                     """,
@@ -1226,6 +1273,11 @@ class PromptsDatabase:
                         if prompt_definition is not None
                         else existing["prompt_definition"]
                     )
+                    resolved_artifact_type = (
+                        normalized_artifact_type
+                        if artifact_type is not None
+                        else existing["artifact_type"]
+                    )
                     update_data = {
                         "name": name,
                         "author": author,
@@ -1235,6 +1287,7 @@ class PromptsDatabase:
                         "prompt_format": resolved_prompt_format,
                         "prompt_schema_version": resolved_prompt_schema_version,
                         "prompt_definition": resolved_prompt_definition,
+                        "artifact_type": resolved_artifact_type,
                         "last_modified": current_time,
                         "version": new_version,
                         "client_id": client_id,
@@ -1250,6 +1303,7 @@ class PromptsDatabase:
                                           prompt_format=?,
                                           prompt_schema_version=?,
                                           prompt_definition=?,
+                                          artifact_type=?,
                                           last_modified=?,
                                           version=?,
                                           client_id=?,
@@ -1264,6 +1318,7 @@ class PromptsDatabase:
                             resolved_prompt_format,
                             resolved_prompt_schema_version,
                             resolved_prompt_definition,
+                            resolved_artifact_type,
                             current_time,
                             new_version,
                             client_id,
@@ -1324,6 +1379,7 @@ class PromptsDatabase:
                         "prompt_format": resolved_prompt_format,
                         "prompt_schema_version": prompt_schema_version,
                         "prompt_definition": normalized_prompt_definition,
+                        "artifact_type": normalized_artifact_type,
                         "uuid": prompt_uuid,
                         "last_modified": current_time,
                         "version": new_version,
@@ -1340,13 +1396,14 @@ class PromptsDatabase:
                                                 prompt_format,
                                                 prompt_schema_version,
                                                 prompt_definition,
+                                                artifact_type,
                                                 uuid,
                                                 last_modified,
                                                 version,
                                                 client_id,
                                                 deleted
                                             )
-                                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+                                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
                         (
                             name,
                             author,
@@ -1356,6 +1413,7 @@ class PromptsDatabase:
                             resolved_prompt_format,
                             prompt_schema_version,
                             normalized_prompt_definition,
+                            normalized_artifact_type,
                             prompt_uuid,
                             current_time,
                             new_version,
@@ -1411,6 +1469,10 @@ class PromptsDatabase:
                 return prompt_id, prompt_uuid, msg
 
         except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
+            if self._is_busy_snapshot_error(e):
+                e = ConflictError(
+                    "Prompt creation lost a WAL snapshot race.", "Prompts", name
+                )
             # Log error metrics
             duration = time.time() - start_time
             error_type = (
@@ -1571,7 +1633,10 @@ class PromptsDatabase:
                 ) from e
 
     def update_prompt_by_id(
-        self, prompt_id: int, update_data: Dict[str, Any]
+        self,
+        prompt_id: int,
+        update_data: Dict[str, Any],
+        expected_version: Optional[int] = None,
     ) -> Tuple[Optional[str], str]:
         """
         Updates an existing prompt identified by its ID.
@@ -1581,6 +1646,8 @@ class PromptsDatabase:
             prompt_id: The ID of the prompt to update.
             update_data: A dictionary containing fields to update (name, author, details, system_prompt, user_prompt).
                          Keywords are handled separately by `update_keywords_for_prompt`.
+            expected_version: The version captured by the caller, when updating an
+                existing working copy. The comparison occurs in this transaction.
 
         Returns:
             A tuple (updated_prompt_uuid, message_string).
@@ -1596,6 +1663,12 @@ class PromptsDatabase:
             not update_data["name"] or not update_data["name"].strip()
         ):
             raise InputError("Prompt name cannot be empty if provided for update.")
+        expected_version = self._normalize_expected_version(expected_version)
+        normalized_artifact_type = None
+        if "artifact_type" in update_data:
+            normalized_artifact_type = self._normalize_artifact_type(
+                update_data.get("artifact_type")
+            )
 
         current_time = self._get_current_utc_timestamp_str()
         client_id = self.client_id
@@ -1625,6 +1698,13 @@ class PromptsDatabase:
                 original_name = existing_prompt_state["name"]
                 current_version = existing_prompt_state["version"]
                 is_deleted = existing_prompt_state["deleted"]
+
+                if expected_version is not None and expected_version != int(
+                    current_version
+                ):
+                    raise ConflictError(
+                        "Prompt changed after it was opened.", "Prompts", prompt_id
+                    )
 
                 if is_deleted:  # Optional: decide if updating a soft-deleted prompt should undelete it.
                     # For now, let's assume we are updating an active prompt or an explicitly fetched soft-deleted one.
@@ -1680,6 +1760,9 @@ class PromptsDatabase:
                 if "prompt_definition" in update_data:
                     set_clauses.append("prompt_definition = ?")
                     params.append(normalized_prompt_definition)
+                if "artifact_type" in update_data:
+                    set_clauses.append("artifact_type = ?")
+                    params.append(normalized_artifact_type)
 
                 # Always update these
                 set_clauses.extend(
@@ -1767,6 +1850,10 @@ class PromptsDatabase:
                 )
 
         except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
+            if self._is_busy_snapshot_error(e):
+                e = ConflictError(
+                    "Prompt update lost a version race.", "Prompts", prompt_id
+                )
             # Log error metrics
             duration = time.time() - start_time
             error_type = (
@@ -2204,12 +2291,15 @@ class PromptsDatabase:
             raise ValueError("Per page must be >= 1")
         offset = (page - 1) * per_page
 
-        where_clause = "WHERE deleted = 0" if not include_deleted else ""
+        include_deleted_flag = 1 if include_deleted else 0
 
         try:
             with self.transaction() as conn:
                 cursor = conn.cursor()
-                cursor.execute(f"SELECT COUNT(*) FROM Prompts {where_clause}")
+                cursor.execute(
+                    "SELECT COUNT(*) FROM Prompts WHERE ? = 1 OR deleted = 0",
+                    (include_deleted_flag,),
+                )
                 total_items = cursor.fetchone()[0]
 
                 results_data = []
@@ -2219,10 +2309,17 @@ class PromptsDatabase:
                     # without an N+1 per-row `fetch_keywords_for_prompt`-
                     # style fetch for a whole page -- this is a single extra
                     # TEXT column on the same query, not a second query.
-                    query = f"""SELECT id, name, uuid, author, details, last_modified FROM Prompts
-                                {where_clause} ORDER BY last_modified DESC, id DESC
+                    query = """SELECT id, name, uuid, author, details, last_modified,
+                                version, artifact_type,
+                                CASE WHEN length(trim(coalesce(system_prompt, ''))) > 0 THEN 1 ELSE 0 END
+                                    AS has_system_prompt,
+                                CASE WHEN length(trim(coalesce(user_prompt, ''))) > 0 THEN 1 ELSE 0 END
+                                    AS has_user_prompt
+                                FROM Prompts
+                                WHERE ? = 1 OR deleted = 0
+                                ORDER BY last_modified DESC, id DESC
                                 LIMIT ? OFFSET ?"""
-                    cursor.execute(query, (per_page, offset))
+                    cursor.execute(query, (include_deleted_flag, per_page, offset))
                     results_data = [dict(row) for row in cursor.fetchall()]
 
             total_pages = ceil(total_items / per_page) if total_items > 0 else 0
@@ -2384,7 +2481,11 @@ class PromptsDatabase:
 
         offset = (page - 1) * results_per_page
 
-        base_select = "SELECT p.*"
+        base_select = """SELECT p.*,
+            CASE WHEN length(trim(coalesce(p.system_prompt, ''))) > 0 THEN 1 ELSE 0 END
+                AS has_system_prompt,
+            CASE WHEN length(trim(coalesce(p.user_prompt, ''))) > 0 THEN 1 ELSE 0 END
+                AS has_user_prompt"""
         count_select = "SELECT COUNT(p.id)"
         from_clause = "FROM Prompts p"
         conditions = []
@@ -2965,6 +3066,10 @@ def add_or_update_prompt(
     system_prompt: Optional[str] = None,
     user_prompt: Optional[str] = None,
     keywords: Optional[List[str]] = None,
+    prompt_format: Optional[str] = None,
+    prompt_schema_version: Optional[int] = None,
+    prompt_definition: Optional[Any] = None,
+    artifact_type: Optional[str] = None,
 ) -> Tuple[Optional[int], Optional[str], str]:
     """
     Adds a new prompt or updates an existing one (identified by name).
@@ -2981,6 +3086,10 @@ def add_or_update_prompt(
         user_prompt=user_prompt,
         keywords=keywords,
         overwrite=True,  # Key change: always overwrite/update if exists
+        prompt_format=prompt_format,
+        prompt_schema_version=prompt_schema_version,
+        prompt_definition=prompt_definition,
+        artifact_type=artifact_type,
     )
 
 

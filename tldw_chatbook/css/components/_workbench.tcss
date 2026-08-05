@@ -47,6 +47,15 @@
     min-height: 1;
 }
 
+/* task-523: red cue when the Roleplay Console handoff provider is unready.
+   `status-blocked` lands on the DestinationHeader (#personas-header); the
+   badge word is the child #workbench-header-status (also .ds-status-badge,
+   whose app-tier `color: $ds-text-primary` this id+class+descendant selector
+   outranks so the "Blocked" word actually turns red). */
+#personas-header.status-blocked .workbench-header-status {
+    color: $ds-status-blocked;
+}
+
 .workbench-command-strip,
 .workbench-mode-strip {
     height: 1;
@@ -74,8 +83,25 @@
     text-style: bold;
 }
 
+/* TASK-1801: this bar stacked THREE dimmers and measured 1.45:1 live --
+   `$ds-text-disabled` is an alpha token (~38%), `.is-disabled` adds
+   `opacity: 0.55`, and Textual's Button:disabled adds `text-style: bold dim`
+   plus `color: auto 50%`. None of that is visible from any single rule.
+
+   Note the class: this bar uses `is-disabled`, NOT `console-action-disabled`.
+   An earlier edit to the latter measured no change at all and was reverted
+   rather than shipped unverified.
+
+   Neutralising the opacity layer and stating the colour bright enough to
+   survive Textual's halving (which `text-style: none` does NOT clear --
+   verified by measuring the running app) gets this to ~3.6:1. This bar's
+   background is lighter than the composer menu's near-black, so 4.5:1 is
+   not reachable while `dim` still halves the result; DESIGN.md states 3:1
+   as the floor for disabled controls for exactly this reason. */
 .workbench-action.is-disabled {
-    color: $ds-text-disabled;
+    color: rgb(245,245,245);
+    opacity: 1;
+    text-style: none;
 }
 
 .workbench-mode {
@@ -211,4 +237,44 @@
 
 .density-compact .workbench-pane {
     padding: 0 1;
+}
+
+/* task-1232 round 1 (fleet-UX expert review F2, Critical fix): the F1 help
+   overlay used to be a bare, unstyled Vertical -- Textual's own defaults
+   (height: 1fr, overflow: hidden hidden) silently clipped anything past the
+   fold with no scrollbar. Mirrors ConsoleScopePickerModal's bounded-panel +
+   scrollable-body + pinned-footer shape (_agentic_terminal.tcss
+   #console-scope-picker-modal / #console-scope-picker-list). */
+WorkbenchHelpPanel {
+    align: center middle;
+}
+
+#workbench-help-panel {
+    width: 76;
+    max-width: 95%;
+    height: auto;
+    max-height: 90%;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    padding: 1 2;
+}
+
+#workbench-help-scroll {
+    height: 1fr;
+    min-height: 3;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+}
+
+#workbench-help-body {
+    width: 100%;
+    height: auto;
+}
+
+#workbench-help-close {
+    width: auto;
+    height: auto;
+    margin: 1 0 0 0;
 }

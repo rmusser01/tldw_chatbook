@@ -295,8 +295,10 @@ class TestImageProcessingEdgeCases:
 
                     # MIME type should be based on extension
                     assert mime_type.startswith("image/")
-                except Exception:
-                    # Some format/extension combinations might not work
+                except (ValueError, OSError):
+                    # Unsupported format/extension combinations surface as
+                    # these; other classes are crashes and now FAIL
+                    # (task-1464).
                     pass
 
 

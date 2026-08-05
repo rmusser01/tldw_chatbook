@@ -4,12 +4,20 @@
 
 **Date:** 2026-07-23
 
-**Related tasks:** TASK-505 through TASK-518; see the
+**Related tasks:** TASK-505, TASK-593 through TASK-605, TASK-1915; see the
 [delivery map](../plans/2026-07-23-stt-artifact-runtime-delivery-map.md)
 
-**Canonical ADR:** [ADR-025](../../../backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md)
+**Canonical ADR:** [ADR-025](../../../backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md), amended by [ADR-041](../../../backlog/decisions/041-direct-local-gguf-before-managed-acquisition.md) for direct-path-first transcribe.cpp delivery
 
 **Primary upstreams reviewed:** `onnx-asr` 0.12.0 and `transcribe.cpp` 0.1.3
+
+> **2026-08-02 delivery amendment:** transcribe.cpp first accepts an explicitly
+> configured, boundedly validated local GGUF path. Managed GGUF catalogs,
+> downloads, copying, and artifact promotion are deferred until that provider
+> works end to end. The first provider reuses the existing spawn-isolated
+> Library parse pool and one-heavy-job gate; the dedicated resident executor is
+> later hardening, not a prerequisite. See ADR-041 and the revised TASK-597
+> design.
 
 ## Executive decision
 
@@ -25,10 +33,10 @@ speech-to-text runtime for explicitly selected supported languages:
 - INT8 is the default Parakeet variant. F32 is an explicit, separately
   downloaded option.
 
-`transcribe.cpp` is adopted as an optional, curated GGUF breadth engine. It is
-not the default, the universal provider abstraction, or an automatic fallback.
-The initial catalog contains one representative model from four families:
-Whisper small, Canary 180M Flash, Moonshine tiny, and Qwen3-ASR 0.6B.
+`transcribe.cpp` is adopted first as an optional direct-local GGUF breadth
+engine. It is not the default, the universal provider abstraction, or an
+automatic fallback. A later managed-acquisition task adds the representative
+catalog: Whisper small, Canary 180M Flash, Moonshine tiny, and Qwen3-ASR 0.6B.
 
 Failures never silently cross engine boundaries. A failed eligible request
 offers an explicit **Retry with faster-whisper** action. A single
@@ -43,12 +51,14 @@ dependent artifacts such as the VAD model required for long-form Parakeet
 recognition. STT is the first consumer; moving LLM model management onto the
 service is a separate future task.
 
-Batch media ingestion is the first delivery surface. Audio/video work moves
-from the shared parse pool to a physically separate one-process heavy-media
-lane with one resident STT model. Legacy `parakeet` and `parakeet-mlx`
-implementations are removed in the landing release only after the specified
-batch, buffer, migration, platform, quality, performance, and recovery gates
-pass.
+Batch media ingestion is the first delivery surface. The first direct-local
+transcribe.cpp provider reuses the existing spawn-isolated parse pool and its
+one-heavy-job gate so usable transcription does not wait for a new executor.
+TASK-601 later moves local STT to a physically separate one-process
+heavy-media lane with resident-model reuse and finer cancellation. Legacy
+`parakeet` and `parakeet-mlx` implementations are removed in the landing
+release only after the specified batch, buffer, migration, platform, quality,
+performance, and recovery gates pass.
 
 ## Why this design
 
@@ -196,6 +206,14 @@ Provider metadata has two levels:
    compatible with the declaration. A mismatch fails closed and marks the
    artifact/runtime combination incompatible.
 
+For the first direct-local transcribe.cpp release, the declaration is scoped to
+one job because the user-selected GGUF determines the model family. The spawn
+worker admits and loads that model once, reads its authoritative capabilities,
+then constructs the exact declaration and sealed per-job registry. Coordinator
+preflight reports the already-loaded observation and equality-checks it before
+inference. This preserves the registry/coordinator contract without inventing
+capabilities before native load.
+
 Capability metadata distinguishes at least:
 
 - Explicit language support.
@@ -255,20 +273,28 @@ the retry action does not silently install it.
 
 #### `transcribe-cpp`
 
-transcribe.cpp is an optional provider using the official Python binding and
-managed GGUF artifacts. The binding is imported lazily and pinned to an exact
-pre-1.0 release. The provider:
+transcribe.cpp first ships as an optional, exact manual provider using one
+explicitly configured local GGUF path. The official Python binding is imported
+lazily inside the existing spawn-isolated ingestion worker and pinned to an
+exact pre-1.0 release. The first provider:
 
-- Accepts only cataloged or locally imported compatible GGUF artifacts.
+- Re-runs bounded direct-file admission immediately before the native load.
+- Loads once per ingest job, derives the exact per-job capabilities after load,
+  and closes the model at job end.
 - Converts the request-scoped audio representation to 16 kHz mono input when
   required.
 - Reports per-model capabilities instead of claiming that every upstream
   family has the same feature set.
-- Uses active cancellation when exposed by the binding.
-- Allows at most one active inference in its worker.
+- Uses the existing parse pool and one-heavy-job gate.
+- Returns a bounded, path-safe STT failure/action envelope through the existing
+  worker `error_detail` payload so the Library UI can offer **Choose another
+  GGUF…** or an eligible explicit **Retry with faster-whisper**.
 
-The curated catalog is described below. Arbitrary compatible GGUF imports are
-advanced, uncurated entries and never become automatic routing targets.
+TASK-601 later supplies the dedicated resident heavy executor, stronger
+heavy/light isolation, and finer cancellation. TASK-1915 later supplies the
+curated representative catalog, verified downloads, managed local-file import,
+and artifact lifecycle. Neither is a prerequisite for TASK-604's usable batch
+path, and direct local files never become automatic routing targets.
 
 #### Temporary legacy bridge
 
@@ -434,6 +460,13 @@ temporary directories carrying Chatbook's own marker and never traverses an
 unresolved broad path.
 
 ## Heavy-media execution lane
+
+This section is the TASK-601 hardening target used by Parakeet ONNX and by
+transcribe.cpp after migration. It is not a prerequisite for the first
+direct-local transcribe.cpp batch release: TASK-604 initially runs through the
+current spawn-isolated parse pool and its one-heavy-job gate, loads once per
+job, and relies on the existing pool monitor/shutdown behavior. The dedicated
+lane and residency below land later without changing the provider contract.
 
 ### Physical isolation
 
@@ -934,7 +967,37 @@ provider lists.
 
 ## Data flow
 
-### Interactive batch submission
+### Direct-local transcribe.cpp batch submission (TASK-604)
+
+1. User selects and admits an explicit local GGUF in provider settings.
+2. The real Library audio/video form submits an exact manual
+   `provider=transcribe-cpp` request through the production batch path.
+3. The existing spawn worker repeats admission, lazily imports the pinned
+   binding, loads the native model once, and reads authoritative capabilities.
+4. The worker constructs the exact per-job declaration and sealed registry.
+   Coordinator preflight returns the already-loaded observation and verifies
+   exact equality before inference.
+5. The adapter prepares 16 kHz mono audio, transcribes with that loaded model,
+   normalizes the result, and closes the model at job end.
+6. On success, the complete parsed payload returns to the existing parent-side
+   writer, which persists transcript content and normalized direct-local
+   provenance atomically.
+7. On failure, the worker extends its existing bounded `error_detail` payload
+   with a path-safe STT failure code and only eligible
+   `choose_another_gguf`/`retry_faster_whisper` actions. The parent job record
+   carries that envelope to the Library failure UI; raw paths and native
+   exceptions never cross the boundary.
+
+This first path has no managed artifact resolution, lease, resident-model
+reuse, dedicated executor, or runtime-version provenance migration. Its stable
+model identity is `local-gguf:<allowlisted-architecture>`, with null artifact
+identity. TASK-601 and TASK-1915 add the deferred hardening and acquisition
+features.
+
+### Managed Parakeet and hardened-executor batch submission
+
+The following is the later TASK-601/TASK-602/TASK-1915 target and does not gate
+TASK-604:
 
 1. Build a canonical request for each selected media item.
 2. Resolve missing language to `en`.
@@ -1313,30 +1376,28 @@ Before implementation planning:
 1. Create or select atomic Backlog tasks in dependency order.
 2. Link [ADR-025](../../../backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md)
    from each affected task and plan.
-3. Create one independently reviewable task/PR for each dependency-ordered
-   delivery slice:
-   1. Prove the cross-platform lease primitive.
-   2. Qualify Parakeet v2/v3 INT8 artifacts against F32.
-   3. Build shared artifact descriptors, activation/readiness, leases, and
-      deletion.
-   4. Add managed download, resume, verification, and recovery.
-   5. Renovate the browser for curated/remote/installed inventory.
-   6. Add bounded local GGUF import.
-   7. Add descriptor-backed local ONNX-bundle import.
-   8. Add coordinator and provider contracts.
-   9. Add durable transcript provenance and retry-lineage migration.
-   10. Add the generation-fenced heavy executor and subprocess-tree lifecycle.
-   11. Integrate Parakeet ONNX routing and batch ingestion.
-   12. Restore bounded dictation-buffer compatibility.
-   13. Add the curated optional transcribe.cpp provider.
-   14. Promote defaults, migrate configuration, and remove legacy Parakeet only
-       after every release gate passes.
-4. Record dependencies only on already-created lower-ID Backlog tasks; no task
+3. Apply [ADR-041](../../../backlog/decisions/041-direct-local-gguf-before-managed-acquisition.md)
+   to transcribe.cpp. Its dependency order is:
+   1. TASK-597 admits an explicit local GGUF without native imports or managed
+      storage.
+   2. TASK-604 delivers actual Library batch transcription through the existing
+      spawn worker and one-heavy-job gate.
+   3. TASK-601 may later migrate the provider to the dedicated resident
+      executor.
+   4. TASK-1915 adds curated verified downloads and managed local-file import
+      after the direct provider works.
+4. Keep the separate Parakeet/artifact slices independently reviewable:
+   qualify Parakeet v2/v3; build shared artifact descriptors and lifecycle; add
+   verified managed downloads and browser UI; add ONNX bundle import; land the
+   provider contracts and provenance; add the hardened executor; integrate
+   Parakeet ONNX batch and dictation; then promote defaults and remove legacy
+   providers only after every release gate passes.
+5. Record dependencies only on already-created lower-ID Backlog tasks; no task
    depends on a future task.
-5. Select the concrete cross-platform interprocess locking primitive and record
+6. Select the concrete cross-platform interprocess locking primitive and record
    it in the implementation plan without weakening this design's crash-release
    requirement.
-6. Pin exact artifact revisions, filenames, sizes, hashes, and licenses only
+7. Pin exact artifact revisions, filenames, sizes, hashes, and licenses only
    after revalidating them against the upstream release at implementation time.
 
 No production code is authorized by this design document alone.

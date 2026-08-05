@@ -37,16 +37,24 @@ class SkillFileFingerprint:
     file_type: str
     byte_length: int
     sha256: str
+    executable: bool = False
 
     def as_manifest_entry(self) -> dict[str, Any]:
-        """Return the JSON-safe manifest representation for this fingerprint."""
+        """Return the JSON-safe manifest representation for this fingerprint.
 
-        return {
+        The ``executable`` key is emitted ONLY when True so that a flat,
+        all-text, non-executable skill serializes byte-identically to the
+        pre-Spec-2 form (preserving existing manifests' HMAC validity).
+        """
+        entry = {
             "relative_path": self.relative_path,
             "file_type": self.file_type,
             "byte_length": self.byte_length,
             "sha256": self.sha256,
         }
+        if self.executable:
+            entry["executable"] = True
+        return entry
 
 
 @dataclass(frozen=True, slots=True)

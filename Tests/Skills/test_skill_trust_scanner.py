@@ -59,16 +59,22 @@ def test_scan_skill_directory_marks_unsupported_paths_without_text_or_fingerprin
 
     snapshot = scan_skill_directory("demo", skill_dir)
 
-    assert snapshot.unsupported_paths == (
-        "SKILL.md.tmp",
+    # SKILL.md.tmp is junk (case-insensitive .tmp suffix): pruned entirely,
+    # never recorded. nested/ignored.md is now walked recursively as a valid
+    # supporting text file. binary.md/nul.md are now fingerprinted as
+    # supporting_binary rather than rejected. Only the symlink and the
+    # invalid (space-containing) filename remain unsupported.
+    assert snapshot.unsupported_paths == ("linked.md", "unsafe name.md")
+    assert [item.relative_path for item in snapshot.fingerprints] == [
+        "SKILL.md",
         "binary.md",
-        "linked.md",
-        "nested",
+        "nested/ignored.md",
         "nul.md",
-        "unsafe name.md",
-    )
-    assert [item.relative_path for item in snapshot.fingerprints] == ["SKILL.md"]
-    assert snapshot.text_files == {"SKILL.md": "# Demo\n"}
+    ]
+    assert snapshot.text_files == {
+        "SKILL.md": "# Demo\n",
+        "nested/ignored.md": "ignored",
+    }
 
 
 def test_scan_skill_directory_rejects_case_variants_and_case_insensitive_temp_suffixes(
@@ -81,7 +87,9 @@ def test_scan_skill_directory_rejects_case_variants_and_case_insensitive_temp_su
 
     snapshot = scan_skill_directory("demo", skill_dir)
 
-    assert snapshot.unsupported_paths == ("notes.md.TMP",)
+    # notes.md.TMP is junk (case-insensitive .tmp suffix): pruned entirely,
+    # never recorded in unsupported_paths.
+    assert snapshot.unsupported_paths == ()
     assert [item.relative_path for item in snapshot.fingerprints] == ["SKILL.md"]
     assert snapshot.text_files == {"SKILL.md": "# Demo\n"}
 

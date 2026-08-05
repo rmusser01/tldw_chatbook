@@ -2,9 +2,11 @@
 """Pure loop tests with deterministic fake callables."""
 
 import json
+from collections import deque
 
 from tldw_chatbook.Agents.agent_models import (
     LOOP_DETECTION_N,
+    MAX_LOOP_PERIOD,
     RUN_CANCELLED,
     RUN_DONE,
     RUN_STUCK,
@@ -20,7 +22,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolResult,
     ToolSchema,
 )
-from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
+from tldw_chatbook.Agents.agent_runtime import LoopDeps, _detect_cycle, run_agent_loop
 
 CALC = ToolSchema(
     id="builtin:calculator",
@@ -250,6 +252,49 @@ def test_console_budget_floor_plus_two_extra_rounds_completes():
     assert len(out.steps) == 16
 
 
+def test_console_budget_step_cap_admits_a_full_model_turn_run():
+    """The Console budget's three caps must be sized together.
+
+    ``max_model_turns`` is meant to be the PRIMARY limiter, so ``max_steps``
+    must be large enough for a full run of fence tool rounds to reach it.
+    A fence round costs 3 steps (STEP_MODEL + STEP_TOOL_CALL +
+    STEP_TOOL_RESULT) and the wrap-up reply costs 1 more, so N model turns
+    need 3*(N-1)+1 steps. Raising the turn cap without raising the step cap
+    would silently move the wall back to the step check.
+    """
+    from tldw_chatbook.Chat.console_agent_bridge import CONSOLE_RUN_BUDGET
+
+    turns = CONSOLE_RUN_BUDGET.max_model_turns
+    assert CONSOLE_RUN_BUDGET.max_steps >= 3 * (turns - 1) + 1
+
+
+def test_console_budget_reaches_its_model_turn_cap_before_step_cap():
+    """Drive a real run to the Console turn cap: it must stop on the
+    model-turn budget, not the step budget."""
+    from tldw_chatbook.Chat.console_agent_bridge import CONSOLE_RUN_BUDGET
+
+    turns = CONSOLE_RUN_BUDGET.max_model_turns
+    # Never-ending distinct tool calls: only a budget can stop this run.
+    # Distinct args keep loop detection out of it.
+    scripted = [
+        ModelTurn(text=fence("calculator", {"expression": f"{i}+{i}"}))
+        for i in range(turns + 5)
+    ]
+    tick = iter(float(i) for i in range(1000))
+    out = run(
+        scripted,
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=CONSOLE_RUN_BUDGET,
+        ),
+        clock=lambda: next(tick),
+    )
+    assert out.steps[-1].summary == "model-turn budget exhausted"
+    assert sum(1 for s in out.steps if s.kind == STEP_MODEL) == turns
+
+
 def test_identical_consecutive_calls_trip_loop_detection():
     same = ModelTurn(text=fence("calculator", {"expression": "6*7"}))
     out = run(
@@ -263,6 +308,18 @@ def test_identical_consecutive_calls_trip_loop_detection():
     )
     assert out.status == RUN_STUCK
     assert out.steps[-1].kind == "error"
+    # The stuck summary is surfaced verbatim to the user (see
+    # console_chat_controller._agent_failure_visible_copy) -- it must name
+    # the looping tool and read as plain English, not "1-cycle" jargon
+    # (TASK-1231/F3 AC4).
+    summary = out.steps[-1].summary
+    assert "calculator" in summary
+    assert summary == (
+        "Agent stopped: it kept calling calculator with the same arguments "
+        f"({LOOP_DETECTION_N} times) without making progress."
+    )
+    assert "cycle" not in summary
+    assert "loop detected" not in summary
 
 
 def test_same_tool_different_args_is_not_stuck():
@@ -279,6 +336,90 @@ def test_same_tool_different_args_is_not_stuck():
         ),
     )
     assert out.status == RUN_DONE
+
+
+def _keys(*names):
+    # cycle-detection keys are (name, args-json); args identical here.
+    return deque([(n, "{}") for n in names], maxlen=LOOP_DETECTION_N * MAX_LOOP_PERIOD)
+
+
+def test_detect_cycle_period1_needs_three():
+    assert _detect_cycle(_keys("A", "A")) is None  # 2 identical: not yet
+    assert _detect_cycle(_keys("A", "A", "A")) == (1, 3)  # 3 identical: trip
+
+
+def test_detect_cycle_period2_trips_at_two_repeats():
+    assert _detect_cycle(_keys("A", "B", "A")) is None  # incomplete
+    assert _detect_cycle(_keys("A", "B", "A", "B")) == (2, 2)
+
+
+def test_detect_cycle_period3_trips_at_two_repeats():
+    assert _detect_cycle(_keys("A", "B", "C", "A", "B", "C")) == (3, 2)
+
+
+def test_detect_cycle_non_cyclic_is_none():
+    assert _detect_cycle(_keys("A", "B", "C", "D", "E")) is None
+
+
+def test_detect_cycle_period4_trips_at_two_repeats():
+    # Boundary: MAX_LOOP_PERIOD (4) is the longest period detected.
+    assert _detect_cycle(_keys("A", "B", "C", "D", "A", "B", "C", "D")) == (4, 2)
+
+
+def test_detect_cycle_period5_is_none_too_long():
+    # A period-5 cycle exceeds MAX_LOOP_PERIOD -- never checked, so it must
+    # never be detected even with two full repeats present.
+    assert (
+        _detect_cycle(_keys("A", "B", "C", "D", "E", "A", "B", "C", "D", "E"))
+        is None
+    )
+
+
+def test_alternating_calls_trip_loop_detection():
+    # A->B->A->B with IDENTICAL args must trip RUN_STUCK (was a gap: only
+    # consecutive-identical calls tripped detection before this fix).
+    a = ModelTurn(text=fence("calculator", {"expression": "6*7"}))
+    b = ModelTurn(text=fence("new_tool", {}))
+    out = run(
+        [a, b, a, b, ModelTurn(text="x")],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator", "new_tool"),
+            budget=RunBudget(max_steps=50),
+        ),
+    )
+    assert out.status == RUN_STUCK
+    assert out.steps[-1].kind == "error"
+    summary = out.steps[-1].summary
+    # User-comprehensible copy, not "N-cycle" jargon (TASK-1231/F3 AC4).
+    assert "loop detected" not in summary
+    assert summary.startswith("Agent stopped: it kept repeating")
+    assert "without making progress" in summary
+    # Both cycle members must be named -- a period>1 trip that only
+    # mentioned one tool would be just as unactionable as the old
+    # "N-cycle" jargon.
+    assert "calculator" in summary
+    assert "new_tool" in summary
+
+
+def test_same_tool_distinct_args_not_stuck():
+    # Four distinct calculator calls with different args: no repeating
+    # cycle at any period, so this must not trip RUN_STUCK.
+    turns = [
+        ModelTurn(text=fence("calculator", {"expression": f"{i}+{i}"}))
+        for i in range(4)
+    ] + [ModelTurn(text="done")]
+    out = run(
+        turns,
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(max_steps=50),
+        ),
+    )
+    assert out.status != RUN_STUCK
 
 
 def test_cancel_lands_at_step_boundary():
@@ -549,6 +690,56 @@ def test_fence_history_convention_unchanged():
     assert history[2]["content"].startswith("Tool result for")
 
 
+def test_token_budget_trips_to_stuck():
+    # Tool-calling turns that never finish; each carries 100 tokens so the
+    # cumulative spend crosses max_total_tokens before the (raised) step/turn caps.
+    turns = [
+        ModelTurn(text=fence("calculator", {"expression": str(i)}), tokens=100)
+        for i in range(50)
+    ]
+    cfg = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=("calculator", SPAWN_TOOL_NAME),
+        budget=RunBudget(max_steps=99, max_model_turns=99, max_total_tokens=250),
+    )
+    out = run(turns, config=cfg)
+    assert out.status == RUN_STUCK
+    assert out.steps[-1].summary == "token budget exhausted"
+    assert out.total_tokens >= 250
+
+
+def test_token_budget_sentinel_zero_never_trips():
+    # Huge per-turn tokens but max_total_tokens=0 (default) -> completes normally.
+    turns = [
+        ModelTurn(text=fence("calculator", {"expression": "1"}), tokens=10_000_000),
+        ModelTurn(text="all done", tokens=10_000_000),
+    ]
+    out = run(turns)  # default CFG budget has max_total_tokens=0
+    assert out.status == RUN_DONE
+    assert out.final_text == "all done"
+
+
+def test_token_budget_done_on_crossing_turn_completes():
+    # The final-answer turn itself crosses the budget -> still RUN_DONE
+    # (stop-the-loop, not fail-the-answer), and total_tokens is reported.
+    cfg = AgentConfig(model="m", system_prompt="s", budget=RunBudget(max_total_tokens=50))
+    out = run([ModelTurn(text="the answer", tokens=100)], config=cfg)
+    assert out.status == RUN_DONE
+    assert out.final_text == "the answer"
+    assert out.total_tokens == 100
+
+
+def test_run_outcome_reports_total_tokens_accounting():
+    turns = [
+        ModelTurn(text=fence("calculator", {"expression": "1"}), tokens=30),
+        ModelTurn(text="done", tokens=12),
+    ]
+    out = run(turns)
+    assert out.status == RUN_DONE
+    assert out.total_tokens == 42
+
+
 def test_load_tools_same_batch_duplicate_names_admit_one_into_active():
     """PR #655 review: the loop's own last line of defense must also dedupe
     by name WITHIN one load batch (a caller can hand the same schema back
@@ -571,3 +762,130 @@ def test_load_tools_same_batch_duplicate_names_admit_one_into_active():
         if s.kind == STEP_TOOL_RESULT and s.tool_name == "load_tools"
     ][0]
     assert load_result.result == "loaded: calculator"  # once, not twice
+
+
+def test_truncate_tool_result_bounds_content_and_names_a_continuation():
+    from tldw_chatbook.Agents.agent_runtime import _truncate_tool_result
+
+    out = _truncate_tool_result("x" * 5000, 100, "grep_files")
+
+    assert len(out) < 5000
+    assert out.startswith("x" * 100)
+    assert "grep_files" in out
+    assert "5000" in out
+
+
+def test_truncate_tool_result_is_a_noop_under_the_cap():
+    from tldw_chatbook.Agents.agent_runtime import _truncate_tool_result
+
+    assert _truncate_tool_result("small", 100, "t") == "small"
+
+
+def test_truncate_tool_result_zero_means_unlimited():
+    """0 restores today's behaviour exactly, for an operator who wants it."""
+    from tldw_chatbook.Agents.agent_runtime import _truncate_tool_result
+
+    assert _truncate_tool_result("x" * 5000, 0, "t") == "x" * 5000
+
+
+# --- integration: the truncation cap is actually wired at the append seam
+# (not just exercised as a pure helper). These drive run_agent_loop end to
+# end with a real RunBudget so deleting the `_truncate_tool_result(...)`
+# call site in the loop -- while leaving the helper itself intact -- fails
+# these tests even though the unit tests above would stay green.
+
+
+def test_run_agent_loop_truncates_oversized_tool_result_in_history():
+    """A tool that ignores pagination and returns far more than the cap
+    must still land in conversation history bounded, carrying the
+    continuation trailer, proving the call site (not just the helper) is
+    wired in."""
+    huge = "y" * 5000
+    seen_messages = []
+
+    def call_model(messages, active_schemas):
+        seen_messages.append(list(messages))
+        return (
+            ModelTurn(text=fence("calculator", {"expression": "1"}))
+            if len(seen_messages) == 1
+            else ModelTurn(text="done")
+        )
+
+    cfg = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_result_chars=100),
+    )
+    deps = make_deps([], invoke=lambda c: ToolResult(ok=True, content=huge))
+    deps.call_model = call_model
+    out = run_agent_loop(cfg, [{"role": "user", "content": "hi"}], [CALC], deps)
+
+    assert out.status == RUN_DONE and out.final_text == "done"
+    assert len(seen_messages) == 2
+    tool_result_message = seen_messages[1][-1]
+    assert tool_result_message["role"] == "user"
+    content = tool_result_message["content"]
+    assert content.startswith("Tool result for calculator: " + "y" * 100)
+    assert len(content) < len(huge)
+    assert "truncated" in content and "calculator" in content
+
+    result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
+    assert result_steps and "truncated" in result_steps[0].result
+
+
+def test_run_agent_loop_truncates_review_hook_refusal_in_history():
+    """The review-hook refusal path (verdict != "proceed") sets `content`
+    from the verdict string BEFORE the dispatch if/else, so it must pass
+    through the same cap as a dispatched tool result -- this was the
+    branch Finding 1 found silently uncapped."""
+    long_refusal = "Blocked: " + "z" * 5000
+    seen_messages = []
+    invoked = []
+
+    def call_model(messages, active_schemas):
+        seen_messages.append(list(messages))
+        return (
+            ModelTurn(text=fence("calculator", {"expression": "1"}))
+            if len(seen_messages) == 1
+            else ModelTurn(text="done")
+        )
+
+    cfg = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_result_chars=100),
+    )
+    deps = make_deps(
+        [],
+        invoke=lambda c: invoked.append(c.name) or ToolResult(ok=True, content="42"),
+    )
+    deps.call_model = call_model
+    deps.review_tool_calls = lambda batch: {"calculator": long_refusal}
+    out = run_agent_loop(cfg, [{"role": "user", "content": "hi"}], [CALC], deps)
+
+    assert out.status == RUN_DONE and out.final_text == "done"
+    assert (
+        invoked == []
+    )  # dispatch was skipped -- the refusal never reaches invoke_tool
+    tool_result_message = seen_messages[1][-1]
+    content = tool_result_message["content"]
+    assert content.startswith(
+        "Tool result for calculator: Blocked: " + "z" * (100 - len("Blocked: "))
+    )
+    assert len(content) < len(long_refusal)
+    assert "truncated" in content and "calculator" in content
+
+
+def test_console_budget_bounds_spend_not_only_time():
+    """Sub-agents inherit the turn budget by an explicit operator decision.
+
+    Worst case is max_model_turns * (1 + max_subagents) provider turns for
+    one message -- 90 at 30/2. The wall clock bounds that in TIME but not
+    in SPEND, so the Console budget carries a token ceiling.
+    """
+    from tldw_chatbook.Chat.console_agent_bridge import CONSOLE_RUN_BUDGET
+
+    assert CONSOLE_RUN_BUDGET.max_model_turns == 30
+    assert CONSOLE_RUN_BUDGET.max_total_tokens > 0

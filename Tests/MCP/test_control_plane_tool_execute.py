@@ -132,7 +132,10 @@ async def test_hub_tool_local_error_response_raises_and_records_failure(tmp_path
 
     records = _log_records(store)
     assert records and records[0]["ok"] is False
-    assert "boom from server" in (records[0]["error"] or "")
+    assert records[0]["status"] == "error"
+    assert records[0]["error_category"] == "execution_failed"
+    assert records[0]["exception_type"] == "RuntimeError"
+    assert "boom from server" not in repr(records[0])
 
 
 @pytest.mark.asyncio
@@ -149,10 +152,10 @@ async def test_hub_tool_builtin_routes_to_execute_tool(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_hub_tool_unknown_prefix_raises_value_error_mentioning_phase_4(tmp_path):
+async def test_hub_tool_unknown_prefix_raises_value_error_display_only(tmp_path):
     service, fake, client, store = _service(tmp_path)
 
-    with pytest.raises(ValueError, match="Phase 4"):
+    with pytest.raises(ValueError, match="display-only"):
         await service.test_hub_tool("server:remote-1", "search", {})
 
 
@@ -173,7 +176,9 @@ async def test_hub_tool_timeout_raises_and_records(tmp_path, monkeypatch):
 
     records = _log_records(store)
     assert records and records[0]["ok"] is False
-    assert "Timed out" in (records[0]["error"] or "")
+    assert records[0]["status"] == "timeout"
+    assert records[0]["error_category"] == "timeout"
+    assert records[0]["exception_type"] == "TimeoutError"
 
 
 @pytest.mark.asyncio
@@ -217,11 +222,7 @@ async def test_hub_tool_execution_log_property_raise_does_not_mask_result(
 
 
 @pytest.mark.asyncio
-async def test_hub_tool_result_excerpt_is_redacted_before_disk(tmp_path):
-    """I2: `build_record()`/`MCPExecutionLog.append()` only redact
-    `arguments`, never `result_excerpt` -- a tool result that happens to
-    echo back a secret-shaped key (e.g. an API key in its response payload)
-    must never reach the JSONL execution log unredacted."""
+async def test_hub_tool_result_is_replaced_by_type_and_size_before_disk(tmp_path):
     service, fake, client, store = _service(tmp_path)
     client.call_tool_response = {"api_key": "sk-secret123", "data": "ok"}
 
@@ -233,19 +234,17 @@ async def test_hub_tool_result_excerpt_is_redacted_before_disk(tmp_path):
     }  # returned raw, unredacted
     records = _log_records(store)
     assert records and records[0]["ok"] is True
-    excerpt = records[0]["result_excerpt"] or ""
-    assert "sk-secret123" not in excerpt
-    assert "***" in excerpt
-    assert "ok" in excerpt  # non-secret fields still recorded
+    assert records[0]["result_type"] == "dict"
+    assert records[0]["result_size"] == 2
+    assert "sk-secret123" not in repr(records[0])
+    assert "result_excerpt" not in records[0]
 
 
 @pytest.mark.asyncio
-async def test_hub_tool_string_false_setting_disables_argument_capture(
+async def test_hub_tool_argument_values_are_never_captured_regardless_setting(
     tmp_path, monkeypatch
 ):
-    """A mis-typed `log_tool_arguments = "false"` config string is truthy;
-    without bool coercion at the call site it would silently keep argument
-    capture ON against the user's stated intent (Qodo PR #639 finding)."""
+    """The obsolete capture setting cannot re-enable private values."""
     real_get_cli_setting = None
     import tldw_chatbook.MCP.unified_control_plane_service as ucps
 
@@ -263,4 +262,59 @@ async def test_hub_tool_string_false_setting_disables_argument_capture(
 
     records = _log_records(store)
     assert records and records[0]["ok"] is True
-    assert records[0]["arguments"] is None  # capture disabled despite truthy string
+    assert "arguments" not in records[0]
+    assert records[0]["argument_names"] == []
+    assert records[0]["unknown_argument_count"] == 1
+    assert "sensitive input" not in repr(records[0])
+
+
+# -- Task 5 (RAG-51): name the permission decision -- `test_hub_tool()` used
+# to hardcode `decision="allowed"` regardless of what actually authorized
+# the run; the Hub workbench now passes the real decision for an Ask-gated
+# tool the user just confirmed.
+
+
+@pytest.mark.asyncio
+async def test_hub_tool_default_decision_is_still_allowed(tmp_path):
+    """Every existing caller (no `decision=` kwarg) keeps recording
+    "allowed" -- byte-identical to the pre-Task-5 hardcoded value."""
+    service, fake, client, store = _service(tmp_path)
+
+    await service.test_hub_tool("local:docs", "search", {"q": "hi"})
+
+    records = _log_records(store)
+    assert records and records[0]["decision"] == "allowed"
+
+
+@pytest.mark.asyncio
+async def test_hub_tool_ask_approved_decision_is_recorded_not_allowed(tmp_path):
+    """A `decision="approved"` call (the Hub workbench's Ask-then-confirmed
+    case) records THAT decision in the execution log entry, not the
+    hardcoded "allowed" every run used to get regardless of gate."""
+    service, fake, client, store = _service(tmp_path)
+
+    result = await service.test_hub_tool(
+        "local:docs", "search", {"q": "hi"}, decision="approved"
+    )
+
+    assert result == client.call_tool_response
+    records = _log_records(store)
+    assert records and records[0]["decision"] == "approved"
+    assert records[0]["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_hub_tool_approved_decision_recorded_on_failure_too(tmp_path):
+    """The decision is recorded on a FAILED run too -- it describes why the
+    call dispatched, not whether it succeeded."""
+    service, fake, client, store = _service(tmp_path)
+    client.call_tool_error = "boom from server"
+
+    with pytest.raises(RuntimeError, match="boom from server"):
+        await service.test_hub_tool(
+            "local:docs", "search", {}, decision="approved"
+        )
+
+    records = _log_records(store)
+    assert records and records[0]["decision"] == "approved"
+    assert records[0]["ok"] is False

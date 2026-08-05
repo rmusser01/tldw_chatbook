@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from textual import on
 from textual.app import ComposeResult
 from textual.message import Message
@@ -93,8 +95,13 @@ class ModelSearchPicker(Widget):
         from tldw_chatbook.UI.Screens.provider_model_resolution import (
             resolve_provider_model_options,
         )
+
+        providers_models = getattr(self.app, "providers_models", {})
         options = await resolve_provider_model_options(
-            self.app, provider=provider, merge_cap=None,
+            providers_models if isinstance(providers_models, Mapping) else {},
+            getattr(self.app, "llm_provider_catalog_scope_service", None),
+            provider=provider,
+            merge_cap=None,
         )
         self._matches = [
             option.model_id for option in options if query in option.model_id.lower()

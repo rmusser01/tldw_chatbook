@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+import pytest
 
 from tldw_chatbook.Chat.answer_citations import (
     build_answer_citation_validation,
@@ -12,9 +12,6 @@ from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.citation_evidence_models import (
     EvidenceBundle,
     EvidenceReference,
-)
-from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
-    attach_current_handoff_citation_validation,
 )
 
 
@@ -95,6 +92,24 @@ def test_extract_citation_markers_preserves_first_seen_order_without_duplicates(
     )
 
     assert markers == ("S2", "S1")
+
+
+def test_extract_citation_markers_ignores_escaped_inline_and_fenced_code() -> None:
+    markers = extract_citation_markers(
+        "Escaped \\[S1]. Inline `[S2]`.\n```\n[S3]\n```\n~~~text\n[S4]\n~~~\nReal [S5]."
+    )
+
+    assert markers == ("S5",)
+
+
+def test_extract_citation_markers_preserves_legacy_bundle_label_grammar() -> None:
+    markers = extract_citation_markers(
+        r"Escaped \[S1_doc]. Inline `[S0]`."
+        "\n```\n[S01]\n```\n"
+        "Real [S1_doc], [S0], and [S01]. Duplicate [S1_doc]."
+    )
+
+    assert markers == ("S1_doc", "S0", "S01")
 
 
 def test_answer_citation_validation_marks_valid_unknown_and_uncited_refs() -> None:
@@ -232,6 +247,24 @@ def test_answer_citation_validation_quote_uses_question_and_exclamation_boundari
     assert result.citations[0].quote == "They did [S1]!"
 
 
+@pytest.mark.parametrize(
+    "answer_text",
+    (
+        r"Example \[S1]. Real source [S1]!",
+        "Example `[S1]`. Real source [S1]!",
+        "Example:\n```\n[S1]\n```\nReal source [S1]!",
+    ),
+    ids=("escaped", "inline-code", "fenced-code"),
+)
+def test_answer_citation_quote_uses_first_eligible_marker(answer_text: str) -> None:
+    result = build_answer_citation_validation(
+        answer_text,
+        _bundle(_reference("S1")),
+    )
+
+    assert result.citations[0].quote == "Real source [S1]!"
+
+
 def test_chat_handoff_model_context_uses_answer_citation_prompt_contract() -> None:
     payload = ChatHandoffPayload(
         source="search-rag",
@@ -250,55 +283,3 @@ def test_chat_handoff_model_context_uses_answer_citation_prompt_contract() -> No
         "Cite each evidence-supported claim with its bracketed source label" in context
     )
     assert "Content:\nRetrieved content" in context
-
-
-def test_attach_current_handoff_citation_validation_sets_widget_and_app_payload() -> (
-    None
-):
-    app = SimpleNamespace(
-        _current_chat_handoff_payload=ChatHandoffPayload(
-            source="search-rag",
-            item_type="rag-result",
-            title="Incident Review",
-            body="Retrieved content",
-            metadata={
-                "evidence_bundle": _bundle(
-                    _reference("S1", source_id="note-1")
-                ).to_payload(),
-            },
-        ).to_dict()
-    )
-    widget = SimpleNamespace()
-
-    validation = attach_current_handoff_citation_validation(
-        app,
-        widget,
-        "The credential expired [S1].",
-    )
-
-    assert validation is not None
-    assert validation.status == "validated"
-    assert widget.citation_validation.status == "validated"
-    assert widget.citation_refs[0].evidence_id == "S1"
-    assert app._current_chat_answer_citation_validation["status"] == "validated"
-
-
-def test_attach_current_handoff_citation_validation_clears_stale_app_payload_without_evidence() -> (
-    None
-):
-    app = SimpleNamespace(
-        _current_chat_handoff_payload=None,
-        _current_chat_pending_evidence_bundle=None,
-        _current_chat_answer_citation_validation={"status": "validated"},
-    )
-    widget = SimpleNamespace()
-
-    validation = attach_current_handoff_citation_validation(
-        app,
-        widget,
-        "Ungrounded answer.",
-    )
-
-    assert validation is None
-    assert app._current_chat_answer_citation_validation is None
-    assert not hasattr(widget, "citation_validation")

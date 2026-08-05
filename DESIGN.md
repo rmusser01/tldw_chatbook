@@ -149,6 +149,31 @@ The palette is semantic and restrained: dark terminal surfaces by default, brigh
 
 **The Rare Neon Rule.** Bright accent color is earned by state or action. It must not become decoration, background wash, or page mood.
 
+**The Legible Disabled Rule (TASK-1801).** A disabled control's label must render at **at least 3:1 against its own background**, measured in a running terminal — not inferred from token names. Disabled is a state to *read*, not a state to *guess at*: several surfaces communicate a restriction only through the disabled control's own label ("writes a file to disk — not available in a temporary chat"), so an illegible disabled label silently voids that explanation.
+
+Two dimmers compound here and neither is visible in the stylesheet:
+
+1. the theme sets `text-disabled: auto 38%` — alpha over the panel, ~3.4:1 on its own;
+2. Textual's `Button:disabled` adds `text-style: bold dim` *and* `color: auto 50%` (`textual/widgets/_button.py`), roughly halving the result again.
+
+Together these put **all 58 shipped themes below 3:1**, including `high_contrast_yellow_black`. Measured live, the composer menu's disabled rows rendered at **1.05:1 and 1.25:1**.
+
+Two consequences for anyone touching disabled styling:
+
+- **`text-style: none` does not clear Textual's `dim`.** Verified by measuring the running app; a rule that relies on it will still render at roughly half the colour it declares. State the colour bright enough to survive the halving.
+- **Widget `DEFAULT_CSS` cannot override it.** Both a screen's `DEFAULT_CSS` and `Button`'s sit in the same tier, where `Button` wins for a `Button`. Disabled overrides belong in the app stylesheet.
+
+A third layer exists on some surfaces: the shared Workbench action bar also carries `.is-disabled { opacity: 0.55 }`, stacking **three** dimmers and measuring 1.45:1. Note the class — that bar uses `is-disabled`, not `console-action-disabled`; editing the wrong one measures no change at all.
+
+Measured results after applying this rule:
+
+| surface | before | after |
+| --- | --- | --- |
+| composer menu rows | 1.25:1 | 4.80:1 |
+| Workbench action bar | 1.45:1 | 6.74:1 |
+
+Disabled must still read as clearly dimmer than enabled — enabled controls measure 10.6:1 to 12.6:1, so these targets leave the states obviously distinct.
+
 ## 3. Typography
 
 **Display Font:** terminal emulator monospace
@@ -208,6 +233,51 @@ This system does not use shadow elevation as a primary depth cue. Depth is conve
 - **Style:** `height: 3`, `width: 100%`, solid `$primary` border or round `$surface-lighten-1` border, with `padding: 0 1`.
 - **Focus:** border or outline shifts to `$accent`; background may use `$accent 10%` for focus visibility.
 - **Error / Disabled:** errors use `$error` border plus `$error 10%` background. Disabled controls use lowered opacity, `$surface-darken-1`, and `$text-disabled`.
+
+### Dense-form control convention (one-row fields)
+
+Dense workbench forms (Settings and its widgets) cannot afford full
+borders: a Textual border costs a row above and below, tripling a
+one-row field. The convention for those fields (task-1586):
+
+- **Rest:** every editable field carries a one-column left edge
+  (`border-left: solid $ds-control-edge`). The edge's *presence* is the
+  carrier — a structural marker separating controls from prose — so
+  color is reinforcement, never the sole signal. Muted at rest.
+- **Focus:** the edge flips to `thick $ds-action-focus` and the
+  background swaps to `$ds-focus-bg` (the task-345 focus surface) with
+  bold text. Three concurrent signals: edge weight, background, weight.
+- **Toggles and switches:** always paired with a text-state word
+  ("On"/"Off", "Enabled"/"Disabled") — the word is the state.
+- **Inert actions:** disabled buttons carry a text annotation for *why*
+  ("— no changes"), never dimming alone.
+- **No underline on fields:** underlined placeholders read as links
+  (task-185).
+- **Persistence badge:** the State bar leads with the category's save
+  model in the same position everywhere ("Draft — save with s" /
+  "Applies immediately" / "Auto-saved" / "Managed in editor" /
+  "Per-item Save/Reset" / "Validate, then Save" / "Read-only here") —
+  five save models coexist on the Settings screen, and the badge is what
+  keeps their differing footer keys from reading as inconsistency
+  (task-1717).
+- **Fold indicator:** scrollable inspector columns reserve a bottom row
+  ("▼ more — scroll…") shown only while content overflows, so a
+  mid-sentence clip is never the only signal that more exists
+  (task-1623).
+- **Pinned contract row:** the State bar (badge + scope) is pinned
+  between the pane title and the scrollable body, never inside it — the
+  save contract must not scroll away while the user is acting on the
+  category (task-1716).
+- **Field-level search:** "/" indexes field labels as well as category
+  names and owned config keys; a field hit echoes "Category › Field" and
+  Enter lands focus ON the field, which also fires its guidance
+  (task-1715).
+- **Inert destructive actions** carry their reason in the label
+  ("Delete — built-in") and are disabled, never merely red (task-1643).
+- **Voice carriers (task-1625):** the three pane titles are the one
+  Focus Phosphor accent on the screen; the State bar sits on the focus
+  steel at low alpha; toasts carry a full severity-tinted round border,
+  never a side stripe.
 
 ### Navigation
 

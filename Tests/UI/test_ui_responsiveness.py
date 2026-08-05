@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 
 
@@ -236,71 +238,105 @@ def test_console_transcript_sync_timer_updates_responsiveness_monitor():
     assert stopped == [True]
 
 
+def _make_sync_probe_screen(monitor):
+    """A ChatScreen stand-in for exercising the console-sync recording bracket.
+
+    task-1469: earlier versions hand-stubbed the delegation stages and broke
+    (or silently rotted) every time `_sync_native_console_chat_ui` grew one —
+    it went 12 -> ~25 stages while the test was dormant, and the re-enumerated
+    fix inherits the same treadmill. `MagicMock(spec=ChatScreen)` auto-stubs
+    every CURRENT stage — async defs become AsyncMocks — and keeps tracking
+    the class as it evolves; only the recording bracket itself is real (bound
+    methods + a real monitor), because that bracket is this test's subject.
+    """
+    from functools import partial
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = MagicMock(spec=ChatScreen)
+    screen._console_sync_in_progress = False
+    screen._console_sync_requested = False
+    screen.app_instance = SimpleNamespace(ui_responsiveness_monitor=monitor)
+    screen._ui_responsiveness_monitor = partial(
+        ChatScreen._ui_responsiveness_monitor, screen
+    )
+    screen._record_ui_worker_started = partial(
+        ChatScreen._record_ui_worker_started, screen
+    )
+    screen._record_ui_worker_finished = partial(
+        ChatScreen._record_ui_worker_finished, screen
+    )
+    return screen
+
+
+@pytest.mark.asyncio
 async def test_console_sync_records_worker_lifecycle():
+    """The sync brackets its stage pipeline in started/finished recording."""
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     monitor = UIResponsivenessMonitor(enabled=True)
-    screen = ChatScreen.__new__(ChatScreen)
-    screen.app_instance = SimpleNamespace(ui_responsiveness_monitor=monitor)
-    screen._console_sync_in_progress = False
-    screen._console_sync_requested = False
-    screen._last_console_rail_state = None
-    screen.run_worker = lambda *_args, **_kwargs: None
+    screen = _make_sync_probe_screen(monitor)
 
-    def assert_worker_active():
-        assert monitor.snapshot().active_workers == 1
-
-    async def async_noop():
-        return None
-
-    screen._sync_console_chat_core_state = assert_worker_active
-    screen._sync_console_session_draft = lambda: None
-    screen._refresh_active_dictionaries_summary_if_scope_changed = async_noop
-    screen._sync_console_control_bar = lambda _rail_state: None
-    screen._sync_console_settings_summary = lambda: None
-    screen._sync_console_mode_bar = lambda: None
-    screen._sync_console_native_session_tabs = async_noop
-    screen._sync_console_workspace_context = lambda: None
-    screen._sync_native_console_transcript_to_legacy_surface = async_noop
-    screen._sync_console_rail_visibility = lambda _state: None
-    screen._current_console_rail_state = lambda: object()
-    screen._dispatch_console_rail_preference_prune = lambda: None
+    during = []
+    screen._sync_console_chat_core_state = lambda: during.append(
+        monitor.snapshot().active_workers
+    )
 
     await ChatScreen._sync_native_console_chat_ui(screen)
+
+    assert during == [1], "worker not recorded as active while stages ran"
+    assert monitor.snapshot().active_workers == 0
+
+
+@pytest.mark.asyncio
+async def test_console_sync_records_finished_even_when_a_stage_raises():
+    """A failing stage must not leak an active-worker record."""
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    monitor = UIResponsivenessMonitor(enabled=True)
+    screen = _make_sync_probe_screen(monitor)
+    screen._sync_console_chat_core_state = MagicMock(
+        side_effect=RuntimeError("stage boom")
+    )
+
+    with pytest.raises(RuntimeError, match="stage boom"):
+        await ChatScreen._sync_native_console_chat_ui(screen)
 
     assert monitor.snapshot().active_workers == 0
 
 
-async def test_console_session_surface_records_tab_mount_churn():
+@pytest.mark.asyncio
+async def test_console_sync_reentry_defers_without_recording():
+    """A sync entered while one is in progress defers and records nothing."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    monitor = UIResponsivenessMonitor(enabled=True)
+    screen = _make_sync_probe_screen(monitor)
+    screen._console_sync_in_progress = True
+
+    await ChatScreen._sync_native_console_chat_ui(screen)
+
+    assert screen._console_sync_requested is True
+    assert monitor.snapshot().active_workers == 0
+
+
+def test_console_session_surface_records_tab_mount_churn():
     from tldw_chatbook.Widgets.Console.console_session_surface import (
         ConsoleSessionSurface,
     )
 
     monitor = UIResponsivenessMonitor(enabled=True)
 
-    class FakeChild:
-        id = "console-new-chat-tab"
-
-        async def remove(self):
-            return None
-
-    class FakeTabStrip:
-        def __init__(self):
-            self.children = [FakeChild()]
-
-        async def mount(self, widget):
-            self.children.append(widget)
-
     surface = ConsoleSessionSurface.__new__(ConsoleSessionSurface)
     surface.app_instance = SimpleNamespace(ui_responsiveness_monitor=monitor)
-    surface._session_sync_lock = __import__("asyncio").Lock()
-    tab_strip = FakeTabStrip()
-    surface.query_one = lambda _selector, _expect_type=None: tab_strip
 
-    await ConsoleSessionSurface.sync_sessions(
+    ConsoleSessionSurface._record_mount_churn(
         surface,
-        sessions=[SimpleNamespace(id="session-1", title="Console")],
-        active_session_id="session-1",
+        mounted=3,
+        removed=1,
     )
 
     snapshot = monitor.snapshot()

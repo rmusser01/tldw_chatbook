@@ -6,15 +6,6 @@
  * ======================================== */
 
 
-/* --- Quick Start Bar --- */
-.quick-start-bar {
-    height: auto;
-    background: $surface;
-    border-bottom: solid $primary;
-    padding: 1;
-    margin-bottom: 1;
-}
-
 .dashboard-title {
     text-style: bold;
     color: $primary;
@@ -43,12 +34,6 @@
     border: solid $primary;
 }
 
-
-.suggestion-text {
-    color: $text-muted;
-    text-style: italic;
-    margin-top: 1;
-}
 
 /* --- Main Content Area --- */
 .main-content {
@@ -81,28 +66,8 @@ Collapsible.-collapsed {
     margin-bottom: 1;
 }
 
-.template-editor {
-    height: 6;
-    margin: 1 0;
-}
-
-
-
-.config-grid {
-    layout: grid;
-    grid-columns: 1fr 1fr;
-    grid-gutter: 1;
-    margin-bottom: 2;
-}
-
 /* Note: Textual doesn't support @media queries
    Use reactive attributes or resize events for responsive design */
-
-.cost-display {
-    text-style: bold;
-    color: $success;
-}
-
 
 /* Template Grid */
 .template-grid {
@@ -123,30 +88,6 @@ Collapsible.-collapsed {
 .template-card:hover {
     background: $boost;
     border: thick $primary;
-}
-
-/* Advanced Configuration */
-.advanced-config-form {
-    padding: 1;
-}
-
-.system-prompt-editor {
-    height: 4;
-    margin: 1 0;
-}
-
-.config-toggles {
-    layout: horizontal;
-    margin-top: 1;
-}
-
-.config-toggles Checkbox {
-    margin-right: 2;
-}
-
-.empty-message {
-    color: $text-muted;
-    text-align: center;
 }
 
 /* Action Bar */
@@ -176,13 +117,6 @@ Collapsible.-collapsed {
 }
 
 /* Results Dashboard */
-.results-dashboard {
-    background: $panel;
-    padding: 2;
-    margin-top: 2;
-    border: tall $primary;
-}
-
 .section-title {
     text-style: bold;
     color: $primary;
@@ -221,12 +155,6 @@ Collapsible.-collapsed {
 .stat-value {
     text-style: bold;
     color: $primary;
-}
-
-/* Model/Dataset Management Sections */
-.model-management-form,
-.dataset-management-form {
-    padding: 1;
 }
 
 .button-row {

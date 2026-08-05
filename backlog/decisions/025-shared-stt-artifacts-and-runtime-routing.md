@@ -2,8 +2,9 @@
 
 Status: Accepted
 Date: 2026-07-23
-Related Tasks: TASK-505 through TASK-518
+Related Tasks: TASK-505, TASK-593 through TASK-605
 Supersedes: N/A
+Amended By: ADR-041 for direct-path-first transcribe.cpp delivery
 
 ## Decision
 

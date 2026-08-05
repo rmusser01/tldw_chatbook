@@ -6,6 +6,18 @@ import json
 from typing import Any, Dict, List, Optional
 
 
+def normalize_artifact_type(artifact_type: Any) -> str:
+    """Return a supported artifact type, defaulting legacy records to Prompt."""
+    if artifact_type is None:
+        return "prompt"
+    if not isinstance(artifact_type, str) or artifact_type not in {
+        "prompt",
+        "recipe",
+    }:
+        raise ValueError("artifact_type must be either 'prompt' or 'recipe'.")
+    return artifact_type
+
+
 def _normalize_keywords(keywords: Any) -> List[str]:
     if keywords is None:
         return []
@@ -43,6 +55,7 @@ def local_prompt_to_server_payload(local_prompt: Dict[str, Any]) -> Dict[str, An
         "prompt_format": local_prompt.get("prompt_format") or "legacy",
         "prompt_schema_version": local_prompt.get("prompt_schema_version"),
         "prompt_definition": prompt_definition,
+        "artifact_type": normalize_artifact_type(local_prompt.get("artifact_type")),
     }
 
     for passthrough_key in ("uuid", "version", "deleted"):
@@ -77,6 +90,11 @@ def server_prompt_to_local_update(payload: Dict[str, Any]) -> Dict[str, Any]:
     ):
         if field in payload:
             update[field] = payload.get(field)
+
+    if "artifact_type" in payload:
+        update["artifact_type"] = normalize_artifact_type(payload.get("artifact_type"))
+    else:
+        update["artifact_type"] = "prompt"
 
     if "keywords" in payload:
         update["keywords"] = sorted(_normalize_keywords(payload.get("keywords")))

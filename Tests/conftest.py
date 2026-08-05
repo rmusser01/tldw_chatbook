@@ -10,33 +10,128 @@ from pathlib import Path
 
 _TEST_CONFIG_ROOT_ENV = "TLDW_TEST_CONFIG_ROOT"
 _TEST_CONFIG_OWNER_ENV = "TLDW_TEST_CONFIG_ROOT_OWNER"
+_SANDBOXED_ENV_NAMES = (
+    "HOME",
+    "USERPROFILE",
+    "XDG_DATA_HOME",
+    "XDG_CONFIG_HOME",
+    "TLDW_CONFIG_PATH",
+    _TEST_CONFIG_ROOT_ENV,
+    _TEST_CONFIG_OWNER_ENV,
+)
+_PREVIOUS_TEST_ENV = {name: os.environ.get(name) for name in _SANDBOXED_ENV_NAMES}
 _existing_test_config_root = os.environ.get(_TEST_CONFIG_ROOT_ENV)
+# Under pytest-xdist the controller creates the sandbox root and workers
+# inherit it via the env; give each worker its own subtree so concurrent
+# workers never share a config/home/data dir (task-1453). The name guard keeps
+# re-entrant loads (Tests/UI/conftest.py, subprocess children) from suffixing
+# twice — the suffixed path is republished to the env below. The controller
+# owns the unsuffixed root and its sessionfinish rmtree removes the worker
+# subtrees with it.
+# The worker id is only ever xdist's own "gw<N>"; the strict pattern makes the
+# env-derived path join traversal-proof without pulling app-level path
+# validation into this pre-sys.path bootstrap (an id that fails the pattern is
+# ignored, falling back to the shared root).
+_XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
+if _XDIST_WORKER and not __import__("re").fullmatch(r"[A-Za-z0-9_-]+", _XDIST_WORKER):
+    _XDIST_WORKER = None
 if _existing_test_config_root:
     _BOOTSTRAP_CONFIG_ROOT = Path(_existing_test_config_root)
+    if _XDIST_WORKER and _BOOTSTRAP_CONFIG_ROOT.name != _XDIST_WORKER:
+        _BOOTSTRAP_CONFIG_ROOT = _BOOTSTRAP_CONFIG_ROOT / _XDIST_WORKER
+        _BOOTSTRAP_CONFIG_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
     _OWNS_BOOTSTRAP_CONFIG_ROOT = False
 else:
     _BOOTSTRAP_CONFIG_ROOT = Path(tempfile.mkdtemp(prefix="tldw_test_config_"))
-    os.environ[_TEST_CONFIG_ROOT_ENV] = str(_BOOTSTRAP_CONFIG_ROOT)
-    os.environ[_TEST_CONFIG_OWNER_ENV] = str(Path(__file__).resolve())
     _OWNS_BOOTSTRAP_CONFIG_ROOT = True
+_BOOTSTRAP_CONFIG_ROOT = _BOOTSTRAP_CONFIG_ROOT.resolve(strict=True)
+os.environ[_TEST_CONFIG_ROOT_ENV] = str(_BOOTSTRAP_CONFIG_ROOT)
+if _OWNS_BOOTSTRAP_CONFIG_ROOT:
+    os.environ[_TEST_CONFIG_OWNER_ENV] = str(Path(__file__).resolve())
+_BOOTSTRAP_DATA_HOME = _BOOTSTRAP_CONFIG_ROOT / "data"
 _BOOTSTRAP_CONFIG_PATH = _BOOTSTRAP_CONFIG_ROOT / "config" / "config.toml"
-_BOOTSTRAP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+_BOOTSTRAP_HOME = _BOOTSTRAP_CONFIG_ROOT / "home"
+_BOOTSTRAP_DATA_HOME.mkdir(parents=True, mode=0o700, exist_ok=True)
+_BOOTSTRAP_CONFIG_PATH.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+_BOOTSTRAP_HOME.mkdir(parents=True, mode=0o700, exist_ok=True)
+os.environ["HOME"] = str(_BOOTSTRAP_HOME)
+os.environ["USERPROFILE"] = str(_BOOTSTRAP_HOME)
+os.environ["XDG_DATA_HOME"] = str(_BOOTSTRAP_DATA_HOME)
+os.environ["XDG_CONFIG_HOME"] = str(_BOOTSTRAP_CONFIG_PATH.parent)
 os.environ["TLDW_CONFIG_PATH"] = str(_BOOTSTRAP_CONFIG_PATH)
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 from loguru import logger  # noqa: E402
 import asyncio  # noqa: E402
-from unittest.mock import MagicMock, AsyncMock  # noqa: E402
 import sqlite3  # noqa: E402
 import sys  # noqa: E402
 import gc  # noqa: E402
+from typing import Iterator  # noqa: E402
 import warnings  # noqa: E402
 
 # Add project root to Python path for consistent imports
 PROJECT_ROOT = Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+# Hypothesis: no per-example deadline (TASK-1260).
+#
+# Several property tests do real work per example -- `test_safe_paths_always_validate`
+# creates a TemporaryDirectory plus up to four directories, and the DB property
+# suites open SQLite connections. Hypothesis' default deadline is 200ms per
+# example, which a loaded machine crosses on work that is not actually slow:
+# this repo routinely runs 10+ concurrent pytest processes from parallel agents.
+#
+# The resulting failure is indistinguishable from a real regression at the moment
+# it appears, and attributing one instance cost five runs across two worktrees.
+# A deadline that fails a property which *holds* is measuring the machine, not
+# the code -- so it is disabled rather than merely raised. Do not "tighten this
+# back up" as an apparent improvement; timing belongs in benchmarks, not in
+# correctness properties.
+try:  # pragma: no cover - hypothesis is a test-only dependency
+    from hypothesis import HealthCheck, settings as _hypothesis_settings
+
+    # Example counts are env-scaled (task-1452): 'dev' keeps routine runs fast,
+    # CI sets TLDW_HYPOTHESIS_PROFILE=ci, and the scheduled deep run uses
+    # 'thorough' so the reduced dev depth has a compensating control.
+    # Hypothesis binds settings.default at DECORATION time, so this profile
+    # must be active whenever a test module is imported. Property modules that
+    # need extra health-check suppressions use local @settings decorators;
+    # they must not register or load process-wide profiles. An import-time
+    # load_profile() silently reconfigures every later-imported module's
+    # unannotated @given tests (the pre-task-1452 state).
+    _HYPOTHESIS_SCALES = {
+        "dev": {"max_examples": 25, "stateful_step_count": 20},
+        "ci": {"max_examples": 50, "stateful_step_count": 30},
+        "thorough": {"max_examples": 300, "stateful_step_count": 100},
+    }
+    _pt_profile = os.environ.get("TLDW_HYPOTHESIS_PROFILE", "dev")
+    if _pt_profile not in _HYPOTHESIS_SCALES:
+        # A typo'd profile silently running at dev depth is exactly the kind of
+        # quiet configuration rot this suite has been burned by — warn loudly
+        # (pytest surfaces it in the warnings summary) but do not brick every
+        # local run over it.
+        warnings.warn(
+            f"Unknown TLDW_HYPOTHESIS_PROFILE={_pt_profile!r}; expected one of "
+            f"{sorted(_HYPOTHESIS_SCALES)} — falling back to 'dev' scale",
+            UserWarning,
+            stacklevel=1,
+        )
+        _pt_profile = "dev"
+    _pt_scale = _HYPOTHESIS_SCALES[_pt_profile]
+
+    _hypothesis_settings.register_profile(
+        "tldw",
+        deadline=None,
+        # `too_slow` fires for the same reason the deadline does: machine load,
+        # not a slow strategy.
+        suppress_health_check=[HealthCheck.too_slow],
+        **_pt_scale,
+    )
+    _hypothesis_settings.load_profile("tldw")
+except ImportError:
+    pass
 
 # Protect against stdout/stderr being closed during testing
 # This can happen with certain test runners or when tests manipulate file descriptors
@@ -103,33 +198,79 @@ def temp_db_path(isolated_temp_dir):
     return isolated_temp_dir / "test_database.db"
 
 
-# ========== Mock Fixtures ==========
-
-
-@pytest.fixture
-def mock_app_minimal():
-    """Minimal mock app for unit tests that don't need full functionality."""
-    app = MagicMock()
-    app.notify = MagicMock()
-    app.copy_to_clipboard = MagicMock()
-    app.query_one = MagicMock()
-    app.query = MagicMock()
-    return app
-
-
-@pytest.fixture
-def mock_async_app():
-    """Mock app with async methods properly configured."""
-    app = AsyncMock()
-    app.notify = MagicMock()  # notify is sync in Textual
-    app.copy_to_clipboard = MagicMock()
-    app.mount = AsyncMock()
-    app.query_one = MagicMock()
-    app.query = MagicMock()
-    return app
-
-
 # ========== Cleanup and Isolation Fixtures ==========
+
+
+@pytest.fixture(scope="session")
+def chachanotes_template_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build the schema-complete CharactersRAGDB template once per session.
+
+    CharactersRAGDB's full schema DDL costs ~137ms per construction; copying
+    this template and reopening costs ~10.5ms (task-1460). Hosted here so any
+    directory's fixtures can copy it (ChaChaNotesDB, Chatbooks — task-1462);
+    the import is lazy, so sessions that never request the fixture never pay
+    for it. client_id is per-row attribution: the empty template carries no
+    identity to re-stamp.
+
+    Args:
+        tmp_path_factory: pytest's session-scoped temp directory factory.
+
+    Returns:
+        Path to a closed, WAL-checkpointed, sidecar-free template file.
+    """
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    template = tmp_path_factory.mktemp("chachanotes-template") / "template.sqlite"
+    db = CharactersRAGDB(template, "template_builder")
+    db.close_connection()
+    leftovers = [s for s in ("-wal", "-shm") if Path(f"{template}{s}").exists()]
+    assert not leftovers, f"template close left WAL sidecars: {leftovers}"
+    return template
+
+
+@pytest.fixture(autouse=True)
+def install_css_parse_cache() -> "Iterator[None]":
+    """Install the session-global CSS parse cache once Textual is imported.
+
+    Lazy and conditional (task-1459): test modules import Textual at
+    collection time, so by the first test's fixture setup the module is in
+    ``sys.modules`` whenever this session will mount apps — and sessions that
+    never touch Textual never import the cache. TLDW_TEST_CSS_CACHE=0
+    disables it (the install() itself re-checks the env var).
+
+    Yields:
+        None. Installation (idempotent) happens in setup.
+    """
+    if "textual.css.stylesheet" in sys.modules:
+        from Tests.UI import css_cache
+
+        css_cache.install()
+    yield
+
+
+@pytest.fixture(autouse=True)
+def drain_test_app_user_data_dirs() -> "Iterator[None]":
+    """Remove the user-data dirs and stop the service patches the shared app
+    factory created during a test.
+
+    ``Tests/UI/app_factory._build_test_app`` records every ``mkdtemp`` it
+    makes; draining here (task-1458) stops the per-call leak that accumulated
+    324k orphaned sandboxes (~285GB) on one dev machine. It also stops every
+    still-running service patch the factory started (task-1631:
+    ``get_subscriptions_db_path`` is patched OUTSIDE the factory's own
+    ``ExitStack`` so it stays in effect for the whole test, not just
+    ``TldwCli.__init__`` -- see that module for why), so it never leaks into
+    the next test. The import is lazy and conditional so the ~18k tests that
+    never build an app pay nothing.
+
+    Yields:
+        None. Draining happens in teardown.
+    """
+    yield
+    factory = sys.modules.get("Tests.UI.app_factory")
+    if factory is not None:
+        factory.drain_active_service_patches()
+        factory.drain_created_dirs()
 
 
 @pytest.fixture(autouse=True)
@@ -161,18 +302,170 @@ def cleanup_loguru_handlers():
                 pass
 
 
+# Full gc passes after EVERY test cost real wall-clock at suite scale: the old
+# version of this fixture ran TWO gc.collect() per test, ~23,000 full-heap
+# collections per run with torch/transformers-sized heaps (2026-07-30 audit,
+# driver #3). The FD-leak incidents that motivated it (loguru handlers, fds
+# under Textual's redirected streams) are guarded by cleanup_loguru_handlers
+# above and the fd_leak_sentinel below; periodic collection plus the
+# requires_cleanup marker covers the rest. TLDW_TEST_GC_EVERY=1 restores
+# per-test collection as an escape hatch.
+def _env_int(name: str, default: int) -> int:
+    """Parse an integer environment knob without letting a typo abort the run.
+
+    Args:
+        name: Environment variable name.
+        default: Value used when the variable is unset or malformed.
+
+    Returns:
+        The parsed integer, or ``default`` (with a UserWarning) when the value
+        is not a valid integer — a malformed escape-hatch value must degrade to
+        the default, not kill conftest import for the whole suite.
+    """
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        warnings.warn(
+            f"{name}={raw!r} is not an integer; using default {default}",
+            UserWarning,
+            stacklevel=2,
+        )
+        return default
+
+
+_GC_EVERY = max(1, _env_int("TLDW_TEST_GC_EVERY", 25))
+_gc_test_counter = 0
+
+# Directories whose tests mount Textual apps (run_test() call-site census from
+# the 2026-07-30 audit). A Textual App is a reference CYCLE that only
+# gc.collect() reclaims, and an uncollected app from the previous test
+# interferes with the next app-mounting test — with periodic-only collection
+# the victim rotates with heap state (task-1468: a 10-test batch failed a
+# DIFFERENT UI test on consecutive runs, and passed 10/10 with
+# TLDW_TEST_GC_EVERY=1). These dirs keep per-test collection; everything else
+# stays periodic, which is where the task-1454 win lives.
+_APP_MOUNTING_DIR_PARTS = (
+    f"{os.sep}Tests{os.sep}UI{os.sep}",
+    f"{os.sep}Tests{os.sep}Widgets{os.sep}",
+    f"{os.sep}Tests{os.sep}Watchlists{os.sep}",
+    f"{os.sep}Tests{os.sep}Skills{os.sep}",
+    f"{os.sep}Tests{os.sep}Library{os.sep}",
+    f"{os.sep}Tests{os.sep}Event_Handlers{os.sep}",
+    f"{os.sep}Tests{os.sep}integration{os.sep}",
+    f"{os.sep}Tests{os.sep}Chat{os.sep}",
+)
+
+
 @pytest.fixture(autouse=True)
-def cleanup_file_descriptors():
-    """Force garbage collection and close any leaked file descriptors after each test."""
+def cleanup_file_descriptors(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Garbage-collect leaked file objects periodically (or per-test on request).
+
+    Tests that genuinely need a collection pass right after they run (e.g. they
+    open many files and assert on fd state) mark themselves
+    ``@pytest.mark.requires_cleanup``. Tests in app-mounting directories
+    (``_APP_MOUNTING_DIR_PARTS``) always collect, so a torn-down Textual app's
+    reference cycle never lingers into the next app's lifetime.
+
+    Args:
+        request: The pytest fixture request, used to read the test's markers
+            and path.
+
+    Yields:
+        None. Collection (if due) happens in teardown, after the test body.
+    """
     yield
 
-    # Force garbage collection to cleanup any unclosed files
-    gc.collect()
+    global _gc_test_counter
+    _gc_test_counter += 1
+    _node_path = str(getattr(request.node, "path", "") or "")
+    if (
+        request.node.get_closest_marker("requires_cleanup")
+        or any(part in _node_path for part in _APP_MOUNTING_DIR_PARTS)
+        or _gc_test_counter % _GC_EVERY == 0
+    ):
+        # Suppress ResourceWarnings emitted for unclosed files reclaimed here.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ResourceWarning)
+            gc.collect()
 
-    # Suppress ResourceWarnings during test cleanup
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", ResourceWarning)
-        gc.collect()
+
+@pytest.fixture(scope="session", autouse=True)
+def fd_leak_sentinel() -> Iterator[None]:
+    """Warn when the session's open-fd count grows past a leak threshold.
+
+    Replacement leak detection for the per-test gc.collect() this file used to
+    do: cheap (two directory listings per session), and unlike the gc pass it
+    produces an actionable signal instead of silently papering over leaks.
+    Warn-only for now; threshold via TLDW_TEST_FD_GROWTH_LIMIT. The signal is
+    a UserWarning (never in default ignore filters, unlike ResourceWarning)
+    plus a stderr line, so it survives any warning-filter configuration.
+
+    Yields:
+        None. The fd count comparison happens at session teardown.
+    """
+    fd_dir = "/dev/fd" if sys.platform == "darwin" else "/proc/self/fd"
+
+    def _count_fds():
+        try:
+            return len(os.listdir(fd_dir))
+        except OSError:
+            return None
+
+    limit = _env_int("TLDW_TEST_FD_GROWTH_LIMIT", 200)
+    start = _count_fds()
+    yield
+    if start is None:
+        return
+    end = _count_fds()
+    if end is not None and end - start > limit:
+        message = (
+            f"open file descriptors grew by {end - start} over the test session "
+            f"(start={start}, end={end}, limit={limit}) — possible fd leak; "
+            "bisect with TLDW_TEST_GC_EVERY=1 and mark offending tests "
+            "@pytest.mark.requires_cleanup"
+        )
+        # UserWarning (not ResourceWarning): ResourceWarning sits in Python's
+        # default ignore filters, so the sentinel's only signal could vanish
+        # under filter configurations that don't re-enable it. The stderr echo
+        # survives even -W ignore.
+        warnings.warn(message, UserWarning, stacklevel=0)
+        print(f"[fd_leak_sentinel] {message}", file=sys.stderr)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_audio_device(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test opens real audio hardware unless it explicitly opts in.
+
+    Task-4 streaming-pcm-sink review, merge-gate finding: `_generate_tts`
+    (`Event_Handlers/TTS_Events/tts_events.py`) can construct a real
+    `StreamingPcmSink` for an eligible pcm/wav response and, if nothing
+    patches `StreamingPcmSink`/`sink_available`, `open()` lazily imports
+    the real `sounddevice` and starts a real `OutputStream` against actual
+    hardware -- reproduced: an unguarded eligible-wav test opened one and
+    still PASSED, so this failure mode is silent to CI, review, and the
+    suite itself. Neutralizes the single chokepoint every production
+    device open passes through (`open()` can only build a stream via
+    `_import_sounddevice()`); returning `None` drives the already-tested
+    `_fail("audio output unavailable ...")` terminal path, so an
+    accidental hazard degrades to the legacy path instead of hardware.
+    Deliberately leaves `sink_available()` (the `find_spec` probe) alone,
+    so no test's LOGICAL coverage changes, only its hardware access --
+    measured: the full `Tests/TTS`/`Tests/TTS_Events`/`Tests/Audio` run is
+    identical with and without this fixture. A test that genuinely needs a
+    real device marks itself `@pytest.mark.real_audio_device` to opt out.
+    This is the backstop; file-local guards (e.g.
+    `Tests/TTS/test_console_audio_cpp_native.py`'s own
+    `_sink_unavailable_by_default`) still document intent at their point
+    of use and are not replaced by this.
+    """
+    if request.node.get_closest_marker("real_audio_device"):
+        return
+    import tldw_chatbook.Audio.streaming_sink as streaming_sink
+
+    monkeypatch.setattr(streaming_sink, "_import_sounddevice", lambda: None)
 
 
 # ========== Async Cleanup Fixtures ==========
@@ -313,21 +606,27 @@ def pytest_configure(config):
         "markers", "requires_cleanup: Tests that need special cleanup"
     )
     config.addinivalue_line("markers", "asyncio: Async tests using asyncio")
-    config.addinivalue_line(
-        "markers", "optional_deps: Tests requiring optional dependencies"
-    )
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):
-    """Remove the module-load config sandbox created by this conftest."""
-    if not _OWNS_BOOTSTRAP_CONFIG_ROOT:
+    """Restore caller config variables and remove only an owned sandbox.
+
+    In xdist workers the pre-suffix snapshot points at the controller's SHARED
+    sandbox, so restoring it here would aim HOME/XDG/TLDW_* back at shared
+    directories for the late-shutdown window (atexit hooks) — exactly the
+    isolation this sandboxing exists to provide. Workers are about to exit and
+    own nothing; skip both the restore and the (already owner-gated) cleanup.
+    """
+    if _XDIST_WORKER:
         return
-    if os.environ.get("TLDW_CONFIG_PATH") == str(_BOOTSTRAP_CONFIG_PATH):
-        os.environ.pop("TLDW_CONFIG_PATH", None)
-    if os.environ.get(_TEST_CONFIG_ROOT_ENV) == str(_BOOTSTRAP_CONFIG_ROOT):
-        os.environ.pop(_TEST_CONFIG_ROOT_ENV, None)
-        os.environ.pop(_TEST_CONFIG_OWNER_ENV, None)
-    shutil.rmtree(_BOOTSTRAP_CONFIG_ROOT, ignore_errors=True)
+    for name, previous in _PREVIOUS_TEST_ENV.items():
+        if previous is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = previous
+    if _OWNS_BOOTSTRAP_CONFIG_ROOT:
+        shutil.rmtree(_BOOTSTRAP_CONFIG_ROOT, ignore_errors=True)
 
 
 # ========== Async Support ==========
@@ -340,6 +639,31 @@ def anyio_backend():
 
 
 # ========== Test Environment Isolation ==========
+
+
+def _close_database_instance(db_instance):
+    """Best-effort close for a database object cached by application config."""
+    close_db = getattr(db_instance, "close", None)
+    if not callable(close_db):
+        return
+    try:
+        close_db()
+    except Exception as exc:
+        logger.warning(f"Failed to close cached test database: {exc}")
+
+
+def _reset_config_database_instances(config_module):
+    """Close and clear config.py's lazy database singletons."""
+    for db_name in ("chachanotes_db", "prompts_db", "media_db"):
+        _close_database_instance(getattr(config_module, db_name, None))
+        setattr(config_module, db_name, None)
+
+
+def _shutdown_prompts_interop_if_loaded():
+    """Reset the prompt singleton without importing its module into every test."""
+    prompts_interop = sys.modules.get("tldw_chatbook.Prompt_Management.Prompts_Interop")
+    if prompts_interop is not None and prompts_interop.is_initialized():
+        prompts_interop.shutdown_interop()
 
 
 @pytest.fixture(autouse=True)
@@ -360,23 +684,64 @@ def isolate_test_environment(monkeypatch, tmp_path):
 
     # Common paths that need isolation
     monkeypatch.setenv("XDG_DATA_HOME", str(test_data_dir))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(test_data_dir / "config"))
-    monkeypatch.setenv("HOME", str(test_data_dir / "home"))
+    test_config_dir = test_data_dir / "config"
+    test_config_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(test_config_dir))
+    test_home_dir = test_data_dir / "home"
+    test_home_dir.mkdir(mode=0o700)
+    monkeypatch.setenv("HOME", str(test_home_dir))
     monkeypatch.setenv(
         "TLDW_CONFIG_PATH",
-        str(test_data_dir / "config" / "config.toml"),
+        str(test_config_dir / "config.toml"),
     )
 
-    # Patch common data directory paths if they're imported
+    # Clear lazy database and prompt singletons before each test so no
+    # connection survives after its per-test temporary directory is removed.
+    # ``get_user_data_dir`` resolves HOME at call time, so the environment
+    # patches above are the path-isolation authority.
     try:
         from tldw_chatbook import config
 
-        if hasattr(config, "get_data_dir"):
-            monkeypatch.setattr(config, "get_data_dir", lambda: test_data_dir)
+        _reset_config_database_instances(config)
+        _shutdown_prompts_interop_if_loaded()
     except ImportError:
-        pass
+        config = None
+
+    # NOTE (task-519): this used to also try to
+    # `monkeypatch.setattr(config, "get_data_dir", ...)`, but `config` has no
+    # `get_data_dir` attribute -- that patch was a silent no-op. It's removed
+    # rather than fixed because it's no longer needed: `get_user_data_dir()`'s
+    # default-dir fallback now resolves HOME/XDG_DATA_HOME at CALL time (see
+    # `config._default_base_data_dir`), so the HOME/XDG_DATA_HOME env patches
+    # above are sufficient on their own.
+
+    # Pre-arm SP2b's first-run-import once-flag so the RAG ingestion module's
+    # real (no-longer-pytest-gated, see task-519) first-run wiring never fires
+    # organically inside an unrelated test and creates a real
+    # "imported_settings" RAG profile under the (now-isolated, but still
+    # real-filesystem) data dir. Tests that specifically want to exercise
+    # `_maybe_run_first_run_import` reset this flag themselves (see
+    # `Tests/RAG/test_first_run_import.py`).
+    #
+    # This must NOT `import tldw_chatbook.RAG_Search.ingestion_indexing` itself
+    # (review finding on task-519/PR #845): that would drag the RAG stack into
+    # every single test in the suite, autouse, even ones that never touch RAG.
+    # Instead only arm the flag if the module is ALREADY in sys.modules (i.e.
+    # some earlier-collected test already imported it) -- the first-run wiring
+    # lives INSIDE that module, so if it isn't imported it cannot fire. If a
+    # test imports it later in its own body, task-519's call-time HOME
+    # resolution already isolates any first-run write under the HOME/
+    # XDG_DATA_HOME patched above, so this pre-arm is belt-and-braces for
+    # modules that happen to already be loaded, not a correctness requirement.
+    ii = sys.modules.get("tldw_chatbook.RAG_Search.ingestion_indexing")
+    if ii is not None:
+        monkeypatch.setattr(ii, "_first_run_import_attempted", True, raising=False)
 
     yield test_data_dir
+
+    if config is not None:
+        _shutdown_prompts_interop_if_loaded()
+        _reset_config_database_instances(config)
 
 
 # ========== Test Data Fixtures ==========
@@ -471,6 +836,87 @@ def benchmark_timer():
     return Timer
 
 
+# ========== Skill Trust Service Fixtures ==========
+#
+# Promoted from ``Tests/Skills/conftest.py`` (task-7 of the skills-script-
+# execution SDD plan): ``Tests/Library/test_skill_script_grant_panel.py``
+# needs ``trust_service_with_skill`` too, and pytest fixture discovery only
+# walks a test file's own directory and its ANCESTORS -- a sibling
+# directory's ``conftest.py`` is never visible. Living here instead of being
+# duplicated means both ``Tests/Skills/`` and ``Tests/Library/`` share the
+# exact same fixture (and its future edits), rather than two copies quietly
+# drifting apart.
+
+
+@pytest.fixture
+def make_trust_service(tmp_path):
+    """Return a factory that builds `SkillTrustService` instances sharing one store.
+
+    Args:
+        tmp_path: Pytest-provided temporary directory fixture.
+
+    Returns:
+        A zero-argument callable that constructs a new `SkillTrustService`
+        bound to the same on-disk `skills_dir`/`trust_dir`, so repeated calls
+        simulate a fresh process re-reading persisted state.
+    """
+    from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
+    from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
+    from tldw_chatbook.Skills_Interop.skill_trust_store import (
+        FileSkillTrustGenerationMarkerStore,
+        SkillTrustStore,
+        default_trust_store_dir,
+    )
+
+    # Derived from the real accessors/objects rather than re-spelled
+    # "skills"/"trust" literals (TASK-866): `LocalSkillsService` computes
+    # its own `skills_dir` from `_SKILLS_DIRNAME`, and
+    # `default_trust_store_dir()` is the same function `app.py` calls to
+    # build the live `SkillTrustStore`. If either constant's name ever
+    # changed, a hardcoded literal here would silently keep matching
+    # nothing -- the exact class of drift this task closes.
+    skills_dir = LocalSkillsService(store_dir=tmp_path).skills_dir
+    trust_dir = default_trust_store_dir(tmp_path)
+    skills_dir.mkdir(exist_ok=True, parents=True)
+    trust_dir.mkdir(exist_ok=True, parents=True)
+
+    def _make() -> "SkillTrustService":
+        marker_path = trust_dir / "marker.json"
+        return SkillTrustService(
+            skills_dir=skills_dir,
+            trust_store=SkillTrustStore(
+                store_dir=trust_dir,
+                marker_store=FileSkillTrustGenerationMarkerStore(
+                    marker_path, store_dir=marker_path.parent
+                ),
+            ),
+        )
+
+    return _make
+
+
+@pytest.fixture
+def trust_service_with_skill(make_trust_service):
+    """Return a `SkillTrustService` with one on-disk demo skill (with a script).
+
+    Args:
+        make_trust_service: Factory fixture for building trust-service instances.
+
+    Returns:
+        A `(service, skill_name)` tuple where `skill_name` names a skill
+        directory containing a `SKILL.md` and a `scripts/hello.py`.
+    """
+    service = make_trust_service()
+    name = "demo-skill"
+    skill_dir = service.skills_dir / name
+    (skill_dir / "scripts").mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: demo-skill\ndescription: demo\n---\nbody\n", encoding="utf-8"
+    )
+    (skill_dir / "scripts" / "hello.py").write_text("print('hello')", encoding="utf-8")
+    return service, name
+
+
 # ========== Pytest Configuration ==========
 
 
@@ -496,7 +942,10 @@ def pytest_collection_modifyitems(config, items):
                 item.add_marker(skip_slow)
 
     if not config.getoption("--run-optional"):
+        # The marker actually used by the suite is `optional` (registered in
+        # pyproject); the old gate keyed on `optional_deps`, which no test has
+        # ever carried, so it selected nothing (task-1457).
         skip_optional = pytest.mark.skip(reason="Need --run-optional option to run")
         for item in items:
-            if "optional_deps" in item.keywords:
+            if "optional" in item.keywords:
                 item.add_marker(skip_optional)

@@ -67,6 +67,23 @@ SCHEMA_VERSION = 1
 STORE_STATES: tuple[str, ...] = ("allow", "ask", "deny")
 DEFAULT_GLOBAL = "ask"
 HIGH_RISK_TAGS = frozenset({"mutates", "process"})
+#: Risk tags that floor an INHERITED ``allow`` to ``ask`` for in-process
+#: built-ins. A superset of ``HIGH_RISK_TAGS``: built-ins additionally
+#: treat filesystem reads as prompt-worthy, because an agent reading
+#: arbitrary sandbox files is a disclosure risk even though it mutates
+#: nothing, and treat network egress as prompt-worthy too, because egress
+#: is the exfiltration leg of a prompt-injection chain. MCP deliberately
+#: keeps ``HIGH_RISK_TAGS``. TASK-845 asked whether ``network`` should move
+#: to the shared set and resolved NO, on evidence rather than preference:
+#: an MCP tool's tags are not ours, they are derived from the remote
+#: server's own payload -- ``risk_class`` plus a free-form ``capabilities``
+#: list, lowercased (``MCP.hub_tool_catalog._extra_tags``). "network" is an
+#: ordinary word for a server to list among its capabilities, so widening
+#: the shared set would not be the no-op it looks like: it would start
+#: prompting on real servers because of a string they chose for unrelated
+#: reasons. The built-in set is a vocabulary WE control and can reason
+#: about; the shared set is partly server-supplied and should stay narrow.
+BUILTIN_HIGH_RISK_TAGS = HIGH_RISK_TAGS | frozenset({"reads", "network"})
 
 _DEFAULT_PROFILE_ID = "default"
 
@@ -373,16 +390,22 @@ class MCPPermissionStore:
             definition_hash: Required when ``state`` is ``"allow"`` -- the
                 tool's current fingerprint (see ``definition_hash()``),
                 stored alongside the allow for the rug-pull guard to
-                compare against later.
+                compare against later. Not required for ``server_key``
+                values in ``HASH_FREE_SERVER_KEYS``.
 
         Raises:
             ValueError: If ``state`` is not None and not one of
                 ``STORE_STATES``, or if ``state`` is ``"allow"`` without a
-                ``definition_hash``.
+                ``definition_hash`` and ``server_key`` is not in
+                ``HASH_FREE_SERVER_KEYS``.
         """
         if state is not None:
             _validate_state(state)
-            if state == "allow" and not definition_hash:
+            if (
+                state == "allow"
+                and not definition_hash
+                and server_key not in HASH_FREE_SERVER_KEYS
+            ):
                 raise ValueError("definition_hash is required when state is 'allow'")
 
         payload = self.load()
@@ -474,6 +497,64 @@ def definition_hash(description: str | None, input_schema: dict | None) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+#: Permission namespace for the agent runtime's in-process built-in tools.
+#: Deliberately NOT ``builtin:tldw_chatbook`` -- that key belongs to the
+#: built-in MCP *server* (see ``readiness.BUILTIN_SERVER_KEY``), and sharing
+#: it would let one decision govern two different execution paths. No MCP
+#: routing label (``local:``/``builtin:``/``server:``) claims ``agent:``.
+BUILTIN_TOOL_SERVER_KEY = "agent:builtin"
+
+#: Server keys whose tools carry no meaningful ``definition_hash``, so
+#: ``set_tool_state(..., "allow")`` does not require one, and
+#: ``resolve_effective_state()`` skips its hash-staleness comparison for
+#: them entirely (see the ``tool.server_key not in HASH_FREE_SERVER_KEYS``
+#: guard in that function).
+#:
+#: The hash is a RUG-PULL guard: it detects a *remote* server changing a
+#: tool's description/schema after the user trusted it. ``agent:builtin``
+#: tools are in-process code shipped with the app -- an attacker who can
+#: change them already has code execution, so the check protects nothing,
+#: while a stored hash would force a re-prompt on every release that edits
+#: a docstring. ``resolve_builtin_state`` correspondingly never reads one.
+#:
+#: ``builtin:tldw_chatbook`` (RAG-48 part 2) is exempted for the identical
+#: reason: it is the built-in MCP *server*'s namespace (see
+#: ``readiness.BUILTIN_SERVER_KEY``) -- also in-process code that ships
+#: with the app and changes only via an app update, not a live remote
+#: connection. Without this exemption, RAG-48 part 1 synthesizing a real
+#: ``inputSchema`` for these tools (previously always ``None``) would make
+#: every already-stored "allow" decision's definition_hash go stale on the
+#: very next resolve, silently downgrading it to "ask" with "Definition
+#: changed since you allowed it" -- a rug-pull false positive against the
+#: app's own code, not an attacker.
+#:
+#: Adding a REMOTE namespace here would silently disable the rug-pull guard
+#: for it; the contents are pinned by test.
+HASH_FREE_SERVER_KEYS = frozenset({BUILTIN_TOOL_SERVER_KEY, "builtin:tldw_chatbook"})
+
+#: Precedence floor for built-in tools: they inherit ``allow`` rather than
+#: the MCP ``global_default``, so changing MCP's posture never starts
+#: prompting for calculator/datetime. High-risk tags still floor it to ask.
+BUILTIN_DEFAULT_STATE = "allow"
+
+
+@dataclass(frozen=True)
+class GatedToolRef:
+    """The minimum a resolver needs to gate one in-process tool.
+
+    Deliberately not ``HubTool``: that type models a *hub* tool (its
+    ``source`` enum is ``local|builtin|server``, and its ``stale``/
+    ``executable``/tag-cap fields are meaningless here), and borrowing it
+    would import MCP's hub model into the tools layer.
+    """
+
+    server_key: str
+    name: str
+    description: str
+    input_schema: dict | None
+    tags: tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class EffectiveToolState:
     """The resolved allow/ask/deny verdict for one tool, plus why.
@@ -481,8 +562,10 @@ class EffectiveToolState:
     Attributes:
         state: One of ``STORE_STATES``.
         origin: Which precedence level produced ``state`` before any
-            downgrade -- ``tool_override``, ``server_default``, or
-            ``global_default``.
+            downgrade -- ``tool_override``, ``server_default``,
+            ``global_default``, or (built-in tools only, via
+            ``resolve_builtin_state``) ``builtin_default``, the allow
+            floor applied when nothing more specific overrides it.
         config_changed: True when an explicit tool-level ``allow`` was
             downgraded to ``ask`` by the rug-pull guard (hash mismatch
             and/or a persisted ``config_changed`` marker).
@@ -530,7 +613,13 @@ def resolve_effective_state(
        ``definition_hash`` no longer matches the one stored alongside the
        ``allow``, or when the entry carries a persisted ``config_changed``
        marker -- regardless of whether the hash happens to match again.
-       Only a fresh ``set_tool_state`` (Task 1) clears the marker.
+       Only a fresh ``set_tool_state`` (Task 1) clears the marker. Skipped
+       entirely (never downgrades, ``config_changed`` stays False) when
+       ``tool.server_key`` is in ``HASH_FREE_SERVER_KEYS`` -- those
+       namespaces store no ``definition_hash`` to begin with (RAG-48 part
+       2), so comparing would always "mismatch" a live tool's real schema
+       against the stored ``None`` and rug-pull every stored allow the
+       first time a schema is attached.
     2. High-risk floor: an *inherited* ``allow`` (origin ``server_default``
        or ``global_default``) is downgraded to ``ask``
        (``risk_floored=True``) when the tool's tags intersect
@@ -570,7 +659,7 @@ def resolve_effective_state(
     if tool_entry is not None and tool_entry.get("state") in STORE_STATES:
         origin = "tool_override"
         state = tool_entry["state"]
-        if state == "allow":
+        if state == "allow" and tool.server_key not in HASH_FREE_SERVER_KEYS:
             current_hash = definition_hash(tool.description, tool.input_schema)
             stale_hash = tool_entry.get("definition_hash") != current_hash
             marked_changed = bool(tool_entry.get("config_changed"))
@@ -611,6 +700,77 @@ def resolve_effective_state(
         state=state,
         origin=origin,
         config_changed=config_changed,
+        risk_floored=risk_floored,
+    )
+
+
+def resolve_builtin_state(
+    payload: dict[str, Any], tool: GatedToolRef
+) -> EffectiveToolState:
+    """Resolve a built-in tool's effective permission state.
+
+    Mirrors ``resolve_effective_state``'s precedence walk with two
+    deliberate differences:
+
+    * The final fallback is ``BUILTIN_DEFAULT_STATE`` (``allow``), not the
+      MCP ``global_default``. Built-ins are in-process code the user
+      already installed; inheriting MCP's ``ask`` would prompt on every
+      calculator call, and changing MCP's global posture must not silently
+      change built-in behavior.
+    * No ``definition_hash`` comparison. That guard exists for a REMOTE
+      server mutating a tool after you trusted it; for in-process code an
+      attacker who can change the tool already has code execution, so it
+      buys nothing -- while any release editing a description or schema
+      would flip ``config_changed`` and re-prompt every user at upgrade
+      time. ``config_changed`` is therefore always False here.
+
+    The high-risk floor: an INHERITED ``allow`` (not an explicit tool
+    override) whose tags intersect ``BUILTIN_HIGH_RISK_TAGS`` is
+    downgraded to ``ask`` with ``risk_floored=True``. That set is a
+    superset of MCP's ``HIGH_RISK_TAGS`` -- built-ins additionally floor
+    on ``"reads"`` and ``"network"``.
+
+    Args:
+        payload: A loaded permission-store payload (``{}`` is valid and
+            resolves everything to the floor).
+        tool: The built-in tool reference to resolve.
+
+    Returns:
+        The resolved ``EffectiveToolState``.
+    """
+    profile = _as_mapping(_as_mapping(payload.get("profiles")).get(_DEFAULT_PROFILE_ID))
+    servers = _as_mapping(profile.get("servers"))
+    server_entry = _as_mapping(servers.get(tool.server_key))
+    tools = _as_mapping(server_entry.get("tools"))
+    tool_entry = tools.get(tool.name)
+    if not isinstance(tool_entry, Mapping):
+        tool_entry = None
+
+    if tool_entry is not None and tool_entry.get("state") in STORE_STATES:
+        origin = "tool_override"
+        state = tool_entry["state"]
+    else:
+        server_default = server_entry.get("default")
+        if server_default in STORE_STATES:
+            origin = "server_default"
+            state = server_default
+        else:
+            origin = "builtin_default"
+            state = BUILTIN_DEFAULT_STATE
+
+    risk_floored = False
+    if (
+        origin != "tool_override"
+        and state == "allow"
+        and set(tool.tags) & BUILTIN_HIGH_RISK_TAGS
+    ):
+        state = "ask"
+        risk_floored = True
+
+    return EffectiveToolState(
+        state=state,
+        origin=origin,
+        config_changed=False,
         risk_floored=risk_floored,
     )
 

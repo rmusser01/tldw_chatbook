@@ -339,3 +339,104 @@ def test_parse_local_file_for_ingest_pdf_branch_still_resolves_process_pdf(
 # (Removed with `Embeddings/Chroma_Lib.py` in task-248; the graceful-absence
 # behavior of the surviving chain is ChromaVectorStore.client's ImportError
 # message, exercised by the RAG vector-store tests.)
+
+
+# --- 6. Graceful-absence: simulated missing aiohttp on the startup path ------
+# Regression net for the boot crash root-caused 2026-07-27: `aiohttp` is an
+# OPTIONAL dependency (declared only in the [websearch]/[all-tools] extras,
+# and registered `"aiohttp": False` in Utils/optional_deps.py), but
+# `Media_Creation/swarmui_client.py` imported it at module scope. The
+# /generate-image console feature put that module on the DEFAULT screen's
+# import path:
+#
+#   UI/Screens/chat_screen.py
+#     -> Chat/console_generate_image.py        (ImageGenerationService)
+#       -> Media_Creation/image_generation_service.py
+#         -> Media_Creation/swarmui_client.py  -> import aiohttp   *boom*
+#
+# With aiohttp absent, `ScreenRoute.load_screen_class()` swallowed the
+# ModuleNotFoundError into a warning and returned None, so `app.py`'s
+# `_push_initial_screen()` raised `RuntimeError: Unable to resolve default
+# chat screen` and the app died on start for anyone who had not installed an
+# optional extra.
+
+_AIOHTTP_ABSENT_SNIPPET = """
+import json
+import sys
+
+
+class _BlockAiohttp:
+    \"\"\"Meta-path finder that simulates aiohttp not being installed.\"\"\"
+
+    def find_spec(self, name, path=None, target=None):
+        if name == "aiohttp" or name.startswith("aiohttp."):
+            raise ImportError("simulated missing aiohttp")
+        return None
+
+
+sys.meta_path.insert(0, _BlockAiohttp())
+
+from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
+
+screen_name, canonical_tab, screen_class = resolve_screen_target("chat")
+print(json.dumps({
+    "screen_name": screen_name,
+    "canonical_tab": canonical_tab,
+    "resolved": screen_class is not None,
+}))
+"""
+
+
+def test_default_chat_screen_resolves_without_aiohttp(tmp_path: Path) -> None:
+    """The default startup screen must resolve with `aiohttp` unavailable.
+
+    Runs in a fresh interpreter because the guard installs a `sys.meta_path`
+    finder and `sys.modules` is process-global -- in a shared pytest session
+    aiohttp may already be resident from an unrelated earlier test, which
+    would give a false pass.
+
+    Args:
+        tmp_path: pytest fixture; isolated dir for the subprocess's HOME/XDG.
+    """
+    result = _run_isolated_python(tmp_path, _AIOHTTP_ABSENT_SNIPPET)
+    assert result.returncode == 0, (
+        f"resolving the chat route failed outright without aiohttp:\n"
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload["resolved"], (
+        "the default chat screen did not resolve with aiohttp absent -- an "
+        "optional dependency is back on the mandatory startup import path; "
+        "app.py's _push_initial_screen() would raise "
+        "'Unable to resolve default chat screen' and the app would not boot"
+    )
+
+
+def test_swarmui_client_importable_without_aiohttp(tmp_path: Path) -> None:
+    """`swarmui_client` itself must import with aiohttp absent.
+
+    The class may only demand aiohttp when a caller actually opens a
+    connection, so importing the module (and constructing nothing) must stay
+    dependency-free. This pins the deferral at the exact file that caused
+    the boot crash, so a regression names that file rather than surfacing
+    only as the broader route-resolution failure above.
+
+    Args:
+        tmp_path: pytest fixture; isolated dir for the subprocess's HOME/XDG.
+    """
+    snippet = _AIOHTTP_ABSENT_SNIPPET.split(
+        "from tldw_chatbook.UI.Navigation"
+    )[0] + """
+import json
+
+from tldw_chatbook.Media_Creation.swarmui_client import SwarmUIClient
+
+print(json.dumps({"imported": SwarmUIClient is not None}))
+"""
+    result = _run_isolated_python(tmp_path, snippet)
+    assert result.returncode == 0, (
+        f"importing swarmui_client without aiohttp failed:\n"
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload["imported"]

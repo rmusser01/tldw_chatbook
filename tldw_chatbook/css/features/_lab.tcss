@@ -1,0 +1,1024 @@
+/* Lab destination (Models | Speech | Evals).
+ *
+ * These rules MUST live app-tier, not in LabModeStrip.DEFAULT_CSS: the
+ * bundle's global `.is-active` rule (border: round) outranks DEFAULT_CSS
+ * regardless of specificity, so a widget-tier override silently loses and
+ * the active chip's label is clipped by the one-row strip. Mirrors
+ * `.personas-mode-chip.is-active` and `#mcp-mode-strip Button.mcp-mode-chip`.
+ *
+ * This copy is authoritative at runtime. `LabModeStrip.DEFAULT_CSS`
+ * (tldw_chatbook/UI/Screens/lab_mode_strip.py) keeps a second, lower-
+ * specificity copy of `.lab-mode-chip` rules purely as a fallback for
+ * harness apps that mount the strip without loading this bundle. The two
+ * have already diverged (that copy adds min-height; this one adds
+ * background/color) -- keep them in lockstep when either changes.
+ */
+
+#lab-mode-strip Button.lab-mode-chip {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    padding: 0 1;
+    border: none;
+}
+
+#lab-mode-strip .lab-mode-chip.is-active {
+    border: none;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+#lab-mode-strip .lab-mode-chip.is-active:focus,
+#lab-mode-strip .lab-mode-chip.is-active:hover:focus {
+    outline: none;
+    border: none;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+/* A focused non-active chip must not impersonate the active one. The app's
+ * global Button:focus grants bold underline, which is exactly the active
+ * chip's signature -- so a keyboard user tabbing the strip would see two
+ * chips read as active. Underline stays exclusive to .is-active. Mirrors
+ * the same guard MCP applies to its mode chips. */
+#lab-mode-strip .lab-mode-chip:focus,
+#lab-mode-strip .lab-mode-chip:hover:focus {
+    text-style: bold;
+    outline: none;
+}
+
+/* --- Lab workbench ------------------------------------------------------
+ *
+ * Region widths are declared here rather than inline so the layout contract
+ * is inspectable in one place.
+ *
+ * The rail is fractional, not fixed. It was `width/min-width/max-width: 26`,
+ * which measured 26 cells at 80, 120 and 200 columns alike -- 32.5% of an
+ * 80-column terminal for a list whose longest label is 14 characters, while
+ * every sibling rail in the app is fractional (`#mcp-hub-rail` is
+ * `3fr` with `min-width: 24`). The bounds keep the labels intact at 80
+ * columns without letting the rail sprawl at 200.
+ *
+ * The 24 floor is measured, not guessed: at 20 the longest Models label
+ * ("Download Models") rendered as "Download" -- Textual drops the whole
+ * overflowing word rather than clipping mid-word, so the truncation is
+ * silent and total. `Tests/UI/test_lab_workbench.py` pins it.
+ */
+
+.lab-workbench {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+}
+
+#lab-rail {
+    width: 1fr;
+    min-width: 24;
+    max-width: 32;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    background: $ds-surface-panel;
+    border-right: solid $ds-column-line;
+}
+
+#lab-body {
+    width: 4fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    padding: 0 1;
+}
+
+/* TASK-1076: was a hard `30` at every terminal width -- the exact anti-
+ * pattern `#lab-rail` documents above (measured 30 cells at 80, 120, 160
+ * and 200 columns alike). At 200 columns that left the inspector's usable
+ * content ~28 cells wide (`.ds-inspector`'s own padding takes 2), so a
+ * plain sentence like "K requested 20 * K returned 20 * canary degenerate"
+ * wrapped mid-phrase with 170+ unused columns beside it. Fractional now,
+ * like the rail, so it actually grows on a wide terminal. `2fr` (a
+ * heavier weight than the rail's own `1fr`, since a FIXED pane was
+ * previously eating this whole width and `1fr` alone only grew it to 34
+ * cells at 200 columns, measured) -- `#lab-body` stays `4fr`, still the
+ * largest of the three regions, so the grid is not starved for it.
+ */
+#lab-inspector {
+    width: 2fr;
+    min-width: 30;
+    max-width: 50;
+    height: 100%;
+    min-height: 0;
+}
+
+/* Rail rows.
+ *
+ * The `border: none` is REQUIRED, not cosmetic. The bundle declares an
+ * unscoped `.is-active { border: round $ds-action-focus; }` earlier in this
+ * sheet, and app-tier CSS beats widget DEFAULT_CSS regardless of
+ * specificity. A height-1 row that picks up that border renders two rows
+ * tall -- a half-bordered artifact that displaces every row below it.
+ * `#mcp-hub-rail Button.mcp-rail-row.is-active` carries the same override
+ * for the same reason.
+ */
+.lab-rail Button.lab-rail-row {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    padding: 0 1 0 2;
+    border: none;
+    /* `text-align` alone does NOT left-align a one-line Button label --
+       `content-align` positions the label box itself and defaults to
+       centered, so without this the nine provider rows each sat at a
+       different indent and the list had no shared left edge to scan down.
+       Same pairing as `Button.mcp-rail-row`, `Button.mcp-inspector-action`
+       and `Button.mcp-callout`, which each hit this and fixed it the same
+       way. */
+    text-align: left;
+    content-align: left middle;
+}
+
+/* The active row is a solid fill plus an accent bar; a merely focused row
+ * gets underline only (below). They must not converge: the app's global
+ * `Button:focus` grants bold, and the old active style was `$ds-focus-bg` --
+ * measured identical to the focus background, so a focused row and the
+ * active row rendered the same colour and two rows read as selected at
+ * once. The mode strip 60 lines above already guards against exactly this.
+ *
+ * `border: none` first is REQUIRED, not cosmetic: the bundle declares an
+ * unscoped `.is-active { border: round $ds-action-focus; }` earlier in this
+ * sheet, and app-tier CSS beats widget DEFAULT_CSS regardless of
+ * specificity. A height-1 row that picks up that round border renders two
+ * rows tall. `border-left` alone consumes a column, never a row, so the
+ * accent bar is safe on a one-line button.
+ */
+.lab-rail .lab-rail-row.is-active {
+    border: none;
+    border-left: thick $accent;
+    background: $primary;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.lab-rail .lab-rail-row.is-active:focus,
+.lab-rail .lab-rail-row.is-active:hover:focus {
+    outline: none;
+    border: none;
+    border-left: thick $accent;
+    background: $primary;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.lab-rail .lab-rail-row:focus,
+.lab-rail .lab-rail-row:hover:focus {
+    outline: none;
+    background: $ds-surface-raised;
+    text-style: underline;
+}
+
+/* Section headings carry the accent so the rail has a scannable hierarchy;
+ * unstyled they forced the list to be read line by line to find where
+ * "Local servers" ended and "Models" began. `margin-top` opens the gap
+ * between groups -- the second heading otherwise butts against the last row
+ * of the first group. */
+.lab-rail-section {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    margin-top: 1;
+    color: $accent;
+    text-style: bold;
+}
+
+/* --- Header row ---------------------------------------------------------
+ *
+ * One row carrying title, subtitle, this mode's status chips, and the
+ * readiness badge -- the same shape Console collapses its own
+ * DestinationHeader into (`#console-workbench-header.console-header-inline`,
+ * height 1, border none).
+ *
+ * Lab previously rendered the stacked `.workbench-header` block instead: a
+ * bordered 5 rows, plus a conditional chip row beneath it. That is the only
+ * 5-row destination header in the app -- the other eleven destinations size
+ * their title with `$ds-destination-header-height` (= 1). The eight rows it
+ * cost were the eight that pushed Models' `Start Server` button past the
+ * bottom of a 40-row terminal.
+ *
+ * `.lab-header-inline` is a class, not an id, so all three Lab modes can
+ * carry it -- Speech and Evals compose their own DestinationHeader rather
+ * than going through this frame, and if only Models were collapsed the mode
+ * strip would sit at y=4 on Models and y=8 on the other two, jumping four
+ * rows on every switch (measured). It ties `.workbench-header` on
+ * specificity (0,1,0) and wins on source order: features/_lab.tcss is
+ * emitted after components/ in CSS_MODULES. The descendant rules below are
+ * (0,2,0), which beats the density rule that hides the subtitle in compact
+ * mode -- the row is one line at any density, so hiding the subtitle would
+ * only waste horizontal space.
+ */
+#lab-header-row {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    background: $ds-surface-panel;
+}
+
+.lab-header-inline {
+    layout: horizontal;
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    margin: 0;
+    border: none;
+    background: $ds-surface-panel;
+}
+
+/* Inside the frame's header row the padding is already supplied by
+   `#lab-header-row`; doubling it would indent Models' title two cells
+   further than Speech's. */
+#lab-header-row .lab-header-inline {
+    padding: 0;
+}
+
+.lab-header-inline .workbench-header-title {
+    width: auto;
+    height: 1;
+    min-height: 1;
+}
+
+.lab-header-inline .workbench-header-subtitle {
+    display: block;
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    margin-left: 2;
+}
+
+.lab-header-inline .workbench-header-status {
+    width: auto;
+    height: 1;
+    min-height: 1;
+    margin-left: 2;
+}
+
+/* The chip shares the header's single row with the title, subtitle and
+ * readiness badge. `width: auto` means a mode with long chip copy claims
+ * whatever it wants and starves the 1fr header beside it -- Speech's
+ * capability chip once rendered the full recovery sentence here and
+ * collapsed `#lab-destination-header` to ONE cell, truncating the title to
+ * "S". Chip copy stays short and the cap makes that structural rather than
+ * a convention each mode has to remember. */
+.lab-status-chip {
+    width: auto;
+    max-width: 40%;
+    height: 1;
+    padding: 0 1;
+    color: $ds-text-muted;
+    text-overflow: ellipsis;
+}
+
+/* The title must survive whatever the chip does. */
+.lab-header-inline .workbench-header-title {
+    min-width: 6;
+}
+
+/* Rail width is per-mode, because label length is per-mode. The shared floor
+ * fits Models (longest: "Download Models", 15 cells). Speech's rows carry
+ * double-width emoji -- "🔤 Speech Recognition" measures 21 cells, and at the
+ * shared floor Textual dropped the overflowing word entirely, rendering
+ * "🔤 Speech" and a bare "📚". Measured, not estimated. */
+.lab-mode-stts #lab-rail {
+    min-width: 28;
+    max-width: 34;
+}
+
+/* Evals' rail is a library, not a menu: section headings carry counts and
+ * their empty states put two buttons side by side ("+ New dataset" /
+ * "Import…"). At the shared floor those wrapped instead. */
+.lab-mode-evals #lab-rail {
+    min-width: 30;
+    max-width: 38;
+}
+
+/* --- Evals panes inside the frame's regions -----------------------------
+ *
+ * `#evals-library-pane, #evals-detail-pane, #evals-inspector-pane` carry
+ * `border: solid $ds-grid-line` + a panel background from the hand-rolled
+ * three-pane workbench they used to live in
+ * (components/_agentic_terminal.tcss). Inside the frame those borders are
+ * doubled -- `#lab-rail` already draws the column rule -- and each one costs
+ * two columns of content width, which truncated the rail's own
+ * "Create sample bench" button.
+ *
+ * Two ids each, so these beat that grouped one-id rule, and features/ is
+ * emitted after components/ regardless. The panes keep their ids: those are
+ * their stable selectors and several tests query them.
+ */
+#lab-rail #evals-library-pane,
+#lab-body #evals-detail-pane,
+#lab-inspector #evals-inspector-pane {
+    border: none;
+    background: transparent;
+    min-height: 0;
+    padding: 0;
+}
+
+/* `#lab-rail` and `#lab-inspector` are VerticalScroll containers that
+ * already hold a collapse header row. A pane at `height: 100%` there makes
+ * the scrollable content header + 100% -- measured `virtual_size` 35 against
+ * a `container_size` of 34, so both rails were permanently scrollable by one
+ * row and the collapse header could be scrolled out of reach, even with
+ * short content. `auto` lets the pane size to its content and leaves
+ * overflow to the scroll container, which is its job.
+ *
+ * This is the same mistake as `#evals-results-grid`'s `height: 100%` fixed
+ * in this branch: 100% is the full parent height and ignores siblings.
+ * Caught by Qodo on PR #1010. */
+#lab-rail #evals-library-pane,
+#lab-inspector #evals-inspector-pane {
+    height: auto;
+}
+
+/* `#lab-body` is a plain Vertical with no header sibling, so the detail
+ * pane genuinely should fill it. */
+#lab-body #evals-detail-pane {
+    height: 100%;
+}
+
+/* "No datasets" offers authoring and import together. In the old three-pane
+ * workbench that pane was ~53 columns and the two buttons sat side by side;
+ * in the frame's rail they need 34 and get 28, so "Import…" was clipped off
+ * the right edge -- present in the DOM, unreachable on screen. Stacking
+ * keeps both offered, which is what the design spec's empty-state table
+ * actually asks for; only the axis changes. */
+#lab-rail .evals-rail-empty-actions {
+    layout: vertical;
+    height: auto;
+}
+
+#lab-rail .evals-rail-empty-actions Button {
+    width: 100%;
+}
+
+/* --- Speech panes, Console grammar ---------------------------------------
+ *
+ * One row per thing. The legacy playground spent 4 rows on every
+ * label/input pair and 5 on each explanatory notice, which made the form 93
+ * rows tall in a 34-row viewport and put `Generate Speech` at y=60. These
+ * rules exist to keep that from coming back: chips are height 1, the action
+ * strip is height 1, and only the text input is allowed to grow.
+ */
+.speech-pane {
+    height: 1fr;
+    padding: 0 1;
+}
+
+.speech-pane-title {
+    height: 1;
+    min-height: 1;
+    text-style: bold;
+    color: $ds-status-info;
+}
+
+#speech-playground-actions {
+    height: 1;
+    min-height: 1;
+    margin: 1 0 0 0;
+}
+
+/* The only element allowed to take the remaining space -- everything else on
+   this screen is one row. */
+.speech-input {
+    height: 1fr;
+    min-height: 5;
+    margin: 1 0;
+    border: solid $ds-grid-line;
+}
+
+.speech-input:focus {
+    border: solid $ds-input-focus-border;
+}
+
+.speech-chip-row {
+    height: 1;
+    min-height: 1;
+}
+
+/* `width: auto` with a cap, for the reason the Lab status chip carries one:
+   an unbounded auto chip starves its neighbours on the same row. */
+.speech-chip {
+    width: auto;
+    max-width: 30;
+    height: 1;
+    padding: 0 1;
+    margin-right: 1;
+    color: $ds-text-muted;
+    background: $ds-surface-panel;
+    text-overflow: ellipsis;
+}
+
+.speech-status-line {
+    height: 1;
+    min-height: 1;
+    margin-top: 1;
+    color: $ds-status-warning;
+}
+
+.speech-readiness-line {
+    height: auto;
+    min-height: 1;
+    margin-top: 1;
+    color: $ds-status-info;
+}
+
+.speech-detail-line {
+    height: auto;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
+/* Textual's Button carries a default min-width, so the shared
+ * `.workbench-action { width: auto }` alone still spread six actions across
+ * the full pane -- "Export" rendered as "Ex" and "Clear" fell off the right
+ * edge entirely. Console packs its action strip left; so does this. */
+#speech-playground-actions Button.workbench-action {
+    width: auto;
+    min-width: 0;
+    padding: 0 1;
+    margin: 0 2 0 0;
+    border: none;
+}
+
+
+/* Reverse-video section head, matching Console's inspector section bars
+ * (Sources / Run / Tools) rather than inventing a third heading style. */
+.speech-section-head {
+    height: 1;
+    min-height: 1;
+    margin-top: 1;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+
+/* Text | Result, side by side. The pane has width to spend and does not have
+ * 34 rows of content to spend vertically -- filling the height with one tall
+ * empty box is what made the first two passes read as sparse. */
+.speech-split {
+    height: 1fr;
+    min-height: 0;
+    margin-top: 1;
+}
+
+.speech-split-pane {
+    width: 1fr;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+}
+
+#speech-result-pane {
+    margin-left: 2;
+}
+
+/* Below SPEECH_SPLIT_MIN_WIDTH two columns would be ~20 cells each, so the
+ * split stacks. Toggled from `on_resize` because Textual has no media
+ * queries -- same approach as the Personas compact workbench. */
+.speech-split-stacked .speech-split {
+    layout: vertical;
+}
+
+.speech-split-stacked #speech-result-pane {
+    margin-left: 0;
+    margin-top: 1;
+}
+
+.speech-input {
+    height: 1fr;
+    min-height: 4;
+    margin: 0;
+}
+
+.speech-result-state {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    color: $ds-text-muted;
+}
+
+#speech-result-actions {
+    height: 1;
+    min-height: 1;
+    margin-top: 1;
+}
+
+#speech-result-actions Button.workbench-action {
+    width: auto;
+    min-width: 0;
+    padding: 0 1;
+    margin: 0 2 0 0;
+    border: none;
+}
+
+/* Result chips stack one per row here, unlike the settings line: they are
+   read as a list of facts about one artifact, not scanned across. */
+#speech-result-pane .speech-chip {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+}
+
+/* Narrow: stack the one-row rows rather than let them overflow.
+ *
+ * At 80 columns the Lab body is ~41 cells. Six actions and four chips do not
+ * fit on one row each -- Stop/Export/Clear and two chips were being cut off
+ * at the right edge, present in the DOM and unreachable on screen. Dropping
+ * actions below a threshold would hide capability; stacking keeps every
+ * option and spends rows, which is the correct trade on a narrow terminal
+ * where rows are the cheaper resource.
+ */
+.speech-split-stacked #speech-playground-actions,
+.speech-split-stacked #speech-result-actions,
+.speech-split-stacked #speech-settings-line {
+    layout: vertical;
+    height: auto;
+    min-height: 1;
+}
+
+/* The Playground inventory is a fixed six actions. Textual's horizontal
+ * container resolves `height: auto` one row short after it switches to a
+ * vertical layout, so reserve the six actual rows rather than clipping the
+ * final cross-surface navigation action. */
+.speech-split-stacked #speech-playground-actions {
+    height: 6;
+    min-height: 6;
+}
+
+.speech-split-stacked #speech-playground-actions Button.workbench-action,
+.speech-split-stacked #speech-result-actions Button.workbench-action {
+    width: 100%;
+    margin: 0;
+    text-align: left;
+    content-align: left middle;
+}
+
+.speech-split-stacked .speech-chip {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+}
+
+/* With the rows stacked, the pane scrolls rather than clipping. */
+.speech-split-stacked {
+    overflow-y: auto;
+}
+
+/* Stacked, the panes must overflow rather than compress. `height: 1fr` on
+ * the text area let it shrink to a single row so the Result pane fell off
+ * the bottom with nothing to scroll -- virtual height equalled the
+ * container, so the content was clipped, not scrollable. Fixed heights make
+ * the pane genuinely taller than its viewport, which is what turns
+ * `overflow-y: auto` into a usable scroll. */
+.speech-split-stacked .speech-split-pane {
+    height: auto;
+}
+
+.speech-split-stacked .speech-input {
+    height: 6;
+    min-height: 6;
+}
+
+/* The split itself must stop being `1fr` when stacked: at 1fr it resolved to
+ * 3 rows while its two panes needed 17, so it squeezed them and the overflow
+ * happened inside a container that does not scroll. `auto` lets it take its
+ * content height and pushes the scrolling up to `.speech-pane`, which has
+ * `overflow-y: auto`. */
+.speech-split-stacked .speech-split {
+    height: auto;
+}
+
+/* An override is stated, not implied. The Playground owns session-scoped
+ * values that never write back, so the user must be able to see at a glance
+ * what they have deliberately changed. The asterisk in the label carries it
+ * for anyone who cannot use the colour. */
+.speech-chip-override {
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
+/* Parameter rows: label left, control right, one row each. The legacy form
+ * spent four rows on exactly this pairing, which is most of why it was 93
+ * rows tall. */
+.speech-param-row {
+    height: 1;
+    min-height: 1;
+}
+
+.speech-param-label {
+    width: 24;
+    height: 1;
+    color: $ds-text-muted;
+}
+
+.speech-param-control {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    border: none;
+}
+
+/* The axes reflow onto a second line rather than truncating. Six chips need
+ * more than the ~81 cells the Lab body gives at 120 columns -- "Format" was
+ * being cut to "Format: un" and "Speed" fell off the edge. These are the
+ * variables the user is comparing; they are the last thing that may be
+ * clipped. One column when stacked. */
+.speech-axis-grid {
+    grid-size: 3;
+    grid-rows: 1;
+    grid-gutter: 0 1;
+    height: auto;
+    margin-bottom: 1;
+}
+
+.speech-split-stacked .speech-axis-grid {
+    grid-size: 1;
+}
+
+/* Four player actions do not fit the ~38-cell result pane on one row --
+ * "Export" rendered at x=101..111 against a pane ending at 107, clipped by
+ * the parent rather than by itself. A 2x2 grid fits, and reflows to one
+ * column when stacked. */
+#speech-result-actions {
+    layout: grid;
+    grid-size: 2;
+    grid-rows: 1;
+    grid-gutter: 0 1;
+    height: auto;
+    margin-top: 1;
+}
+
+.speech-split-stacked #speech-result-actions {
+    grid-size: 1;
+}
+
+/* Axis cells: label then the real control, one row. The label carries the
+ * override marker; the control carries the legacy id so the existing
+ * synthesis handler reads it unchanged. */
+.speech-axis-cell {
+    height: 1;
+    min-height: 1;
+}
+
+.speech-axis-cell .speech-chip {
+    width: 10;
+    max-width: 10;
+    margin: 0;
+    background: transparent;
+}
+
+.speech-axis-control {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    border: none;
+    background: $ds-surface-panel;
+}
+
+/* `border: none` on a Select does NOT reach its inner SelectCurrent, which
+ * keeps its own three-row bordered box. Clipped to `height: 1`, every axis
+ * rendered its top border and nothing else -- a visible control showing
+ * neither its value nor its arrow. The child needs the rule too. */
+.speech-axis-control SelectCurrent {
+    border: none;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+}
+
+.speech-axis-control SelectCurrent Static {
+    height: 1;
+}
+
+/* The speed Input has the same inner-border problem in reverse: it is the
+ * bordered widget itself. */
+Input.speech-axis-control {
+    padding: 0 1;
+}
+
+/* --- Speech: player, generation status, clip source ------------------- */
+
+/* The result is one current artifact. It owns enough intrinsic height for its
+ * summary, lifecycle copy, and always-visible actions. */
+.speech-player {
+    height: auto;
+    padding: 0 1;
+    border-top: solid $ds-grid-line;
+}
+
+#audio-player-container > .speech-section-head {
+    margin-top: 0;
+}
+
+.speech-player-status {
+    height: 1;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.speech-result-lifecycle {
+    height: auto;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
+.speech-player-transport {
+    height: 1;
+}
+
+#audio-progress-bar {
+    width: 1fr;
+    height: 1;
+}
+
+.speech-player-time {
+    width: auto;
+    min-width: 12;
+    content-align: right middle;
+    color: $text-muted;
+}
+
+/* Generic Collapsible styling elsewhere is a three-row form header. Speech's
+ * diagnostics and tuning disclosures are compact workbench rows. */
+#speech-param-group,
+#speech-connection-details,
+#speech-log-group {
+    height: auto;
+    min-height: 1;
+    padding: 0;
+    margin-bottom: 0;
+    border: none;
+    background: transparent;
+}
+
+#speech-param-group > CollapsibleTitle,
+#speech-connection-details > CollapsibleTitle,
+#speech-log-group > CollapsibleTitle {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#speech-param-group > Contents,
+#speech-connection-details > Contents,
+#speech-log-group > Contents {
+    height: auto;
+}
+
+/* One row: what is happening, and how far along. */
+.speech-generation-status {
+    height: 1;
+    padding: 0 1;
+}
+
+.speech-generation-text {
+    width: 1fr;
+    color: $text-muted;
+}
+
+#generation-progress {
+    width: auto;
+    min-width: 20;
+    height: 1;
+}
+
+/* Diagnostic, so it stays behind a collapsed disclosure rather than
+   occupying rows nobody reads. */
+#speech-log-group {
+    height: auto;
+    border: none;
+    background: transparent;
+}
+
+.speech-log {
+    height: 8;
+    background: transparent;
+}
+
+/* The reference-clip / voice-sample picker, mounted only for the providers
+   that use one. */
+.speech-source-row {
+    height: 1;
+    margin-top: 1;
+}
+
+.speech-source-status {
+    width: 1fr;
+    color: $text-muted;
+}
+
+/* --- Speech: TTS Settings --------------------------------------------- */
+
+/* One row per setting. The legacy form spent FOUR on each -- a blank row,
+ * the input's top border, the label+value row, the bottom border -- which
+ * is what put `save-settings-btn` at y=102 in a 26-row viewport. */
+.speech-setting-row {
+    height: 1;
+    padding: 0 1;
+}
+
+.speech-setting-label {
+    width: 28;
+    color: $text-muted;
+}
+
+.speech-setting-control {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    border: none;
+    background: $ds-surface-panel;
+}
+
+/* Read-only global ownership stays visible without competing for the row's
+   flexible width. Static defaults to 1fr; that used to leave the actual
+   value control only two cells wide at every tested terminal width. */
+.speech-setting-scope {
+    width: auto;
+    min-width: 0;
+    margin-left: 1;
+    color: $text-muted;
+}
+
+/* `border: none` on a Select does not reach its inner SelectCurrent, which
+ * keeps its own three-row box and, clipped to `height: 1`, paints only its
+ * top border. */
+.speech-setting-control SelectCurrent {
+    border: none;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+}
+
+Input.speech-setting-control {
+    padding: 0 1;
+}
+
+.speech-settings-group {
+    height: auto;
+    border: none;
+    background: transparent;
+    margin-bottom: 1;
+}
+
+/* The action strip sits OUTSIDE the scroll region: `save-settings-btn`
+ * measured at y=102 after every provider block, four screens below the
+ * fold. Keeping it above the groups is what makes it reachable regardless
+ * of how many are expanded. */
+.speech-settings-pane {
+    height: 1fr;
+}
+
+#speech-settings-actions {
+    height: 1;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+#speech-settings-groups {
+    height: 1fr;
+    overflow-y: auto;
+}
+
+.studio-tts-scope {
+    height: auto;
+    min-height: 2;
+    padding: 0 1;
+    color: $ds-text-muted;
+}
+
+#speech-settings-actions {
+    height: auto;
+    min-height: 1;
+}
+
+#speech-settings-actions Button.workbench-action,
+#studio-tts-voice-profile-actions Button.workbench-action {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    padding: 0 1;
+    margin: 0 2 0 0;
+    border: none;
+}
+
+.studio-tts-settings-stacked #speech-settings-actions {
+    layout: vertical;
+    height: 4;
+}
+
+.studio-tts-settings-stacked #speech-settings-actions Button.workbench-action {
+    width: 100%;
+    margin-right: 0;
+}
+
+.studio-tts-setting-row {
+    height: auto;
+    min-height: 1;
+}
+
+.studio-tts-source {
+    width: 34;
+    min-width: 18;
+    padding-left: 1;
+    color: $ds-text-muted;
+    text-overflow: ellipsis;
+}
+
+.studio-tts-field-error {
+    width: auto;
+    min-width: 16;
+    padding-left: 1;
+    color: $ds-status-error;
+}
+
+.studio-tts-settings-stacked .studio-tts-setting-row {
+    layout: vertical;
+    height: auto;
+    min-height: 3;
+    margin-bottom: 1;
+}
+
+.studio-tts-settings-stacked .studio-tts-setting-row .speech-setting-label,
+.studio-tts-settings-stacked .studio-tts-setting-row .speech-setting-control,
+.studio-tts-settings-stacked .studio-tts-setting-row .studio-tts-source,
+.studio-tts-settings-stacked .studio-tts-setting-row .studio-tts-field-error {
+    width: 100%;
+    min-width: 0;
+}
+
+.studio-tts-settings-stacked .studio-tts-setting-row .studio-tts-source,
+.studio-tts-settings-stacked .studio-tts-setting-row .studio-tts-field-error {
+    height: auto;
+    min-height: 1;
+}
+
+#studio-tts-chatterbox-options {
+    height: auto;
+}
+
+#studio-tts-voice-profile-actions {
+    height: auto;
+    min-height: 1;
+    margin: 0 1 1 1;
+}
+
+.studio-tts-settings-stacked #studio-tts-voice-profile-actions {
+    layout: vertical;
+    height: 3;
+}
+
+.studio-tts-settings-stacked #studio-tts-voice-profile-actions Button.workbench-action {
+    width: 100%;
+    margin-right: 0;
+}
+
+.studio-tts-helper {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    color: $ds-text-muted;
+}
+
+#tts-adopt-studio-preferences-btn {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    padding: 0 1;
+    border: none;
+}
+
+
+/* AudioBook actions live above the scroll region, so they stay on screen
+ * whatever is expanded below. Inside it they measured at y=40 in a 26-row
+ * viewport, after eight collapsible groups. */
+#audiobook-actions {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+#audiobook-actions Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    padding: 0 1;
+    margin: 0 2 0 0;
+    border: none;
+}

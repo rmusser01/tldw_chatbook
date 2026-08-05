@@ -12,6 +12,7 @@ from tldw_chatbook.Stats.user_statistics import UserStatistics
 
 
 def test_user_statistics_counts_real_data(tmp_path):
+    """Seeded conversation/messages are counted, not zeroed by a dead DB API."""
     db = CharactersRAGDB(tmp_path / "stats.db", client_id="test-client")
     conv_id = db.add_conversation({"title": "Stats Conversation", "character_id": None})
     db.add_message(

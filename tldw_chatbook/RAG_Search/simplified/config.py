@@ -18,22 +18,10 @@ from tldw_chatbook.config import (
     load_cli_config_and_ensure_existence,
     get_user_data_dir,
 )
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 # Server-parity hybrid fusion default (alpha weights the vector leg)
 from ..fusion import DEFAULT_HYBRID_ALPHA
-
-
-def _coerce_int_setting(value: Any, default: int) -> int:
-    """Coerce user-editable integer settings without raising on bad config."""
-    if isinstance(value, bool):
-        return default
-    try:
-        parsed = float(str(value).strip())
-    except (TypeError, ValueError):
-        return default
-    if not parsed.is_integer():
-        return default
-    return int(parsed)
 
 
 # Canonical vector store type values used by the selection logic below.
@@ -180,6 +168,68 @@ def default_chroma_persist_directory() -> Path:
     if explicit:
         return Path(explicit).expanduser()
     return get_user_data_dir() / "chromadb"
+
+
+def validate_chroma_persist_directory(persist_directory: Union[str, Path]) -> Path:
+    """Validate and normalize a config-sourced Chroma ``persist_directory``.
+
+    Both ``ChromaVectorStore`` (``vector_store.py``) and
+    ``collection_indexes._client()`` construct a ``chromadb.PersistentClient``
+    against this same directory. chromadb's ``SharedSystemClient`` caches one
+    client per persist-directory *string* within a process and raises
+    ``ValueError`` if the same directory is requested again with different
+    ``Settings`` -- but even a harmless string-normalization difference
+    between the two call sites (e.g. one wrapped in ``Path(...)``, one used
+    as a raw string) would produce two different path strings for the same
+    on-disk directory, defeating that cache and constructing two independent
+    clients against it. This function is the single normalization point both
+    call sites route through so they always agree on the exact string.
+
+    ``persist_directory`` is config-sourced (TOML setting or ``RAG_PERSIST_DIR``
+    env var), not untrusted network input, and is not confined to any single
+    base directory -- a user may legitimately point it anywhere. That rules
+    out ``path_validation.validate_path``, which requires a base directory
+    and would also false-positive on the common default persist directory,
+    which lives under a dotted ancestor (``~/.local/share/tldw_cli/...``).
+    ``validate_path_simple`` fits instead: it rejects null bytes and other
+    dangerous patterns without requiring a base directory or rejecting
+    hidden/dotted path segments.
+
+    This function is also the single point both persist_directory PRODUCERS
+    route through -- ``active_config._apply_env_overrides`` (the
+    ``RAG_PERSIST_DIR`` env-override layer) and ``RAGConfig.from_dict`` (a
+    saved/legacy profile's stored JSON) -- not just the two client-
+    construction CONSUMERS above. A producer that left a persist_directory
+    unexpanded (e.g. a literal ``"~/x"`` string, never ``~``-expanded) would
+    hand the consumers a raw value that diverges from what re-running this
+    same function on it would produce, reopening the exact collision this
+    function exists to close -- just one hop upstream, at config-resolution
+    time instead of client-construction time. Idempotent by construction (an
+    already-validated ``Path`` re-validates to itself), so calling it again
+    downstream on an already-normalized value from a compliant producer is a
+    safe no-op, not a second, possibly-divergent transformation.
+
+    Args:
+        persist_directory: The configured Chroma persist directory. May use
+            ``~`` for the user's home directory.
+
+    Returns:
+        The validated, ``~``-expanded ``Path``.
+
+    Raises:
+        ValueError: If ``persist_directory`` isn't a str/Path-like value (so
+            ``Path(...)``/``.expanduser()`` construction itself fails), or if
+            the resulting path contains null bytes or another dangerous
+            pattern (see ``validate_path_simple``).
+    """
+    try:
+        expanded = Path(persist_directory).expanduser()
+        validate_path_simple(str(expanded))
+    except (TypeError, ValueError, OSError) as e:
+        raise ValueError(
+            f"Invalid Chroma persist_directory {str(persist_directory)!r}: {e}"
+        ) from e
+    return expanded
 
 
 @dataclass
@@ -402,12 +452,18 @@ class RAGConfig:
         query_expansion_data = data.get("query_expansion", {})
         pipeline_data = data.get("pipeline", {})
 
-        # Handle path conversion for persist_directory
+        # Handle path conversion for persist_directory. Routed through the
+        # SAME validate_chroma_persist_directory() the two Chroma client-
+        # construction sites use (not a bare Path(...)) -- a saved/legacy
+        # profile JSON is a persist_directory PRODUCER, and a stored "~/x"
+        # left unexpanded here would reach the consumers as a literal,
+        # un-expanded path string that diverges from what they'd compute
+        # themselves. See validate_chroma_persist_directory's docstring.
         if (
             "persist_directory" in vector_store_data
             and vector_store_data["persist_directory"]
         ):
-            vector_store_data["persist_directory"] = Path(
+            vector_store_data["persist_directory"] = validate_chroma_persist_directory(
                 vector_store_data["persist_directory"]
             )
 
@@ -435,345 +491,27 @@ class RAGConfig:
         override_embedding_model: Optional[str] = None,
         override_persist_dir: Optional[Union[str, Path]] = None,
     ) -> "RAGConfig":
-        """
-        Load configuration from tldw_cli settings with optional overrides.
+        """Load the active-profile RAG config + env overrides.
 
-        This integrates with the existing configuration system, loading from:
-        1. Environment variables (highest priority)
-        2. TOML configuration file
-        3. Defaults defined in this class (lowest priority)
+        Delegates to `active_config.resolve_active_rag_config`, which reads the
+        active profile's `rag_config` (deep copy) and applies the same
+        env/override layer this method used to apply directly. This makes the
+        active profile the single config source for both the search path (this
+        method) and the ingestion path, so they never diverge.
 
         Args:
             override_embedding_model: Override the embedding model
             override_persist_dir: Override the persist directory
 
         Returns:
-            RAGConfig instance with loaded settings
+            RAGConfig instance with resolved settings
         """
-        # Load the main configuration
-        load_cli_config_and_ensure_existence()
+        # Imported at call time (not module scope) to avoid a config.py <->
+        # active_config.py import cycle (active_config imports RAGConfig from
+        # this module).
+        from .active_config import resolve_active_rag_config
 
-        # Get RAG-specific configuration section
-        rag_config = get_cli_setting("AppRAGSearchConfig", "rag", {})
-        if not isinstance(rag_config, dict):
-            rag_config = {}
-
-        # Create default configuration
-        config = cls()
-
-        # === Embedding Configuration ===
-        embedding_section = rag_config.get("embedding", {})
-
-        # Check if we should use the embedding_config default model
-        embedding_config = get_cli_setting("embedding_config", None, {})
-        default_model_from_embedding_config = embedding_config.get(
-            "default_model_id", None
-        )
-
-        # Model selection (priority: override > env > rag.embedding > embedding_config default > class default)
-        config.embedding.model = (
-            override_embedding_model
-            or os.getenv("RAG_EMBEDDING_MODEL")
-            or embedding_section.get("model")
-            or default_model_from_embedding_config
-            or get_cli_setting(
-                "AppRAGSearchConfig", "embedding_model"
-            )  # Legacy location
-            or config.embedding.model
-        )
-
-        # Device selection with auto-detection support
-        device_setting = (
-            os.getenv("RAG_DEVICE")
-            or embedding_section.get("device")
-            or config.embedding.device
-        )
-
-        # Handle "auto" device selection
-        if device_setting == "auto":
-            # Try to detect best available device
-            try:
-                import torch
-
-                if torch.cuda.is_available():
-                    config.embedding.device = "cuda"
-                elif (
-                    hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-                ):
-                    config.embedding.device = "mps"
-                else:
-                    config.embedding.device = "cpu"
-                logger.info(f"Auto-detected device: {config.embedding.device}")
-            except ImportError:
-                config.embedding.device = "cpu"
-                logger.info("Torch not available, defaulting to CPU")
-        else:
-            config.embedding.device = device_setting
-
-        # Cache settings
-        config.embedding.cache_size = int(
-            os.getenv("RAG_EMBEDDING_CACHE_SIZE")
-            or embedding_section.get("cache_size", config.embedding.cache_size)
-        )
-
-        config.embedding.batch_size = int(
-            embedding_section.get("batch_size", config.embedding.batch_size)
-        )
-
-        # API settings for OpenAI-compatible models
-        config.embedding.api_key = os.getenv("OPENAI_API_KEY") or get_cli_setting(
-            "API", "openai_api_key"
-        )
-
-        config.embedding.base_url = os.getenv(
-            "RAG_EMBEDDING_BASE_URL"
-        ) or embedding_section.get("base_url")
-
-        # === Vector Store Configuration ===
-        vector_store_section = rag_config.get("vector_store", {})
-
-        # vector_store.type is already resolved by VectorStoreConfig.__post_init__
-        # with the same precedence (RAG_VECTOR_STORE env > explicit config >
-        # installed-deps default) plus normalization; re-applying the raw
-        # env/config values here would undo that normalization.
-
-        # Persist directory (priority: override > env > config > default)
-        persist_dir = (
-            override_persist_dir
-            or os.getenv("RAG_PERSIST_DIR")
-            or vector_store_section.get("persist_directory")
-            or rag_config.get("chroma", {}).get("persist_directory")  # Legacy location
-        )
-
-        if persist_dir:
-            config.vector_store.persist_directory = Path(persist_dir)
-        else:
-            # Default to user-specific data directory
-            user_dir = get_user_data_dir()
-            config.vector_store.persist_directory = user_dir / "chromadb"
-
-        # Collection settings
-        config.vector_store.collection_name = vector_store_section.get(
-            "collection_name", config.vector_store.collection_name
-        )
-
-        config.vector_store.distance_metric = (
-            vector_store_section.get("distance_metric")
-            or rag_config.get("chroma", {}).get("distance_metric")  # Legacy
-            or config.vector_store.distance_metric
-        )
-
-        # Content-specific collections
-        retriever_section = rag_config.get("retriever", {})
-        config.vector_store.media_collection = retriever_section.get(
-            "media_collection", config.vector_store.media_collection
-        )
-        config.vector_store.chat_collection = retriever_section.get(
-            "chat_collection", config.vector_store.chat_collection
-        )
-        config.vector_store.notes_collection = retriever_section.get(
-            "notes_collection", config.vector_store.notes_collection
-        )
-        config.vector_store.character_collection = retriever_section.get(
-            "character_collection", config.vector_store.character_collection
-        )
-
-        # === Chunking Configuration ===
-        chunking_section = rag_config.get("chunking", {})
-
-        config.chunking.chunk_size = int(
-            os.getenv("RAG_CHUNK_SIZE")
-            or chunking_section.get("chunk_size")
-            or retriever_section.get("chunk_size")  # Legacy location
-            or config.chunking.chunk_size
-        )
-
-        config.chunking.chunk_overlap = int(
-            os.getenv("RAG_CHUNK_OVERLAP")
-            or chunking_section.get("chunk_overlap")
-            or retriever_section.get("chunk_overlap")  # Legacy
-            or config.chunking.chunk_overlap
-        )
-
-        config.chunking.chunking_method = chunking_section.get(
-            "method", config.chunking.chunking_method
-        )
-
-        # === Search Configuration ===
-        search_section = rag_config.get("search", {})
-        processor_section = rag_config.get("processor", {})
-
-        config.search.default_top_k = int(
-            os.getenv("RAG_TOP_K")
-            or search_section.get("default_top_k")
-            or retriever_section.get("vector_top_k")  # Legacy
-            or config.search.default_top_k
-        )
-
-        config.search.score_threshold = float(
-            search_section.get("score_threshold", config.search.score_threshold)
-        )
-
-        config.search.include_citations = search_section.get(
-            "include_citations", config.search.include_citations
-        )
-
-        config.search.citation_style = search_section.get(
-            "citation_style", config.search.citation_style
-        )
-
-        config.search.snippet_max_chars = _coerce_int_setting(
-            search_section.get("snippet_max_chars", config.search.snippet_max_chars),
-            config.search.snippet_max_chars,
-        )
-
-        config.search.max_context_size = _coerce_int_setting(
-            search_section.get("max_context_size", config.search.max_context_size),
-            config.search.max_context_size,
-        )
-
-        # Search mode configuration
-        config.search.default_search_mode = os.getenv(
-            "RAG_SEARCH_MODE"
-        ) or search_section.get(
-            "default_search_mode", config.search.default_search_mode
-        )
-
-        # Search type specific settings
-        config.search.fts_top_k = int(
-            retriever_section.get("fts_top_k", config.search.fts_top_k)
-        )
-
-        config.search.vector_top_k = int(
-            retriever_section.get("vector_top_k", config.search.vector_top_k)
-        )
-
-        config.search.hybrid_alpha = float(
-            retriever_section.get("hybrid_alpha", config.search.hybrid_alpha)
-        )
-
-        # Re-ranking settings
-        config.search.enable_reranking = processor_section.get(
-            "enable_reranking", config.search.enable_reranking
-        )
-
-        config.search.reranker_model = processor_section.get("reranker_model")
-
-        config.search.reranker_top_k = int(
-            processor_section.get("reranker_top_k", config.search.reranker_top_k)
-        )
-
-        # Cache and database connection settings
-        config.search.cache_size = int(
-            search_section.get("cache_size", config.search.cache_size)
-        )
-
-        config.search.cache_ttl = float(
-            search_section.get("cache_ttl", config.search.cache_ttl)
-        )
-
-        config.search.fts5_connection_pool_size = int(
-            search_section.get(
-                "fts5_connection_pool_size", config.search.fts5_connection_pool_size
-            )
-        )
-
-        # Search-type specific cache TTLs
-        if "semantic_cache_ttl" in search_section:
-            config.search.semantic_cache_ttl = float(
-                search_section["semantic_cache_ttl"]
-            )
-
-        if "keyword_cache_ttl" in search_section:
-            config.search.keyword_cache_ttl = float(search_section["keyword_cache_ttl"])
-
-        if "hybrid_cache_ttl" in search_section:
-            config.search.hybrid_cache_ttl = float(search_section["hybrid_cache_ttl"])
-
-        # === Query Expansion Configuration ===
-        query_expansion_section = rag_config.get("query_expansion", {})
-
-        config.query_expansion.enabled = query_expansion_section.get(
-            "enabled", config.query_expansion.enabled
-        )
-        config.query_expansion.method = query_expansion_section.get(
-            "method", config.query_expansion.method
-        )
-
-        # === Pipeline Configuration ===
-        pipeline_section = rag_config.get("pipeline", {})
-
-        config.pipeline.default_pipeline = os.getenv(
-            "RAG_DEFAULT_PIPELINE"
-        ) or pipeline_section.get("default_pipeline", config.pipeline.default_pipeline)
-
-        config.pipeline.enable_pipeline_metrics = pipeline_section.get(
-            "enable_pipeline_metrics", config.pipeline.enable_pipeline_metrics
-        )
-
-        config.pipeline.pipeline_timeout_seconds = float(
-            pipeline_section.get(
-                "pipeline_timeout_seconds", config.pipeline.pipeline_timeout_seconds
-            )
-        )
-
-        config.pipeline.cache_pipeline_results = pipeline_section.get(
-            "cache_pipeline_results", config.pipeline.cache_pipeline_results
-        )
-
-        # Pipeline config file location
-        if "pipeline_config_file" in pipeline_section:
-            config.pipeline.pipeline_config_file = Path(
-                pipeline_section["pipeline_config_file"]
-            )
-
-        # Pipeline-specific overrides
-        if "pipeline_overrides" in pipeline_section:
-            config.pipeline.pipeline_overrides = pipeline_section["pipeline_overrides"]
-
-        config.query_expansion.method = query_expansion_section.get(
-            "method", config.query_expansion.method
-        )
-
-        config.query_expansion.max_sub_queries = int(
-            query_expansion_section.get(
-                "max_sub_queries", config.query_expansion.max_sub_queries
-            )
-        )
-
-        config.query_expansion.llm_provider = query_expansion_section.get(
-            "llm_provider", config.query_expansion.llm_provider
-        )
-
-        config.query_expansion.llm_model = query_expansion_section.get(
-            "llm_model", config.query_expansion.llm_model
-        )
-
-        config.query_expansion.local_model = query_expansion_section.get(
-            "local_model", config.query_expansion.local_model
-        )
-
-        config.query_expansion.expansion_prompt_template = query_expansion_section.get(
-            "expansion_prompt_template",
-            config.query_expansion.expansion_prompt_template,
-        )
-
-        config.query_expansion.combine_results = query_expansion_section.get(
-            "combine_results", config.query_expansion.combine_results
-        )
-
-        config.query_expansion.cache_expansions = query_expansion_section.get(
-            "cache_expansions", config.query_expansion.cache_expansions
-        )
-
-        # Log the loaded configuration
-        logger.info(
-            f"Loaded RAG configuration: embedding_model={config.embedding_model}, "
-            f"vector_store={config.vector_store_type}, "
-            f"persist_dir={config.persist_directory}"
-        )
-
-        return config
+        return resolve_active_rag_config(override_embedding_model, override_persist_dir)
 
     def validate(self) -> List[str]:
         """

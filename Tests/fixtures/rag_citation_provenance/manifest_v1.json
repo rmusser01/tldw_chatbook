@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "fixture_version": "rag-citation-provenance-v1",
+  "files": [
+    {
+      "path": "corpus_v1.json",
+      "sha256": "2360238ad20cc0fd2ae0d265c67c07f7360311a56eecafa6605fa75c0d584972",
+      "bytes": 9557,
+      "characters": 9555
+    }
+  ],
+  "source_kinds": [
+    "conversation",
+    "media",
+    "note"
+  ],
+  "source_text_counts": {
+    "ragcp-v1-source-conversation-001": {
+      "bytes": 92,
+      "characters": 92
+    },
+    "ragcp-v1-source-media-001": {
+      "bytes": 77,
+      "characters": 77
+    },
+    "ragcp-v1-source-note-001": {
+      "bytes": 72,
+      "characters": 71
+    }
+  },
+  "answer_text_counts": {
+    "ragcp-v1-answer-grouped-001": {
+      "bytes": 89,
+      "characters": 89
+    },
+    "ragcp-v1-answer-repaired-001": {
+      "bytes": 31,
+      "characters": 31
+    },
+    "ragcp-v1-answer-repeated-001": {
+      "bytes": 82,
+      "characters": 82
+    },
+    "ragcp-v1-answer-unicode-001": {
+      "bytes": 75,
+      "characters": 74
+    }
+  },
+  "answer_cardinalities": {
+    "ragcp-v1-answer-grouped-001": 3,
+    "ragcp-v1-answer-repaired-001": 1,
+    "ragcp-v1-answer-repeated-001": 3,
+    "ragcp-v1-answer-unicode-001": 2
+  },
+  "evidence_cardinalities": {
+    "ragcp-v1-shape-001": 1,
+    "ragcp-v1-shape-008": 8,
+    "ragcp-v1-shape-032": 32,
+    "ragcp-v1-shape-064": 64
+  }
+}

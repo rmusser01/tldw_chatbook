@@ -66,6 +66,7 @@ DEPENDENCIES_AVAILABLE = {
     "tts_processing": False,
     "kokoro_onnx": False,
     "chatterbox": False,
+    "higgs_tts": False,
     "pydub": False,
     "pyaudio": False,
     "av": False,
@@ -153,6 +154,7 @@ class OptionalFeatureInfo:
 
 AREA_RAG = "RAG and retrieval"
 AREA_MEDIA = "Media ingestion and transcription"
+AREA_MEDIA_CREATION = "Media creation"
 AREA_MCP = "MCP integration"
 AREA_LOCAL_INFERENCE = "Local inference"
 AREA_WEB = "Web access"
@@ -295,6 +297,18 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         "Higgs Audio TTS",
         OWNER_LIBRARY_MEDIA,
     ),
+    "image_generation": _feature(
+        "image_generation",
+        "SwarmUI image generation",
+        AREA_MEDIA_CREATION,
+        ("aiohttp",),
+        # No settings screen owns media_creation; `/generate-image` in the
+        # Console is the real entry point, and SwarmUI is configured under
+        # [media_creation.swarmui] in config.toml.
+        "Console > /generate-image",
+        "Image generation",
+        OWNER_CONSOLE_PROVIDER,
+    ),
     "local_mlx": _feature(
         "local_mlx",
         "Local MLX inference",
@@ -403,11 +417,28 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         "Speech recording",
         OWNER_LIBRARY_MEDIA,
     ),
+    # `_is_installed` requires EVERY package here to import, so anything listed
+    # that Watchlists can run without disables it for no reason. This list was
+    # ("markdown", "schedule", "feedparser", "beautifulsoup4", "cryptography")
+    # and is now just the one hard requirement (TASK-1221).
+    #
+    # Only `beautifulsoup4` belongs: monitoring_engine.py does a module-level
+    # `from bs4 import BeautifulSoup` with no fallback, so losing it breaks
+    # WatchlistCheckHandler outright. Everything else degrades or is unused:
+    #   - markdown/schedule/feedparser: no import site anywhere. Feeds are
+    #     parsed by defusedxml/ElementTree plus bs4, never feedparser; the other
+    #     two belonged to the retired briefing and scheduler modules.
+    #   - cryptography: security.py imports it in a try/except and falls back to
+    #     storing credentials in plaintext, warning at the point of use. That is
+    #     a security degradation to surface there, NOT an availability gate --
+    #     conflating the two is what produced this bug. Watchlists runs without
+    #     it today.
+    #   - defusedxml: falls back to stdlib xml.etree.
     "subscriptions": _feature(
         "subscriptions",
         "Subscriptions and scheduled feeds",
         AREA_WATCHLISTS,
-        ("markdown", "schedule", "feedparser", "beautifulsoup4", "cryptography"),
+        ("beautifulsoup4",),
         "Watchlists",
         "Subscriptions/watchlists",
         OWNER_WATCHLISTS,
@@ -446,6 +477,15 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         ("parakeet-mlx",),
         "Library > Import/Export",
         "Parakeet transcription",
+        OWNER_LIBRARY_MEDIA,
+    ),
+    "transcription_parakeet_onnx": _feature(
+        "transcription_parakeet_onnx",
+        "Parakeet ONNX transcription",
+        AREA_MEDIA,
+        ("onnx-asr[cpu]",),
+        "Library > Import/Export",
+        "Parakeet ONNX transcription",
         OWNER_LIBRARY_MEDIA,
     ),
     "video": _feature(
@@ -551,6 +591,36 @@ def check_dependency(module_name: str, feature_name: Optional[str] = None) -> bo
         return False
 
 
+def _check_dependency_installed(
+    module_name: str, feature_name: Optional[str] = None
+) -> bool:
+    """Record whether a dependency is installed without importing it.
+
+    This probe is reserved for native runtimes whose import can initialize
+    hardware or abort the interpreter. Actual feature use must still import the
+    dependency through :func:`require_dependency`.
+
+    Args:
+        module_name: Top-level module name to locate.
+        feature_name: Optional registry key; defaults to ``module_name``.
+
+    Returns:
+        True when Python can resolve the module without importing it.
+    """
+    dependency_key = feature_name or module_name
+    try:
+        available = importlib.util.find_spec(module_name) is not None
+    except Exception as exc:
+        logger.debug(
+            f"Module-spec probe failed for {module_name}; "
+            f"feature '{dependency_key}' will be disabled. Reason: {exc}"
+        )
+        available = False
+
+    DEPENDENCIES_AVAILABLE[dependency_key] = available
+    return available
+
+
 # SVG rendering (cairosvg) — checked lazily, cached after the first call.
 _svg_rendering_available: Optional[bool] = None
 
@@ -654,6 +724,29 @@ def embeddings_rag_deps_installed() -> bool:
     return True
 
 
+def parakeet_onnx_deps_installed() -> bool:
+    """Cheap probe: is the `onnx-asr` runtime extra installed?
+
+    Same shape as `embeddings_rag_deps_installed()` — `find_spec` only, no
+    import, no side effects, safe from configuration/render paths. Mirrors
+    `Local_Ingestion.transcription_service`'s own `ONNX_ASR_AVAILABLE`
+    probe (`importlib.util.find_spec("onnx_asr")`), which is the actual
+    runtime gate `parakeet-onnx` transcription checks before loading a
+    model; this is the same check available without importing that heavier
+    module.
+
+    Returns:
+        True when `onnx_asr` (the `onnx-asr[cpu]` extra,
+        `transcription_parakeet_onnx` feature) resolves to an installed
+        distribution.
+    """
+    try:
+        return importlib.util.find_spec("onnx_asr") is not None
+    except Exception as e:
+        logger.debug(f"find_spec probe failed for onnx_asr: {e}")
+        return False
+
+
 def check_embeddings_rag_deps() -> bool:
     """Check all dependencies needed for embeddings and RAG functionality."""
     # Always recheck dependencies - don't return cached False value
@@ -747,6 +840,40 @@ def check_embeddings_rag_deps() -> bool:
         )
 
     return all_available
+
+
+def lazy_embeddings_rag_available() -> bool:
+    """Resolve real embeddings/RAG dependency availability, checking lazily.
+
+    ``DEPENDENCIES_AVAILABLE["embeddings_rag"]`` starts False and, under the
+    default lazy dependency-checking mode (see the module docstring/
+    ``initialize_dependency_checks()``), is only ever populated by
+    ``check_embeddings_rag_deps()`` -- a function nothing calls automatically
+    before a caller's first real use (task-657). Without a lazy re-probe
+    here, the flag stays at its pristine False default for the app's entire
+    lifetime even when the packages are genuinely importable, so any caller
+    that reads the raw flag directly refuses/hides functionality that is
+    actually available (``EmbeddingFactory`` construction -- task-657 --
+    and the Search/RAG window's missing-deps banner plus Start Indexing
+    guard -- task-638).
+
+    Callers with a genuine "first real use" moment should call this instead
+    of reading ``DEPENDENCIES_AVAILABLE["embeddings_rag"]`` directly: a False
+    reading triggers the real (deep-import) probe now. A True reading is
+    trusted without re-probing -- callers that explicitly reset the registry
+    (``reset_dependency_checks()``) or force a fresh probe
+    (``force_recheck_embeddings()``) get a fresh check on the next call. An
+    explicit False determination reached by actually running the checker
+    (e.g. a genuine failed probe) is honored, not silently overridden --
+    this function re-runs ``check_embeddings_rag_deps()`` on every False
+    reading rather than trusting a stale negative.
+
+    Returns:
+        True when the embeddings/RAG optional dependencies are available.
+    """
+    if DEPENDENCIES_AVAILABLE.get("embeddings_rag", False):
+        return True
+    return bool(check_embeddings_rag_deps())
 
 
 def check_websearch_deps() -> bool:
@@ -859,17 +986,20 @@ def check_audio_processing_deps() -> bool:
     # Check transcription deps
     faster_whisper_available = check_dependency("faster_whisper")
 
-    # Check lightning-whisper-mlx (macOS only)
+    # Probe native MLX backends without importing them. Importing these modules
+    # can initialize Metal and abort a headless process before Python can catch
+    # an exception; the feature-specific runtime loader performs the real import.
     lightning_whisper_available = False
     if sys.platform == "darwin":
-        lightning_whisper_available = check_dependency("lightning_whisper_mlx")
+        lightning_whisper_available = _check_dependency_installed(
+            "lightning_whisper_mlx"
+        )
     else:
         DEPENDENCIES_AVAILABLE["lightning_whisper_mlx"] = False
 
-    # Check parakeet-mlx (macOS only)
     parakeet_mlx_available = False
     if sys.platform == "darwin":
-        parakeet_mlx_available = check_dependency("parakeet_mlx")
+        parakeet_mlx_available = _check_dependency_installed("parakeet_mlx")
     else:
         DEPENDENCIES_AVAILABLE["parakeet_mlx"] = False
 
@@ -1047,6 +1177,7 @@ def check_tts_deps() -> bool:
     """Check dependencies needed for TTS functionality."""
     kokoro_available = check_dependency("kokoro_onnx", "kokoro_onnx")
     chatterbox_available = check_dependency("chatterbox")
+    higgs_available = check_dependency("boson_multimodal", "higgs_tts")
     pydub_available = check_dependency("pydub")
     pyaudio_available = check_dependency("pyaudio")
     av_available = check_dependency("av")
@@ -1054,6 +1185,7 @@ def check_tts_deps() -> bool:
     tts_available = (
         kokoro_available
         or chatterbox_available
+        or higgs_available
         or (pydub_available and pyaudio_available)
     )
     DEPENDENCIES_AVAILABLE["tts_processing"] = tts_available
@@ -1065,6 +1197,8 @@ def check_tts_deps() -> bool:
             available_features.append("Kokoro TTS")
         if chatterbox_available:
             available_features.append("Chatterbox TTS")
+        if higgs_available:
+            available_features.append("Higgs Audio TTS")
         if pydub_available and pyaudio_available:
             available_features.append("Audio playback")
         if av_available:

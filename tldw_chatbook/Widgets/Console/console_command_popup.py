@@ -11,8 +11,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from loguru import logger
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import OptionList
 from textual.widgets.option_list import Option
@@ -23,7 +25,7 @@ MAX_VISIBLE_ROWS = 8
 MIN_WIDTH = 30
 
 
-class SuggestionOption(Option):
+class _SuggestionOption(Option):
     """OptionList row carrying its originating `CommandSuggestion`."""
 
     def __init__(self, suggestion: CommandSuggestion) -> None:
@@ -41,12 +43,6 @@ class ConsoleCommandPopup(Widget):
     can_focus = False
 
     def __init__(self, **kwargs: Any) -> None:
-        """Create the popup, hidden until `show_suggestions` is called.
-
-        Args:
-            **kwargs: Forwarded to ``Widget``. The popup forces its own
-                ``id`` ("console-command-popup") when none is given.
-        """
         kwargs.setdefault("id", "console-command-popup")
         super().__init__(**kwargs)
         self._suggestions: list[CommandSuggestion] = []
@@ -66,23 +62,31 @@ class ConsoleCommandPopup(Widget):
         return self.display
 
     def show_suggestions(self, suggestions: list[CommandSuggestion]) -> None:
-        """Replace rows, reset the highlight, reposition, and show.
-
-        Args:
-            suggestions: Completions to list, in display order. An empty
-                list still opens the popup at height 0 (caller filters).
-        """
+        """Replace rows, reset the highlight, reposition, and show."""
         self._suggestions = list(suggestions)
+        self._desired_height = min(len(self._suggestions), MAX_VISIBLE_ROWS)
+        self.styles.height = self._desired_height
+        # Set the final width BEFORE rebuilding the OptionList: option row
+        # heights are computed (and cached) against the width at add time, so
+        # adding options while the popup is still narrow wraps rows, inflates
+        # the virtual size, and strands the list in a scrollbar-stuck state
+        # that paints nothing.
+        self.reposition()
         option_list = self.query_one(OptionList)
         option_list.clear_options()
         option_list.add_options(
-            [SuggestionOption(suggestion) for suggestion in self._suggestions]
+            [_SuggestionOption(suggestion) for suggestion in self._suggestions]
         )
-        self._desired_height = min(len(self._suggestions), MAX_VISIBLE_ROWS)
-        self.styles.height = self._desired_height
         option_list.highlighted = 0
-        self.reposition()
         self.display = True
+        # The shell's post-keystroke machinery (console-sync worker, guidance
+        # dismissal) can reflow the composer a beat AFTER even the
+        # post-refresh anchor runs (verified: both immediate and
+        # call_after_refresh repositions can observe the pre-shift composer).
+        # The trailing timer re-anchor covers that settle; every subsequent
+        # keystroke re-anchors anyway. Idempotent and cheap.
+        self.call_after_refresh(self.reposition)
+        self.set_timer(0.1, self.reposition)
 
     def hide(self) -> None:
         """Hide the popup and drop its rows."""
@@ -90,11 +94,7 @@ class ConsoleCommandPopup(Widget):
         self._suggestions = []
 
     def move_highlight(self, delta: int) -> None:
-        """Move the highlight by ``delta`` rows, wrapping at both ends.
-
-        Args:
-            delta: Rows to move the highlight by; negative moves up.
-        """
+        """Move the highlight by ``delta`` rows, wrapping at both ends."""
         count = len(self._suggestions)
         if count == 0:
             return
@@ -120,7 +120,15 @@ class ConsoleCommandPopup(Widget):
             return
         try:
             composer = self.screen.query_one("#console-native-composer")
-        except Exception:
+        except NoMatches:
+            # Composer not mounted (lifecycle transition) — nothing to anchor to.
+            return
+        except Exception as exception:
+            # Unexpected failure: keep the popup from crashing the screen,
+            # but leave a diagnostic trail instead of swallowing it silently.
+            logger.warning(
+                f"ConsoleCommandPopup.reposition failed: {exception!r}"
+            )
             return
         anchor = composer.region
         origin = self.parent.content_region

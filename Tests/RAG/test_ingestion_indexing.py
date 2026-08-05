@@ -36,6 +36,7 @@ from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
 from tldw_chatbook.RAG_Search import ingestion_indexing
 from tldw_chatbook.RAG_Search.ingestion_indexing import (
     IndexEntry,
+    IndexRemoval,
     IngestionIndexer,
     backfill_semantic_index,
     conversation_document,
@@ -86,6 +87,7 @@ def _clean_hook_registry():
     yield
     uninstall_media_ingest_hook()
     media_db_module._MEDIA_POST_INGEST_CALLBACKS.clear()
+    media_db_module._MEDIA_POST_DELETE_CALLBACKS.clear()
 
 
 def _add_media(
@@ -115,13 +117,29 @@ class FakeVectorStore:
         self.deleted.append(doc_id)
 
 
+class FakeSearchCache:
+    def __init__(self):
+        self.clear_count = 0
+
+    def clear(self):
+        self.clear_count += 1
+
+
 class FakeRAGService:
     """Minimal stand-in exposing the real batch indexing API."""
 
     def __init__(self):
         self.vector_store = FakeVectorStore()
+        self.cache = FakeSearchCache()
         self.indexed_docs = []
         self.fail = False
+        self.close_calls = 0
+
+    def close(self):
+        """task-640 item 2: mirrors EnhancedRAGServiceV2's real close(), so
+        tests can assert get_shared_rag_service() releases a build it
+        discards due to a construction race."""
+        self.close_calls += 1
 
     async def index_batch_optimized(self, documents, show_progress=True, batch_size=32):
         if self.fail:
@@ -235,8 +253,10 @@ class TestMediaPostIngestHook:
 
     def test_unregister_stops_callbacks(self, media_db):
         calls = []
+
         def cb(db, mid, muuid):
             return calls.append(mid)
+
         media_db_module.register_media_post_ingest_callback(cb)
         media_db_module.unregister_media_post_ingest_callback(cb)
 
@@ -265,6 +285,58 @@ class TestMediaPostIngestHook:
         assert updated_id == media_id
         assert calls == [media_id]
 
+    def test_delete_callback_observes_committed_source_state(self, media_db):
+        seen = []
+        media_id, media_uuid, _ = _add_media(
+            media_db, content="delete callback ordering"
+        )
+
+        def callback(db, deleted_id, deleted_uuid):
+            row = db.get_media_by_id(deleted_id, include_deleted=True)
+            seen.append((deleted_id, deleted_uuid, row["deleted"]))
+
+        media_db_module.register_media_post_delete_callback(callback)
+        try:
+            assert media_db.soft_delete_media(media_id)
+        finally:
+            media_db_module.unregister_media_post_delete_callback(callback)
+
+        assert seen == [(media_id, media_uuid, 1)]
+
+    def test_delete_callback_failure_does_not_roll_back_source(self, media_db):
+        media_id, _, _ = _add_media(media_db, content="delete survives observer")
+
+        def bad_callback(db, deleted_id, deleted_uuid):
+            raise RuntimeError("delete observer exploded")
+
+        media_db_module.register_media_post_delete_callback(bad_callback)
+        try:
+            assert media_db.soft_delete_media(media_id)
+        finally:
+            media_db_module.unregister_media_post_delete_callback(bad_callback)
+
+        row = media_db.get_media_by_id(media_id, include_deleted=True)
+        assert row["deleted"] == 1
+
+    def test_hard_delete_callback_fires_after_source_is_gone(self, media_db):
+        seen = []
+        media_id, media_uuid, _ = _add_media(
+            media_db, content="hard delete callback ordering"
+        )
+        assert media_db.soft_delete_media(media_id)
+
+        def callback(db, deleted_id, deleted_uuid):
+            row = db.get_media_by_id(deleted_id, include_deleted=True)
+            seen.append((deleted_id, deleted_uuid, row))
+
+        media_db_module.register_media_post_delete_callback(callback)
+        try:
+            assert media_db.hard_delete_old_media(days_old=-1) == 1
+        finally:
+            media_db_module.unregister_media_post_delete_callback(callback)
+
+        assert seen == [(media_id, media_uuid, None)]
+
 
 # === Availability gate (AC #5) ===
 
@@ -288,6 +360,8 @@ class TestAvailabilityGate:
 
         assert media_id is not None
         assert media_db.get_media_by_id(media_id) is not None
+
+        assert media_db.soft_delete_media(media_id)
 
     def test_semantic_indexing_available_false_when_deps_missing(self, monkeypatch):
         monkeypatch.setattr(
@@ -503,6 +577,49 @@ class TestIngestionIndexer:
             release.set()
             idx.stop()
 
+    def test_removal_deletes_vector_document_then_tracking_state(
+        self, indexer, fake_service, indexing_db
+    ):
+        entry = _entry("57")
+        assert indexer.submit(entry)
+        assert indexer.wait_until_idle(timeout=10)
+        assert indexing_db.get_indexed_item_info("57", "media") is not None
+
+        assert indexer.submit_removal(
+            IndexRemoval(
+                item_id="57",
+                item_type="media",
+                document_id="media_57",
+            )
+        )
+        assert indexer.wait_until_idle(timeout=10)
+
+        assert fake_service.vector_store.deleted[-1] == "media_57"
+        assert fake_service.cache.clear_count == 2
+        assert indexing_db.get_indexed_item_info("57", "media") is None
+        assert indexer.stats()["removed"] == 1
+
+    def test_failed_vector_removal_retains_tracking_for_reconciliation(
+        self, indexing_db
+    ):
+        class FailingVectorStore:
+            def delete_document(self, doc_id):
+                raise RuntimeError("vector store unavailable")
+
+        service = FakeRAGService()
+        service.vector_store = FailingVectorStore()
+        indexing_db.mark_item_indexed(
+            "58", "media", datetime.now(timezone.utc), chunk_count=2
+        )
+        idx = IngestionIndexer(rag_service=service, indexing_db=indexing_db)
+        try:
+            assert idx.submit_removal(IndexRemoval("58", "media", "media_58"))
+            assert idx.wait_until_idle(timeout=10)
+            assert indexing_db.get_indexed_item_info("58", "media") is not None
+            assert idx.stats()["failed"] == 1
+        finally:
+            idx.stop()
+
 
 # === End-to-end: ingest -> worker -> semantic search (AC #1, #2) ===
 
@@ -576,6 +693,99 @@ class TestEndToEndSemanticSearch:
         assert top.metadata.get("chunk_id"), (
             "chunk_id must be present for _semantic_row"
         )
+
+    def test_rag_services_keep_query_caches_isolated(self):
+        first = _make_real_service("memory")
+        second = _make_real_service("memory")
+
+        assert first.cache is not second.cache
+        assert first.cache.enabled is False
+        assert second.cache.enabled is False
+
+    def test_soft_delete_removes_semantic_result_and_undelete_restores_it(
+        self, media_db, tmp_path, monkeypatch
+    ):
+        service = _make_real_service("memory")
+        indexing_db = RAGIndexingDB(tmp_path / "rag-lifecycle.db")
+        indexer = IngestionIndexer(
+            rag_service=service,
+            indexing_db=indexing_db,
+        )
+        monkeypatch.setattr(
+            ingestion_indexing, "get_ingestion_indexer", lambda: indexer
+        )
+        install_media_ingest_hook()
+        try:
+            media_id, _, _ = _add_media(
+                media_db,
+                title="Quokka Manifesto",
+                content=DISTINCTIVE_CONTENT,
+            )
+            assert indexer.wait_until_idle(timeout=60)
+
+            assert media_db.soft_delete_media(media_id)
+            assert indexer.wait_until_idle(timeout=60)
+            deleted_results = asyncio.run(
+                service.search(
+                    "zanzibar quokka snorkeling manifesto",
+                    top_k=3,
+                    search_type="semantic",
+                    include_citations=False,
+                )
+            )
+            assert all(
+                result.metadata.get("source_id") != str(media_id)
+                for result in deleted_results
+            )
+            assert indexing_db.get_indexed_item_info(str(media_id), "media") is None
+
+            assert media_db.undelete_media(media_id)
+            assert indexer.wait_until_idle(timeout=60)
+            restored_results = asyncio.run(
+                service.search(
+                    "zanzibar quokka snorkeling manifesto",
+                    top_k=3,
+                    search_type="semantic",
+                    include_citations=False,
+                )
+            )
+            assert any(
+                result.metadata.get("source_id") == str(media_id)
+                for result in restored_results
+            )
+
+            assert media_db.mark_as_trash(media_id)
+            assert indexer.wait_until_idle(timeout=60)
+            trashed_results = asyncio.run(
+                service.search(
+                    "zanzibar quokka snorkeling manifesto",
+                    top_k=3,
+                    search_type="semantic",
+                    include_citations=False,
+                )
+            )
+            assert all(
+                result.metadata.get("source_id") != str(media_id)
+                for result in trashed_results
+            )
+
+            assert media_db.restore_from_trash(media_id)
+            assert indexer.wait_until_idle(timeout=60)
+            untrashed_results = asyncio.run(
+                service.search(
+                    "zanzibar quokka snorkeling manifesto",
+                    top_k=3,
+                    search_type="semantic",
+                    include_citations=False,
+                )
+            )
+            assert any(
+                result.metadata.get("source_id") == str(media_id)
+                for result in untrashed_results
+            )
+        finally:
+            uninstall_media_ingest_hook()
+            indexer.stop()
 
     def test_v2_service_with_parallel_profile_indexes_and_searches(
         self, media_db, tmp_path, monkeypatch
@@ -738,6 +948,39 @@ class TestBackfill:
         assert summary["status"] == "unavailable"
         assert summary["indexed"] == 0
 
+    def test_backfill_reconciles_tracked_media_deleted_while_hook_was_absent(
+        self, media_db, tmp_path
+    ):
+        media_id, _, _ = _add_media(
+            media_db,
+            title="Orphaned projection",
+            content=DISTINCTIVE_CONTENT,
+        )
+        service = FakeRAGService()
+        indexing_db = RAGIndexingDB(tmp_path / "rag-reconcile.db")
+        first = asyncio.run(
+            ingestion_indexing.index_entries(
+                service,
+                indexing_db,
+                [_entry(str(media_id))],
+            )
+        )
+        assert first["indexed"] == 1
+        assert media_db.soft_delete_media(media_id)
+
+        summary = asyncio.run(
+            backfill_semantic_index(
+                media_db=media_db,
+                rag_service=service,
+                indexing_db=indexing_db,
+                item_types=("media",),
+            )
+        )
+
+        assert summary["removed"] == 1
+        assert service.vector_store.deleted[-1] == f"media_{media_id}"
+        assert indexing_db.get_indexed_item_info(str(media_id), "media") is None
+
 
 # === Shared service wiring ===
 
@@ -781,3 +1024,529 @@ class TestSharedRagService:
             assert app._rag_service is fake
         finally:
             ingestion_indexing.reset_shared_rag_service()
+
+
+@pytest.mark.unit
+class TestSharedRagServiceLockDeadlock:
+    """task-641: get_shared_rag_service() must never hold
+    ``_shared_service_lock`` across the blocking ``create_rag_service()``
+    call (which can trigger real network I/O, e.g. a HuggingFace model
+    download) -- otherwise any concurrent lock-taking caller
+    (``reset_shared_rag_service`` / ``set_shared_rag_service``, both
+    reachable from the main/UI thread via
+    ``active_config.set_active_profile`` and the Settings-screen
+    save/Backfill/Clone paths) blocks for the full duration of the stalled
+    construction, which is exactly the 6+ minute total-app-freeze the UAT
+    ``sample(1)`` stack capture showed (main thread parked in
+    ``PyThread_acquire_lock_timed`` while a worker thread sat in a raw
+    ``select()`` on a stalled socket).
+    """
+
+    _THREAD_SCHEDULING_TIMEOUT_SECONDS = 30.0
+
+    @pytest.fixture(autouse=True)
+    def _isolate_build_lock(self, monkeypatch):
+        monkeypatch.setattr(
+            ingestion_indexing, "_shared_service_build_lock", threading.Lock()
+        )
+
+    def _patch_construction(self, monkeypatch, build_fn):
+        import tldw_chatbook.RAG_Search.simplified as simplified_pkg
+        import tldw_chatbook.RAG_Search.simplified.active_config as active_config
+
+        monkeypatch.setattr(simplified_pkg, "create_rag_service", build_fn)
+        # resolve_active_rag_config() is evaluated as part of resolving what
+        # to build -- fake it so this test never touches a real
+        # ConfigProfileManager / on-disk profiles dir (same rationale as
+        # Tests/RAG/test_first_run_import.py's lock-ordering regression test).
+        monkeypatch.setattr(
+            active_config, "resolve_active_rag_config", lambda **kwargs: object()
+        )
+
+    def test_reset_does_not_block_on_in_flight_construction(self, monkeypatch):
+        """RED for task-641: a reset/set-active call concurrent with a slow
+        (simulated stalled-network) construction must complete promptly
+        instead of waiting on the lock construction currently holds."""
+        ingestion_indexing.reset_shared_rag_service()
+        entered_construction = threading.Event()
+        release_construction = threading.Event()
+
+        def _slow_create_rag_service(**kwargs):
+            entered_construction.set()
+            # Stand-in for the stalled HuggingFace CloudFront socket read
+            # the UAT sample(1) capture showed.
+            release_construction.wait(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
+            return FakeRAGService()
+
+        self._patch_construction(monkeypatch, _slow_create_rag_service)
+
+        builder = threading.Thread(
+            target=ingestion_indexing.get_shared_rag_service, daemon=True
+        )
+        builder.start()
+        try:
+            assert entered_construction.wait(
+                timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS
+            ), "construction never started"
+
+            # While construction is still blocked "mid-download", a
+            # concurrent reset (as fired from the main/UI thread by
+            # Backfill's save path / Clone / Set active) must not queue
+            # up behind it.
+            start = time.monotonic()
+            ingestion_indexing.reset_shared_rag_service()
+            elapsed = time.monotonic() - start
+            assert elapsed < 1.0, (
+                f"reset_shared_rag_service() blocked for {elapsed:.2f}s on "
+                "in-flight construction -- this is the task-641 deadlock"
+            )
+        finally:
+            release_construction.set()
+            builder.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
+            assert not builder.is_alive()
+            ingestion_indexing.reset_shared_rag_service()
+
+    def test_concurrent_callers_construct_exactly_once(self, monkeypatch):
+        """Task-249 invariant preserved by the task-641 fix: two threads
+        racing get_shared_rag_service() with no service yet installed must
+        still trigger construction at most once -- the second caller waits
+        for (and reuses) the first's result rather than paying the
+        construction cost twice. This is what
+        ``_shared_service_build_lock`` (separate from ``_shared_service_
+        lock``, so it never blocks reset/set) is for."""
+        ingestion_indexing.reset_shared_rag_service()
+        calls = []
+        calls_lock = threading.Lock()
+
+        def _counting_create_rag_service(**kwargs):
+            with calls_lock:
+                calls.append(1)
+            time.sleep(0.05)
+            return FakeRAGService()
+
+        self._patch_construction(monkeypatch, _counting_create_rag_service)
+
+        results = []
+
+        def _call():
+            results.append(ingestion_indexing.get_shared_rag_service())
+
+        t1 = threading.Thread(target=_call, daemon=True)
+        t2 = threading.Thread(target=_call, daemon=True)
+        t1.start()
+        t2.start()
+        try:
+            t1.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
+            t2.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
+            assert not t1.is_alive() and not t2.is_alive()
+            assert len(calls) == 1, f"construction ran {len(calls)} times, expected 1"
+            assert len(results) == 2
+            assert results[0] is not None and results[0] is results[1]
+        finally:
+            ingestion_indexing.reset_shared_rag_service()
+
+    def test_reset_racing_in_flight_construction_discards_the_stale_build(
+        self, monkeypatch
+    ):
+        """task-641 AC#3 (no double-construction leak on a construction/reset
+        race): if reset_shared_rag_service() lands while a build is already
+        past the lock and mid-``create_rag_service()``, that build must be
+        discarded at swap time rather than quietly resurrecting a since-
+        superseded profile immediately after the reset -- so at most one
+        instance is EVER installed as the shared singleton, and it is never
+        the stale, pre-reset one."""
+        ingestion_indexing.reset_shared_rag_service()
+        entered_construction = threading.Event()
+        release_construction = threading.Event()
+
+        def _slow_create_rag_service(**kwargs):
+            entered_construction.set()
+            release_construction.wait(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
+            return FakeRAGService()
+
+        self._patch_construction(monkeypatch, _slow_create_rag_service)
+
+        results = []
+        builder = threading.Thread(
+            target=lambda: results.append(ingestion_indexing.get_shared_rag_service()),
+            daemon=True,
+        )
+        builder.start()
+        try:
+            assert entered_construction.wait(
+                timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS
+            ), "construction never started"
+
+            # Reset while the build above is still in flight.
+            ingestion_indexing.reset_shared_rag_service()
+
+            release_construction.set()
+            builder.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
+            assert not builder.is_alive()
+
+            # The in-flight build's own result was discarded (it reflects a
+            # since-superseded generation): its caller sees None, and the
+            # stale instance was NEVER installed as the shared singleton.
+            assert results == [None]
+            assert ingestion_indexing.peek_shared_rag_service() is None
+        finally:
+            release_construction.set()
+            ingestion_indexing.reset_shared_rag_service()
+
+    def test_reset_racing_in_flight_construction_closes_the_discarded_build(
+        self, monkeypatch
+    ):
+        """task-640 item 2: a build discarded because a concurrent reset
+        superseded its generation must have close() called on it (releasing
+        whatever real resources -- thread pool, embeddings, vector store,
+        DB connection pools -- EnhancedRAGServiceV2.close() frees) instead
+        of just being dropped for GC."""
+        ingestion_indexing.reset_shared_rag_service()
+        entered_construction = threading.Event()
+        release_construction = threading.Event()
+        built_holder = []
+
+        def _slow_create_rag_service(**kwargs):
+            entered_construction.set()
+            release_construction.wait(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
+            built = FakeRAGService()
+            built_holder.append(built)
+            return built
+
+        self._patch_construction(monkeypatch, _slow_create_rag_service)
+
+        builder = threading.Thread(
+            target=ingestion_indexing.get_shared_rag_service, daemon=True
+        )
+        builder.start()
+        try:
+            assert entered_construction.wait(
+                timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS
+            ), "construction never started"
+            ingestion_indexing.reset_shared_rag_service()
+            release_construction.set()
+            builder.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
+            assert not builder.is_alive()
+
+            assert len(built_holder) == 1
+            assert built_holder[0].close_calls == 1, (
+                "the build discarded by the concurrent reset was never "
+                "closed -- its resources (thread pool/embeddings/vector "
+                "store/DB connection pools) leak"
+            )
+        finally:
+            release_construction.set()
+            ingestion_indexing.reset_shared_rag_service()
+
+    def test_concurrent_set_racing_in_flight_construction_closes_the_discarded_build(
+        self, monkeypatch
+    ):
+        """task-640 item 2, the other discard branch: an injected
+        set_shared_rag_service() winning while a build is in flight must
+        also close the losing (discarded) build -- and must NOT close the
+        winner it just installed."""
+        ingestion_indexing.reset_shared_rag_service()
+        entered_construction = threading.Event()
+        release_construction = threading.Event()
+        built_holder = []
+
+        def _slow_create_rag_service(**kwargs):
+            entered_construction.set()
+            release_construction.wait(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
+            built = FakeRAGService()
+            built_holder.append(built)
+            return built
+
+        self._patch_construction(monkeypatch, _slow_create_rag_service)
+
+        results = []
+        builder = threading.Thread(
+            target=lambda: results.append(ingestion_indexing.get_shared_rag_service()),
+            daemon=True,
+        )
+        builder.start()
+        winner = FakeRAGService()
+        try:
+            assert entered_construction.wait(
+                timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS
+            ), "construction never started"
+            ingestion_indexing.set_shared_rag_service(winner)
+            release_construction.set()
+            builder.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
+            assert not builder.is_alive()
+
+            assert results == [winner]
+            assert len(built_holder) == 1
+            assert built_holder[0].close_calls == 1, (
+                "the build discarded because an injected "
+                "set_shared_rag_service() already won was never closed"
+            )
+            assert winner.close_calls == 0, (
+                "the WINNING (installed) service must never be closed just "
+                "because a concurrent build lost the race"
+            )
+        finally:
+            release_construction.set()
+            ingestion_indexing.reset_shared_rag_service()
+
+    def test_config_resolution_runs_before_the_build_lock_not_serialized_behind_it(
+        self, monkeypatch
+    ):
+        """task-640 item 1: resolve_active_rag_config()/_configured_profile()
+        must run BEFORE _shared_service_build_lock is acquired at all, so a
+        second caller's config resolution is never serialized behind a slow
+        in-flight build holding that lock."""
+        import tldw_chatbook.RAG_Search.simplified as simplified_pkg
+        import tldw_chatbook.RAG_Search.simplified.active_config as active_config
+
+        ingestion_indexing.reset_shared_rag_service()
+        entered_construction = threading.Event()
+        release_construction = threading.Event()
+
+        def _slow_create_rag_service(**kwargs):
+            entered_construction.set()
+            release_construction.wait(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
+            return FakeRAGService()
+
+        monkeypatch.setattr(
+            simplified_pkg, "create_rag_service", _slow_create_rag_service
+        )
+
+        resolve_calls = []
+        resolve_calls_lock = threading.Lock()
+        second_resolve_seen = threading.Event()
+
+        def _tracking_resolve(**kwargs):
+            with resolve_calls_lock:
+                resolve_calls.append(1)
+                count = len(resolve_calls)
+            if count == 2:
+                second_resolve_seen.set()
+            return object()
+
+        monkeypatch.setattr(
+            active_config, "resolve_active_rag_config", _tracking_resolve
+        )
+
+        t1 = threading.Thread(
+            target=ingestion_indexing.get_shared_rag_service, daemon=True
+        )
+        t1.start()
+        try:
+            assert entered_construction.wait(
+                timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS
+            ), "construction never started"
+            # t1 is now stuck mid-build, holding _shared_service_build_lock
+            # (its own config resolution already happened before that).
+            t2 = threading.Thread(
+                target=ingestion_indexing.get_shared_rag_service, daemon=True
+            )
+            t2.start()
+            try:
+                assert second_resolve_seen.wait(
+                    timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS
+                ), (
+                    "the second caller's config resolution was blocked "
+                    "behind the in-flight build's _shared_service_build_"
+                    "lock -- config resolution must run BEFORE that lock "
+                    "is acquired (task-640 item 1)"
+                )
+            finally:
+                release_construction.set()
+                t2.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
+                assert not t2.is_alive()
+        finally:
+            release_construction.set()
+            t1.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
+            assert not t1.is_alive()
+            ingestion_indexing.reset_shared_rag_service()
+
+    def test_reset_landing_between_resolve_and_generation_capture_discards_the_build(
+        self, monkeypatch
+    ):
+        """task-640 review pinning test: a reset landing in the window
+        between "config resolved" and "generation captured" must still
+        cause the build to be discarded -- NOT installed as the shared
+        singleton.
+
+        Mirrors the reviewer's adversarial repro exactly: the getter is
+        blocked mid config-resolution (simulating the config-profile disk
+        read); a concurrent reset_shared_rag_service() lands while it's
+        still blocked there; resolution then completes (returning config
+        resolved BEFORE the reset) and the getter proceeds into the locks.
+
+        Capturing `_shared_service_generation` AFTER resolving config (the
+        bug) reads the reset's ALREADY-BUMPED value, so the swap-time
+        check sees "generation matches" and installs the stale-config
+        build. Capturing it BEFORE resolution (the fix) means the reset
+        bumps generation PAST what was already captured, so the swap-time
+        check correctly discards the build instead.
+        """
+        import tldw_chatbook.RAG_Search.simplified as simplified_pkg
+        import tldw_chatbook.RAG_Search.simplified.active_config as active_config
+
+        ingestion_indexing.reset_shared_rag_service()
+
+        resolve_entered = threading.Event()
+        resolve_may_return = threading.Event()
+
+        def _fake_resolve(**kwargs):
+            # The getter is INSIDE its pre-lock config resolution when the
+            # concurrent reset (simulating a user's profile switch) lands.
+            resolve_entered.set()
+            assert resolve_may_return.wait(
+                timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS
+            )
+            return "CONFIG_RESOLVED_BEFORE_THE_RESET"
+
+        def _fake_create(**kwargs):
+            fake = FakeRAGService()
+            fake.cfg = kwargs.get("config")
+            return fake
+
+        monkeypatch.setattr(active_config, "resolve_active_rag_config", _fake_resolve)
+        monkeypatch.setattr(simplified_pkg, "create_rag_service", _fake_create)
+
+        results = []
+        getter = threading.Thread(
+            target=lambda: results.append(ingestion_indexing.get_shared_rag_service()),
+            daemon=True,
+        )
+        getter.start()
+        try:
+            assert resolve_entered.wait(
+                timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS
+            ), "getter never entered config resolution"
+
+            # The user switches profiles NOW: settings save ->
+            # set_active_profile() -> reset_shared_rag_service(). Bumps
+            # generation, clears the singleton.
+            ingestion_indexing.reset_shared_rag_service()
+
+            # Config resolution (started pre-reset) completes, returning
+            # the OLD profile's config; the getter proceeds into the locks.
+            resolve_may_return.set()
+            getter.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
+            assert not getter.is_alive()
+
+            assert results == [None], (
+                "the getter returned a service built from config resolved "
+                "BEFORE the reset, instead of discarding it"
+            )
+            installed = ingestion_indexing.peek_shared_rag_service()
+            assert installed is None, (
+                "a service built from config resolved BEFORE the reset was "
+                "installed as the shared singleton -- the generation check "
+                "did not catch it because generation was captured AFTER "
+                "config resolution instead of before"
+            )
+        finally:
+            resolve_may_return.set()
+            getter.join(timeout=self._THREAD_SCHEDULING_TIMEOUT_SECONDS)
+            ingestion_indexing.reset_shared_rag_service()
+
+
+class TestFirstRunIndexingIsNotReportedAsFailure:
+    """A fresh install must not present its first successful ingest as a failure.
+
+    With the embeddings_rag deps installed but no embedding model downloaded,
+    every chunk fails to embed and the indexer reported "RAG indexing failed" as
+    a warning toast. The import itself succeeded, so the first thing a new user
+    saw after their first working action was a failure they did not cause and
+    could not act on (task-685).
+    """
+
+    def _indexer(self, tmp_path, notes):
+        idx = IngestionIndexer(
+            rag_service=None,
+            indexing_db=RAGIndexingDB(tmp_path / "rag_indexing.db"),
+        )
+        idx.set_failure_notifier(lambda m: notes.append(("failure", m)))
+        idx.set_guidance_notifier(lambda m: notes.append(("guidance", m)))
+        return idx
+
+    def test_embeddings_never_worked_is_guidance_not_a_failure(self, tmp_path):
+        notes: list[tuple[str, str]] = []
+        idx = self._indexer(tmp_path, notes)
+
+        idx._report_index_summary(
+            {
+                "indexed": 0,
+                "skipped": 0,
+                "failed": 2,
+                "errors": ["All chunks failed embedding generation"] * 2,
+            }
+        )
+
+        assert notes, "the user was told nothing at all"
+        kind, message = notes[-1]
+        assert kind == "guidance", f"still reported as a {kind}: {message}"
+        # AC#2: say what indexing gives and how to turn it on.
+        lowered = message.lower()
+        assert "search" in lowered
+        assert "embedding" in lowered
+        assert "failed" not in lowered, "guidance must not read as a failure"
+
+    def test_a_real_failure_on_a_working_install_still_surfaces(self, tmp_path):
+        """AC#3. Embeddings clearly work here -- something indexed -- so a
+        failure on one item is a genuine problem, not a first-run gap."""
+        notes: list[tuple[str, str]] = []
+        idx = self._indexer(tmp_path, notes)
+
+        idx._report_index_summary(
+            {
+                "indexed": 5,
+                "skipped": 0,
+                "failed": 1,
+                "errors": ["All chunks failed embedding generation"],
+            }
+        )
+
+        assert notes and notes[-1][0] == "failure", notes
+
+    def test_an_unrelated_error_always_surfaces(self, tmp_path):
+        """A vector-store or DB error is never a missing-model story."""
+        notes: list[tuple[str, str]] = []
+        idx = self._indexer(tmp_path, notes)
+
+        idx._report_index_summary(
+            {"indexed": 0, "skipped": 0, "failed": 1, "errors": ["disk I/O error"]}
+        )
+
+        assert notes and notes[-1][0] == "failure", notes
+
+    def test_a_failure_in_the_first_batch_after_a_restart_still_surfaces(
+        self, tmp_path
+    ):
+        """The in-process counter resets every run; indexing history does not.
+
+        On a configured install the first batch after any restart has
+        ``_stats["indexed"] == 0``, so relying on that alone downgraded a
+        genuine failure to guidance -- and the same error text is produced by
+        embeddings init errors and circuit breakers, not only by a missing
+        model. The indexing DB is the durable record that embeddings have worked
+        here before (task-685 review).
+        """
+        notes: list[tuple[str, str]] = []
+        indexing_db = RAGIndexingDB(tmp_path / "rag_indexing.db")
+        # A previous run indexed something on this install.
+        indexing_db.mark_item_indexed(
+            item_id="1", item_type="media", last_modified=datetime.now(), chunk_count=3
+        )
+
+        idx = IngestionIndexer(rag_service=None, indexing_db=indexing_db)
+        idx.set_failure_notifier(lambda m: notes.append(("failure", m)))
+        idx.set_guidance_notifier(lambda m: notes.append(("guidance", m)))
+
+        idx._report_index_summary(
+            {
+                "indexed": 0,
+                "skipped": 0,
+                "failed": 1,
+                "errors": ["All chunks failed embedding generation"],
+            }
+        )
+
+        assert notes and notes[-1][0] == "failure", (
+            f"a real failure was downgraded on a configured install: {notes}"
+        )

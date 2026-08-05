@@ -37,6 +37,74 @@ DataTable > .datatable--selected {
     text-style: bold underline;
 }
 
+/* TASK-1160. The app-wide keyboard-focus fallback in core/_reset.tcss
+ *
+ *     *:focus { outline: solid $ds-focus-accent; }
+ *
+ * makes the bottom row of EVERY focused `DataTable` unclickable.
+ *
+ * Textual paints an `outline` OVER the widget's outermost rendered lines
+ * rather than around them -- that is exactly what distinguishes it from
+ * `border`, which costs geometry. The overwritten segments lose the
+ * `{"row", "column"}` Rich style metadata, and `DataTable._on_click`
+ * resolves the clicked cell from nothing else:
+ *
+ *     meta = event.style.meta
+ *     if "row" not in meta or "column" not in meta:
+ *         return
+ *
+ * so the click is silently dropped. Measured in a bare Textual app (no
+ * tldw CSS at all, the outline rule the only variable), 6-row table,
+ * region height 7:
+ *
+ *     no outline            outline
+ *     click y=5 -> row 4    click y=5 -> row 4
+ *     click y=6 -> row 5    click y=6 -> row 0   <- last row dead
+ *
+ * The whole perimeter is affected, not just the last row: column x=0 is
+ * dead on every row, and the top line -- a `DataTable`'s column header --
+ * is overwritten outright (that was TASK-1034's "focused results grid
+ * loses its header").
+ *
+ * It reads as intermittent rather than broken because `MouseDown` focuses
+ * the table before the `Click` is resolved, so the FIRST click on a
+ * blurred table still lands. The second click onto the bottom row is the
+ * one that does nothing.
+ *
+ * Fixed once here rather than per table: a bare type selector so none of
+ * the ~40 `DataTable` call sites has to opt in. `DataTable:focus` is
+ * (0,1,1) against the reset's (0,1,0), so it wins wherever it applies, and
+ * Textual type selectors match subclasses too.
+ *
+ * Focus stays visible -- the reset's "non-obscuring keyboard focus"
+ * contract is kept, not dropped -- via two cues that recolour cells the
+ * table already draws and therefore never overwrite a segment or its meta:
+ * the cursor cell and the column header both take the sanctioned readable
+ * `$ds-focus-bg`/`$ds-focus-fg` pair. Two cues, because the cursor can be
+ * turned off (`cursor_type="none"`) or scrolled out of view, while the
+ * header is always on screen. Textual's own `DataTable:focus {
+ * background-tint: $foreground 5%; }` survives on top of both.
+ *
+ * This supersedes the two screen-local workarounds that preceded it:
+ * TASK-1105's `.watchlists-region DataTable:focus` and TASK-1034's
+ * `#evals-grid-table:focus`, both now removed from their feature modules.
+ */
+DataTable:focus {
+    outline: none;
+}
+
+DataTable:focus > .datatable--cursor {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+DataTable:focus > .datatable--header {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
 OptionList > .option-list--option-highlighted,
 OptionList:focus > .option-list--option-highlighted,
 SelectionList > .selection-list--button-highlighted,
@@ -49,8 +117,174 @@ Tree:focus > .tree--cursor {
     text-style: bold underline;
 }
 
+/* TASK-368: the discovered-model SelectionList checkbox glyph (▐X▌) must clearly
+   distinguish selected from unselected. The shared native-choice contract above
+   paints the toggle classes the same ($surface/$text), erasing the
+   checked/unchecked distinction and rendering the ▐▌ caps fg==bg (invisible).
+   Scope a distinct toggle to THIS list only (id specificity). The CHECKED states
+   are a sanctioned high-contrast override (the $ds-focus contract); the base
+   unchecked glyph renders as an empty box (no inner X). `-button-highlighted`
+   (an unchecked row under the cursor) is left to the shared contract above. */
+#settings-discovered-models-list .selection-list--button {
+    color: $ds-grid-line;
+    background: $ds-grid-line;
+}
+#settings-discovered-models-list .selection-list--button-selected,
+#settings-discovered-models-list .selection-list--button-selected-highlighted {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+/* TASK-430 AC#1: the file picker's list must show a clearly-visible selected
+   row. The generic OptionList rule above paints $surface (≈ dialog
+   background), which is near-invisible; scope a higher-contrast focus token
+   to the picker list only, using the sanctioned non-obscuring focus color
+   (TASK-345). */
+#file-list-pane .option-list--option-highlighted {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
 OptionList > .option-list--option-hover,
 Tree > .tree--highlight-line {
     background: $surface-lighten-1;
     color: $text;
+}
+
+/* TASK-2300. The same app-wide focus fallback TASK-1160 opted `DataTable`
+ * out of, biting a second widget -- this time destroying content outright.
+ *
+ *     *:focus { outline: solid $ds-focus-accent; }      core/_reset.tcss
+ *
+ * An expanded `Select` moves focus to its own `SelectOverlay`
+ * (`Select._watch_expanded` -> `overlay.focus(...)`), so the overlay is
+ * ALWAYS the focused widget for the whole time it is on screen. Textual
+ * paints an `outline` OVER a widget's outermost rendered lines rather than
+ * around them, and it costs no geometry -- so those lines have to be
+ * expendable for the rule to be harmless.
+ *
+ * On a COMPACT `Select` they are not. `Select.compose` data-binds `compact`
+ * onto the overlay, and `OptionList.-textual-compact` sets
+ * `border: none !important; padding: 0`, so the overlay's box model reserves
+ * no perimeter at all: every cell of it is an option cell. The outline
+ * therefore overwrites the FIRST and LAST option rows outright and the first
+ * and last character of every row in between. Measured at 235x52 against the
+ * production stylesheet, `#items-status-select` (6 statuses, region 16x6):
+ *
+ *     with the outline            without
+ *     ┌──────────────┐            All statuses
+ *     │ew            │            New
+ *     │ead           │            Read
+ *     │ngested       │            Ingested
+ *     │gnored        │            Ignored
+ *     └──────────────┘            Error
+ *
+ * Two of six options gone, four mangled -- and for any compact Select with
+ * two options or fewer, the overlay renders as a bare box with nothing in
+ * it, which is exactly what the 2026-08-04 Watchlists UAT reported (F30).
+ *
+ * Fixed here rather than per screen, for the same reason TASK-1160 was: a
+ * bare type selector so no `Select` call site has to opt in, and Textual
+ * type selectors match subclasses (`PruneSafeSelect`'s overlay is a plain
+ * `SelectOverlay`, but the rule would follow a subclass too).
+ *
+ * Focus stays visible without the reset's cue: the overlay is only ever on
+ * screen while it holds focus, so an "is this focused" ring conveys nothing
+ * there, while the highlighted-option recolour (Textual's own
+ * `.option-list--option-highlighted`, plus the sanctioned pair above)
+ * already says which option is current. Same trade TASK-1160 made for the
+ * table cursor -- recolour content the widget already draws, never overwrite
+ * cells it needs.
+ */
+SelectOverlay:focus {
+    outline: none;
+}
+
+/* TASK-2300, second instance -- found in live verification, after the
+ * overlay above was already fixed and the suite was green. The control
+ * itself, not its popup.
+ *
+ * A `Select` that is compact AND has not been given a frame of its own is ONE
+ * row tall (`Select.-textual-compact > SelectCurrent { border: none
+ * !important }` in Textual's own CSS, and this app's filter strips pin
+ * `height: 1` on top of that). So its single rendered line IS its value, and
+ * `*:focus { outline: solid ... }` (core/_reset.tcss) -- which paints OVER a
+ * widget's outermost rendered lines at no geometric cost -- lands on it.
+ * Measured at 235x52 against the production stylesheet,
+ * `#items-status-select`:
+ *
+ *     blurred   'All statuses  ▼    '
+ *     focused   '┌──────────────┐   '
+ *
+ * The control the user just clicked stops saying what it is set to. Same
+ * substitution as the overlay above and as TASK-1160's table cursor: drop the
+ * cue that overwrites content, keep the ones that recolour it
+ * (`Select:focus`'s background/colour half in components/_forms.tcss).
+ *
+ * REVIEW WAVE, Critical 1 -- what this rule must NOT do. It first shipped as
+ *
+ *     Select.-textual-compact:focus,
+ *     Select.-textual-compact:hover { border: none; outline: none; }
+ *
+ * and "compact" turned out to be the wrong predicate for "has no perimeter".
+ * `.settings-compact-select` (components/_agentic_terminal.tcss) is compact
+ * too, and gives its Selects `height: 3` with a `border` of their OWN, sized
+ * around -- so ~21 Settings/Speech/ImageGen/Splash controls lost their frame
+ * on focus, and hovering one strobed it on and off every frame: the pointer
+ * on the border row made the `Select` the hover target, the border went, the
+ * child slid under the pointer, the `Select` un-hovered, the border came
+ * back. Measured on `#settings-provider-value`:
+ *
+ *     rest     ┌────────────────────────┐
+ *              │ Manual / custom provider ▼ │
+ *              └────────────────────────┘
+ *     focused   Manual / custom provider ▼      <- frame gone, two blank rows
+ *
+ * The `border` declarations are gone rather than re-scoped: with the two
+ * rules that used to put a border on a `Select` now moved onto the child that
+ * reserves room for one (components/_forms.tcss, features/_embeddings.tcss),
+ * nothing gives a borderless compact `Select` a border any more, so they were
+ * dead weight whose only remaining effect was to strip a border from Selects
+ * that had asked for one. The `:hover` half goes with them -- `*:focus` is
+ * focus-only, so hover never needed an exemption at all, and a hover rule that
+ * changes geometry is precisely what made the flicker self-sustaining.
+ *
+ * What is left is `outline`, on `:focus`, which is the one cue that genuinely
+ * costs no geometry and therefore genuinely cannot be reserved for.
+ * `.settings-compact-select:focus` sets `outline: none` itself, so this
+ * agrees with it rather than overriding it.
+ *
+ * ROUND 2, O1 -- and taking the outline away left nothing behind. The
+ * replacement cue was supposed to be `Select:focus`'s recolour
+ * (components/_forms.tcss), but that paints the SELECT, and `SelectCurrent`
+ * covers the whole of it with an opaque `background: $surface` of its own, so
+ * the recolour never reached the screen. All that did was Textual's 5%
+ * `background-tint`. Measured on `#items-status-select` and
+ * `#watchlists-backend-select`:
+ *
+ *     rest #1e1e1e   focused #272727    ~1.10:1
+ *
+ * `core/_variables.tcss` (TASK-345) names 1.1:1 as *exactly* the failure that
+ * killed the non-obscuring focus contract once already -- an invisible focus
+ * ring is how a Tab+Enter activated the wrong control. And with the hover cue
+ * fixed in the same wave, hover (#2d2d2d) had become STRONGER than focus,
+ * which is backwards.
+ *
+ * So the recolour is re-homed one level in, onto the child that actually
+ * paints. Unlike Critical 1's rule this is a COLOUR, not geometry: it cannot
+ * resize anything, and its specificity ((0,2,2), which does outrank
+ * `.settings-compact-select:focus > SelectCurrent`'s (0,2,1)) is harmless
+ * because that rule sets `$ds-input-focus-bg` too -- the same token, so the
+ * bordered controls are byte-identical either way. Verified by measurement,
+ * not by reading: `#settings-provider-value` focuses to #586d82 before and
+ * after.
+ */
+Select.-textual-compact:focus {
+    outline: none;
+}
+
+Select.-textual-compact:focus > SelectCurrent {
+    background: $ds-input-focus-bg;
 }

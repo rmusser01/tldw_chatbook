@@ -2,10 +2,13 @@ import json
 import uuid
 from pathlib import Path
 
+import shutil
+
 import pytest
 
 from Tests.ChaChaNotesDB.legacy_conversation_schema import (
     create_legacy_v13_conversations_db,
+    migrated_legacy_conversations_db,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
@@ -21,11 +24,12 @@ def db_path(tmp_path):
 
 
 @pytest.fixture
-def db_instance(db_path, client_id):
+def db_instance(db_path, client_id, chachanotes_template_db):
     current_db_path = Path(db_path)
     for suffix in ["", "-wal", "-shm"]:
         Path(str(current_db_path) + suffix).unlink(missing_ok=True)
 
+    shutil.copyfile(chachanotes_template_db, current_db_path)
     db = CharactersRAGDB(current_db_path, client_id)
     try:
         yield db
@@ -43,7 +47,7 @@ def test_character_conversation_stores_canonical_assistant_id(
         {
             "title": "Character Session",
             "assistant_kind": "character",
-            "assistant_id": "char.local.alice",
+            "assistant_id": str(character_id),
             "character_id": character_id,
             "runtime_backend": "local",
             "discovery_owner": "ccp_character",
@@ -52,7 +56,11 @@ def test_character_conversation_stores_canonical_assistant_id(
     )
 
     conversation = db_instance.get_conversation_by_id(conversation_id)
-    assert conversation["assistant_id"] == "char.local.alice"
+    assert conversation["assistant_id"] == str(character_id)
+    assert (
+        conversation["assistant_authority_id"]
+        == db_instance.get_local_authority_id()
+    )
     assert conversation["runtime_backend"] == "local"
     assert conversation["discovery_owner"] == "ccp_character"
     assert conversation["discovery_entity_id"] == "char.local.alice"
@@ -93,15 +101,22 @@ def test_legacy_v13_rows_default_runtime_and_discovery_metadata(db_path, client_
         ],
     )
 
-    db = CharactersRAGDB(db_path, client_id)
-    try:
-        conversation = db.get_conversation_by_id(legacy_conversation_id)
+    with migrated_legacy_conversations_db(
+        db_path,
+        CharactersRAGDB._migrate_from_v13_to_v14,
+    ) as connection:
+        conversation = connection.execute(
+            """
+            SELECT runtime_backend, discovery_owner, discovery_entity_id
+            FROM conversations
+            WHERE id = ?
+            """,
+            (legacy_conversation_id,),
+        ).fetchone()
         assert conversation is not None
         assert conversation["runtime_backend"] == "local"
         assert conversation["discovery_owner"] == "general_chat"
         assert conversation["discovery_entity_id"] is None
-    finally:
-        db.close_connection()
 
 
 def test_update_conversation_supports_runtime_and_discovery_metadata(
@@ -112,7 +127,7 @@ def test_update_conversation_supports_runtime_and_discovery_metadata(
         {
             "title": "Update Runtime",
             "assistant_kind": "character",
-            "assistant_id": "char.local.updater",
+            "assistant_id": str(character_id),
             "character_id": character_id,
             "runtime_backend": "local",
             "discovery_owner": "ccp_character",
@@ -136,6 +151,8 @@ def test_update_conversation_supports_runtime_and_discovery_metadata(
     updated = db_instance.get_conversation_by_id(conversation_id)
     assert updated is not None
     assert updated["runtime_backend"] == "server"
+    assert updated["character_id"] is None
+    assert updated["assistant_authority_id"] is None
     assert updated["discovery_owner"] == "general_chat"
     assert updated["discovery_entity_id"] == "canonical.updater"
 

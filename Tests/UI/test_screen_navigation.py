@@ -1,13 +1,15 @@
 """Focused screen wiring tests for screen-navigation mode."""
 
-import tempfile
-from pathlib import Path
+import asyncio
+import shutil
+import subprocess
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App
+from textual.app import App, ComposeResult
 from textual.widgets import Button, Input
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat import (
@@ -47,6 +49,7 @@ from tldw_chatbook.Media import (
     ServerMediaReadingService,
 )
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+from tldw_chatbook.Notes.file_notes_session_owner import SessionChange
 from tldw_chatbook.Notes.server_notes_workspace_service import (
     ServerNotesWorkspaceService,
 )
@@ -181,14 +184,11 @@ from tldw_chatbook.Voice_Assistant_Interop import (
     ServerVoiceAssistantService,
     VoiceAssistantScopeService,
 )
-from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_SUBSCRIPTIONS
+from tldw_chatbook.Constants import ALL_TABS
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-from tldw_chatbook.UI.Screens.media_ingest_screen import MediaIngestScreen
 from tldw_chatbook.UI.Screens.media_screen import MediaScreen
-from tldw_chatbook.UI.Screens.search_screen import SearchScreen
-from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.runtime_policy.server_capabilities import (
     ActiveServerCapabilityService,
 )
@@ -269,7 +269,9 @@ def test_home_route_resolves_to_home_screen():
 def test_customize_route_resolves_to_settings_screen():
     app = _build_test_app()
 
-    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target("customize")
+    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target(
+        "customize"
+    )
 
     assert screen_name == "settings"
     assert current_tab == "settings"
@@ -282,17 +284,6 @@ def test_first_run_initial_route_defaults_to_home():
     app._initial_tab_value = "chat"
 
     assert app._resolve_initial_shell_route() == "home"
-
-
-@pytest.mark.asyncio
-async def test_deferred_initial_tab_uses_first_run_home_route():
-    app = _build_test_app()
-    app.app_config["_first_run"] = True
-    app._initial_tab_value = "chat"
-
-    await app._set_initial_tab()
-
-    assert app.current_tab == "home"
 
 
 @pytest.mark.parametrize("configured_route", ["home", "library", "settings", "notes"])
@@ -322,55 +313,6 @@ def test_ccp_default_tab_initializes_before_reactive_watcher_runs():
 
     assert app._initial_tab_value == "conversations_characters_prompts"
     assert app._ui_ready is False
-
-
-@pytest.mark.asyncio
-async def test_ccp_character_select_change_dispatches_once(monkeypatch):
-    app = _build_test_app()
-    app.current_tab = TAB_CCP
-    calls = []
-
-    async def fake_character_select_changed(_app, value):
-        calls.append(value)
-
-    monkeypatch.setattr(
-        "tldw_chatbook.app.ccp_handlers.handle_ccp_character_select_changed",
-        fake_character_select_changed,
-    )
-
-    await app.on_select_changed(
-        SimpleNamespace(
-            select=SimpleNamespace(id="conv-char-character-select"),
-            value="character-1",
-        )
-    )
-
-    assert calls == ["character-1"]
-
-
-@pytest.mark.asyncio
-async def test_chat_select_change_before_ui_ready_skips_token_counter(monkeypatch):
-    app = _build_test_app()
-    app.current_tab = TAB_CHAT
-    app._ui_ready = False
-    calls = []
-
-    async def fake_update_token_counter(_app):
-        calls.append("updated")
-
-    monkeypatch.setattr(
-        "tldw_chatbook.Event_Handlers.Chat_Events.chat_token_events.update_chat_token_counter",
-        fake_update_token_counter,
-    )
-
-    await app.on_select_changed(
-        SimpleNamespace(
-            select=SimpleNamespace(id="chat-api-provider"),
-            value="OpenAI",
-        )
-    )
-
-    assert calls == []
 
 
 def test_notes_is_not_a_navigable_tab():
@@ -525,7 +467,9 @@ def test_lazy_screen_registry_resolves_visible_shell_destinations():
 def test_subscriptions_route_resolves_to_watchlists_collections_via_alias():
     from tldw_chatbook.UI.Navigation import screen_registry
 
-    screen_name, canonical_tab, screen_class = screen_registry.resolve_screen_target("subscriptions")
+    screen_name, canonical_tab, screen_class = screen_registry.resolve_screen_target(
+        "subscriptions"
+    )
 
     assert screen_name == "watchlists_collections"
     assert canonical_tab == "watchlists_collections"
@@ -535,7 +479,9 @@ def test_subscriptions_route_resolves_to_watchlists_collections_via_alias():
 def test_subscription_route_resolves_to_watchlists_collections_via_alias():
     from tldw_chatbook.UI.Navigation import screen_registry
 
-    screen_name, canonical_tab, screen_class = screen_registry.resolve_screen_target("subscription")
+    screen_name, canonical_tab, screen_class = screen_registry.resolve_screen_target(
+        "subscription"
+    )
 
     assert screen_name == "watchlists_collections"
     assert canonical_tab == "watchlists_collections"
@@ -733,6 +679,107 @@ async def test_navigation_flush_exception_warns_and_aborts_switch(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_navigation_confirms_with_outgoing_screen_and_honors_veto(monkeypatch):
+    """TASK-1143 (F5): navigating away must consult the outgoing screen's
+    ``confirm_navigation()`` the same way it already consults
+    ``flush_pending_work()``. Console (``ChatScreen``) implements this to
+    warn when the agent fleet is busy -- unmounting cancels every
+    in-flight run and denies every pending/parked approval round. False
+    vetoes the switch, leaving the screen (and its live fleet) mounted
+    exactly like a flush veto; True (idle fleet, or the user chose
+    "Leave") lets it proceed.
+    """
+    app = _build_test_app()
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    def fake_resolve(target):
+        return "chat", "chat", FakeTargetScreen
+
+    switched_screens = []
+
+    async def fake_switch_screen(screen):
+        switched_screens.append(screen)
+
+    monkeypatch.setattr(app, "_resolve_screen_navigation_target", fake_resolve)
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+
+    confirm_results = {"value": False}
+    confirm_calls = []
+
+    class FakeOutgoingScreen:
+        screen_name = "library"
+
+        async def confirm_navigation(self):
+            confirm_calls.append(True)
+            return confirm_results["value"]
+
+    outgoing = FakeOutgoingScreen()
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+
+    await app.handle_screen_navigation(NavigateToScreen("chat"))
+    assert confirm_calls, "outgoing screen's confirm_navigation was never awaited"
+    assert switched_screens == [], "veto (False) must abort the switch"
+
+    confirm_results["value"] = True
+    await app.handle_screen_navigation(NavigateToScreen("chat"))
+    assert len(switched_screens) == 1, "confirm returning True must allow the switch"
+
+
+@pytest.mark.asyncio
+async def test_navigation_confirm_exception_warns_and_aborts_switch(monkeypatch):
+    """A broken outgoing confirm_navigation must fail closed, not silently
+    let navigation proceed and tear down live work nobody was asked about.
+    """
+    app = _build_test_app()
+    created_screens = []
+    switched_screens = []
+    notifications = []
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            created_screens.append(app_instance)
+
+    class FakeOutgoingScreen:
+        screen_name = "library"
+
+        async def confirm_navigation(self):
+            raise RuntimeError("simulated confirm failure")
+
+    async def fake_switch_screen(screen):
+        switched_screens.append(screen)
+
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notifications.append((message, kwargs)),
+    )
+    outgoing = FakeOutgoingScreen()
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+
+    await app.handle_screen_navigation(NavigateToScreen("chat"))
+
+    assert switched_screens == []
+    assert created_screens == []
+    assert any(
+        "Couldn't confirm leaving this screen" in message
+        for message, _kwargs in notifications
+    )
+
+
+@pytest.mark.asyncio
 async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
     """Live-repro regression lock for the rapid-tab-switch freeze.
 
@@ -762,15 +809,36 @@ async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
                 await pilot.pause(0)
         # Let the queued switches drain, then prove the app still navigates.
         app.post_message(NavigateToScreen("library"))
-        for _ in range(150):
+        zombies: list = []
+        for _ in range(200):
             await pilot.pause(0.02)
             if type(app.screen).__name__ == "LibraryScreen" and app.screen.is_running:
-                break
+                # TASK-1230: `handle_screen_navigation` now runs each
+                # attempt as its own worker (`_dispatch_screen_navigation`)
+                # instead of inline on the App's own message-processing
+                # task, specifically so a busy-fleet confirm dialog can
+                # never starve that task's own input routing (see that
+                # method's docstring). Twelve back-to-back navigations
+                # posted with zero pacing (`pilot.pause(0)` above) now
+                # queue behind `_screen_navigation_lock` with real worker-
+                # scheduling overhead each, so the LAST one's own children
+                # can still be finishing their own mount for a brief beat
+                # after `app.screen` first reports the target screen and
+                # `is_running` -- keep polling for the zombie check itself
+                # to clear rather than asserting on the very first tick;
+                # if the app ever regresses to genuinely stuck/dead
+                # widgets (the historical instance-cache bug this test
+                # guards against), `zombies` never clears and the
+                # assertion below still fails.
+                zombies = [
+                    widget
+                    for widget in app.screen.walk_children()
+                    if not widget.is_running
+                ]
+                if not zombies:
+                    break
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen.is_running
-        zombies = [
-            widget for widget in app.screen.walk_children() if not widget.is_running
-        ]
         assert not zombies, f"zombie widgets on active screen: {zombies[:5]}"
         # One more hop for responsiveness.
         app.post_message(NavigateToScreen("home"))
@@ -782,101 +850,670 @@ async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
         assert app.screen.is_running
 
 
-def _build_test_app(configured_default: str | None = None) -> TldwCli:
-    user_data_dir = Path(tempfile.mkdtemp(prefix="tldw-chatbook-test-"))
+@pytest.mark.asyncio
+async def test_overlapping_navigate_requests_complete_in_fifo_order() -> None:
+    """TASK-1230 review follow-up: `TldwCli._dispatch_screen_navigation`
+    runs each `NavigateToScreen` attempt as its own worker instead of
+    awaiting it inline on the App's own message-processing task (see that
+    method's docstring for why -- a busy-fleet confirm dialog must never
+    starve that task's own input routing). Workers are otherwise
+    independent tasks, so nothing but `_screen_navigation_lock` stops
+    three overlapping attempts from racing on shared state
+    (``self.current_tab``, ``ScreenStateStore`` save/restore, and
+    ``switch_screen``'s screen stack -- all inside the region the lock
+    guards, since they run from within ``_handle_screen_navigation_locked``
+    while the lock is held).
 
-    def fake_runtime_policy(app):
-        context = SimpleNamespace(
-            state=RuntimeSourceState(active_source="local", server_configured=True),
-            persist=lambda: None,
-        )
-        app.runtime_policy = context
-        app.current_runtime_source = "local"
-        app.current_runtime_backend = "local"
-        return context
+    This asserts the STRONGER property than "the last target wins" (which
+    the storm test above already covers): three back-to-back
+    ``NavigateToScreen`` messages -- posted with NO awaited gap between
+    them, an idle fleet so no confirm dialog ever gates any of them --
+    must still MOUNT in EXACTLY the order they were posted. Recorded via
+    the real ``BaseAppScreen.on_mount`` seam every screen (Home/Library/
+    Workflows alike) calls once actually mounted -- the point AFTER
+    ``switch_screen``'s own async unmount/mount work has run, which is
+    where two attempts racing without the lock could genuinely finish out
+    of order. (Recording at ``TldwCli._create_navigation_screen`` instead
+    -- called synchronously, early in each attempt, before any of that
+    async work -- was tried and rejected: it recorded FIFO order even with
+    the lock temporarily replaced by a fresh, unshared ``asyncio.Lock()``
+    per call [i.e. no real serialization at all], because nothing before
+    that point yields the event loop for an idle-fleet attempt -- not a
+    discriminating check.)
 
-    def fake_cli_setting(_section, _key=None, default=None):
-        if (
-            _section == "general"
-            and _key == "default_tab"
-            and configured_default is not None
-        ):
-            return configured_default
-        return default
+    Incidental asyncio scheduling alone turned out to be an unreliable way
+    to PROVE the lock matters (verified directly: with the lock replaced
+    by a fresh, unshared lock per call, reordering was observed on some
+    runs but not others -- real, but not deterministic, since nothing
+    forces the three attempts' async work to overlap in a particular way).
+    So this test manufactures a deterministic race instead: it wraps
+    `_complete_screen_navigation` (called from inside the guarded region)
+    with a per-target `asyncio.sleep` -- LONGEST for "home" (posted
+    FIRST), zero for "workflows" (posted LAST) -- so that without
+    serialization the last-posted, zero-delay attempt would provably
+    finish first. Confirmed this setup, with the real lock temporarily
+    replaced by a fresh lock per call, reliably reorders `mounted_order`
+    (5/5 runs; "workflows" -- zero delay -- mounts first every time, then
+    either `['workflows', 'library', 'home']` [the exact reverse, 4/5
+    runs] or `['workflows', 'home', 'library']` [1/5 runs] depending on
+    exactly how "library"'s short delay lands relative to "home"'s longer
+    one); restoring the real lock forces `['home', 'library', 'workflows']`
+    every time despite the same delays, because the lock keeps "library"
+    from even starting its own (short) delay until "home" -- delay
+    included -- fully finishes, and likewise for "workflows" after
+    "library". Not polling ``app.screen`` after the fact: polling can only
+    ever observe whichever attempt happens to be current when it looks,
+    never prove the two that came before it also landed in order.
+    """
+    from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 
-    with patch(
-        "tldw_chatbook.app.load_settings",
-        return_value={"tldw_api": {"base_url": "http://localhost:8000"}},
+    app = _build_test_app()
+    mounted_order: list[str] = []
+    original_on_mount = BaseAppScreen.on_mount
+
+    def _recording_on_mount(self) -> None:
+        mounted_order.append(self.screen_name)
+        return original_on_mount(self)
+
+    # Deterministic race pressure: "home" (posted first) is slowest,
+    # "workflows" (posted last) is instant. Without the lock this
+    # guarantees "workflows" mounts before "home" even finishes; with the
+    # lock, "workflows" cannot start until "library" (and, transitively,
+    # "home") has fully completed, delay included.
+    delays = {"home": 0.2, "library": 0.05, "workflows": 0.0}
+    original_complete = type(app)._complete_screen_navigation
+
+    async def _delayed_complete(self, **kwargs):
+        delay = delays.get(kwargs.get("screen_name"), 0.0)
+        if delay:
+            await asyncio.sleep(delay)
+        return await original_complete(self, **kwargs)
+
+    with (
+        patch.object(BaseAppScreen, "on_mount", _recording_on_mount),
+        patch.object(type(app), "_complete_screen_navigation", _delayed_complete),
     ):
-        with patch("tldw_chatbook.app.get_cli_setting", side_effect=fake_cli_setting):
-            with patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None):
-                with patch(
-                    "tldw_chatbook.app.ServerNotesWorkspaceService.from_config",
-                    return_value=MagicMock(),
-                ):
-                    with patch(
-                        "tldw_chatbook.app.ServerCharacterPersonaService.from_config",
-                        return_value=MagicMock(),
-                    ):
-                        with patch.object(
-                            TldwCli,
-                            "_init_notes_service",
-                            lambda self, _user: setattr(self, "notes_service", None),
-                        ):
-                            with patch.object(
-                                TldwCli,
-                                "_init_prompts_service",
-                                lambda self: setattr(
-                                    self, "prompts_service_initialized", False
-                                ),
-                            ):
-                                with patch.object(
-                                    TldwCli,
-                                    "_init_providers_models",
-                                    lambda self: setattr(self, "providers_models", {}),
-                                ):
-                                    with patch.object(
-                                        TldwCli,
-                                        "_init_media_db",
-                                        lambda self: (
-                                            setattr(self, "media_db", None),
-                                            setattr(
-                                                self,
-                                                "_media_types_for_ui",
-                                                ["All Media"],
-                                            ),
-                                        ),
-                                    ):
-                                        with patch(
-                                            "tldw_chatbook.app.load_runtime_policy_for_app",
-                                            side_effect=fake_runtime_policy,
-                                        ):
-                                            with patch(
-                                                "tldw_chatbook.app.get_notifications_db_path",
-                                                return_value=":memory:",
-                                            ):
-                                                with patch(
-                                                    "tldw_chatbook.app.get_subscriptions_db_path",
-                                                    return_value=":memory:",
-                                                ):
-                                                    with patch(
-                                                        "tldw_chatbook.app.get_research_db_path",
-                                                        return_value=":memory:",
-                                                    ):
-                                                        with patch(
-                                                            "tldw_chatbook.app.get_writing_db_path",
-                                                            return_value=":memory:",
-                                                        ):
-                                                            with patch(
-                                                                "tldw_chatbook.app.get_user_data_dir",
-                                                                return_value=user_data_dir,
-                                                            ):
-                                                                with patch(
-                                                                    "tldw_chatbook.app.get_workspaces_db_path",
-                                                                    return_value=user_data_dir
-                                                                    / "workspaces.sqlite",
-                                                                ):
-                                                                    return TldwCli()
+        async with app.run_test(size=(160, 40)) as pilot:
+            for _ in range(150):
+                await pilot.pause(0.02)
+                if type(app.screen).__name__ != "Screen":
+                    break
+            assert type(app.screen).__name__ != "Screen", (
+                "app never mounted its initial screen"
+            )
+            # Deliberately NOT clearing `mounted_order` here: the app's own
+            # delayed initial-tab switch (a known cold-start gotcha -- it
+            # can re-navigate to "chat" shortly after the placeholder
+            # screen clears) settles on an unpredictable timeline under
+            # load. Filtering the recorded names down to this test's own
+            # three targets below is immune to that race regardless of how
+            # long the boot noise takes to settle.
+
+            # Three DIFFERENT targets, posted back-to-back with NO await
+            # between them -- this is exactly what lets their
+            # `_dispatch_screen_navigation` workers get CREATED in a tight
+            # burst; only `_screen_navigation_lock` then decides which one
+            # actually gets to run its body first. A `pilot.pause(0)`
+            # between posts (as the storm test above uses) would let each
+            # attempt fully settle before the next is even posted, which
+            # would never exercise the lock's ordering guarantee at all.
+            app.post_message(NavigateToScreen("home"))
+            app.post_message(NavigateToScreen("library"))
+            app.post_message(NavigateToScreen("workflows"))
+
+            # Wait for all THREE targets to have mounted at least once,
+            # rather than asserting `app.screen`'s final type: without the
+            # lock, completion order reverses (the induced delays mean
+            # "home" -- posted first, slowest -- finishes LAST), so
+            # whichever screen ends up current when this loop times out
+            # differs run to run and isn't itself the property under
+            # test. The FIFO check below, on `mounted_order`, is.
+            this_tests_targets = {"home", "library", "workflows"}
+            for _ in range(150):
+                await pilot.pause(0.02)
+                seen = {name for name in mounted_order if name in this_tests_targets}
+                if len(seen) >= 3:
+                    break
+
+    # `mounted_order` can also carry the app's own cold-start noise (its
+    # delayed initial-tab switch to "chat"; see above) and
+    # `BaseAppScreen.on_mount` fires twice per real mount (a pre-existing,
+    # harmless duplication -- also visible as a doubled "Screen X mounted"
+    # log line, unrelated to this fix). Filter down to this test's own
+    # three targets and dedupe consecutive repeats before asserting order,
+    # so the check is immune to both and verifies FIFO ordering only.
+    this_tests_targets = {"home", "library", "workflows"}
+    filtered = [name for name in mounted_order if name in this_tests_targets]
+    deduped = [
+        name for i, name in enumerate(filtered) if i == 0 or name != filtered[i - 1]
+    ]
+    assert deduped == ["home", "library", "workflows"], (
+        f"navigation attempts mounted out of FIFO order: {mounted_order}"
+    )
+
+
+# The shared app factory moved to Tests/UI/app_factory.py (task-1458) so a
+# test module no longer hosts suite-wide infrastructure and its temp dirs
+# get drained after every test. Re-exported here for in-flight branches
+# that still import it from this module.
+from Tests.UI.app_factory import _build_test_app  # noqa: F401,E402
+
+
+def test_local_watchlists_service_db_factory_resolves_the_same_path_as_the_eager_subscriptions_db():
+    """task-1631: `_build_test_app`'s `get_subscriptions_db_path` patch must
+    stay in effect for the WHOLE test, not just `TldwCli.__init__`.
+
+    `LocalWatchlistsService.db_factory` (wired inside
+    `_wire_watchlists_and_notifications_services`) is a lambda that
+    re-resolves `get_subscriptions_db_path()` fresh on every call rather than
+    once at construction, so calling it here -- well after `_build_test_app()`
+    has already returned -- exercises exactly the "every call the running
+    screen makes" case the split used to break. `watchlist_bundle_service.db`
+    is the SAME eager `subscriptions_db` built during `__init__`
+    (`self.watchlist_bundle_service = WatchlistBundleService(subscriptions_db)`),
+    so it is the other half of the comparison.
+
+    Compares RESOLVED PATHS, not object identity: `db_factory()` builds a
+    brand-new `SubscriptionsDB` instance on every call by design (mirroring
+    production), so the two sides are never the same object even when the
+    harness is correct -- only the underlying on-disk file must match.
+    """
+    app = _build_test_app()
+
+    eager_path = app.watchlist_bundle_service.db.db_path
+    lazy_path = app.local_watchlists_service.db_factory().db_path
+
+    assert lazy_path == eager_path, (
+        "local_watchlists_service.db_factory() resolved a DIFFERENT on-disk "
+        f"file ({lazy_path}) than the eagerly-built subscriptions_db "
+        f"({eager_path}) -- the get_subscriptions_db_path patch fell out of "
+        "scope before this call, splitting the app across two databases"
+    )
+
+
+def test_file_notes_owner_is_injected_into_fresh_library_workspaces(
+    monkeypatch,
+    tmp_path,
+):
+    """Fresh production Library screens share only the app-scoped owner."""
+    from tldw_chatbook.Notes.file_notes_session_owner import (
+        FileSystemIdentity,
+        HeadIdentity,
+        IndexBaseline,
+        IndexEntry,
+        RepositoryIdentity,
+        SessionChangeGroup,
+        SessionGitRow,
+        SessionGitStatus,
+        StagingOwnership,
+    )
+    from tldw_chatbook.UI.Screens import library_screen as library_module
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    constructed = []
+
+    class WorkspaceProbe:
+        def __init__(self, *, session_owner):
+            self.session_owner = session_owner
+            self.editor = object()
+            self.replica = object()
+            self.service = object()
+            constructed.append(self)
+
+    monkeypatch.setattr(
+        library_module,
+        "LibraryFileNotesWorkspace",
+        WorkspaceProbe,
+    )
+    app = _build_test_app()
+    first_screen = app._create_navigation_screen("library", LibraryScreen)
+    first = first_screen._library_file_notes_workspace_factory()
+
+    binding = app.file_notes_session_owner.select_root(tmp_path / "notes")
+    assert app.file_notes_session_owner.record_change(
+        binding,
+        SessionChange("modified", "note.md"),
+    )
+    filesystem_identity = FileSystemIdentity(device=1, inode=2)
+    repository = RepositoryIdentity(
+        worktree_root="/repo",
+        git_dir="/repo/.git",
+        git_common_dir="/repo/.git",
+        worktree_identity=filesystem_identity,
+        git_dir_identity=filesystem_identity,
+        git_common_dir_identity=filesystem_identity,
+    )
+    group = SessionChangeGroup(
+        group_id=1,
+        endpoints=("note.md",),
+        source_path="note.md",
+        destination_path=None,
+        current_path="note.md",
+        latest_action="modified",
+        latest_sequence=1,
+    )
+    staged_entry = IndexEntry("note.md", "100644", "a" * 40)
+    ownership = StagingOwnership(
+        repository=repository,
+        head=HeadIdentity.attached("refs/heads/main", "b" * 40),
+        approved_endpoint_topology=("note.md",),
+        approved_move_edges=(),
+        approved_current_path="note.md",
+        original_baselines={"note.md": IndexBaseline(None)},
+        post_stage_entries={"note.md": staged_entry},
+    )
+    status_generation = app.file_notes_session_owner.next_status_generation(binding)
+    assert status_generation is not None
+    status = SessionGitStatus(
+        binding_generation=binding.generation,
+        status_generation=status_generation,
+        state="ready",
+        rows=(SessionGitRow(group, "owned", unstage_eligible=True),),
+        repository=repository,
+        head=ownership.head,
+    )
+    assert app.file_notes_session_owner.publish_trust(binding, repository)
+    assert app.file_notes_session_owner.publish_status(binding, status)
+    assert app.file_notes_session_owner.publish_ownership(binding, {1: ownership})
+
+    second_screen = app._create_navigation_screen("library", LibraryScreen)
+    second = second_screen._library_file_notes_workspace_factory()
+
+    assert constructed == [first, second]
+    assert first.session_owner is app.file_notes_session_owner
+    assert second.session_owner is app.file_notes_session_owner
+    assert first is not second
+    assert first.editor is not second.editor
+    assert first.replica is not second.replica
+    assert first.service is not second.service
+    assert [
+        change.change.relative_path
+        for change in second.session_owner.snapshot(binding).changes
+    ] == ["note.md"]
+    retained = second.session_owner.snapshot(binding)
+    assert retained.trusted_repository == repository
+    assert retained.git_status == status
+    assert retained.staging_ownership == {1: ownership}
+    assert retained.git_status.rows[0].unstage_eligible
+
+    replacement = app.file_notes_session_owner.select_root(tmp_path / "replacement")
+    cleared = app.file_notes_session_owner.snapshot(replacement)
+    assert cleared.changes == ()
+    assert cleared.trusted_repository is None
+    assert cleared.git_status is None
+    assert not cleared.staging_ownership
+    replacement_app = _build_test_app()
+    assert replacement_app.file_notes_session_owner is not app.file_notes_session_owner
+    assert replacement_app.file_notes_session_owner.current_binding() is None
+
+
+@pytest.mark.asyncio
+async def test_file_notes_new_app_owner_classifies_prior_stage_as_external_without_unstage(
+    tmp_path,
+):
+    """A replacement app observes prior-process staging without inheriting authority."""
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("Git is not installed")
+    repository = tmp_path / "repository"
+    repository.mkdir()
+
+    def run_git(*arguments: str) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(
+            [git, *arguments],
+            cwd=repository,
+            check=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+    run_git("init", "--initial-branch=main")
+    run_git("config", "--local", "user.name", "Chatbook Test")
+    run_git("config", "--local", "user.email", "chatbook@example.invalid")
+    note = repository / "note.md"
+    note.write_text("initial\n", encoding="utf-8")
+    run_git("add", "--", "note.md")
+    run_git("commit", "-m", "initial")
+    note.write_text("edited\n", encoding="utf-8")
+
+    prior_app = _build_test_app()
+    replacement_app = _build_test_app()
+    prior_owner = prior_app.file_notes_session_owner
+    replacement_owner = replacement_app.file_notes_session_owner
+    prior_service = prior_owner.attached_git_service()
+    replacement_service = replacement_owner.attached_git_service()
+    assert prior_service is not None
+    assert replacement_service is not None
+    try:
+        prior_binding = prior_owner.select_root(repository)
+        assert prior_owner.record_change(
+            prior_binding,
+            SessionChange("modified", "note.md"),
+        )
+        discovery = await prior_service.discover(prior_binding)
+        assert discovery.repository is not None
+        assert prior_owner.publish_trust(prior_binding, discovery.repository)
+        result = await prior_service.start_stage(prior_binding, (1,))
+        assert result.state == "success"
+        assert prior_owner.snapshot(prior_binding).staging_ownership
+        assert run_git("diff", "--cached", "--name-only").stdout == b"note.md\n"
+
+        replacement_binding = replacement_owner.select_root(repository)
+        assert replacement_owner.record_change(
+            replacement_binding,
+            SessionChange("modified", "note.md"),
+        )
+        replacement_discovery = await replacement_service.discover(
+            replacement_binding
+        )
+        assert replacement_discovery.repository is not None
+        assert replacement_owner.publish_trust(
+            replacement_binding,
+            replacement_discovery.repository,
+        )
+        status = await replacement_service.start_status(
+            replacement_binding,
+            replacement_owner.snapshot(replacement_binding).changes,
+        )
+
+        assert status.state == "ready"
+        assert len(status.rows) == 1
+        assert status.rows[0].state == "external_staged"
+        assert not status.rows[0].unstage_eligible
+        assert not replacement_owner.snapshot(
+            replacement_binding
+        ).staging_ownership
+    finally:
+        await prior_owner.shutdown_async()
+        await replacement_owner.shutdown_async()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_navigation_transition_blocks_mutation_until_switch_finishes(
+    monkeypatch,
+    tmp_path,
+):
+    """Transition admission immediately after flush closes the Stage race."""
+    app = _build_test_app()
+    owner = app.file_notes_session_owner
+    binding = owner.select_root(tmp_path / "notes")
+    switched = []
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    class FakeOutgoingScreen:
+        screen_name = "library"
+
+        async def flush_pending_work(self):
+            return True
+
+        def acquire_navigation_transition(self):
+            lease = owner.try_acquire_transition(binding, "screen")
+            return False if lease is None else lease.release
+
+    async def fake_switch_screen(screen):
+        admission = owner.admit_mutation(binding)
+        assert admission.lease is None
+        assert admission.reason == "transition_active"
+        switched.append(screen)
+
+    outgoing = FakeOutgoingScreen()
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda _target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+
+    await app.handle_screen_navigation(NavigateToScreen("chat"))
+
+    assert len(switched) == 1
+    after_switch = owner.try_acquire_mutation(binding)
+    assert after_switch is not None
+    after_switch.release()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_mutation_admitted_during_flush_vetoes_navigation(
+    monkeypatch,
+    tmp_path,
+):
+    """A Stage lease won during flush leaves the current screen mounted."""
+    app = _build_test_app()
+    owner = app.file_notes_session_owner
+    binding = owner.select_root(tmp_path / "notes")
+    flush_started = asyncio.Event()
+    finish_flush = asyncio.Event()
+    switched = []
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    class FakeOutgoingScreen:
+        screen_name = "library"
+
+        async def flush_pending_work(self):
+            flush_started.set()
+            await finish_flush.wait()
+            return not owner.mutation_active(binding)
+
+        def acquire_navigation_transition(self):
+            raise AssertionError("a vetoed flush must not attempt transition admission")
+
+    outgoing = FakeOutgoingScreen()
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda _target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(
+        app,
+        "switch_screen",
+        lambda screen: switched.append(screen),
+    )
+
+    navigation = asyncio.create_task(
+        app.handle_screen_navigation(NavigateToScreen("chat"))
+    )
+    await flush_started.wait()
+    mutation = owner.try_acquire_mutation(binding)
+    assert mutation is not None
+    finish_flush.set()
+    await navigation
+
+    assert switched == []
+    assert app.screen is outgoing
+    mutation.release()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_source_transition_blocks_mutation_through_recompose(
+    monkeypatch,
+    tmp_path,
+):
+    """The Files-to-Database switch holds exact source admission to completion."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    owner = app.file_notes_session_owner
+    binding = owner.select_root(tmp_path / "notes")
+
+    class WorkspaceProbe:
+        async def flush_pending_work(self):
+            return not owner.mutation_active(binding)
+
+        def acquire_transition(self, kind):
+            lease = owner.try_acquire_transition(binding, kind)
+            return False if lease is None else lease.release
+
+    class EventProbe:
+        def stop(self):
+            return None
+
+    workspace = WorkspaceProbe()
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+    screen._library_file_notes_workspace = workspace
+    screen._library_notes_source = "files"
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    recompose_calls = []
+
+    async def recompose():
+        admission = owner.admit_mutation(binding)
+        assert admission.lease is None
+        assert admission.reason == "transition_active"
+        recompose_calls.append(True)
+
+    monkeypatch.setattr(screen, "recompose", recompose)
+
+    await screen._show_library_database_notes(EventProbe())
+
+    assert screen._library_notes_source == "database"
+    assert recompose_calls == [True]
+    after_recompose = owner.try_acquire_mutation(binding)
+    assert after_recompose is not None
+    after_recompose.release()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_collections_source_transition_blocks_mutation_through_recompose(
+    monkeypatch,
+    tmp_path,
+):
+    """Files-to-Collections keeps source admission through actual recompose."""
+    from tldw_chatbook.Library.library_shell_state import (
+        LIBRARY_ROW_BROWSE_COLLECTIONS,
+        LIBRARY_ROW_BROWSE_NOTES,
+    )
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    owner = app.file_notes_session_owner
+    binding = owner.select_root(tmp_path / "notes")
+    sync_returned = asyncio.Event()
+    recompose_started = asyncio.Event()
+    finish_recompose = asyncio.Event()
+
+    class WorkspaceProbe:
+        async def flush_pending_work(self):
+            return not owner.mutation_active(binding)
+
+        def acquire_transition(self, kind):
+            lease = owner.try_acquire_transition(binding, kind)
+            return False if lease is None else lease.release
+
+    workspace = WorkspaceProbe()
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+    screen._library_file_notes_workspace = workspace
+    screen._library_notes_source = "files"
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    screen._library_collections_loaded = False
+
+    async def refresh_collections_snapshot():
+        screen._library_collections_loaded = True
+        sync_returned.set()
+
+    async def flush_note():
+        return None
+
+    async def flush_editor():
+        return True
+
+    async def recompose():
+        recompose_started.set()
+        admission = owner.admit_mutation(binding)
+        assert admission.lease is None
+        assert admission.reason == "transition_active"
+        await finish_recompose.wait()
+
+    monkeypatch.setattr(
+        screen,
+        "_refresh_library_collections_snapshot",
+        refresh_collections_snapshot,
+    )
+    monkeypatch.setattr(screen, "refresh", lambda *, recompose: None)
+    monkeypatch.setattr(screen, "_flush_library_note_save", flush_note)
+    monkeypatch.setattr(screen, "_flush_library_prompt_save", flush_editor)
+    monkeypatch.setattr(screen, "_flush_library_skill_save", flush_editor)
+    monkeypatch.setattr(screen, "recompose", recompose)
+
+    source_switch = asyncio.create_task(
+        screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
+    )
+    await sync_returned.wait()
+    await asyncio.sleep(0)
+
+    assert recompose_started.is_set()
+    assert not source_switch.done()
+    admission = owner.admit_mutation(binding)
+    assert admission.lease is None
+    assert admission.reason == "transition_active"
+
+    finish_recompose.set()
+    await source_switch
+    after_recompose = owner.try_acquire_mutation(binding)
+    assert after_recompose is not None
+    after_recompose.release()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_mutation_admitted_during_source_flush_vetoes_switch(
+    monkeypatch,
+    tmp_path,
+):
+    """Stage winning during source flush preserves the mounted Files source."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    owner = app.file_notes_session_owner
+    binding = owner.select_root(tmp_path / "notes")
+    flush_started = asyncio.Event()
+    finish_flush = asyncio.Event()
+
+    class WorkspaceProbe:
+        async def flush_pending_work(self):
+            flush_started.set()
+            await finish_flush.wait()
+            return not owner.mutation_active(binding)
+
+        def acquire_transition(self, kind):
+            raise AssertionError("a vetoed flush must not admit a source transition")
+
+    class EventProbe:
+        def stop(self):
+            return None
+
+    workspace = WorkspaceProbe()
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+    screen._library_file_notes_workspace = workspace
+    screen._library_notes_source = "files"
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    recompose = AsyncMock()
+    monkeypatch.setattr(screen, "recompose", recompose)
+
+    source_switch = asyncio.create_task(
+        screen._show_library_database_notes(EventProbe())
+    )
+    await flush_started.wait()
+    mutation = owner.try_acquire_mutation(binding)
+    assert mutation is not None
+    finish_flush.set()
+    await source_switch
+
+    assert screen._library_notes_source == "files"
+    recompose.assert_not_awaited()
+    mutation.release()
 
 
 def test_app_uses_screen_navigation_and_wires_media_services():
@@ -887,7 +1524,7 @@ def test_app_uses_screen_navigation_and_wires_media_services():
     assert isinstance(app.local_media_reading_service, LocalMediaReadingService)
     assert isinstance(app.server_media_reading_service, ServerMediaReadingService)
     assert isinstance(app.media_reading_scope_service, MediaReadingScopeService)
-    assert app.media_runtime_state.runtime_backend == "local"
+    assert not hasattr(app, "media_runtime_state")
     assert (
         app.auth_account_scope_service.server_context_provider
         is app.server_context_provider
@@ -920,6 +1557,14 @@ def test_app_uses_screen_navigation_and_wires_media_services():
     assert (
         app.server_auth_account_service.client_provider is app.server_context_provider
     )
+
+
+def test_app_harness_multi_connection_databases_keep_initialized_schemas():
+    app = _build_test_app()
+
+    assert app.scheduling_service.watchlist_projection.list_jobs() == []
+    assert list(app.local_research_service.list_runs()) == []
+    assert app.local_writing_service.list_projects() == []
 
 
 @pytest.mark.asyncio
@@ -1176,28 +1821,20 @@ def test_app_wires_local_and_server_skills_services():
     assert isinstance(app.prompt_chatbook_scope_service, PromptChatbookScopeService)
 
 
-def test_media_screen_uses_shared_runtime_state():
+def test_media_screen_constructs_destination_local_runtime_state():
     app = _build_test_app()
     screen = MediaScreen(app)
 
     widgets = list(screen.compose_content())
 
     assert len(widgets) == 2  # destination header + media window
-    assert screen.media_runtime_state is app.media_runtime_state
+    assert not hasattr(app, "media_runtime_state")
+    assert not hasattr(screen, "media_runtime_state")
     assert screen.media_window is widgets[1]
-    assert screen.media_window.runtime_state is app.media_runtime_state
-
-
-def test_media_ingest_screen_uses_shared_runtime_state():
-    app = _build_test_app()
-    screen = MediaIngestScreen(app)
-
-    widgets = list(screen.compose_content())
-
-    assert len(widgets) == 1
-    assert screen.media_runtime_state is app.media_runtime_state
-    assert screen.media_ingest_window is widgets[0]
-    assert screen.media_ingest_window.runtime_state is app.media_runtime_state
+    assert (
+        screen.media_window.runtime_state.runtime_backend
+        == app.get_authoritative_runtime_source()
+    )
 
 
 @pytest.mark.asyncio
@@ -1251,16 +1888,16 @@ def test_screen_lifecycle_methods():
 @pytest.mark.asyncio
 async def test_main_navigation_copy_and_order():
     expected_button_order = [
-        ("nav-home", "^1 Home"),
-        ("nav-console", "^2 Console"),
-        ("nav-library", "^3 Library"),
-        ("nav-artifacts", "^4 Artifacts"),
-        ("nav-personas", "^5 Personas"),
-        ("nav-watchlists_collections", "^6 Watchlists"),
-        ("nav-schedules", "^7 Schedules"),
-        ("nav-workflows", "^8 Workflows"),
-        ("nav-mcp", "^9 MCP"),
-        ("nav-acp", "^0 ACP"),
+        ("nav-home", "\u23031 Home"),
+        ("nav-console", "\u23032 Console"),
+        ("nav-library", "\u23033 Library"),
+        ("nav-artifacts", "\u23034 Artifacts"),
+        ("nav-personas", "\u23035 Roleplay"),
+        ("nav-watchlists_collections", "\u23036 Watchlists"),
+        ("nav-schedules", "\u23037 Schedules"),
+        ("nav-workflows", "\u23038 Workflows"),
+        ("nav-mcp", "\u23039 MCP"),
+        ("nav-acp", "\u23030 ACP"),
         ("nav-lab", "F7 Lab"),
         ("nav-logs", "F8 Logs"),
         ("nav-settings", "F9 Settings"),
@@ -1281,11 +1918,21 @@ async def test_main_navigation_copy_and_order():
         ]
 
         assert actual_button_order == expected_button_order
-        assert str(app.query_one("#nav-console", Button).label).strip() == "^2 Console"
+        assert str(app.query_one("#nav-console", Button).label).strip() == "\u23032 Console"
         assert nav_buttons[0].id == "nav-home"
         assert nav_buttons[1].id == "nav-console"
         assert nav_buttons[-1].id == "nav-settings"
-        assert "More: Ctrl+P" in str(app.query_one("#nav-overflow-hint").renderable)
+        # F-001: the "More ›" affordance is conditional -- it shows only when
+        # the strip actually overflows, carrying the F-key legend when the
+        # bar has the cells to spare ("More ›" otherwise).
+        overflow_hint = app.query_one("#nav-overflow-hint")
+        if overflow_hint.display:
+            assert str(overflow_hint.label).strip() in (
+                MainNavigationBar._HINT_WIDE,
+                MainNavigationBar._HINT_NARROW,
+            )
+        else:
+            assert str(overflow_hint.label).strip() == "More ›"
 
 
 @pytest.mark.asyncio
@@ -1517,6 +2164,132 @@ async def test_skills_route_lands_on_library_with_skills_row_selected():
 
 
 @pytest.mark.asyncio
+async def test_search_route_lands_on_library_rag_canvas():
+    """``NavigateToScreen("search")`` must land on Library with the
+    Search/RAG rail row selected. The standalone Search screen is retired
+    (RAG UX v2 PR-1, Task 1) and the legacy "search" route now re-points into
+    Library, mirroring ``test_prompts_route_lands_on_library_with_prompts_row_selected``
+    /``test_skills_route_lands_on_library_with_skills_row_selected`` exactly --
+    "search" has no dedicated re-entry action to carry a nav-context, so the
+    bare alias route itself must supply it via
+    ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT``.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ != "Screen":
+                break
+
+        app.post_message(NavigateToScreen("search"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-search"
+            ):
+                break
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+
+
+@pytest.mark.asyncio
+async def test_boot_with_search_default_tab_lands_on_library_rag_canvas():
+    """RAG UX v2 PR-2, Task 4: booting with ``default_tab = "search"`` must
+    land on Library with the Search/RAG rail row selected, not generic
+    Library. Mirrors ``test_search_route_lands_on_library_rag_canvas`` above
+    exactly, except it drives the BOOT path (``_push_initial_screen``, via
+    ``_build_test_app(configured_default=...)``) instead of an in-app
+    ``NavigateToScreen`` message -- before this fix, ``_push_initial_screen``
+    never consulted ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT``, so a configured
+    "search" default tab silently degraded to the generic Library canvas
+    (default rail row) instead of honoring the alias's landing promise.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
+
+    app = _build_test_app(configured_default="search")
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-search"
+            ):
+                break
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+
+
+@pytest.mark.asyncio
+async def test_boot_with_prompts_default_tab_lands_on_library_with_prompts_row_selected():
+    """Sibling of ``test_boot_with_search_default_tab_lands_on_library_rag_canvas``
+    proving the boot-time fix is generic across
+    ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT`` rather than special-cased to
+    "search" -- the table also carries "prompts", "skills" and "customize",
+    and the fix must apply whichever pre-resolution route id
+    ``_resolve_initial_shell_route()`` returns.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_PROMPTS
+
+    app = _build_test_app(configured_default="prompts")
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-prompts"
+            ):
+                break
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+
+
+@pytest.mark.asyncio
+async def test_search_all_palette_command_lands_on_library_with_honest_toast():
+    """RAG UX v2 PR-1, Task 2: the "Search All Content" quick-action palette
+    command dispatches through the "search" alias (Task 1), so it must
+    resolve to the same Library Search/RAG canvas as
+    ``test_search_route_lands_on_library_rag_canvas`` -- and its toast must
+    say so honestly instead of promising the retired standalone "Search/RAG"
+    screen.
+    """
+    from tldw_chatbook.app import QuickActionsProvider
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
+
+    app = _build_test_app()
+    notices: list[tuple[str, str]] = []
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ != "Screen":
+                break
+
+        app.notify = lambda message_text, **kwargs: notices.append(
+            (str(message_text), kwargs.get("severity", ""))
+        )
+
+        provider = QuickActionsProvider(screen=app.screen)
+        provider.execute_quick_action("search_all")
+
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-search"
+            ):
+                break
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+        assert ("Opened Library Search/RAG", "information") in notices
+
+
+@pytest.mark.asyncio
 async def test_media_screen_round_trip_restores_type_filter_and_search_term():
     """Regression lock for the bug this task fixes: nothing seeds
     ``MediaWindow.active_media_type`` on a screen-navigated visit except a
@@ -1599,12 +2372,19 @@ async def test_media_screen_round_trip_restores_type_filter_and_search_term():
 
 
 @pytest.mark.asyncio
-async def test_search_screen_round_trip_restores_query_input():
-    """SearchScreen wraps ``SearchRAGWindow`` directly with no app-owned
-    runtime-state seam of its own (unlike Media's shared
-    ``MediaRuntimeState``), so its query input is entirely at the mercy of
-    ``_screen_states``.
+async def test_search_route_round_trips_to_the_library_rag_row():
+    """The retired standalone Search screen is folded into Library (RAG UX
+    v2 PR-1, Task 1): the "search" route no longer has a runtime-state seam
+    of its own, so this locks that the alias's rail-row selection survives a
+    round trip through another screen and is not just a first-navigation
+    fluke of ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT``. Unlike the "library" +
+    click entry point exercised by
+    ``test_library_screen_round_trip_restores_rag_query_and_rail_selection``,
+    entering via the bare "search" alias re-applies that legacy nav context
+    on every visit rather than relying solely on restored screen state.
     """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
+
     app = _build_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
@@ -1616,15 +2396,12 @@ async def test_search_screen_round_trip_restores_query_input():
         app.post_message(NavigateToScreen("search"))
         for _ in range(150):
             await pilot.pause(0.02)
-            if type(app.screen).__name__ == "SearchScreen" and app.screen.query(
-                "#search-query-input"
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-search"
             ):
                 break
-        assert type(app.screen).__name__ == "SearchScreen"
-
-        query_input = app.screen.query_one("#search-query-input", Input)
-        query_input.value = "quantum encryption notes"
-        await pilot.pause()
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
 
         app.post_message(NavigateToScreen("home"))
         for _ in range(150):
@@ -1636,15 +2413,14 @@ async def test_search_screen_round_trip_restores_query_input():
         app.post_message(NavigateToScreen("search"))
         for _ in range(150):
             await pilot.pause(0.02)
-            if type(app.screen).__name__ == "SearchScreen" and app.screen.query(
-                "#search-query-input"
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-search"
             ):
                 break
 
         restored_screen = app.screen
-        assert type(restored_screen).__name__ == "SearchScreen"
-        restored_input = restored_screen.query_one("#search-query-input", Input)
-        assert restored_input.value == "quantum encryption notes"
+        assert type(restored_screen).__name__ == "LibraryScreen"
+        assert restored_screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
 
 
 # --- Media/Search unit-style save_state/restore_state contracts -----------
@@ -1702,29 +2478,426 @@ def test_media_screen_restore_state_stashes_pending_dict_for_on_mount():
     }
 
 
-def test_search_screen_save_state_never_raises_when_window_unset():
-    app = _build_test_app()
-    screen = SearchScreen(app)  # compose_content never ran -- search_window is None
+def test_the_retired_ingest_route_resolves_to_library():
+    """The legacy ``ingest`` route must still land somewhere real.
 
-    state = screen.save_state()
+    The standalone Ingest screen is retired (task-684.4) now that importing
+    lives entirely in Library's Import media canvas, including the server-backed
+    and web-clipping paths it used to own. The route id is kept as an alias
+    rather than deleted, because startup configs and saved navigation state can
+    still say "ingest" -- dropping it outright would dead-end them, and
+    ``_ROUTABLE_LEGACY_ROUTES`` already treats it as a routable legacy id.
 
-    assert "search_query" not in state
+    Mirrors the ``notes``/``prompts``/``skills`` retirements exactly, and matches
+    the Workbench route inventory, which already declared ingest -> library.
+    """
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
+
+    ingest_name, ingest_tab, ingest_class = resolve_screen_target("ingest")
+    library_name, library_tab, library_class = resolve_screen_target("library")
+
+    assert (ingest_name, ingest_tab, ingest_class) == (
+        library_name,
+        library_tab,
+        library_class,
+    )
+    assert ingest_class is not None, "the ingest route must not dead-end"
 
 
-def test_search_screen_restore_state_stashes_pending_dict_for_on_mount():
-    app = _build_test_app()
-    screen = SearchScreen(app)
+def test_no_route_reaches_the_retired_ingest_screen():
+    """AC#2: nothing may still resolve to the deleted screen."""
+    from tldw_chatbook.UI.Navigation import screen_registry
 
-    screen.restore_state(
-        {
-            "search_query": "hello",
-            "search_mode": "hybrid",
-            "search_active_tab": "history-tab",
-        }
+    for route_id in screen_registry.registered_screen_route_ids():
+        route = screen_registry._SCREEN_ROUTES[route_id]
+        assert "media_ingest_screen" not in route.module_path, route_id
+        assert route.class_name != "MediaIngestScreen", route_id
+
+
+# --- Startup-failure diagnosability -----------------------------------------
+# Root-caused 2026-07-27: `aiohttp` (an optional dependency) sat on the default
+# chat screen's import chain via Media_Creation/swarmui_client.py. With it
+# absent, `ScreenRoute.load_screen_class()` swallowed the ModuleNotFoundError
+# into a warning and returned None, so the app died on start with a bare
+# `RuntimeError: Unable to resolve default chat screen` -- naming neither the
+# missing module nor the file that imported it. `resolve_screen_target()` keeps
+# its graceful None contract (a broken optional screen must not break
+# navigation), but the fatal startup site must report the underlying cause.
+
+
+def test_screen_load_error_reports_underlying_import_failure(monkeypatch):
+    """`screen_load_error()` must return the exception blocking a route's load.
+
+    Args:
+        monkeypatch: pytest fixture; points the chat route at a module that
+            does not exist, so the load fails the way a missing dependency
+            deep in the import chain does.
+    """
+    from tldw_chatbook.UI.Navigation import screen_registry
+
+    route = screen_registry._SCREEN_ROUTES["chat"]
+    broken = replace(route, module_path="tldw_chatbook.UI.Screens.no_such_screen_xyz")
+    monkeypatch.setitem(screen_registry._SCREEN_ROUTES, "chat", broken)
+
+    # Precondition: the route resolves to None, i.e. the masked failure mode.
+    _name, _tab, screen_class = screen_registry.resolve_screen_target("chat")
+    assert screen_class is None
+
+    cause = screen_registry.screen_load_error("chat")
+    assert isinstance(cause, ImportError)
+    assert "no_such_screen_xyz" in str(cause)
+
+
+def test_screen_load_error_returns_none_for_a_loadable_route():
+    """A healthy route has no load failure to report."""
+    from tldw_chatbook.UI.Navigation import screen_registry
+
+    assert screen_registry.screen_load_error("chat") is None
+
+
+def test_screen_load_error_reports_missing_optional_dependency(monkeypatch):
+    """A dependency-gated route reports the gate, not a bare None.
+
+    The gate short-circuits before the import is attempted, so there is no
+    exception to surface -- but the caller still needs a reason, otherwise the
+    fatal startup message stays as uninformative as the bug this guards.
+
+    Args:
+        monkeypatch: pytest fixture; gates the chat route on a dependency
+            check name that `optional_deps` does not define, so
+            `dependencies_available()` reports False.
+    """
+    from tldw_chatbook.UI.Navigation import screen_registry
+
+    route = screen_registry._SCREEN_ROUTES["chat"]
+    gated = replace(route, dependency_check="definitely_not_a_real_dep_check")
+    monkeypatch.setitem(screen_registry._SCREEN_ROUTES, "chat", gated)
+
+    cause = screen_registry.screen_load_error("chat")
+    assert cause is not None
+    assert "definitely_not_a_real_dep_check" in str(cause)
+
+
+def test_screen_load_error_handles_unknown_route():
+    """An unroutable target reports a miss rather than raising."""
+    from tldw_chatbook.UI.Navigation import screen_registry
+
+    cause = screen_registry.screen_load_error("no_such_route_xyz")
+    assert cause is not None
+    assert "no_such_route_xyz" in str(cause)
+
+
+def test_push_initial_screen_fatal_error_names_the_underlying_cause(monkeypatch):
+    """The fatal startup error must name the real blocker, not just the symptom.
+
+    Exercises `_push_initial_screen()`'s unresolvable branch against a stub
+    `self` -- the method only reads `_initial_screen_pushed` and calls two
+    resolution helpers before raising, so this needs no Textual app boot.
+
+    Driven via `asyncio.run()` rather than an `async def` test: only
+    `Tests/UI/pytest.ini` sets `asyncio_mode = auto`, and there is no
+    repo-root pytest.ini, so a sweep spanning Tests/UI *and* other
+    directories resolves a different rootdir/config and would not collect
+    this as an async test.
+
+    Args:
+        monkeypatch: pytest fixture; points the chat route at a module that
+            does not exist, making the default screen unresolvable so the
+            fatal branch is reached.
+    """
+    from tldw_chatbook.UI.Navigation import screen_registry
+
+    route = screen_registry._SCREEN_ROUTES["chat"]
+    broken = replace(route, module_path="tldw_chatbook.UI.Screens.no_such_screen_xyz")
+    monkeypatch.setitem(screen_registry._SCREEN_ROUTES, "chat", broken)
+
+    stub = SimpleNamespace(
+        _initial_screen_pushed=False,
+        _resolve_initial_shell_route=lambda: "chat",
+        _resolve_screen_navigation_target=screen_registry.resolve_screen_target,
     )
 
-    assert screen._pending_search_restore == {
-        "query": "hello",
-        "mode": "hybrid",
-        "active_tab": "history-tab",
-    }
+    with pytest.raises(RuntimeError) as excinfo:
+        asyncio.run(TldwCli._push_initial_screen(stub))
+
+    message = str(excinfo.value)
+    # The old message was exactly "Unable to resolve default chat screen" --
+    # it named neither the failing module nor the exception type.
+    assert "no_such_screen_xyz" in message, message
+    assert "ModuleNotFoundError" in message, message
+    # Chained, so the traceback shows the real import failure too.
+    assert isinstance(excinfo.value.__cause__, ImportError)
+
+
+@pytest.mark.asyncio
+async def test_navigation_survives_screen_construction_failure(monkeypatch):
+    """A screen whose ``__init__`` raises must not take the whole app down.
+
+    Root cause of the reported "app crashes when clicking onto MCP": the MCP
+    canvases read ``Select.NULL`` at construction time, which does not exist
+    before Textual 8. ``_complete_screen_navigation`` guarded ``save_state``,
+    ``restore_state`` and ``apply_navigation_context`` but ran
+    ``_create_navigation_screen`` unguarded, so the AttributeError escaped the
+    ``NavigateToScreen`` handler and Textual exited the app (return_code 1).
+
+    Any screen that fails to build is a broken destination, never a dead app:
+    the user must be told and left on the screen they were already using.
+    """
+    app = _build_test_app()
+
+    class ExplodingScreen:
+        screen_name = "mcp"
+
+        def __init__(self, app_instance):
+            raise AttributeError("type object 'Select' has no attribute 'NULL'")
+
+    def fake_resolve(target):
+        return "mcp", "mcp", ExplodingScreen
+
+    switched_screens = []
+
+    async def fake_switch_screen(screen):
+        switched_screens.append(screen)
+
+    notifications = []
+
+    class FakeOutgoingScreen:
+        screen_name = "chat"
+
+    # Same shim the flush/veto tests use: the handler reads self.screen for
+    # the outgoing save-state step, which needs a live screen stack.
+    monkeypatch.setattr(
+        type(app), "screen", property(lambda self: FakeOutgoingScreen())
+    )
+    monkeypatch.setattr(app, "_resolve_screen_navigation_target", fake_resolve)
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+    monkeypatch.setattr(
+        app, "notify", lambda message, **kwargs: notifications.append(message)
+    )
+
+    # Must not raise: an escaping exception here is what killed the app.
+    await app.handle_screen_navigation(NavigateToScreen("mcp"))
+
+    assert switched_screens == [], "a screen that failed to build must not be switched to"
+    assert notifications, "the user must be told the destination failed to open"
+
+
+@pytest.mark.asyncio
+async def test_navigation_survives_screen_mount_failure(monkeypatch):
+    """A screen that raises while mounting must not take the whole app down.
+
+    Sibling of the construction guard: the MCP audit canvas reads
+    ``Select.NULL`` inside ``compose()``, so the same AttributeError can
+    surface from ``switch_screen`` (which drives compose/mount) rather than
+    from ``__init__``. Both legs must fail soft.
+    """
+    app = _build_test_app()
+
+    class FakeScreen:
+        screen_name = "mcp"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    def fake_resolve(target):
+        return "mcp", "mcp", FakeScreen
+
+    async def exploding_switch_screen(screen):
+        raise AttributeError("type object 'Select' has no attribute 'NULL'")
+
+    notifications = []
+
+    class FakeOutgoingScreen:
+        screen_name = "chat"
+
+    # Same shim the flush/veto tests use: the handler reads self.screen for
+    # the outgoing save-state step, which needs a live screen stack.
+    monkeypatch.setattr(
+        type(app), "screen", property(lambda self: FakeOutgoingScreen())
+    )
+    monkeypatch.setattr(app, "_resolve_screen_navigation_target", fake_resolve)
+    monkeypatch.setattr(app, "switch_screen", exploding_switch_screen)
+    monkeypatch.setattr(
+        app, "notify", lambda message, **kwargs: notifications.append(message)
+    )
+
+    await app.handle_screen_navigation(NavigateToScreen("mcp"))
+
+    assert notifications, "the user must be told the destination failed to open"
+
+
+@pytest.mark.asyncio
+async def test_navigation_flush_that_never_returns_does_not_freeze_the_app(monkeypatch):
+    """A hung outgoing flush must not freeze the whole app forever.
+
+    ``handle_screen_navigation`` is an ``@on`` handler on the App, so while
+    it awaits, the App's own message pump processes nothing -- no clicks, no
+    bindings, no further navigation. The outgoing flush reaches unbounded
+    awaits (``library_screen``'s ``await worker.wait()`` with no timeout, and
+    ``_run_library_service_call``'s uncancellable ``asyncio.to_thread``), so a
+    save that never completes used to leave the app permanently frozen and
+    unkillable rather than merely slow.
+
+    The flush must therefore be bounded: on timeout the app fails closed
+    (stays put, pending edits intact) and stays responsive.
+    """
+    app = _build_test_app()
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    def fake_resolve(target):
+        return "chat", "chat", FakeTargetScreen
+
+    switched_screens = []
+
+    async def fake_switch_screen(screen):
+        switched_screens.append(screen)
+
+    class HungOutgoingScreen:
+        screen_name = "library"
+
+        async def flush_pending_work(self):
+            await asyncio.Event().wait()  # never completes
+
+    notifications = []
+    monkeypatch.setattr(app, "_resolve_screen_navigation_target", fake_resolve)
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+    monkeypatch.setattr(
+        type(app), "screen", property(lambda self: HungOutgoingScreen())
+    )
+    monkeypatch.setattr(
+        app, "notify", lambda message, **kwargs: notifications.append(message)
+    )
+    monkeypatch.setattr(app, "NAVIGATION_FLUSH_TIMEOUT_SECONDS", 0.2, raising=False)
+
+    # If the flush is unbounded this never returns and the suite hangs, so
+    # bound the assertion itself rather than wedging CI.
+    await asyncio.wait_for(
+        app.handle_screen_navigation(NavigateToScreen("chat")), timeout=10
+    )
+
+    assert switched_screens == [], "a timed-out flush must fail closed, not switch"
+    assert notifications, "the user must be told the switch was abandoned"
+
+
+@pytest.mark.asyncio
+async def test_navigation_timeout_does_not_cancel_the_in_flight_save(monkeypatch):
+    """Timing out the flush must not cancel the save's reconciliation.
+
+    Bounding the flush released the App message pump, but `asyncio.wait_for`
+    cancels what it waits on -- and the Library File Notes save is a
+    `asyncio.to_thread` write that cannot be cancelled. The thread kept
+    writing while the coroutine died at the await, so `_save_draft` never ran
+    the lines after it: `_save_state` stayed "saving" and `_opened.content_hash`
+    kept the pre-save value.
+
+    That is worse than the freeze it replaced. `leave_allowed` is False while
+    the state is "saving", so the screen becomes permanently non-leavable and
+    the next save compares against a stale hash.
+
+    The wait must therefore be shielded: the app stops waiting, the save does
+    not stop saving.
+    """
+    app = _build_test_app()
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    def fake_resolve(target):
+        return "chat", "chat", FakeTargetScreen
+
+    async def fake_switch_screen(screen):
+        pass
+
+    reconciled = {"done": False, "cancelled": False}
+
+    class SlowSavingScreen:
+        screen_name = "library"
+
+        async def flush_pending_work(self):
+            try:
+                # Stands in for `await asyncio.to_thread(service.save_file, ...)`:
+                # slower than the navigation budget, and uncancellable in reality.
+                await asyncio.sleep(0.6)
+            except asyncio.CancelledError:
+                reconciled["cancelled"] = True
+                raise
+            # The post-save reconciliation that must still run.
+            reconciled["done"] = True
+            return True
+
+    notifications = []
+    monkeypatch.setattr(app, "_resolve_screen_navigation_target", fake_resolve)
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+    monkeypatch.setattr(
+        type(app), "screen", property(lambda self: SlowSavingScreen())
+    )
+    monkeypatch.setattr(
+        app, "notify", lambda message, **kwargs: notifications.append(message)
+    )
+    monkeypatch.setattr(app, "NAVIGATION_FLUSH_TIMEOUT_SECONDS", 0.1, raising=False)
+
+    await app.handle_screen_navigation(NavigateToScreen("chat"))
+    assert notifications, "the user must be told the switch was abandoned"
+
+    # Give the shielded save the time it needs to finish on its own.
+    await asyncio.sleep(1.0)
+
+    assert not reconciled["cancelled"], (
+        "the in-flight save was cancelled; its reconciliation never ran, so the "
+        "editor is stuck in 'saving' with a stale content hash"
+    )
+    assert reconciled["done"], "the save must still complete after the app stops waiting"
+
+
+@pytest.mark.asyncio
+async def test_broken_screen_content_degrades_instead_of_killing_a_running_app():
+    """Integration lock for the compose seam, in a real running Textual app.
+
+    The focused navigation tests stub ``switch_screen``, which hid a real
+    limitation: Textual composes a screen inside its own mount pipeline, so an
+    exception in ``compose_content`` is never raised back to whoever called
+    ``switch_screen``. Textual records it on the App and exits the process --
+    the navigation handler's try/except cannot see it, so ``BaseAppScreen`` is
+    the only place that can catch it. That is the path the MCP crash took.
+
+    This drives a real ``push_screen`` + compose + mount through a live app.
+    It deliberately does NOT use ``_build_test_app``: real ``switch_screen``
+    does not work in that harness (navigating to a healthy screen fails there
+    too), which is why the other tests stub it.
+    """
+
+    class BrokenScreen(BaseAppScreen):
+        def __init__(self):
+            super().__init__(app_instance=None, screen_name="mcp")
+
+        def compose_content(self) -> ComposeResult:
+            # Stands in for the MCP canvases reading Select.NULL on a Textual
+            # that predates it.
+            raise AttributeError("type object 'Select' has no attribute 'NULL'")
+            yield  # pragma: no cover - unreachable, keeps this a generator
+
+    class HostApp(App):
+        pass
+
+    app = HostApp()
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause()
+        await app.push_screen(BrokenScreen())
+        await pilot.pause()
+
+        assert app.is_running, "a screen that fails to compose must not exit the app"
+        assert app.screen.query("#screen-content-error"), (
+            "the failure must be shown, not swallowed into a blank screen"
+        )
+        # The message pump must still be live afterwards.
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.is_running, "app must stay responsive after the failed compose"

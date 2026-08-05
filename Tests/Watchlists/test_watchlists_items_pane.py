@@ -1,6 +1,7 @@
 """Tests for the Watchlists items pane."""
 
 import pytest
+from rich.markup import escape as escape_markup
 from textual.app import App, ComposeResult
 from textual.widgets import Button, DataTable, Input, Select
 
@@ -9,6 +10,13 @@ from tldw_chatbook.UI.Watchlists_Modules.items_pane import (
     ItemsPane,
     RefreshItemsRequested,
 )
+
+# Marked so CI actually runs this file (whole-branch review fix 5): the unit
+# job selects `pytest -m unit`, and an unmarked file in `Tests/Watchlists`
+# is invisible to it. Matches the convention sibling files in this
+# directory already use (`test_watchlist_name_and_copy.py`,
+# `test_region_layout_store.py`, `test_watchlist_dialogs_escape.py`).
+pytestmark = pytest.mark.unit
 
 
 class ItemsPaneHarness(App):
@@ -57,6 +65,70 @@ async def test_items_pane_renders_table_and_toolbar():
         assert pane.query_one("#items-search-input", Input)
         assert pane.query_one("#items-status-select", Select)
         assert pane.query_one("#items-table", DataTable)
+
+
+@pytest.mark.asyncio
+async def test_markup_shaped_item_text_is_escaped_at_the_datatable_boundary(sample_items):
+    """`DataTable` markup-parses `str` cells, and item title / source name are
+    remote feed content -- so `[bold red]BREAKING[/]` in a feed title would be
+    interpreted as Rich markup rather than shown as text (TASK-1348 AC#1). The
+    escape at the `add_row` boundary keeps the markup delimiters as data. This
+    test fails if that escape is removed: the raw tag form would sit in the
+    cell instead of the escaped one.
+
+    Args:
+        sample_items: Two normalized item dicts (the module fixture); the
+            first is overwritten here with markup-shaped title/source_name.
+    """
+    hostile_title = "[bold red]BREAKING[/] news"
+    hostile_source = "[link=http://evil.test]Feed[/link]"
+    items = [dict(sample_items[0], title=hostile_title, source_name=hostile_source)]
+
+    app = ItemsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ItemsPane)
+        pane.items = items
+        await pilot.pause()
+
+        table = pane.query_one("#items-table", DataTable)
+        row = table.get_row(str(items[0]["id"]))
+        # The cell holds the escaped form (delimiters survive as literal data,
+        # never consumed as Rich tags) -- and NOT the raw markup that would be
+        # parsed if the boundary escape were gone.
+        assert row[0] == escape_markup(hostile_title)
+        assert row[1] == escape_markup(hostile_source)
+        assert row[0] != hostile_title
+        assert row[1] != hostile_source
+
+
+@pytest.mark.asyncio
+async def test_status_repaint_escapes_at_the_update_cell_boundary(sample_items):
+    """`update_item_status_cell` repaints a single Status cell via
+    `DataTable.update_cell`, which markup-parses its value exactly as
+    `add_row` does -- so the sibling write site must escape too, or it
+    reopens the sink `compose()` closed (TASK-1348, Qodo finding 3). Status is
+    an app-controlled enum today, but a markup-shaped value proves the
+    boundary holds; fails if the repaint escape is removed.
+
+    Args:
+        sample_items: Two normalized item dicts (the module fixture); the
+            first row's Status cell is repainted with a markup-shaped value.
+    """
+    items = [dict(sample_items[0])]
+    app = ItemsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ItemsPane)
+        pane.items = items
+        await pilot.pause()
+
+        hostile_status = "[blink]ingested[/]"
+        pane.update_item_status_cell(items[0]["id"], hostile_status)
+        await pilot.pause()
+
+        table = pane.query_one("#items-table", DataTable)
+        cell = table.get_row(str(items[0]["id"]))[2]
+        assert cell == escape_markup(hostile_status)
+        assert cell != hostile_status
 
 
 @pytest.mark.asyncio
@@ -109,3 +181,53 @@ async def test_items_pane_selects_item_and_posts_message(sample_items):
 
         assert pane.selected_item == sample_items[0]
         assert app.captured_messages == [("item_selected", sample_items[0])]
+
+
+# --- Spec #2 phase 1, task 5: the queued-for-briefing indicator column ----
+
+
+@pytest.mark.asyncio
+async def test_queued_indicator_renders_from_the_normalized_flag_on_load(sample_items):
+    """Requirement 5: a pre-queued item shows the glyph after a plain load --
+    pinning the read path (Task 1's `queued_for_briefing`) end to end, with
+    no button press involved."""
+    items = [dict(sample_items[0], queued_for_briefing=True), dict(sample_items[1])]
+    app = ItemsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ItemsPane)
+        pane.items = items
+        await pilot.pause()
+
+        table = pane.query_one("#items-table", DataTable)
+        assert table.get_row(str(items[0]["id"]))[4] == ItemsPane._QUEUED_GLYPH, (
+            "a queued item must show the glyph as soon as it is loaded"
+        )
+        assert table.get_row(str(items[1]["id"]))[4] == "", (
+            "an item the flag was never set on must show nothing"
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_item_queued_cell_repaints_in_place_without_recompose(sample_items):
+    """Mirrors `update_item_status_cell`'s own contract: the same instances
+    (pane AND table) must survive the repaint -- the Phase D pattern this
+    stream keeps re-verifying (a recompose once destroyed the live table)."""
+    app = ItemsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ItemsPane)
+        pane.items = [dict(item) for item in sample_items]
+        await pilot.pause()
+        table = pane.query_one("#items-table", DataTable)
+        row_key = str(sample_items[0]["id"])
+
+        pane.update_item_queued_cell(row_key, True)
+        await pilot.pause()
+
+        assert pane.query_one("#items-table", DataTable) is table, (
+            "repainting a cell must not recompose the pane"
+        )
+        assert table.get_row(row_key)[4] == ItemsPane._QUEUED_GLYPH
+
+        pane.update_item_queued_cell(row_key, False)
+        await pilot.pause()
+        assert table.get_row(row_key)[4] == "", "toggling back must clear the glyph"

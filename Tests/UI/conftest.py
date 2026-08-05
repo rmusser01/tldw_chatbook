@@ -12,8 +12,18 @@ from pathlib import Path
 _TEST_CONFIG_ROOT_ENV = "TLDW_TEST_CONFIG_ROOT"
 _TEST_CONFIG_OWNER_ENV = "TLDW_TEST_CONFIG_ROOT_OWNER"
 _existing_test_config_root = os.environ.get(_TEST_CONFIG_ROOT_ENV)
+# Per-xdist-worker sandbox subtree; see Tests/conftest.py for the rationale
+# (task-1453). Needed here too for runs rooted at Tests/UI, where the root
+# conftest is not loaded.
+_XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
+if _XDIST_WORKER and not __import__("re").fullmatch(r"[A-Za-z0-9_-]+", _XDIST_WORKER):
+    _XDIST_WORKER = None  # never join an unexpected id into a path
 if _existing_test_config_root:
     _BOOTSTRAP_CONFIG_ROOT = Path(_existing_test_config_root)
+    if _XDIST_WORKER and _BOOTSTRAP_CONFIG_ROOT.name != _XDIST_WORKER:
+        _BOOTSTRAP_CONFIG_ROOT = _BOOTSTRAP_CONFIG_ROOT / _XDIST_WORKER
+        _BOOTSTRAP_CONFIG_ROOT.mkdir(parents=True, exist_ok=True)
+        os.environ[_TEST_CONFIG_ROOT_ENV] = str(_BOOTSTRAP_CONFIG_ROOT)
     _OWNS_BOOTSTRAP_CONFIG_ROOT = False
 else:
     _BOOTSTRAP_CONFIG_ROOT = Path(tempfile.mkdtemp(prefix="tldw_test_config_"))
@@ -32,14 +42,21 @@ from contextlib import asynccontextmanager  # noqa: E402
 from textual.app import App  # noqa: E402
 from textual.widget import Widget  # noqa: E402
 
-# Import test utilities
-from Tests.textual_test_utils import app_pilot, widget_pilot  # noqa: E402
-from Tests.textual_test_harness import (  # noqa: E402
+# Import test utilities (fixture re-exports for this nested pytest root).
+from Tests.textual_test_utils import app_pilot, widget_pilot  # noqa: F401,E402
+from Tests.conftest import isolate_test_environment  # noqa: F401,E402
+from Tests.textual_test_harness import (  # noqa: F401,E402
     IsolatedWidgetTestApp,
     TestApp,
     enhanced_app_pilot,
     isolated_widget_pilot,
 )
+
+# Re-export the canonical scratch_config fixture from Tests/Internal_Prompts.conftest.
+# See Tests/RAG/conftest.py for the collision rationale (plain import, not
+# pytest_plugins, sidesteps a duplicate-plugin-registration error when both
+# test directories are collected in the same session).
+from Tests.Internal_Prompts.conftest import scratch_config  # noqa: F401,E402
 
 # Type variables
 W = TypeVar("W", bound=Widget)
@@ -56,15 +73,6 @@ def pytest_sessionfinish(session, exitstatus):
         os.environ.pop(_TEST_CONFIG_ROOT_ENV, None)
         os.environ.pop(_TEST_CONFIG_OWNER_ENV, None)
     shutil.rmtree(_BOOTSTRAP_CONFIG_ROOT, ignore_errors=True)
-
-
-@pytest.fixture(autouse=True)
-def isolate_ui_config_path(monkeypatch, tmp_path):
-    """Isolate config when Tests/UI/pytest.ini is the pytest root."""
-    monkeypatch.setenv(
-        "TLDW_CONFIG_PATH",
-        str(tmp_path / "test_data" / "config" / "config.toml"),
-    )
 
 
 @pytest.fixture(scope="session")

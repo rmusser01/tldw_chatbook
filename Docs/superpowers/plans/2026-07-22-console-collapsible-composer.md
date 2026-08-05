@@ -8,7 +8,7 @@
 
 **Spec:** `Docs/superpowers/specs/2026-07-22-console-collapsible-composer-design.md` — read it before starting.
 
-**Backlog:** `TASK-398` — `backlog/tasks/task-398 - Add-collapsible-Console-composer-reading-mode.md`.
+**Backlog:** `TASK-487` — `backlog/tasks/task-487 - Add-collapsible-Console-composer-reading-mode.md`.
 
 **ADR required:** no
 
@@ -52,7 +52,7 @@
 - Create: `Docs/superpowers/qa/console-collapsible-composer-2026-07/README.md`
   - Record live Textual-web capture recipe, evidence, and approval status.
 - Create during QA: PNG evidence in `Docs/superpowers/qa/console-collapsible-composer-2026-07/`.
-- Modify: `backlog/tasks/task-398 - Add-collapsible-Console-composer-reading-mode.md`
+- Modify: `backlog/tasks/task-487 - Add-collapsible-Console-composer-reading-mode.md`
   - Check acceptance criteria, add implementation notes, and mark Done only after tests, static checks, screenshot evidence, and user approval.
 
 ---
@@ -1191,7 +1191,7 @@ If either product file did not change, omit it from `git add`.
 
 - Create: `Docs/superpowers/qa/console-collapsible-composer-2026-07/README.md`
 - Create: screenshots under `Docs/superpowers/qa/console-collapsible-composer-2026-07/`
-- Modify: `backlog/tasks/task-398 - Add-collapsible-Console-composer-reading-mode.md`
+- Modify: `backlog/tasks/task-487 - Add-collapsible-Console-composer-reading-mode.md`
 
 **Interfaces:** No product interfaces. This is the evidence and closeout gate.
 
@@ -1399,9 +1399,9 @@ Create `Docs/superpowers/qa/console-collapsible-composer-2026-07/README.md` cont
 - secret/privacy inspection result;
 - `Approval status: pending`.
 
-Present the actual screenshots to the user. Do not mark TASK-398 Done and do not merge until the user explicitly approves the rendered UI.
+Present the actual screenshots to the user. Do not mark TASK-487 Done and do not merge until the user explicitly approves the rendered UI.
 
-- [ ] **Step 7: Close TASK-398 after approval**
+- [ ] **Step 7: Close TASK-487 after approval**
 
 After approval:
 
@@ -1434,14 +1434,14 @@ Expected: status `Done`, all AC boxes checked, Implementation Plan present, Impl
 ```bash
 git add \
   Docs/superpowers/qa/console-collapsible-composer-2026-07 \
-  "backlog/tasks/task-398 - Add-collapsible-Console-composer-reading-mode.md"
+  "backlog/tasks/task-487 - Add-collapsible-Console-composer-reading-mode.md"
 git diff --cached --check
 git commit -m "docs(console): verify collapsible composer"
 ```
 
 - [ ] **Step 9: Finish the branch**
 
-Invoke `superpowers:verification-before-completion`, then `superpowers:finishing-a-development-branch`. Include the spec, plan, TASK-398, test commands/results, and approved wide/compact screenshots in the handoff or PR description.
+Invoke `superpowers:verification-before-completion`, then `superpowers:finishing-a-development-branch`. Include the spec, plan, TASK-487, test commands/results, and approved wide/compact screenshots in the handoff or PR description.
 
 ---
 

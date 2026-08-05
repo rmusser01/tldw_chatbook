@@ -9,38 +9,24 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Collapsible, Input, Static
 from textual.widget import Widget
 
+from ...Library.library_rag_answer_service import (
+    ANSWER_STATUS_ABSTAINED,
+    ANSWER_STATUS_FAILED,
+    ANSWER_STATUS_NO_EVIDENCE,
+    ANSWER_STATUS_READY,
+)
 from ...Library.library_rag_state import (
-    LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LibraryRagPanelState,
     LibraryRagQueryState,
     LibraryRagResultRow,
     LibraryRagScopeState,
     LibraryRagSourceOption,
+    library_rag_answer_display_text,
+    library_rag_empty_state_quiet_copy,
+    library_rag_score_suffix,
+    library_rag_scope_summary,
     searching_status_line,
-)
-
-
-_SELECTED_EVIDENCE_DETAIL_IDS = (
-    "library-rag-selected-status-heading",
-    "library-rag-selected-status",
-    "library-rag-selected-evidence-heading",
-    "library-rag-selected-snippet",
-    "library-rag-selected-citations",
-    "library-rag-selected-authority-heading",
-    "library-rag-selected-source",
-    "library-rag-selected-authority",
-    "library-rag-selected-eligibility",
-    "library-rag-selected-allowed-heading",
-    "library-rag-selected-allowed",
-    "library-rag-selected-blocked-heading",
-    "library-rag-selected-blocked",
-    "library-rag-selected-recovery-heading",
-    "library-rag-selected-recovery",
-    "library-rag-selected-handoff-heading",
-    "library-rag-selected-handoff",
-    "library-rag-selected-future-heading",
-    "library-rag-selected-future",
 )
 
 
@@ -64,7 +50,7 @@ class LibrarySearchRagPanel(VerticalScroll):
             yield Button(
                 _mode_toggle_label(self.state),
                 id="library-rag-mode-toggle",
-                tooltip="Cycle Search/RAG mode.",
+                tooltip=_mode_toggle_tooltip(self.state),
             )
             yield Input(
                 value=self.state.query_state.query,
@@ -98,9 +84,23 @@ class LibrarySearchRagPanel(VerticalScroll):
             for child in library_rag_scope_recovery_children(self.state):
                 yield child
 
+        # PR-3 Task 3: the Answer region is its own sibling here, BETWEEN
+        # source-scope and results -- never yielded inside the
+        # `#library-rag-results` block below. That block's own teardown/
+        # remount loop (`LibraryScreen._refresh_library_rag_results_widgets`)
+        # only ever touches ITS OWN children (it skips
+        # `LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS`, tears down the rest, and
+        # remounts from `library_rag_results_body_children`); an answer
+        # region mounted inside it would be destroyed on every results
+        # refresh. `library_rag_answer_children` returns `[]` (nothing
+        # yielded) outside rag mode and before any answer/in-flight state
+        # exists, so the idle and keyword-mode canvases are unaffected.
+        for child in library_rag_answer_children(self.state):
+            yield child
+
         with Vertical(id="library-rag-results", classes="library-rag-region"):
             yield Static(
-                _results_heading_text(self.state),
+                results_heading_text(self.state),
                 id="library-rag-results-heading",
                 classes="destination-section",
             )
@@ -118,11 +118,20 @@ class LibrarySearchRagPanel(VerticalScroll):
 
 def _scope_summary(state: LibraryRagPanelState) -> str:
     """Return the source scope line for the main Search/RAG work lane."""
-    return LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
+    return library_rag_scope_summary(state.scope)
 
 
-def _scope_toggle_label(option: LibraryRagSourceOption) -> str:
-    """Return a toggle Button's visible label for one scope source option."""
+def scope_toggle_label(option: LibraryRagSourceOption) -> str:
+    """Return a toggle Button's visible label for one scope source option.
+
+    Public (RAG-27 fix-review): also imported by the screen's snapshot-
+    driven in-place refresh (`LibraryScreen._sync_library_rag_scope_toggle_and_run_gate_widgets`)
+    so a background ingest's fresh counts can update each toggle's ``(N)``
+    suffix without going through `library_rag_scope_toggle_children`'s
+    full Button rebuild (a mount/remove sequence unsafe to run
+    concurrently with the other refresh callers -- see that method's
+    docstring).
+    """
     marker = "✓" if option.selected else "○"
     return f"{marker} {option.label} ({option.count})"
 
@@ -144,7 +153,7 @@ def library_rag_scope_toggle_children(state: LibraryRagPanelState) -> list[Widge
     """
     return [
         Button(
-            _scope_toggle_label(option),
+            scope_toggle_label(option),
             id=f"library-rag-scope-toggle-{option.source_type}",
             classes="library-rag-scope-toggle",
             disabled=not option.available,
@@ -190,6 +199,203 @@ def library_rag_scope_recovery_children(state: LibraryRagPanelState) -> list[Wid
             tooltip="Open Library Import media to add sources.",
         ),
     ]
+
+
+#: Caution copy for a `ready` answer whose `citation_status` is not
+#: `validated` but which carries no recovery copy of its own -- a state the
+#: shipping validator never produces, kept because nothing enforces that
+#: cross-module invariant here. Says only what is actually known (the
+#: citations did not validate; check the evidence), never that they were
+#: "verified".
+LIBRARY_RAG_ANSWER_UNVALIDATED_CAUTION = (
+    "This answer's citations did not validate against the staged evidence. "
+    "Check the evidence rows below before relying on it."
+)
+
+#: Fallback for a `ready` answer whose escaped display text comes back empty
+#: (fix-review I2). `library_rag_answer_display_text` returns `""` for
+#: unsafe input -- its own docstring names an embedded `<script>` block as
+#: the example, and that is plausible model output here: the model is
+#: quoting HTML-ingested library evidence back at us. Without this
+#: fallback, a `ready`/`validated` answer rendered an EMPTY headline
+#: `Static` under "Citations resolve to staged evidence." -- a silent
+#: omission wearing the panel's own trust note. Rendered in the same
+#: caution register as `LIBRARY_RAG_ANSWER_UNVALIDATED_CAUTION`, not as the
+#: headline answer text, because there is nothing safe to show as the
+#: headline.
+LIBRARY_RAG_ANSWER_UNSAFE_TEXT_FALLBACK = (
+    "The answer could not be displayed safely — see the evidence rows below."
+)
+
+
+def library_rag_answer_children(state: LibraryRagPanelState) -> list[Widget]:
+    """Return the Answer region (`Vertical#library-rag-answer`), or none (PR-3 Task 3).
+
+    Rag mode's headline: the RAG Answer worker's grounded-answer outcome
+    (Task 1's `LibraryRagAnswer`), rendered as its own region -- see the
+    mount-point comment in `compose()` for why this must never be yielded
+    inside `#library-rag-results`.
+
+    Nothing renders in keyword (search) mode -- Task 1's answer service is
+    never invoked there, and this checks `state.query_state.mode` directly
+    rather than only `state.answer`, so a stale answer left over from a
+    mode flip can never leak through either. Nothing renders before any
+    query has run in rag mode either (`state.answer is None` and
+    `state.retrieval_status != "answering"`): the idle canvas has nothing
+    to say yet.
+
+    Visual hierarchy (design call, PR-3 Task 3): the answer IS the headline
+    of rag mode, so a clean `ready` answer renders as plain, unmuted
+    "headline" text (`#library-rag-answer-text`, a raised card, styled in
+    CSS) -- but `abstained`/`no_evidence`/`failed` are NOT errors, and
+    render in the same `.library-rag-quiet-line` register this panel
+    already uses elsewhere (RAG-29/33) for "nothing went wrong, there's
+    just nothing to show". `failed` additionally gets a one-line retry
+    HINT, not a bespoke retry Button: the Run button already re-triggers
+    retrieval + answer generation on the next press (wired in PR-3 Task 4),
+    so a second button doing the same thing would be redundant, not
+    additive -- worse than no button at all.
+
+    Carried ruling (Task 1 review): `status == "ready"` never renders as a
+    clean answer without branching on `citation_status` first.
+    `uncited`/`unverified` (in fact, anything other than the literal
+    `"validated"`) shows `citation_recovery` -- or
+    `LIBRARY_RAG_ANSWER_UNVALIDATED_CAUTION` when that copy is somehow
+    empty -- in a bordered callout ABOVE the answer text: at least as
+    prominent as the answer, not a footnote below it, since a
+    plausible-looking wrong answer is the single most dangerous failure
+    mode this feature exists to prevent. `validated` gets
+    a neutral one-line note instead -- and that note, like every other
+    string this module builds, never calls it "verified":
+    `build_answer_citation_validation` only checks that a citation label
+    RESOLVES to a staged reference, never that the cited snippet actually
+    supports the claim.
+
+    Fix-review (I2): a `ready` answer whose escaped display text comes back
+    empty (`library_rag_answer_display_text` returns `""` for unsafe input,
+    e.g. an embedded `<script>` block quoted from HTML-ingested evidence)
+    renders `LIBRARY_RAG_ANSWER_UNSAFE_TEXT_FALLBACK` in the caution
+    register instead of an empty headline `Static` -- and the citation note
+    is suppressed in that case, `clean` or not, since there is nothing safe
+    shown for it to vouch for.
+
+    Args:
+        state: Current Library Search/RAG panel display state.
+
+    Returns:
+        `[]` outside rag mode or when there is nothing to show yet;
+        otherwise a single-element list holding the answer region.
+    """
+    if state.query_state.mode != "rag":
+        return []
+
+    heading = Static(
+        "Answer", id="library-rag-answer-heading", classes="destination-section"
+    )
+
+    if state.retrieval_status == "answering":
+        return [
+            Vertical(
+                heading,
+                Static(
+                    "Generating answer…",
+                    id="library-rag-answer-status",
+                    classes="library-rag-quiet-line",
+                ),
+                id="library-rag-answer",
+                classes="library-rag-region",
+            )
+        ]
+
+    answer = state.answer
+    if answer is None:
+        return []
+
+    body: list[Widget] = [heading]
+    if answer.status == ANSWER_STATUS_READY:
+        clean = answer.citation_status == "validated"
+        if not clean:
+            # `citation_status` and `citation_recovery` are set together by
+            # `build_answer_citation_validation` -- but that invariant lives
+            # in another module and nothing enforces it at the dataclass
+            # level (PR-3 Task 3 review finding). Falling back to generic
+            # caution copy, rather than skipping the callout when recovery
+            # copy happens to be empty, keeps the branch's whole point
+            # intact: an answer whose citations did not validate is NEVER
+            # rendered as if they had.
+            body.append(
+                Static(
+                    library_rag_answer_display_text(answer.citation_recovery)
+                    or LIBRARY_RAG_ANSWER_UNVALIDATED_CAUTION,
+                    id="library-rag-answer-caution",
+                    classes="library-rag-callout is-caution",
+                )
+            )
+        display_text = library_rag_answer_display_text(answer.text)
+        if display_text.strip():
+            body.append(
+                Static(
+                    display_text,
+                    id="library-rag-answer-text",
+                )
+            )
+            if clean:
+                body.append(
+                    Static(
+                        "Citations resolve to staged evidence.",
+                        id="library-rag-answer-citation-note",
+                        classes="library-rag-quiet-line",
+                    )
+                )
+        else:
+            # Fix-review (I2): `library_rag_answer_display_text` returns
+            # `""` for unsafe input -- a `ready` answer must never render
+            # as a blank headline sitting under the "Citations resolve to
+            # staged evidence." trust note (a silent omission presented as
+            # trustworthy). This fallback ALWAYS wins over the citation
+            # note, `clean` or not: there is nothing safe to show as the
+            # answer either way.
+            body.append(
+                Static(
+                    LIBRARY_RAG_ANSWER_UNSAFE_TEXT_FALLBACK,
+                    id="library-rag-answer-unsafe",
+                    classes="library-rag-callout is-caution",
+                )
+            )
+    elif answer.status in (ANSWER_STATUS_ABSTAINED, ANSWER_STATUS_NO_EVIDENCE):
+        body.append(
+            Static(
+                library_rag_answer_display_text(answer.text),
+                id="library-rag-answer-text",
+                classes="library-rag-quiet-line",
+            )
+        )
+    elif answer.status == ANSWER_STATUS_FAILED:
+        error_text = (
+            library_rag_answer_display_text(answer.error)
+            or "The answer could not be generated."
+        )
+        body.append(
+            Static(
+                f"Answer failed: {error_text}",
+                id="library-rag-answer-error",
+                classes="library-rag-quiet-line",
+            )
+        )
+        body.append(
+            Static(
+                "Run the query again to retry.",
+                id="library-rag-answer-retry-hint",
+                classes="library-rag-quiet-line",
+            )
+        )
+    else:
+        # An answer status this module does not recognize -- nothing
+        # well-formed to show here is safer than guessing at a
+        # presentation for it.
+        return []
+
+    return [Vertical(*body, id="library-rag-answer", classes="library-rag-region")]
 
 
 def _query_blocked_is_quiet(query_state: LibraryRagQueryState) -> bool:
@@ -263,9 +469,66 @@ def _mode_toggle_label(state: LibraryRagPanelState) -> str:
     return f"mode: {state.query_state.mode_label} ▸"
 
 
-def _results_heading_text(state: LibraryRagPanelState) -> str:
-    """Return the Evidence region heading, surfacing top-k (A3)."""
-    return f"Evidence · top {state.query_state.top_k} per source"
+def _other_mode_label(state: LibraryRagPanelState) -> str:
+    """Return the label of the mode a toggle press would switch TO.
+
+    The cycle only ever has two states (`rag`/`search`), so the "other"
+    mode is simply whichever one isn't current -- see `_mode_toggle_tooltip`.
+    """
+    return "Search" if state.query_state.mode == "rag" else "RAG Answer"
+
+
+def _mode_toggle_tooltip(state: LibraryRagPanelState) -> str:
+    """Return the mode-cycle button's tooltip, naming the next mode (RAG-39).
+
+    A bare "Cycle Search/RAG mode." tooltip gives no hint how many modes
+    exist or what a press does -- a two-state cycle looks identical to a
+    five-state one. Naming the next mode makes the button's effect legible
+    before the user presses it, and stays honest across a mode flip because
+    it reads `state.query_state.mode` fresh on every build (recompose is
+    the only path that rebuilds this button -- see the mode-toggle
+    `Button.Pressed` handler in `library_screen.py`).
+    """
+    return f"Cycle Search/RAG mode. Next: {_other_mode_label(state)}."
+
+
+def results_heading_text(state: LibraryRagPanelState) -> str:
+    """Return the Evidence region heading, surfacing top-k (A3).
+
+    Public (Task 8): shared by the panel's own `compose()` and the screen's
+    incremental refresh (`_refresh_library_rag_results_widgets`), mirroring
+    every other body/heading builder in this module.
+
+    "Per source" is only true for keyword mode: `_search_keyword` fans out
+    one query per selected source and caps each independently at `top_k`.
+    Rag mode's semantic leg is ONE store query (or one per allowlisted
+    source type under an active scope, still merged by score) trimmed to a
+    single `top_k` overall -- so the suffix is dropped there rather than
+    making a claim that live UAT showed was false (RAG-29/scout item 3).
+    """
+    suffix = "" if state.query_state.mode == "rag" else " per source"
+    return f"Evidence · top {state.query_state.top_k}{suffix}"
+
+
+def library_rag_coverage_note_children(state: LibraryRagPanelState) -> list[Widget]:
+    """Return the Evidence region's semantic coverage-note `Static`, or none.
+
+    Shared by `compose()` and the screen's incremental refresh (folded into
+    `library_rag_results_body_children` below, so both paths get it for
+    free). Reuses the existing `library-rag-quiet-line` styling -- no new
+    CSS. Empty (`[]`) whenever `state.coverage_note` has nothing to say
+    (everything the query's semantic leg was asked to cover came back
+    covered, and no result banded weak) -- see `library_rag_coverage_note`.
+    """
+    if not state.coverage_note:
+        return []
+    return [
+        Static(
+            state.coverage_note,
+            id="library-rag-coverage-note",
+            classes="library-rag-quiet-line",
+        )
+    ]
 
 
 def library_rag_result_row_children(
@@ -273,11 +536,22 @@ def library_rag_result_row_children(
     index: int,
     selected_result_id: str,
 ) -> list[Widget]:
-    """Return one evidence row's child widgets (C1): content first, Open primary.
+    """Return one evidence row as a single focusable card (C1/Task 12).
 
     Shared by the panel's own `compose()` and the screen's incremental DOM
     refresh (`_refresh_library_rag_results_widgets`) so both build identical
     rows from the same state.
+
+    RAG-36 (live UAT, keyboard-only persona Sam): evidence rows used to be a
+    flat list of sibling Statics plus a per-row `Horizontal` of buttons,
+    mounted directly into the results container -- Tab only ever reached
+    the buttons, with no row-level cursor and nothing indicating which row
+    keyboard focus was "on". Every row's children are now wrapped in one
+    `Vertical` card (`.library-rag-result-card`, `#library-rag-result-card-
+    {index}`) that is itself a Tab stop; `LibraryScreen`'s Enter/`o`
+    handlers resolve this card's index the same way the button handlers do
+    (`_trailing_index` on the id) and call the exact same underlying
+    selection/open methods -- no duplicated logic.
 
     Args:
         row: The evidence row to render.
@@ -286,13 +560,14 @@ def library_rag_result_row_children(
         selected_result_id: The panel's currently selected result id, if any.
 
     Returns:
-        Title -> badges -> snippet -> citations (when present) -> an action
-        row with Open first (primary emphasis, when the row is openable)
-        then Select evidence.
+        A single-element list holding the row's card: title -> badges ->
+        snippet -> citations (when present) -> an action row with Open
+        first (primary emphasis, when the row is openable) then Select
+        evidence.
     """
     selected = row.result_id == selected_result_id
-    score = "" if row.score is None else f" | score {row.score:.3f}"
-    children: list[Widget] = [
+    score = library_rag_score_suffix(row.score)
+    card_children: list[Widget] = [
         Static(
             f"{index + 1}. {row.title}{score}",
             id=f"library-rag-result-{index}",
@@ -307,10 +582,14 @@ def library_rag_result_row_children(
             id=f"library-rag-result-badges-{index}",
             classes="library-rag-result-badges",
         ),
-        Static(row.snippet, id=f"library-rag-result-snippet-{index}"),
+        Static(
+            row.display_snippet,
+            id=f"library-rag-result-snippet-{index}",
+            classes="library-rag-result-snippet",
+        ),
     ]
     if row.citation_labels:
-        children.append(
+        card_children.append(
             Static(
                 f"Citations: {', '.join(row.citation_labels)}",
                 id=f"library-rag-result-citations-{index}",
@@ -334,8 +613,18 @@ def library_rag_result_row_children(
             tooltip="Select this evidence result for Console handoff.",
         )
     )
-    children.append(Horizontal(*actions, classes="library-rag-result-actions"))
-    return children
+    card_children.append(Horizontal(*actions, classes="library-rag-result-actions"))
+    card = Vertical(
+        *card_children,
+        id=f"library-rag-result-card-{index}",
+        classes="library-rag-result-card",
+    )
+    # `Vertical.__init__` has no `can_focus` kwarg (only
+    # `VerticalScroll`/`ScrollableContainer` accept it) -- set the instance
+    # attribute directly, the same idiom already used elsewhere in this
+    # screen (e.g. `left_rail.can_focus = True` in `library_screen.py`).
+    card.can_focus = True
+    return [card]
 
 
 def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widget]:
@@ -348,14 +637,32 @@ def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widge
     recovery copy, or empty-state guidance, depending on retrieval status
     and result count.
 
+    The `retrieval_status == "empty"` case (RAG-33/Task 11: a routine
+    "your library has nothing matching this query" search) renders the
+    quiet two-line `library_rag_empty_state_quiet_copy` instead of
+    `state.recovery_copy`'s full Unavailable/Why/Next/Recovery/Owner
+    dump -- that dump is reserved for real failures (`"blocked"`/
+    `"failed"`: missing dependencies, empty index, provider unavailable,
+    policy denial), which still render it verbatim because the user
+    genuinely has to act on infrastructure there. Both branches keep
+    `state.recovery_selector` as the rendered `Static`'s id, so existing
+    selectors (`#library-rag-empty-state`, `#library-rag-service-error`)
+    are unaffected.
+
     Args:
         state: Current Library Search/RAG panel display state.
 
     Returns:
         The widgets to mount directly below the Evidence heading.
     """
+    # Task 8: the coverage note, when there is one, is the very first thing
+    # under the heading -- ahead of the row list. `state.coverage_note` is
+    # only ever non-empty alongside `state.results` (see
+    # `library_rag_coverage_note`'s empty-rows guard), so prepending it
+    # unconditionally here is a no-op in every other branch below rather
+    # than needing its own conditional per branch.
     if state.results:
-        children: list[Widget] = []
+        children: list[Widget] = list(library_rag_coverage_note_children(state))
         for index, result in enumerate(state.results):
             children.extend(
                 library_rag_result_row_children(result, index, state.selected_result_id)
@@ -382,6 +689,23 @@ def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widge
             )
         ]
     if state.recovery_copy and state.recovery_selector:
+        if state.retrieval_status == "empty":
+            return [
+                Static(
+                    # `state.searched_query`, NOT `state.query_state.query`
+                    # (task-15 finding I3): the latter is live, not-yet-
+                    # submitted input text that keeps moving after this
+                    # "empty" outcome landed (in-panel edits, the rail
+                    # search box, a scope toggle) -- this line must quote
+                    # the query that actually produced the outcome it
+                    # explains, not whatever is sitting in a box right now.
+                    library_rag_empty_state_quiet_copy(
+                        state.searched_query, state.scope
+                    ),
+                    id=state.recovery_selector,
+                    classes="library-rag-quiet-line",
+                )
+            ]
         return [Static(state.recovery_copy, id=state.recovery_selector)]
     if not state.scope.has_available_sources:
         # No Library sources at all: the scope region's single quiet gate
@@ -445,6 +769,16 @@ def library_rag_history_children(state: LibraryRagPanelState) -> list[Widget]:
             escape_markup(entry),
             id=f"library-rag-history-{index}",
             classes="library-rag-history-row",
+            # RAG-38: history entries are bare strings -- no mode was
+            # recorded when they ran -- so clicking one always re-runs
+            # under the CURRENT mode, not necessarily the one it first ran
+            # under. The tooltip says so honestly instead of implying an
+            # exact replay, and stays truthful across a mode flip because
+            # it reads `state.query_state.mode_label` fresh on every build.
+            tooltip=(
+                f"Re-runs under the current mode "
+                f"({state.query_state.mode_label})."
+            ),
         )
         for index, entry in enumerate(state.history)
     )
@@ -463,41 +797,6 @@ def _evidence_empty_guidance() -> str:
     return "Add or import sources, run a query, then select evidence for Console."
 
 
-def _console_handoff_summary(state: LibraryRagPanelState) -> str:
-    """Return the inspector's Console handoff decision."""
-    if state.use_in_console_action.enabled:
-        return "\n".join(
-            (
-                "Use in Console: ready",
-                "Why: selected evidence is workspace-eligible.",
-                "Next: send selected evidence to Console.",
-            )
-        )
-    return "\n".join(
-        (
-            "Use in Console: blocked",
-            "Blocked: select usable evidence before Console handoff.",
-        )
-    )
-
-
-def _inspector_recovery_summary(state: LibraryRagPanelState) -> str:
-    """Return recovery guidance for the inspector decision panel."""
-    if state.use_in_console_action.enabled:
-        return "Recovery: choose a different evidence row, revise the query, or send to Console."
-    return "Recovery: add or import sources, enter a query, run retrieval, then select evidence."
-
-
-def _future_attribution_summary(state: LibraryRagPanelState) -> str:
-    """Return future attribution scope without implying persistence is implemented."""
-    if state.selected_result is not None:
-        return (
-            "Citation/snippet carry-through placeholder: preserve source, chunk, "
-            "snippet, and citations."
-        )
-    return "Citation/snippet carry-through placeholder: reserved for selected evidence."
-
-
 def _query_region_classes(state: LibraryRagPanelState) -> str:
     """Return query-region classes that reserve recovery height only when needed."""
     return (
@@ -514,185 +813,3 @@ def _scope_region_classes(state: LibraryRagPanelState) -> str:
         if library_rag_scope_shows_recovery(state.scope)
         else "library-rag-region"
     )
-
-
-class LibrarySearchRagInspectorPanel(Vertical):
-    """Display retrieval status and Console handoff readiness."""
-
-    def __init__(self, state: LibraryRagPanelState, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.state = state
-
-    def compose(self) -> ComposeResult:
-        yield Static(
-            "Retrieval Inspector",
-            id="library-rag-inspector-title",
-            classes="destination-section",
-        )
-        yield Static(
-            "Retrieval Status",
-            id="library-rag-retrieval-heading",
-            classes="destination-section",
-        )
-        yield Static(
-            f"Status: {self.state.retrieval_status.title()}",
-            id="library-rag-retrieval-status",
-        )
-        yield Static(self.state.next_action, id="library-rag-next-action")
-        yield Static(
-            "Console Handoff",
-            id="library-rag-console-handoff-heading",
-            classes="destination-section",
-        )
-        yield Static(
-            _console_handoff_summary(self.state),
-            id="library-rag-console-handoff-status",
-        )
-        yield Button(
-            self.state.use_in_console_action.label,
-            id=self.state.use_in_console_action.widget_id,
-            disabled=not self.state.use_in_console_action.enabled,
-            tooltip=self.state.use_in_console_action.tooltip,
-            classes="library-rag-console-action",
-        )
-        yield Static(
-            "Selected Evidence",
-            id="library-rag-selected-heading",
-            classes="destination-section",
-        )
-        selected_result = self.state.selected_result
-        selected_state = Static(
-            (
-                f"Selected: {selected_result.title}"
-                if selected_result is not None
-                else "Selected Evidence: none"
-            ),
-            id="library-rag-selected-result",
-        )
-        yield selected_state
-        for widget_id, text in _selected_evidence_details(selected_result).items():
-            detail = Static(
-                text,
-                id=widget_id,
-                classes=_selected_evidence_detail_classes(widget_id),
-            )
-            detail.display = selected_result is not None
-            yield detail
-        empty_state = Static(
-            "Blocked: select usable evidence before Console handoff.",
-            id="library-rag-inspector-empty",
-        )
-        empty_state.display = selected_result is None
-        yield empty_state
-        yield Static(
-            "Recovery",
-            id="library-rag-inspector-recovery-heading",
-            classes="destination-section",
-        )
-        yield Static(
-            _inspector_recovery_summary(self.state),
-            id="library-rag-inspector-recovery",
-        )
-        yield Static(
-            "Future Attribution",
-            id="library-rag-inspector-future-heading",
-            classes="destination-section",
-        )
-        yield Static(
-            _future_attribution_summary(self.state),
-            id="library-rag-inspector-future",
-        )
-
-    def refresh_from_state(self, state: LibraryRagPanelState) -> None:
-        """Update inspector copy and toggle stable selection widgets."""
-        self.state = state
-        self.query_one("#library-rag-retrieval-status", Static).update(
-            f"Status: {state.retrieval_status.title()}"
-        )
-        self.query_one("#library-rag-next-action", Static).update(state.next_action)
-        self.query_one("#library-rag-console-handoff-status", Static).update(
-            _console_handoff_summary(state)
-        )
-        self.query_one("#library-rag-inspector-recovery", Static).update(
-            _inspector_recovery_summary(state)
-        )
-        self.query_one("#library-rag-inspector-future", Static).update(
-            _future_attribution_summary(state)
-        )
-
-        selected_state = self.query_one("#library-rag-selected-result", Static)
-        empty_state = self.query_one("#library-rag-inspector-empty", Static)
-        if state.selected_result is not None:
-            selected_state.update(f"Selected: {state.selected_result.title}")
-            selected_state.display = True
-            empty_state.display = False
-            for widget_id, text in _selected_evidence_details(
-                state.selected_result
-            ).items():
-                detail = self.query_one(f"#{widget_id}", Static)
-                detail.update(text)
-                detail.display = True
-        else:
-            selected_state.update("Selected Evidence: none")
-            selected_state.display = True
-            for widget_id in _selected_evidence_detail_ids():
-                detail = self.query_one(f"#{widget_id}", Static)
-                detail.update("")
-                detail.display = False
-            empty_state.update(
-                "Blocked: select usable evidence before Console handoff."
-            )
-            empty_state.display = True
-
-        console_action = state.use_in_console_action
-        console_button = self.query_one("#library-rag-use-in-console", Button)
-        console_button.disabled = not console_action.enabled
-        console_button.tooltip = console_action.tooltip
-
-
-def _selected_evidence_detail_ids() -> tuple[str, ...]:
-    return _SELECTED_EVIDENCE_DETAIL_IDS
-
-
-def _selected_evidence_detail_classes(widget_id: str) -> str:
-    return "destination-section" if widget_id.endswith("-heading") else ""
-
-
-def _selected_evidence_details(
-    result: LibraryRagResultRow | None,
-) -> dict[str, str]:
-    if result is None:
-        return {widget_id: "" for widget_id in _selected_evidence_detail_ids()}
-
-    source_lines = [
-        result.source_identity_label,
-        result.runtime_label,
-    ]
-    if result.score_label:
-        source_lines.append(result.score_label)
-    citations = (
-        ", ".join(result.citation_labels)
-        if result.citation_labels
-        else "No citation labels provided."
-    )
-    return {
-        "library-rag-selected-status-heading": "Selected Status",
-        "library-rag-selected-status": "Status: selected evidence ready for review",
-        "library-rag-selected-evidence-heading": "Selected Evidence",
-        "library-rag-selected-snippet": f"Snippet: {result.snippet}",
-        "library-rag-selected-citations": f"Citations: {citations}",
-        "library-rag-selected-authority-heading": "Authority & eligibility",
-        "library-rag-selected-source": "\n".join(source_lines),
-        "library-rag-selected-authority": result.authority_display_label,
-        "library-rag-selected-eligibility": result.eligibility_label,
-        "library-rag-selected-allowed-heading": "Allowed actions",
-        "library-rag-selected-allowed": "Allowed: inspect snippet, review citations, use eligible evidence in Console",
-        "library-rag-selected-blocked-heading": "Blocked actions",
-        "library-rag-selected-blocked": "Blocked: answer generation and artifact citation persistence remain downstream work",
-        "library-rag-selected-recovery-heading": "Recovery",
-        "library-rag-selected-recovery": "Recovery: choose a different evidence row or revise the query",
-        "library-rag-selected-handoff-heading": "Console Handoff",
-        "library-rag-selected-handoff": result.handoff_label,
-        "library-rag-selected-future-heading": "Future Attribution",
-        "library-rag-selected-future": "Citation/snippet carry-through placeholder: preserve source authority through Console and Chatbooks",
-    }

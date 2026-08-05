@@ -33,6 +33,12 @@ class ContentType(Enum):
     EMBEDDING = "embedding"
     PROMPT = "prompt"
     EVALUATION = "evaluation"
+    # A user's kept briefing (ChaChaNotes `kept_briefings`, task-1780). Kept
+    # scripts (`kept_scripts`) are NOT independently selectable -- they ride
+    # with their parent kept briefing and are nested inside its exported
+    # payload, mirroring how a conversation's messages are nested inside the
+    # conversation's own JSON rather than being their own content type.
+    KEPT_BRIEFING = "kept_briefing"
 
 
 @dataclass
@@ -128,6 +134,7 @@ class ChatbookManifest:
     total_characters: int = 0
     total_media_items: int = 0
     total_prompts: int = 0
+    total_kept_briefings: int = 0
     total_size_bytes: int = 0
 
     # Metadata
@@ -156,6 +163,7 @@ class ChatbookManifest:
                 "total_characters": self.total_characters,
                 "total_media_items": self.total_media_items,
                 "total_prompts": self.total_prompts,
+                "total_kept_briefings": self.total_kept_briefings,
                 "total_size_bytes": self.total_size_bytes,
             },
             "tags": self.tags,
@@ -198,6 +206,11 @@ class ChatbookManifest:
         manifest.total_characters = stats.get("total_characters", 0)
         manifest.total_media_items = stats.get("total_media_items", 0)
         manifest.total_prompts = stats.get("total_prompts", 0)
+        # Backward compat: bundles created before this content type existed
+        # (task-1870) have no "total_kept_briefings" key at all -- default to
+        # 0 rather than raising, same treatment every other statistic here
+        # gets.
+        manifest.total_kept_briefings = stats.get("total_kept_briefings", 0)
         manifest.total_size_bytes = stats.get("total_size_bytes", 0)
 
         # Load metadata
@@ -220,6 +233,7 @@ class ChatbookContent:
     embeddings: List[Dict[str, Any]] = field(default_factory=list)
     prompts: List[Dict[str, Any]] = field(default_factory=list)
     evaluations: List[Dict[str, Any]] = field(default_factory=list)
+    kept_briefings: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass

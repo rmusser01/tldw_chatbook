@@ -12,7 +12,9 @@ import uuid
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, Union
+from typing import Sequence, Iterator, Union
+
+from loguru import logger
 
 from .base_db import BaseDB
 
@@ -24,14 +26,38 @@ def _now_iso() -> str:
 class AgentRunsDB(BaseDB):
     """Run records for the agent runtime (vertical-slice spec data model)."""
 
-    _CURRENT_SCHEMA_VERSION = 1
+    _CURRENT_SCHEMA_VERSION = 3
+    _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
         super().__init__(db_path, client_id)
+        # After super().__init__: the agent_runs table exists (base_db ran
+        # _initialize_schema) and self.is_memory_db is set. Reconcile once per
+        # file per process so a crash mid-run doesn't leave a 'running' row
+        # orphaned forever. reconcile_orphaned_runs() itself guards against
+        # memory DBs and against re-sweeping a path already swept this
+        # process, so a later explicit call is also a no-op (see its
+        # docstring).
+        try:
+            self.reconcile_orphaned_runs()
+        except Exception as exc:  # noqa: BLE001 — reconcile is best-effort
+            logger.warning(f"AgentRunsDB reconcile skipped: {exc}")
 
     def _get_connection(self) -> sqlite3.Connection:
         conn = super()._get_connection()
         conn.execute("PRAGMA foreign_keys = ON")
+        # busy_timeout FIRST: the journal_mode=WAL conversion below is the
+        # one PRAGMA here that can itself contend (switching a rollback-
+        # journal file to WAL briefly needs an exclusive lock), so it must
+        # not run while busy_timeout is still 0 -- a contended cross-process
+        # first conversion would otherwise raise 'database is locked'
+        # immediately instead of waiting. busy_timeout is harmless to set
+        # for in-memory DBs too, so it's unconditional (kept for
+        # uniformity); WAL itself is unavailable for in-memory DBs, so that
+        # one stays guarded on is_memory_db.
+        conn.execute("PRAGMA busy_timeout = 5000")
+        if not self.is_memory_db:
+            conn.execute("PRAGMA journal_mode = WAL")
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -84,7 +110,7 @@ class AgentRunsDB(BaseDB):
                 CREATE TABLE IF NOT EXISTS schema_version (
                     version INTEGER PRIMARY KEY NOT NULL
                 );
-                INSERT OR IGNORE INTO schema_version (version) VALUES (1);
+                INSERT OR IGNORE INTO schema_version (version) VALUES (4);
 
                 CREATE TABLE IF NOT EXISTS agent_runs (
                     id TEXT PRIMARY KEY,
@@ -97,15 +123,222 @@ class AgentRunsDB(BaseDB):
                     result TEXT,
                     budget TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    assistant_message_id TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation
                     ON agent_runs(conversation_id);
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_parent
                     ON agent_runs(parent_run_id);
+
+                -- v3 (TASK-1971, Agent Change Review): one row per
+                -- (run, root) pair recording that turn's shadow-repo
+                -- baseline/end snapshots. CREATE IF NOT EXISTS on every
+                -- open IS this DB's migration mechanism (see the v1->v2
+                -- note below).
+                CREATE TABLE IF NOT EXISTS change_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL,
+                    root TEXT NOT NULL,
+                    baseline_sha TEXT NOT NULL,
+                    end_sha TEXT NOT NULL,
+                    files_changed INTEGER NOT NULL DEFAULT 0,
+                    adds INTEGER NOT NULL DEFAULT 0,
+                    dels INTEGER NOT NULL DEFAULT 0,
+                    reverted TEXT NOT NULL DEFAULT '',
+                    tracking_error TEXT NOT NULL DEFAULT '',
+                    untracked_oversize INTEGER NOT NULL DEFAULT 0,
+                    nested_repos TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_change_snapshots_run
+                    ON change_snapshots(run_id);
                 """
             )
+            # v1->v2: this DB has no migration framework -- _initialize_schema
+            # only runs CREATE TABLE IF NOT EXISTS, so a file created before
+            # assistant_message_id existed keeps its old 11-column table and
+            # never picks up the new one from the DDL above. Guard against
+            # that with an idempotent ALTER TABLE, run on every open.
+            existing_columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
+            }
+            if "assistant_message_id" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN assistant_message_id TEXT"
+                )
+            # v3->v4 (TASK-1975): oversize disclosure count on snapshot
+            # rows -- same idempotent-ALTER migration mechanism as above.
+            snapshot_columns = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(change_snapshots)"
+                ).fetchall()
+            }
+            if "untracked_oversize" not in snapshot_columns:
+                conn.execute(
+                    "ALTER TABLE change_snapshots ADD COLUMN "
+                    "untracked_oversize INTEGER NOT NULL DEFAULT 0"
+                )
+            if "nested_repos" not in snapshot_columns:
+                conn.execute(
+                    "ALTER TABLE change_snapshots ADD COLUMN "
+                    "nested_repos TEXT NOT NULL DEFAULT '[]'"
+                )
+            # Keep the (write-only, audit) version table in step with the
+            # DDL -- append-per-version, matching the INSERT OR IGNORE
+            # convention above (UPDATE would collide on the UNIQUE column
+            # when older version rows exist).
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (4)"
+            )
+
+    def record_change_snapshot(
+        self,
+        *,
+        run_id: str,
+        root: str,
+        baseline_sha: str,
+        end_sha: str,
+        files_changed: int = 0,
+        adds: int = 0,
+        dels: int = 0,
+        tracking_error: str = "",
+        untracked_oversize: int = 0,
+        nested_repos: "Sequence[str]" = (),
+    ) -> None:
+        """Record one root's turn snapshot pair (TASK-1971).
+
+        Args:
+            run_id: The owning agent run.
+            root: Canonical root path.
+            baseline_sha: The B snapshot tip ("" when tracking failed).
+            end_sha: The E snapshot tip ("" when tracking failed).
+            files_changed: Changed-file count between B and E.
+            adds: Total added lines.
+            dels: Total deleted lines.
+            tracking_error: Non-empty when tracking failed for this root.
+            untracked_oversize: Files over the size cap left untracked at
+                the turn's end (TASK-1975 disclosure).
+            nested_repos: Root-relative nested repos excluded from tracking
+                (TASK-1976 disclosure).
+        """
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO change_snapshots
+                    (run_id, root, baseline_sha, end_sha, files_changed,
+                     adds, dels, tracking_error, untracked_oversize,
+                     nested_repos, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    root,
+                    baseline_sha,
+                    end_sha,
+                    files_changed,
+                    adds,
+                    dels,
+                    tracking_error,
+                    untracked_oversize,
+                    json.dumps(list(nested_repos)),
+                    _now_iso(),
+                ),
+            )
+
+    def delete_change_snapshots_older_than(self, cutoff_iso: str) -> int:
+        """Delete snapshot rows created before ``cutoff_iso`` (TASK-1975).
+
+        Args:
+            cutoff_iso: ISO-8601 UTC timestamp in this DB's own format
+                (lexicographic compare is valid for it).
+
+        Returns:
+            Number of rows deleted.
+        """
+        with self.transaction() as conn:
+            cur = conn.execute(
+                "DELETE FROM change_snapshots WHERE created_at < ?",
+                (cutoff_iso,),
+            )
+            return int(cur.rowcount or 0)
+
+    def roots_with_change_snapshots(self) -> set[str]:
+        """Roots still referenced by at least one snapshot row (TASK-1975).
+
+        Returns:
+            The distinct ``root`` values across all remaining rows.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT root FROM change_snapshots"
+            ).fetchall()
+        return {str(row[0]) for row in rows}
+
+    def update_change_snapshot_reverted(
+        self, row_id: int, reverted_paths: list[str]
+    ) -> None:
+        """Record which of a snapshot row's paths were reverted (TASK-1974).
+
+        Args:
+            row_id: The ``change_snapshots`` row id.
+            reverted_paths: Paths restored to baseline; appended to any
+                previously recorded set (a second partial revert must not
+                erase the first's record).
+        """
+        with self.transaction() as conn:
+            current = conn.execute(
+                "SELECT reverted FROM change_snapshots WHERE id = ?",
+                (row_id,),
+            ).fetchone()
+            existing = json.loads(current["reverted"]) if current and current["reverted"] else []
+            merged = list(dict.fromkeys([*existing, *reverted_paths]))
+            conn.execute(
+                "UPDATE change_snapshots SET reverted = ? WHERE id = ?",
+                (json.dumps(merged), row_id),
+            )
+
+    def change_snapshots_for_run(self, run_id: str) -> list[dict]:
+        """Return a run's change-snapshot rows, oldest first.
+
+        Args:
+            run_id: The agent run id.
+
+        Returns:
+            One dict per (run, root) row.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM change_snapshots WHERE run_id = ? ORDER BY id",
+                (run_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def change_snapshots_for_conversation(self, conversation_id: str) -> list[dict]:
+        """Return a conversation's change-snapshot rows for turn history.
+
+        Args:
+            conversation_id: The Console conversation id.
+
+        Returns:
+            Rows joined with their runs, oldest first — the Review screen's
+            "Last turn" selector data.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT cs.*, ar.created_at AS run_created_at, ar.status AS run_status
+                FROM change_snapshots cs
+                JOIN agent_runs ar ON ar.id = cs.run_id
+                WHERE ar.conversation_id = ?
+                ORDER BY cs.id
+                """,
+                (conversation_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     @staticmethod
     def _row_to_dict(row: sqlite3.Row) -> dict:
@@ -122,6 +355,7 @@ class AgentRunsDB(BaseDB):
         task: str | None = None,
         parent_run_id: str | None = None,
         budget: dict | None = None,
+        assistant_message_id: str | None = None,
     ) -> str:
         """Create a new run record in ``running`` status.
 
@@ -133,6 +367,11 @@ class AgentRunsDB(BaseDB):
                 for a primary run.
             budget: The run's ``RunBudget`` serialized to a dict, stored
                 as JSON for later inspection; ``None`` if not recorded.
+            assistant_message_id: The persisted id of the assistant reply
+                this run produced, if already known at creation time;
+                ``None`` (the common case) when it will be recorded later
+                via ``set_run_assistant_message_id`` once the reply is
+                persisted.
 
         Returns:
             The newly created run's id (a hex UUID4).
@@ -143,8 +382,9 @@ class AgentRunsDB(BaseDB):
             conn.execute(
                 """INSERT INTO agent_runs
                    (id, conversation_id, parent_run_id, agent_kind, task,
-                    status, steps, result, budget, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?)""",
+                    status, steps, result, budget, created_at, updated_at,
+                    assistant_message_id)
+                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?)""",
                 (
                     run_id,
                     conversation_id,
@@ -154,6 +394,7 @@ class AgentRunsDB(BaseDB):
                     json.dumps(budget) if budget is not None else None,
                     now,
                     now,
+                    assistant_message_id,
                 ),
             )
         return run_id
@@ -201,6 +442,89 @@ class AgentRunsDB(BaseDB):
                 (status, result, _now_iso(), run_id),
             )
 
+    def reconcile_orphaned_runs(self) -> int:
+        """Mark runs left ``running`` by a crashed process as ``error``.
+
+        A hard crash between run start (``create_run`` -> ``running``) and run
+        end (``set_status`` at finalize) leaves a row stuck ``running``
+        forever. On open, flip all such rows to ``error`` with a default
+        ``result`` (preserving any partial result via COALESCE). Assumes a
+        single app instance per data dir: a second instance sharing the file
+        would flip the first's actively-running run — an accepted edge case,
+        matching Library_Ingest_Jobs' "Interrupted by app restart" behavior.
+
+        No-ops (returns ``0`` without touching the database) for in-memory
+        databases and for any file path already reconciled once in this
+        process (tracked via ``_swept_paths``). The guard lives here, not
+        just in ``__init__``'s auto-call, so a later *explicit* call to this
+        method within the same process is also a no-op -- it must not sweep
+        up a run that legitimately started running after the first sweep
+        (e.g. one created by this same still-live process).
+
+        The path is registered in ``_swept_paths`` only *after* the sweep's
+        transaction has committed successfully (i.e. after the ``with
+        self.transaction()`` block below exits normally). ``transaction()``
+        rolls back and re-raises on any error -- e.g. a transient
+        ``sqlite3.OperationalError: database is locked`` -- so registering
+        beforehand would leave the path permanently marked "swept" even
+        though nothing was actually reconciled, silently defeating AC#2's
+        crash-recovery guarantee for the rest of the process. A clean sweep
+        that finds zero orphaned rows still registers the path (it commits
+        successfully; it just has nothing to update).
+
+        Timing note: despite this being framed as an "on app start" sweep
+        (see the backlog AC), it actually fires lazily -- the first time
+        something constructs an ``AgentRunsDB`` on this path, which today is
+        ``ChatScreen._ensure_console_agent_bridge()``'s first call, not app
+        boot. No surface can currently observe a stale ``running`` row
+        before that: the only readers of ``agent_runs.db`` are that bridge
+        itself and the chat-screen rail's sub-agent-count summary, which
+        also routes through ``_ensure_console_agent_bridge()`` first. A
+        future entry point that opens this DB file WITHOUT going through
+        that bridge construction path would not inherit this guarantee and
+        could observe a not-yet-reconciled orphaned row.
+
+        Returns:
+            The number of rows reconciled (``0`` if skipped by a guard).
+
+        Raises:
+            Exception: Re-raised (from ``transaction()``) on any error
+                while sweeping; the path is left unregistered so a later
+                call in this process retries the sweep.
+        """
+        if self.is_memory_db or self.db_path_str in self._swept_paths:
+            return 0
+        with self.transaction() as conn:
+            cur = conn.execute(
+                "UPDATE agent_runs "
+                "SET status = 'error', "
+                "    result = COALESCE(result, 'Interrupted by app restart'), "
+                "    updated_at = ? "
+                "WHERE status = 'running'",
+                (_now_iso(),),
+            )
+            rowcount = cur.rowcount
+        self._swept_paths.add(self.db_path_str)
+        return rowcount
+
+    def set_run_assistant_message_id(
+        self, run_id: str, assistant_message_id: str | None
+    ) -> None:
+        """Record the persisted id of the assistant reply a run produced.
+
+        Args:
+            run_id: The run to update.
+            assistant_message_id: The persisted message id of the
+                assistant reply this run produced; ``None`` clears a
+                previously recorded id.
+        """
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE agent_runs SET assistant_message_id = ?, "
+                "updated_at = ? WHERE id = ?",
+                (assistant_message_id, _now_iso(), run_id),
+            )
+
     def get_run(self, run_id: str) -> dict | None:
         """Fetch one run record.
 
@@ -217,11 +541,37 @@ class AgentRunsDB(BaseDB):
             ).fetchone()
         return self._row_to_dict(row) if row else None
 
+    def latest_primary_run(self, conversation_id: str) -> dict | None:
+        """Fetch the newest non-superseded PRIMARY run for a conversation.
+
+        A single bounded query (``LIMIT 1``) so hot callers (the user-Stop
+        path's run-anchor lookup) never materialize the whole run history;
+        interleaved newer sub-agent runs cannot hide the newest primary
+        because the kind filter is in the SQL.
+
+        Args:
+            conversation_id: The conversation whose runs to inspect.
+
+        Returns:
+            The newest matching run as a dict (``steps``/``budget``
+            JSON-decoded), or ``None`` when the conversation has no
+            non-superseded primary run.
+        """
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM agent_runs WHERE conversation_id = ? "
+                "AND agent_kind = 'primary' AND status != 'superseded' "
+                "ORDER BY created_at DESC, id DESC LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+        return self._row_to_dict(row) if row else None
+
     def list_runs(
         self,
         conversation_id: str,
         include_superseded: bool = True,
         limit: int | None = None,
+        agent_kind: str | None = None,
     ) -> list[dict]:
         """List a conversation's run records, newest first.
 
@@ -233,6 +583,17 @@ class AgentRunsDB(BaseDB):
                 runs (``ORDER BY created_at DESC, id DESC``). ``None``
                 (the default) returns every matching run, preserving prior
                 behavior.
+            agent_kind: When set (``"primary"`` or ``"subagent"``),
+                restricts to that kind IN THE QUERY -- e.g.
+                ``search_run_log``'s ``scope="conversation"`` (task-1273
+                review finding A) wants only the conversation's PRIMARY
+                runs, and filtering here (rather than fetching everything
+                and discarding client-side) is what lets ``limit`` bound
+                the actual number of ROWS RETURNED to what the caller can
+                use, instead of a limit over an unfiltered set that a
+                subagent-heavy conversation could still starve. ``None``
+                (the default) applies no kind filter, preserving prior
+                behavior.
 
         Returns:
             The matching runs as dicts, newest first.
@@ -241,6 +602,9 @@ class AgentRunsDB(BaseDB):
         params: list = [conversation_id]
         if not include_superseded:
             query += " AND status != 'superseded'"
+        if agent_kind is not None:
+            query += " AND agent_kind = ?"
+            params.append(agent_kind)
         query += " ORDER BY created_at DESC, id DESC"
         if limit is not None:
             query += " LIMIT ?"
@@ -248,6 +612,45 @@ class AgentRunsDB(BaseDB):
         with self.connection() as conn:
             rows = conn.execute(query, params).fetchall()
         return [self._row_to_dict(r) for r in rows]
+
+    def count_runs(
+        self,
+        conversation_id: str,
+        include_superseded: bool = True,
+        agent_kind: str | None = None,
+    ) -> int:
+        """Count a conversation's run records, without materializing rows.
+
+        task-1273 review finding A: a caller that only needs to know HOW
+        MANY runs exist beyond a windowed ``list_runs(..., limit=N)`` call
+        (to report an exact "N more exist" count) must not fetch every row
+        just to take its length -- that is exactly the unbounded query the
+        finding flagged. ``COUNT(*)`` returns a single row regardless of
+        how many runs match, so pairing this with a ``limit``-bounded
+        ``list_runs`` call keeps BOTH queries' returned size independent of
+        the conversation's total run count.
+
+        Args:
+            conversation_id: The conversation to count runs for.
+            include_superseded: When ``False``, excludes runs whose status
+                is ``"superseded"`` -- mirrors ``list_runs``' own filter.
+            agent_kind: When set (``"primary"`` or ``"subagent"``),
+                restricts the count to that kind -- mirrors ``list_runs``'
+                own filter. ``None`` (the default) counts every kind.
+
+        Returns:
+            The number of matching runs.
+        """
+        query = "SELECT COUNT(*) AS n FROM agent_runs WHERE conversation_id = ?"
+        params: list = [conversation_id]
+        if not include_superseded:
+            query += " AND status != 'superseded'"
+        if agent_kind is not None:
+            query += " AND agent_kind = ?"
+            params.append(agent_kind)
+        with self.connection() as conn:
+            row = conn.execute(query, params).fetchone()
+        return int(row["n"])
 
     def count_subagent_runs(self, conversation_id: str) -> int:
         """Count a conversation's sub-agent runs (all statuses, historical).

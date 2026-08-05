@@ -31,7 +31,6 @@ import asyncio  # noqa: E402
 import random  # noqa: E402
 import threading  # noqa: E402
 import time  # noqa: E402
-import os  # noqa: E402
 import sys  # noqa: E402
 from collections import OrderedDict  # noqa: E402
 from typing import (  # noqa: E402
@@ -46,7 +45,6 @@ from typing import (  # noqa: E402
     TypedDict,
     Union,
 )
-from contextlib import contextmanager  # noqa: E402
 
 #
 # Third-Party Libraries
@@ -124,13 +122,26 @@ def _ensure_numpy():
     return numpy
 
 
-def _current_dependencies_available() -> Dict[str, bool]:
-    """Resolve the live optional-deps registry even after test/module reloads."""
+def _embeddings_rag_available() -> bool:
+    """Resolve real embeddings/RAG dependency availability, checking lazily.
+
+    This constructor's gate is a genuine "first real use" of the
+    embeddings/RAG optional dependencies, so it delegates to
+    ``optional_deps.lazy_embeddings_rag_available()`` (task-657, lifted to a
+    shared public seam in task-638 so ``UI/Views/RAGSearch/search_rag_window.py``
+    can reuse the exact same re-probe-on-False semantics instead of reading
+    ``DEPENDENCIES_AVAILABLE["embeddings_rag"]`` directly and getting stuck on
+    a stale pristine-False default). Resolved via ``sys.modules`` rather than
+    a static import so it keeps working across the module reloads some tests
+    perform, and so tests that monkeypatch
+    ``optional_deps.check_embeddings_rag_deps`` (which the shared helper
+    calls internally) are honored.
+    """
     optional_deps_module = sys.modules.get("tldw_chatbook.Utils.optional_deps")
-    current_registry = getattr(optional_deps_module, "DEPENDENCIES_AVAILABLE", None)
-    if isinstance(current_registry, dict):
-        return current_registry
-    return DEPENDENCIES_AVAILABLE
+    lazy_available_fn = getattr(optional_deps_module, "lazy_embeddings_rag_available", None)
+    if not callable(lazy_available_fn):
+        from ..Utils.optional_deps import lazy_embeddings_rag_available as lazy_available_fn
+    return bool(lazy_available_fn())
 
 
 # `Tensor` is only used for type annotations (deferred at runtime by
@@ -179,81 +190,12 @@ logger = logger.bind(module="Embeddings_Lib")
 # File Descriptor Protection for macOS subprocess issues
 ###############################################################################
 
-
-@contextmanager
-def protect_file_descriptors():
-    """Context manager to protect file descriptors during subprocess operations.
-
-    This fixes the "bad value(s) in fds_to_keep" error on macOS when the
-    transformers library spawns subprocesses for model downloads.
-    """
-    # Save original file descriptors
-    original_stdout = sys.stdout
-    original_stderr = sys.stderr
-    original_stdin = sys.stdin
-
-    # Save original environment
-    env_backup = os.environ.copy()
-
-    # Save original subprocess.Popen to restore later
-
-    try:
-        # Ensure we have real file descriptors, not wrapped objects
-        # This is crucial for subprocess operations
-        try:
-            # Test if stdout/stderr are real files with valid file descriptors
-            stdout_fd = sys.stdout.fileno()
-            stderr_fd = sys.stderr.fileno()
-            # Verify they're valid by attempting to use them
-            os.fstat(stdout_fd)
-            os.fstat(stderr_fd)
-        except (AttributeError, ValueError, OSError):
-            # stdout/stderr are wrapped/captured or invalid, create new ones
-            # Use the original file descriptors 1 and 2 directly
-            try:
-                sys.stdout = os.fdopen(1, "w")
-                sys.stderr = os.fdopen(2, "w")
-            except OSError:
-                # If that fails, use devnull as a fallback
-                devnull = open(os.devnull, "w")
-                sys.stdout = devnull
-                sys.stderr = devnull
-
-        # Set environment to prevent subprocess issues
-        os.environ["TOKENIZERS_PARALLELISM"] = "false"
-        os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
-
-        # For macOS specifically
-        if sys.platform == "darwin":
-            os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
-            # Ensure subprocess doesn't inherit bad file descriptors
-            os.environ["PYTHONNOUSERSITE"] = "1"
-            # Force subprocess to close all file descriptors except 0,1,2
-            os.environ["PYTHON_SUBPROCESS_CLOSE_FDS"] = "1"
-
-        yield
-
-    finally:
-        # Restore original file descriptors
-        sys.stdout = original_stdout
-        sys.stderr = original_stderr
-        sys.stdin = original_stdin
-
-        # Close any temporary files we created
-        if sys.stdout != original_stdout and hasattr(sys.stdout, "close"):
-            try:
-                sys.stdout.close()
-            except Exception:
-                pass
-        if sys.stderr != original_stderr and hasattr(sys.stderr, "close"):
-            try:
-                sys.stderr.close()
-            except Exception:
-                pass
-
-        # Restore original environment
-        os.environ.clear()
-        os.environ.update(env_backup)
+# task-640: consolidated into tldw_chatbook.Utils.fd_protection (was
+# duplicated verbatim here, in Local_Ingestion/transcription_service.py, and
+# in TTS/backends/higgs.py). Re-exported under this name so existing
+# `from tldw_chatbook.Embeddings.Embeddings_Lib import protect_file_descriptors`
+# call sites (including tests) keep working unchanged.
+from ..Utils.fd_protection import protect_file_descriptors  # noqa: E402,F401
 
 
 ###############################################################################
@@ -661,8 +603,10 @@ class EmbeddingFactory:
         idle_seconds: int = 900,
         allow_dynamic_hf: bool = True,
     ) -> None:
-        # Check if embeddings/RAG dependencies are available
-        if not _current_dependencies_available().get("embeddings_rag", False):
+        # Check if embeddings/RAG dependencies are available (lazily checking
+        # for real on first use if nothing has populated the registry yet --
+        # see _embeddings_rag_available, task-657).
+        if not _embeddings_rag_available():
             raise ImportError(
                 "EmbeddingFactory requires embeddings/RAG dependencies. "
                 "Install with: pip install tldw_chatbook[embeddings_rag]"

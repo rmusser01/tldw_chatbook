@@ -25,6 +25,7 @@ CSS_MODULES = [
     "components/_forms.tcss",
     "components/_lists.tcss",
     "components/_navigation.tcss",
+    "components/_change_review.tcss",
     "components/_messages.tcss",
     "components/_dialogs.tcss",
     "components/_status.tcss",
@@ -34,21 +35,45 @@ CSS_MODULES = [
     "components/stats_screen.css",
     # NOTE: "components/splash_viewer.css" was deleted in 778f75813 when the
     # splash viewer moved into Settings, but that commit wrote the replacement
-    # styles directly into the GENERATED bundle instead of a source module.
-    # Keep the replacement at the same manifest position so cascade order is
-    # unchanged.
+    # styles directly into the GENERATED bundle instead of a source module —
+    # every rebuild (including the app's boot-time mtime rebuild) silently
+    # stripped the live Settings splash/theme-editor styling. The bundle-only
+    # rules now live in _settings_splash_theme.tcss at this same manifest
+    # position so cascade order is unchanged.
     "components/_settings_splash_theme.tcss",
+    # TASK-394: generic, app-wide component styles moved OUT of the splash/theme
+    # module. Kept at this manifest position (immediately after it) so the
+    # bundle cascade is byte-for-byte equivalent for the relocated rules.
+    "components/_shared_components.tcss",
     # 4. Features - Application Specific (depends on all above)
     "features/_chat.tcss",
-    "features/_chat_tabs.tcss",
+    # task-577 T4: "features/_chat_tabs.tcss" removed -- every selector in it
+    # (chat-tab-bar, .chat-tab, .chat-session, .close-tab-button,
+    # .new-tab-button, .chat-sessions-container, .no-sessions-placeholder,
+    # and the .chat-session-scoped chat-empty-state/chat-log/chat-input-area/
+    # image-attachment-indicator variants) styled the retired
+    # ChatTabContainer/ChatSession tabs subsystem (task-577 T2), composed
+    # nowhere live (grep -rn confirmed zero id=/classes= compose sites).
     "features/_conversations.tcss",
     "features/_notes.tcss",
     "features/_media.tcss",
-    "features/_search-rag.tcss",
+    # RAG UX v2 PR-2 Task 2: "features/_search-rag.tcss" removed -- an audit
+    # found only 5 of its 104 selectors had live users. Three of those
+    # (.action-button, .settings-section, .status-bar) were already shadowed
+    # by same-name rules defined later in this manifest (_evaluation_unified.tcss,
+    # _wizards.tcss), so dropping this sheet's copies is a no-op. The other two
+    # (.action-spacer, .param-group) were this sheet's SOLE definitions with
+    # live users (CodeRepoCopyPasteWindow, MediaViewerPanel) and were moved
+    # verbatim to components/_shared_components.tcss to preserve them.
     "features/_llm-management.tcss",
     "features/_tools-settings.tcss",
     "features/_ingest.tcss",
-    "features/_ingest_tldw_api_tabs.tcss",
+    # task-745: "features/_ingest_tldw_api_tabs.tcss" removed -- it styled the
+    # standalone ingest window's tab strip and API form, deleted in task-684.4.
+    # Every distinctive selector in that retired sheet has zero mount sites.
+    # Its scoped ".hidden" rule had no surviving owner, and other sheets define
+    # .hidden anyway; its unscoped ".window-title" rule was the only bundled
+    # definition and moved to components/_shared_components.tcss.
     # NOTE: "features/_evaluation_v2.tcss" was removed from the tree back in
     # ac937dab ("f", Aug 2025) when the Evals dashboard was consolidated
     # into _evaluation_unified.tcss below; this manifest entry was left
@@ -57,6 +82,11 @@ CSS_MODULES = [
     # tldw_chatbook/**/*.py) -- T169 dropped the stale entry rather than
     # restoring a file nothing needs.
     "features/_evaluation_unified.tcss",
+    # PR3a Task 3: the new Console-styled three-pane Evals workbench's own
+    # rail/pane rules. Distinct from _evaluation_unified.tcss above (the
+    # retired card hub's legacy dashboard CSS, PR 3b's concern) -- no
+    # selector overlap between the two files.
+    "features/_evals.tcss",
     "features/_metrics.tcss",
     "features/_embeddings.tcss",
     "features/_splash.tcss",
@@ -67,6 +97,7 @@ CSS_MODULES = [
     "features/_coding.tcss",
     "features/_tab_dropdown.tcss",
     "features/_watchlists.tcss",
+    "features/_lab.tcss",
     "features/_logs.tcss",
     "features/_writing.tcss",
     "features/config_search.tcss",

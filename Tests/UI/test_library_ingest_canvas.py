@@ -43,6 +43,8 @@ class _MessageRecordingHost(App):
         self._state = state
         self.option_changes: list[LibraryIngestCanvas.OptionValueChanged] = []
         self.panel_toggles: list[LibraryIngestCanvas.OptionPanelToggled] = []
+        self.parakeet_install_requests = 0
+        self.transcribe_cpp_gguf_requests = 0
 
     def compose(self) -> ComposeResult:
         yield LibraryIngestCanvas(self._state, id="library-ingest-canvas")
@@ -54,6 +56,18 @@ class _MessageRecordingHost(App):
     @on(LibraryIngestCanvas.OptionPanelToggled)
     def _record_panel_toggle(self, event: LibraryIngestCanvas.OptionPanelToggled) -> None:
         self.panel_toggles.append(event)
+
+    @on(LibraryIngestCanvas.ParakeetInstallRequested)
+    def _record_parakeet_install_request(
+        self, _event: LibraryIngestCanvas.ParakeetInstallRequested
+    ) -> None:
+        self.parakeet_install_requests += 1
+
+    @on(LibraryIngestCanvas.TranscribeCppGGUFRequested)
+    def _record_transcribe_cpp_gguf_request(
+        self, _event: LibraryIngestCanvas.TranscribeCppGGUFRequested
+    ) -> None:
+        self.transcribe_cpp_gguf_requests += 1
 
 
 def _default_form() -> LibraryIngestFormState:
@@ -168,9 +182,12 @@ async def test_unsupported_files_summary_renders():
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
         summary = pilot.app.query_one("#ingest-unsupported-summary", Static)
-        assert (
-            "1 unsupported file will be recorded as a failure."
-            == str(summary.renderable)
+        # (task-2100) Unsupported-only selection is gate-blocked, so the
+        # line names the file instead of promising a failure row that a
+        # blocked submit never records.
+        assert str(summary.renderable) == (
+            "Unsupported: weird.xyz."
+            " Supported: PDF documents, audio/video files, e-books, plain text files."
         )
 
 
@@ -232,9 +249,13 @@ async def test_preflight_checking_suppresses_summary():
             "#ingest-type-breakdown",
             "#ingest-estimate",
             "#ingest-unsupported-summary",
-            "#type-group-pdf",
         ):
             assert len(pilot.app.query(widget_id)) == 0
+        # (task-2042) Options panels stay mounted during a re-analysis:
+        # hiding them made ``preflight_checking`` a STRUCTURAL flag, and the
+        # resulting full recompose swallowed clicks in flight. A re-check
+        # lasts well under a second; last-known panels are less flicker.
+        assert len(pilot.app.query("#type-group-pdf")) == 1
 
 
 @pytest.mark.asyncio
@@ -294,7 +315,9 @@ async def test_error_and_warning_markup_is_escaped():
         assert error_static.visual.plain == "[bold]not bold[/bold]"
 
         warning_static = pilot.app.query_one("#ingest-preflight-warning-0", Static)
-        assert warning_static.visual.plain == "⚠ Hint: [/bracket]"
+        assert warning_static.visual.plain == (
+            "⚠ Hint isn't installed — needed for [/bracket]."
+        )
 
 
 # --- Per-type options panels ------------------------------------------------
@@ -323,12 +346,14 @@ async def test_type_group_panels_render_for_detected_groups():
         pdf_panel = pilot.app.query_one("#type-group-pdf", Collapsible)
         generic_panel = pilot.app.query_one("#type-group-generic", Collapsible)
         assert "PDF documents" in str(pdf_panel.title)
-        assert "pdf_engine=" in str(pdf_panel.title)
-        assert "Plain text / documents / HTML" in str(generic_panel.title)
-        assert "chunk_size=" in str(generic_panel.title)
+        assert "PDF engine: pymupdf4llm" in str(pdf_panel.title)
+        assert "Plain text & HTML" in str(generic_panel.title)
+        assert "Chunk size: 1000" in str(generic_panel.title)
 
         scope = pilot.app.query_one("#type-group-pdf .type-group-scope", Static)
-        assert "These options apply to all PDF documents files" in str(scope.renderable)
+        assert "Applies to all PDF documents in this import." in str(
+            scope.renderable
+        )
 
         assert pilot.app.query_one("#opt-pdf-reset", Button)
         assert pilot.app.query_one("#opt-generic-reset", Button)
@@ -336,17 +361,18 @@ async def test_type_group_panels_render_for_detected_groups():
 
 @pytest.mark.asyncio
 async def test_expand_collapse_all_buttons_render_when_type_groups_present():
-    """Bulk expand/collapse buttons render only when there are type groups."""
+    """Bulk expand/collapse buttons render only when MULTIPLE panels exist
+    (task-2016: a single panel has nothing to expand "all" of)."""
     with_groups = build_library_ingest_state(
         (),
         form=_default_form(),
         preflight=PreflightResult(
-            type_groups={"generic": ["/tmp/a.txt"]},
+            type_groups={"pdf": ["/tmp/a.pdf"], "generic": ["/tmp/a.txt"]},
             warnings=[],
             errors=[],
             total_size=0,
             truncated=False,
-            total_files=1,
+            total_files=2,
         ),
     )
     app = _CanvasHost(with_groups)
@@ -401,7 +427,7 @@ async def test_non_dependent_controls_stay_enabled():
     async with app.run_test() as pilot:
         analyze_checkbox = pilot.app.query_one("#opt-generic-analyze", Checkbox)
         chunk_checkbox = pilot.app.query_one("#opt-generic-chunk", Checkbox)
-        encoding_input = pilot.app.query_one("#opt-generic-encoding", Input)
+        encoding_input = pilot.app.query_one("#opt-generic-encoding", Select)
         assert analyze_checkbox.disabled is False
         assert chunk_checkbox.disabled is False
         assert encoding_input.disabled is False
@@ -411,7 +437,11 @@ async def test_non_dependent_controls_stay_enabled():
 async def test_chunk_size_disabled_when_chunk_unchecked():
     """Chunk size and overlap inputs are disabled until Chunk is checked."""
     form = _default_form()
+    # The panel renders from ``type_options``; the screen writes the scalar
+    # ``form.chunk`` mirror and this dict together on every toggle. Chunking
+    # is on by default now, so the off case has to be stated explicitly.
     form.chunk = False
+    form.type_options = {"generic": {"chunk": False}}
     state = build_library_ingest_state(
         (),
         form=form,
@@ -690,6 +720,78 @@ async def test_retry_button_hidden_for_unsupported_file_type():
 
 
 @pytest.mark.asyncio
+async def test_transcribe_cpp_failure_renders_only_eligible_recovery_actions():
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/private/voice.wav",
+        state=IngestJobState.FAILED,
+        error="The selected GGUF cannot be used by transcribe.cpp.",
+        permanent=False,
+        error_detail={
+            "category": "stt_failure",
+            "code": "artifact_incompatible",
+            "message": "The selected GGUF cannot be used by transcribe.cpp.",
+            "actions": ["choose_another_gguf", "retry_faster_whisper"],
+        },
+    )
+    state = build_library_ingest_state((job,), form=_default_form())
+    app = _CanvasHost(state)
+
+    async with app.run_test() as pilot:
+        choose = pilot.app.query_one(
+            "#library-ingest-choose-gguf-ingest-job-1", Button
+        )
+        retry = pilot.app.query_one(
+            "#library-ingest-retry-faster-whisper-ingest-job-1", Button
+        )
+        assert "Choose another GGUF" in str(choose.label)
+        assert str(retry.label) == "Retry with faster-whisper"
+        assert not list(pilot.app.query("#library-ingest-retry-ingest-job-1"))
+
+
+@pytest.mark.asyncio
+async def test_transcribe_cpp_provider_shows_path_free_configured_picker():
+    form = _default_form()
+    form.type_options = {
+        "audio_video": {"transcription_provider": "transcribe-cpp"}
+    }
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={"audio_video": ["/tmp/voice.wav"]},
+            warnings=[],
+            errors=[],
+            total_size=1,
+            truncated=False,
+            total_files=1,
+        ),
+        transcribe_cpp_configured=True,
+    )
+    app = _MessageRecordingHost(state)
+
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            button = pilot.app.query_one(
+                "#opt-audio_video-choose-transcribe-cpp-gguf", Button
+            )
+            status = pilot.app.query_one(
+                "#opt-audio_video-transcribe-cpp-status", Static
+            )
+            assert "Choose another GGUF" in str(button.label)
+            assert "configured" in str(status.renderable).lower()
+            assert "/" not in str(status.renderable)
+
+            button.press()
+            await pilot.pause()
+
+    assert app.transcribe_cpp_gguf_requests == 1
+
+
+@pytest.mark.asyncio
 async def test_recent_ingests_section_renders_terminal_jobs():
     """The Recent ingests collapsible lists done/failed jobs but not queued."""
     done = LibraryIngestJob(
@@ -726,9 +828,725 @@ async def test_recent_ingests_section_renders_terminal_jobs():
 
 @pytest.mark.asyncio
 async def test_recent_ingests_section_renders_when_queue_empty():
-    """Recent ingests is visible even when there are no jobs at all."""
+    """(task-2100) Recent ingests is HIDDEN when there is nothing recent --
+    it used to render always, and after a clear it expanded to an empty,
+    unlabeled shell (round-3 critique evidence)."""
     state = build_library_ingest_state((), form=_default_form())
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
-        assert pilot.app.query_one("#library-ingest-recent", Collapsible)
+        assert not list(pilot.app.query("#library-ingest-recent"))
         assert len(pilot.app.query("#library-ingest-queue-empty")) == 1
+
+
+@pytest.mark.asyncio
+async def test_mounting_option_panels_posts_no_option_changes():
+    """Mounting a type-group panel must not look like a user edit.
+
+    Textual's ``Select`` posts ``Changed`` as soon as it mounts, and an
+    ``Input`` does the same for a non-empty ``value=``. Bubbling those as
+    ``OptionValueChanged`` made the screen recompose, which remounted the
+    select, which posted again -- an unbounded recompose cycle that pinned
+    the UI at 100% CPU for every pdf/audio/ebook pre-flight (task-673).
+
+    Every type group is mounted at once: ``pdf``, ``audio_video`` and
+    ``ebook`` each carry a select and so each reproduced the freeze on its
+    own, while ``generic`` (the one group with no select) is the reason
+    plain text was the only content type that ever worked.
+    """
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={
+                "pdf": ["/tmp/a.pdf"],
+                "audio_video": ["/tmp/a.mp3"],
+                "ebook": ["/tmp/a.epub"],
+                "generic": ["/tmp/a.txt"],
+            },
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=4,
+        ),
+    )
+    app = _MessageRecordingHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.pause()
+
+    assert app.option_changes == [], (
+        "mounting option panels emitted "
+        f"{[(e.group, e.name, e.value) for e in app.option_changes]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_audio_video_defaults_to_semantic_provider_with_exact_controls_disabled():
+    form = _default_form()
+    form.expanded_type_groups.add("audio_video")
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={"audio_video": ["/tmp/a.mp3"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _MessageRecordingHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            provider = pilot.app.query_one(
+                "#opt-audio_video-transcription_provider", Select
+            )
+            model = pilot.app.query_one("#opt-audio_video-transcription_model", Select)
+            model_dir = pilot.app.query_one(
+                "#opt-audio_video-transcription_model_dir", Input
+            )
+            assert provider.value == "default"
+            assert model.disabled is True
+            assert model_dir.disabled is True
+            assert model_dir.value == ""
+            install = pilot.app.query_one(
+                "#opt-audio_video-install-parakeet-v2", Button
+            )
+            assert "Install verified Parakeet v2 INT8" in str(install.label)
+            assert install.disabled is True
+            install.press()
+            await pilot.pause()
+            assert app.parakeet_install_requests == 0
+
+
+@pytest.mark.asyncio
+async def test_explicit_parakeet_enables_model_dir_and_verified_installer():
+    form = _default_form()
+    form.expanded_type_groups.add("audio_video")
+    form.type_options = {"audio_video": {"transcription_provider": "parakeet-onnx"}}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={"audio_video": ["/tmp/a.mp3"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _MessageRecordingHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            provider = pilot.app.query_one(
+                "#opt-audio_video-transcription_provider", Select
+            )
+            model = pilot.app.query_one("#opt-audio_video-transcription_model", Select)
+            model_dir = pilot.app.query_one(
+                "#opt-audio_video-transcription_model_dir", Input
+            )
+            install = pilot.app.query_one(
+                "#opt-audio_video-install-parakeet-v2", Button
+            )
+
+            assert provider.value == "parakeet-onnx"
+            assert model.disabled is True
+            assert model_dir.disabled is False
+            assert install.disabled is False
+            install.press()
+            await pilot.pause()
+            assert app.parakeet_install_requests == 1
+
+
+@pytest.mark.asyncio
+async def test_explicit_faster_whisper_enables_only_whisper_model_control():
+    form = _default_form()
+    form.expanded_type_groups.add("audio_video")
+    form.type_options = {"audio_video": {"transcription_provider": "faster-whisper"}}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={"audio_video": ["/tmp/a.mp3"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            assert (
+                pilot.app.query_one(
+                    "#opt-audio_video-transcription_provider", Select
+                ).value
+                == "faster-whisper"
+            )
+            assert (
+                pilot.app.query_one(
+                    "#opt-audio_video-transcription_model", Select
+                ).disabled
+                is False
+            )
+            assert (
+                pilot.app.query_one(
+                    "#opt-audio_video-transcription_model_dir", Input
+                ).disabled
+                is True
+            )
+            assert (
+                pilot.app.query_one(
+                    "#opt-audio_video-install-parakeet-v2", Button
+                ).disabled
+                is True
+            )
+
+
+@pytest.mark.asyncio
+async def test_chunk_size_enabled_when_chunk_checked():
+    """Chunk size and overlap become editable once Chunk is on.
+
+    They were gated through the installed-feature lookup on the name
+    "chunk", which is a sibling field rather than a package, so they were
+    disabled no matter what the user did (task-676).
+    """
+    form = _default_form()
+    form.chunk = True
+    form.type_options = {"generic": {"chunk": True}}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#opt-generic-chunk_size", Input).disabled is False
+        assert (
+            pilot.app.query_one("#opt-generic-chunk_overlap", Input).disabled is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_path_error_offers_a_way_to_pick_a_file_not_retry():
+    """A path that cannot be found offers correction, not Retry.
+
+    Re-running the same analysis against the same bad path fails identically,
+    so Retry was the wrong verb for the most common pre-flight error a
+    first-time user hits (task-666).
+    """
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={},
+            warnings=[],
+            errors=["Path not found: /tmp/nope.txt"],
+            total_size=0,
+            truncated=False,
+            total_files=0,
+            path_invalid=True,
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        assert len(pilot.app.query("#ingest-preflight-retry")) == 0
+        assert pilot.app.query_one("#ingest-preflight-choose", Button)
+
+
+@pytest.mark.asyncio
+async def test_retryable_error_still_offers_retry():
+    """A URL that failed to respond is worth another attempt."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={},
+            warnings=[],
+            errors=["URL unreachable: timed out"],
+            total_size=0,
+            truncated=False,
+            total_files=0,
+            path_invalid=False,
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#ingest-preflight-retry", Button)
+        assert len(pilot.app.query("#ingest-preflight-choose")) == 0
+
+
+@pytest.mark.asyncio
+async def test_option_panel_title_reads_as_plain_language():
+    """The collapsed panel title describes settings, not internal field names."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"pdf": ["/tmp/a.pdf"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            title = str(pilot.app.query_one("#type-group-pdf", Collapsible).title)
+
+    assert "pdf_engine=" not in title
+    assert "ocr=False" not in title
+    assert "PDF engine: pymupdf4llm" in title
+    assert "Enable OCR: off" in title
+
+
+def test_warning_line_does_not_repeat_itself():
+    """Warning copy names the gap once, then how to close it."""
+    from tldw_chatbook.Library.library_ingest_state import build_warning_lines
+
+    lines = build_warning_lines(
+        [
+            {
+                "feature": "pdf_processing",
+                "label": "PDF processing",
+                "hint": "PDF ingestion",
+                "command": 'pip install -e ".[pdf]"',
+            },
+            {
+                "feature": "audio_processing",
+                "label": "Audio processing",
+                "hint": "Audio processing",
+                "command": 'pip install -e ".[audio]"',
+            },
+        ]
+    )
+
+    assert lines[0] == (
+        "PDF processing isn't installed — needed for PDF ingestion. "
+        'Install it with: pip install -e ".[pdf]"'
+    )
+    # The label and the capability are the same words here, so say it once.
+    assert lines[1] == (
+        'Audio processing isn\'t installed. Install it with: pip install -e ".[audio]"'
+    )
+
+
+@pytest.mark.asyncio
+async def test_first_visit_explains_what_can_be_imported():
+    """An untouched form orients the user instead of showing blank space."""
+    state = build_library_ingest_state((), form=LibraryIngestFormState())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        first = str(pilot.app.query_one("#library-ingest-intro-0", Static).renderable)
+        second = str(pilot.app.query_one("#library-ingest-intro-1", Static).renderable)
+
+    assert "folder" in first and "URL" in first
+    assert "PDF documents" in first and "e-books" in first
+    assert "searchable" in second
+
+
+@pytest.mark.asyncio
+async def test_intro_gives_way_to_the_real_summary():
+    """Orientation never competes with an actual pre-flight result."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=10,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        # (task-2042) Intro Statics stay mounted (display-managed) so their
+        # appearance/disappearance never changes the canvas structure; the
+        # user-visible contract is that they are not DISPLAYED.
+        intro = pilot.app.query_one("#library-ingest-intro-0")
+        assert intro.display is False
+
+
+@pytest.mark.asyncio
+async def test_clear_button_appears_only_with_a_path():
+    """The path field can be emptied in one press once it has content."""
+    empty = build_library_ingest_state((), form=LibraryIngestFormState())
+    app = _CanvasHost(empty)
+    async with app.run_test() as pilot:
+        # (task-2042) Always mounted, display-managed -- the visible
+        # contract is unchanged (hidden without a path, shown with one),
+        # but the widget STRUCTURE no longer flips while typing.
+        clear = pilot.app.query_one("#library-ingest-clear-path", Button)
+        assert clear.display is False
+
+    filled = build_library_ingest_state((), form=_default_form())
+    app = _CanvasHost(filled)
+    async with app.run_test() as pilot:
+        clear = pilot.app.query_one("#library-ingest-clear-path", Button)
+        assert clear.display is True
+
+
+@pytest.mark.asyncio
+async def test_backend_switch_appears_only_with_a_server_configured():
+    """A dead toggle is worse than none, so it is offered only when real."""
+    local_only = build_library_ingest_state((), form=LibraryIngestFormState())
+    app = _CanvasHost(local_only)
+    async with app.run_test() as pilot:
+        assert len(pilot.app.query("#library-ingest-backend-switch")) == 0
+        assert len(pilot.app.query("#library-ingest-server-line")) == 0
+
+    with_server = build_library_ingest_state(
+        (), form=LibraryIngestFormState(), runtime_source="server",
+        server_ingest_available=True
+    )
+    app = _CanvasHost(with_server)
+    async with app.run_test() as pilot:
+        button = pilot.app.query_one("#library-ingest-backend-switch", Button)
+        assert "server" in str(button.label).lower()
+        line = pilot.app.query_one("#library-ingest-server-line", Static)
+        assert "this machine" in str(line.renderable).lower()
+
+
+@pytest.mark.asyncio
+async def test_backend_switch_offers_the_way_back_when_targeting_the_server():
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        ingest_backend="server",
+        runtime_source="server",
+        server_ingest_available=True,
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        button = pilot.app.query_one("#library-ingest-backend-switch", Button)
+        assert "this machine" in str(button.label).lower()
+        line = pilot.app.query_one("#library-ingest-server-line", Static)
+        assert "server" in str(line.renderable).lower()
+
+
+@pytest.mark.asyncio
+async def test_backend_state_is_rendered_before_the_switch():
+    """"Imports run on X" must precede the button that changes it.
+
+    With the button first, the pane read as a contradiction top-to-bottom:
+    "Import on the server" directly above "Imports run on this machine."
+    """
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(), runtime_source="server",
+        server_ingest_available=True
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        children = list(pilot.app.query_one(LibraryIngestCanvas).children)
+        ids = [c.id for c in children if c.id]
+        assert "library-ingest-server-line" in ids
+        assert "library-ingest-backend-switch" in ids
+        assert ids.index("library-ingest-server-line") < ids.index(
+            "library-ingest-backend-switch"
+        ), f"switch rendered before the state line: {ids[:6]}"
+
+
+@pytest.mark.asyncio
+async def test_unsupported_files_summary_pluralizes_correctly():
+    """(task-2015) Plural counts must not read "recorded as a failures"."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"unsupported": ["/tmp/a.xyz", "/tmp/b.xyz"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=2,
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        summary = pilot.app.query_one("#ingest-unsupported-summary", Static)
+        # (task-2100) Gate-blocked (nothing importable): names only.
+        assert str(summary.renderable) == (
+            "Unsupported: a.xyz, b.xyz."
+            " Supported: PDF documents, audio/video files, e-books, plain text files."
+        )
+
+
+# --- task-2016: P3 polish ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_done_row_progress_line_has_no_state_prefix():
+    """(task-2016) The row line already says "✓ done"; prefixing the progress
+    line with "done" again read as stuttering. Terminal states render the
+    message alone; active states keep the prefix (previous test)."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/report.txt",
+        state=IngestJobState.DONE,
+        media_id=1,
+        progress={"message": "Ingested report.txt"},
+    )
+    state = build_library_ingest_state((job,), form=_default_form())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        progress = pilot.app.query_one(
+            "#library-ingest-progress-ingest-job-1", Static
+        )
+        assert str(progress.renderable) == "Ingested report.txt"
+
+
+@pytest.mark.asyncio
+async def test_expand_collapse_all_hidden_for_single_panel():
+    """(task-2016) Bulk expand/collapse over exactly one panel is noise."""
+    single = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(single)
+    async with app.run_test() as pilot:
+        assert not list(pilot.app.query("#ingest-expand-all"))
+        assert not list(pilot.app.query("#ingest-collapse-all"))
+
+
+@pytest.mark.asyncio
+async def test_generic_scope_line_reworded_when_no_generic_files_staged():
+    """(task-2016) The always-present generic panel claimed "Applies to all
+    Plain text & HTML in this import." even when the import
+    contained zero such files."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"pdf": ["/tmp/a.pdf"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    # Expand the generic panel so its scope line mounts.
+    state.form.expanded_type_groups.add("generic")
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        scopes = [
+            str(w.renderable)
+            for w in pilot.app.query(".type-group-scope").results(Static)
+        ]
+        generic_scope = [s for s in scopes if "Plain text" in s]
+        assert generic_scope, f"generic scope line missing: {scopes}"
+        assert "if this import contains any" in generic_scope[0]
+        assert "in this import." not in generic_scope[0]
+
+
+# --- task-2043: P2 batch ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_expanded_details_render_inline_and_flip_button_label():
+    """(task-2043) Expanded rows render their detail lines inline (the old
+    surface was a ~4s uncopyable toast) and the button reads Hide details."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/broken.pdf",
+        state=IngestJobState.FAILED,
+        error="Failed to process pdf file: PDF Extraction Error.",
+        error_detail={
+            "category": "parse_error",
+            "message": "Failed to process pdf file: PDF Extraction Error.",
+        },
+    )
+    state = build_library_ingest_state(
+        (job,),
+        form=_default_form(),
+        expanded_details={"ingest-job-1"},
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        detail = pilot.app.query_one("#library-ingest-detail-ingest-job-1-0", Static)
+        assert "Category: parse error" in str(detail.renderable)
+        button = pilot.app.query_one("#library-ingest-details-ingest-job-1", Button)
+        assert str(button.label) == "Hide details"
+
+
+@pytest.mark.asyncio
+async def test_select_fields_carry_visible_labels():
+    """(task-2043) Selects missed task-2012's labeling: 'pymupdf4llm' bare
+    carries no meaning. Every select gets a label Static."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"pdf": ["/tmp/a.pdf"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    state.form.expanded_type_groups.add("pdf")
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        labels = [
+            str(w.renderable)
+            for w in pilot.app.query(".type-group-field-label").results(Static)
+        ]
+        from tldw_chatbook.Library.ingest_capabilities import get_capabilities
+
+        select_labels = [
+            f.label for f in get_capabilities("pdf").fields if f.type == "select"
+        ]
+        assert select_labels, "pdf group unexpectedly has no selects"
+        for label in select_labels:
+            assert label in labels, f"select {label!r} has no visible label"
+
+
+@pytest.mark.asyncio
+async def test_checkbox_glyph_tracks_state_without_color():
+    """(task-2043) Stock ToggleButton renders 'X' for both states; the
+    subclass carries on/off in the glyph itself."""
+    from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+        StateGlyphCheckbox,
+    )
+
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    state.form.expanded_type_groups.add("generic")
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        analyze = pilot.app.query_one("#opt-generic-analyze", StateGlyphCheckbox)
+        chunk = pilot.app.query_one("#opt-generic-chunk", StateGlyphCheckbox)
+        assert chunk.value is True and chunk.BUTTON_INNER == "✓"
+        assert analyze.value is False and analyze.BUTTON_INNER == " "
+        analyze.value = True
+        await pilot.pause()
+        assert analyze.BUTTON_INNER == "✓"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_forecast_line_renders_in_summary():
+    """(task-2043) The pre-flight duplicate forecast renders as a quiet
+    line in the summary block."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=1,
+            already_in_library=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        line = pilot.app.query_one("#ingest-duplicate-summary", Static)
+        assert "already be in your Library" in str(line.renderable)
+
+
+@pytest.mark.asyncio
+async def test_severity_colour_supplements_glyphs_and_invalid_field_marked() -> None:
+    """Severity colour supplements glyphs; invalid fields stay marked.
+
+    (task-2230 a11y) Failed/skipped rows carry a severity class ON TOP of
+    the glyph+word they already have (never colour-only), and an invalid
+    option field stays marked without focus -- the gate line's
+    "highlighted" pointed at a border that only existed while focused.
+    """
+    failed = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/broken.pdf",
+        state=IngestJobState.FAILED,
+        error="Failed to process pdf file.",
+    )
+    skipped = LibraryIngestJob(
+        job_id="ingest-job-2",
+        source_path="/tmp/photo.jpg",
+        state=IngestJobState.SKIPPED,
+        error="Unsupported file type: .jpg.",
+    )
+    done = LibraryIngestJob(
+        job_id="ingest-job-3",
+        source_path="/tmp/report.txt",
+        state=IngestJobState.DONE,
+    )
+    form = LibraryIngestFormState(path="/tmp/report.txt")
+    form.type_options["generic"] = {"chunk_size": "abc"}
+    state = build_library_ingest_state((failed, skipped, done), form=form)
+
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        rows = list(pilot.app.query(".library-ingest-row"))
+        classes = [set(row.classes) for row in rows]
+        assert any("library-ingest-row-failed" in c for c in classes)
+        assert any("library-ingest-row-skipped" in c for c in classes)
+        # The done row carries neither severity class.
+        assert sum(
+            1
+            for c in classes
+            if "library-ingest-row-failed" in c
+            or "library-ingest-row-skipped" in c
+        ) == 2
+
+        # Glyph + word survive alongside the colour (monochrome contract).
+        by_id = {row.job_id: row for row in state.queue_rows}
+        assert by_id["ingest-job-1"].line.startswith("✗ failed")
+        assert by_id["ingest-job-2"].line.startswith("○ skipped")
+
+        invalid = pilot.app.query_one("#opt-generic-chunk_size", Input)
+        assert invalid.has_class("-ingest-option-invalid"), (
+            "an invalid field must stay marked without focus"
+        )
+        assert pilot.app.focused is not invalid

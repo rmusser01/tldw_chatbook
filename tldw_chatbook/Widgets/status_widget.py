@@ -12,6 +12,8 @@ from rich.text import Text
 from rich.panel import Panel
 from rich.table import Table
 
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
+
 
 StatusLevel = Literal["info", "success", "warning", "error", "debug"]
 
@@ -61,7 +63,7 @@ class StatusMessage:
         return text
 
 
-class EnhancedStatusWidget(Widget):
+class EnhancedStatusWidget(RecomposeCaptureGuard, Widget):
     """Enhanced status widget with color-coded messages and scrolling."""
 
     DEFAULT_CSS = """

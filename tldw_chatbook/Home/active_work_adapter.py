@@ -1034,7 +1034,7 @@ def _is_local_ingest_job_id(value: str | None) -> bool:
 
 
 def _runtime_server_status_fields(runtime_policy: Any | None) -> dict[str, object]:
-    state = getattr(runtime_policy, "state", None)
+    state = runtime_policy.state if runtime_policy is not None else None
     if not isinstance(state, RuntimeSourceState):
         return {
             "runtime_source": "local",

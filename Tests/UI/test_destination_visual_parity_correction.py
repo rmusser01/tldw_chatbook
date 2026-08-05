@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -11,10 +12,12 @@ from textual.app import App, ComposeResult
 from textual.css.query import NoMatches
 from textual.widgets import Button
 from textual.widgets import Collapsible
+from textual.widgets import DataTable
 from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
+    StaticHomeActiveWorkAdapter,
     StaticWatchlistsScopeService,
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
@@ -31,26 +34,133 @@ from Tests.UI.test_library_shell import (
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
-from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
-from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem
+from tldw_chatbook.UI.Navigation.main_navigation import (
+    MainNavigationBar,
+    NavigateToScreen,
+)
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.UI.Screens import (
     artifacts_screen as artifacts_screen_module,
     library_screen as library_screen_module,
-    schedules_screen as schedules_screen_module,
     skills_screen as skills_screen_module,
     watchlists_collections_screen as wc_screen_module,
     workflows_screen as workflows_screen_module,
 )
+from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
+    SchedulesWorkbench,
+)
+from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
+from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import NotificationsPane
+from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane
+from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
+from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
+from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
+from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+    TreeScope,
+    TreeScopeChanged,
+)
+from tldw_chatbook.UI.Watchlists_Modules.watchlists_tab_strip import SECTIONS
 from tldw_chatbook.Widgets.destination_workbench import (
     DestinationWorkbench,
     WorkbenchPane,
 )
 
 
+class ProductionCSSDestinationHarness(DestinationHarness):
+    """Mount one destination with the production stylesheet."""
+
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
+
+
+class WatchlistsVisualHarness(ProductionCSSDestinationHarness):
+    """Mount Watchlists with the production stylesheet for geometry checks."""
+
+
+class SchedulesVisualHarness(ProductionCSSDestinationHarness):
+    """Mount Schedules with the production stylesheet for geometry checks."""
+
+
+def _visual_destination_harness(app, route: str) -> DestinationHarness:
+    harness_type = {
+        "watchlists_collections": WatchlistsVisualHarness,
+        "schedules": SchedulesVisualHarness,
+    }.get(route, DestinationHarness)
+    return harness_type(app, route)
+
+
+@pytest.fixture(autouse=True)
+def _default_advanced_open(monkeypatch):
+    """Task 5 (MCP Hub Phase 6): same rationale as test_mcp_workbench.py's
+    fixture of the same name -- the MCP destination mounts a nested
+    `MCPInspector`, whose `compose()` reads `mcp.hub_state.advanced_open`
+    AND the new `mcp.hub_state.advanced_visible` opt-in via
+    `mcp_inspector.get_cli_setting` at mount time. Without this, every MCP
+    parity test here would hit the developer's real config
+    (non-deterministic) and -- with `advanced_visible` defaulting False --
+    `_assert_advanced_run_reachable()`'s `#mcp-adv-*` queries would find the
+    opt-in reveal Button instead of the composed Advanced pane. The blanket
+    True answers both keys (visible + expanded), matching the pre-Task-5
+    layout these geometry assertions were written against.
+    """
+    import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
+
+    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
+    monkeypatch.setattr(
+        mcp_inspector_module, "save_setting_to_cli_config", lambda *a, **k: True
+    )
+
+
 def _region(widget):
     region = widget.region
     return region.x, region.y, region.width, region.height
+
+
+async def _wait_for_production_screen(
+    app,
+    pilot,
+    screen_type,
+    *,
+    timeout: float = 6.0,
+):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        screen = app.screen
+        if isinstance(screen, screen_type) and screen.region.width > 0:
+            await pilot.pause()
+            return screen
+        await pilot.pause(0.01)
+    raise AssertionError(
+        f"Timed out waiting for {screen_type.__name__}; "
+        f"active={type(app.screen).__name__}"
+    )
+
+
+async def _wait_for_loading_cover(
+    screen,
+    pilot,
+    container_selector: str,
+    *,
+    timeout: float = 6.0,
+) -> object:
+    """Return Textual's rendered loading cover for a production container."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        container = screen.query_one(container_selector)
+        cover = container._cover_widget
+        if cover is not None and cover.region.width > 0 and cover.region.height > 0:
+            return cover
+        await pilot.pause()
+    raise AssertionError(
+        f"{container_selector} did not render its loading cover before timeout"
+    )
 
 
 def _assert_no_horizontal_overlap(left, right, *, context: str) -> None:
@@ -206,6 +316,69 @@ def _visible_button_labels(screen) -> set[str]:
     return {str(button.label) for button in screen.query(Button) if button.display}
 
 
+def _composited_rows(container) -> list[str]:
+    """`container`'s own row-span exactly as the compositor painted it.
+
+    `Widget.render_line()` is NOT ground truth for what is actually visible:
+    it returns a widget's own strip at whatever size the widget computed for
+    ITSELF (e.g. `width: auto` sizes to fit the label), which can be wider
+    than the space its container/viewport actually has -- Textual does not
+    clamp an overflowing child down to its parent's box before rendering it.
+    Verified empirically while writing this test: with the pre-fix 28-wide
+    rail (no `width: 100%`/`text-wrap: wrap`), `Button.render_line(0)`
+    happily returned the FULL, untruncated label even though the button's
+    own `.region` (x=210, width=37) already ran 12 columns past the rail's
+    right edge at x=235 -- a `render_line`-based assertion would have passed
+    against the very CSS this test exists to catch, the same false-negative
+    shape the task brief warned a bare-`App` unit test would produce, just
+    one layer further down. The COMPOSITOR (`Screen._compositor`) is what
+    actually clips overlapping/overflowing widgets down to what a real
+    terminal shows; `render_strips()` returns that final, already-clipped
+    output, confirmed against a live capture reproducing the exact
+    truncated strings from the task brief ("Stage Watchlists Cont", "Open
+    current Watchlis", "Console follow unavai") before the CSS fix, and
+    their full, wrapped text after it.
+    """
+    strips = container.screen._compositor.render_strips()
+    region = container.region
+    rows = []
+    for y in range(region.y, region.y + region.height):
+        if 0 <= y < len(strips):
+            row_text = "".join(segment.text for segment in strips[y])
+            rows.append(row_text[region.x : region.x + region.width])
+    return rows
+
+
+_BORDER_GLYPHS = "─│┌┐└┘╭╮╯╰═║╔╗╚╝├┤┬┴┼"
+
+
+def _assert_label_intact_on_screen(container, label: str, *, context: str) -> None:
+    """Assert `label` appears whole (possibly wrapped, never clipped) in the
+    compositor's actual painted output for `container`.
+
+    Border-drawing glyphs are stripped before joining rows: the label is
+    read back by squeezing whitespace and concatenating rows in order (a
+    wrapped label reads correctly this way since Textual wraps at word
+    boundaries without reordering), and a literal border character
+    surviving between two words a wrap split apart -- e.g. "Context ││ in"
+    from the panel's own frame sitting inside the column slice -- would
+    otherwise break a substring match that has nothing to do with clipping.
+    """
+    rows = _composited_rows(container)
+    cleaned_rows = [
+        "".join(ch for ch in row if ch not in _BORDER_GLYPHS) for row in rows
+    ]
+    combined = " ".join(" ".join(row.split()) for row in cleaned_rows if row.strip())
+    assert "…" not in combined, (
+        f"{context}: composited output shows an ellipsis (clipped text): {combined!r}"
+    )
+    normalized = " ".join(label.split())
+    assert normalized in combined, (
+        f"{context}: {label!r} does not appear intact on screen -- composited "
+        f"rail reads {combined!r}"
+    )
+
+
 def _mark_console_onboarding_complete(app) -> None:
     app.app_config = getattr(app, "app_config", {}) or {}
     console_config = app.app_config.setdefault("console", {})
@@ -253,9 +426,9 @@ async def test_main_navigation_overflow_hint_does_not_overlap_settings_at_defaul
         home = _active_home_screen(host)
         await _wait_for_selector(home, pilot, "#home-triage-grid")
         nav = home.query_one(MainNavigationBar)
+        strip = nav.query_one("#nav-destination-strip")
         settings = nav.query_one("#nav-settings", Button)
         more = nav.query_one("#nav-overflow-hint")
-        strip = nav.query_one("#nav-destination-strip")
         if more.display:
             # Overflow regime (F-key labels made the bar wider than 140):
             # the hint is docked outside the strip, so it can never sit on a
@@ -267,6 +440,9 @@ async def test_main_navigation_overflow_hint_does_not_overlap_settings_at_defaul
         else:
             _assert_no_horizontal_overlap(
                 settings, more, context="More hint overlaps Settings nav item"
+            )
+            _assert_no_horizontal_overlap(
+                strip, more, context="More hint overlaps the destination scroll strip"
             )
 
 
@@ -491,7 +667,7 @@ async def test_library_empty_state_reports_empty_with_next_action():
     assert "Notes (0)" in visible_text
     assert "Media (0)" in visible_text
     assert "Conversations (0)" in visible_text
-    assert "Search, pick a content type, or ingest something new." in visible_text
+    assert "Search everything, pick a section on the left, or add something new." in visible_text
 
 
 @pytest.mark.asyncio
@@ -699,8 +875,7 @@ async def test_library_service_call_awaits_coroutine_functions_without_worker(
             ("#console-left-rail", "#console-main-column", "#console-right-rail"),
             (
                 "#console-send-message",
-                "#console-attach-context",
-                "#console-save-chatbook",
+                "#console-composer-menu",
             ),
             ("#console-run-inspector-state",),
             "#console-run-inspector",
@@ -790,21 +965,41 @@ SOURCE_PREP_WORKBENCHES = {
         "markers": ("#personas-library-empty", "#personas-library-count"),
         "marker_container": "#personas-library-pane",
     },
+    # Watchlists moved from the placeholder 3-column shell onto
+    # `WatchlistsWorkbench` (rails around a VERTICALLY stacked centre — see
+    # `watchlists_workbench.py`'s docstring on why the shared
+    # `DestinationWorkbench`/3-column-ASCII contract can't express this
+    # layout). `#watchlists-list-pane` and `#watchlists-detail-pane` are now
+    # stacked one above the other inside `#wl-centre`, not side by side, so
+    # this entry is kept for the `markers`/`marker_container`/`actions` keys
+    # (still valid — those panes still exist, just not horizontally arranged)
+    # but excluded from the two horizontal-geometry parametrizations below via
+    # `SOURCE_PREP_WORKBENCHES_HORIZONTAL`, the same way "personas" above
+    # excluded itself from the retired snapshot-worker markers.
     "watchlists_collections": {
-        "workbench": "#watchlists-workbench",
-        "strip": "#watchlists-filter-strip",
+        "workbench": "#wl-workbench",
+        "strip": "#watchlists-header-bar",
+        "strip_max_height": 3,
         "panes": (
             "#watchlists-list-pane",
             "#watchlists-detail-pane",
             "#watchlists-inspector-pane",
         ),
+        # `#nav-overview` was the retired left-rail navigator's Overview
+        # button; the rail now hosts the watchlist tree and the section
+        # buttons live in the centre tab strip as `#wl-tab-*`.
+        # `_assert_any_action_visible` skips selectors with no matches, so
+        # the dead id silently shrank this guard by one action rather than
+        # failing.
         "actions": (
+            "#wl-tab-overview",
+            "#wc-empty-create-source",
             "#wc-open-watchlists",
             "#wc-attach-to-console",
             "#watchlists-follow-in-console",
         ),
         "markers": ("#wc-empty-state", "#wc-service-error", "#wc-loading-state"),
-        "marker_container": "#watchlists-detail-pane",
+        "marker_container": "#watchlists-list-pane",
     },
     "skills": {
         "workbench": "#skills-workbench",
@@ -820,14 +1015,26 @@ SOURCE_PREP_WORKBENCHES = {
     },
 }
 
+#: `SOURCE_PREP_WORKBENCHES` minus destinations that no longer lay their
+#: list/detail/inspector panes out horizontally. Watchlists' rehost onto
+#: `WatchlistsWorkbench` stacks FEEDS/ITEMS/CONTENT vertically inside a
+#: centre column by deliberate design (see `watchlists_workbench.py`), so it
+#: cannot satisfy `_assert_horizontal_panes` — that is a real, intentional
+#: geometry change, not a regression to paper over.
+SOURCE_PREP_WORKBENCHES_HORIZONTAL = {
+    route: contract
+    for route, contract in SOURCE_PREP_WORKBENCHES.items()
+    if route != "watchlists_collections"
+}
 
-@pytest.mark.parametrize("route,contract", SOURCE_PREP_WORKBENCHES.items())
+
+@pytest.mark.parametrize("route,contract", SOURCE_PREP_WORKBENCHES_HORIZONTAL.items())
 @pytest.mark.asyncio
 async def test_source_prep_destinations_use_list_detail_inspector_workbench(
     route, contract
 ):
     app = _build_test_app()
-    host = DestinationHarness(app, route)
+    host = _visual_destination_harness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, contract["workbench"])
@@ -835,6 +1042,7 @@ async def test_source_prep_destinations_use_list_detail_inspector_workbench(
             screen,
             workbench=contract["workbench"],
             strip=contract["strip"],
+            strip_max_height=contract.get("strip_max_height", 2),
             panes=contract["panes"],
             actions=contract["actions"],
             height=42,
@@ -847,13 +1055,13 @@ async def test_source_prep_destinations_use_list_detail_inspector_workbench(
         )
 
 
-@pytest.mark.parametrize("route,contract", SOURCE_PREP_WORKBENCHES.items())
+@pytest.mark.parametrize("route,contract", SOURCE_PREP_WORKBENCHES_HORIZONTAL.items())
 @pytest.mark.asyncio
 async def test_source_prep_default_empty_or_unavailable_states_preserve_workbench_geometry(
     route, contract
 ):
     app = _build_test_app()
-    host = DestinationHarness(app, route)
+    host = _visual_destination_harness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, contract["workbench"])
@@ -861,6 +1069,7 @@ async def test_source_prep_default_empty_or_unavailable_states_preserve_workbenc
             screen,
             workbench=contract["workbench"],
             strip=contract["strip"],
+            strip_max_height=contract.get("strip_max_height", 2),
             panes=contract["panes"],
             actions=contract["actions"],
             height=42,
@@ -871,7 +1080,7 @@ async def test_source_prep_default_empty_or_unavailable_states_preserve_workbenc
 async def test_watchlists_screen_matches_approved_control_plane_columns():
     app = _build_test_app()
     app.watchlist_scope_service = StaticWatchlistsScopeService([])
-    host = DestinationHarness(app, "watchlists_collections")
+    host = _visual_destination_harness(app, "watchlists_collections")
 
     async with host.run_test(size=(160, 42)) as pilot:
         screen = _active_destination_screen(host)
@@ -884,21 +1093,628 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
             >= 0
         )
         visible_text = _visible_static_text(screen)
-        assert "Filters: Running Failed Recent Alerts Sources Feeds" in visible_text
-        assert "Column 1: Watchlist List" in visible_text
-        assert "Column 2: Detail / Items / Runs" in visible_text
-        assert "Column 3: Status Inspector" in visible_text
-        assert "State:" in visible_text
-        assert "Retry/backoff:" in visible_text
+        assert screen.query_one("#watchlists-header-bar").region.height == 3
+        assert "Backend: local" in visible_text
+        assert "Sources" in visible_text
+        assert "Overview" in visible_text
+        assert "Inspector" in visible_text
+        assert "State: ready" in visible_text
+        assert "Alert rules active:" in visible_text
+        assert "Latest run status:" in visible_text
         assert "Collections" not in visible_text
+        assert "Column 1:" not in visible_text
+        assert "Column 2:" not in visible_text
+        assert "Column 3:" not in visible_text
+
+        # The Rule-divided three-column body was replaced by the collapsible
+        # WatchlistsWorkbench (rails around a vertically stacked centre; see
+        # watchlists_workbench.py) — region borders replace Rule dividers, so
+        # the old #watchlists-*-divider ids no longer exist. Assert the new
+        # structural landmarks instead: the workbench container, and each
+        # region wrapper.
+        #
+        # FEEDS and CONTENT are both unmounted on this screen's default
+        # section (Overview), not Items -- per the approved design spec
+        # ("### Tabs"), only Read (this implementation's Items tab) uses the
+        # three-pane split; every other section gets the full centre width
+        # (TASK-1344 AC#1 widened Task 4's CONTENT-only gating to cover
+        # FEEDS too, and AC#4 unmounts both rather than leaving a one-row
+        # header -- see `WatchlistsCollectionsScreen._hidden_centre_regions`
+        # and `_rendered_region_layout`). ITEMS is the one centre region
+        # that is always present; the tab strip and snapshot markers this
+        # test already asserted above ("Sources"/"State: ready"/... in
+        # `visible_text`) now come from `#wl-centre-status`
+        # (`_build_centre_status_header`) rather than from FEEDS's own body.
+        assert screen.query_one("#wl-workbench")
+        assert screen.query_one("#wl-centre-status")
+        for region_id in (
+            "wl-region-left_rail",
+            "wl-region-items",
+            "wl-region-right_rail",
+        ):
+            assert screen.query_one(f"#{region_id}")
+        assert not screen.query("#wl-region-feeds")
+        assert not screen.query("#wl-header-feeds")
+        assert not screen.query("#wl-region-content")
+        assert not screen.query("#wl-header-content")
+
+
+@pytest.mark.asyncio
+async def test_watchlists_centre_regions_stack_vertically_in_order():
+    """Vertical-geometry replacement for the horizontal contract Watchlists
+    was excluded from (see `SOURCE_PREP_WORKBENCHES_HORIZONTAL` above): its
+    rehost onto `WatchlistsWorkbench` stacks FEEDS/ITEMS/CONTENT vertically
+    inside the centre column by deliberate design, so `_assert_horizontal_panes`
+    (which asserts `left.region.x < right.region.x`) can never apply — but
+    that must not mean Watchlists has zero automated geometry coverage.
+    """
+    app = _build_test_app()
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-workbench")
+
+        # CONTENT only occupies space on the Items (Read) tab -- Task 4 fix
+        # round 1, `WatchlistsCollectionsScreen._visible_region_layout`. This
+        # test is specifically about the three-region stack, so it must be
+        # on that tab, independent of whatever the section otherwise
+        # defaults to.
+        screen.active_section = "items"
+        await pilot.pause()
+
+        # Force every region open so all three centre regions have real
+        # geometry to compare — independent of whatever CONTENT's first-run
+        # collapse default happens to be (region_layout_store.load_region_layout).
+        screen._apply_layout(RegionLayout())
+        await pilot.pause()
+
+        feeds = screen.query_one("#wl-region-feeds")
+        items = screen.query_one("#wl-region-items")
+        content = screen.query_one("#wl-region-content")
+
+        assert feeds.region.y < items.region.y < content.region.y, (
+            f"centre regions are not stacked top-to-bottom: "
+            f"feeds={feeds.region} items={items.region} content={content.region}"
+        )
+        for selector, pane in (
+            ("#wl-region-feeds", feeds),
+            ("#wl-region-items", items),
+            ("#wl-region-content", content),
+        ):
+            assert pane.region.width > 0, f"{selector} has no width"
+            assert pane.region.height > 0, f"{selector} has no height"
+            _assert_visible_in_viewport(pane, height=42, context=selector)
+
+        # No two centre regions may overlap.
+        for top, bottom in ((feeds, items), (items, content)):
+            assert top.region.y + top.region.height <= bottom.region.y, (
+                f"centre regions overlap: {top.region} vs {bottom.region}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_collapsing_both_rails_keeps_every_region_in_viewport():
+    """Fix round 2, Finding 1 (CRITICAL): `.watchlists-region-header`'s
+    `width: 100%` rule was unscoped, so a RAIL header (a direct child of the
+    workbench `Horizontal`, not the centre `Vertical`) took the ENTIRE
+    workbench width instead of a narrow collapsed-handle width -- pushing
+    every region after it off-screen. Measured pre-fix at 160x42 after
+    collapsing both rails: the right rail's header landed at
+    x=161 with the workbench only 160 wide, unreachable by mouse. This forces
+    the exact reproduction and asserts every remaining region/header stays
+    inside the 160-wide viewport.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-workbench")
+
+        # FEEDS only occupies the centre on the Read tab (TASK-1344 AC#1),
+        # and this test needs it present for its "every region stays inside
+        # the viewport" sweep.
+        screen.active_section = "items"
+        await pilot.pause()
+
+        screen._apply_layout(
+            RegionLayout(collapsed=frozenset({Region.LEFT_RAIL, Region.RIGHT_RAIL}))
+        )
+        await pilot.pause()
 
         for selector in (
-            "#watchlists-list-detail-divider",
-            "#watchlists-detail-inspector-divider",
+            "#wl-header-left_rail",
+            "#wl-region-feeds",
+            "#wl-region-items",
+            "#wl-header-right_rail",
         ):
-            divider = screen.query_one(selector)
-            assert divider.has_class("destination-pane-divider")
-            assert divider.region.width == 1
+            _assert_visible_in_viewport(
+                screen.query_one(selector),
+                height=42,
+                context=selector,
+                viewport_width=160,
+            )
+
+        left_header = screen.query_one("#wl-header-left_rail")
+        right_header = screen.query_one("#wl-header-right_rail")
+        assert left_header.region.width < 160, (
+            f"left rail header claimed (close to) the full workbench width: "
+            f"{left_header.region}"
+        )
+        assert right_header.region.x + right_header.region.width <= 160, (
+            f"right rail header fell outside the viewport: {right_header.region}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_items_region_is_taller_than_feeds_region_when_expanded():
+    """Fix round 2, Finding 5 (human-ruled, CSS-only rebalance): FEEDS only
+    ever hosts a short (<=5-line) source-count summary but shared an equal
+    `1fr` with ITEMS -- which hosts all six section panes and their
+    DataTables -- and CONTENT, before this rebalance. `height: auto` on
+    FEEDS lets it take only what its content needs so ITEMS (still `1fr`)
+    gets the space FEEDS no longer claims.
+    """
+    app = _build_test_app()
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-workbench")
+
+        # FEEDS only occupies the centre on the Read tab (TASK-1344 AC#1).
+        screen.active_section = "items"
+        await pilot.pause()
+
+        screen._apply_layout(RegionLayout())
+        await pilot.pause()
+
+        feeds = screen.query_one("#wl-region-feeds")
+        items = screen.query_one("#wl-region-items")
+
+        assert items.region.height > feeds.region.height, (
+            f"ITEMS should be taller than FEEDS once FEEDS is content-fit: "
+            f"feeds={feeds.region} items={items.region}"
+        )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_feeds_empty_state_fits_without_scrolling(size):
+    """Fix round 2, regression pin: round 1 shipped `max-height: 10`, one row
+    BELOW the real empty state's measured 11-row need (tab strip, "Sources"
+    title, "No sources yet.", Create/Import button row, inside the pane's
+    own border) -- so a watchlist with zero sources rendered a scrollbar.
+    That was a ceiling below its own minimum content, not the intended
+    "grows to fit, caps, then scrolls" behaviour.
+
+    `max-height` is now 12 (see `.watchlists-region-feeds` in
+    `_watchlists.tcss` for the full derivation), which clears the 11-row
+    need with headroom: the pane's real content must sit entirely inside
+    FEEDS -- the cap never engages, nothing is clipped -- and there must be
+    nothing left to scroll, at both the guard suite's 160x42 and the app's
+    real 235x52.
+
+    Fix round 3 restated the containment check. It was
+    `feeds.region.height == pane.region.height`, which silently also encoded
+    "the PANE draws FEEDS's only border" -- true only while round 1's border
+    decision stood. Round 3 inverted that decision (the region draws the box,
+    `#watchlists-list-pane` is stripped by ID; see `_watchlists.tcss`), so
+    the region is now exactly its own 2 border rows taller than the pane:
+    measured 160x42 feeds=11 pane=9, 235x52 feeds=11 pane=9. `contains_region`
+    asserts the same property -- the pane fits, unclipped -- without pinning
+    which widget happens to own the border rows.
+    """
+    app = _build_test_app()
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-workbench")
+
+        # FEEDS only occupies the centre on the Read tab (TASK-1344 AC#1).
+        screen.active_section = "items"
+        await pilot.pause()
+
+        screen._apply_layout(RegionLayout())
+        await pilot.pause()
+
+        feeds = screen.query_one("#wl-region-feeds")
+        pane = screen.query_one("#watchlists-list-pane")
+
+        assert feeds.region.contains_region(pane.region), (
+            f"the empty state's real content should fit inside FEEDS's cap "
+            f"without being clipped: feeds={feeds.region} pane={pane.region}"
+        )
+        assert feeds.max_scroll_y == 0, (
+            f"the empty state should have nothing left to scroll: "
+            f"max_scroll_y={feeds.max_scroll_y} feeds={feeds.region}"
+        )
+
+
+#: Watchlists' 40-source stand-in for a populated FEEDS list. Enough rows to
+#: force the region past any plausible `max-height`.
+_WL_OVERFLOW_RECORDS = tuple(
+    {"name": f"source-{index:02d}", "title": f"source-{index:02d}"}
+    for index in range(40)
+)
+
+
+def _seed_overflow_sources(app, count: int = 40) -> None:
+    """Put `count` real sources in FEEDS's own list.
+
+    Task 7 fix round 1, Finding 1 moved the long list in FEEDS: the
+    Console-staging block used to render one row per
+    `_local_watchlist_records` entry and now collapses to a single line, so
+    `_apply_local_wc_snapshot(_WL_OVERFLOW_RECORDS, ...)` alone no longer
+    produces enough rows to reach the cap. The rows that remain are
+    `scoped_source_rows()`, which reads the bundle service's own
+    `subscriptions` table -- an isolated temp file per `_build_test_app()`,
+    never the developer's database.
+
+    Setup only: every assertion in the tests below is unchanged.
+    """
+    db = app.watchlist_bundle_service._db
+    for index in range(count):
+        db.add_subscription(
+            name=f"source-{index:02d}",
+            type="rss",
+            source=f"https://feed-{index:02d}.example/rss",
+        )
+
+
+_ROUND_CORNERS = "╭╮╰╯"
+_SQUARE_CORNERS = "┌┐└┘"
+
+
+@pytest.mark.asyncio
+async def test_watchlists_every_region_draws_exactly_one_round_border():
+    """Task 6 fix round 3, Finding 2: one box per region, all the same shape.
+
+    Round 1 kept the *pane's* border and dropped the *region's* in three of
+    the five regions. Region borders are `round` and the shared destination
+    pane's is `solid`, so the screen drew round corners on LEFT_RAIL/CONTENT
+    and square ones on FEEDS/ITEMS/RIGHT_RAIL. Round 3 inverted it: the region
+    wrapper draws the box everywhere, and `#watchlists-list-pane`/
+    `#watchlists-detail-pane`/`#watchlists-inspector-pane` are stripped by ID
+    in `features/_watchlists.tcss` (an ID rule that beats the shared block in
+    `components/_agentic_terminal.tcss` on source order, touching no other
+    destination).
+
+    Counting corners in the compositor's output catches both failure modes at
+    once: a doubled border shows more than four corners inside a region, and a
+    mixed style shows square ones.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wc-empty-state")
+
+        # CONTENT only occupies space (and therefore only draws a border) on
+        # the Items (Read) tab -- Task 4 fix round 1. This test iterates
+        # every `Region`, CONTENT included, so it must be on that tab.
+        screen.active_section = "items"
+        await pilot.pause()
+
+        screen._apply_layout(RegionLayout())
+        await pilot.pause()
+        # Regions are focusable, and the app-wide focus affordance is
+        # `*:focus { outline: solid $ds-focus-accent }` (core reset, top of
+        # the bundle) -- a SQUARE outline painted over whichever box has
+        # keyboard focus, on every screen. That is a deliberate focus signal,
+        # not a border-style inconsistency, so this test measures the resting
+        # state and blurs first rather than depending on where focus landed.
+        screen.set_focus(None)
+        await pilot.pause()
+
+        # 1. Every region draws its own box, and draws it `round`.
+        for region in Region:
+            widget = screen.query_one(f"#wl-region-{region.value}")
+            rows = _composited_rows(widget)
+            assert rows[0].startswith("╭") and rows[0].endswith("╮"), (
+                f"{region.value} has no round top border: {rows[0]!r}"
+            )
+            assert rows[-1].startswith("╰") and rows[-1].endswith("╯"), (
+                f"{region.value} has no round bottom border: {rows[-1]!r}"
+            )
+
+        # 2. The pane inside draws none -- that is the doubling this task
+        #    exists to remove. (Inner content may still draw its own cards,
+        #    e.g. the Overview grid; only the pane's own frame is checked.)
+        for pane_id in (
+            "watchlists-list-pane",
+            "watchlists-detail-pane",
+            "watchlists-inspector-pane",
+        ):
+            rows = _composited_rows(screen.query_one(f"#{pane_id}"))
+            edges = (rows[0][0], rows[0][-1], rows[-1][0], rows[-1][-1])
+            assert not any(ch in _ROUND_CORNERS + _SQUARE_CORNERS for ch in edges), (
+                f"#{pane_id} still draws its own frame inside the region's: "
+                f"{rows[0]!r} ... {rows[-1]!r}"
+            )
+
+        # 3. Nothing in the workbench draws a square-cornered box, so the
+        #    five outer boxes and everything nested in them read as one
+        #    family. Round 1's split left FEEDS/ITEMS/RIGHT_RAIL square while
+        #    LEFT_RAIL and CONTENT stayed round.
+        workbench_rows = _composited_rows(screen.query_one("#wl-workbench"))
+        squares = {ch for row in workbench_rows for ch in row if ch in _SQUARE_CORNERS}
+        assert not squares, (
+            f"the workbench mixes border styles ({sorted(squares)}); every box "
+            f"here should be `round`"
+        )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_left_rail_is_labelled_when_expanded():
+    """Task 6 fix round 3, Finding 1: title suppression keyed on
+    factory-presence rather than on "the pane supplies its own heading", and
+    LEFT_RAIL is where the two diverge -- `WatchlistTree` composes navigation
+    buttons and no heading. The expanded rail rendered as an unlabelled box
+    while its collapsed header still read "▸ Watchlists".
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wc-empty-state")
+
+        screen._apply_layout(RegionLayout())
+        await pilot.pause()
+
+        rail = screen.query_one("#wl-region-left_rail")
+        _assert_label_intact_on_screen(
+            rail, "Watchlists", context="expanded left rail heading"
+        )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_active_section_tab_label_is_visible():
+    """Task 3 defect, folded into Task 6 fix round 3 by the reviewer
+    (Finding 5): `WatchlistsTabStrip` pins its strip to `height: 1`, and
+    `.watchlists-tab` had no styling, so the active tab inherited the global
+    `.is-active { border: round $ds-action-focus }`. A `round` border needs
+    two rows before it has a content row at all, so the active button painted
+    as its own top border and nothing else -- the user could not see which
+    section was selected. Measured pre-fix at 160x42: the strip's only row
+    read `╭──────────────╮    Sources    Items ...`.
+
+    The compositor is the instrument, not `render_line()`: `render_line()`
+    returns a widget's own strip at the size the widget computed for itself,
+    which false-negatives on exactly this class of assertion (see
+    `_composited_rows`).
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wc-empty-state")
+
+        screen._apply_layout(RegionLayout())
+        await pilot.pause()
+
+        strip = screen.query_one("#wl-tabs")
+        active = screen.query_one("#wl-tab-overview", Button)
+        assert active.has_class("is-active"), sorted(active.classes)
+
+        rows = _composited_rows(strip)
+        assert len(rows) == 1, f"the section strip must stay one row: {rows!r}"
+        assert not any(ch in rows[0] for ch in _ROUND_CORNERS + _SQUARE_CORNERS), (
+            f"a border inside the one-row strip eats the row the labels need: "
+            f"{rows[0]!r}"
+        )
+        for label in ("Overview", "Sources", "Items", "Runs", "Rules", "Notifications"):
+            _assert_label_intact_on_screen(
+                strip, label, context="watchlists section tab strip"
+            )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (100, 40)])
+@pytest.mark.asyncio
+async def test_watchlists_soloed_feeds_fills_the_centre(size):
+    """Task 6 fix round 3, Finding 3: `Z` soloed FEEDS into a degenerate view.
+
+    Solo (`action_solo_region` -> `RegionLayout.solo`) collapses the other two
+    centre regions to one-line headers. FEEDS is the only capped region, so it
+    stayed pinned at `max-height: 13` while the rest of the centre went blank
+    -- measured pre-fix at 100x40 with 40 sources: `feeds=13@y0, items=1,
+    content=1`, 17 of the centre's 32 rows empty while FEEDS scrolled a 13-row
+    window over 44 rows of content. Solo-ITEMS and solo-CONTENT filled
+    correctly; only the capped region was broken.
+
+    Nothing in the DOM distinguished the state, so `_region_widget` now adds
+    `.watchlists-region-sole-centre` and the stylesheet lifts the cap there.
+    No solo geometry was tested anywhere before this.
+    """
+    app = _build_test_app()
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-workbench")
+
+        # CONTENT only occupies space on the Items (Read) tab -- Task 4 fix
+        # round 1. Soloing/un-soloing it below needs it genuinely present.
+        screen.active_section = "items"
+        await pilot.pause()
+
+        screen._apply_layout(RegionLayout())
+        await pilot.pause()
+        screen._apply_local_wc_snapshot(_WL_OVERFLOW_RECORDS, 40, True)
+        await pilot.pause()
+
+        for soloed in (Region.FEEDS, Region.ITEMS, Region.CONTENT):
+            screen._apply_layout(RegionLayout().solo(soloed))
+            await pilot.pause()
+            await pilot.pause()
+
+            # Re-query every widget after each layout change: the workbench
+            # reactive is `recompose=True`, so the previous iteration's
+            # references are unmounted and report a zero-sized region.
+            centre = screen.query_one("#wl-centre")
+            body = screen.query_one(f"#wl-region-{soloed.value}")
+            headers = [
+                screen.query_one(f"#wl-header-{other.value}")
+                for other in (Region.FEEDS, Region.ITEMS, Region.CONTENT)
+                if other is not soloed
+            ]
+            covered = body.region.height + sum(h.region.height for h in headers)
+            assert covered == centre.region.height, (
+                f"solo({soloed.value}) leaves "
+                f"{centre.region.height - covered} of the centre's "
+                f"{centre.region.height} rows blank: body={body.region} "
+                f"headers={[h.region for h in headers]}"
+            )
+
+
+@pytest.mark.parametrize("height,budget", [(42, 34), (41, 33)])
+@pytest.mark.asyncio
+async def test_watchlists_feeds_cap_keeps_items_taller_when_it_actually_binds(
+    height: int, budget: int
+):
+    """Task 6 fix round 3, Finding 4: the cap's derivation, made executable.
+
+    `test_watchlists_items_region_is_taller_than_feeds_region_when_expanded`
+    (above) runs the EMPTY state, where FEEDS's natural 11 rows never reach
+    the 12-row cap -- so the constraint that actually chose the cap has never
+    been exercised by a test. This forces FEEDS past its cap inside the real
+    chrome-wrapped screen and pins the resulting split.
+
+    Re-derived for Task 4 (the numbers below are NOT the pre-Phase-D ones):
+    CONTENT stopped being a `1fr` co-claimant on the ITEMS/CONTENT split (see
+    `.watchlists-region-content` in `_watchlists.tcss`) and became `auto` +
+    `max-height`, content-sized like FEEDS rather than budget-sized like
+    ITEMS. With no item selected -- true here, this test never selects one --
+    `ContentPane` composes just its one-line placeholder, so CONTENT sits at
+    its structural floor (border 2 + the generic "Content" heading 1 + the
+    placeholder line 1 = 4 rows) regardless of terminal height. ITEMS is
+    therefore the `.watchlists-centre` Vertical's ONLY real `fr` sibling
+    again (as it was before CONTENT held any real content), and simply takes
+    what FEEDS and CONTENT leave: `items = budget - feeds_cap - content_floor
+    = budget - 12 - 4`. At budget 34 that is 18; at budget 33, 17 -- both
+    comfortably above FEEDS's 12, so this split has real margin rather than
+    the pre-Phase-D derivation's razor-thin one-cap-value-wide window (that
+    fragility was a direct consequence of `fr`-splitting a shrinking pool
+    two ways; a fixed content floor does not have that problem).
+    """
+    app = _build_test_app()
+    # Setup change only (Task 7 fix round 1, Finding 1) -- see
+    # `_seed_overflow_sources`. Every assertion below is unchanged.
+    _seed_overflow_sources(app)
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, height)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-workbench")
+
+        # CONTENT only occupies space on the Items (Read) tab -- Task 4 fix
+        # round 1. This derivation is specifically about the three-region
+        # split, so it must be on that tab.
+        screen.active_section = "items"
+        await pilot.pause()
+
+        screen._apply_layout(RegionLayout())
+        await pilot.pause()
+        screen._apply_local_wc_snapshot(_WL_OVERFLOW_RECORDS, 40, True)
+        await pilot.pause()
+        await pilot.pause()
+
+        feeds = screen.query_one("#wl-region-feeds")
+        items = screen.query_one("#wl-region-items")
+        content = screen.query_one("#wl-region-content")
+
+        assert feeds.max_scroll_y > 0, (
+            "40 sources should overflow FEEDS -- if they do not, this test is "
+            f"no longer exercising the cap: feeds={feeds.region}"
+        )
+        assert feeds.region.height == 12, (
+            f"FEEDS should sit exactly at its `max-height: 12` at 160x{height}: "
+            f"{feeds.region}"
+        )
+        assert content.region.height == 4, (
+            f"CONTENT's idle floor (border 2 + heading 1 + placeholder 1) "
+            f"should not depend on terminal height: content={content.region}"
+        )
+        expected_items = {34: 18, 33: 17}[budget]
+        assert items.region.height == expected_items, (
+            f"ITEMS should take exactly what FEEDS (pinned at its 12-row "
+            f"cap) and CONTENT (idle at its 4-row floor) leave of the "
+            f"{budget}-row budget -- {budget} - 12 - 4 = {expected_items}: "
+            f"feeds={feeds.region} items={items.region} content={content.region}"
+        )
+        assert items.region.height > feeds.region.height, (
+            f"ITEMS must stay the taller reading area even when FEEDS is "
+            f"pinned at its cap: feeds={feeds.region} items={items.region}"
+        )
+        assert (
+            feeds.region.height + items.region.height + content.region.height == budget
+        ), (
+            f"the centre budget moved; the cap's derivation needs redoing: "
+            f"feeds={feeds.region} items={items.region} content={content.region}"
+        )
+
+
+@pytest.mark.parametrize("size", [(235, 52), (160, 42)])
+@pytest.mark.asyncio
+async def test_watchlists_right_rail_does_not_clip_action_labels(size):
+    """Task 5, defect 1: at the pre-fix 28-wide rail (26 usable columns),
+    every action label on the right rail truncated -- measured live at
+    235x52 as "Stage Watchlists Cont", "Open current Watchlis", "Console
+    follow unavai". Reproduced here byte-for-byte against the unfixed CSS
+    while writing this test (see `_composited_rows`'s docstring for why a
+    per-widget assertion is not enough to catch it), then confirmed fixed.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-workbench")
+
+        right_rail = screen.query_one("#wl-region-right_rail")
+        context = f"watchlists right rail at {size}"
+        for label in (
+            "Stage Watchlists Context in Console",
+            "Open current Watchlists",
+            "Console follow unavailable",
+        ):
+            _assert_label_intact_on_screen(right_rail, label, context=context)
+
+        # Also drive the entity Inspector itself through every action set
+        # it can show, including the new watchlist-level (scope-only) one,
+        # so a future action label long enough to threaten wrapping is
+        # caught here too, not just the console-handoff buttons above it.
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+
+        inspector.selected_entity = {
+            "id": "source-1",
+            "name": "AI News RSS",
+            "source_type": "rss",
+            "url": "http://example.com/feed",
+        }
+        await pilot.pause()
+        for label in ("Preview", "Check now", "Stage in Console", "Delete"):
+            _assert_label_intact_on_screen(
+                right_rail, label, context=f"{context} (source actions)"
+            )
+
+        inspector.selected_entity = None
+        inspector.scope = TreeScope(kind="watchlist", watchlist_id=1)
+        await pilot.pause()
+        for label in ("Check now", "Delete"):
+            _assert_label_intact_on_screen(
+                right_rail, label, context=f"{context} (watchlist-scope actions)"
+            )
 
 
 @pytest.mark.parametrize(
@@ -916,8 +1732,8 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         ("personas", "#personas-workbench", ("Library", "Inspector")),
         (
             "schedules",
-            "#schedules-workbench",
-            ("Schedule Queue", "Run Detail", "Status Inspector"),
+            "#scheduling-workbench",
+            ("Schedule Queue", "Task Detail", "Inspector"),
         ),
         (
             "workflows",
@@ -940,7 +1756,7 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         (
             "settings",
             "#settings-workbench",
-            ("Settings Sections", "Preference Detail", "Overview", "Scope Inspector"),
+            ("Overview", "Scope Inspector"),
         ),
         # The legacy ccp route/screen was retired; its workbench is the Personas
         # destination, covered by Tests/UI/test_personas_workbench.py.
@@ -951,7 +1767,7 @@ async def test_destination_pane_titles_are_user_facing_not_ordinal(
     route, workbench, expected_titles
 ):
     app = _build_test_app()
-    host = DestinationHarness(app, route)
+    host = _visual_destination_harness(app, route)
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
@@ -969,36 +1785,41 @@ async def test_destination_pane_titles_are_user_facing_not_ordinal(
 @pytest.mark.asyncio
 async def test_schedules_screen_matches_approved_control_plane_columns():
     app = _build_test_app()
-    host = DestinationHarness(app, "schedules")
+    host = _visual_destination_harness(app, "schedules")
 
     async with host.run_test(size=(160, 42)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#schedules-empty-state")
+        await _wait_for_selector(screen, pilot, "#scheduling-task-detail-empty-state")
+        await pilot.pause()
 
         visible_text = _visible_static_text(screen)
         for expected in (
-            "Schedules | Jobs, digests, timers, retries | Local | Console handoff",
-            "Filters: Next run Paused Failed Retry History",
+            "Last pull: —",
+            "Last push: —",
             "Schedule Queue",
-            "Run Detail",
-            "Status Inspector",
-            "State:",
-            "Retry/backoff:",
-            "Next action:",
-            "Console: blocked",
+            "Task Detail",
+            "No scheduled tasks yet",
+            "Inspector",
+            "No conflict",
         ):
             assert expected in visible_text
+        assert {"Local", "Server (unavailable)", "Follow in Console"}.issubset(
+            _visible_button_labels(screen)
+        )
+        assert screen.query_one("#scheduling-owner-server", Button).disabled
+        assert screen.query_one("#schedules-follow-in-console", Button).disabled
         assert "Column 1:" not in visible_text
         assert "Column 2:" not in visible_text
         assert "Column 3:" not in visible_text
 
-        for selector in (
-            "#schedules-list-detail-divider",
-            "#schedules-detail-inspector-divider",
-        ):
-            divider = screen.query_one(selector)
-            assert divider.has_class("destination-pane-divider")
-            assert divider.region.width == 1
+        _assert_horizontal_panes(
+            screen,
+            (
+                "#scheduling-list-pane",
+                "#scheduling-detail-pane",
+                "#scheduling-inspector-pane",
+            ),
+        )
 
 
 @pytest.mark.asyncio
@@ -1091,7 +1912,7 @@ async def test_personas_workbench_exposes_approved_three_column_ia():
         assert "Column 1:" not in visible_text
         assert "Column 2:" not in visible_text
         assert "Column 3:" not in visible_text
-        assert {"Characters", "Personas", "New", "Attach to Console"}.issubset(buttons)
+        assert {"Characters", "Personas", "New", "Chat now"}.issubset(buttons)
 
 
 @pytest.mark.asyncio
@@ -1183,7 +2004,7 @@ SOURCE_PREP_LOADING_CONTRACTS = [
     (
         "artifacts",
         artifacts_screen_module.ArtifactsScreen,
-        "_refresh_latest_chatbook_context",
+        "_start_chatbook_refresh",
         "#artifacts-loading-state",
         SOURCE_PREP_WORKBENCHES["artifacts"],
         "#artifacts-detail-pane",
@@ -1191,14 +2012,16 @@ SOURCE_PREP_LOADING_CONTRACTS = [
     # The Personas thin shell's snapshot worker (and its loading marker) was
     # retired with the workbench rebuild; loading/empty behavior is covered by
     # Tests/UI/test_personas_workbench.py.
-    (
-        "watchlists_collections",
-        wc_screen_module.WatchlistsCollectionsScreen,
-        "_refresh_local_wc_snapshot",
-        "#wc-loading-state",
-        SOURCE_PREP_WORKBENCHES["watchlists_collections"],
-        "#watchlists-detail-pane",
-    ),
+    #
+    # Watchlists' loading marker (#wc-loading-state) still exists and is
+    # still checked (Tests/UI/test_destination_shells.py::
+    # test_watchlists_collections_initial_load_uses_distinct_loading_copy),
+    # but `_assert_ascii_workbench_contract` requires the list/detail/
+    # inspector panes to be laid out horizontally, which Watchlists' rehost
+    # onto the collapsible WatchlistsWorkbench deliberately no longer does
+    # (FEEDS/ITEMS/CONTENT stack vertically inside a centre column — see
+    # watchlists_workbench.py). See `SOURCE_PREP_WORKBENCHES_HORIZONTAL`
+    # above for the same exclusion applied to the two sibling tests.
     (
         "skills",
         skills_screen_module.SkillsScreen,
@@ -1224,9 +2047,9 @@ async def test_source_prep_loading_states_preserve_workbench_geometry(
     contract,
     loading_container,
 ):
-    monkeypatch.setattr(screen_cls, refresh_method, lambda self: None)
+    monkeypatch.setattr(screen_cls, refresh_method, lambda self, *_a, **_k: None)
     app = _build_test_app()
-    host = DestinationHarness(app, route)
+    host = _visual_destination_harness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, loading_marker)
@@ -1234,6 +2057,7 @@ async def test_source_prep_loading_states_preserve_workbench_geometry(
             screen,
             workbench=contract["workbench"],
             strip=contract["strip"],
+            strip_max_height=contract.get("strip_max_height", 2),
             panes=contract["panes"],
             actions=contract["actions"],
             height=42,
@@ -1251,12 +2075,12 @@ async def test_source_prep_loading_states_preserve_workbench_geometry(
     [
         (
             "schedules",
-            "#schedules-filter-strip",
-            "#schedules-workbench",
+            "#scheduling-sync-status",
+            "#scheduling-workbench",
             (
-                "#schedules-list-pane",
-                "#schedules-detail-pane",
-                "#schedules-inspector-pane",
+                "#scheduling-list-pane",
+                "#scheduling-detail-pane",
+                "#scheduling-inspector-pane",
             ),
             ("#schedules-follow-in-console",),
         ),
@@ -1278,7 +2102,7 @@ async def test_operational_destinations_use_timing_or_procedure_workbench(
     route, strip, workbench, panes, actions
 ):
     app = _build_test_app()
-    host = DestinationHarness(app, route)
+    host = _visual_destination_harness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, workbench)
@@ -1286,6 +2110,7 @@ async def test_operational_destinations_use_timing_or_procedure_workbench(
             screen,
             workbench=workbench,
             strip=strip,
+            strip_max_height=5 if route == "schedules" else 2,
             panes=panes,
             actions=actions,
             height=42,
@@ -1297,16 +2122,16 @@ async def test_operational_destinations_use_timing_or_procedure_workbench(
     [
         (
             "schedules",
-            "#schedules-filter-strip",
-            "#schedules-workbench",
+            "#scheduling-sync-status",
+            "#scheduling-workbench",
             (
-                "#schedules-list-pane",
-                "#schedules-detail-pane",
-                "#schedules-inspector-pane",
+                "#scheduling-list-pane",
+                "#scheduling-detail-pane",
+                "#scheduling-inspector-pane",
             ),
             ("#schedules-follow-in-console",),
-            ("#schedules-empty-state", "#schedules-console-unavailable"),
-            "#schedules-detail-pane",
+            ("#scheduling-task-detail-empty-state",),
+            "#scheduling-detail-pane",
         ),
         (
             "workflows",
@@ -1328,14 +2153,16 @@ async def test_operational_empty_or_blocked_states_preserve_workbench_geometry(
     route, strip, workbench, panes, actions, markers, marker_container
 ):
     app = _build_test_app()
-    host = DestinationHarness(app, route)
+    host = _visual_destination_harness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, workbench)
+        await pilot.pause()
         _assert_ascii_workbench_contract(
             screen,
             workbench=workbench,
             strip=strip,
+            strip_max_height=5 if route == "schedules" else 2,
             panes=panes,
             actions=actions,
             height=42,
@@ -1346,18 +2173,24 @@ async def test_operational_empty_or_blocked_states_preserve_workbench_geometry(
             marker_container,
             context=f"{route} non-happy marker escaped workbench pane",
         )
+        if route == "schedules":
+            assert screen.query_one("#schedules-follow-in-console", Button).disabled
 
 
 OPERATIONAL_LOADING_CONTRACTS = [
     (
         "schedules",
-        schedules_screen_module.SchedulesScreen,
-        "_refresh_latest_console_context",
-        "#schedules-loading-state",
-        "#schedules-detail-pane",
-        "#schedules-filter-strip",
-        "#schedules-workbench",
-        ("#schedules-list-pane", "#schedules-detail-pane", "#schedules-inspector-pane"),
+        SchedulesWorkbench,
+        "load_tasks",
+        "#scheduling-task-table",
+        "#scheduling-list-pane",
+        "#scheduling-sync-status",
+        "#scheduling-workbench",
+        (
+            "#scheduling-list-pane",
+            "#scheduling-detail-pane",
+            "#scheduling-inspector-pane",
+        ),
         ("#schedules-follow-in-console",),
     ),
     (
@@ -1391,16 +2224,34 @@ async def test_operational_loading_states_preserve_workbench_geometry(
     panes,
     actions,
 ):
-    monkeypatch.setattr(screen_cls, refresh_method, lambda self: None)
+    load_started: asyncio.Event | None = None
+    load_cancelled: asyncio.Event | None = None
+    if route == "schedules":
+        load_started = asyncio.Event()
+        load_cancelled = asyncio.Event()
+
+        async def hold_initial_load(self):
+            load_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                load_cancelled.set()
+
+        monkeypatch.setattr(screen_cls, refresh_method, hold_initial_load)
+    else:
+        monkeypatch.setattr(screen_cls, refresh_method, lambda self, *_a, **_k: None)
     app = _build_test_app()
-    host = DestinationHarness(app, route)
+    host = _visual_destination_harness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, loading_marker)
+        if load_started is not None:
+            await asyncio.wait_for(load_started.wait(), timeout=1)
         _assert_ascii_workbench_contract(
             screen,
             workbench=workbench,
             strip=strip,
+            strip_max_height=5 if route == "schedules" else 2,
             panes=panes,
             actions=actions,
             height=42,
@@ -1411,6 +2262,10 @@ async def test_operational_loading_states_preserve_workbench_geometry(
             loading_container,
             context=f"{route} loading state escaped workbench geometry",
         )
+        if route == "schedules":
+            assert screen.query_one("#schedules-follow-in-console", Button).disabled
+    if load_cancelled is not None:
+        await asyncio.wait_for(load_cancelled.wait(), timeout=1)
 
 
 async def _assert_advanced_run_reachable(screen, pilot) -> None:
@@ -1508,6 +2363,21 @@ async def test_mcp_unavailable_or_local_default_state_keeps_workbench_geometry()
             height=42,
         )
         await _assert_advanced_run_reachable(screen, pilot)
+        # task-2240: this fresh install's lone built-in row is pre-selected,
+        # so the canvas opens on the built-in's DETAIL view -- return to the
+        # overview ("← All servers") before checking its geometry.
+        await _wait_for_selector(screen, pilot, "#mcp-detail-back")
+        await pilot.click("#mcp-detail-back")
+        deadline = time.monotonic() + 4.0
+        while time.monotonic() < deadline:
+            overview = screen.query_one("#mcp-servers-overview")
+            if overview.display and overview.region.width > 0:
+                break
+            await pilot.pause(0.01)
+        else:
+            raise AssertionError(
+                "servers overview did not reappear after ← All servers"
+            )
         _assert_marker_inside_container(
             screen,
             "#mcp-overview-summary",
@@ -1518,43 +2388,52 @@ async def test_mcp_unavailable_or_local_default_state_keeps_workbench_geometry()
 
 @pytest.mark.asyncio
 async def test_mcp_forced_loading_state_stays_inside_workbench(monkeypatch):
-    """Realigned from the retired `UnifiedMCPPanel.load_context` monkeypatch.
-
-    `UnifiedMCPPanel` is no longer mounted anywhere in the MCP screen's
-    component chain (Task 8 replaced it with `MCPWorkbench`), so forcing
-    *its* `load_context()` to hang no longer has any effect. Same product
-    intent -- force the surface to sit in a still-loading state and verify
-    nothing overflows its pane geometry -- reproduced by no-op'ing
-    `MCPWorkbench.reload()`, which pins the rail/canvas/inspector to their
-    just-mounted, pre-reload compose shape (empty rail besides "All servers";
-    inspector's default "Select a server" prompt) for the whole test. A no-op
-    rather than a hung await: `MCPWorkbench.on_mount` awaits `reload()`
-    inline, so an await that never resolves would deadlock app teardown.
-    """
-
-    async def keep_loading(self):
-        return None
-
-    monkeypatch.setattr(MCPWorkbench, "reload", keep_loading)
+    """A blocked production service load keeps the real workbench usable."""
     app = _build_test_app()
-    host = DestinationHarness(app, "mcp")
-    async with host.run_test(size=(140, 42)) as pilot:
-        screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#mcp-hub-inspector")
-        _assert_ascii_workbench_contract(
-            screen,
-            workbench="#mcp-hub-workbench",
-            strip="#mcp-mode-strip",
-            panes=("#mcp-hub-rail", "#mcp-hub-canvas", "#mcp-hub-inspector"),
-            actions=("#mcp-adv-run",),
-            height=42,
-        )
-        _assert_marker_inside_container(
-            screen,
-            "#mcp-inspector-state",
-            "#mcp-hub-inspector",
-            context="MCP forced loading state escaped inspector pane",
-        )
+    app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
+    service = app.unified_mcp_service
+    real_load_context = service.load_context
+    load_started = asyncio.Event()
+    release_load = asyncio.Event()
+
+    async def keep_loading():
+        load_started.set()
+        await release_load.wait()
+        return await real_load_context()
+
+    monkeypatch.setattr(service, "load_context", keep_loading)
+    async with app.run_test(size=(140, 42)) as pilot:
+        try:
+            await _wait_for_production_screen(app, pilot, ChatScreen)
+            await app.handle_screen_navigation(NavigateToScreen("mcp"))
+            screen = await _wait_for_production_screen(app, pilot, MCPScreen)
+            await asyncio.wait_for(load_started.wait(), timeout=6.0)
+            await _wait_for_selector(screen, pilot, "#mcp-hub-inspector")
+            rail = screen.query_one("#mcp-hub-rail")
+            loading = await _wait_for_loading_cover(
+                screen,
+                pilot,
+                "#mcp-hub-canvas",
+            )
+            inspector = screen.query_one("#mcp-hub-inspector")
+            _assert_strip_compact(screen, "#mcp-mode-strip", max_height=2)
+            assert rail.region.x < loading.region.x < inspector.region.x
+            assert len({rail.region.y, loading.region.y, inspector.region.y}) == 1
+            for widget, context in (
+                (rail, "MCP rail"),
+                (loading, "MCP loading canvas"),
+                (inspector, "MCP inspector"),
+            ):
+                _assert_visible_in_viewport(widget, height=42, context=context)
+            _assert_marker_inside_container(
+                screen,
+                "#mcp-inspector-state",
+                "#mcp-hub-inspector",
+                context="MCP forced loading state escaped inspector pane",
+            )
+        finally:
+            release_load.set()
 
 
 @pytest.mark.parametrize(
@@ -1749,8 +2628,7 @@ COMPACT_DESTINATION_CONTRACTS = {
         "detail": "#console-session-surface",
         "actions": (
             "#console-send-message",
-            "#console-attach-context",
-            "#console-save-chatbook",
+            "#console-composer-menu",
         ),
     },
     "library": {
@@ -1791,16 +2669,29 @@ COMPACT_DESTINATION_CONTRACTS = {
     },
     "watchlists_collections": {
         "identity": "#watchlists-collections-title",
-        "workbench": "#watchlists-workbench",
-        "object": "#watchlists-list-pane",
+        "workbench": "#wl-workbench",
+        # `#watchlists-list-pane` (FEEDS) is gated to the Read tab (TASK-1344
+        # AC#1) and unmounted everywhere else (AC#4), so it is not visible
+        # at this test's default section. `#wl-region-left_rail` (the
+        # watchlist tree) is the rail-as-"object" analogue "chat" and
+        # "library" already use above for the same reason -- always
+        # present, regardless of active section.
+        "object": "#wl-region-left_rail",
         "detail": "#watchlists-detail-pane",
-        "actions": ("#wc-open-watchlists", "#watchlists-follow-in-console"),
+        # `#nav-overview` retired with the left-rail navigator -- see the
+        # note on the same key in SOURCE_PREP_WORKBENCHES above.
+        "actions": (
+            "#wl-tab-overview",
+            "#wc-empty-create-source",
+            "#wc-open-watchlists",
+            "#watchlists-follow-in-console",
+        ),
     },
     "schedules": {
-        "identity": "#schedules-title",
-        "workbench": "#schedules-workbench",
-        "object": "#schedules-list-pane",
-        "detail": "#schedules-detail-pane",
+        "identity": "#scheduling-sync-status",
+        "workbench": "#scheduling-workbench",
+        "object": "#scheduling-list-pane",
+        "detail": "#scheduling-detail-pane",
         "actions": ("#schedules-follow-in-console",),
     },
     "workflows": {
@@ -1875,7 +2766,7 @@ async def test_top_level_destinations_keep_primary_workbench_visible_at_compact_
     elif route == "chat":
         host = ConsoleHarness(app)
     else:
-        host = DestinationHarness(app, route)
+        host = _visual_destination_harness(app, route)
     async with host.run_test(size=(100, 32)) as pilot:
         screen = host.screen_stack[-1]
         await _wait_for_selector(screen, pilot, contract["workbench"])
@@ -1897,6 +2788,38 @@ async def test_top_level_destinations_keep_primary_workbench_visible_at_compact_
                 context=f"{route}:{required}:{contract[required]}",
                 viewport_width=100,
             )
+        if route == "schedules":
+            assert screen.has_class("schedules-workbench-compact")
+            compact_inspector = screen.query_one("#scheduling-inspector-pane")
+            assert _is_effectively_displayed(compact_inspector)
+            assert compact_inspector.region.width > 0
+            _assert_visible_in_viewport(
+                compact_inspector,
+                height=32,
+                context="schedules:compact-inspector",
+                viewport_width=100,
+            )
+            for width, compact in ((121, False), (120, True)):
+                await pilot.resize_terminal(width, 32)
+                await pilot.pause()
+                assert screen.has_class("schedules-workbench-compact") is compact
+                for selector in (
+                    "#scheduling-list-pane",
+                    "#scheduling-detail-pane",
+                    "#scheduling-inspector-pane",
+                ):
+                    pane = screen.query_one(selector)
+                    assert _is_effectively_displayed(pane)
+                    assert pane.region.width > 0
+                    _assert_visible_in_viewport(
+                        pane,
+                        height=32,
+                        context=f"schedules:{width}:{selector}",
+                        viewport_width=width,
+                    )
+            await pilot.resize_terminal(100, 32)
+            await pilot.pause()
+            assert screen.has_class("schedules-workbench-compact")
         _assert_any_action_visible(
             screen,
             contract["actions"],
@@ -1915,8 +2838,8 @@ VISIBLE_FOCUS_TARGETS = {
     },
     "chat": {
         "console-send-message",
-        "console-attach-context",
-        "console-save-chatbook",
+        # Attach and Save Chatbook are ☰ menu rows now, not row buttons.
+        "console-composer-menu",
         "console-run-library-rag",
     },
     # The retired #library-open-* buttons lived only in the never-mounted
@@ -1957,22 +2880,51 @@ VISIBLE_FOCUS_TARGETS = {
     "settings": {"settings-category-overview", "settings-category-providers-models"},
 }
 
+#: Tab-order search budget per destination, default 24. Watchlists needs a
+#: few more presses: `WatchlistsWorkbench`'s five regions are each
+#: individually focusable (`can_focus = True`, so `z` can target whichever
+#: one has focus — see `watchlists_workbench.py`), adding five stops on top
+#: of everything the pre-rehost tree already had. Measured empirically at 29
+#: presses to `wc-open-watchlists` with the default `_build_test_app()`
+#: empty-state fixture; 32 leaves a small margin.
+TAB_ORDER_ATTEMPTS = {
+    "watchlists_collections": 32,
+}
+
 
 @pytest.mark.parametrize("route,targets", VISIBLE_FOCUS_TARGETS.items())
 @pytest.mark.asyncio
 async def test_tab_order_reaches_visible_primary_action(route, targets):
     app = _build_test_app()
+    if route == "schedules":
+        app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
+            HomeActiveWorkItem(
+                item_id="local:schedule_run:visual-parity",
+                title="Visual parity schedule",
+                source="Schedules",
+                status="running",
+                detail_route="schedules",
+                console_available=True,
+            )
+        )
     if route == "home":
         host = HomeHarness(app)
     elif route == "chat":
         _mark_console_onboarding_complete(app)
         host = ConsoleHarness(app)
     else:
-        host = DestinationHarness(app, route)
+        host = _visual_destination_harness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
         screen = host.screen_stack[-1]
         workbench = TOP_LEVEL_WORKBENCH_SELECTORS[route]
         await _wait_for_selector(screen, pilot, workbench)
+        if route == "schedules":
+            for _ in range(20):
+                follow_button = screen.query_one("#schedules-follow-in-console", Button)
+                if not follow_button.disabled:
+                    break
+                await pilot.pause()
+            assert not follow_button.disabled
         target_buttons = [
             screen.query_one(f"#{target}", Button)
             for target in targets
@@ -1990,7 +2942,7 @@ async def test_tab_order_reaches_visible_primary_action(route, targets):
                 viewport_width=140,
             )
             return
-        for _ in range(24):
+        for _ in range(TAB_ORDER_ATTEMPTS.get(route, 24)):
             await pilot.press("tab")
             focused = host.focused
             if focused is not None and focused.id in enabled_targets:
@@ -2003,4 +2955,952 @@ async def test_tab_order_reaches_visible_primary_action(route, targets):
                 return
         pytest.fail(
             f"{route} did not focus a visible primary action from {sorted(enabled_targets)}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_feed_source_row_stays_one_row_however_long_the_name():
+    """Task 7 fix round 1, Finding 1 (CSS half): `watchlist-feed-source-row`
+    shipped as a class name with no rule behind it.
+
+    It now has one, and `height: 1` is the load-bearing declaration. FEEDS is
+    capped at `max-height: 12` and that cap was derived against one-row
+    children; a bare `Static` sizes to `auto`, so a long feed title -- these
+    arrive from remote feeds and OPML imports, not from us -- would wrap and
+    silently eat the region's budget. Measured through the production
+    stylesheet, since a bare `App` with no CSS cannot see this at all.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Morning AI Brief")
+    long_name = " ".join(
+        ["A remote feed title that runs on well past the feeds column"] * 6
+    )
+    source_id = service._db.add_subscription(
+        name=long_name, type="rss", source="https://long.example/f"
+    )
+    service.add_source(watchlist["id"], source_id)
+
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-workbench")
+        # FEEDS only occupies the centre on the Read tab (TASK-1344 AC#1).
+        screen.active_section = "items"
+        await pilot.pause()
+        screen._tree_watchlists = [{"id": watchlist["id"], "name": "Morning AI Brief"}]
+        screen._apply_layout(RegionLayout())
+        await pilot.pause()
+
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
+        )
+        for _ in range(20):
+            await pilot.pause()
+            if list(screen.query(f"#wl-feeds-source-{source_id}")):
+                break
+
+        row = screen.query_one(f"#wl-feeds-source-{source_id}", Static)
+        assert row.region.height == 1, (
+            f"a long feed name must not wrap the row to {row.region.height} rows; "
+            "FEEDS's max-height was derived against one-row children"
+        )
+        feeds = screen.query_one("#wl-region-feeds")
+        assert feeds.region.contains_region(row.region), (
+            f"the row should sit inside FEEDS: feeds={feeds.region} row={row.region}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_tree_selection_is_visually_distinct_against_the_bundle():
+    """task-876: the tree node matching `tree_scope` must be visually
+    distinguished from its siblings under the REAL stylesheet.
+
+    A bare `App` would pass this even if `.watchlist-tree-watchlist.is-active`
+    carried no rule at all -- the exact LabModeStrip/Watchlists-tab-strip
+    failure mode this program has already hit twice. Loads the production
+    bundle (`_visual_destination_harness`) and reads the resolved styles
+    Textual actually computed, not a bare class-presence check.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Morning AI Brief")
+
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(
+            screen, pilot, f"#wl-tree-node-watchlist-{watchlist['id']}"
+        )
+
+        all_button = screen.query_one("#wl-tree-node-all", Button)
+        watchlist_button = screen.query_one(
+            f"#wl-tree-node-watchlist-{watchlist['id']}", Button
+        )
+
+        # Resting state: `tree_scope` defaults to "all", so the "All
+        # sources" root starts active and must already read differently
+        # from its as-yet-unselected "Morning AI Brief" sibling. `text_style`
+        # is NOT part of this comparison: Textual's own default Button
+        # variant (`-style-default`) is unconditionally bold, so both nodes
+        # already agree on that regardless of `is-active` -- background and
+        # foreground colour are what this CSS actually changes.
+        assert all_button.has_class("is-active")
+        assert not watchlist_button.has_class("is-active")
+        assert all_button.styles.background != watchlist_button.styles.background, (
+            "the active root must not share its background with an inactive "
+            "sibling under the production stylesheet"
+        )
+        assert all_button.styles.color != watchlist_button.styles.color
+
+        # Click the watchlist node: the highlight must MOVE, not merely
+        # duplicate onto a second node. `active_scope` is `recompose=True`
+        # on `WatchlistTree` itself, so the click swaps in brand new button
+        # instances -- the `all_button`/`watchlist_button` references above
+        # are now stale and must be re-queried, not reused.
+        await pilot.click(f"#wl-tree-node-watchlist-{watchlist['id']}")
+        await pilot.pause()
+
+        all_button = screen.query_one("#wl-tree-node-all", Button)
+        watchlist_button = screen.query_one(
+            f"#wl-tree-node-watchlist-{watchlist['id']}", Button
+        )
+        assert watchlist_button.has_class("is-active")
+        assert not all_button.has_class("is-active")
+        assert all_button.styles.background != watchlist_button.styles.background
+        assert all_button.styles.color != watchlist_button.styles.color
+
+        # And the label itself must actually be painted, not clipped away by
+        # the border-round-in-a-one-row-strip defect this program has
+        # already hit twice (task-875) -- `render_line()` would not catch a
+        # regression of that shape; the compositor is ground truth.
+        _assert_label_intact_on_screen(
+            watchlist_button, "Morning AI Brief", context="tree watchlist node"
+        )
+
+
+def _row_reverse_video(strips, region, needle: str) -> bool | None:
+    """Whether ANY segment in the row containing `needle` renders reverse
+    video, or `None` if `needle` is not on screen inside `region` at all.
+    """
+    for y in range(region.y, region.y + region.height):
+        if not (0 <= y < len(strips)):
+            continue
+        row_segments = strips[y]
+        row_text = "".join(segment.text for segment in row_segments)
+        if needle in row_text:
+            return any(
+                bool(getattr(segment.style, "reverse", False))
+                for segment in row_segments
+            )
+    return None
+
+
+@pytest.mark.asyncio
+async def test_sources_pane_selected_row_renders_reverse_video_under_the_bundle():
+    """task-876, AC #6: confirm the Sources selection highlight is real
+    painted output, not just a Python-side style attribute, under the
+    production stylesheet + theme (`SourcesPane`/`RunsPane`/
+    `NotificationsPane` share the identical mechanism -- a `reverse bold`
+    Rich `Text` style baked into the selected row's cells, since a
+    DataTable cell cannot reference Textual CSS variables; see
+    `SourcesPane._SELECTED_ROW_STYLE`'s docstring).
+
+    Does not also assert against a second, merely-focused row: this
+    destination's `#sources-toolbar` currently claims nearly all of
+    `SourcesPane`'s vertical budget in the full shell (measured: 33 of 34
+    rows at 160x60), leaving the table only 1 visible row regardless of
+    terminal size -- a real, pre-existing layout defect unrelated to this
+    task's CSS-vs-bare-App concern. The per-pane unit tests in
+    Tests/Watchlists/test_watchlists_*_pane.py already cover "does the
+    highlight move / does an unselected row stay unstyled" with two rows
+    both on screen; this test only needs to confirm the SAME mechanism
+    still renders as reverse video once real CSS/theme are in the loop.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+
+        sources_pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        sources_pane.sources = [
+            {"id": 1, "name": "AI News RSS", "source_type": "rss", "active": True},
+        ]
+        await pilot.pause()
+        sources_pane.select_source_by_id("1")
+        await pilot.pause()
+
+        table = sources_pane.query_one("#sources-table", DataTable)
+        strips = screen._compositor.render_strips()
+        assert _row_reverse_video(strips, table.region, "AI News RSS") is True, (
+            "the selected row must actually paint as reverse video under the "
+            "production stylesheet, not just carry the style in Python"
+        )
+
+
+@pytest.mark.asyncio
+async def test_runs_pane_selected_row_renders_reverse_video_under_the_bundle():
+    """Same confirmation as the Sources pane test above, for `RunsPane`."""
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "runs"
+        await pilot.pause(0.2)
+
+        runs_pane = screen.query_one("#watchlists-runs-pane", RunsPane)
+        runs_pane.runs = [
+            {"id": "run-1", "source_title": "AI News RSS", "status": "completed"},
+        ]
+        await pilot.pause()
+        runs_pane.select_run_by_id("run-1")
+        await pilot.pause()
+
+        table = runs_pane.query_one("#runs-table", DataTable)
+        strips = screen._compositor.render_strips()
+        assert _row_reverse_video(strips, table.region, "AI News RSS") is True, (
+            "the selected run row must actually paint as reverse video under "
+            "the production stylesheet"
+        )
+
+
+@pytest.mark.asyncio
+async def test_notifications_pane_selected_row_renders_reverse_video_under_the_bundle():
+    """Same confirmation as the Sources pane test above, for
+    `NotificationsPane` -- whose `selected_notification` is `recompose=True`
+    (unlike Sources/Runs), so the highlight is applied entirely in
+    `compose()` rather than via a targeted `update_cell`.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "notifications"
+        await pilot.pause(0.2)
+
+        notifications_pane = screen.query_one(
+            "#watchlists-notifications-pane", NotificationsPane
+        )
+        notifications_pane.notifications = [
+            {"id": 1, "title": "Research complete", "category": "research"},
+        ]
+        await pilot.pause()
+        notifications_pane.select_notification_by_id("1")
+        await pilot.pause()
+
+        table = notifications_pane.query_one("#notifications-table", DataTable)
+        strips = screen._compositor.render_strips()
+        assert _row_reverse_video(strips, table.region, "Research complete") is True, (
+            "the selected notification row must actually paint as reverse "
+            "video under the production stylesheet"
+        )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_right_rail_says_inspector_exactly_once():
+    """Post-branch live-capture finding: the RIGHT_RAIL rendered "Inspector"
+    twice in one box.
+
+    `_build_inspector_pane` opens the region with
+    `Static("Inspector", classes="destination-section watchlists-column-title")`
+    -- the rail's heading, left-aligned, covering the state summaries and
+    Console actions as well as the entity inspector. `InspectorPane.compose`
+    then yielded its own `Static("Inspector", classes="pane-title")`, centred,
+    directly below the Console action buttons.
+
+    Task 6 ("one border, one title per region") did not catch this because it
+    compared each REGION's title against its content's, and both of these
+    live inside the content. The screenshot caught it in seconds -- which is
+    the whole argument for looking at the assembled app before shipping.
+
+    Asserts on the rendered text rather than on widget identity so it fails
+    for any future re-introduction, whichever widget emits the duplicate.
+    """
+    app = _build_test_app()
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-workbench")
+        screen._apply_layout(RegionLayout())
+        await pilot.pause()
+
+        rail = screen.query_one("#wl-region-right_rail")
+        headings = [
+            str(node.renderable).strip()
+            for node in rail.query(Static)
+            if str(node.renderable).strip() == "Inspector"
+        ]
+        assert len(headings) == 1, (
+            f"the right rail must carry exactly one 'Inspector' heading, "
+            f"found {len(headings)}"
+        )
+        # The one that survives is the rail's, not the nested pane's: the
+        # region holds more than the entity inspector.
+        assert "Inspector" in _visible_static_text(screen), (
+            "dropping the duplicate must not drop the heading entirely"
+        )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_sources_toolbar_does_not_starve_its_table(size):
+    """TASK-897: `#sources-toolbar` took every row its pane had.
+
+    It is a bare `Vertical` with no height rule anywhere in the stylesheet,
+    so it inherited Textual's `height: 1fr` default and claimed all the
+    space in `SourcesPane`, leaving `#sources-table` a single visible row --
+    at any terminal size, because `1fr` grows with the pane. The Sources
+    section is the screen's main list of what a user is monitoring, so it
+    showed one source at a time.
+
+    Same shape as the FEEDS clipping bug: a height that is fine in
+    isolation and wrong once the widget is nested in the real layout. Which
+    is why this runs in the full shell under the production stylesheet -- a
+    bare `App` with no CSS cannot see it, and on this screen that blind spot
+    has now shipped three separate defects.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+
+        sources_pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        # The empty state is where this bites, and it is the first thing a
+        # new user sees: with no rows the table collapses to 1 and the
+        # elastic toolbar swallows the rest of the pane. Measured pre-fix at
+        # 160x42: toolbar=15, table=1 inside a 16-row pane.
+        toolbar = sources_pane.query_one("#sources-toolbar")
+        table = sources_pane.query_one("#sources-table", DataTable)
+        assert toolbar.region.height <= 6, (
+            f"the toolbar must take only what its own controls need, not "
+            f"whatever the table is not using: toolbar={toolbar.region} "
+            f"table={table.region} pane={sources_pane.region}"
+        )
+
+        sources_pane.sources = [
+            {"id": i, "name": f"feed-{i:02d}", "source_type": "rss", "active": True}
+            for i in range(1, 13)
+        ]
+        await pilot.pause()
+
+        toolbar = sources_pane.query_one("#sources-toolbar")
+        table = sources_pane.query_one("#sources-table", DataTable)
+
+        assert table.region.height > 1, (
+            f"the sources table must show more than one row; the toolbar is "
+            f"eating the pane: toolbar={toolbar.region} table={table.region} "
+            f"pane={sources_pane.region}"
+        )
+        assert table.region.height >= toolbar.region.height, (
+            f"the table is the point of this pane and must not be shorter "
+            f"than its own toolbar: toolbar={toolbar.region} "
+            f"table={table.region}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_tree_action_labels_fit_the_rail_intact():
+    """TASK-895: the tree's five write verbs must be readable in the real
+    28-column rail, not clipped to an ellipsis.
+
+    A bare `App` cannot see this at all. Textual's own Button CSS pins
+    `min-width: 16` and `compact=True` only drops the border, so three
+    action buttons in a `Horizontal` claim 48 columns inside a 26-column
+    interior unless `features/_watchlists.tcss` overrides it -- measured
+    pre-rule as `New Rena… Dele…`. The compositor is the instrument
+    (`render_strips()` via `_composited_rows`): `render_line()` returns each
+    button's own self-computed strip and would report the full label even
+    while the button overflowed its rail.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-tree-new")
+        screen._apply_layout(RegionLayout())
+        await pilot.pause()
+
+        rail = screen.query_one("#wl-region-left_rail")
+        for label in ("New", "Rename", "Delete", "Add source", "Remove"):
+            _assert_label_intact_on_screen(
+                rail, label, context=f"tree action {label!r}"
+            )
+
+        # And every action button sits inside the rail's own box rather than
+        # spilling past its right edge, which is what the `min-width: 16`
+        # default does when it wins.
+        for action_id in (
+            "#wl-tree-new",
+            "#wl-tree-rename",
+            "#wl-tree-delete",
+            "#wl-tree-add-source",
+            "#wl-tree-remove-source",
+        ):
+            button = screen.query_one(action_id, Button)
+            assert rail.region.contains_region(button.region), (
+                f"{action_id} escapes the left rail: rail={rail.region} "
+                f"button={button.region}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_tree_blocked_verbs_render_as_disabled_under_the_bundle():
+    """TASK-895 / AC #5's rendering half: a disabled action must not paint
+    like a live one.
+
+    "A disabled button that looks enabled" is a defect this program has
+    already fixed once, and `disabled=True` alone is a Python attribute --
+    whether it reaches the screen depends on the theme and the bundle
+    winning over `.watchlist-tree-action`'s own `border: none`. Compared
+    against a sibling in the same strip that IS live, so the assertion
+    cannot pass by both being styled identically.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-tree-new")
+
+        live = screen.query_one("#wl-tree-new", Button)
+        blocked = screen.query_one("#wl-tree-rename", Button)
+        assert not live.disabled and blocked.disabled
+
+        strips = screen._compositor.render_strips()
+
+        def _cells(button):
+            row = button.region.y
+            column = 0
+            out = []
+            for segment in strips[row]:
+                for char in segment.text:
+                    if (
+                        button.region.x
+                        <= column
+                        < button.region.x + button.region.width
+                    ):
+                        out.append((char, segment.style))
+                    column += 1
+            return out
+
+        live_cells = [cell for cell in _cells(live) if cell[0].strip()]
+        blocked_cells = [cell for cell in _cells(blocked) if cell[0].strip()]
+        assert live_cells and blocked_cells, (
+            "both buttons must actually be painted for this comparison to mean "
+            f"anything: live={live_cells!r} blocked={blocked_cells!r}"
+        )
+        assert {str(style) for _, style in live_cells} != {
+            str(style) for _, style in blocked_cells
+        }, (
+            "the disabled action paints identically to the live one under the "
+            "production stylesheet"
+        )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_sources_toolbar_controls_are_actually_visible(size):
+    """TASK-995: the Sources toolbar drew no controls at all.
+
+    `.destination-filter-strip` is `height: 1` (`layout/_panes.tcss`), but a
+    bordered `Input`/`Select` is three rows, so the strip carrying the search
+    box, the three filters, `New Source` and `Filters` rendered as its top
+    border and nothing else. Captured live on a clean profile:
+
+        ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+            Preview        Check now      Import OPML     Export OPML
+
+    That blocked the whole new-user path: create a watchlist, click
+    "Create source", and there is no visible way to add one.
+
+    The Rules strip holds only `Button`s and rendered correctly, which is why
+    this asserts on the widgets that are three rows tall rather than on the
+    strip class.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        for selector in (
+            "#sources-search-input",
+            "#sources-type-select",
+            "#sources-status-filter",
+            "#sources-active-filter",
+            "#sources-new-button",
+            "#sources-filter-toggle",
+        ):
+            widget = pane.query_one(selector)
+            assert widget.region.height >= 1, (
+                f"{selector} is clipped to nothing: {widget.region}"
+            )
+            assert widget.region.width > 0, f"{selector} has no width: {widget.region}"
+            # Clipping was only half of it. Nothing sized these controls, so
+            # `Input`'s `width: 100%` default and the global
+            # `Select { width: 100% }` each claimed the whole strip and
+            # stacked: `New Source` measured Region(x=395, ...) inside a pane
+            # 93 columns wide on a 160-column terminal. A control that is
+            # three hundred columns off the right edge is just as unusable as
+            # one clipped to its border, and neither `height` nor
+            # `render_strips` alone catches it, so assert containment.
+            assert widget.region.right <= pane.region.right, (
+                f"{selector} overflows the Sources pane horizontally: "
+                f"{widget.region} is outside {pane.region}"
+            )
+            assert widget.region.x >= pane.region.x, (
+                f"{selector} starts left of the Sources pane: "
+                f"{widget.region} vs {pane.region}"
+            )
+
+        # Regions are not enough on their own: a three-row control inside a
+        # one-row strip still reports a region while painting only its
+        # border. Every label has to actually reach the screen.
+        strips = screen._compositor.render_strips()
+        strip_row = pane.query_one("#sources-search-input").region.y
+        painted = "".join(seg.text for seg in strips[strip_row])
+        for label in (
+            "Search sources...",  # the search Input's placeholder
+            "All statuses",  # the status Select's current value
+            "New Source",
+            "Filters",
+        ):
+            assert label in painted, (
+                f"{label!r} never reaches the screen; the Sources toolbar is "
+                f"still unusable at {size}. Row {strip_row} paints: "
+                f"{painted.strip()!r}"
+            )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_other_filter_strip_controls_are_visible(size):
+    """TASK-995 AC#3: the same defect, everywhere else it occurs.
+
+    `.destination-filter-strip` is shared chrome, so the Sources toolbar was
+    checked against every other user of it. Schedules, Workflows and the
+    Runs/Rules/Notifications toolbars put only `Static`s and `Button`s in
+    theirs and were never affected; the two that carry an `Input` or a
+    `Select`, and so had exactly the Sources defect, are the Items toolbar
+    and the screen's own backend header bar. Both are asserted here so the
+    UAT does not have to find them a second time.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "items"
+        await pilot.pause(0.2)
+
+        items_pane = screen.query_one("#watchlists-items-pane")
+        for selector in ("#items-search-input", "#items-status-select"):
+            widget = screen.query_one(selector)
+            assert widget.region.height >= 1 and widget.region.width > 0, (
+                f"{selector} is clipped to nothing: {widget.region}"
+            )
+            assert widget.region.right <= items_pane.region.right, (
+                f"{selector} overflows the Items pane horizontally: "
+                f"{widget.region} is outside {items_pane.region}"
+            )
+
+        strips = screen._compositor.render_strips()
+        items_row = screen.query_one("#items-search-input").region.y
+        painted = "".join(seg.text for seg in strips[items_row])
+        for label in ("Search items...", "All statuses"):
+            assert label in painted, (
+                f"{label!r} never reaches the screen; the Items toolbar is "
+                f"clipped at {size}. Row {items_row} paints: {painted.strip()!r}"
+            )
+
+        backend = screen.query_one("#watchlists-backend-select")
+        assert backend.region.height >= 1 and backend.region.width > 0, (
+            f"the backend Select is clipped to nothing: {backend.region}"
+        )
+        assert backend.region.right <= screen.size.width, (
+            f"the backend Select is off the right edge: {backend.region}"
+        )
+        header_painted = "".join(seg.text for seg in strips[backend.region.y])
+        assert "Local" in header_painted, (
+            "the backend Select's current value never reaches the screen; "
+            f"row {backend.region.y} paints: {header_painted.strip()!r}"
+        )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_tab_strip_hit_regions_match_its_painted_labels(size):
+    """TASK-996: a real click at each tab's PAINTED label column has to
+    activate that tab's own section.
+
+    The UAT reported that clicking the column where `Items` is drawn
+    activated `Runs`, and suspected the task-875 shape: `WatchlistsTabStrip`
+    pins `height: 1` while a bordered `Button` wants three rows, so layout
+    boxes and painted labels come apart. That did not reproduce -- see the
+    task file -- but nothing was asserting it either way, which is why a
+    harness coordinate error could be mistaken for an app defect for a whole
+    UAT round. This closes that gap.
+
+    Deliberately derived from the compositor, not from the widget's own
+    region: reading `button.region.x` and clicking there would pass even if
+    the label were painted somewhere else entirely, which is precisely the
+    failure that was alleged. Every column the label occupies is probed, not
+    just its centre, so a hit region that merely OVERLAPS the label still
+    fails.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        await pilot.pause(0.2)
+
+        for section_id, label in SECTIONS:
+            # Recomputed every iteration, not captured once up front: the
+            # tab strip's own row can legitimately differ between the Read
+            # tab -- where it still lives inside FEEDS's bordered body,
+            # unchanged since before this task -- and every OTHER tab, where
+            # it now lives in the borderless `#wl-centre-status` header
+            # (TASK-1344 AC#1 gates FEEDS to Read; AC#4 unmounts it rather
+            # than leaving a one-row header elsewhere). A stale row/painted
+            # pair captured on one tab and reused after switching to a
+            # structurally different one is exactly the kind of harness
+            # coordinate error this test exists to catch in the *app* --
+            # it must not reintroduce the same class of bug in the *test*.
+            strip = screen.query_one("#wl-tabs")
+            row = strip.region.y
+            painted = "".join(
+                segment.text for segment in screen._compositor.render_strips()[row]
+            )
+
+            start = painted.find(label)
+            assert start != -1, (
+                f"the {label!r} tab label is not painted at all on row {row}: "
+                f"{painted.strip()!r}"
+            )
+            for column in range(start, start + len(label)):
+                hit = screen.get_widget_at(column, row)[0]
+                assert getattr(hit, "id", None) == f"wl-tab-{section_id}", (
+                    f"column {column} of row {row} paints {label!r} but belongs "
+                    f"to {getattr(hit, 'id', None)!r} -- clicking the label "
+                    f"would activate the wrong section"
+                )
+
+            # And the click has to land, not merely be routed: `Items` was
+            # the tab the UAT could never reach.
+            await pilot.click(offset=(start + len(label) // 2, row))
+            await pilot.pause(0.2)
+            assert screen.active_section == section_id, (
+                f"clicking column {start + len(label) // 2} of row {row}, where "
+                f"{label!r} is painted, activated "
+                f"{screen.active_section!r} instead of {section_id!r}"
+            )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_tree_chevron_shares_a_row_with_its_watchlist(size):
+    """TASK-997: the expand chevron drew on its own line above the name.
+
+    Captured live in the rail on a clean profile:
+
+        │ Unassigned  0            │
+        │       ▸                  │
+        │ Morning AI Brief  0      │
+
+    `_watchlist_node` yielded the chevron `Button` and the name `Button` as
+    two separate children of the tree's `Vertical`, so they stacked; and the
+    chevron inherited Textual's `min-width: 16`, which is why it painted
+    seven columns in from the left of a 26-column rail rather than beside
+    anything. Every watchlist cost two rows of the screen's primary
+    navigation instead of one.
+
+    Asserted from the compositor under the production stylesheet: which row a
+    glyph lands on is exactly the kind of thing a bare `App` gets wrong.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Morning AI Brief")
+    arxiv = service._db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
+    service.add_source(watchlist["id"], arxiv)
+
+    async with app.run_test(size=size) as pilot:
+        await _wait_for_production_screen(app, pilot, ChatScreen)
+        await app.handle_screen_navigation(NavigateToScreen("watchlists_collections"))
+        screen = await _wait_for_production_screen(
+            app,
+            pilot,
+            wc_screen_module.WatchlistsCollectionsScreen,
+        )
+        await _wait_for_selector(
+            screen, pilot, f"#wl-tree-node-watchlist-{watchlist['id']}"
+        )
+
+        def painted_rows():
+            strips = screen._compositor.render_strips()
+            return ["".join(seg.text for seg in row) for row in strips]
+
+        chevron = screen.query_one(f"#wl-tree-expand-{watchlist['id']}", Button)
+        node = screen.query_one(f"#wl-tree-node-watchlist-{watchlist['id']}", Button)
+
+        # AC#1: same row, and the chevron to the LEFT of the name.
+        assert chevron.region.y == node.region.y, (
+            f"the chevron is on row {chevron.region.y} and its watchlist name "
+            f"on row {node.region.y}; they must share one row"
+        )
+        assert chevron.region.right <= node.region.x, (
+            f"the chevron {chevron.region} must sit left of the name "
+            f"{node.region}, not overlap or follow it"
+        )
+
+        rows = painted_rows()
+        row_text = rows[node.region.y]
+        assert "▸" in row_text and "Morning AI Brief" in row_text, (
+            f"row {node.region.y} should paint the collapsed chevron beside "
+            f"the name; it paints {row_text.strip()!r}"
+        )
+        assert row_text.index("▸") < row_text.index("Morning AI Brief"), (
+            f"the chevron must precede the name on the row: {row_text.strip()!r}"
+        )
+
+        # AC#2: one collapsed watchlist occupies exactly one rail row. The
+        # chevron used to own a row of its own directly above the name.
+        # Guarded: a watchlist painted on row 0 has no row above it, and an
+        # unguarded `y - 1` would wrap to the last row and compare against
+        # something unrelated (Qodo #2 on PR #1017).
+        assert node.region.y > 0, (
+            f"expected the watchlist below the rail heading, not at the top "
+            f"of the screen: {node.region}"
+        )
+        row_above = rows[node.region.y - 1]
+        assert "▸" not in row_above, (
+            f"the row above the watchlist still paints a stray chevron: "
+            f"{row_above.strip()!r}"
+        )
+
+        # AC#4: expanding still nests the sources under the watchlist.
+        await pilot.click(f"#wl-tree-expand-{watchlist['id']}")
+        await pilot.pause(0.2)
+
+        source = screen.query_one(f"#wl-tree-node-source-1-{arxiv}", Button)
+        node = screen.query_one(f"#wl-tree-node-watchlist-{watchlist['id']}", Button)
+        chevron = screen.query_one(f"#wl-tree-expand-{watchlist['id']}", Button)
+        assert chevron.region.y == node.region.y, (
+            "the open chevron must still share the watchlist's row"
+        )
+        assert source.region.y > node.region.y, (
+            f"the source row {source.region} must sit below its watchlist {node.region}"
+        )
+        rows = painted_rows()
+        # The source's indent is textual (its label is prefixed with four
+        # spaces), not a region offset, so assert on what is painted.
+        assert rows[source.region.y].index("ArXiv") > rows[node.region.y].index(
+            "Morning AI Brief"
+        ), (
+            f"the source name must be indented past its watchlist's: "
+            f"{rows[source.region.y].strip()!r} under "
+            f"{rows[node.region.y].strip()!r}"
+        )
+        assert "▾" in rows[node.region.y], (
+            f"an expanded watchlist must paint the open chevron on its own "
+            f"row: {rows[node.region.y].strip()!r}"
+        )
+        assert "ArXiv" in rows[source.region.y], (
+            f"row {source.region.y} should paint the source name; it paints "
+            f"{rows[source.region.y].strip()!r}"
+        )
+
+
+def _pane_painted_text(screen, widget) -> str:
+    """Everything the compositor actually paints inside `widget`'s region."""
+    strips = screen._compositor.render_strips()
+    region = widget.region
+    lines = []
+    for y in range(region.y, min(region.y + region.height, len(strips))):
+        row = "".join(segment.text for segment in strips[y])
+        lines.append(row[region.x : region.x + region.width])
+    return "\n".join(lines)
+
+
+@pytest.mark.asyncio
+async def test_watchlists_first_run_replaces_empty_cards_with_guidance():
+    """TASK-998: on a profile with nothing in it, the biggest region on the
+    screen was seven empty bordered cards and the right rail told the user to
+    "Select a source, run, item, rule, or notification" when none can exist.
+
+    Both are answers to one question -- what should this screen say when there
+    is nothing in it yet -- so both are asserted together here.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#overview-first-run")
+        assert screen.active_section == "overview"
+
+        overview = screen.query_one("#watchlists-overview-pane", OverviewPane)
+
+        # AC#1: no empty bordered cards, and no empty failed-runs table
+        # either -- both are chrome around data that does not exist.
+        assert not overview.query(".overview-card"), (
+            "a profile with no sources still renders the summary cards"
+        )
+        assert not overview.query("#overview-failed-runs"), (
+            "a profile with no runs still renders the failed-runs table"
+        )
+
+        # ...replaced by copy that actually reaches the screen. Asserting the
+        # actual guidance sentence, not merely the word "watchlist", is the
+        # point of task-1347: the weaker check passed even with the title
+        # blanked, because "Watchlists" appears elsewhere on screen (e.g. the
+        # inspector's own copy) with nothing to do with THIS pane's body.
+        painted = _pane_painted_text(screen, overview)
+        assert "a watchlist is a folder of feeds" in painted.lower(), (
+            f"the no-watchlists first-run guidance is missing or empty; it "
+            f"paints {painted!r}"
+        )
+
+        # AC#2: the guidance must name controls that exist and can be used
+        # right now, not five things that cannot exist yet.
+        inspector_text = "\n".join(
+            getattr(node.renderable, "plain", str(node.renderable))
+            for node in screen.query("#watchlists-entity-inspector Static")
+        )
+        assert "Select a source, run, item, rule, or notification" not in (
+            inspector_text
+        ), "the dead-end guidance is still shown on a profile with nothing in it"
+
+        for label, selector in (
+            ("New", "#wl-tree-new"),
+            ("Sources", "#wl-tab-sources"),
+        ):
+            control = screen.query_one(selector, Button)
+            assert not control.disabled, (
+                f"{selector} is named in the first-run guidance but is disabled"
+            )
+            assert label in painted or label in inspector_text, (
+                f"the first-run guidance names no reachable control; it should "
+                f"name {label!r} ({selector})"
+            )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_populated_overview_and_inspector_are_unchanged():
+    """TASK-998 AC#4: the first-run treatment must not leak into a populated
+    profile. With a source present the seven cards, the failed-runs table and
+    the Inspector's ordinary "select something" guidance all come back.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService(
+        [
+            {
+                "id": 1,
+                "name": "ArXiv",
+                "source_type": "rss",
+                "url": "https://a.example/f",
+                "status": "ok",
+                "active": True,
+            }
+        ]
+    )
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#watchlists-overview-grid")
+
+        overview = screen.query_one("#watchlists-overview-pane", OverviewPane)
+        assert len(overview.query(".overview-card")) == 7
+        assert overview.query_one("#overview-failed-runs")
+        assert not overview.query("#overview-first-run")
+        assert "Total sources\n1" in str(
+            overview.query_one("#overview-total-sources").renderable
+        )
+
+        inspector_text = "\n".join(
+            getattr(node.renderable, "plain", str(node.renderable))
+            for node in screen.query("#watchlists-entity-inspector Static")
+        )
+        assert "Select a source, run, item, rule, or notification" in inspector_text, (
+            "with sources present and nothing selected, the ordinary Inspector "
+            "guidance is the correct copy and must be preserved"
+        )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_overview_cards_paint_their_labels_and_numbers(size):
+    """TASK-998, second finding: the Overview cards were empty in EVERY state.
+
+    The UAT read "seven empty bordered cards" as a first-run problem. It was
+    not. Measured at 160x42 with a source present, before the fix:
+
+        #overview-total-sources  region=Region(height=1)  content=Size(height=0)
+
+    The grid had no `height` and so took `Grid`'s `1fr` default -- six rows for
+    three rows of cards plus two gutters -- and `padding: 1` inside `height: 4`
+    with a `round` border left zero content rows even when the height was
+    granted. Neither the label nor the number could ever paint.
+
+    `Tests/Watchlists/test_watchlists_overview_pane.py` did not catch it
+    because it asserts on `Static.renderable`, which is correct whether or not
+    a single cell of it reaches the screen. This asserts the compositor.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService(
+        [
+            {
+                "id": 1,
+                "name": "ArXiv",
+                "source_type": "rss",
+                "url": "https://a.example/f",
+                "status": "ok",
+                "active": True,
+            }
+        ]
+    )
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#watchlists-overview-grid")
+
+        card = screen.query_one("#overview-total-sources")
+        assert card.content_size.height >= 2, (
+            f"the card has no room for its two lines: {card.region} "
+            f"content={card.content_size}"
+        )
+
+        painted = _pane_painted_text(screen, card)
+        assert "Total sources" in painted, (
+            f"the card's label never reaches the screen; it paints {painted!r}"
+        )
+        assert "1" in painted, (
+            f"the card's value never reaches the screen; it paints {painted!r}"
         )

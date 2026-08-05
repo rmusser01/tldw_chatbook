@@ -1,6 +1,8 @@
 # test_chatbook_integration.py
 # Integration tests for chatbook functionality
 
+import shutil
+
 import pytest
 import json
 import zipfile
@@ -26,7 +28,7 @@ class TestChatbookIntegration:
     """Integration tests for complete chatbook workflow."""
 
     @pytest.fixture
-    def setup_test_databases(self, tmp_path):
+    def setup_test_databases(self, tmp_path, chachanotes_template_db):
         """Setup test databases with proper schema and test data."""
         db_dir = tmp_path / "databases"
         db_dir.mkdir()
@@ -41,6 +43,7 @@ class TestChatbookIntegration:
         }
 
         # Initialize ChaChaNotes database
+        shutil.copyfile(chachanotes_template_db, db_paths["ChaChaNotes"])
         chacha_db = CharactersRAGDB(db_paths["ChaChaNotes"], "test_client")
 
         # Add test character first (required for conversations)

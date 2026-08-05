@@ -21,7 +21,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 @pytest.fixture
 def temp_dir():
     """Create a temporary directory for testing."""
-    temp_path = tempfile.mkdtemp()
+    temp_path = Path(tempfile.mkdtemp()).resolve(strict=True)
     yield Path(temp_path)
     shutil.rmtree(temp_path)
 

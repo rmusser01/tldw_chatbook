@@ -159,6 +159,7 @@ class LocalModelsWidget(Container):
     }
     
     LocalModelsWidget .delete-confirm-dialog {
+        display: none;
         dock: top;
         layer: notification;
         width: 60;
@@ -246,10 +247,6 @@ class LocalModelsWidget(Container):
         logger.info("LocalModelsWidget mounted, scanning for models")
         self.scan_models()
 
-        # Hide delete confirmation dialog initially
-        dialog = self.query_one("#delete-confirm-dialog")
-        dialog.display = False
-
     def watch_models(self, models: List[ModelInfo]) -> None:
         """Update UI when models change."""
         self.call_later(self._refresh_model_list)
@@ -257,8 +254,14 @@ class LocalModelsWidget(Container):
 
     def watch_show_delete_confirm(self, show: bool) -> None:
         """Show/hide delete confirmation dialog."""
-        dialog = self.query_one("#delete-confirm-dialog")
-        dialog.display = show
+        self.call_after_refresh(self._set_delete_confirm_visibility, show)
+
+    def _set_delete_confirm_visibility(self, show: bool) -> None:
+        """Apply dialog visibility after composed children are queryable."""
+        dialogs = list(self.query("#delete-confirm-dialog"))
+        if not dialogs:
+            return
+        dialogs[0].display = show
 
     @work(thread=True)
     def scan_models(self) -> None:

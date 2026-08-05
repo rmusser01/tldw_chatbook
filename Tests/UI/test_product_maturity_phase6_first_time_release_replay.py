@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Button, Static
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
@@ -150,9 +150,9 @@ async def test_release_first_time_replay_exposes_home_console_library_and_setup(
             )
             nav = [(button.id, str(button.label).strip()) for button in nav_buttons]
             for expected_nav in (
-                ("nav-home", "^1 Home"),
-                ("nav-console", "^2 Console"),
-                ("nav-library", "^3 Library"),
+                ("nav-home", "⌃1 Home"),
+                ("nav-console", "⌃2 Console"),
+                ("nav-library", "⌃3 Library"),
                 ("nav-settings", "F9 Settings"),
             ):
                 assert expected_nav in nav

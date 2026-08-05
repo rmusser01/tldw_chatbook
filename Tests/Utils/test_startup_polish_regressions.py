@@ -5,6 +5,7 @@ from __future__ import annotations
 import builtins
 import importlib
 import sys
+import types
 from types import SimpleNamespace
 
 import pytest
@@ -165,12 +166,11 @@ def test_random_splash_selection_skips_missing_active_card_definitions(
     """Default active cards can outpace implemented card definitions."""
     from tldw_chatbook.Widgets import splash_screen
 
-    def fake_get_cli_setting(setting: str, default=None, *args, **kwargs):
-        if setting == "splash_screen":
-            return {
-                "card_selection": "random",
-                "active_cards": ["neon_sign", "default"],
-            }
+    def fake_get_cli_setting(section, key=None, default=None):
+        if section == "splash_screen" and key == "card_selection":
+            return "random"
+        if section == "splash_screen" and key == "active_cards":
+            return ["neon_sign", "default"]
         return default
 
     choices: list[list[str]] = []
@@ -243,6 +243,24 @@ def test_nltk_download_false_is_not_logged_as_success(
 ) -> None:
     from tldw_chatbook.Chunking import Chunk_Lib
 
+    # `nltk` is an OPTIONAL extra (chunker/websearch). Forcing NLTK_AVAILABLE
+    # below is not enough on its own: `_ensure_nltk()` still does a real
+    # `import nltk`, so without the package it returns early and never reaches
+    # the warning under test -- which surfaces as "no WARNING was logged" and
+    # reads exactly like the production warning having been deleted. It cost a
+    # wrong root-cause once (task-1261); stub the module so this test asserts
+    # our logic, not which extras happen to be installed.
+    #
+    # The stub only has to satisfy the import: `_probe_sent_tokenize` is
+    # stubbed to False below, so this tokenizer is never actually called.
+    fake_nltk = types.ModuleType("nltk")
+    fake_tokenize = types.ModuleType("nltk.tokenize")
+    fake_tokenize.sent_tokenize = lambda text, **kwargs: [text]
+    fake_nltk.tokenize = fake_tokenize
+    fake_nltk.download = lambda *args, **kwargs: False
+    monkeypatch.setitem(sys.modules, "nltk", fake_nltk)
+    monkeypatch.setitem(sys.modules, "nltk.tokenize", fake_tokenize)
+
     messages: list[tuple[str, str]] = []
     sink_id = logger.add(
         lambda message: messages.append(
@@ -250,24 +268,29 @@ def test_nltk_download_false_is_not_logged_as_success(
         )
     )
     try:
-
-        def mock_find(_path):
-            raise LookupError("missing")
-
-        fake_nltk = SimpleNamespace(
-            data=SimpleNamespace(find=mock_find),
-            download=lambda _package: False,
-        )
-
+        # A failed download must be reported as a failure. Readiness is decided
+        # by whether the tokenizer TOKENIZES (a probe), not by whether a named
+        # resource is on disk -- nltk >= 3.9 needs 'punkt_tab' while the old
+        # check asked for 'punkt', so a machine with only 'punkt' was reported
+        # ready and still raised on the next call (task-842). Failing the probe
+        # is therefore how "the data is unusable" is expressed here.
         monkeypatch.setattr(Chunk_Lib, "NLTK_AVAILABLE", True)
-        monkeypatch.setattr(Chunk_Lib, "nltk", fake_nltk)
-        # ensure_nltk_data() is now idempotent (first successful run sets
-        # _nltk_data_ready); reset it so this test always exercises the real
-        # find/download path regardless of whether an earlier test already
-        # warmed punkt in this process.
+        monkeypatch.setattr(Chunk_Lib, "nltk", None)
+        monkeypatch.setattr(Chunk_Lib, "_probe_sent_tokenize", lambda _tokenize: False)
+        monkeypatch.setattr(
+            Chunk_Lib, "_download_nltk_tokenizer_corpora", lambda _nltk: None
+        )
+        # Both gates are idempotence latches; reset them so this test exercises
+        # the real path regardless of whether an earlier test warmed the
+        # tokenizer in this process.
         monkeypatch.setattr(Chunk_Lib, "_nltk_data_ready", False)
+        monkeypatch.setattr(Chunk_Lib, "_nltk_tokenizer_unusable", False)
 
         Chunk_Lib.ensure_nltk_data()
+
+        assert Chunk_Lib._nltk_data_ready is False, (
+            "unusable tokenizer data was reported ready"
+        )
     finally:
         logger.remove(sink_id)
 

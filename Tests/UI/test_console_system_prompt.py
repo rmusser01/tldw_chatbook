@@ -28,6 +28,10 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService as ScopeLocalPromptService,
     PromptScopeService,
 )
+from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_SYSTEM_PROMPT_LABEL_SET,
+    CONSOLE_SYSTEM_PROMPT_LABEL_UNSET,
+)
 from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
@@ -64,8 +68,14 @@ def _real_prompt_scope_service(tmp_path):
     return db, service
 
 
-def _rail_system_line_text(console) -> str:
+def _rail_system_line_raw_text(console) -> str:
     return _static_plain_text(console.query_one("#console-rail-system-line", Static))
+
+
+def _rail_system_line_text(console) -> str:
+    # Content assertions target the semantic "System: <preview>" text; strip the
+    # TASK-365 trailing interactive affordance (▸) so those tests stay focused.
+    return _rail_system_line_raw_text(console).removesuffix(" ▸")
 
 
 def _rail_system_line_is_dim(console) -> bool:
@@ -119,6 +129,22 @@ async def test_console_rail_system_line_defaults_to_dim_none_state():
 
 
 @pytest.mark.asyncio
+async def test_console_rail_system_line_shows_interactive_affordance():
+    """TASK-365: the clickable rail system-prompt line must carry a visible
+    interactive affordance (▸) so it does not read as inert label text like the
+    Provider/Model lines above it."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-system-line")
+
+        assert _rail_system_line_raw_text(console).endswith(" ▸")
+
+
+@pytest.mark.asyncio
 async def test_console_rail_system_line_click_opens_editor_modal():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -143,7 +169,7 @@ async def test_console_rail_system_line_click_opens_editor_modal():
 
 
 # ---------------------------------------------------------------------------
-# Control-bar System Prompt chip.
+# Status-strip System Prompt chip.
 # ---------------------------------------------------------------------------
 
 
@@ -152,7 +178,7 @@ def _system_prompt_chip_text(console) -> str:
 
 
 @pytest.mark.asyncio
-async def test_console_system_prompt_chip_click_opens_editor_modal():
+async def test_console_system_prompt_chip_activation_opens_editor_modal():
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -163,7 +189,7 @@ async def test_console_system_prompt_chip_click_opens_editor_modal():
         await _wait_for_selector(console, pilot, "#console-system-prompt-chip")
 
         # Activate via keyboard: the test harness loads no stylesheet, so the
-        # chip row overflows the screen and a mouse click lands out of bounds.
+        # chip strip overflows the screen and a mouse click lands out of bounds.
         console.query_one("#console-system-prompt-chip").focus()
         await pilot.press("enter")
         await pilot.pause(0.2)
@@ -182,15 +208,15 @@ async def test_console_system_prompt_chip_label_reflects_applied_prompt():
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-system-prompt-chip")
-        assert _system_prompt_chip_text(console) == "System Prompt"
+        assert _system_prompt_chip_text(console) == CONSOLE_SYSTEM_PROMPT_LABEL_UNSET
 
         console._apply_console_session_system_prompt("Be concise.")
         await pilot.pause(0.2)
-        assert _system_prompt_chip_text(console) == "System Prompt: set"
+        assert _system_prompt_chip_text(console) == CONSOLE_SYSTEM_PROMPT_LABEL_SET
 
         console._apply_console_session_system_prompt(None)
         await pilot.pause(0.2)
-        assert _system_prompt_chip_text(console) == "System Prompt"
+        assert _system_prompt_chip_text(console) == CONSOLE_SYSTEM_PROMPT_LABEL_UNSET
 
 
 # ---------------------------------------------------------------------------

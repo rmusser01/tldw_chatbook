@@ -2,6 +2,9 @@ from tldw_chatbook.Chat.console_command_grammar import (
     CommandParse,
     ConsoleCommand,
     ConsoleCommandRegistry,
+    REWIND_COMMAND_ARGUMENT_HINT,
+    REWIND_COMMAND_HANDLER_ID,
+    REWIND_COMMAND_NAME,
     SKILLS_COMMAND_NAME,
     default_console_registry,
 )
@@ -86,13 +89,23 @@ def test_second_fallback_resolver_is_consulted_after_first_declines():
     assert registry.parse("/found here") == CommandParse("fallback", "found", "here")
 
 
-def test_default_console_registry_registers_prompt_system_and_skills_with_stable_ids():
+def test_default_console_registry_registers_prompt_system_skills_prefill_and_generate_image_with_stable_ids():
     registry = default_console_registry()
 
-    assert registry.available_names() == ("prompt", "system", "skills")
+    assert registry.available_names() == (
+        "prompt",
+        "system",
+        "skills",
+        "prefill",
+        "generate-image",
+        "rewind",
+    )
     assert registry.parse("/prompt") == CommandParse("command", "prompt", "")
     assert registry.parse("/system") == CommandParse("command", "system", "")
     assert registry.parse("/skills") == CommandParse("command", "skills", "")
+    assert registry.parse("/generate-image") == CommandParse(
+        "command", "generate-image", ""
+    )
 
 
 def test_available_names_includes_skills():
@@ -135,3 +148,26 @@ def test_empty_registry_has_no_available_names_and_unknown_falls_through():
 
     assert registry.available_names() == ()
     assert registry.parse("/anything") == CommandParse("unknown", "anything", "")
+
+
+def test_prefill_parses_with_args():
+    registry = default_console_registry()
+    assert registry.parse("/prefill pin *She pauses*") == CommandParse(
+        "command", "prefill", "pin *She pauses*"
+    )
+    assert registry.parse("/prefill") == CommandParse("command", "prefill", "")
+
+
+def test_rewind_command_constants_are_stable():
+    assert REWIND_COMMAND_NAME == "rewind"
+    assert REWIND_COMMAND_ARGUMENT_HINT == ""
+    assert REWIND_COMMAND_HANDLER_ID == "rewind"
+
+
+def test_rewind_parses_to_command_kind():
+    registry = default_console_registry()
+    assert registry.parse("/rewind") == CommandParse("command", "rewind", "")
+
+
+def test_available_names_includes_rewind():
+    assert REWIND_COMMAND_NAME in default_console_registry().available_names()

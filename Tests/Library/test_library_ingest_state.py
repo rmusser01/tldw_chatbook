@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import re
+
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
 from tldw_chatbook.Library.library_ingest_state import (
     INGEST_UNAVAILABLE_COPY,
     MEDIA_DB_UNAVAILABLE_COPY,
-    SERVER_QUIET_LINE_COPY,
     LibraryIngestFormState,
     _human_size,
     build_estimate_line,
@@ -16,6 +17,7 @@ from tldw_chatbook.Library.library_ingest_state import (
     build_warning_lines,
     clamp_chunk_size,
     parse_keywords,
+    short_ingest_error,
 )
 
 
@@ -40,11 +42,20 @@ def test_queue_heading_is_queue():
     assert state.queue_heading == "Queue"
 
 
-def test_server_runtime_shows_quiet_line():
+def test_browse_scope_no_longer_drives_the_ingest_line():
+    """Browsing server-side says nothing about where an import will run.
+
+    This test previously asserted the old "ingest runs on Local" warning, which
+    existed because ingest ignored the browse scope. Ingest now has its own
+    explicit target and never keys off browse scope, so on a local-only install
+    the line is silent rather than warning about a coupling that no longer
+    exists (task-684.1).
+    """
     state = build_library_ingest_state(
         (), form=LibraryIngestFormState(), runtime_source="server"
     )
-    assert state.server_quiet_line == SERVER_QUIET_LINE_COPY
+    assert state.server_quiet_line == ""
+    assert state.ingest_backend == "local"
 
 
 def test_local_runtime_hides_quiet_line():
@@ -225,12 +236,15 @@ def test_done_row_line_format_seconds_only():
 
 
 def test_done_row_line_format_minutes_and_seconds():
+    # (task-2015) Elapsed measures from submission; the fixture's timeline is
+    # submitted -> started -> finished, 125s of user-perceived wait.
     jobs = (
         _job(
             state=IngestJobState.DONE,
             source_path="/tmp/report.txt",
-            started_at=0.0,
-            finished_at=125.0,
+            submitted_at=100.0,
+            started_at=110.0,
+            finished_at=225.0,
             media_id=7,
         ),
     )
@@ -388,7 +402,7 @@ def test_failed_row_line_appends_retry_suffix():
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     row = state.queue_rows[0]
-    assert row.line == "✗ failed · report.txt · bad codec · retry 2"
+    assert row.line == "✗ failed · report.txt · bad codec · attempt 3"
 
 
 def test_basename_used_for_nested_path():
@@ -445,7 +459,7 @@ def test_queue_counts_line_lists_only_nonzero_states_in_fixed_order():
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     assert (
         state.queue_counts_line
-        == "1 parsing · 1 writing · 1 queued · 2 done · 1 failed"
+        == "1 parsing · 1 writing · 1 queued · 2 done · 1 failed — in queue"
     )
 
 
@@ -474,7 +488,9 @@ def test_queue_counts_line_omits_zero_states():
         ),
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
-    assert state.queue_counts_line == "2 done · 1 failed"
+    # (task-2043) The suffix says the totals span ALL ingests (the
+    # registry restores prior sessions from the jobs DB).
+    assert state.queue_counts_line == "2 done · 1 failed — in queue"
 
 
 def test_queue_counts_line_hidden_with_no_jobs():
@@ -675,7 +691,9 @@ def test_build_warning_lines_empty():
 
 def test_build_warning_lines_label_and_hint():
     warnings = [{"label": "PDF processing", "hint": "PyMuPDF is not installed."}]
-    assert build_warning_lines(warnings) == ["PDF processing: PyMuPDF is not installed."]
+    assert build_warning_lines(warnings) == [
+        "PDF processing isn't installed — needed for PyMuPDF is not installed."
+    ]
 
 
 def test_build_warning_lines_falls_back_to_hint_only():
@@ -683,9 +701,35 @@ def test_build_warning_lines_falls_back_to_hint_only():
     assert build_warning_lines(warnings) == ["Something is missing."]
 
 
+def test_build_warning_lines_names_the_gap_and_the_fix():
+    """The composed line says what is missing, why it matters, and the fix.
+
+    The old shape pasted the label in front of a hint that already repeated
+    it, producing "PDF processing: PDF processing is unavailable: PDF
+    ingestion." (task-666).
+    """
+    warnings = [
+        {
+            "label": "PDF processing",
+            "hint": "PDF ingestion",
+            "command": 'pip install -e ".[pdf]"',
+        }
+    ]
+    assert build_warning_lines(warnings) == [
+        "PDF processing isn't installed — needed for PDF ingestion. "
+        'Install it with: pip install -e ".[pdf]"'
+    ]
+
+
+def test_build_warning_lines_does_not_repeat_the_label():
+    """When the label and the capability are the same words, say them once."""
+    warnings = [{"label": "Audio processing", "hint": "Audio processing"}]
+    assert build_warning_lines(warnings) == ["Audio processing isn't installed."]
+
+
 def test_build_warning_lines_label_only():
     warnings = [{"label": "PDF processing"}]
-    assert build_warning_lines(warnings) == ["PDF processing"]
+    assert build_warning_lines(warnings) == ["PDF processing isn't installed."]
 
 
 def test_build_warning_lines_empty_dict():
@@ -693,9 +737,12 @@ def test_build_warning_lines_empty_dict():
     assert build_warning_lines(warnings) == ["{}"]
 
 
-def test_build_warning_lines_ignores_command_key():
+def test_build_warning_lines_includes_the_install_command():
+    """The command is the actionable half; it belongs in the line."""
     warnings = [{"label": "PDF", "hint": "missing", "command": "pip install x"}]
-    assert build_warning_lines(warnings) == ["PDF: missing"]
+    assert build_warning_lines(warnings) == [
+        "PDF isn't installed — needed for missing. Install it with: pip install x"
+    ]
 
 
 # --- _human_size -----------------------------------------------------------
@@ -725,9 +772,11 @@ def test_canvas_state_preflight_fields_populated_from_parameter():
         total_files=2,
     )
     state = build_library_ingest_state((), form=LibraryIngestFormState(), preflight=preflight)
-    assert state.type_breakdown_line == "2 PDF documents"
-    assert state.estimate_line == "2 files · 2.0 KB"
-    assert state.warning_lines == ["PDF: missing"]
+    # (task-2015) With errors present, the breakdown/estimate are suppressed
+    # -- an estimate parked under an error is noise. Warnings still render.
+    assert state.type_breakdown_line == ""
+    assert state.estimate_line == ""
+    assert state.warning_lines == ["PDF isn't installed — needed for missing."]
     assert state.errors == ["Path not found"]
     assert state.type_groups == ["pdf", "generic"]
     assert state.unsupported_files == []
@@ -842,3 +891,1399 @@ def test_recent_jobs_limits_to_ten():
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     assert len(state.recent_jobs) == 10
+
+
+def test_form_defaults_come_from_the_capability_declaration() -> None:
+    """One declaration of defaults, not two that disagree.
+
+    The capability layer declared ``analyze=True, chunk_size=1000`` while the
+    form shipped ``analyze=False, chunk=False, chunk_size=500``, and the two
+    ingest surfaces disagreed about chunking on top of that. Whichever was
+    authoritative, they could not both be (task-667).
+    """
+    from tldw_chatbook.Library.ingest_capabilities import get_capabilities
+
+    generic = {f.name: f.default for f in get_capabilities("generic").fields}
+    form = LibraryIngestFormState()
+
+    assert form.analyze is generic["analyze"]
+    assert form.chunk is generic["chunk"]
+    assert form.chunk_size == str(generic["chunk_size"])
+
+
+def test_chunking_is_on_by_default_and_analysis_is_off() -> None:
+    """Imports are chunked for retrieval; nothing calls an LLM unasked.
+
+    Chunking off by default meant imported documents were never chunked for
+    retrieval, quietly undermining search and RAG for anyone who never opened
+    the advanced panel. Analysis stays off because it costs an LLM call per
+    document at ingest time.
+    """
+    form = LibraryIngestFormState()
+
+    assert form.chunk is True
+    assert form.chunk_size == "1000"
+    assert form.analyze is False
+
+
+# --- queue row origin (task-684.2) ------------------------------------------
+
+
+def _row_for(job: LibraryIngestJob):
+    from tldw_chatbook.Library.library_ingest_state import _build_queue_row
+
+    return _build_queue_row(job, now=100.0)
+
+
+def test_queue_row_marks_a_server_job():
+    """A row has to say where the job runs, or two backends look identical.
+
+    Once local and server ingests share one queue, "done · notes.txt" alone
+    cannot tell the user which machine did the work (task-684.2).
+    """
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/notes.txt",
+        state=IngestJobState.QUEUED,
+        origin="server",
+    )
+
+    row = _row_for(job)
+
+    assert row.origin == "server"
+    assert "server" in row.line.lower()
+
+
+def test_queue_row_does_not_clutter_a_local_job():
+    """Local is the overwhelmingly common case and stays unannotated."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/notes.txt",
+        state=IngestJobState.QUEUED,
+    )
+
+    row = _row_for(job)
+
+    assert row.origin == "local"
+    assert "server" not in row.line.lower()
+    assert row.line == "● queued · notes.txt"
+
+
+def test_server_origin_is_marked_in_every_state():
+    """The marker cannot depend on which state branch built the row."""
+    for state in (
+        IngestJobState.QUEUED,
+        IngestJobState.PARSING,
+        IngestJobState.WRITING,
+        IngestJobState.DONE,
+        IngestJobState.FAILED,
+    ):
+        job = LibraryIngestJob(
+            job_id="ingest-job-1",
+            source_path="/tmp/notes.txt",
+            state=state,
+            origin="server",
+            media_id=1 if state == IngestJobState.DONE else None,
+            error="boom" if state == IngestJobState.FAILED else "",
+        )
+        row = _row_for(job)
+        assert "server" in row.line.lower(), f"{state.value} row lost the marker"
+        assert row.origin == "server"
+
+
+# --- cancelled row rendering (task-684.2) -----------------------------------
+
+
+def test_cancelled_row_reads_as_stopped_not_failed():
+    """A cancellation must not wear the failure glyph.
+
+    The user stopped this deliberately; showing ✗ would read as an error they
+    caused, and would sit beside a Retry the registry refuses anyway.
+    """
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/talk.mp3",
+        state=IngestJobState.CANCELLED,
+        origin="server",
+        error="Cancelled on the server.",
+        finished_at=50.0,
+    )
+
+    row = _row_for(job)
+
+    assert row.glyph not in {"✓", "✗"}
+    assert "cancelled" in row.line.lower()
+    assert "talk.mp3" in row.line
+    assert row.can_open is False
+    assert row.can_retry is False, "requeue is FAILED-only; Retry would be dead bait"
+    assert row.can_dismiss is True, "a cancelled row is clearable"
+
+
+def test_cancelled_counts_line_segment_is_rendered():
+    """A cancelled job has to appear in the queue's per-state summary."""
+    from tldw_chatbook.Library.library_ingest_state import _queue_counts_line
+
+    jobs = [
+        LibraryIngestJob(
+            job_id="ingest-job-1",
+            source_path="/tmp/a.mp3",
+            state=IngestJobState.CANCELLED,
+        ),
+        LibraryIngestJob(
+            job_id="ingest-job-2",
+            source_path="/tmp/b.txt",
+            state=IngestJobState.DONE,
+            media_id=1,
+        ),
+    ]
+
+    line = _queue_counts_line(jobs)
+
+    assert "1 cancelled" in line
+    assert "1 done" in line
+
+
+# --- cancel affordance (task-684.2) -----------------------------------------
+
+
+def test_a_running_server_job_can_be_cancelled():
+    """Only a server job offers Cancel: the local pipeline has no cancel seam.
+
+    ``cancel_media_ingest_jobs_batch`` exists on the server service; there is no
+    local equivalent, so offering Cancel on a local job would be dead bait.
+    """
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/a.mp3",
+        state=IngestJobState.PARSING,
+        origin="server",
+        batch_id="batch-1",
+        remote_job_id="11",
+    )
+
+    assert _row_for(job).can_cancel is True
+
+
+def test_a_running_local_job_offers_no_cancel():
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/a.txt",
+        state=IngestJobState.PARSING,
+    )
+
+    assert _row_for(job).can_cancel is False
+
+
+def test_a_settled_server_job_offers_no_cancel():
+    """There is nothing left to stop once the server has finished."""
+    for state in (
+        IngestJobState.DONE,
+        IngestJobState.FAILED,
+        IngestJobState.CANCELLED,
+    ):
+        job = LibraryIngestJob(
+            job_id="ingest-job-1",
+            source_path="/tmp/a.mp3",
+            state=state,
+            origin="server",
+            batch_id="batch-1",
+            remote_job_id="11",
+            error="boom" if state is IngestJobState.FAILED else "",
+        )
+        assert _row_for(job).can_cancel is False, f"{state.value} offered Cancel"
+
+
+def test_a_server_job_without_a_batch_offers_no_cancel():
+    """Cancel goes by batch id; without one there is nothing to address."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/a.mp3",
+        state=IngestJobState.QUEUED,
+        origin="server",
+    )
+
+    assert _row_for(job).can_cancel is False
+
+
+# --- backend target + switch (task-684.1 slice 3) ---------------------------
+
+
+def test_local_only_install_says_nothing_about_backends():
+    """With no server configured there is no choice to explain.
+
+    The old "ingest runs on Local" line existed to warn that ingest ignored your
+    browse scope. Ingest no longer keys off browse scope at all, so on a
+    local-only install the line is just noise.
+    """
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(), runtime_source="server"
+    )
+
+    assert state.server_quiet_line == ""
+    assert state.show_backend_switch is False
+    assert state.ingest_backend == "local"
+
+
+def test_a_configured_server_names_the_target_and_offers_the_switch():
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        ingest_backend="local",
+        runtime_source="server",
+        server_ingest_available=True,
+    )
+
+    assert "this machine" in state.server_quiet_line.lower()
+    assert state.show_backend_switch is True
+    assert state.ingest_backend == "local"
+
+
+def test_targeting_the_server_says_so_plainly():
+    """A user must be able to see that their files will leave the machine."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        ingest_backend="server",
+        runtime_source="server",
+        server_ingest_available=True,
+    )
+
+    assert "server" in state.server_quiet_line.lower()
+    assert state.ingest_backend == "server"
+    assert state.show_backend_switch is True
+
+
+def test_canvas_and_submit_agree_when_the_precondition_is_unmet():
+    """An unmet precondition must show local, because submit will be local.
+
+    This test previously asserted the opposite -- that a server target stays
+    named even when unusable -- to stop the canvas claiming local while submit
+    tried the server. That mismatch no longer exists: ``_resolve_ingest_backend``
+    applies the same runtime-policy gate, so an opted-in user whose runtime is
+    local really does get a local ingest. The canvas saying "this machine" is
+    now the truth, not a lie, and the line explains how to enable server
+    imports.
+    """
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        ingest_backend="server",
+        runtime_source="local",
+        server_ingest_available=True,
+    )
+
+    assert state.ingest_backend == "local"
+    assert state.show_backend_switch is False
+    assert "server mode" in state.server_quiet_line.lower()
+
+
+def test_server_ingest_needs_server_mode_not_just_a_configured_server():
+    """Server ingest is gated by runtime policy, so the UI must say so.
+
+    ``media.ingestion_jobs.launch.server`` declares ``required_source="server"``
+    in the runtime-policy registry, so the service refuses the launch outright
+    when the Library runtime is local -- the same rule that makes the retired
+    ingest window disable its server panels in local mode. Offering the switch
+    regardless produced a job that failed with
+    "media.ingestion_jobs.launch.server requires server mode" (seen live).
+    """
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        runtime_source="local",
+        server_ingest_available=True,
+    )
+
+    assert state.show_backend_switch is False
+    assert "server mode" in state.server_quiet_line.lower()
+
+
+def test_server_mode_plus_a_configured_server_offers_the_switch():
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        runtime_source="server",
+        server_ingest_available=True,
+    )
+
+    assert state.show_backend_switch is True
+    assert "this machine" in state.server_quiet_line.lower()
+
+
+def test_a_page_source_offers_its_scope_settings_in_the_canvas_state():
+    """AC#3: the clipper's scope settings survive the move into the canvas.
+
+    The canvas renders one option group per pre-flight type group, reading each
+    group's fields from the capability schema -- so a page source has to reach
+    the state as the ``web`` group, and that group has to declare the scope
+    settings the retired window exposed (scrape_method plus the page/depth
+    limits). Asserting on the schema the canvas actually consults is what keeps
+    this from passing while the screen shows nothing.
+    """
+    from tldw_chatbook.Library.ingest_capabilities import get_capabilities
+    from tldw_chatbook.Library.ingest_preflight import analyze_path
+    from unittest.mock import MagicMock, patch
+
+    response = MagicMock()
+    response.__enter__ = MagicMock(return_value=response)
+    response.__exit__ = MagicMock(return_value=False)
+    with patch(
+        "tldw_chatbook.Library.ingest_preflight.urlopen", return_value=response
+    ):
+        preflight = analyze_path("https://example.com/some-post")
+
+    assert list(preflight.type_groups) == ["web"], (
+        "a page must reach the canvas as the web group, not as an unsupported file"
+    )
+
+    # get_capabilities is exactly what the canvas calls per group; a group it
+    # cannot answer for raises rather than rendering (task-673).
+    fields = {f.name for f in get_capabilities("web").fields}
+    assert {"scrape_method", "max_pages", "max_depth"} <= fields
+
+
+class TestOpenAServerIngestedItem:
+    """A finished server job must offer a route to what it produced.
+
+    Its content lives in the server's library, so "Open in Library" -- which
+    resolves a local media row -- stays withheld. The server does report the id
+    of the row it created, so the item is addressable; it just needs its own
+    affordance (task-700).
+    """
+
+    def _server_job(self, **kwargs):
+        from tldw_chatbook.Library.library_ingest_jobs import (
+            IngestJobState,
+            LibraryIngestJob,
+        )
+
+        defaults = dict(
+            job_id="ingest-job-1",
+            source_path="/tmp/paper.pdf",
+            state=IngestJobState.DONE,
+            origin="server",
+            remote_media_id="1125",
+            started_at=1.0,
+            finished_at=2.0,
+        )
+        defaults.update(kwargs)
+        return LibraryIngestJob(**defaults)
+
+    def test_a_finished_server_job_offers_the_server_view(self):
+        from tldw_chatbook.Library.library_ingest_state import (
+            _build_queue_row as build_ingest_queue_row,
+        )
+
+        row = build_ingest_queue_row(self._server_job(), now=3.0)
+
+        assert row.can_open_on_server is True
+        assert row.remote_media_id == "1125"
+        # The local action stays withheld: there is no local row to open.
+        assert row.can_open is False
+
+    def test_a_server_job_without_an_id_offers_nothing(self):
+        """AC#3. The server does not always report an id, and an action that
+        cannot resolve anything is worse than no action."""
+        from tldw_chatbook.Library.library_ingest_state import (
+            _build_queue_row as build_ingest_queue_row,
+        )
+
+        row = build_ingest_queue_row(self._server_job(remote_media_id=None), now=3.0)
+
+        assert row.can_open_on_server is False
+
+    def test_a_local_job_never_offers_the_server_view(self):
+        """Even holding an id, a local job's content is local."""
+        from tldw_chatbook.Library.library_ingest_state import (
+            _build_queue_row as build_ingest_queue_row,
+        )
+
+        row = build_ingest_queue_row(
+            self._server_job(origin="local", media_id=7, remote_media_id="1125"),
+            now=3.0,
+        )
+
+        assert row.can_open_on_server is False
+        assert row.can_open is True
+
+    def test_an_unfinished_server_job_offers_nothing_yet(self):
+        from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
+        from tldw_chatbook.Library.library_ingest_state import (
+            _build_queue_row as build_ingest_queue_row,
+        )
+
+        row = build_ingest_queue_row(
+            self._server_job(state=IngestJobState.PARSING), now=3.0
+        )
+
+        assert row.can_open_on_server is False
+
+
+def test_the_view_on_server_action_cannot_be_caught_by_the_local_open_handler():
+    """The two row actions must not collide on id prefix or class.
+
+    "Open in Library" matches ``.library-ingest-open`` and recovers a job id by
+    stripping the prefix ``library-ingest-open-``. An id like
+    ``library-ingest-open-server-<job>`` would therefore be caught by that
+    handler and parsed into the bogus job id ``server-<job>`` -- opening
+    nothing, from the wrong handler. Both the id prefix and the class are
+    deliberately distinct (task-700).
+    """
+    import inspect
+
+    from tldw_chatbook.Widgets.Library import library_ingest_canvas
+
+    source = inspect.getsource(library_ingest_canvas)
+    assert 'id=f"library-ingest-view-server-{row.job_id}"' in source
+    # Check the id CONSTRUCTIONS, not the raw source: the comment above that
+    # button deliberately names the colliding form to explain why it is avoided.
+    ids = re.findall(r'id=f"([a-z-]+)\{row\.job_id\}"', source)
+    assert not [i for i in ids if i.startswith("library-ingest-open-") and i != "library-ingest-open-"], (
+        f"an action id shadows the local open prefix: {ids}"
+    )
+    # The class the local handler selects on must not be on the server button.
+    server_button = source[source.index('"View on server"'):]
+    server_button = server_button[: server_button.index("compact=True")]
+    assert "library-ingest-view-server" in server_button
+    assert "library-ingest-open " not in server_button
+
+
+# --- task-2015: P2 batch ----------------------------------------------------
+
+
+def test_short_ingest_error_collapses_nested_failed_to_prefixes():
+    """(task-2015) Wrapper-on-wrapper copy like the PDF failure chain must
+    collapse to a single 'Failed to …' prefix on the queue-row surface."""
+    nested = (
+        "Failed to ingest pdf file: Failed to process pdf file: "
+        "PDF Extraction Error."
+    )
+    assert (
+        short_ingest_error(nested)
+        == "Failed to process pdf file: PDF Extraction Error."
+    )
+
+
+def test_short_ingest_error_leaves_single_prefix_alone():
+    single = "Failed to process pdf file: PDF Extraction Error."
+    assert short_ingest_error(single) == single
+
+
+def test_estimate_and_breakdown_suppressed_when_preflight_has_errors():
+    """(task-2015) A '0 files' estimate parked under a path error is noise;
+    error states render the error + recovery only."""
+    preflight = PreflightResult(
+        type_groups={},
+        warnings=[],
+        errors=["Path not found: /nope/missing.txt"],
+        total_size=0,
+        truncated=False,
+        total_files=0,
+        path_invalid=True,
+    )
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(path="/nope/missing.txt"), preflight=preflight
+    )
+    assert state.errors == ["Path not found: /nope/missing.txt"]
+    assert state.estimate_line == ""
+    assert state.type_breakdown_line == ""
+
+
+def test_start_disabled_when_every_staged_file_is_unsupported():
+    """(task-2015) Pre-flight just promised every file will fail; Start must
+    be disabled with the gate line explaining why."""
+    preflight = PreflightResult(
+        type_groups={"unsupported": ["/tmp/x.json", "/tmp/y.jpg"]},
+        warnings=[],
+        errors=[],
+        total_size=51,
+        truncated=False,
+        total_files=2,
+    )
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(path="/tmp/folder"), preflight=preflight
+    )
+    assert state.start_enabled is False
+    assert "unsupported" in state.start_quiet_line
+    assert "2" in state.start_quiet_line
+
+
+def test_start_stays_enabled_for_mixed_selection():
+    preflight = PreflightResult(
+        type_groups={
+            "generic": ["/tmp/a.txt"],
+            "unsupported": ["/tmp/x.json"],
+        },
+        warnings=[],
+        errors=[],
+        total_size=300,
+        truncated=False,
+        total_files=2,
+    )
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(path="/tmp/folder"), preflight=preflight
+    )
+    assert state.start_enabled is True
+
+
+def test_done_row_elapsed_measures_from_submission():
+    """(task-2015) Elapsed reflects what the user actually waited: submission
+    to finish, not parse-start to finish."""
+    jobs = (
+        _job(
+            state=IngestJobState.DONE,
+            source_path="/tmp/report.txt",
+            submitted_at=100.0,
+            started_at=104.0,
+            finished_at=105.0,
+            media_id=1,
+        ),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState(), now=110.0)
+    assert state.queue_rows[0].line == "✓ done · report.txt · 5s"
+
+
+def test_done_row_subsecond_elapsed_renders_lt_one_second():
+    jobs = (
+        _job(
+            state=IngestJobState.DONE,
+            source_path="/tmp/report.txt",
+            submitted_at=100.0,
+            started_at=100.1,
+            finished_at=100.4,
+            media_id=1,
+        ),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState(), now=110.0)
+    assert state.queue_rows[0].line == "✓ done · report.txt · <1s"
+
+
+def test_done_row_without_timestamps_omits_elapsed_segment():
+    """A restored/malformed job with no usable timestamps must not claim
+    '0s'; the elapsed segment is dropped entirely."""
+    jobs = (
+        _job(
+            state=IngestJobState.DONE,
+            source_path="/tmp/report.txt",
+            submitted_at=0.0,
+            started_at=None,
+            finished_at=None,
+            media_id=1,
+        ),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState(), now=110.0)
+    assert state.queue_rows[0].line == "✓ done · report.txt"
+
+
+# --- task-2043: P2 batch ----------------------------------------------------
+
+
+def test_unwrap_ingest_error_collapses_chain_keeping_tail():
+    """(task-2043) The details surface shows the FULL message (tail kept),
+    but never more than one 'Failed to …' prefix."""
+    from tldw_chatbook.Library.library_ingest_state import unwrap_ingest_error
+
+    nested = (
+        "Failed to ingest pdf file: Failed to process pdf file: "
+        "PDF Extraction Error."
+    )
+    assert (
+        unwrap_ingest_error(nested)
+        == "Failed to process pdf file: PDF Extraction Error."
+    )
+    single = "Failed to process pdf file: PDF Extraction Error."
+    assert unwrap_ingest_error(single) == single
+
+
+def test_expanded_details_render_unwrapped_lines_and_retry_hint():
+    """(task-2043, contract revised by task-2130) An expanded failed row
+    carries category and an honest retry hint -- and NEVER a Details line
+    that repeats the row summary verbatim (the round-4 critique's
+    "circular details" P1: the expansion click must add information)."""
+    job = _job(
+        state=IngestJobState.FAILED,
+        source_path="/tmp/broken.pdf",
+        error="Failed to ingest pdf file: Failed to process pdf file: PDF Extraction Error.",
+        error_detail={
+            "category": "parse_error",
+            "exception_type": "RuntimeError",
+            "message": (
+                "Failed to ingest pdf file: Failed to process pdf file: "
+                "PDF Extraction Error."
+            ),
+        },
+    )
+    state = build_library_ingest_state(
+        (job,),
+        form=LibraryIngestFormState(),
+        expanded_details={"ingest-job-1"},
+    )
+    row = state.queue_rows[0]
+    assert row.details_expanded is True
+    # (task-2160) No parenthesized exception class -- it serves no user.
+    assert row.detail_lines[0] == "Category: parse error"
+    assert not any(
+        line.startswith("Details:") for line in row.detail_lines
+    ), "a Details line that repeats the summary is the round-4 P1"
+    # (task-2140) Parse errors get corrupt-file advice, never network talk.
+    assert any("repair or re-export" in line for line in row.detail_lines)
+    assert not any("network" in line for line in row.detail_lines)
+    assert not any("missing tooling" in line for line in row.detail_lines)
+
+
+def test_expanded_details_surface_chain_and_name_missing_dependency():
+    """(task-2130) The captured exception chain renders as Underlying
+    lines, a genuinely-different structured message keeps its Details
+    line, and a missing-module failure names the dependency in the
+    retry advisory instead of "missing tooling"."""
+    job = _job(
+        state=IngestJobState.FAILED,
+        source_path="/tmp/broken.pdf",
+        error="Failed to process pdf file: PDF Extraction Error.",
+        error_detail={
+            "category": "parse_error",
+            "exception_type": "ImportError",
+            "message": "Text extraction failed at page 3.",
+            "chain": [
+                "ImportError: No module named 'pymupdf'",
+                "OSError: cannot open shared object",
+            ],
+        },
+    )
+    state = build_library_ingest_state(
+        (job,),
+        form=LibraryIngestFormState(),
+        expanded_details={"ingest-job-1"},
+    )
+    row = state.queue_rows[0]
+    assert "Details: Text extraction failed at page 3." in row.detail_lines
+    assert (
+        "Underlying: ImportError: No module named 'pymupdf'"
+        in row.detail_lines
+    )
+    assert (
+        "Underlying: OSError: cannot open shared object" in row.detail_lines
+    )
+    assert (
+        "Missing dependency: pymupdf. Install it, then Retry."
+        in row.detail_lines
+    )
+
+    collapsed = build_library_ingest_state((job,), form=LibraryIngestFormState())
+    assert collapsed.queue_rows[0].details_expanded is False
+    assert collapsed.queue_rows[0].detail_lines == ()
+
+
+def test_preflight_duplicate_line_renders_and_suppresses_under_errors():
+    """(task-2043) The pre-flight duplicate forecast renders a quiet line;
+    error states suppress it like the estimate."""
+    preflight = PreflightResult(
+        type_groups={"generic": ["/tmp/a.txt", "/tmp/b.txt"]},
+        warnings=[],
+        errors=[],
+        total_size=200,
+        truncated=False,
+        total_files=2,
+        already_in_library=2,
+    )
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(path="/tmp"), preflight=preflight
+    )
+    assert state.duplicate_line == (
+        "2 files appear to already be in your Library — "
+        "they'll be matched, not re-imported."
+    )
+
+    single = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp"),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=1,
+            already_in_library=1,
+        ),
+    )
+    assert single.duplicate_line == (
+        "1 file appears to already be in your Library — "
+        "it will be matched, not re-imported."
+    )
+
+    with_errors = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/nope"),
+        preflight=PreflightResult(
+            type_groups={},
+            warnings=[],
+            errors=["Path not found: /nope"],
+            total_size=0,
+            truncated=False,
+            total_files=0,
+            path_invalid=True,
+            already_in_library=1,
+        ),
+    )
+    assert with_errors.duplicate_line == ""
+
+
+def test_unsupported_line_names_files_and_matches_gate():
+    """(task-2100) The forecast names the files (count alone forced a
+    submit-and-read round trip); when the gate blocks the whole selection
+    the line stops promising failure rows a blocked submit never records."""
+    mixed = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/folder"),
+        preflight=PreflightResult(
+            type_groups={
+                "generic": ["/tmp/a.txt"],
+                "unsupported": ["/tmp/x.json"],
+            },
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=2,
+        ),
+    )
+    assert mixed.unsupported_line == (
+        "1 unsupported file will be skipped: x.json."
+    )
+
+    blocked = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/folder"),
+        preflight=PreflightResult(
+            type_groups={"unsupported": ["/tmp/x.json", "/tmp/y.jpg"]},
+            warnings=[],
+            errors=[],
+            total_size=50,
+            truncated=False,
+            total_files=2,
+        ),
+    )
+    assert blocked.start_enabled is False
+    assert blocked.unsupported_line == (
+        "Unsupported: x.json, y.jpg."
+        " Supported: PDF documents, audio/video files, e-books, plain text files."
+    )
+
+    many = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/folder"),
+        preflight=PreflightResult(
+            type_groups={
+                "generic": ["/tmp/a.txt"],
+                "unsupported": [f"/tmp/u{i}.bin" for i in range(5)],
+            },
+            warnings=[],
+            errors=[],
+            total_size=500,
+            truncated=False,
+            total_files=6,
+        ),
+    )
+    assert many.unsupported_line.endswith("u0.bin, u1.bin, u2.bin, ....")
+
+
+def test_invalid_option_values_gate_start_with_text_message():
+    """(task-2130) 'abc' as a chunk size used to sail into a running job;
+    invalid option values now gate Start like a bad path, with a text
+    message (not a color-only border)."""
+    form = LibraryIngestFormState(path="/tmp/report.txt")
+    form.type_options["generic"] = {"chunk_size": "abc"}
+    state = build_library_ingest_state((), form=form)
+    assert not state.start_enabled
+    assert ("generic", "chunk_size", "Chunk size must be a whole number.") in (
+        state.option_errors
+    )
+    assert state.start_quiet_line == (
+        "Fix the highlighted options to start: "
+        "Chunk size must be a whole number."
+    )
+
+    form.type_options["generic"] = {"chunk_size": "0"}
+    zero = build_library_ingest_state((), form=form)
+    assert (
+        "generic",
+        "chunk_size",
+        "Chunk size must be between 100 and 5000.",
+    ) in zero.option_errors
+
+    # (Qodo round) The UI validator mirrors the submit-time clamp bounds:
+    # a value the gate blesses is never silently rewritten at submit.
+    form.type_options["generic"] = {"chunk_size": "150000"}
+    huge = build_library_ingest_state((), form=form)
+    assert (
+        "generic",
+        "chunk_size",
+        "Chunk size must be between 100 and 5000.",
+    ) in huge.option_errors
+
+    form.type_options["generic"] = {"chunk_size": "1000", "chunk_overlap": "-5"}
+    negative = build_library_ingest_state((), form=form)
+    assert ("generic", "chunk_overlap", "Chunk overlap must be at least 0.") in (
+        negative.option_errors
+    )
+
+    form.type_options["generic"] = {"chunk_size": "1000", "chunk_overlap": "100"}
+    valid = build_library_ingest_state((), form=form)
+    assert valid.option_errors == ()
+    assert valid.start_enabled
+
+
+def test_recent_ledger_survives_registry_clear_and_empty_copy_is_honest():
+    """(task-2130) Recent ingests is the durable session ledger: jobs
+    snapshotted at Clear-finished time still render after the registry
+    removal, and the empty-queue copy stops claiming "No ingest jobs
+    yet." after a session with activity."""
+    cleared = _job(
+        state=IngestJobState.FAILED,
+        source_path="/tmp/broken.pdf",
+        error="Failed to process pdf file: PDF Extraction Error.",
+    )
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        recent_ledger=(cleared,),
+    )
+    assert [job.job_id for job in state.recent_jobs] == [cleared.job_id]
+    assert state.queue_empty_line == "Queue is empty."
+
+    untouched = build_library_ingest_state((), form=LibraryIngestFormState())
+    assert untouched.queue_empty_line == "No ingest jobs yet."
+
+
+def test_queue_counts_line_shows_in_flight_batch_work():
+    """(task-2130 pin) The tally names queued/parsing work during a batch
+    -- the round-4 live report of '3 done' with no in-flight signal was a
+    sampling artifact, and this pins the contract that keeps it one."""
+    jobs = (
+        _job(job_id="ingest-job-1", state=IngestJobState.DONE),
+        _job(job_id="ingest-job-2", state=IngestJobState.PARSING),
+        _job(job_id="ingest-job-3", state=IngestJobState.QUEUED),
+        _job(job_id="ingest-job-4", state=IngestJobState.QUEUED),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    assert state.queue_counts_line == (
+        "1 parsing · 2 queued · 1 done — in queue"
+    )
+
+
+def test_capped_duplicate_forecast_says_at_least():
+    """(task-2130) When the duplicate check hits its 20-candidate cap the
+    count is a floor -- an 80-duplicate folder used to read '20 files
+    appear to already be…' presenting the cap as the total."""
+    capped = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/folder"),
+        preflight=PreflightResult(
+            type_groups={"generic": [f"/tmp/f{i}.txt" for i in range(20)]},
+            warnings=[],
+            errors=[],
+            total_size=1000,
+            truncated=False,
+            total_files=80,
+            already_in_library=20,
+            already_in_library_capped=True,
+        ),
+    )
+    assert capped.duplicate_line.startswith(
+        "at least 20 files appear to already be in your Library"
+    )
+    assert "at least 20 will match" in capped.commit_summary_line
+
+
+def test_option_errors_skip_hidden_groups_and_gated_fields():
+    """(task-2130 Qodo round) A stale invalid value in a panel that is not
+    rendered, or in a field whose enabled_when gate is off, must not block
+    Start with nothing visible to fix."""
+    form = LibraryIngestFormState(path="/tmp/report.txt")
+    # Invalid value in a group whose panel is NOT rendered (no preflight
+    # -> only the generic group is validated).
+    form.type_options["web"] = {"max_pages": "abc"}
+    form.type_options["generic"] = {"chunk_size": "1000"}
+    state = build_library_ingest_state((), form=form)
+    assert state.option_errors == ()
+    assert state.start_enabled
+
+    # Invalid chunk_size while its enabled_when gate (chunk) is OFF: the
+    # field renders disabled, so it must not gate Start either.
+    form.type_options["generic"] = {"chunk": False, "chunk_size": "abc"}
+    gated_off = build_library_ingest_state((), form=form)
+    assert gated_off.option_errors == ()
+
+
+def test_underlying_lines_skip_prefixed_restatements_of_the_row_error():
+    """(task-2140) A chain entry that merely restates the row's error
+    behind a "ClassName: " prefix must not render -- round 5 saw
+    "Underlying: FileIngestionError: <row error>" as the only detail."""
+    job = _job(
+        state=IngestJobState.FAILED,
+        source_path="/tmp/broken.pdf",
+        error="Failed to process pdf file: PDF Extraction Error.",
+        error_detail={
+            "category": "parse_error",
+            "exception_type": "FileIngestionError",
+            "message": "Failed to process pdf file: PDF Extraction Error.",
+            "chain": [
+                "FileIngestionError: Failed to process pdf file: PDF Extraction Error.",
+                "ValueError: startxref not found",
+            ],
+        },
+    )
+    state = build_library_ingest_state(
+        (job,),
+        form=LibraryIngestFormState(),
+        expanded_details={"ingest-job-1"},
+    )
+    row = state.queue_rows[0]
+    assert not any(
+        "FileIngestionError: Failed to process" in line
+        for line in row.detail_lines
+    ), "prefixed restatement of the row error leaked into the details"
+    assert "Underlying: ValueError: startxref not found" in row.detail_lines
+
+
+def test_empty_files_forecast_as_failures_not_imports():
+    """(task-2160) A 0-byte file is pulled out of its type group at
+    analysis time and forecast as a failure -- the forecast used to
+    promise '1 will import' for a file it had measured at 0 B."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/folder"),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/real.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=2,
+            empty_files=("/tmp/empty.txt",),
+        ),
+    )
+    assert state.empty_line == "1 empty file will fail — empty.txt is 0 B."
+    assert state.commit_summary_line == "1 will import · 1 will fail"
+
+    solo = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/empty.txt"),
+        preflight=PreflightResult(
+            type_groups={},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+            empty_files=("/tmp/empty.txt",),
+        ),
+    )
+    # A selection that is ONLY an empty file has nothing importable --
+    # the gate blocks exactly like a solo-unsupported selection.
+    assert not solo.start_enabled
+
+
+def test_armed_clear_label_names_failed_rows():
+    """(task-2160) 'finished' includes failed rows -- the armed label must
+    say so at the moment of destruction."""
+    jobs = (
+        _job(job_id="ingest-job-1", state=IngestJobState.DONE),
+        _job(job_id="ingest-job-2", state=IngestJobState.FAILED),
+        _job(job_id="ingest-job-3", state=IngestJobState.FAILED),
+    )
+    armed = build_library_ingest_state(
+        jobs, form=LibraryIngestFormState(), clear_finished_armed=True
+    )
+    assert armed.queue_clear_finished_label == (
+        "Press again to clear 3 finished (incl. 2 failed)"
+    )
+    done_only = build_library_ingest_state(
+        (_job(job_id="ingest-job-1", state=IngestJobState.DONE),),
+        form=LibraryIngestFormState(),
+        clear_finished_armed=True,
+    )
+    assert done_only.queue_clear_finished_label == (
+        "Press again to clear 1 finished"
+    )
+
+
+def test_all_match_selection_gets_consent_line_and_stays_enabled():
+    """(task-2223 ruling) Zero imports + >=1 predicted match keeps Start
+    ENABLED (the dedup probe is capped best-effort) with an
+    informed-consent quiet line saying what starting will actually do."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/report.txt"),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/report.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=1,
+            already_in_library=1,
+        ),
+    )
+    assert state.start_enabled
+    assert state.start_quiet_line == (
+        "Everything here appears to already be in your Library — "
+        "starting will re-check and match, not re-import."
+    )
+    assert state.commit_summary_line == "0 will import · 1 will match"
+
+
+def test_skipped_jobs_render_neutral_and_count_separately():
+    """(task-2220 ruling) A skipped job renders with the neutral glyph, no
+    Retry, dismiss offered; the tally counts skips in their own segment,
+    never as failures; the armed clear label counts them as finished but
+    not as failed."""
+    skipped = _job(
+        job_id="ingest-job-1",
+        state=IngestJobState.SKIPPED,
+        source_path="/tmp/photo.jpg",
+        error="Unsupported file type: .jpg.",
+    )
+    done = _job(job_id="ingest-job-2", state=IngestJobState.DONE)
+    state = build_library_ingest_state(
+        (skipped, done),
+        form=LibraryIngestFormState(),
+        clear_finished_armed=True,
+    )
+    row = next(r for r in state.queue_rows if r.job_id == "ingest-job-1")
+    assert row.glyph == "○"
+    assert row.line.startswith("○ skipped · photo.jpg")
+    assert row.can_retry is False
+    assert row.can_dismiss is True
+    assert state.queue_counts_line == "1 done · 1 skipped — in queue"
+    assert state.queue_clear_finished_label == (
+        "Press again to clear 2 finished"
+    )
+    assert [j.job_id for j in state.recent_jobs] == [
+        "ingest-job-1",
+        "ingest-job-2",
+    ]
+
+
+def test_commit_summary_splits_skip_from_fail():
+    """(task-2220) Unsupported files forecast as 'will skip'; empty files
+    keep 'will fail' (they are enqueued and genuinely fail)."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/folder"),
+        preflight=PreflightResult(
+            type_groups={
+                "generic": ["/tmp/a.txt", "/tmp/b.txt"],
+                "unsupported": ["/tmp/pic.jpg"],
+            },
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=4,
+            empty_files=("/tmp/zero.txt",),
+        ),
+    )
+    assert state.commit_summary_line == (
+        "2 will import · 1 will skip · 1 will fail"
+    )
+    assert "will be skipped: pic.jpg." in state.unsupported_line
+
+
+def test_skips_only_queue_still_offers_clear_finished():
+    """(task-2220 Qodo round) A queue holding ONLY skipped rows must show
+    the Clear finished control -- skips count as finished everywhere."""
+    skipped = _job(
+        job_id="ingest-job-1",
+        state=IngestJobState.SKIPPED,
+        source_path="/tmp/photo.jpg",
+    )
+    state = build_library_ingest_state((skipped,), form=LibraryIngestFormState())
+    assert state.queue_show_clear_finished is True
+
+
+def test_queue_groups_batches_with_headers_and_latest_line():
+    """(task-2221 owner ruling) Contiguous same-batch runs become one
+    headed group (source, count, age, outcomes); singles stay bare; the
+    latest-batch line leads with the newest batch's outcomes."""
+    single = _job(
+        job_id="ingest-job-1",
+        state=IngestJobState.DONE,
+        source_path="/tmp/solo.txt",
+    )
+    b1 = _job(
+        job_id="ingest-job-2",
+        state=IngestJobState.DONE,
+        source_path="/data/folder_a/one.txt",
+        batch_id="local-aaa",
+        submitted_at=100.0,
+    )
+    b2 = _job(
+        job_id="ingest-job-3",
+        state=IngestJobState.SKIPPED,
+        source_path="/data/folder_a/pic.jpg",
+        batch_id="local-aaa",
+        submitted_at=101.0,
+    )
+    state = build_library_ingest_state(
+        (single, b1, b2), form=LibraryIngestFormState()
+    )
+    assert len(state.queue_groups) == 2
+    bare, headed = state.queue_groups
+    assert bare.header_line == ""
+    assert bare.job_ids == ("ingest-job-1",)
+    assert headed.batch_id == "local-aaa"
+    assert headed.job_ids == ("ingest-job-2", "ingest-job-3")
+    assert headed.header_line.startswith("▸ folder_a — 2 files")
+    assert "1 done" in headed.header_line
+    assert "1 skipped" in headed.header_line
+    # The batch carries the newer submitted_at here, so it is the latest
+    # run (the single job's default timestamp is older).
+    assert state.latest_batch_line == "Latest run: 1 done · 1 skipped"
+
+
+def test_single_file_submission_reads_naturally_without_header():
+    """(task-2221) A batchless single job renders exactly as before: one
+    bare group, no header, no latest-batch line."""
+    solo = _job(job_id="ingest-job-1", state=IngestJobState.DONE)
+    state = build_library_ingest_state((solo,), form=LibraryIngestFormState())
+    assert len(state.queue_groups) == 1
+    assert state.queue_groups[0].header_line == ""
+    assert state.latest_batch_line == ""
+
+
+def test_latest_run_line_follows_a_single_file_submission() -> None:
+    """The latest-run line reports a single-file submission.
+
+    (task-2230) THE round-7 regression: the line was computed only from
+    groups carrying a batch_id, so a single-file run left it reporting
+    the previous multi-file batch. Every submission is a run.
+    """
+    b1 = _job(
+        job_id="ingest-job-1",
+        state=IngestJobState.DONE,
+        source_path="/data/folder_a/one.txt",
+        batch_id="local-aaa",
+        submitted_at=100.0,
+    )
+    b2 = _job(
+        job_id="ingest-job-2",
+        state=IngestJobState.SKIPPED,
+        source_path="/data/folder_a/pic.jpg",
+        batch_id="local-aaa",
+        submitted_at=101.0,
+    )
+    later_single = _job(
+        job_id="ingest-job-3",
+        state=IngestJobState.DONE,
+        source_path="/tmp/solo.txt",
+        submitted_at=500.0,
+    )
+    state = build_library_ingest_state(
+        (b1, b2, later_single), form=LibraryIngestFormState()
+    )
+    assert state.latest_batch_line == "Latest run: 1 done", (
+        "the single-file run is the latest submission and must be reported"
+    )
+
+
+def test_latest_run_line_hidden_when_the_queue_holds_one_run() -> None:
+    """The latest-run line hides when the queue holds a single run.
+
+    (task-2230) The group header already reports it, so the line would
+    just repeat itself.
+    """
+    only = _job(job_id="ingest-job-1", state=IngestJobState.DONE)
+    state = build_library_ingest_state((only,), form=LibraryIngestFormState())
+    assert state.latest_batch_line == ""
+
+
+def test_unresolvable_path_gates_start_with_an_explanation() -> None:
+    """An unresolvable path gates Start and explains itself.
+
+    (task-2230) It used to leave Start styled exactly like a valid
+    selection with a BLANK gate line, and pressing it left no queue
+    record at all.
+    """
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/nope_does_not_exist.txt"),
+        preflight=PreflightResult(
+            type_groups={},
+            warnings=[],
+            errors=["Path not found: /tmp/nope_does_not_exist.txt"],
+            total_size=0,
+            truncated=False,
+            total_files=0,
+            path_invalid=True,
+        ),
+    )
+    assert not state.start_enabled
+    assert state.start_quiet_line == (
+        "Can't find that path — check it, or use Browse… to pick a file "
+        "or folder."
+    )
+
+
+def test_matched_rows_and_tallies_use_the_forecast_vocabulary() -> None:
+    """A dedup match reports as "matched", distinct from an import.
+
+    (task-2231) The forecast promises "will import · will match · will
+    skip"; the receipt used to fold match into "done" and render the two
+    outcomes as byte-identical rows, so the promise could not be audited.
+    """
+    imported = _job(
+        job_id="ingest-job-1",
+        state=IngestJobState.DONE,
+        source_path="/tmp/fresh.txt",
+        progress={"message": "Ingested fresh.txt"},
+        batch_id="local-aaa",
+        submitted_at=10.0,
+    )
+    matched = _job(
+        job_id="ingest-job-2",
+        state=IngestJobState.DONE,
+        source_path="/tmp/twin.txt",
+        progress={
+            "message": (
+                "Already in Library — matched an existing item; nothing "
+                "new was imported."
+            )
+        },
+        batch_id="local-aaa",
+        submitted_at=11.0,
+    )
+    other = _job(
+        job_id="ingest-job-3",
+        state=IngestJobState.DONE,
+        source_path="/tmp/solo.txt",
+        submitted_at=99.0,
+    )
+    state = build_library_ingest_state(
+        (imported, matched, other), form=LibraryIngestFormState()
+    )
+    rows = {row.job_id: row for row in state.queue_rows}
+    assert rows["ingest-job-1"].line.startswith("✓ done · fresh.txt")
+    assert rows["ingest-job-2"].line.startswith("≡ matched · twin.txt")
+    assert rows["ingest-job-2"].glyph == "≡"
+
+    headed = next(g for g in state.queue_groups if g.header_line)
+    assert "1 done" in headed.header_line
+    assert "1 matched" in headed.header_line
+
+
+def test_active_rows_show_the_attempt_number_after_a_retry() -> None:
+    """A re-attempt is visible while it runs, not only once it ends.
+
+    (task-2231) Requeue creates a new QUEUED job with an incremented
+    count, but the in-flight rows never showed it — so pressing Retry
+    looked identical to nothing happening.
+    """
+    # (Qodo round) detected_type is appended by the parsing/writing
+    # branches, so the marker must be the row's TRAILING element -- with a
+    # type present it used to read "… · attempt 2 · pdf".
+    for state_value, word, detected in (
+        (IngestJobState.QUEUED, "queued", ""),
+        (IngestJobState.PARSING, "parsing", "pdf"),
+        (IngestJobState.WRITING, "writing", "pdf"),
+    ):
+        job = _job(
+            job_id="ingest-job-1",
+            state=state_value,
+            source_path="/tmp/broken.pdf",
+            retry_count=1,
+            detected_type=detected,
+        )
+        row = build_library_ingest_state(
+            (job,), form=LibraryIngestFormState()
+        ).queue_rows[0]
+        assert row.line.startswith(f"● {word} · broken.pdf")
+        assert row.line.endswith("· attempt 2"), (
+            f"{word} row must show the attempt number: {row.line!r}"
+        )
+
+    first = _job(job_id="ingest-job-2", state=IngestJobState.PARSING)
+    first_row = build_library_ingest_state(
+        (first,), form=LibraryIngestFormState()
+    ).queue_rows[0]
+    assert "attempt" not in first_row.line
+
+
+def test_consent_line_requires_every_importable_file_to_match() -> None:
+    """"Everything here" only renders when it is true.
+
+    (task-2231) The line rendered on a selection where only some files
+    were predicted matches.
+    """
+    form = LibraryIngestFormState(path="/tmp/folder")
+    partial = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={
+                "generic": ["/tmp/a.txt", "/tmp/b.txt"],
+                "unsupported": ["/tmp/pic.jpg"],
+            },
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=3,
+            already_in_library=2,
+        ),
+    )
+    assert "Everything here" not in partial.start_quiet_line
+
+    total = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=1,
+            already_in_library=1,
+        ),
+    )
+    assert total.start_quiet_line.startswith("Everything here")
+
+
+def test_queue_tally_and_group_header_agree_on_matched() -> None:
+    """The tally buckets the way the headers and rows do.
+
+    (task-2231 Qodo round) The top-level counts line bucketed purely by
+    state, so it read "2 done" while a group header directly below it
+    read "1 done · 1 matched" — two contradictory summaries on one
+    screen.
+    """
+    imported = _job(
+        job_id="ingest-job-1",
+        state=IngestJobState.DONE,
+        source_path="/tmp/fresh.txt",
+        progress={"message": "Ingested fresh.txt"},
+        batch_id="local-aaa",
+        submitted_at=10.0,
+    )
+    matched = _job(
+        job_id="ingest-job-2",
+        state=IngestJobState.DONE,
+        source_path="/tmp/twin.txt",
+        progress={
+            "message": (
+                "Already in Library — matched an existing item; nothing "
+                "new was imported."
+            )
+        },
+        batch_id="local-aaa",
+        submitted_at=11.0,
+    )
+    state = build_library_ingest_state(
+        (imported, matched), form=LibraryIngestFormState()
+    )
+    assert state.queue_counts_line == "1 done · 1 matched — in queue"
+    headed = next(g for g in state.queue_groups if g.header_line)
+    assert "1 done" in headed.header_line
+    assert "1 matched" in headed.header_line

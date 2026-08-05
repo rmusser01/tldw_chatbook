@@ -8,6 +8,7 @@ from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import QueryError
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, Input, OptionList, Select, Static, Switch
@@ -28,6 +29,13 @@ DEFAULT_SPLASH_CONFIG: dict[str, Any] = {
     "fade_out_duration": 0.2,
     "animation_speed": 1.0,
 }
+
+
+def switch_state_label(value: bool) -> str:
+    """Textual state for a Switch: the slider itself carries state by
+    position/color only, which is unreadable in reduced-color terminals and
+    violates the text-labeled-states rule (task-1561)."""
+    return "On" if value else "Off"
 
 
 class SettingsSplashScreenViewer(Vertical):
@@ -51,7 +59,15 @@ class SettingsSplashScreenViewer(Vertical):
 
     def _load_config(self) -> dict[str, Any]:
         try:
-            config = get_cli_setting("splash_screen", DEFAULT_SPLASH_CONFIG)
+            _EFFECTS_KEYS = {"fade_in_duration", "fade_out_duration", "animation_speed"}
+            config = {
+                key: get_cli_setting(
+                    "splash_screen.effects" if key in _EFFECTS_KEYS else "splash_screen",
+                    key,
+                    value,
+                )
+                for key, value in DEFAULT_SPLASH_CONFIG.items()
+            }
         except Exception as exc:
             logger.warning("Failed to load splash_screen config: {}. Using defaults.", exc)
             config = dict(DEFAULT_SPLASH_CONFIG)
@@ -105,25 +121,52 @@ class SettingsSplashScreenViewer(Vertical):
                     compact=True,
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Enabled", classes="settings-input-label")
+                label_static = Static("Enabled", classes="settings-input-label")
+                # task-1561: the shared label column truncates longer
+                # labels ("Skip on keypress" showed as "Skip on").
+                label_static.styles.width = 20
+                yield label_static
                 yield Switch(
                     value=bool(self._config.get("enabled", True)),
                     id="settings-splash-enabled",
                 )
+                yield Static(
+                    switch_state_label(bool(self._config.get("enabled", True))),
+                    id="settings-splash-enabled-state",
+                    classes="settings-toggle-state",
+                )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Show progress", classes="settings-input-label")
+                label_static = Static("Show progress", classes="settings-input-label")
+                # task-1561: the shared label column truncates longer
+                # labels ("Skip on keypress" showed as "Skip on").
+                label_static.styles.width = 20
+                yield label_static
                 yield Switch(
                     value=bool(self._config.get("show_progress", True)),
                     id="settings-splash-show-progress",
                 )
+                yield Static(
+                    switch_state_label(bool(self._config.get("show_progress", True))),
+                    id="settings-splash-show-progress-state",
+                    classes="settings-toggle-state",
+                )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Skip on keypress", classes="settings-input-label")
+                label_static = Static("Skip on keypress", classes="settings-input-label")
+                # task-1561: the shared label column truncates longer
+                # labels ("Skip on keypress" showed as "Skip on").
+                label_static.styles.width = 20
+                yield label_static
                 yield Switch(
                     value=bool(self._config.get("skip_on_keypress", True)),
                     id="settings-splash-skip-on-keypress",
                 )
+                yield Static(
+                    switch_state_label(bool(self._config.get("skip_on_keypress", True))),
+                    id="settings-splash-skip-on-keypress-state",
+                    classes="settings-toggle-state",
+                )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Duration", classes="settings-input-label")
+                yield Static("Duration (s)", classes="settings-input-label")
                 yield Input(
                     value=str(self._config.get("duration", 2.5)),
                     id="settings-splash-duration",
@@ -132,7 +175,7 @@ class SettingsSplashScreenViewer(Vertical):
                     restrict=r"^[0-9]*\.?[0-9]*$",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Animation speed", classes="settings-input-label")
+                yield Static("Animation speed (x)", classes="settings-input-label")
                 yield Input(
                     value=str(self._config.get("animation_speed", 1.0)),
                     id="settings-splash-animation-speed",
@@ -161,7 +204,17 @@ class SettingsSplashScreenViewer(Vertical):
             )
 
     def on_mount(self) -> None:
-        card_list = self.query_one("#settings-splash-card-list", OptionList)
+        """Initialize after composed descendants are mounted."""
+        self.call_after_refresh(self._initialize_card_list)
+
+    def _initialize_card_list(self) -> None:
+        """Select the first available splash card."""
+        try:
+            card_list = self.query_one("#settings-splash-card-list", OptionList)
+        except QueryError:
+            # Settings can recompose while this callback is queued. A stale,
+            # detached viewer must not fail the replacement screen.
+            return
         if self._cards:
             card_list.highlighted = 0
 
@@ -191,16 +244,25 @@ class SettingsSplashScreenViewer(Vertical):
 
     @on(Switch.Changed, "#settings-splash-enabled")
     def handle_enabled_changed(self, event: Switch.Changed) -> None:
+        self.query_one("#settings-splash-enabled-state", Static).update(
+            switch_state_label(bool(event.value))
+        )
         if self._save_config_value("enabled", event.value):
             self._update_status("Splash screen enabled setting saved.")
 
     @on(Switch.Changed, "#settings-splash-show-progress")
     def handle_show_progress_changed(self, event: Switch.Changed) -> None:
+        self.query_one("#settings-splash-show-progress-state", Static).update(
+            switch_state_label(bool(event.value))
+        )
         if self._save_config_value("show_progress", event.value):
             self._update_status("Show progress setting saved.")
 
     @on(Switch.Changed, "#settings-splash-skip-on-keypress")
     def handle_skip_on_keypress_changed(self, event: Switch.Changed) -> None:
+        self.query_one("#settings-splash-skip-on-keypress-state", Static).update(
+            switch_state_label(bool(event.value))
+        )
         if self._save_config_value("skip_on_keypress", event.value):
             self._update_status("Skip on keypress setting saved.")
 
@@ -264,7 +326,6 @@ class SettingsSplashScreenViewer(Vertical):
             )
             return
 
-        card_data = self._cards[card_name]
         try:
             preview = SplashScreen(
                 card_name=card_name,

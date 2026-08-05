@@ -7,6 +7,7 @@ complex mocking, focusing on the actual implementation.
 
 import pytest
 import time
+from unittest.mock import MagicMock
 
 # Import optional dependency checker
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
@@ -63,13 +64,22 @@ class TestRAGServiceBasics:
         config = RAGConfig()
         config.vector_store.persist_directory = temp_dir
 
-        service = create_rag_service_from_config(config=config)
+        with create_rag_service_from_config(config=config) as service:
+            assert isinstance(service, EnhancedRAGServiceV2)
+            assert service.config is not None
+            assert isinstance(service.config, RAGConfig)
+            assert service.embeddings is not None
+            assert service.vector_store is not None
 
-        assert isinstance(service, EnhancedRAGServiceV2)
-        assert service.config is not None
-        assert isinstance(service.config, RAGConfig)
-        assert service.embeddings is not None
-        assert service.vector_store is not None
+    def test_close_releases_vector_store(self, test_rag_config):
+        """Test that service cleanup closes its vector-store resources."""
+        service = create_rag_service_from_config(config=test_rag_config)
+        vector_store = service.vector_store
+        vector_store.close = MagicMock(wraps=vector_store.close)
+
+        service.close()
+
+        vector_store.close.assert_called_once_with()
 
     @pytest.mark.asyncio
     async def test_index_simple_document(self, test_rag_config):

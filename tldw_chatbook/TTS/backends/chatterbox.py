@@ -416,7 +416,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
 
             # Import protect_file_descriptors if available
             try:
-                from tldw_chatbook.Embeddings.Embeddings_Lib import (
+                from tldw_chatbook.Utils.fd_protection import (
                     protect_file_descriptors,
                 )
 
@@ -831,7 +831,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
             """Generate audio with complete isolation"""
             # Import here to avoid issues
             try:
-                from tldw_chatbook.Embeddings.Embeddings_Lib import (
+                from tldw_chatbook.Utils.fd_protection import (
                     protect_file_descriptors,
                 )
 
@@ -1218,7 +1218,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
                     # Run the blocking generate call with complete isolation
                     # Try to import protect_file_descriptors
                     try:
-                        from tldw_chatbook.Embeddings.Embeddings_Lib import (
+                        from tldw_chatbook.Utils.fd_protection import (
                             protect_file_descriptors,
                         )
 

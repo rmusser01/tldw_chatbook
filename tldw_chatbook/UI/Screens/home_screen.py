@@ -22,7 +22,15 @@ from tldw_chatbook.config import (
     load_settings,
     save_setting_to_cli_config,
 )
-from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_NOTE_ID, TAB_CHAT, TAB_LIBRARY
+from tldw_chatbook.Constants import (
+    LIBRARY_NAV_CONTEXT_NOTE_ID,
+    TAB_CHAT,
+    TAB_LIBRARY,
+    TAB_WATCHLISTS_COLLECTIONS,
+    WATCHLISTS_NAV_CONTEXT_SECTION,
+    WATCHLISTS_SECTION_NOTIFICATIONS,
+    WATCHLISTS_SECTION_RUNS,
+)
 from tldw_chatbook.Home.dashboard_state import (
     HOME_PRIMARY_ACTION_ID,
     HOME_RESUME_KIND_CONVERSATION,
@@ -44,15 +52,16 @@ from tldw_chatbook.Home.home_rail_state import (
     coerce_home_rail_preferences,
     serialize_home_rail_preferences,
 )
-from tldw_chatbook.Widgets.Console.console_rail_section import (
-    CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
-    ConsoleRailSectionHeader,
+from tldw_chatbook.Widgets.destination_rail import (
+    RAIL_SECTION_TOGGLE_PREFIX,
+    DestinationRailSectionHeader,
 )
 from tldw_chatbook.Widgets.Home.home_canvas import HomeCanvas
 from tldw_chatbook.Widgets.Home.home_rail import HOME_RAIL_ROW_PREFIX, HomeRail
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+from ..Navigation.screen_state_store import RuntimeIdentity
 from .settings_config_models import SettingsCategoryId
 
 
@@ -86,8 +95,21 @@ def _home_runtime_status_label(state: HomeDashboardInput) -> str:
 
 
 def _home_primary_action_context(action: object) -> dict[str, object]:
-    if getattr(action, "action_id", None) == "fix_model_setup":
+    action_id = getattr(action, "action_id", None)
+    if action_id == "fix_model_setup":
         return {"category": SettingsCategoryId.PROVIDERS_MODELS.value}
+    if action_id == "review_notifications" and getattr(
+        action, "target_route", None
+    ) in {
+        "subscriptions",
+        TAB_WATCHLISTS_COLLECTIONS,
+    }:
+        return {WATCHLISTS_NAV_CONTEXT_SECTION: WATCHLISTS_SECTION_NOTIFICATIONS}
+    if action_id == "review_failed_work" and getattr(action, "target_route", None) in {
+        "subscriptions",
+        TAB_WATCHLISTS_COLLECTIONS,
+    }:
+        return {WATCHLISTS_NAV_CONTEXT_SECTION: WATCHLISTS_SECTION_RUNS}
     return {}
 
 
@@ -475,7 +497,12 @@ class HomeScreen(BaseAppScreen):
             return test_override
 
         providers = getattr(self.app_instance, "providers_models", {}) or {}
-        has_recent_work = bool(getattr(self.app_instance, "_screen_states", {}))
+        runtime_identity = RuntimeIdentity.from_state(
+            self.app_instance.runtime_policy.state
+        )
+        has_recent_work = self.app_instance.screen_state_store.has_snapshots(
+            runtime_identity
+        )
         dashboard_input = (
             self.app_instance.home_active_work_adapter.build_dashboard_input(
                 providers_models=providers,
@@ -640,7 +667,7 @@ class HomeScreen(BaseAppScreen):
         try:
             body = self.query_one(f"#home-rail-section-body-{section_id}")
             header = self.query_one(
-                f"#home-rail-section-header-{section_id}", ConsoleRailSectionHeader
+                f"#home-rail-section-header-{section_id}", DestinationRailSectionHeader
             )
         except Exception:
             return
@@ -692,10 +719,10 @@ class HomeScreen(BaseAppScreen):
                 self._sync_home_triage()
             return
 
-        if button_id.startswith(f"{CONSOLE_RAIL_SECTION_TOGGLE_PREFIX}home-"):
+        if button_id.startswith(f"{RAIL_SECTION_TOGGLE_PREFIX}home-"):
             event.stop()
             section_id = button_id.removeprefix(
-                f"{CONSOLE_RAIL_SECTION_TOGGLE_PREFIX}home-"
+                f"{RAIL_SECTION_TOGGLE_PREFIX}home-"
             )
             currently_open = bool(
                 getattr(self._home_rail_preferences(), f"{section_id}_open", True)
@@ -713,9 +740,6 @@ class HomeScreen(BaseAppScreen):
         dashboard = self._current_dashboard
         if dashboard is None:
             return
-        prepare = getattr(self.app_instance, "prepare_home_primary_action", None)
-        if callable(prepare):
-            prepare(dashboard.next_action)
         self.post_message(
             NavigateToScreen(
                 dashboard.next_action.target_route,

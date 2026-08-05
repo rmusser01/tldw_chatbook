@@ -9,22 +9,29 @@ Handles the import and validation of chatbooks into the application.
 """
 
 import json
+import os
 import shutil
+import stat
+import tempfile
 import zipfile
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import List, Dict, Any, Optional, Tuple, Mapping
 from loguru import logger
 
 from .chatbook_models import ChatbookManifest, ContentType, ChatbookVersion
 from .conflict_resolver import ConflictResolver, ConflictResolution
 from ..Chat.chat_conversation_service import ChatConversationService
-from ..DB.ChaChaNotes_DB import CharactersRAGDB
+from ..Chat.citation_service_factory import (
+    build_local_citation_conversation_service,
+)
+from ..DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
 from ..Character_Chat.character_card_formats import detect_and_parse_character_card
 from ..Utils.path_validation import validate_filename
 from ..Utils.paths import get_user_data_dir
+from ..Utils.private_paths import secure_private_directory
 
 
 class ImportStatus:
@@ -71,11 +78,80 @@ class ChatbookImporter:
             db_paths: Dictionary mapping database names to their paths
         """
         self.db_paths = db_paths
-        self.temp_dir = (
-            Path.home() / ".local" / "share" / "tldw_cli" / "temp" / "imports"
-        )
-        self.temp_dir.mkdir(parents=True, exist_ok=True)
+        self.temp_dir = secure_private_directory(
+            get_user_data_dir() / "temp" / "imports",
+            create=True,
+            application_owned=True,
+        ).lexical_path
         self.conflict_resolver = ConflictResolver()
+
+    def _create_extract_dir(self, prefix: str) -> Path:
+        """Create one collision-resistant owner-only extraction directory."""
+
+        return Path(tempfile.mkdtemp(prefix=prefix, dir=self.temp_dir))
+
+    @staticmethod
+    def _validated_archive_parts(member: zipfile.ZipInfo) -> tuple[str, ...]:
+        """Return safe relative path components for one archive member."""
+
+        filename = member.filename
+        if not filename or "\x00" in filename or "\\" in filename:
+            raise ValueError(f"Unsafe archive member path: {filename!r}")
+        relative = PurePosixPath(filename)
+        parts = relative.parts
+        if (
+            relative.is_absolute()
+            or not parts
+            or any(part in {"", ".", ".."} for part in parts)
+            or parts[0].endswith(":")
+        ):
+            raise ValueError(f"Unsafe archive member path: {filename!r}")
+
+        archived_mode = member.external_attr >> 16
+        archived_type = stat.S_IFMT(archived_mode)
+        if archived_type not in {0, stat.S_IFREG, stat.S_IFDIR}:
+            raise ValueError(f"Unsupported archive member type: {filename!r}")
+        return parts
+
+    def _extract_private_archive(
+        self,
+        chatbook_path: Path,
+        extract_dir: Path,
+    ) -> None:
+        """Extract regular ZIP members with owner-only permissions."""
+
+        with zipfile.ZipFile(chatbook_path, "r") as archive:
+            for member in archive.infolist():
+                parts = self._validated_archive_parts(member)
+                target = extract_dir.joinpath(*parts)
+                if member.is_dir():
+                    secure_private_directory(
+                        target,
+                        create=True,
+                        application_owned=True,
+                    )
+                    continue
+
+                secure_private_directory(
+                    target.parent,
+                    create=True,
+                    application_owned=True,
+                )
+                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                flags |= getattr(os, "O_NOFOLLOW", 0)
+                file_fd = os.open(target, flags, 0o600)
+                try:
+                    if hasattr(os, "fchmod"):
+                        os.fchmod(file_fd, 0o600)
+                    with os.fdopen(file_fd, "wb") as destination:
+                        file_fd = -1
+                        with archive.open(member, "r") as source:
+                            shutil.copyfileobj(source, destination)
+                        destination.flush()
+                        os.fsync(destination.fileno())
+                finally:
+                    if file_fd >= 0:
+                        os.close(file_fd)
 
     def preview_chatbook(
         self, chatbook_path: Path
@@ -89,25 +165,19 @@ class ChatbookImporter:
         Returns:
             Tuple of (manifest, error_message)
         """
+        extract_dir: Optional[Path] = None
         try:
-            # Extract to temporary directory
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            extract_dir = self.temp_dir / f"preview_{timestamp}"
-
-            # Extract archive
-            if chatbook_path.suffix == ".zip":
-                with zipfile.ZipFile(chatbook_path, "r") as zf:
-                    zf.extractall(extract_dir)
-            else:
+            if chatbook_path.suffix != ".zip":
                 return (
                     None,
                     "Unsupported chatbook format. Only ZIP files are supported.",
                 )
+            extract_dir = self._create_extract_dir("preview_")
+            self._extract_private_archive(chatbook_path, extract_dir)
 
             # Load manifest
             manifest_path = extract_dir / "manifest.json"
             if not manifest_path.exists():
-                shutil.rmtree(extract_dir)
                 return None, "Invalid chatbook: manifest.json not found"
 
             with open(manifest_path, "r", encoding="utf-8") as f:
@@ -115,14 +185,14 @@ class ChatbookImporter:
 
             manifest = ChatbookManifest.from_dict(manifest_data)
 
-            # Cleanup
-            shutil.rmtree(extract_dir)
-
             return manifest, None
 
         except Exception as e:
             logger.error(f"Error previewing chatbook: {e}")
             return None, f"Error previewing chatbook: {str(e)}"
+        finally:
+            if extract_dir is not None:
+                shutil.rmtree(extract_dir, ignore_errors=True)
 
     def import_chatbook(
         self,
@@ -144,6 +214,7 @@ class ChatbookImporter:
             prefix_imported: Whether to prefix imported content titles
             import_media: Whether to import media files
             import_embeddings: Whether to import embeddings
+            import_status: Optional status object populated with item-level results
 
         Returns:
             Tuple of (success, message)
@@ -155,23 +226,17 @@ class ChatbookImporter:
             f"ChatbookImporter.import_chatbook: Options - conflict_resolution={conflict_resolution}, prefix_imported={prefix_imported}, import_media={import_media}, import_embeddings={import_embeddings}"
         )
         status = import_status if import_status else ImportStatus()
+        extract_dir: Optional[Path] = None
 
         try:
-            # Extract chatbook
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            extract_dir = self.temp_dir / f"import_{timestamp}"
-
             logger.info(f"Importing chatbook from {chatbook_path}")
 
-            # Extract archive
-            if chatbook_path.suffix == ".zip":
-                with zipfile.ZipFile(chatbook_path, "r") as zf:
-                    zf.extractall(extract_dir)
-            else:
-                status.add_error(
-                    "Unsupported chatbook format. Only ZIP files are supported."
-                )
-                return False, status
+            if chatbook_path.suffix != ".zip":
+                error_msg = "Unsupported chatbook format. Only ZIP files are supported."
+                status.add_error(error_msg)
+                return False, error_msg
+            extract_dir = self._create_extract_dir("import_")
+            self._extract_private_archive(chatbook_path, extract_dir)
 
             # Load manifest
             manifest_path = extract_dir / "manifest.json"
@@ -182,9 +247,9 @@ class ChatbookImporter:
                 logger.error(
                     "ChatbookImporter.import_chatbook: manifest.json not found"
                 )
-                status.add_error("Invalid chatbook: manifest.json not found")
-                shutil.rmtree(extract_dir)
-                return False, status
+                error_msg = "Invalid chatbook: manifest.json not found"
+                status.add_error(error_msg)
+                return False, error_msg
 
             with open(manifest_path, "r", encoding="utf-8") as f:
                 manifest_data = json.load(f)
@@ -266,8 +331,13 @@ class ChatbookImporter:
                     status,
                 )
 
-            # Cleanup
-            shutil.rmtree(extract_dir)
+            if ContentType.KEPT_BRIEFING in content_selections:
+                self._import_kept_briefings(
+                    extract_dir,
+                    manifest,
+                    content_selections[ContentType.KEPT_BRIEFING],
+                    status,
+                )
 
             # Success if we processed items without fatal errors
             # This includes both imported and skipped items
@@ -304,6 +374,9 @@ class ChatbookImporter:
             logger.error(f"Error importing chatbook: {e}")
             status.add_error(error_msg)
             return False, error_msg
+        finally:
+            if extract_dir is not None:
+                shutil.rmtree(extract_dir, ignore_errors=True)
 
     def _import_conversations(
         self,
@@ -327,9 +400,9 @@ class ChatbookImporter:
             return
 
         db = CharactersRAGDB(db_path, "chatbook_importer")
-        conversation_service = ChatConversationService(
+        conversation_service, _, _ = build_local_citation_conversation_service(
             db,
-            rag_context_store_path=get_user_data_dir()
+            sidecar_path=get_user_data_dir()
             / "tldw_chatbook_chat_rag_context.json",
         )
         conv_dir = extract_dir / "content" / "conversations"
@@ -402,6 +475,7 @@ class ChatbookImporter:
                         "updated_at", datetime.now().isoformat()
                     ),
                     "character_id": character_id,
+                    "assistant_authority_id": None,
                     "root_id": f"imported_{conv_data.get('id', 'unknown')}",
                 }
                 # Stage all filesystem work FIRST (attachment byte loads),
@@ -632,7 +706,7 @@ class ChatbookImporter:
         if not rag_context and not citation_items:
             return
 
-        conversation_service.record_message_rag_context(
+        conversation_service.record_imported_legacy_citation_context(
             conversation_id,
             message_id,
             rag_context=rag_context,
@@ -1078,6 +1152,9 @@ class ChatbookImporter:
                             transcription_model=media_data.get("metadata", {}).get(
                                 "transcription_model"
                             ),
+                            transcription_provenance=media_data.get("metadata", {}).get(
+                                "transcription_provenance"
+                            ),
                             author=media_data.get("author"),
                             ingestion_date=media_data.get("metadata", {}).get(
                                 "ingestion_date"
@@ -1102,6 +1179,378 @@ class ChatbookImporter:
                 status.failed_items += 1
                 status.add_error(f"Error importing media {media_id}: {str(e)}")
                 logger.error(f"Error importing media {media_id}: {e}")
+
+    # Mirrors ChatbookCreator._KEPT_SCRIPTS_EXPORT_PAGE_SIZE, but this read is
+    # only used to de-duplicate scripts with no `source_script_id` against
+    # rows already present in the *target* DB (see the match loop below), not
+    # to enumerate every script for export -- a single page is intentional
+    # here, unlike the paginated export path.
+    _KEPT_SCRIPTS_IMPORT_LIMIT = 1000
+
+    @staticmethod
+    def _kept_dt_key(value: Any) -> Any:
+        """Normalize a kept-row datetime-ish value for equality comparison.
+
+        The importer's `payload` values are always ISO strings (JSON has no
+        datetime type); a freshly-queried `existing` row's `DATETIME`
+        columns come back as real `datetime` objects (the connection's
+        registered converter). Rendering both sides through `.isoformat()`
+        (when present) lets the two representations compare equal.
+        """
+        if value is None:
+            return None
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return value
+
+    @classmethod
+    def _kept_briefing_content_matches(
+        cls, existing: Mapping[str, Any], payload: Mapping[str, Any]
+    ) -> bool:
+        """True if a locally-existing kept briefing is byte-identical to an
+        incoming one sharing the same `source_briefing_id` (already-present,
+        safe to skip silently) vs. genuinely different content (a conflict
+        that must never be silently overwritten).
+
+        `kept_at` is deliberately excluded from this comparison: it is
+        provenance of *when* the briefing was kept, not part of the
+        briefing's content, so the same artifact kept at different moments
+        (e.g. re-exported from a second device) must still compare equal
+        and skip as already-present rather than spuriously conflict.
+        """
+        plain_fields = (
+            "watchlist_name",
+            "body_markdown",
+            "covers_through_item_id",
+            "selection_mode",
+            "model_used",
+            "item_count",
+            "featured_count",
+            "overflow_count",
+            "origin",
+        )
+        if any(existing.get(f) != payload.get(f) for f in plain_fields):
+            return False
+        dt_fields = ("covers_from_ts", "original_created_at")
+        return all(
+            cls._kept_dt_key(existing.get(f)) == cls._kept_dt_key(payload.get(f))
+            for f in dt_fields
+        )
+
+    @classmethod
+    def _kept_script_content_matches(
+        cls, existing: Mapping[str, Any], payload: Mapping[str, Any]
+    ) -> bool:
+        """Same byte-identity check as `_kept_briefing_content_matches`, for
+        one kept script.
+
+        `kept_at` is deliberately excluded here too, for the same reason:
+        it is provenance of the keeping, not content, so a script kept at
+        different moments must still skip as already-present rather than
+        spam a conflict.
+        """
+        plain_fields = ("preset_name", "roster_snapshot_json", "turns_json", "model_used")
+        if any(existing.get(f) != payload.get(f) for f in plain_fields):
+            return False
+        return cls._kept_dt_key(existing.get("original_created_at")) == cls._kept_dt_key(
+            payload.get("original_created_at")
+        )
+
+    @staticmethod
+    def _kept_briefing_file_path(
+        extract_dir: Path,
+        kept_dir: Path,
+        manifest: ChatbookManifest,
+        kept_id: str,
+    ) -> Path:
+        for item in manifest.content_items:
+            if (
+                item.id == kept_id
+                and item.type == ContentType.KEPT_BRIEFING
+                and item.file_path
+            ):
+                return ChatbookImporter._safe_manifest_relative_path(
+                    extract_dir, item.file_path
+                )
+        fallback_filename = f"kept_briefing_{kept_id}.json"
+        validate_filename(fallback_filename)
+        return kept_dir / fallback_filename
+
+    def _import_kept_briefings(
+        self,
+        extract_dir: Path,
+        manifest: ChatbookManifest,
+        kept_briefing_ids: List[str],
+        status: ImportStatus,
+    ) -> None:
+        """Import kept briefings and their kept scripts (task-1870).
+
+        Policy: `source_briefing_id` is a device-local Subscriptions_DB id,
+        so a cross-device import can collide with a *different* local kept
+        briefing that happens to share the same source id. Rather than
+        force this through the display-name-keyed ask/skip/rename/replace
+        machinery in `ConflictResolver` (built for conversations/notes/
+        characters, not a UNIQUE-source-id-keyed idempotent artifact), this
+        mirrors the "raced keep" handling the keep service itself already
+        uses (`Subscriptions/briefing_keep.py` -- see the kept-briefings
+        design doc's delivery notes): try the insert; if `create_kept_
+        briefing` raises `ConflictError` because a row for this source id
+        already exists, fall back to the existing row -- silently if its
+        content is byte-identical (an ordinary idempotent re-import), with
+        an honest warning if it differs (a genuine conflict; the existing
+        row is never overwritten). Kept scripts ride under the (possibly
+        pre-existing) parent under the same policy, except NULL-source
+        scripts (cast directly from a kept briefing, no subscriptions-side
+        source) are deduped by content match within the parent instead,
+        since NULL carries no identity of its own.
+        """
+        db_path = self.db_paths.get("ChaChaNotes")
+        if not db_path:
+            logger.error(
+                "ChatbookImporter._import_kept_briefings: ChaChaNotes database path not configured"
+            )
+            status.add_error("ChaChaNotes database path not configured")
+            return
+
+        db = CharactersRAGDB(db_path, "chatbook_importer")
+        kept_dir = extract_dir / "content" / "kept_briefings"
+
+        for kept_id in kept_briefing_ids:
+            status.processed_items += 1
+            try:
+                kept_file = self._kept_briefing_file_path(
+                    extract_dir, kept_dir, manifest, kept_id
+                )
+                if not kept_file.exists():
+                    status.add_warning(
+                        f"Kept briefing file not found: {kept_file.name}"
+                    )
+                    status.failed_items += 1
+                    continue
+
+                with open(kept_file, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+
+                source_briefing_id = payload["source_briefing_id"]
+
+                newly_inserted = False
+                conflict = False
+                target_kept_id: Optional[int] = None
+                try:
+                    target_kept_id = db.create_kept_briefing(
+                        source_briefing_id=source_briefing_id,
+                        watchlist_name=payload.get("watchlist_name"),
+                        body_markdown=payload["body_markdown"],
+                        covers_through_item_id=payload.get(
+                            "covers_through_item_id"
+                        ),
+                        covers_from_ts=payload.get("covers_from_ts"),
+                        selection_mode=payload.get("selection_mode"),
+                        model_used=payload.get("model_used"),
+                        item_count=payload.get("item_count", 0),
+                        featured_count=payload.get("featured_count", 0),
+                        overflow_count=payload.get("overflow_count", 0),
+                        origin=payload.get("origin", "manual"),
+                        original_created_at=payload.get("original_created_at"),
+                        kept_at=payload.get("kept_at"),
+                    )
+                    newly_inserted = True
+                except ConflictError:
+                    existing = db.get_kept_briefing_by_source(source_briefing_id)
+                    if existing is None:
+                        # Lost a race with another writer between the
+                        # failed insert and this read -- a hard failure
+                        # rather than a guess.
+                        status.failed_items += 1
+                        status.add_error(
+                            "Kept briefing conflict for "
+                            f"source_briefing_id={source_briefing_id} could not "
+                            "be resolved (row vanished mid-import)."
+                        )
+                        continue
+                    target_kept_id = existing["id"]
+                    if not self._kept_briefing_content_matches(existing, payload):
+                        conflict = True
+
+                # Count the briefing's own outcome now, before touching its
+                # kept scripts: the row is already durably present (either
+                # freshly inserted, or an existing row we deliberately left
+                # alone), so a script-level failure below must not turn an
+                # already-successful briefing insert into a false "failed"
+                # count (task-1870 fix-wave F5 -- see the per-item try
+                # around `_import_kept_scripts`).
+                if newly_inserted:
+                    status.successful_items += 1
+                else:
+                    status.skipped_items += 1
+                    if conflict:
+                        status.add_warning(
+                            "Kept briefing conflict: source_briefing_id="
+                            f"{source_briefing_id} already exists locally with "
+                            "different content; the existing kept briefing "
+                            "and its kept script(s) were not modified."
+                        )
+
+                if conflict:
+                    # Refuse the whole incoming item as a unit -- parent AND
+                    # children. `target_kept_id` here is the *unrelated*
+                    # local briefing that merely happens to share the same
+                    # source id, so importing the incoming scripts under it
+                    # would graft someone else's cast history onto the
+                    # user's own briefing while the warning above claims
+                    # nothing was touched (task-1870 fix-wave F1). The
+                    # byte-identical (non-conflict) branch above is
+                    # unaffected -- scripts still import additively there,
+                    # which is the ordinary re-keep/idempotent-import path.
+                    logger.info(
+                        "ChatbookImporter._import_kept_briefings: kept briefing "
+                        f"source_briefing_id={source_briefing_id} conflicts with "
+                        "an existing local row; its kept scripts were not imported."
+                    )
+                    continue
+
+                try:
+                    scripts_inserted, scripts_present, scripts_conflicted = (
+                        self._import_kept_scripts(
+                            db, target_kept_id, payload.get("scripts") or []
+                        )
+                    )
+                except Exception as script_exc:
+                    # The briefing itself is already counted above and is
+                    # durably in the DB -- an honest report says so, and
+                    # names the script failure as a warning instead of
+                    # reporting the whole item as failed (task-1870
+                    # fix-wave F5).
+                    status.add_warning(
+                        f"Kept briefing (source_briefing_id={source_briefing_id}): "
+                        f"kept scripts could not be imported: {script_exc}"
+                    )
+                    logger.opt(exception=True).error(
+                        "ChatbookImporter._import_kept_briefings: Error importing "
+                        "kept scripts for source_briefing_id={}",
+                        source_briefing_id,
+                    )
+                    continue
+
+                if scripts_conflicted:
+                    status.add_warning(
+                        f"Kept briefing (source_briefing_id={source_briefing_id}): "
+                        f"{scripts_conflicted} kept script(s) already present "
+                        "locally with different content and were not modified."
+                    )
+                logger.info(
+                    "ChatbookImporter._import_kept_briefings: kept briefing "
+                    f"source_briefing_id={source_briefing_id} "
+                    f"({'inserted' if newly_inserted else 'already present'}); "
+                    f"scripts inserted={scripts_inserted} present={scripts_present} "
+                    f"conflicted={scripts_conflicted}"
+                )
+
+            except Exception as e:
+                status.failed_items += 1
+                status.add_error(
+                    f"Error importing kept briefing {kept_id}: {str(e)}"
+                )
+                logger.opt(exception=True).error(
+                    "ChatbookImporter._import_kept_briefings: Error importing kept briefing {}",
+                    kept_id,
+                )
+
+    def _import_kept_scripts(
+        self,
+        db: CharactersRAGDB,
+        kept_briefing_id: int,
+        script_payloads: List[Dict[str, Any]],
+    ) -> Tuple[int, int, int]:
+        """Import one kept briefing's kept scripts under its (possibly
+        pre-existing) parent.
+
+        Returns (inserted, already_present, conflicted) counts. These are
+        deliberately kept out of `ImportStatus`'s top-level counters --
+        scripts are not independently selectable content items, so they
+        would inflate the "X/Y items" accounting beyond the selected kept
+        briefing count; the caller surfaces conflicts via a warning and logs
+        the full breakdown instead.
+        """
+        inserted = 0
+        already_present = 0
+        conflicted = 0
+        # Lazily fetched, and only for NULL-source scripts: the DB state for
+        # this kept briefing *before* this call touches it. A matched
+        # candidate is popped out of this pool (not merely flagged) so each
+        # pre-existing row can satisfy at most one incoming script -- two
+        # incoming scripts with genuinely identical content (legal: NULLs
+        # are mutually distinct) still both insert if only one matching row
+        # pre-existed, while re-importing the same chatbook twice matches
+        # one-for-one and adds nothing. Rows inserted earlier in *this same*
+        # loop are deliberately never added to the pool, so a source export
+        # that legitimately contains two distinct byte-identical scripts
+        # still round-trips as two rows, not one.
+        existing_scripts: Optional[List[Dict[str, Any]]] = None
+
+        for script_payload in script_payloads:
+            source_script_id = script_payload.get("source_script_id")
+            preset_name = script_payload.get("preset_name", "")
+            roster_snapshot_json = script_payload.get("roster_snapshot_json", "{}")
+            turns_json = script_payload.get("turns_json", "[]")
+            model_used = script_payload.get("model_used")
+            original_created_at = script_payload.get("original_created_at")
+            kept_at = script_payload.get("kept_at")
+
+            if source_script_id is not None:
+                try:
+                    db.create_kept_script(
+                        kept_briefing_id,
+                        source_script_id=source_script_id,
+                        preset_name=preset_name,
+                        roster_snapshot_json=roster_snapshot_json,
+                        turns_json=turns_json,
+                        model_used=model_used,
+                        original_created_at=original_created_at,
+                        kept_at=kept_at,
+                    )
+                    inserted += 1
+                except ConflictError:
+                    existing = db.get_kept_script_by_source(source_script_id)
+                    if existing is not None and self._kept_script_content_matches(
+                        existing, script_payload
+                    ):
+                        already_present += 1
+                    else:
+                        conflicted += 1
+                continue
+
+            if existing_scripts is None:
+                existing_scripts = db.list_kept_scripts(
+                    kept_briefing_id, limit=self._KEPT_SCRIPTS_IMPORT_LIMIT
+                )
+            match_index = next(
+                (
+                    idx
+                    for idx, row in enumerate(existing_scripts)
+                    if row.get("source_script_id") is None
+                    and self._kept_script_content_matches(row, script_payload)
+                ),
+                None,
+            )
+            if match_index is not None:
+                existing_scripts.pop(match_index)
+                already_present += 1
+                continue
+
+            db.create_kept_script(
+                kept_briefing_id,
+                source_script_id=None,
+                preset_name=preset_name,
+                roster_snapshot_json=roster_snapshot_json,
+                turns_json=turns_json,
+                model_used=model_used,
+                original_created_at=original_created_at,
+                kept_at=kept_at,
+            )
+            inserted += 1
+
+        return inserted, already_present, conflicted
 
     def _generate_unique_media_title(self, base_title: str, db: MediaDatabase) -> str:
         """Generate a unique media title."""

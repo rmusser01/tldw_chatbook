@@ -1,8 +1,6 @@
 import ast
 import json
 import re
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -235,24 +233,6 @@ def test_phase_five_optional_dependency_recovery_helper_builds_required_fields()
     )
 
 
-def test_search_rag_window_imports_without_screens_recovery_cycle():
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from tldw_chatbook.UI.Views.RAGSearch.search_rag_window import SearchRAGWindow; "
-            "print(SearchRAGWindow.__name__)",
-        ],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=45,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert "SearchRAGWindow" in result.stdout
-
-
 def test_service_backed_policy_destinations_use_async_workers_without_asyncio_run():
     screen_paths = [
         Path("tldw_chatbook/UI/Screens/library_screen.py"),
@@ -270,12 +250,13 @@ def test_service_backed_policy_destinations_use_async_workers_without_asyncio_ru
     }
     # @work(thread=True) is likewise a deliberate, reviewable exception on
     # these service-backed screens (Library computes export counts, runs
-    # sync-body export service calls, and persists rail/search preferences
-    # on dedicated OS threads). Exact decorator counts per file keep new
-    # thread workers from slipping in silently; personas and skills stay
-    # on async workers only.
+    # sync-body export service calls, persists rail/search preferences,
+    # installs the verified Parakeet model, and scans ingest paths on
+    # dedicated OS threads). Exact decorator counts per file keep new thread
+    # workers from slipping in silently; personas and skills stay on async
+    # workers only.
     allowed_thread_workers = {
-        Path("tldw_chatbook/UI/Screens/library_screen.py"): 4,
+        Path("tldw_chatbook/UI/Screens/library_screen.py"): 6,
     }
     for screen_path in screen_paths:
         source = _text(screen_path)

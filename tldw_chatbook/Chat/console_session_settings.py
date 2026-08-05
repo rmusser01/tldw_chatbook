@@ -13,7 +13,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     supported_console_provider_readiness_keys,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import (
-    URL_BASED_PROVIDER_KEYS,
+    URL_BASED_PROVIDER_KEYS,  # noqa: F401  (re-exported; console_settings_modal imports it from here)
     first_configured_endpoint,
     generic_endpoint_differs,
     normalize_generic_endpoint_for_compare,
@@ -162,7 +162,6 @@ class ConsoleSessionSettings:
     thinking_effort: str | None = None
     thinking_budget_tokens: int | None = None
     streaming: bool = True
-    persona_label: str = "General"
     character_label: str = ""
     #: Optional per-session system prompt prepended as the first provider
     #: message on every native Console send (submit/retry/regenerate/continue).
@@ -174,6 +173,10 @@ class ConsoleSessionSettings:
     #: (refreshable when config changes while the session is unused) vs
     #: ``"user"`` for explicit user selections (never auto-replaced).
     source: str = "derived"
+    #: Pinned response prefill applied to every submit/retry/regenerate;
+    #: persisted per-conversation in conversations.metadata (one-shot
+    #: prefill is transient store state, not settings).
+    pinned_prefill: str | None = None
 
 
 @dataclass(frozen=True)
@@ -388,7 +391,18 @@ def build_default_console_session_settings(
         chat_defaults.get("model"),
     )
     model_profile = _model_default_profile(provider_settings, configured_model)
-    default_sources = (model_profile, chat_defaults, provider_settings)
+    # TASK-342: [console.provider_defaults.<provider>] holds ONLY values the
+    # Console's Save-as-default wrote, so it outranks everything except a
+    # model profile. chat_defaults stays ahead of raw [api_settings.*]
+    # scalars (f14d22dc3, review feedback): factory provider templates carry
+    # sampling values for every provider and must not shadow user-tuned
+    # global defaults — which is precisely why saved defaults need their own
+    # section instead of writing into api_settings.
+    saved_defaults = _mapping_value(
+        _mapping_value(_mapping_value(app_config, "console"), "provider_defaults"),
+        configured_provider,
+    )
+    default_sources = (model_profile, saved_defaults, chat_defaults, provider_settings)
 
     return ConsoleSessionSettings(
         provider=configured_provider,
@@ -685,11 +699,8 @@ def build_console_settings_summary_state(
         sampling_parts.append(f"thinking {settings.thinking_effort}")
 
     character_label = _string_value(settings.character_label)
-    persona_label = _string_value(settings.persona_label) or "General"
     identity_row = (
-        f"Character: {character_label}"
-        if character_label
-        else f"Persona: {persona_label}"
+        f"Character: {character_label}" if character_label else "Assistant: General"
     )
 
     return ConsoleSettingsSummaryState(

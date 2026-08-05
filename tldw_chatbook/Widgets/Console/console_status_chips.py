@@ -1,0 +1,675 @@
+"""Console status-pill strip (provider/model/assistant/RAG/source/tool/approval)
+plus the retrieval-scope and cost chips.
+
+Extracted from ConsoleControlBar so the pills can render in their own strip
+directly above the composer. The widget owns the chip classes, the chip
+builder, chip labelling + emphasis sync, and the approvals-review action.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from textual import events, on
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal
+from textual.content import Content
+from textual.css.query import NoMatches
+from textual.message import Message
+from textual.widgets import Button, Static
+
+from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostState
+from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
+    ConsoleControlState,
+    ConsoleRetrievalScopeState,
+)
+from tldw_chatbook.Chat.console_ephemeral import TEMPORARY_LABEL, TEMPORARY_TOOLTIP
+from tldw_chatbook.Chat.rag_scope import SCOPE_EMPTY_NOTICE_TEMPLATE, SCOPE_REASON_EMPTY
+from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+from tldw_chatbook.Widgets.Console.console_retrieval_scope_row import (
+    UNSCOPED_LABEL as SCOPE_ROW_UNSCOPED_LABEL,
+)
+
+
+class ConsoleChip(Static):
+    """Focusable Console readiness chip.
+
+    Chips ellipsize at 22 cells; focusing a chip lifts that cap (see
+    ``.console-control-chip:focus`` in ``_agentic_terminal.tcss``) so the full
+    label is reachable from the keyboard, while the tooltip keeps carrying the
+    same full text on hover.
+    """
+
+    can_focus = True
+
+
+class ConsoleApprovalsChip(ConsoleChip):
+    """Approvals readiness chip that doubles as an approval-review action.
+
+    Activating it (Enter/Space while focused, or click) asks the strip to
+    focus the pending approval card in the transcript.
+    """
+
+    BINDINGS = [
+        Binding("enter", "review_approval", "Review pending approval", show=False),
+        Binding("space", "review_approval", "Review pending approval", show=False),
+    ]
+
+    class ReviewRequested(Message):
+        """Posted when the approvals chip is activated from keyboard or mouse."""
+
+    def action_review_approval(self) -> None:
+        self.post_message(self.ReviewRequested())
+
+    def _on_click(self, event: events.Click) -> None:
+        self.post_message(self.ReviewRequested())
+
+
+class ConsoleModelChip(ConsoleChip):
+    """Provider/model chip that opens the quick model popover when activated.
+
+    task-1670: mirrors ``ConsoleApprovalsChip``/``ConsoleScopeChip`` exactly
+    -- Enter/Space while focused, or a click, opens the same popover Alt+M
+    opens (``ChatScreen.action_open_console_model_popover``). Both the
+    Provider and Model chips use this class; they are two views of one
+    setting, so either is a reasonable place to click.
+    """
+
+    BINDINGS = [
+        Binding("enter", "open_model_popover", "Open model settings", show=False),
+        Binding("space", "open_model_popover", "Open model settings", show=False),
+    ]
+
+    class OpenRequested(Message):
+        """Posted when a provider/model chip is activated."""
+
+    def action_open_model_popover(self) -> None:
+        self.post_message(self.OpenRequested())
+
+    def _on_click(self, event: events.Click) -> None:
+        self.post_message(self.OpenRequested())
+
+
+class ConsoleAssistantChip(ConsoleChip):
+    """Character/persona chip that opens the character picker when activated.
+
+    task-1672: same activation contract as the sibling action chips. The
+    chip stays actionable even when it reads "Assistant: General" -- that
+    is precisely when a user most wants to pick a character.
+    """
+
+    BINDINGS = [
+        Binding("enter", "open_character_picker", "Choose character", show=False),
+        Binding("space", "open_character_picker", "Choose character", show=False),
+    ]
+
+    class OpenRequested(Message):
+        """Posted when the assistant/character chip is activated."""
+
+    def action_open_character_picker(self) -> None:
+        self.post_message(self.OpenRequested())
+
+    def _on_click(self, event: events.Click) -> None:
+        self.post_message(self.OpenRequested())
+
+
+class ConsoleSystemPromptChip(ConsoleChip):
+    """System-prompt chip that opens the system-prompt editor when activated.
+
+    Same activation contract as the sibling action chips: Enter/Space while
+    focused, or a click, opens the same editor modal ``/system`` and the
+    command palette open (``ChatScreen._open_console_system_prompt_editor``).
+    """
+
+    BINDINGS = [
+        Binding("enter", "edit_system_prompt", "Edit system prompt", show=False),
+        Binding("space", "edit_system_prompt", "Edit system prompt", show=False),
+    ]
+
+    class OpenRequested(Message):
+        """Posted when the system-prompt chip is activated."""
+
+    def action_edit_system_prompt(self) -> None:
+        """Post ``OpenRequested`` when the chip is activated from the keyboard."""
+        self.post_message(self.OpenRequested())
+
+    def _on_click(self, event: events.Click) -> None:
+        self.post_message(self.OpenRequested())
+
+
+class ConsoleScopeChip(ConsoleChip):
+    """Retrieval-scope chip that opens the scope picker when activated.
+
+    Mirrors ``ConsoleApprovalsChip`` exactly: Enter/Space while focused, or
+    a click, opens the same RAG retrieval-scope picker modal the Inspector
+    row's Edit/Narrow… button opens
+    (``ChatScreen._open_console_retrieval_scope_picker``, task-9) -- the
+    same handler seam, task-10 just adds a second entry point into it.
+    """
+
+    BINDINGS = [
+        Binding(
+            "enter", "open_scope_picker", "Open retrieval scope picker", show=False
+        ),
+        Binding(
+            "space", "open_scope_picker", "Open retrieval scope picker", show=False
+        ),
+    ]
+
+    class OpenRequested(Message):
+        """Posted when the scope chip is activated from keyboard or mouse."""
+
+    def action_open_scope_picker(self) -> None:
+        self.post_message(self.OpenRequested())
+
+    def _on_click(self, event: events.Click) -> None:
+        self.post_message(self.OpenRequested())
+
+
+class ConsoleRagChip(ConsoleChip):
+    """RAG readiness chip that opens the Library RAG settings modal.
+
+    Same activation contract as the sibling action chips: Enter/Space while
+    focused, or a click. "RAG: off" is not a latent toggle the chip could
+    flip in place -- RAG reads "on" once retrieved Library evidence is
+    staged for the next send -- so activation opens the modal where the
+    user sets the retrieval query and runs it.
+    """
+
+    BINDINGS = [
+        Binding(
+            "enter", "open_rag_settings", "Open Library RAG settings", show=False
+        ),
+        Binding(
+            "space", "open_rag_settings", "Open Library RAG settings", show=False
+        ),
+    ]
+
+    class OpenRequested(Message):
+        """Posted when the RAG chip is activated from keyboard or mouse."""
+
+    def action_open_rag_settings(self) -> None:
+        self.post_message(self.OpenRequested())
+
+    def _on_click(self, event: events.Click) -> None:
+        self.post_message(self.OpenRequested())
+
+
+class ConsoleTemporaryChip(ConsoleChip):
+    """Temporary-chat chip that doubles as the "Save this chat" action.
+
+    Same activation contract as the sibling action chips: Enter/Space while
+    focused, or a click. The chip is the marker AND the escape hatch, so the
+    user never has to remember where saving lives.
+    """
+
+    BINDINGS = [
+        Binding("enter", "save_chat", "Save this chat", show=False),
+        Binding("space", "save_chat", "Save this chat", show=False),
+    ]
+
+    class SaveRequested(Message):
+        """Posted when the temporary chip is activated."""
+
+    def action_save_chat(self) -> None:
+        self.post_message(self.SaveRequested())
+
+    def _on_click(self, event: events.Click) -> None:
+        self.post_message(self.SaveRequested())
+
+
+class ConsoleCostChip(ConsoleChip):
+    """Cost chip that opens the cost breakdown modal when activated (task-4).
+
+    Same activation contract as the sibling action chips: Enter/Space while
+    focused, or a click. The chip is the running-total ticker AND the entry
+    point into the per-message breakdown, so a user who wants to know why
+    the total looks the way it does never has to hunt for it elsewhere.
+    """
+
+    BINDINGS = [
+        Binding("enter", "open_cost_breakdown", "Open cost breakdown", show=False),
+        Binding("space", "open_cost_breakdown", "Open cost breakdown", show=False),
+    ]
+
+    class ConsoleCostChipPressed(Message):
+        """Posted when the cost chip is activated from keyboard or mouse."""
+
+    def action_open_cost_breakdown(self) -> None:
+        """Post the activation event that opens the cost breakdown modal."""
+        self.post_message(self.ConsoleCostChipPressed())
+
+    def _on_click(self, event: events.Click) -> None:
+        self.post_message(self.ConsoleCostChipPressed())
+
+
+class ConsoleStatusChips(Horizontal):
+    """Full-width strip of Console readiness pills (provider/model/assistant/
+    RAG/source/tool/approval plus the retrieval-scope chip).
+
+    Exposes ``sync_state`` so ``ChatScreen`` can refresh the pill labels and
+    counter emphasis after provider/model/source/tool/approval state changes.
+    """
+
+    def __init__(
+        self,
+        state: ConsoleControlState,
+        *,
+        scope_state: ConsoleRetrievalScopeState | None = None,
+        ephemeral: bool = False,
+        cost_state: ConsoleCostState | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the strip.
+
+        Args:
+            state: Display-state snapshot for the readiness labels.
+            scope_state: Display-state snapshot for the "Scope" chip
+                (task-10) -- the same ``ConsoleRetrievalScopeState`` the
+                Inspector's retrieval-scope row renders from. ``None``
+                renders as unscoped (hidden).
+            ephemeral: Whether the active session is temporary at
+                construction time (final-review F1). Without this the
+                Temporary chip always composed as "not temporary" on a
+                freshly (re)constructed screen -- e.g. after Console ->
+                another screen -> Console navigation, which builds a brand
+                new ``ChatScreen``/``ConsoleStatusChips`` -- and stayed
+                wrong until something happened to call
+                ``sync_temporary_chip`` by hand. Callers should still call
+                ``ChatScreen._sync_console_temporary_chip()`` after mount
+                as a second line of defense for session switches that
+                happen post-construction.
+            cost_state: Display-state snapshot for the cost chip (task-4,
+                PR3 cost ticker) -- mirrors the F1 precedent above: passed
+                in at construction so the chip renders correctly on the
+                very first frame rather than waiting for a post-mount
+                ``sync_cost_state`` call. ``None`` renders hidden (non-
+                Console-native contexts have no cost to show).
+            **kwargs: Additional Textual widget arguments (id/classes).
+        """
+        classes = kwargs.pop("classes", "")
+        # Reuse the existing chip-row class so its CSS continues to apply.
+        super().__init__(
+            classes=f"console-control-chip-row console-status-chips {classes}".strip(),
+            **kwargs,
+        )
+        self.state = state
+        self.scope_state = scope_state
+        self.ephemeral = ephemeral
+        self._cost_state = cost_state
+        self.styles.height = 1
+        self.styles.min_height = 1
+        self.styles.max_height = 1
+
+    @staticmethod
+    def _chip(
+        label: str,
+        *,
+        id: str,
+        emphasis: bool | None = None,
+        chip_class: type[ConsoleChip] = ConsoleChip,
+    ) -> ConsoleChip:
+        """Build one readiness chip. Mirrors the former ConsoleControlBar._chip."""
+        classes = "console-control-chip"
+        if emphasis is False:
+            classes += " console-chip-dim"
+        elif emphasis is True:
+            classes += " console-chip-alert"
+        # markup=False: chip labels carry user data (assistant names and model
+        # ids). A name containing `[red]...[/]` would otherwise
+        # restyle the chip strip, or raise MarkupError when unbalanced.
+        chip = chip_class(label, id=id, classes=classes, markup=False)
+        chip.tooltip = Content(label)
+        return chip
+
+    def compose(self) -> ComposeResult:
+        # First: this is a property of the whole chat, not one setting.
+        yield self._temporary_chip()
+        yield self._chip(
+            self.state.provider_label,
+            id="console-provider-chip",
+            chip_class=ConsoleModelChip,
+        )
+        yield self._chip(
+            self.state.model_label,
+            id="console-model-chip",
+            chip_class=ConsoleModelChip,
+        )
+        yield self._chip(
+            self.state.system_prompt_label,
+            id="console-system-prompt-chip",
+            chip_class=ConsoleSystemPromptChip,
+        )
+        yield self._chip(
+            self.state.assistant_label,
+            id="console-assistant-chip",
+            chip_class=ConsoleAssistantChip,
+        )
+        yield self._chip(
+            self.state.rag_label,
+            id="console-rag-chip",
+            chip_class=ConsoleRagChip,
+        )
+        yield self._chip(
+            self.state.sources_label,
+            id="console-sources-chip",
+            emphasis=self.state.sources_active,
+        )
+        yield self._chip(
+            self.state.tools_label,
+            id="console-tools-chip",
+            emphasis=self.state.tools_active,
+        )
+        yield self._chip(
+            self.state.approvals_label,
+            id="console-approvals-chip",
+            emphasis=self.state.approvals_active,
+            chip_class=ConsoleApprovalsChip,
+        )
+        # task-10: the retrieval-scope chip -- unlike the chips above,
+        # hidden entirely when unscoped rather than showing a
+        # "Scope: everything" default (see ``_scope_chip_render``).
+        yield self._scope_chip()
+        # task-4 (PR3 cost ticker): last in the strip, hidden entirely
+        # when there is no cost state (see ``_cost_chip_render``).
+        yield self._cost_chip()
+
+    def _temporary_chip(self) -> ConsoleTemporaryChip:
+        label, tooltip, hidden = self._temporary_chip_render(self.ephemeral)
+        chip = self._chip(
+            label,
+            id="console-temporary-chip",
+            chip_class=ConsoleTemporaryChip,
+        )
+        chip.tooltip = tooltip
+        chip.display = not hidden
+        return chip
+
+    @staticmethod
+    def _temporary_chip_render(ephemeral: bool) -> tuple[str, str, bool]:
+        """Pure ``(label, tooltip, hidden)`` render for the temporary chip.
+
+        Args:
+            ephemeral: Whether the active session is temporary.
+
+        Returns:
+            ``label``: chip text. ``tooltip``: hover/focus text, which is
+            where the save affordance is spelled out. ``hidden``: ``True``
+            for a normal chat -- a "Saved" chip on every ordinary
+            conversation would be noise, and the strip is width-bounded.
+        """
+        if not ephemeral:
+            return TEMPORARY_LABEL, TEMPORARY_TOOLTIP, True
+        return TEMPORARY_LABEL, TEMPORARY_TOOLTIP, False
+
+    def sync_temporary_chip(self, ephemeral: bool) -> None:
+        """Refresh the temporary chip from the active session's flag.
+
+        Separate from ``sync_state`` for the same reason ``sync_scope_chip``
+        is: this is pushed from the screen when the active session changes,
+        not on every control-bar sync tick.
+
+        Args:
+            ephemeral: Whether the active session is temporary.
+        """
+        if ephemeral == self.ephemeral:
+            return
+        self.ephemeral = ephemeral
+        try:
+            chip = self.query_one("#console-temporary-chip", ConsoleTemporaryChip)
+        except NoMatches:
+            return
+        label, tooltip, hidden = self._temporary_chip_render(ephemeral)
+        chip.update(label)
+        chip.tooltip = tooltip
+        chip.display = not hidden
+
+    def _scope_chip(self) -> ConsoleScopeChip:
+        label, tooltip, hidden, alert = self._scope_chip_render(self.scope_state)
+        chip = self._chip(
+            label,
+            id="console-scope-chip",
+            emphasis=True if alert else None,
+            chip_class=ConsoleScopeChip,
+        )
+        chip.tooltip = tooltip
+        chip.display = not hidden
+        return chip
+
+    @staticmethod
+    def _scope_chip_render(
+        state: ConsoleRetrievalScopeState | None,
+    ) -> tuple[str, str, bool, bool]:
+        """Pure ``(label, tooltip, hidden, alert)`` render for the scope chip.
+
+        ``item_count`` is always the EFFECTIVE (post-intersection) count
+        (task-13). The tooltip's breakdown widens with how many scope
+        levels are active: a single active level (conversation-only, or
+        workspace-only) reads as "conversation N items"/"workspace N
+        items"; both active levels read as the full intersection breakdown
+        ("conversation A ∩ workspace B → N").
+
+        Args:
+            state: Display-state snapshot, or ``None`` (renders unscoped).
+
+        Returns:
+            ``label``: chip text. ``tooltip``: hover/focus text (the
+            EMPTY branch folds the cause in). ``hidden``: ``True`` when
+            unscoped (chip carries no useful information -- hidden rather
+            than shown as "everything", matching the brief). ``alert``:
+            ``True`` only for EMPTY, reusing the same
+            ``console-chip-alert`` action-required styling the
+            sources/tools/approvals chips use when their own count is
+            active.
+        """
+        if state is None or (not state.is_scoped and not state.is_empty):
+            return SCOPE_ROW_UNSCOPED_LABEL, "", True, False
+        if state.is_empty:
+            cause = state.cause or SCOPE_REASON_EMPTY
+            return (
+                "Scope: empty",
+                SCOPE_EMPTY_NOTICE_TEMPLATE.format(cause=cause),
+                False,
+                True,
+            )
+        label = f"Scope: {state.item_count}"
+        if state.conv_item_count is not None and state.ws_item_count is not None:
+            tooltip = (
+                f"conversation {state.conv_item_count} ∩ workspace "
+                f"{state.ws_item_count} → {state.item_count}"
+            )
+        elif state.ws_item_count is not None:
+            tooltip = f"workspace {state.ws_item_count} items"
+        else:
+            tooltip = f"conversation {state.item_count} items"
+        return label, tooltip, False, False
+
+    def sync_scope_chip(self, scope_state: ConsoleRetrievalScopeState | None) -> None:
+        """Refresh the "Scope" chip from a new snapshot (task-10).
+
+        Deliberately NOT folded into ``sync_state`` above: this is pushed
+        directly from ``ChatScreen._sync_console_retrieval_scope_row`` with
+        the exact same ``ConsoleRetrievalScopeState`` instance passed to the
+        Inspector row's own ``sync_state`` in the same call -- one state,
+        two renderers, computed once. Keeping it a separate method also
+        keeps the chip's refresh triggers identical to the row's: the
+        general ``sync_state`` refresh (called far more often, e.g. every
+        control-bar sync tick) never touches this chip at all.
+
+        Args:
+            scope_state: Updated display-state snapshot to render.
+        """
+        if scope_state == self.scope_state:
+            return
+        self.scope_state = scope_state
+        try:
+            chip = self.query_one("#console-scope-chip", ConsoleScopeChip)
+        except NoMatches:
+            return
+        label, tooltip, hidden, alert = self._scope_chip_render(scope_state)
+        chip.update(label)
+        chip.tooltip = tooltip
+        chip.display = not hidden
+        chip.set_class(alert, "console-chip-alert")
+
+    def _cost_chip(self) -> ConsoleCostChip:
+        label, tooltip, hidden, alert, cold = self._cost_chip_render(self._cost_state)
+        # ``_chip``'s emphasis only knows dim/alert -- cold is a third,
+        # non-alarming state added on top (see the class-toggle table in
+        # ``sync_cost_state``). Neutral (``None``) suppresses both so the
+        # cold class is the only one applied.
+        emphasis: bool | None
+        if alert:
+            emphasis = True
+        elif cold:
+            emphasis = None
+        else:
+            emphasis = False
+        chip = self._chip(
+            label,
+            id="console-cost-chip",
+            emphasis=emphasis,
+            chip_class=ConsoleCostChip,
+        )
+        chip.tooltip = Content(tooltip)
+        chip.display = not hidden
+        if cold:
+            chip.add_class("console-chip-cold")
+        return chip
+
+    @staticmethod
+    def _cost_chip_render(
+        state: ConsoleCostState | None,
+    ) -> tuple[str, str, bool, bool, bool]:
+        """Pure ``(label, tooltip, hidden, alert, cold)`` render for the cost chip.
+
+        Args:
+            state: Display-state snapshot, or ``None`` (hides the chip --
+                non-Console-native contexts have no cost to show).
+
+        Returns:
+            ``label``: chip text (the full ``state.label``; the strip
+            hasn't been laid out yet at compose time, so the width-aware
+            compact form only applies from ``sync_cost_state``).
+            ``tooltip``: hover/focus text. ``hidden``: ``True`` when
+            ``state`` is ``None``. ``alert``/``cold``: ``state.alert``/
+            ``state.cold``.
+        """
+        if state is None:
+            return "", "", True, False, False
+        return state.label, state.tooltip, False, state.alert, state.cold
+
+    def sync_cost_state(self, state: ConsoleCostState | None) -> None:
+        """Refresh the cost chip from a new cost-state snapshot (task-4).
+
+        Deliberately NOT folded into ``sync_state`` below, for the same
+        reason ``sync_scope_chip`` isn't: cost state is computed and
+        pushed on its own cadence (the general control-bar sync tick, but
+        independently of whether ``ConsoleControlState`` itself changed),
+        so it owns its own equality guard.
+
+        Args:
+            state: Updated cost-chip snapshot, or ``None`` to hide the
+                chip.
+        """
+        if state == self._cost_state:
+            return
+        self._cost_state = state
+        try:
+            chip = self.query_one("#console-cost-chip", ConsoleCostChip)
+        except NoMatches:
+            return
+        if state is None:
+            chip.display = False
+            return
+        # Narrow strips fall back to the delta-free compact label; pre-
+        # layout (``size.width`` still zero) falls back to the full label.
+        label = (
+            state.compact_label
+            if self.size.width and self.size.width < 120
+            else state.label
+        )
+        chip.update(label)
+        chip.tooltip = Content(state.tooltip)
+        chip.display = True
+        chip.set_class(state.alert, "console-chip-alert")
+        chip.set_class(state.cold, "console-chip-cold")
+        chip.set_class(not state.alert and not state.cold, "console-chip-dim")
+
+    def sync_state(self, state: ConsoleControlState) -> None:
+        """Refresh pill labels and counter emphasis from a new snapshot."""
+        if state == self.state:
+            return
+        self.state = state
+        label_values = {
+            "#console-provider-chip": state.provider_label,
+            "#console-model-chip": state.model_label,
+            "#console-system-prompt-chip": state.system_prompt_label,
+            "#console-assistant-chip": state.assistant_label,
+            "#console-rag-chip": state.rag_label,
+            "#console-sources-chip": state.sources_label,
+            "#console-tools-chip": state.tools_label,
+            "#console-approvals-chip": state.approvals_label,
+        }
+        for selector, label in label_values.items():
+            try:
+                chip = self.query_one(selector, Static)
+            except NoMatches:
+                continue
+            chip.update(label)
+            chip.tooltip = Content(label)
+        chip_emphasis = {
+            "#console-sources-chip": state.sources_active,
+            "#console-tools-chip": state.tools_active,
+            "#console-approvals-chip": state.approvals_active,
+        }
+        for selector, active in chip_emphasis.items():
+            try:
+                chip = self.query_one(selector, Static)
+            except NoMatches:
+                continue
+            chip.set_class(not active, "console-chip-dim")
+            chip.set_class(active, "console-chip-alert")
+
+    @on(ConsoleApprovalsChip.ReviewRequested)
+    def on_approval_review_requested(
+        self, event: ConsoleApprovalsChip.ReviewRequested
+    ) -> None:
+        """Focus the pending approval card in the transcript.
+
+        Falls back to a notification when no approval is pending so the
+        keyboard-only path never dead-ends silently.
+        """
+        event.stop()
+        self._focus_pending_approval_card()
+
+    def _focus_pending_approval_card(self) -> None:
+        """Scroll the displayed approval card into view and focus its action."""
+        try:
+            cards = list(self.screen.query("#chat-approval-card"))
+        except Exception:
+            cards = []
+        card = next(
+            (
+                candidate
+                for candidate in cards
+                if isinstance(candidate, ChatApprovalCard) and candidate.display
+            ),
+            None,
+        )
+        if card is None:
+            self.app.notify(CONSOLE_INSPECTOR_NO_APPROVAL_REASON, severity="warning")
+            return
+        try:
+            card.scroll_visible(animate=False)
+        except Exception:
+            pass
+        # `set_batch` (the card's sole production entry point, task-914) is
+        # the only body it ever renders, so a displayed card's action is
+        # always its "Submit" button.
+        try:
+            card.focus_first_decision()
+        except NoMatches:
+            pass

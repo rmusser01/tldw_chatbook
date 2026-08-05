@@ -220,8 +220,9 @@ class TestFileExtractionProperties:
             reader = csv.reader(io.StringIO(csv_content))
             rows = list(reader)
             assert len(rows) > 0  # At least one row
-        except Exception:
-            # If CSV parsing fails, that's okay for edge cases
+        except (csv.Error, ValueError):
+            # CSV edge-case rejections are acceptable; anything else is a
+            # crash and now FAILS (task-1464).
             pass
 
     @given(json_content=json_content_strategy())

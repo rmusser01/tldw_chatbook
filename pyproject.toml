@@ -1,6 +1,6 @@
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -12,7 +12,8 @@ authors = [
 description = "A Textual TUI for chatting with LLMs, and interacting with the tldw server."
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "AGPL-3.0-or-later"}
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 keywords = ["tui", "cli", "llm", "textual", "ai", "chat", "rag", "embeddings", "terminal"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -38,13 +39,14 @@ dependencies = [
     "chardet",
     "httpx",
     "loguru",
-    "textual>=8.0.0,<9",
+    "textual>=8.2.8,<9",
     "requests",
     "rich",
     "rich-pixels>=3.0.0",
     "pillow",
     "PyYAML",
     "pydantic>=2.4,<3",
+    "portalocker==3.2.0",
     "psutil",
     "toml",
     "tomli; python_version < '3.11'",
@@ -107,6 +109,12 @@ local_mlx = ["mlx-lm"]
 transcription_faster_whisper = [
     "faster-whisper",  # CPU/CUDA optimized Whisper
 ]
+transcription_parakeet_onnx = [
+    "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX runtime
+]
+transcription_transcribe_cpp = [
+    "transcribe-cpp==0.1.3",  # Optional direct-local GGUF runtime
+]
 transcription_lightning_whisper = [
     "lightning-whisper-mlx; sys_platform == 'darwin'",  # Fast Whisper for Apple Silicon
 ]
@@ -121,6 +129,13 @@ mlx_whisper = [
 local_transformers = ["transformers"]
 mcp = [
     "mcp[cli]>=1.0.0",
+]
+image_generation = [
+    # SwarmUI API client (Media_Creation/swarmui_client.py). aiohttp previously
+    # shipped only in [websearch] -- for the article scraper -- so wanting image
+    # generation meant installing the web-search stack (playwright, trafilatura,
+    # pandas, nltk, scikit-learn, ...) to obtain one HTTP client (task-1262).
+    "aiohttp",
 ]
 svg = [
     "cairosvg",  # SVG rasterization for image attachments; needs the cairo C library (e.g. `brew install cairo`)
@@ -144,20 +159,31 @@ audio = [
     "yt-dlp",
     "numpy",
     "pydub",
-    "faster-whisper",  # Default transcription provider
-    # Note: For Apple Silicon optimized transcription, also install:
-    # pip install -e ".[audio,transcription_lightning_whisper]" or
-    # pip install -e ".[audio,transcription_parakeet]"
+    "audioop-lts; python_version >= '3.13'",  # stdlib audioop removed in 3.13; pydub needs it
+    # macOS prefers parakeet-mlx at runtime (see config.py's darwin branch), so
+    # ship it there rather than leaving the preferred engine uninstalled: the
+    # preference could never engage on a normal macOS install, and audio ingest
+    # failed with "faster-whisper is not installed" instead (task-839).
+    "parakeet-mlx; sys_platform == 'darwin'",
+    # Fallback everywhere, and the default off darwin.
+    "faster-whisper",
+    # For the other Apple Silicon engine:
+    # pip install -e ".[audio,transcription_lightning_whisper]"
 ]
 video = [
     "soundfile",
     "scipy",
     "yt-dlp",
     "numpy",
-    "faster-whisper",  # Default transcription provider
-    # Note: For Apple Silicon optimized transcription, also install:
-    # pip install -e ".[video,transcription_lightning_whisper]" or
-    # pip install -e ".[video,transcription_parakeet]"
+    # macOS prefers parakeet-mlx at runtime (see config.py's darwin branch), so
+    # ship it there rather than leaving the preferred engine uninstalled: the
+    # preference could never engage on a normal macOS install, and audio ingest
+    # failed with "faster-whisper is not installed" instead (task-839).
+    "parakeet-mlx; sys_platform == 'darwin'",
+    # Fallback everywhere, and the default off darwin.
+    "faster-whisper",
+    # For the other Apple Silicon engine:
+    # pip install -e ".[video,transcription_lightning_whisper]"
 ]
 media_processing = [
     "soundfile",
@@ -186,6 +212,7 @@ local_tts = [
     "nltk",
     "pyaudio",
     "pydub",
+    "audioop-lts; python_version >= '3.13'",  # stdlib audioop removed in 3.13; pydub needs it
     "transformers",  # For tokenization
     "torch",  # For PyTorch-based models
     "onnxruntime",  # For ONNX models
@@ -222,7 +249,7 @@ nemo = [
 speech_recording = [
     "pyaudio>=0.2.14",  # Primary audio backend
     "sounddevice>=0.4.6",  # Fallback audio backend
-    "webrtcvad>=2.0.10",  # Voice activity detection
+    "webrtcvad-wheels>=2.0.14",  # Voice activity detection (drop-in `webrtcvad` fork; upstream webrtcvad 2.0.10 imports pkg_resources, which setuptools>=81 removed)
 ]
 ocr_docext = [
     "docext",  # NanoNets document extraction toolkit
@@ -235,6 +262,9 @@ ocr_docext = [
 dev = [
     "pytest",
     "pytest-timeout",  # For handling hanging tests
+    "pytest-xdist",  # Parallel test execution: pytest -n auto --dist loadscope
+    "pytest-mock",  # Used throughout Tests/; was only in requirements-test.txt
+    "pytest-cov",  # Coverage runs documented in Tests/README.md
     "textual-dev", # For Textual development tools
     "hypothesis",
     "pytest-asyncio",
@@ -258,14 +288,19 @@ diarization = [
     "numpy",  # Numerical operations (already in base deps)
 ]
 subscriptions = [
-    "markdown",  # For HTML generation from markdown
-    "schedule",  # For scheduled tasks
-    "feedparser",  # For RSS feed parsing
-    "beautifulsoup4", # HTML parsing for subscription monitors
-    "cryptography", # Security.py
-    "defusedxml",  # For safe XML parsing
+    # markdown/schedule/feedparser were dropped in TASK-1221: nothing imported
+    # them, and because the feature gate requires every listed package to
+    # import, their absence disabled Watchlists for no reason. Feeds are parsed
+    # by defusedxml/ElementTree plus bs4, never feedparser.
+    "beautifulsoup4", # HTML parsing for subscription monitors (hard import)
+    "cryptography", # Security.py -- without it credentials are stored plaintext
+    "defusedxml",  # Safe XML parsing; falls back to stdlib xml.etree if absent
     "tqdm",
 ]
+# Note: cryptography and defusedxml are shipped in this extra but are NOT part of
+# the availability gate in Utils/optional_deps.py, because both have working
+# fallbacks. Installing them is still the right default -- the fallbacks are
+# plaintext credentials and a less safe XML parser respectively.
 web = [
     "textual-serve",  # Web server for running Textual apps in browser
 ]
@@ -305,11 +340,14 @@ all-tools = [
     "pandas",
     "playwright",
     "trafilatura",
+    # Serves both [websearch] (article scraper) and [image_generation]
+    # (SwarmUI client); listed once here since all-tools enumerates packages.
     "aiohttp",
     "defusedxml",
     
     # === Transcription and Audio ===
     "faster-whisper",  # CPU/CUDA optimized Whisper
+    "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX runtime
     "lightning-whisper-mlx; sys_platform == 'darwin'",  # Fast Whisper for Apple Silicon
     "parakeet-mlx; sys_platform == 'darwin'",  # Real-time ASR for Apple Silicon
     
@@ -318,9 +356,10 @@ all-tools = [
     "scipy",
     "yt-dlp",
     "pydub",
+    "audioop-lts; python_version >= '3.13'",  # stdlib audioop removed in 3.13; pydub needs it
     "pyaudio>=0.2.14",
     "sounddevice>=0.4.6",
-    "webrtcvad>=2.0.10",
+    "webrtcvad-wheels>=2.0.14",  # drop-in `webrtcvad` fork; see speech_recording extra note
     "librosa",
     
     # === TTS (Text-to-Speech) ===
@@ -396,19 +435,36 @@ tldw-cli = "tldw_chatbook.cli:main_cli_runner"
 # Direct web server entry point
 tldw-serve = "tldw_chatbook.Web_Server.serve:main"
 
+[tool.setuptools]
+include-package-data = false
+
 [tool.setuptools.packages.find]
 where = ["."]  # Look for packages in the current directory (where pyproject.toml is)
 # Include the 'tldw_chatbook' package and its submodules
 include = ["tldw_chatbook*"]
-exclude = ["Tests*", ".venv*"]
+exclude = [
+    "Tests*",
+    ".venv*",
+    "tldw_chatbook.Chunking.templates*",
+]
 
 [tool.setuptools.package-data]
 # Include all .tcss files in css directory and subdirectories
 "tldw_chatbook.css" = ["*.tcss", "**/*.tcss"]
 # Include theme files
 "tldw_chatbook.css.Themes" = ["*.tcss"]
-# Include JSON template files and guides
-"tldw_chatbook.Config_Files" = ["*.json", "*.md"]
+# Include JSON configuration, guides, and the RAG pipeline defaults
+"tldw_chatbook.Config_Files" = ["*.json", "*.md", "rag_pipelines.toml"]
+# Include runtime chunking templates and evaluator defaults
+"tldw_chatbook.Chunking" = ["templates/*.json"]
+"tldw_chatbook.Evals" = ["config/*.yaml"]
+"tldw_chatbook.DB" = [
+    "migrations/chachanotes_v26_to_v27_citation_provenance.sql",
+    "migrations/chachanotes_v27_to_v28_character_authority.sql",
+]
+# Preserve the licenses for vendored packages
+"tldw_chatbook.Third_Party.aider" = ["LICENSE.txt"]
+"tldw_chatbook.Third_Party.textual_fspicker" = ["LICENSE"]
 # Include CSS files in subdirectories
 "tldw_chatbook.css.core" = ["*.tcss"]
 "tldw_chatbook.css.features" = ["*.tcss"]
@@ -417,9 +473,19 @@ exclude = ["Tests*", ".venv*"]
 # "tldw_chatbook.assets" = ["*"]
 
 [tool.pytest.ini_options]
+# THE single pytest config (task-1457). Tests/UI/pytest.ini used to shadow this
+# whenever pytest was invoked as `pytest Tests/UI` (different rootdir, its own
+# asyncio mode, NO timeout, root conftest not loaded); every invocation now
+# resolves here.
 testpaths = ["Tests"]
-# Exclude server tests that don't belong in the TUI
-addopts = "--ignore=STests --import-mode=importlib"
+# Exclude server tests that don't belong in the TUI.
+# --durations: always report the slowest tests (>=1s) so wall-clock regressions are visible in every run.
+# --strict-markers: an unregistered marker is a collection error, not a silent no-op.
+addopts = "--ignore=STests --import-mode=importlib --durations=25 --durations-min=1.0 --strict-markers -ra"
+# Auto mode suite-wide: async tests execute without per-function marks. Under
+# the old split config, unmarked async tests silently DID NOT RUN in full runs
+# from the repo root (pytest-asyncio strict mode skips unmarked coroutines).
+asyncio_mode = "auto"
 # Default timeout for all tests (in seconds)
 timeout = 300
 # Timeout method: thread (default) or signal
@@ -430,10 +496,17 @@ markers = [
     "ui: marks tests as UI/Textual tests",
     "asyncio: marks tests as async",
     "timeout: marks tests with custom timeout values",
-    "optional: marks tests that require optional dependencies",
+    "optional: marks tests that require optional dependencies (skipped unless --run-optional)",
     "performance: marks tests as performance tests",
     "property: marks tests as property-based tests",
-    "slow: marks tests that take a long time to run",
+    "slow: marks tests that take a long time to run (skipped unless --run-slow)",
+    "smoke: fast sanity checks of core imports and wiring",
+    "benchmark: performance-measurement tests (labeling only; pytest-benchmark is not installed)",
+    "snapshot: visual regression tests using snapshots",
+    "notes: Notes feature tests",
+    "requires_display: tests that require a display (may fail in CI)",
+    "requires_cleanup: tests that need a gc pass immediately after running",
+    "real_audio_device: opts out of the autouse _no_real_audio_device guard (Tests/conftest.py) to exercise a real sounddevice OutputStream",
 ]
 
 [tool.mypy]

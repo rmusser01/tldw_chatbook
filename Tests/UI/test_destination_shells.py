@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import logging
 import time
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
@@ -11,20 +12,23 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Select, Static
 
-from Tests.UI.test_screen_navigation import _build_test_app
-from Tests.UI.test_unified_mcp_panel import FakeUnifiedMCPService
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
-from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
-from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+from tldw_chatbook.MCP.unified_control_models import (
+    ConfiguredServerTarget,
+    SectionCapabilityFlags,
+    ServerAccessContext,
+    UnifiedMCPContext,
+)
+from tldw_chatbook.runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
-from tldw_chatbook.UI.MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.acp_screen import ACPScreen
@@ -1024,6 +1028,7 @@ def _assert_policy_recovery_copy(
     next_action: str,
     recovery_action: str,
     authority_owner: str,
+    pressable_when_blocked: bool = False,
 ) -> None:
     assert status_label in visible_text
     assert f"Unavailable: {unavailable_what}." in visible_text
@@ -1031,7 +1036,14 @@ def _assert_policy_recovery_copy(
     assert f"Next: {next_action}" in visible_text
     assert f"Recovery: {recovery_action}." in visible_text
     assert f"Owner: {authority_owner}." in visible_text
-    assert button.disabled is True
+    if pressable_when_blocked:
+        # TASK-716: Library's blocked source action stays pressable so the
+        # press handler can explain the block (disabled Buttons never emit
+        # Pressed); the blocked class carries the dimmed styling.
+        assert button.disabled is False
+        assert button.has_class("library-source-action-blocked")
+    else:
+        assert button.disabled is True
     assert why in str(button.tooltip)
     assert next_action in str(button.tooltip)
 
@@ -1059,7 +1071,9 @@ def _custom_policy_recovery_state(
         # (#library-header-line); the landing canvas still carries a
         # `.destination-purpose` line, just with Library's own copy instead
         # of the generic "source material" phrasing artifacts/personas use.
-        ("library", "#library-header-line", "content type"),
+        # (F-013: the copy was rewritten in plain language -- "Search
+        # everything, pick a section on the left, or add something new.")
+        ("library", "#library-header-line", "pick a section"),
         ("artifacts", "#artifacts-title", "generated"),
         ("personas", "#personas-header", "who the ai plays"),
     ],
@@ -1125,9 +1139,22 @@ async def test_watchlists_collections_lists_local_snapshot_from_services():
         button = screen.query_one("#wc-attach-to-console", Button)
 
         assert "Local Watchlists snapshot" in text
-        assert "Watchlists (showing up to 5): 2" in text
-        assert "Research feeds" in text
-        assert "Vendor changelogs" in text
+        # Phase C task 7 fix round 1, Finding 1: the Console-staging block
+        # collapsed from "count line + one row per snapshot record" to a
+        # single line naming the tree scope that pressing Stage would send.
+        # The records it used to list resolve, via `list_watch_items` ->
+        # `list_sources` -> `get_all_subscriptions`, to the same
+        # `subscriptions` table the Feeds region's own scoped rows read, so
+        # rendering both printed every source twice in one box. The
+        # "services feed this pane" contract this test exists for is
+        # unchanged and still pinned by `button.disabled` and the
+        # `list_watch_items` call assertion below.
+        assert "Local Watchlists snapshot: All sources" in text
+        assert "Research feeds" not in text, (
+            "the snapshot's records must not be re-listed under the Feeds "
+            "region's own scoped rows"
+        )
+        assert "Vendor changelogs" not in text
         assert "Saved article" not in text
         assert button.disabled is False
 
@@ -1283,7 +1310,14 @@ async def test_watchlists_collections_attach_to_console_uses_listed_context():
     assert payload.source == "watchlists_collections"
     assert payload.item_type == "wc-context"
     assert payload.title == "Local Watchlists snapshot"
-    assert "Research feeds" in payload.body
+    # Fix round 1, Finding 1: the body is now the tree scope's own sources
+    # (here: the default "all" scope over this harness's empty subscriptions
+    # DB) rather than the unscoped snapshot listing. Selecting a watchlist
+    # and then staging must stage that watchlist -- pinned with real seeded
+    # rows in Tests/Watchlists/test_watchlists_collections_screen.py.
+    assert "All sources" in payload.body
+    assert payload.metadata["scope_kind"] == "all"
+    assert payload.metadata["source_count"] == 0
     assert "Saved article" not in payload.body
     assert payload.metadata["watchlist_count"] == 1
     assert "collection_count" not in payload.metadata
@@ -1306,7 +1340,6 @@ async def test_watchlists_collections_preserves_safe_comparison_titles_and_rejec
         await _wait_for_wc_snapshot(screen, pilot)
         text = _visible_text(screen)
 
-        assert "Model A < Model B > Baseline" in text
         assert "javascript:alert(1)" not in text
         assert "alert(1)" not in text
 
@@ -1314,9 +1347,15 @@ async def test_watchlists_collections_preserves_safe_comparison_titles_and_rejec
         await _wait_for_mock_call(app.open_chat_with_handoff, pilot)
 
     payload = app.open_chat_with_handoff.call_args.args[0]
-    assert "Model A < Model B > Baseline" in payload.body
+    # Fix round 1, Finding 1: the snapshot's titles are no longer rendered
+    # or enumerated in the body (see the staging-block collapse above), but
+    # they still travel in the metadata through the *same* `_record_title` /
+    # `_safe_text` sanitise-and-validate pass this test exists to guard --
+    # comparison operators survive it, a `javascript:` URL does not.
+    assert "Model A < Model B > Baseline" in payload.metadata["watchlist_titles"]
     assert "javascript:alert(1)" not in payload.body
     assert "alert(1)" not in payload.body
+    assert not any("alert(1)" in title for title in payload.metadata["watchlist_titles"])
 
 
 # The legacy thin-shell Personas tests that lived here were retired with the
@@ -1440,12 +1479,16 @@ async def test_library_destination_empty_state_disables_console_handoff():
         # successor as standalone canvas text; the landing canvas purpose
         # line plus the zero-state rail row counts carry the same "there is
         # nothing here yet" signal, and Console handoff stays disabled.
-        assert "Search, pick a content type, or ingest something new." in text
+        assert "Search everything, pick a section on the left, or add something new." in text
         assert "Notes (0)" in text
         assert "Media (0)" in text
         assert "Conversations (0)" in text
         assert screen.query_one("#library-canvas-landing")
-        assert button.disabled is True
+        # TASK-716: blocked actions stay pressable (a disabled Button never
+        # emits Pressed, so its explanatory warning was unreachable); the
+        # blocked class carries the dimmed styling.
+        assert button.disabled is False
+        assert button.has_class("library-source-action-blocked")
         assert "Stage Library source context" in str(button.tooltip)
 
 
@@ -1526,7 +1569,8 @@ async def test_library_destination_service_failure_uses_recovery_copy():
             "Library source services unavailable; retry Library later."
             in _visible_text(screen)
         )
-        assert button.disabled is True
+        assert button.disabled is False
+        assert button.has_class("library-source-action-blocked")
         assert "Library source services are unavailable" in str(button.tooltip)
 
 
@@ -1553,6 +1597,7 @@ async def test_library_policy_denial_uses_runtime_recovery_taxonomy():
         button = screen.query_one("#library-use-in-console", Button)
 
         _assert_policy_recovery_copy(
+            pressable_when_blocked=True,
             visible_text=_static_text(details_body),
             button=button,
             status_label="Wrong source",
@@ -2169,10 +2214,14 @@ async def test_destination_action_buttons_explain_their_outcome(route):
         await pilot.pause(0.1)
         screen = _active_destination_screen(host)
 
-        for button in screen.query(Button):
-            tooltip = getattr(button, "tooltip", None)
-            assert tooltip is not None, button.id
-            assert str(tooltip).strip().lower() not in {"", "none"}, button.id
+        missing_tooltips = [
+            button.id
+            for button in screen.query(Button)
+            if str(getattr(button, "tooltip", None)).strip().lower() in {"", "none"}
+        ]
+        assert not missing_tooltips, (
+            f"{route} buttons without outcome tooltips: {missing_tooltips}"
+        )
 
 
 @pytest.mark.parametrize(
@@ -2355,7 +2404,7 @@ async def test_workflows_empty_state_reads_as_live_queue_with_recovery_path():
 @pytest.mark.parametrize(
     ("route", "expected_text"),
     [
-        ("mcp", "scoped tools"),
+        ("mcp", "Model Context Protocol"),
         ("acp", "Agent Client Protocol"),
         ("skills", "SKILL.md"),
         ("settings", "Global preferences"),
@@ -2404,9 +2453,11 @@ async def test_mcp_destination_embeds_mcp_workbench():
     """MCP screen now hosts the rail/canvas/inspector workbench, not the legacy panel.
 
     Realigned from the retired `test_mcp_destination_embeds_unified_mcp_management_panel`
-    (Task 8 replaced the embedded `UnifiedMCPPanel` with `MCPWorkbench`). Same product
-    intent — the MCP destination embeds its management surface directly, with no
-    "open elsewhere" escape hatch and no "not embedded" placeholder copy.
+    (Task 8 replaced the embedded `UnifiedMCPPanel` with `MCPWorkbench`; Task 5 of MCP
+    Hub Phase 6 deleted `UnifiedMCPPanel` itself, so there is no longer a class to query
+    for absence -- the module simply doesn't exist). Same product intent — the MCP
+    destination embeds its management surface directly, with no "open elsewhere" escape
+    hatch and no "not embedded" placeholder copy.
     """
     app = _build_test_app()
     host = DestinationHarness(app, "mcp")
@@ -2420,7 +2471,6 @@ async def test_mcp_destination_embeds_mcp_workbench():
         assert screen.query_one("#mcp-hub-rail", MCPRail)
         assert screen.query_one("#mcp-hub-canvas")
         assert screen.query_one("#mcp-hub-inspector", MCPInspector)
-        assert not screen.query(UnifiedMCPPanel)
         assert not screen.query("#mcp-open-management")
         assert (
             "Unified MCP management is not embedded in this shell yet."
@@ -2463,14 +2513,165 @@ async def test_mcp_destination_labels_server_first_workbench_columns():
         assert len(rail_rows) >= 2
         assert any("All servers" in str(row.label) for row in rail_rows)
 
-        # Inspector is present and explains readiness (not a bare shell).
+        # Inspector is present and explains readiness (not a bare shell) --
+        # task-2240: on a fresh install the rail's lone row (the off/opt-in
+        # built-in) is pre-selected, so the inspector opens on its
+        # informational detail instead of the dead empty-state prompt.
         assert "Inspector" in text
-        assert "Select an item to inspect." in text
+        await _wait_for_visible_text(screen, pilot, "Off (opt-in)")
+        inspector_state = screen.query_one("#mcp-inspector-state", Static)
+        assert "tldw_chatbook (built-in)" in _static_text(inspector_state)
 
         assert (
-            "Manage MCP servers, scoped tools, permissions, and audit readiness."
-            in text
+            "MCP (Model Context Protocol) lets chatbook use external tools — "
+            "most people never need to change anything here." in text
         )
+
+
+class FakeUnifiedMCPService:
+    """Ported from the retired `test_unified_mcp_panel.py` (deleted along with
+    `UnifiedMCPPanel`/`unified_mcp_sections.py` in MCP Hub Phase 6 Task 5) --
+    this is the only test in the suite that still needs it, to drive
+    `MCPWorkbench`'s `unified_mcp_service`-backed source/scope/section
+    tracking for `test_mcp_destination_restores_unified_mcp_view_state_after_
+    mount` below. Kept local to this one test rather than resurrecting a
+    shared fixture module for a single caller.
+    """
+
+    def __init__(self, target_store: ConfiguredServerTargetStore) -> None:
+        self.target_store = target_store
+        self.context = UnifiedMCPContext(
+            selected_source="local", selected_section="overview"
+        )
+        self.action_calls: list[tuple[str, dict]] = []
+        self.runtime_state_override_calls = 0
+
+    async def load_context(self) -> UnifiedMCPContext:
+        return self.context
+
+    async def select_source(self, source: str) -> UnifiedMCPContext:
+        normalized_source = "server" if source == "server" else "local"
+        self.context = replace(self.context, selected_source=normalized_source)
+        if (
+            normalized_source == "server"
+            and self.context.selected_active_server_id is None
+        ):
+            default_target = self.target_store.resolve_active_target()
+            if default_target is not None:
+                return await self.select_server_target(default_target.server_id)
+        return self.context
+
+    async def select_server_target(self, server_id: str) -> UnifiedMCPContext:
+        target = self.target_store.resolve_active_target(server_id)
+        if target is None:
+            raise KeyError(server_id)
+        context = ServerAccessContext(
+            server_id=target.server_id,
+            selected_scope="personal",
+            selected_scope_ref=None,
+            selected_section=self.context.selected_section or "overview",
+            can_use_personal_scope=True,
+            manageable_team_ids=(21,),
+            manageable_org_ids=(11,),
+            can_use_system_admin_scope=True,
+            section_capabilities=SectionCapabilityFlags(
+                overview=True,
+                inventory=True,
+                catalogs=True,
+                external_servers=True,
+                governance=True,
+                advanced=True,
+            ),
+        )
+        per_server_state = dict(self.context.per_server_state)
+        per_server_state[target.server_id] = context
+        self.context = replace(
+            self.context,
+            selected_source="server",
+            selected_active_server_id=target.server_id,
+            selected_scope=context.selected_scope,
+            selected_scope_ref=context.selected_scope_ref,
+            selected_section=context.selected_section,
+            per_server_state=per_server_state,
+        )
+        return self.context
+
+    async def select_scope(
+        self, scope: str | None, scope_ref: str | None = None
+    ) -> UnifiedMCPContext:
+        server_id = self.context.selected_active_server_id
+        if server_id is None:
+            return self.context
+        if scope == "team" and scope_ref is None:
+            scope_ref = "21"
+        elif scope == "org" and scope_ref is None:
+            scope_ref = "11"
+        else:
+            scope_ref = (
+                None if scope in {None, "personal", "system_admin"} else scope_ref
+            )
+        context = replace(
+            self.context.per_server_state[server_id],
+            selected_scope=scope or "personal",
+            selected_scope_ref=scope_ref,
+        )
+        per_server_state = dict(self.context.per_server_state)
+        per_server_state[server_id] = context
+        self.context = replace(
+            self.context,
+            selected_scope=context.selected_scope,
+            selected_scope_ref=context.selected_scope_ref,
+            per_server_state=per_server_state,
+        )
+        return self.context
+
+    async def select_section(self, section: str | None) -> UnifiedMCPContext:
+        server_id = self.context.selected_active_server_id
+        if server_id is None:
+            self.context = replace(self.context, selected_section=section or "overview")
+            return self.context
+        context = replace(
+            self.context.per_server_state[server_id],
+            selected_section=section or "overview",
+        )
+        per_server_state = dict(self.context.per_server_state)
+        per_server_state[server_id] = context
+        self.context = replace(
+            self.context,
+            selected_section=context.selected_section,
+            per_server_state=per_server_state,
+        )
+        return self.context
+
+    async def load_section(self, section: str | None = None) -> dict:
+        effective_section = section or self.context.selected_section or "overview"
+        return {
+            "source": self.context.selected_source,
+            "section": effective_section,
+            "server_id": self.context.selected_active_server_id,
+            "scope": self.context.selected_scope,
+            "scope_ref": self.context.selected_scope_ref,
+        }
+
+    def available_actions(self) -> list[dict]:
+        return []
+
+    def runtime_state_override(self) -> RuntimeSourceState:
+        self.runtime_state_override_calls += 1
+        if self.context.selected_source == "server":
+            return RuntimeSourceState(
+                active_source="server",
+                active_server_id=self.context.selected_active_server_id,
+                server_configured=True,
+                server_reachability="reachable",
+                server_auth_state="authenticated",
+                last_known_server_label=self.context.selected_active_server_id,
+            )
+        return RuntimeSourceState(active_source="local")
+
+    async def run_action(self, action_name: str, payload: dict) -> dict:
+        self.action_calls.append((action_name, dict(payload)))
+        return {"ok": True, "action": action_name, **dict(payload)}
 
 
 @pytest.mark.asyncio
@@ -2605,13 +2806,21 @@ async def test_mcp_destination_mode_chip_syncs_to_restored_mode():
         screen = _active_destination_screen(host)
         workbench = screen.query_one(MCPWorkbench)
 
+        tools_chip = screen.query_one("#mcp-mode-tools", Button)
+        servers_chip = screen.query_one("#mcp-mode-servers", Button)
+
+        # Wait on the chip, not just on `active_mode`. The mode is applied by
+        # the workbench and the chip is synced by the screen's `ModeChanged`
+        # handler, so the highlight necessarily lands one pump cycle after the
+        # mode itself. Polling the mode and asserting the chip made the test
+        # depend on the load happening to finish before the test body resumed
+        # (TASK-1320 moved that load into a worker). The end state asserted is
+        # unchanged -- this still fails if the chip never syncs.
         deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline and workbench.active_mode != "tools":
+        while time.monotonic() < deadline and not tools_chip.has_class("is-active"):
             await pilot.pause(0.01)
 
         assert workbench.active_mode == "tools"
-        tools_chip = screen.query_one("#mcp-mode-tools", Button)
-        servers_chip = screen.query_one("#mcp-mode-servers", Button)
         assert tools_chip.has_class("is-active")
         assert not servers_chip.has_class("is-active")
 
@@ -2684,7 +2893,7 @@ async def test_mcp_destination_runtime_refresh_uses_exclusive_worker(monkeypatch
 def test_mcp_screen_bindings_include_add_refresh_and_test_tool_shortcuts():
     """T13/T8: `a`/`r`/`t` map to the documented actions, all hidden from the
     Footer widget's own binding list (`show=False`) -- the Phase 2 footer
-    shortcut hint (`MCP_SHORTCUTS`) documents them instead."""
+    shortcut hint (`MCP_MODE_SHORTCUTS`, per-mode since F-055) documents them instead."""
     bindings = {b.key: b for b in MCPScreen.BINDINGS}
     assert bindings["a"].action == "mcp_add_server"
     assert bindings["a"].show is False
@@ -2897,7 +3106,9 @@ class MCPFooterHarness(App):
 async def test_mcp_destination_registers_footer_workbench_shortcuts():
     """T13: mounting the MCP destination registers its Phase 2 footer
     shortcut hint (source="mcp") -- same contract Console established
-    (`test_console_registers_footer_workbench_shortcuts`).
+    (`test_console_registers_footer_workbench_shortcuts`). F-055: the
+    hint is per-mode now -- Servers mode (the initial mode) has no
+    working `t`/`space` keys, so neither is advertised.
     """
     app = _build_test_app()
     host = MCPFooterHarness(app)
@@ -2911,9 +3122,41 @@ async def test_mcp_destination_registers_footer_workbench_shortcuts():
 
         assert (
             footer.shortcut_text
-            == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
-            " | F1 help · F6 panes · Ctrl+P palette · Ctrl+Q quit"
+            == f"1-4 mode | a add server | r refresh | {AppFooterStatus.GLOBAL_HINTS}"
         )
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_footer_shortcuts_follow_mode():
+    """F-055: the footer only advertises keys that work in the ACTIVE mode
+    -- `t` appears in Tools mode, `space` in Permissions mode, and neither
+    leaks into the other modes where pressing it is dead or hijacking."""
+    app = _build_test_app()
+    host = MCPFooterHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#mcp-shell")
+        footer = screen.query_one(AppFooterStatus)
+        common = "1-4 mode | a add server | r refresh"
+        globals_suffix = f" | {AppFooterStatus.GLOBAL_HINTS}"
+        assert footer.shortcut_text == f"{common}{globals_suffix}"
+
+        screen.action_mcp_mode("tools")
+        await pilot.pause()
+        assert footer.shortcut_text == f"{common} | t test tool{globals_suffix}"
+
+        screen.action_mcp_mode("permissions")
+        await pilot.pause()
+        assert footer.shortcut_text == f"{common} | space cycle permission{globals_suffix}"
+
+        screen.action_mcp_mode("audit")
+        await pilot.pause()
+        assert footer.shortcut_text == f"{common}{globals_suffix}"
+
+        screen.action_mcp_mode("servers")
+        await pilot.pause()
+        assert footer.shortcut_text == f"{common}{globals_suffix}"
 
 
 @pytest.mark.asyncio
@@ -2935,8 +3178,7 @@ async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend
         footer = screen.query_one(AppFooterStatus)
         assert (
             footer.shortcut_text
-            == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
-            " | F1 help · F6 panes · Ctrl+P palette · Ctrl+Q quit"
+            == f"1-4 mode | a add server | r refresh | {AppFooterStatus.GLOBAL_HINTS}"
         )
 
         overlay = TextualScreen()
@@ -2948,8 +3190,7 @@ async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend
         await pilot.pause()
         assert (
             footer.shortcut_text
-            == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
-            " | F1 help · F6 panes · Ctrl+P palette · Ctrl+Q quit"
+            == f"1-4 mode | a add server | r refresh | {AppFooterStatus.GLOBAL_HINTS}"
         )
 
 
@@ -3630,17 +3871,15 @@ async def test_settings_destination_uses_three_column_workbench_contract():
         await _wait_for_visible_text(
             screen,
             pilot,
-            "Settings | Global preferences, appearance, accounts, storage | Local",
+            "Settings | Global preferences, appearance, storage | Local",
         )
         text = _visible_text(screen)
 
         assert (
-            "Settings | Global preferences, appearance, accounts, storage | Local"
+            "Settings | Global preferences, appearance, storage | Local"
             in text
         )
         assert "Mode: Overview | Runtime controls stay in MCP and ACP" in text
-        assert "Settings Sections" in text
-        assert "Preference Detail" in text
         assert "Scope Inspector" in text
         assert "Overview" in text
         assert "Provider readiness" in text
@@ -3780,6 +4019,41 @@ async def test_legacy_tools_settings_route_opens_mcp_not_global_settings():
             for widget in screen.query(Static)
             if hasattr(widget, "renderable")
         )
-        assert "MCP servers" in visible_text
-        assert "scoped tools" in visible_text
+        assert "Model Context Protocol" in visible_text
+        assert "scoped tools" not in visible_text
         assert "global preferences" not in visible_text
+
+
+@pytest.mark.asyncio
+async def test_workspace_import_sources_mounts_the_ingest_canvas_in_place():
+    """The Workspaces "Import sources" action must not leave the Library.
+
+    Every other way into ingest mounts the canvas here -- the rail row (see
+    ``test_library_ingest_import_media_row_mounts_ingest_canvas``), the rail-top
+    button, and Home's ingest deep link. This action was the last one still
+    posting ``NavigateToScreen("ingest")`` to the standalone Ingest screen, so
+    the same job took the user to a different screen depending on which button
+    they found -- and once that screen is retired (task-684.4) it would lead
+    nowhere.
+    """
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    seen_routes = []
+    host = DestinationHarness(app, "library", seen_routes)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        from types import SimpleNamespace
+
+        await screen.open_workspace_import_sources(
+            SimpleNamespace(stop=lambda: None)
+        )
+        await _wait_for_selector(screen, pilot, "#library-ingest-canvas")
+
+        assert getattr(screen, "_library_selected_row_id") == "ingest-import-media"
+
+    assert seen_routes == [], "Import sources must not hand off to another screen"

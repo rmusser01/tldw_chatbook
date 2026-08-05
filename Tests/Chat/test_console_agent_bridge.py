@@ -5,6 +5,7 @@ import contextlib
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 from tldw_chatbook.Chat.console_agent_bridge import (
     CONSOLE_AGENT_OPERATING_PROMPT,
@@ -12,18 +13,25 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     compose_agent_system_prompt,
     format_agent_step_marker,
     inject_resume_agent_markers,
+    _BridgeSkillRunner,
     _compose_run_allowed_tools,
     _compose_run_registry_and_allowed,
     _non_colliding_mcp_names,
+    _WARNED_SHADOWED_MCP_NAMES,
+    shadowed_mcp_names,
 )
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_provider_gateway import ProviderToolCalls
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderStreamSignals,
+    ProviderToolCalls,
+)
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Agents.agent_models import (
+    DIRECT_DISCLOSE_THRESHOLD,
     LOAD_TOOLS_NAME,
     RUN_DONE,
     RUN_ERROR,
@@ -33,13 +41,35 @@ from tldw_chatbook.Agents.agent_models import (
     STEP_SPAWN,
     STEP_TOOL_RESULT,
     RunOutcome,
+    SkillFileBindings,
     ToolCatalogEntry,
     ToolResult,
     ToolSchema,
 )
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.tool_catalog import (
+    SkillToolProvider,
+    ToolCatalogRegistry,
+)
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
+
+
+@pytest.fixture(autouse=True)
+def _reset_shadowed_mcp_warning_dedup():
+    """Reset the shadowed-MCP-name log-once set so tests are order-independent.
+
+    Mirrors ``Tests/Internal_Prompts/conftest.py``'s
+    ``resolver._warned_ids.clear()`` idiom for the identical reason:
+    ``_compose_run_registry_and_allowed``'s shadowed-name warning is now
+    deduped per name for the life of the process (finding 8, substrate
+    review). Without this reset, whichever test in this file runs FIRST
+    for a given shadowed name would win, and every later test asserting
+    the same warning would silently observe nothing logged.
+    """
+    _WARNED_SHADOWED_MCP_NAMES.clear()
+    yield
+    _WARNED_SHADOWED_MCP_NAMES.clear()
 
 
 class _FakeMCPProvider:
@@ -52,8 +82,10 @@ class _FakeMCPProvider:
         self._entries = list(entries)
         self.invoke_calls: list[tuple[str, dict]] = []
         self.stamp_scope_calls = 0
+        self.list_catalog_calls = 0
 
     def list_catalog(self):
+        self.list_catalog_calls += 1
         return [
             ToolCatalogEntry(
                 id=name, name=name, one_line_description=desc, source="mcp"
@@ -105,11 +137,30 @@ class _ChunkGateway:
         self.calls = 0
         self.tools_seen = []
 
-    async def stream_chat(self, resolution, messages, tools=None):
+    async def stream_chat(self, resolution, messages, tools=None, **kwargs):
         self.tools_seen.append(tools)
         chunks = self._scripts[self.calls]
         self.calls += 1
         for chunk in chunks:
+            yield chunk
+
+
+class _SignalChunkGateway(_ChunkGateway):
+    """Scripted gateway that records the out-of-band signal by identity."""
+
+    def __init__(self, scripts):
+        super().__init__(scripts)
+        self.signals_seen = []
+        self.signal_states_seen = []
+
+    async def stream_chat(self, resolution, messages, tools=None, signals=None):
+        self.signals_seen.append(signals)
+        self.signal_states_seen.append(signals.synthetic_fallback_emitted)
+        async for chunk in super().stream_chat(
+            resolution,
+            messages,
+            tools=tools,
+        ):
             yield chunk
 
 
@@ -133,6 +184,14 @@ def _native_calls(name, args, call_id="c1"):
 
 
 def _bridge(tmp_path, scripts, native_tools_enabled=None):
+    return _bridge_with_gateway(
+        tmp_path,
+        _ChunkGateway(scripts),
+        native_tools_enabled=native_tools_enabled,
+    )
+
+
+def _bridge_with_gateway(tmp_path, gateway, native_tools_enabled=None):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -143,7 +202,7 @@ def _bridge(tmp_path, scripts, native_tools_enabled=None):
     bridge = ConsoleAgentBridge(
         agent_runs_db=db,
         store=store,
-        provider_gateway=_ChunkGateway(scripts),
+        provider_gateway=gateway,
         native_tools_enabled=native_tools_enabled,
     )
     return bridge, db, store, session, assistant.id
@@ -161,7 +220,9 @@ def _run(bridge, store, session, assistant_id, **over):
         should_cancel=lambda: False,
     )
     kwargs.update(over)
-    return bridge.run_reply(**kwargs)
+    # run_reply returns (run_id, outcome); these tests assert on the outcome.
+    _run_id, outcome = bridge.run_reply(**kwargs)
+    return outcome
 
 
 def test_compose_prepends_session_prompt_then_agent_prompt():
@@ -199,6 +260,183 @@ def test_tool_turn_renders_a_tool_marker_not_prose(tmp_path):
     # The fenced tool JSON never streamed into the assistant answer.
     assert FENCE_OPEN not in store.get_message(aid).content
     assert store.get_message(aid).content == "It is 42."
+
+
+class _RefusingBuiltinGate:
+    """A `BuiltinToolGate` double that refuses every call -- proves
+    `run_reply`'s `builtin_gate=` argument is the SAME object
+    `BuiltinToolProvider.invoke()` ends up checking, end to end."""
+
+    def __init__(self) -> None:
+        self.checked: list[str] = []
+
+    def check(self, tool):
+        self.checked.append(tool.name)
+        return f"disabled for test: {tool.name}"
+
+
+def test_run_reply_threads_builtin_gate_end_to_end(tmp_path):
+    """task-545/T6: a `builtin_gate` handed to `run_reply` must be the
+    exact instance the run's own `BuiltinToolProvider.invoke()` consults --
+    a second, independently-built gate would silently desync from
+    whatever the caller's review hook already decided (the core risk this
+    task's wiring exists to avoid)."""
+    scripts = [
+        [_fence("calculator", {"expression": "6*7"})],
+        ["it was refused."],
+    ]
+    bridge, _db, store, session, aid = _bridge(tmp_path, scripts)
+    gate = _RefusingBuiltinGate()
+    outcome = _run(bridge, store, session, aid, builtin_gate=gate)
+    assert outcome.status == "done"
+    assert gate.checked == ["calculator"]
+    tool_rows = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert tool_rows, "a refused tool call still drops a TOOL marker"
+    assert "disabled for test: calculator" in tool_rows[0].content
+    assert store.get_message(aid).content == "it was refused."
+
+
+def test_run_reply_threads_session_workspace_id_end_to_end(tmp_path, monkeypatch):
+    """task-6 (settings-workspaces-folder-roots spec Sec3): the RUNNING
+    session's own ``workspace_id`` must reach the run's
+    ``BuiltinToolProvider``, so a builtin tool observes it (via
+    ``workspace_file_roots.run_workspace``) while it executes -- not
+    whatever workspace happens to be active in the UI by the time the
+    call actually fires. Verified by monkeypatching ``CalculatorTool.
+    execute`` (the real built-in tool the scripted fence calls) to record
+    the ContextVar it sees, since the bridge builds its own
+    ``BuiltinToolProvider`` internally with no seam for a test double."""
+    from tldw_chatbook.Tools import workspace_file_roots as wfr
+    from tldw_chatbook.Tools.tool_executor import CalculatorTool
+
+    observed: list[str | None] = []
+    real_execute = CalculatorTool.execute
+
+    async def _recording_execute(self, expression):
+        observed.append(wfr.current_run_workspace_id())
+        return await real_execute(self, expression)
+
+    monkeypatch.setattr(CalculatorTool, "execute", _recording_execute)
+
+    scripts = [
+        [_fence("calculator", {"expression": "6*7"})],
+        ["It is 42."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.create_session(workspace_id="ws-session-42")
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts)
+    )
+    # Any non-None `builtin_gate` forces the fresh-build branch that
+    # actually looks up and threads the session's workspace_id (see
+    # `run_reply`'s own docstring) -- the shared/no-gate fast path's
+    # provider is built once at bridge-construction time, before any
+    # session exists, so it is out of scope for a per-session binding.
+    outcome = _run(
+        bridge, store, session, assistant.id,
+        builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+    )
+    assert outcome.status == "done"
+    assert observed == ["ws-session-42"]
+    assert wfr.current_run_workspace_id() is None  # cleared after the run
+
+
+def test_run_reply_refuses_write_file_in_an_ephemeral_session_end_to_end(
+    tmp_path, monkeypatch
+):
+    """F4 (final-review): agent tool calls are a 9th, ungated local-write
+    sink -- an ordinary reply in a temporary Console session can compose
+    and dispatch `write_file` (a gateable built-in) exactly like any other
+    session, independently of the Console UI action-id registry in
+    `Chat/console_ephemeral.py`. Verified end-to-end through `run_reply`,
+    mirroring `test_run_reply_threads_session_workspace_id_end_to_end`'s
+    own pattern (the bridge builds its own `BuiltinToolProvider` internally
+    with no seam for a test double) -- the RUNNING session's `ephemeral`
+    flag must reach it via `_store.session_is_ephemeral`.
+    """
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Tools.file_operation_tools import WriteFileTool
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            True
+            if section == "tools" and key == "write_file_enabled"
+            else default
+        ),
+    )
+
+    called = {"n": 0}
+
+    async def _recording_execute(self, **kwargs):
+        called["n"] += 1
+        return {"success": True}
+
+    monkeypatch.setattr(WriteFileTool, "execute", _recording_execute)
+
+    scripts = [
+        [_fence("write_file", {"file_path": "note.txt", "content": "hi"})],
+        ["I could not save that."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.create_session(ephemeral=True)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts)
+    )
+    outcome = _run(
+        bridge, store, session, assistant.id,
+        builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+    )
+    assert outcome.status == "done"
+    assert called["n"] == 0, "write_file must never execute in a temporary chat"
+    tool_rows = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert tool_rows, "a refused tool call still drops a TOOL marker"
+    assert "temporary chat" in tool_rows[0].content
+
+    # CONTROL: the identical scripted call executes normally outside a
+    # temporary chat.
+    called["n"] = 0
+    db2 = AgentRunsDB(tmp_path / "runs2.db", client_id="t")
+    store2 = ConsoleChatStore()
+    normal_session = store2.create_session()
+    store2.append_message(
+        normal_session.id, role=ConsoleMessageRole.USER, content="hi"
+    )
+    normal_assistant = store2.append_message(
+        normal_session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    scripts2 = [
+        [_fence("write_file", {"file_path": "note.txt", "content": "hi"})],
+        ["Saved."],
+    ]
+    bridge2 = ConsoleAgentBridge(
+        agent_runs_db=db2, store=store2, provider_gateway=_ChunkGateway(scripts2)
+    )
+    outcome2 = _run(
+        bridge2, store2, normal_session, normal_assistant.id,
+        builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+    )
+    assert outcome2.status == "done"
+    assert called["n"] == 1, "write_file must execute normally outside a temporary chat"
 
 
 def test_leaked_prose_before_disobedient_fence_is_reset_not_garbled(tmp_path):
@@ -286,7 +524,7 @@ def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
     seen_loops = []
 
     class _LoopSpyGateway(_ChunkGateway):
-        async def stream_chat(self, resolution, messages, tools=None):
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
             seen_loops.append(asyncio.get_running_loop())
             async for chunk in super().stream_chat(resolution, messages, tools=tools):
                 yield chunk
@@ -313,6 +551,83 @@ def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
     assert seen_loops[0].is_closed(), (
         "the run's shared loop must be closed once run_reply returns"
     )
+
+
+def test_provider_stream_signal_survives_primary_tool_and_final_turns(tmp_path):
+    signals = ConsoleProviderStreamSignals()
+    gateway = _SignalChunkGateway(
+        [
+            [_fence("calculator", {"expression": "6*7"})],
+            ["It is ", "42."],
+        ]
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        provider_stream_signals=signals,
+    )
+
+    assert outcome.status == "done"
+    assert gateway.signals_seen == [signals, signals]
+    assert all(item is signals for item in gateway.signals_seen)
+
+
+def test_provider_stream_signal_survives_subagent_turns(tmp_path):
+    signals = ConsoleProviderStreamSignals()
+    gateway = _SignalChunkGateway(
+        [
+            [_fence("spawn_subagent", {"task": "compute 1+1"})],
+            ["2"],
+            ["Done: 2."],
+        ]
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        provider_stream_signals=signals,
+    )
+
+    assert outcome.status == "done"
+    assert gateway.signals_seen == [signals, signals, signals]
+    assert all(item is signals for item in gateway.signals_seen)
+
+
+def test_provider_stream_signal_is_never_reset_by_bridge(tmp_path):
+    signals = ConsoleProviderStreamSignals()
+    signals.mark_synthetic_fallback()
+    gateway = _SignalChunkGateway([["Already marked."]])
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        provider_stream_signals=signals,
+    )
+
+    assert outcome.status == "done"
+    assert gateway.signals_seen == [signals]
+    assert gateway.signal_states_seen == [True]
+    assert signals.synthetic_fallback_emitted is True
+
+
+def test_provider_stream_signal_omission_preserves_legacy_gateway_signature(tmp_path):
+    bridge, _db, store, session, aid = _bridge(tmp_path, [["Unchanged."]])
+
+    outcome = _run(bridge, store, session, aid)
+
+    assert outcome.status == "done"
+    assert bridge._gateway.calls == 1
+    assert store.get_message(aid).content == "Unchanged."
 
 
 def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
@@ -557,6 +872,53 @@ def test_format_agent_step_marker_matches_each_live_marker_shape():
     assert format_agent_step_marker(STEP_MODEL, summary="The answer is 42.") is None
 
 
+def test_long_tool_result_marker_is_collapsed_with_truncation_affordance():
+    """TASK-350: a spawn_subagent whose result IS the full answer must not be
+    dumped verbatim into the TOOL marker — it duplicated the assistant bubble
+    word-for-word. Collapse it to a preview and mark the truncation plus how much
+    is hidden, so the marker reads as provenance, not a second copy."""
+    answer = "### Understanding SQLite WAL. " + "word " * 300  # long answer
+    marker = format_agent_step_marker(
+        STEP_TOOL_RESULT, tool_name="spawn_subagent", result=answer
+    )
+    assert marker.startswith("\u2699 spawn_subagent \u2192 ### Understanding SQLite")
+    assert "\u2026" in marker  # ellipsis marks the cut
+    assert "chars)" in marker  # explicit "how much more" affordance
+    assert len(marker) < len(answer) // 2  # collapsed, not a full duplicate
+
+
+def test_short_tool_result_marker_is_unchanged():
+    # Short results stay verbatim — no ellipsis, no affordance.
+    marker = format_agent_step_marker(
+        STEP_TOOL_RESULT, tool_name="calculator", result="42"
+    )
+    assert marker == "\u2699 calculator \u2192 42"
+    assert "\u2026" not in marker
+
+
+def test_step_truncation_cuts_on_word_boundary_with_ellipsis():
+    from tldw_chatbook.Chat.console_agent_bridge import _truncate_step_text
+
+    text = "alpha beta gamma delta epsilon zeta eta theta iota kappa"
+    out = _truncate_step_text(text, limit=24)
+    assert "\u2026" in out and "(+" in out and "chars)" in out
+    preview = out.split("\u2026", 1)[0].strip()
+    # every token shown is a whole word from the source — never a mid-word clip
+    assert preview
+    assert all(tok in text.split() for tok in preview.split())
+
+
+def test_step_truncation_cuts_on_newline_and_tab_boundaries():
+    """Qodo #3: markdown/structured results split on newlines/tabs, not just
+    spaces — the boundary search must treat any whitespace as a token break so a
+    fenced/heading result is not clipped mid-token."""
+    from tldw_chatbook.Chat.console_agent_bridge import _truncate_step_text
+
+    text = "### Heading\n\nsome body text that keeps going well past the limit here"
+    out = _truncate_step_text(text, limit=15)
+    assert out.split("\u2026", 1)[0] == "### Heading"  # cut at the newline, not "so"
+
+
 def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
     tmp_path,
 ):
@@ -579,8 +941,60 @@ def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
         agent_runs_db=db, store=None, provider_gateway=None
     )
     blocks = fresh_bridge.resume_marker_messages("conv-1")
-    resumed_tool_contents = [m.content for block in blocks for m in block]
+    resumed_tool_contents = [m.content for _anchor, block in blocks for m in block]
     assert resumed_tool_contents == live_tool_contents
+
+
+def test_resume_marker_messages_surfaces_assistant_message_id_anchor(tmp_path):
+    """Task 3: each block is paired with the run's ``assistant_message_id``
+    (``None`` for a legacy/pre-Phase-C run that never recorded one) so the
+    placement layer can anchor by id instead of guessing ordinally."""
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    anchored = db.create_run(
+        conversation_id="conv-1",
+        agent_kind="primary",
+        assistant_message_id="asst-anchor",
+    )
+    db.append_steps(
+        anchored,
+        [
+            {
+                "index": 0,
+                "kind": STEP_ERROR,
+                "summary": "boom",
+                "tool_name": "",
+                "result": "",
+                "args": None,
+                "created_at": "",
+            },
+        ],
+    )
+    db.set_status(anchored, "done", result="ok")
+    legacy = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.append_steps(
+        legacy,
+        [
+            {
+                "index": 0,
+                "kind": STEP_ERROR,
+                "summary": "legacy",
+                "tool_name": "",
+                "result": "",
+                "args": None,
+                "created_at": "",
+            },
+        ],
+    )
+    db.set_status(legacy, "done", result="ok")
+
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    blocks = bridge.resume_marker_messages("conv-1")
+
+    assert len(blocks) == 2
+    assert blocks[0][0] == "asst-anchor"
+    assert "boom" in blocks[0][1][0].content
+    assert blocks[1][0] is None
+    assert "legacy" in blocks[1][1][0].content
 
 
 def test_resume_marker_messages_orders_blocks_chronologically_oldest_first(tmp_path):
@@ -621,8 +1035,8 @@ def test_resume_marker_messages_orders_blocks_chronologically_oldest_first(tmp_p
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     blocks = bridge.resume_marker_messages("conv-1")
     assert len(blocks) == 2
-    assert "calculator" in blocks[0][0].content
-    assert "timed out" in blocks[1][0].content
+    assert "calculator" in blocks[0][1][0].content
+    assert "timed out" in blocks[1][1][0].content
 
 
 def test_resume_marker_messages_skips_superseded_runs(tmp_path):
@@ -663,7 +1077,7 @@ def test_resume_marker_messages_skips_superseded_runs(tmp_path):
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     blocks = bridge.resume_marker_messages("conv-1")
     assert len(blocks) == 1
-    assert "final attempt" in blocks[0][0].content
+    assert "final attempt" in blocks[0][1][0].content
 
 
 def _tool_marker(text: str) -> ConsoleChatMessage:
@@ -673,17 +1087,32 @@ def _tool_marker(text: str) -> ConsoleChatMessage:
 
 
 def test_inject_resume_agent_markers_places_block_after_matching_assistant_message():
+    """Task 3: placement follows the block's anchor id (matched against
+    each message's ``persisted_message_id``), not block order/ordinal
+    position. The blocks below are listed in the OPPOSITE order of their
+    anchors -- the block for the SECOND assistant reply ("asst-2") comes
+    first in the list -- so an ordinal placement would put it after "42."
+    (wrong); id-anchoring must still put it after "ok." (right)."""
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
         ConsoleChatMessage(
-            role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"
+            role=ConsoleMessageRole.ASSISTANT,
+            content="42.",
+            status="complete",
+            persisted_message_id="asst-1",
         ),
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="again"),
         ConsoleChatMessage(
-            role=ConsoleMessageRole.ASSISTANT, content="ok.", status="complete"
+            role=ConsoleMessageRole.ASSISTANT,
+            content="ok.",
+            status="complete",
+            persisted_message_id="asst-2",
         ),
     ]
-    blocks = [[_tool_marker("⚙ calculator → 42")], [_tool_marker("⚠ retry")]]
+    blocks = [
+        ("asst-2", [_tool_marker("⚠ retry")]),
+        ("asst-1", [_tool_marker("⚙ calculator → 42")]),
+    ]
 
     result = inject_resume_agent_markers(messages, blocks)
 
@@ -698,14 +1127,110 @@ def test_inject_resume_agent_markers_places_block_after_matching_assistant_messa
     ]
 
 
+def test_inject_resume_agent_markers_drops_block_whose_anchor_matches_no_active_path_message():
+    """A block anchored to an assistant_message_id that isn't in the
+    active-path ``messages`` (the run's reply lives on another branch) must
+    be hidden entirely -- never appended anywhere -- rather than leak an
+    off-branch tool trace onto the visible transcript."""
+    messages = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content="42.",
+            status="complete",
+            persisted_message_id="asst-1",
+        ),
+    ]
+    blocks = [("asst-OFF-PATH", [_tool_marker("⚙ calculator → 999")])]
+
+    result = inject_resume_agent_markers(messages, blocks)
+
+    assert [m.content for m in result] == ["hi", "42."]
+    assert not any(m.role is ConsoleMessageRole.TOOL for m in result)
+
+
+def test_inject_resume_agent_markers_null_anchor_blocks_place_ordinally_when_no_id_claims():
+    """Legacy (pre-Phase-C) runs never recorded an assistant_message_id --
+    their blocks carry a ``None`` anchor and keep the old ordinal
+    placement: Nth null block <-> Nth assistant reply."""
+    messages = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"
+        ),
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="again"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="ok.", status="complete"
+        ),
+    ]
+    blocks = [
+        (None, [_tool_marker("⚙ calculator → 42")]),
+        (None, [_tool_marker("⚠ retry")]),
+    ]
+
+    result = inject_resume_agent_markers(messages, blocks)
+
+    roles = [(m.role, m.content) for m in result]
+    assert roles == [
+        (ConsoleMessageRole.USER, "hi"),
+        (ConsoleMessageRole.ASSISTANT, "42."),
+        (ConsoleMessageRole.TOOL, "⚙ calculator → 42"),
+        (ConsoleMessageRole.USER, "again"),
+        (ConsoleMessageRole.ASSISTANT, "ok."),
+        (ConsoleMessageRole.TOOL, "⚠ retry"),
+    ]
+
+
+def test_inject_resume_agent_markers_mixed_id_and_null_anchors_null_skips_claimed_assistant():
+    """Mixed case: one block is id-anchored to the FIRST assistant reply: the
+    remaining null (legacy) block's ordinal fallback must skip that already
+    id-claimed reply and land on the next unclaimed one, not double up on
+    "42."."""
+    messages = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content="42.",
+            status="complete",
+            persisted_message_id="asst-1",
+        ),
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="again"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="ok.", status="complete"
+        ),
+    ]
+    blocks = [
+        ("asst-1", [_tool_marker("⚙ calculator → 42")]),
+        (None, [_tool_marker("⚠ legacy retry")]),
+    ]
+
+    result = inject_resume_agent_markers(messages, blocks)
+
+    roles = [(m.role, m.content) for m in result]
+    assert roles == [
+        (ConsoleMessageRole.USER, "hi"),
+        (ConsoleMessageRole.ASSISTANT, "42."),
+        (ConsoleMessageRole.TOOL, "⚙ calculator → 42"),
+        (ConsoleMessageRole.USER, "again"),
+        (ConsoleMessageRole.ASSISTANT, "ok."),
+        (ConsoleMessageRole.TOOL, "⚠ legacy retry"),
+    ]
+
+
 def test_inject_resume_agent_markers_appends_leftover_block_when_more_runs_than_replies():
+    """Preserves the old leftover-append behavior, now for NULL-anchored
+    blocks: a legacy run with no corresponding assistant reply left in the
+    active path is appended at the end rather than dropped."""
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
         ConsoleChatMessage(
             role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"
         ),
     ]
-    blocks = [[_tool_marker("⚙ calculator → 42")], [_tool_marker("⚠ orphan run")]]
+    blocks = [
+        (None, [_tool_marker("⚙ calculator → 42")]),
+        (None, [_tool_marker("⚠ orphan run")]),
+    ]
 
     result = inject_resume_agent_markers(messages, blocks)
 
@@ -723,7 +1248,7 @@ def test_inject_resume_agent_markers_skips_empty_blocks():
             role=ConsoleMessageRole.ASSISTANT, content="ok.", status="complete"
         ),
     ]
-    result = inject_resume_agent_markers(messages, [[], []])
+    result = inject_resume_agent_markers(messages, [(None, []), ("some-id", [])])
     assert [m.content for m in result] == ["ok."]
 
 
@@ -731,10 +1256,13 @@ def test_inject_resume_agent_markers_is_idempotent_no_duplicates_on_second_call(
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
         ConsoleChatMessage(
-            role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"
+            role=ConsoleMessageRole.ASSISTANT,
+            content="42.",
+            status="complete",
+            persisted_message_id="asst-1",
         ),
     ]
-    blocks = [[_tool_marker("⚙ calculator → 42")]]
+    blocks = [("asst-1", [_tool_marker("⚙ calculator → 42")])]
 
     once = inject_resume_agent_markers(messages, blocks)
     twice = inject_resume_agent_markers(once, blocks)
@@ -751,11 +1279,14 @@ def test_inject_resume_agent_markers_leaves_live_session_with_markers_untouched(
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
         ConsoleChatMessage(
-            role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"
+            role=ConsoleMessageRole.ASSISTANT,
+            content="42.",
+            status="complete",
+            persisted_message_id="asst-1",
         ),
         _tool_marker("⚙ calculator → 42"),
     ]
-    blocks = [[_tool_marker("⚙ calculator → 42")]]
+    blocks = [("asst-1", [_tool_marker("⚙ calculator → 42")])]
 
     result = inject_resume_agent_markers(messages, blocks)
 
@@ -921,6 +1452,283 @@ def test_skill_trust_blocked_refuses_without_spawning(tmp_path):
     assert db.count_subagent_runs("conv-blocked") == 0
 
 
+# -- task-4 (skills-fork-reachability): _BridgeSkillRunner grants its own
+# name skill_file authorization pre-spawn and appends a "Bundled files"
+# pointer block to the rendered task text whenever execute_skill reports
+# reference_files -- unit-level, directly against _BridgeSkillRunner, so
+# these don't need a full run_reply/model round trip. --
+
+
+class _FakeSkillsServiceWithRefs(_FakeSkillsService):
+    """Same fake as above, but execute_skill also reports a bundle manifest."""
+
+    async def execute_skill(self, name, *, mode="local", args=None):
+        self.execute_calls.append(args)
+        return {
+            "skill_name": name,
+            "rendered_prompt": f"Review this: {args}",
+            "allowed_tools": self.allowed_tools,
+            "execution_mode": "inline",
+            "reference_files": [
+                {"path": "references/api.md", "size": 120, "is_text": True},
+                {"path": "assets/logo.png", "size": 2048, "is_text": False},
+            ],
+        }
+
+
+def test_bridge_skill_runner_grants_own_name_and_appends_bundle_block_before_spawn():
+    skills_service = _FakeSkillsServiceWithRefs()
+    bindings = SkillFileBindings(authorized=set())
+    runner = _BridgeSkillRunner(
+        skills_service=skills_service,
+        skill_names=frozenset({"code-review"}),
+        builtin_names=(),
+        skill_file_bindings=bindings,
+    )
+    spawn_calls = []
+
+    def spawn(rendered, *, allowed_tools):
+        # The name must already be authorized by the time spawn actually
+        # runs -- so the spawned child's very first turn can read its own
+        # bundle -- not merely by the time .run() returns.
+        assert "code-review" in bindings.authorized
+        spawn_calls.append(rendered)
+        return ToolResult(ok=True, content="sub-agent result")
+
+    result = runner.run("code-review", "the diff", spawn)
+
+    assert result.ok
+    assert spawn_calls == [
+        "Review this: the diff\n\nBundled files (readable via skill_file): "
+        "references/api.md (120 bytes), assets/logo.png (2048 bytes, binary)"
+    ]
+    assert "code-review" in bindings.authorized
+
+
+def test_bridge_skill_runner_no_reference_files_body_unchanged_still_authorizes():
+    skills_service = _FakeSkillsService()  # no reference_files key at all
+    bindings = SkillFileBindings(authorized=set())
+    runner = _BridgeSkillRunner(
+        skills_service=skills_service,
+        skill_names=frozenset({"code-review"}),
+        builtin_names=(),
+        skill_file_bindings=bindings,
+    )
+    spawn_calls = []
+
+    def spawn(rendered, *, allowed_tools):
+        spawn_calls.append(rendered)
+        return ToolResult(ok=True, content="sub-agent result")
+
+    runner.run("code-review", "the diff", spawn)
+
+    assert spawn_calls == ["Review this: the diff"]
+    assert "code-review" in bindings.authorized
+
+
+def test_bridge_skill_runner_bindings_none_is_byte_identical_legacy_behavior():
+    # reference_files IS present in the execute_skill result, but with no
+    # skill_file_bindings wired at all (legacy/non-bridge construction) the
+    # block must never be appended and nothing must crash.
+    skills_service = _FakeSkillsServiceWithRefs()
+    runner = _BridgeSkillRunner(
+        skills_service=skills_service,
+        skill_names=frozenset({"code-review"}),
+        builtin_names=(),
+    )
+    spawn_calls = []
+
+    def spawn(rendered, *, allowed_tools):
+        spawn_calls.append(rendered)
+        return ToolResult(ok=True, content="sub-agent result")
+
+    runner.run("code-review", "the diff", spawn)
+
+    assert spawn_calls == ["Review this: the diff"]
+
+
+def test_run_reply_wires_one_skill_file_bindings_to_both_service_and_runner(
+    tmp_path,
+):
+    """run_reply must construct exactly ONE SkillFileBindings per run and
+    hand the SAME object to both AgentService and the _BridgeSkillRunner --
+    never two independently-seeded copies (which would let the runner's
+    pre-spawn grant silently fail to reach the loop's authorization check)."""
+    captured = {}
+    real_runner_init = _BridgeSkillRunner.__init__
+    real_service_init = AgentService.__init__
+
+    def spy_runner_init(self, **kwargs):
+        captured["runner_bindings"] = kwargs.get("skill_file_bindings")
+        real_runner_init(self, **kwargs)
+
+    def spy_service_init(self, *args, **kwargs):
+        captured["service_bindings"] = kwargs.get("skill_file_bindings")
+        real_service_init(self, *args, **kwargs)
+
+    scripts = [
+        [_fence("code-review", {"args": "the diff"})],
+        ["Looks fine to me."],
+        ["All done."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    skills_service = _FakeSkillsService()
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway(scripts),
+        skills_service=skills_service,
+    )
+
+    with patch.object(_BridgeSkillRunner, "__init__", spy_runner_init), patch.object(
+        AgentService, "__init__", spy_service_init
+    ):
+        outcome = _run(
+            bridge, store, session, assistant.id, conversation_id="conv-bindings"
+        )
+
+    assert outcome.status == "done"
+    assert captured["runner_bindings"] is not None
+    assert captured["runner_bindings"] is captured["service_bindings"]
+
+
+def test_run_reply_seeds_turn_bindings_into_shared_object(tmp_path):
+    """Task 5: the turn's already-resolved `$skill` binding names (splice
+    output the CONTROLLER computed for the triggering turn) must be seeded
+    into THIS run's SkillFileBindings.authorized -- the SAME shared object
+    handed to both AgentService and the _BridgeSkillRunner (Task 4) -- so
+    the primary agent's very first turn can already read that skill's own
+    bundle via skill_file. Reuses the sibling wiring test's spy idiom to
+    prove the seed lands on the one shared object, not a second copy."""
+    captured = {}
+    real_runner_init = _BridgeSkillRunner.__init__
+    real_service_init = AgentService.__init__
+
+    def spy_runner_init(self, **kwargs):
+        captured["runner_bindings"] = kwargs.get("skill_file_bindings")
+        real_runner_init(self, **kwargs)
+
+    def spy_service_init(self, *args, **kwargs):
+        captured["service_bindings"] = kwargs.get("skill_file_bindings")
+        real_service_init(self, *args, **kwargs)
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    skills_service = _FakeSkillsService()
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway([["Tokyo."]]),
+        skills_service=skills_service,
+    )
+
+    with patch.object(_BridgeSkillRunner, "__init__", spy_runner_init), patch.object(
+        AgentService, "__init__", spy_service_init
+    ):
+        outcome = _run(
+            bridge,
+            store,
+            session,
+            assistant.id,
+            conversation_id="conv-turn-bindings",
+            turn_skill_bindings=("code-review",),
+        )
+
+    assert outcome.status == "done"
+    assert captured["runner_bindings"] is not None
+    assert "code-review" in captured["runner_bindings"].authorized
+    # Seeded onto the ONE shared object -- never two independently-seeded
+    # copies (Task 4's invariant, re-verified here under a non-empty seed).
+    assert captured["runner_bindings"] is captured["service_bindings"]
+
+
+def test_run_reply_appends_bundle_block_copy_safely(tmp_path):
+    """Task 5: the turn's pre-rendered "Bundled files" block is appended to
+    a NEW list + NEW dict for the last role=="user" entry -- the caller's
+    own `agent_messages` list and its message dict are never mutated. A
+    future refactor that switches to in-place `message["content"] += ...`
+    must fail assertions (b) below."""
+    real_run_turn = AgentService.run_turn
+
+    def _spy(captured):
+        def spy_run_turn(self, **kwargs):
+            captured["messages"] = kwargs.get("messages")
+            return real_run_turn(self, **kwargs)
+
+        return spy_run_turn
+
+    block = "Bundled files (readable via skill_file): notes.md (1 bytes)"
+
+    # -- (a) + (b): a non-empty block is appended copy-safely -------------
+    bridge, _db, store, session, aid = _bridge(tmp_path, [["Tokyo."]])
+    original_user_message = {"role": "user", "content": "hi"}
+    agent_messages = [original_user_message]
+    captured = {}
+
+    with patch.object(AgentService, "run_turn", _spy(captured)):
+        outcome = _run(
+            bridge,
+            store,
+            session,
+            aid,
+            conversation_id="conv-bundle-block",
+            agent_messages=agent_messages,
+            turn_bundle_block=block,
+        )
+
+    assert outcome.status == "done"
+    run_messages = captured["messages"]
+    assert run_messages is not None
+    # (a) the run actually received the block appended after "\n\n" on the
+    # last user entry.
+    assert run_messages[-1]["content"] == f"hi\n\n{block}"
+    assert run_messages[-1]["role"] == "user"
+    # (b) non-mutation contract: the caller's own list length and the dict
+    # identity at that index are unchanged, and the original dict's content
+    # carries no trace of the block. This is exactly what would break if
+    # the append were switched to in-place `message["content"] += ...`.
+    assert len(agent_messages) == 1
+    assert agent_messages[0] is original_user_message
+    assert original_user_message["content"] == "hi"
+    assert "Bundled files" not in original_user_message["content"]
+    # A new list AND a new dict were built for the run -- not the caller's.
+    assert run_messages is not agent_messages
+    assert run_messages[-1] is not original_user_message
+
+    # -- (c) sibling case: an empty block appends nothing, no-op path -----
+    bridge2, _db2, store2, session2, aid2 = _bridge(tmp_path, [["Tokyo."]])
+    agent_messages2 = [{"role": "user", "content": "hi"}]
+    captured2 = {}
+
+    with patch.object(AgentService, "run_turn", _spy(captured2)):
+        outcome2 = _run(
+            bridge2,
+            store2,
+            session2,
+            aid2,
+            conversation_id="conv-bundle-block-empty",
+            agent_messages=agent_messages2,
+            turn_bundle_block="",
+        )
+
+    assert outcome2.status == "done"
+    assert captured2["messages"][-1]["content"] == "hi"
+    # No block to append: the original list is used unchanged (not merely
+    # equal -- the very same object), matching the documented no-op path.
+    assert captured2["messages"] is agent_messages2
+
+
 def test_no_skills_service_leaves_shared_registry_path_untouched(tmp_path):
     """The no-skills-service path (skills_service=None, the default) must
     stay byte-identical to the pre-Task-12 behavior: no get_context call, no
@@ -1059,6 +1867,364 @@ def test_compose_run_registry_and_allowed_absent_mcp_provider_is_unchanged():
     assert len(registry.list_catalog()) == 2
 
 
+class _FakeBuiltinGateForRegistry:
+    """Minimal `BuiltinToolGate` double -- only `.check()` is exercised by
+    `BuiltinToolProvider.invoke()`."""
+
+    def __init__(self, refuse: bool) -> None:
+        self.refuse = refuse
+        self.checked: list[str] = []
+
+    def check(self, tool):
+        self.checked.append(tool.name)
+        return f"disabled for test: {tool.name}" if self.refuse else None
+
+
+def test_compose_run_registry_and_allowed_threads_builtin_gate_into_the_provider():
+    """task-545/T6: `builtin_gate=` must reach the freshly-built
+    `BuiltinToolProvider` -- NOT a second, independently-built gate --
+    else a decision the caller's review hook stamped on that gate would
+    never be visible to `invoke()`."""
+    gate = _FakeBuiltinGateForRegistry(refuse=True)
+    registry, _allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+        {}, builtin_gate=gate
+    )
+    result = registry.invoke_by_name("calculator", {"expression": "6*7"})
+    assert result.ok is False
+    assert result.error == "disabled for test: calculator"
+    assert gate.checked == ["calculator"]
+
+
+def test_compose_run_registry_and_allowed_no_builtin_gate_is_unchanged():
+    """`builtin_gate=None` (the default) must not alter the pre-task-545
+    no-skills/no-MCP behavior -- the provider builds its own lazy gate."""
+    registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed({})
+    assert allowed_tools == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
+    result = registry.invoke_by_name("calculator", {"expression": "6*7"})
+    assert result.ok is True
+
+
+class _WorkspaceProbeTool:
+    """A minimal Tool double that reports the run workspace bound around it."""
+
+    name = "probe_workspace"
+    description = "records the bound run workspace"
+    parameters = {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs):
+        from tldw_chatbook.Tools import workspace_file_roots as wfr
+
+        return {"workspace": wfr.current_run_workspace_id()}
+
+
+def test_compose_run_registry_and_allowed_threads_workspace_id_into_the_provider():
+    """task-6 (settings-workspaces-folder-roots spec Sec3): `workspace_id=`
+    must reach the freshly-built `BuiltinToolProvider` so its `invoke()`
+    binds the run's workspace around every tool call."""
+    registry, _allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+        {},
+        builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+        workspace_id="ws-compose",
+    )
+    # registry._providers[0] is the BuiltinToolProvider this call just built
+    # (see _compose_run_registry_and_allowed's own body) -- poke a probe
+    # tool onto it exactly as the constructor-level test does, since the
+    # real calculator/datetime tools have no way to report the ContextVar.
+    registry._providers[0]._tools["probe_workspace"] = _WorkspaceProbeTool()
+    result = registry.invoke_by_name("probe_workspace", {})
+    assert result.ok, result.error
+    assert '"workspace": "ws-compose"' in result.content
+
+
+def test_compose_run_registry_and_allowed_no_workspace_id_is_unchanged():
+    """`workspace_id=None` (the default) must not alter the pre-task-6
+    behavior -- the provider leaves the run workspace unbound."""
+    registry, _allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+        {}, builtin_gate=_FakeBuiltinGateForRegistry(refuse=False)
+    )
+    registry._providers[0]._tools["probe_workspace"] = _WorkspaceProbeTool()
+    result = registry.invoke_by_name("probe_workspace", {})
+    assert result.ok, result.error
+    assert '"workspace": null' in result.content
+
+
+class _StubWriteFileTool:
+    """Minimal Tool double named ``write_file`` -- ``_WorkspaceProbeTool``
+    above hardcodes its own name (``probe_workspace``), which would make
+    `registry.invoke_by_name("write_file", ...)` fail to resolve since the
+    catalog entry it produces is keyed by ``.name``, not by the provider's
+    internal dict key it was poked under."""
+
+    name = "write_file"
+    description = "stub"
+    parameters = {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs):
+        return {"ok": True}
+
+
+def test_compose_run_registry_and_allowed_threads_ephemeral_into_the_provider():
+    """F4 (final-review): `ephemeral=` must reach the freshly-built
+    `BuiltinToolProvider` so its `invoke()` refuses the write-shaped
+    built-ins for a temporary session. Mirrors ``..._threads_workspace_id_
+    into_the_provider`` exactly."""
+    registry, _allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+        {},
+        builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+        ephemeral=True,
+    )
+    registry._providers[0]._tools["write_file"] = _StubWriteFileTool()
+    result = registry.invoke_by_name("write_file", {})
+    assert result.ok is False
+    assert "temporary chat" in result.error
+
+
+def test_compose_run_registry_and_allowed_no_ephemeral_is_unchanged():
+    """`ephemeral=False` (the default) must not alter pre-F4 behavior --
+    the provider dispatches the tool normally."""
+    registry, _allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
+        {}, builtin_gate=_FakeBuiltinGateForRegistry(refuse=False)
+    )
+    registry._providers[0]._tools["write_file"] = _StubWriteFileTool()
+    result = registry.invoke_by_name("write_file", {})
+    assert result.ok, result.error
+
+
+# -- the temporary-session tool gate at the shared choke point --
+#
+# Every refusal assertion below carries its allowed-normally control in the
+# SAME test. That is the dangerous direction here: a guard that fired
+# unconditionally would break MCP and skill tools for every user of the app,
+# and each "assert refused" half would still be perfectly green.
+
+
+def _stub_tool(tool_name: str):
+    """A minimal always-succeeding ``Tool`` double registered under a name.
+
+    ``_StubWriteFileTool`` above hardcodes one name; the gate tests need a
+    handful (the three write-shaped built-ins and the four gateable
+    read-only ones, none of which are registered by default because their
+    ``[tools]`` gates ship off).
+    """
+
+    class _Stub:
+        name = tool_name
+        description = "stub"
+        parameters = {"type": "object", "properties": {}}
+
+        async def execute(self, **kwargs):
+            return {"ok": True}
+
+    return _Stub()
+
+
+class _FakeSourcedProvider:
+    """``ToolProvider`` double that reports an arbitrary catalog ``source``.
+
+    Lets the source-based policy be exercised for skills (whose real
+    provider deliberately raises from ``invoke``) and for a source no one
+    has whitelisted, without inventing a whole provider per case.
+    """
+
+    def __init__(self, source, entries):
+        self._source = source
+        self._entries = list(entries)
+        self.invoke_calls: list[tuple[str, dict]] = []
+
+    def list_catalog(self):
+        return [
+            ToolCatalogEntry(
+                id=name, name=name, one_line_description="d", source=self._source
+            )
+            for name in self._entries
+        ]
+
+    def load_schema(self, tool_id):
+        return ToolSchema(
+            id=tool_id,
+            name=tool_id,
+            description="",
+            parameters={"type": "object", "properties": {}},
+        )
+
+    def invoke(self, tool_id, args):
+        self.invoke_calls.append((tool_id, dict(args or {})))
+        return ToolResult(ok=True, content=f"result:{tool_id}")
+
+
+_SKILL_CONTEXT = {
+    "available_skills": [
+        {
+            "name": "tidy_repo",
+            "description": "Tidy the repository",
+            "argument_hint": "",
+            "trust_blocked": False,
+            "disable_model_invocation": False,
+        },
+    ],
+}
+
+
+def test_invoke_by_name_refuses_an_mcp_tool_only_in_a_temporary_run():
+    """Requirements 1 and 5, together: the CHOKE POINT is load-bearing on
+    its own, not merely a backstop to the allow-list.
+
+    Both registries here are built by hand and the MCP provider registered
+    straight onto them -- no allow-list, no ``_compose_run_registry_and_
+    allowed`` filtering anywhere in the picture. So the refusal can only be
+    coming from ``invoke_by_name`` itself, and the control proves the same
+    call succeeds when the session is not temporary.
+    """
+    saved_provider = _FakeMCPProvider([("mcp__srv_a__search", "Search the web")])
+    saved = ToolCatalogRegistry()
+    saved.register_provider(saved_provider)
+    control = saved.invoke_by_name("mcp__srv_a__search", {"query": "weather"})
+    assert control.ok is True, control.error
+    assert saved_provider.invoke_calls == [("mcp__srv_a__search", {"query": "weather"})]
+
+    temp_provider = _FakeMCPProvider([("mcp__srv_a__search", "Search the web")])
+    temporary = ToolCatalogRegistry(ephemeral=True)
+    temporary.register_provider(temp_provider)
+    refused = temporary.invoke_by_name("mcp__srv_a__search", {"query": "weather"})
+    assert refused.ok is False
+    assert "temporary chat" in refused.error
+    assert "mcp__srv_a__search" in refused.error
+    # The provider was never reached -- refused before dispatch, not after.
+    assert temp_provider.invoke_calls == []
+
+
+def test_invoke_by_name_refuses_a_skill_tool_only_in_a_temporary_run():
+    """Requirement 2, at the choke point, with the real ``SkillToolProvider``.
+
+    That class's ``invoke`` raises by design (skill calls route through the
+    run-scoped spawn executor), which makes the control unusually sharp: in
+    a saved chat the call must still REACH the provider, and the only
+    observable proof of that is the RuntimeError escaping. In a temporary
+    chat the gate must intercept first and hand back a ToolResult.
+    """
+    entries = [
+        {"name": "tidy_repo", "description": "Tidy the repository", "argument_hint": ""}
+    ]
+
+    saved = ToolCatalogRegistry()
+    saved.register_provider(SkillToolProvider(entries))
+    with pytest.raises(RuntimeError):
+        saved.invoke_by_name("tidy_repo", {"args": ""})
+
+    temporary = ToolCatalogRegistry(ephemeral=True)
+    temporary.register_provider(SkillToolProvider(entries))
+    refused = temporary.invoke_by_name("tidy_repo", {"args": ""})
+    assert refused.ok is False
+    assert "temporary chat" in refused.error
+    assert "tidy_repo" in refused.error
+
+
+def test_invoke_by_name_refuses_a_skill_sourced_tool_that_would_otherwise_succeed():
+    """Requirement 2 again, with a skill-sourced provider that DOES return
+    a successful result -- so the control half is a real, observed success
+    rather than the real provider's by-design raise."""
+    saved_provider = _FakeSourcedProvider("skill", ["tidy_repo"])
+    saved = ToolCatalogRegistry()
+    saved.register_provider(saved_provider)
+    control = saved.invoke_by_name("tidy_repo", {"args": "x"})
+    assert control.ok is True, control.error
+    assert saved_provider.invoke_calls == [("tidy_repo", {"args": "x"})]
+
+    temp_provider = _FakeSourcedProvider("skill", ["tidy_repo"])
+    temporary = ToolCatalogRegistry(ephemeral=True)
+    temporary.register_provider(temp_provider)
+    refused = temporary.invoke_by_name("tidy_repo", {"args": "x"})
+    assert refused.ok is False
+    assert "temporary chat" in refused.error
+    assert temp_provider.invoke_calls == []
+
+
+def test_invoke_by_name_refuses_a_provider_source_nobody_whitelisted():
+    """Unknown capability fails toward not-writing: a provider added after
+    this was written is gated on the day it is added, and the control shows
+    it is otherwise dispatched completely normally."""
+    saved_provider = _FakeSourcedProvider("some_provider_invented_in_2027", ["thing"])
+    saved = ToolCatalogRegistry()
+    saved.register_provider(saved_provider)
+    control = saved.invoke_by_name("thing", {})
+    assert control.ok is True, control.error
+
+    temp_provider = _FakeSourcedProvider("some_provider_invented_in_2027", ["thing"])
+    temporary = ToolCatalogRegistry(ephemeral=True)
+    temporary.register_provider(temp_provider)
+    refused = temporary.invoke_by_name("thing", {})
+    assert refused.ok is False
+    assert "temporary chat" in refused.error
+    assert temp_provider.invoke_calls == []
+
+
+def test_temporary_run_keeps_read_only_builtins_and_still_refuses_write_shaped_ones():
+    """Requirements 3 and 4 in one test: no over-blocking, no regression.
+
+    The read-only half is the control that catches an unconditional guard;
+    the saved-run half at the end is the control that catches a guard which
+    ignores the flag entirely.
+    """
+    write_shaped = ("write_file", "create_note", "update_note")
+    read_only = ("read_file", "list_directory", "glob_files", "grep_files")
+
+    temporary, _allowed, _names = _compose_run_registry_and_allowed(
+        {}, builtin_gate=_FakeBuiltinGateForRegistry(refuse=False), ephemeral=True
+    )
+    # The gateable built-ins ship behind `[tools]` gates that default to
+    # off, so poke stubs under their real names rather than flipping user
+    # config from a test.
+    for name in write_shaped + read_only:
+        temporary._providers[0]._tools[name] = _stub_tool(name)
+    temporary.reset_catalog_cache()
+
+    for name in write_shaped:
+        result = temporary.invoke_by_name(name, {})
+        assert result.ok is False, name
+        assert "temporary chat" in result.error, name
+    for name in read_only:
+        result = temporary.invoke_by_name(name, {})
+        assert result.ok, (name, result.error)
+    calc = temporary.invoke_by_name("calculator", {"expression": "6*7"})
+    assert calc.ok, calc.error
+
+    saved, _allowed, _names = _compose_run_registry_and_allowed(
+        {}, builtin_gate=_FakeBuiltinGateForRegistry(refuse=False)
+    )
+    for name in write_shaped:
+        saved._providers[0]._tools[name] = _stub_tool(name)
+    saved.reset_catalog_cache()
+    for name in write_shaped:
+        result = saved.invoke_by_name(name, {})
+        assert result.ok, (name, result.error)
+
+
+def test_temporary_run_never_advertises_mcp_or_skill_tools_but_a_saved_run_does():
+    """Defense in depth (the allow-list half): the model is not offered a
+    tool whose only possible outcome is a refusal. Control in the same
+    test: the identical composition for a saved chat advertises both."""
+    saved_mcp = _FakeMCPProvider([("mcp__srv_a__search", "Search the web")])
+    saved, saved_allowed, _names = _compose_run_registry_and_allowed(
+        _SKILL_CONTEXT, mcp_provider=saved_mcp
+    )
+    assert "mcp__srv_a__search" in saved_allowed
+    assert "tidy_repo" in saved_allowed
+    assert {e.source for e in saved.list_catalog()} == {"builtin", "skill", "mcp"}
+
+    temp_mcp = _FakeMCPProvider([("mcp__srv_a__search", "Search the web")])
+    temporary, temp_allowed, _names = _compose_run_registry_and_allowed(
+        _SKILL_CONTEXT, mcp_provider=temp_mcp, ephemeral=True
+    )
+    assert "mcp__srv_a__search" not in temp_allowed
+    assert "tidy_repo" not in temp_allowed
+    assert temp_allowed == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
+    assert {e.source for e in temporary.list_catalog()} == {"builtin"}
+    # Never listed, so a stray call cannot resolve at all -- and the fake
+    # is never reached either way.
+    assert temporary.invoke_by_name("mcp__srv_a__search", {}).ok is False
+    assert temp_mcp.invoke_calls == []
+
+
 def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_builtin():
     """Task 11 review note 2's shadowing precedent, extended to MCP: a
     builtin always wins a same-named MCP tool -- the name is carried
@@ -1131,6 +2297,132 @@ def test_compose_run_registry_and_allowed_all_mcp_names_colliding_skips_registra
 def test_non_colliding_mcp_names_pure_helper():
     mcp_provider = _FakeMCPProvider([("calculator", "x"), ("mcp__srv__y", "y")])
     assert _non_colliding_mcp_names(mcp_provider, {"calculator"}) == ("mcp__srv__y",)
+
+
+def test_shadowed_mcp_names_reports_what_the_filter_drops():
+    """A user's configured MCP tool must never vanish silently.
+
+    Built-ins keep winning the collision -- inverting that would let a
+    compromised server name-squat an audited built-in -- so the shadowing
+    is surfaced instead. ``shadowed_mcp_names`` and
+    ``_non_colliding_mcp_names`` must partition the same catalog: every
+    entry appears in exactly one of the two results.
+    """
+    mcp_provider = _FakeMCPProvider([("read_file", "x"), ("weather", "y")])
+    collision_names = {"read_file"}
+
+    assert shadowed_mcp_names(mcp_provider, collision_names) == ("read_file",)
+    assert _non_colliding_mcp_names(mcp_provider, collision_names) == ("weather",)
+
+
+def test_compose_run_registry_and_allowed_warns_when_mcp_tool_is_shadowed():
+    """``shadowed_mcp_names`` itself is a silent pure partition -- the
+    user-visible half of this behavior is the warning logged from
+    ``_compose_run_registry_and_allowed`` for each dropped name. Without it
+    a user whose configured MCP tool stopped being offered has no way to
+    discover a built-in silently claimed the name.
+
+    caplog does not intercept loguru (this project's logger); attach a
+    temporary loguru sink instead (mirrors
+    ``Tests/Chat/test_console_chat_store.py``'s pattern).
+    """
+    from loguru import logger as loguru_logger
+
+    mcp_provider = _FakeMCPProvider(
+        [("calculator", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")]
+    )
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert any("calculator" in message for message in messages), messages
+
+
+def test_compose_run_registry_and_allowed_no_warning_without_mcp_collisions():
+    """No MCP name collided with a builtin, so nothing should be logged --
+    guards against a future refactor that logs unconditionally instead of
+    only when a name is actually dropped."""
+    from loguru import logger as loguru_logger
+
+    mcp_provider = _FakeMCPProvider([("mcp__srv_a__search", "Search")])
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert messages == []
+
+
+def test_compose_run_registry_and_allowed_walks_mcp_catalog_only_once():
+    """Finding 8 (substrate review): ``_partition_mcp_catalog_by_collision``
+    already computes both the non-colliding and shadowed sides in a single
+    walk of ``mcp_provider.list_catalog()``, but the composition function
+    used to call the two PUBLIC wrapper functions separately
+    (``_non_colliding_mcp_names`` then ``shadowed_mcp_names``), each of
+    which re-invoked the partition -- walking the catalog twice per run.
+    """
+    mcp_provider = _FakeMCPProvider(
+        [("calculator", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")]
+    )
+
+    _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
+
+    assert mcp_provider.list_catalog_calls == 1
+
+
+def test_compose_run_registry_and_allowed_warns_about_a_shadowed_name_only_once():
+    """Finding 8 (substrate review): ``_compose_run_registry_and_allowed``
+    runs once per Console message, so a naive per-call warning re-logs the
+    identical shadowed-name message on every single turn of a long-running
+    session. The warning must fire at most once per name for the life of
+    the process.
+    """
+    from loguru import logger as loguru_logger
+
+    mcp_provider = _FakeMCPProvider(
+        [("calculator", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")]
+    )
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        # Simulate three Console messages in the same session, each
+        # re-composing the run registry.
+        _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
+        _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
+        _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    calculator_warnings = [m for m in messages if "calculator" in m]
+    assert len(calculator_warnings) == 1, messages
+
+
+def test_compose_run_registry_and_allowed_warns_once_per_distinct_shadowed_name():
+    """A dedup keyed on the wrong thing (e.g. "has anything ever been
+    warned") would silently suppress a DIFFERENT shadowed name's very
+    first warning -- this pins that the dedup is per-name. Both
+    ``calculator`` and ``get_current_datetime`` are always-on builtins
+    (see ``Tools.tool_executor``), so both genuinely collide.
+    """
+    from loguru import logger as loguru_logger
+
+    first_provider = _FakeMCPProvider([("calculator", "x")])
+    second_provider = _FakeMCPProvider([("get_current_datetime", "y")])
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        _compose_run_registry_and_allowed({}, mcp_provider=first_provider)
+        _compose_run_registry_and_allowed({}, mcp_provider=second_provider)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert any("calculator" in m for m in messages)
+    assert any("get_current_datetime" in m for m in messages)
 
 
 def test_run_reply_routes_fence_call_to_mcp_provider(tmp_path):
@@ -1285,15 +2577,17 @@ def test_skill_named_like_a_builtin_never_shadows_it_at_invocation(tmp_path):
 
 
 class _ManySkillsService:
-    """9 real skills (> DIRECT_DISCLOSE_THRESHOLD == 8), so the catalog
-    defers everything to find_tools/load_tools -- the exact >8-skill shape
-    that engaged progressive disclosure in the live gate capture."""
+    """Enough real skills to exceed DIRECT_DISCLOSE_THRESHOLD on their own
+    (even before the 2 builtins _compose_run_registry_and_allowed always
+    adds), so the catalog defers everything to find_tools/load_tools -- the
+    same >threshold-skill shape that engaged progressive disclosure in the
+    live gate capture."""
 
     def __init__(self):
         self.execute_calls = []
 
     async def get_context(self, *, mode="local"):
-        names = ["shout"] + [f"filler{i}" for i in range(8)]
+        names = ["shout"] + [f"filler{i}" for i in range(DIRECT_DISCLOSE_THRESHOLD)]
         return {
             "available_skills": [
                 {
@@ -1406,7 +2700,7 @@ def test_run_reply_returns_runoutcome_done():
     outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="done")
 
     with patch.object(AgentService, "run_turn", return_value=("run-1", outcome)):
-        result = bridge.run_reply(
+        run_id, result = bridge.run_reply(
             conversation_id="c1",
             session_id="s1",
             resolution=None,
@@ -1417,6 +2711,7 @@ def test_run_reply_returns_runoutcome_done():
             should_cancel=lambda: False,
         )
 
+    assert run_id == "run-1"
     assert result.status == RUN_DONE
     assert result.final_text == "done"
 
@@ -1426,7 +2721,7 @@ def test_run_reply_returns_runoutcome_error():
     outcome = RunOutcome(status=RUN_ERROR, steps=[], final_text="")
 
     with patch.object(AgentService, "run_turn", return_value=("run-1", outcome)):
-        result = bridge.run_reply(
+        run_id, result = bridge.run_reply(
             conversation_id="c1",
             session_id="s1",
             resolution=None,
@@ -1437,7 +2732,40 @@ def test_run_reply_returns_runoutcome_error():
             should_cancel=lambda: False,
         )
 
+    assert run_id == "run-1"
     assert result.status == RUN_ERROR
+
+
+def test_run_reply_returns_run_id_and_does_not_store_native_assistant_id():
+    """run_reply exposes the primary run id to its caller but must NOT forward
+    the native in-memory assistant_message_id into run_turn: create_run would
+    store it, and that native id can never match any persisted_message_id, so an
+    unfinished/crashed run would be left holding a stale non-null id. The run
+    row therefore starts NULL (assistant_message_id omitted / None); the
+    controller writes the durable persisted id onto the run on every terminal
+    path later, via record_run_assistant_message."""
+    bridge = _make_bridge()
+    outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="done")
+
+    with patch.object(
+        AgentService, "run_turn", return_value=("run-xyz", outcome)
+    ) as run_turn:
+        run_id, result = bridge.run_reply(
+            conversation_id="c1",
+            session_id="s1",
+            resolution=None,
+            assistant_message_id="native-a1",
+            model="gpt-4",
+            session_system_prompt="sys",
+            agent_messages=[{"role": "user", "content": "hi"}],
+            should_cancel=lambda: False,
+        )
+
+    assert run_id == "run-xyz"
+    assert result is outcome
+    # The native id is NOT forwarded -- the kwarg is omitted (or None), so
+    # create_run leaves the run's assistant_message_id NULL at create time.
+    assert run_turn.call_args.kwargs.get("assistant_message_id") is None
 
 
 def test_native_tool_schemas_returns_builtin_tool_schemas():
@@ -1452,3 +2780,310 @@ def test_native_tool_schemas_returns_builtin_tool_schemas():
         assert "name" in schema
         assert "description" in schema
         assert "parameters" in schema
+
+
+# -- task-4 (skills-agent-install): the install_skill closure built in
+# run_reply and threaded via AgentService(install_skill_tool=...). Order is
+# load-bearing: enforce policy -> classify URL -> in-chat confirm -> install
+# -> broad-catch wrap. --
+
+
+def _install_skills_service():
+    svc = _FakeSkillsService()
+
+    def enforce_install_remote():
+        return None
+
+    async def import_skill_file(*a, **k):  # not used (install_skill_from_url is patched)
+        return {"name": "unused"}
+
+    svc.enforce_install_remote = enforce_install_remote
+    svc.import_skill_file = import_skill_file
+    return svc
+
+
+def test_install_skill_confirm_allow_installs(tmp_path, monkeypatch):
+    import tldw_chatbook.Skills_Interop.skill_remote_fetch as srf
+
+    installed = []
+
+    async def fake_install(url, *, scope_service, **kw):
+        installed.append(url)
+        return {"name": "demo", "trust_status": "quarantined_added", "trust_blocked": True}
+
+    monkeypatch.setattr(srf, "install_skill_from_url", fake_install)
+
+    scripts = [
+        [_fence("install_skill", {"url": "https://github.com/o/r"})],
+        ["Installed it."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=_install_skills_service(),
+    )
+    confirmed = []
+
+    outcome = _run(
+        bridge, store, session, assistant.id,
+        conversation_id="conv-install",
+        request_skill_install_confirm=lambda url: confirmed.append(url) or True,
+    )
+    assert outcome.status == "done"
+    assert confirmed == ["https://github.com/o/r"]
+    assert installed == ["https://github.com/o/r"]
+    tool_msgs = [m.content for m in store.messages_for_session(session.id)
+                 if m.role == ConsoleMessageRole.TOOL]
+    assert any("demo" in c and "pending" in c.lower() for c in tool_msgs)
+
+
+def test_install_skill_confirm_deny_does_not_install(tmp_path, monkeypatch):
+    import tldw_chatbook.Skills_Interop.skill_remote_fetch as srf
+
+    async def fake_install(url, *, scope_service, **kw):
+        raise AssertionError("install must not run when the user denies")
+
+    monkeypatch.setattr(srf, "install_skill_from_url", fake_install)
+
+    scripts = [
+        [_fence("install_skill", {"url": "https://github.com/o/r"})],
+        ["Okay, cancelled."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=_install_skills_service(),
+    )
+    outcome = _run(
+        bridge, store, session, assistant.id,
+        conversation_id="conv-deny",
+        request_skill_install_confirm=lambda url: False,
+    )
+    assert outcome.status == "done"
+    tool_msgs = [m.content for m in store.messages_for_session(session.id)
+                 if m.role == ConsoleMessageRole.TOOL]
+    assert any("declined" in c.lower() for c in tool_msgs)
+
+
+def test_install_skill_malformed_url_never_prompts(tmp_path):
+    """A URL that fails classification returns an error WITHOUT prompting."""
+    prompted = []
+    scripts = [
+        [_fence("install_skill", {"url": "not-a-url"})],
+        ["That URL is not valid."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=_install_skills_service(),
+    )
+    outcome = _run(
+        bridge, store, session, assistant.id, conversation_id="conv-bad",
+        request_skill_install_confirm=lambda url: prompted.append(url) or True,
+    )
+    assert outcome.status == "done"
+    assert prompted == []  # classification failed before any prompt
+
+
+def test_install_skill_collision_error_survives_turn(tmp_path, monkeypatch):
+    """A bare ValueError('local_skill_exists:...') is wrapped, not fatal."""
+    import tldw_chatbook.Skills_Interop.skill_remote_fetch as srf
+
+    async def fake_install(url, *, scope_service, **kw):
+        raise ValueError("local_skill_exists:demo")
+
+    monkeypatch.setattr(srf, "install_skill_from_url", fake_install)
+    scripts = [
+        [_fence("install_skill", {"url": "https://github.com/o/r"})],
+        ["It already exists."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=_install_skills_service(),
+    )
+    outcome = _run(
+        bridge, store, session, assistant.id, conversation_id="conv-exists",
+        request_skill_install_confirm=lambda url: True,
+    )
+    assert outcome.status == "done"  # turn survives the bare ValueError
+    tool_msgs = [m.content for m in store.messages_for_session(session.id)
+                 if m.role == ConsoleMessageRole.TOOL]
+    assert any("local_skill_exists" in c for c in tool_msgs)
+
+
+def test_install_skill_absent_without_confirm_callback(tmp_path):
+    """No request_skill_install_confirm wired -> the tool is ABSENT, not auto-denied.
+
+    A skills service alone is not enough to advertise install_skill: without a
+    confirm callback, run_reply must never pin/dispatch the tool at all, so a
+    model call to it falls through the same "Tool not permitted" path as any
+    other undisclosed tool -- never the misleading "declined" message.
+    """
+    scripts = [
+        [_fence("install_skill", {"url": "https://github.com/o/r"})],
+        ["It seems that tool is unavailable."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=_install_skills_service(),
+    )
+    outcome = _run(
+        bridge, store, session, assistant.id, conversation_id="conv-no-confirm",
+        # request_skill_install_confirm intentionally omitted.
+    )
+    assert outcome.status == "done"
+    tool_msgs = [m.content for m in store.messages_for_session(session.id)
+                 if m.role == ConsoleMessageRole.TOOL]
+    assert any("Tool not permitted: install_skill" in c for c in tool_msgs)
+    assert not any("declined" in c.lower() for c in tool_msgs)
+
+
+# --- task-628: combined per-turn state scopes -------------------------------
+
+
+def test_combine_state_scopes_none_and_single_are_passthrough():
+    from tldw_chatbook.Chat.console_agent_bridge import _combine_state_scopes
+
+    assert _combine_state_scopes([]) is None
+    sentinel = object()
+    assert _combine_state_scopes([sentinel]) is sentinel  # byte-identical wiring
+
+
+def test_combine_state_scopes_enters_and_exits_both():
+    """Both owners' per-turn state must be guarded around a nested run."""
+    import contextlib
+
+    from tldw_chatbook.Chat.console_agent_bridge import _combine_state_scopes
+
+    events = []
+
+    def _make(name):
+        @contextlib.contextmanager
+        def _scope():
+            events.append(f"enter:{name}")
+            try:
+                yield
+            finally:
+                events.append(f"exit:{name}")
+
+        return _scope
+
+    combined = _combine_state_scopes([_make("mcp"), _make("builtin")])
+    with combined():
+        events.append("child-run")
+
+    # Both entered, both exited, unwinding in reverse order.
+    assert events == [
+        "enter:mcp",
+        "enter:builtin",
+        "child-run",
+        "exit:builtin",
+        "exit:mcp",
+    ]
+
+
+def test_combine_state_scopes_restores_both_when_the_nested_run_raises():
+    import contextlib
+
+    from tldw_chatbook.Chat.console_agent_bridge import _combine_state_scopes
+
+    exited = []
+
+    def _make(name):
+        @contextlib.contextmanager
+        def _scope():
+            try:
+                yield
+            finally:
+                exited.append(name)
+
+        return _scope
+
+    combined = _combine_state_scopes([_make("mcp"), _make("builtin")])
+    raised = False
+    try:
+        with combined():
+            raise RuntimeError("child blew up")
+    except RuntimeError:
+        raised = True
+    assert raised
+    assert exited == ["builtin", "mcp"]
+
+
+def test_resumed_markers_carry_the_same_full_output_as_live_ones(
+    tmp_path, monkeypatch
+):
+    """TASK-1860 AC#5: resume is a second door, and it has been missed before.
+
+    `resume_marker_messages` re-derives markers from AgentRunsDB and builds
+    `ConsoleChatMessage` objects DIRECTLY, bypassing the live append path. A
+    resumed transcript whose markers could not be expanded would be the same
+    data loss by a different door -- exactly how TASK-1842's first fix leaked.
+
+    The display cap is forced to its MINIMUM (20) so the ~57-char calculator
+    result is actually truncated. Without that BOTH sides are None and the
+    comparison passes while proving nothing -- which is how this test was
+    first written. A value below the minimum is clamped back to the default,
+    so it must be the real floor, not an arbitrary small number.
+    """
+    from tldw_chatbook.config import MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS
+
+    monkeypatch.setenv(
+        "TLDW_CONSOLE_TOOL_RESULT_DISPLAY_CHARS",
+        str(MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS),
+    )
+    scripts = [
+        [_fence("calculator", {"expression": "6*7"})],
+        ["It is ", "42."],
+    ]
+    bridge, db, store, session, aid = _bridge(tmp_path, scripts)
+    _run(bridge, store, session, aid)
+    live = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert live, "sanity: the live run left a marker"
+    assert any(m.tool_output_full for m in live), (
+        "precondition: at least one marker must actually hide part of its "
+        f"result, or this test is vacuous: {[m.content for m in live]}"
+    )
+
+    fresh_bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=None, provider_gateway=None
+    )
+    resumed = [
+        m
+        for _anchor, block in fresh_bridge.resume_marker_messages("conv-1")
+        for m in block
+    ]
+
+    assert [m.content for m in resumed] == [m.content for m in live]
+    assert [m.tool_output_full for m in resumed] == [
+        m.tool_output_full for m in live
+    ], (
+        "a resumed marker exposes a different amount of its result than the "
+        "live one did"
+    )

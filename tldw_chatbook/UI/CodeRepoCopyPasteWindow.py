@@ -34,11 +34,17 @@ from textual.css.query import NoMatches
 # Local imports
 from tldw_chatbook.Widgets.Coding_Widgets.repo_tree_widgets import TreeView
 from ..Utils.github_api_client import GitHubAPIClient, GitHubAPIError
+from ..config import get_cli_config_path
 
 if TYPE_CHECKING:
     from ..app import TldwCli
 
 logger = logger.bind(module="CodeRepoCopyPasteWindow")
+
+
+def _github_config_guidance_path() -> Path:
+    """Return the active config file shown in GitHub token guidance."""
+    return get_cli_config_path()
 
 
 class FileSelected(Message):
@@ -554,7 +560,7 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         # In a real implementation, we'd create a proper modal dialog
 
         # Simplified approach: Direct the user to update config
-        config_path = "~/.config/tldw_cli/config.toml"
+        config_path = _github_config_guidance_path()
         if has_token:
             self.notify(
                 f"To update your GitHub token, edit:\n{config_path}\n\nLook for [github] section, api_token field",
@@ -989,7 +995,19 @@ class CodeRepoCopyPasteWindow(ModalScreen):
 
     @work(thread=True)
     async def _export_to_zip_worker(self, selected_files: List[str]) -> None:
-        """Worker to export selected files to ZIP."""
+        """Worker to export selected files to ZIP.
+
+        TASK-981 cross-event-loop audit: this worker genuinely awaits
+        ``self.api_client.get_files_content_batch(...)``, so it stays
+        ``async def``. It shares ``self.api_client`` (a ``GitHubAPIClient``)
+        with app-loop handlers such as ``load_repository`` -- that WAS a
+        real cross-loop hazard (the client's cached ``httpx.AsyncClient``
+        got built on whichever loop touched it first and then reused from
+        the other), fixed at the source in
+        ``GitHubAPIClient.client``/``close`` (see ``Utils/github_api_client.py``),
+        which now scopes the cached client to the currently running loop
+        instead of caching a single instance across loops.
+        """
         try:
             # Show loading state
             self.loading_message = "Preparing ZIP export..."
@@ -1097,7 +1115,7 @@ class CodeRepoCopyPasteWindow(ModalScreen):
             file_size = zip_path.stat().st_size
             size_mb = file_size / (1024 * 1024)
 
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.notify,
                 f"ZIP exported successfully!\nSaved to: {zip_path}\nSize: {size_mb:.1f} MB",
                 severity="success",
@@ -1115,7 +1133,7 @@ class CodeRepoCopyPasteWindow(ModalScreen):
 
         except Exception as e:
             logger.error(f"Failed to export ZIP: {e}")
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.notify, f"Failed to export ZIP: {str(e)}", severity="error"
             )
         finally:
@@ -1123,7 +1141,13 @@ class CodeRepoCopyPasteWindow(ModalScreen):
 
     @work(thread=True)
     async def load_node_children(self, node_path: str) -> None:
-        """Load children for a specific directory node."""
+        """Load children for a specific directory node.
+
+        TASK-981 cross-event-loop audit: genuinely awaits
+        ``self.api_client.get_directory_contents(...)`` on the same shared
+        ``GitHubAPIClient`` as ``_export_to_zip_worker`` above and the
+        app-loop handlers -- same fix, see the note there.
+        """
         try:
             branch = self.query_one("#branch-selector", Select).value
 
@@ -1148,11 +1172,15 @@ class CodeRepoCopyPasteWindow(ModalScreen):
                 )
 
             # Update tree view with new children
-            await self.call_from_thread(tree_view.expand_node, node_path, child_nodes)
+            # call_from_thread is a synchronous, blocking marshal that returns the
+            # callback's own result directly (already awaited internally) -- it must
+            # not be awaited here, or the callback's return value (None) gets
+            # awaited instead, raising TypeError and masking a successful expand.
+            self.app.call_from_thread(tree_view.expand_node, node_path, child_nodes)
 
         except Exception as e:
             logger.error(f"Failed to load children for {node_path}: {e}")
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.notify,
                 f"Failed to load directory contents: {str(e)}",
                 severity="error",

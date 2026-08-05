@@ -1,0 +1,76 @@
+/* Agent Change Review screen (TASK-1973). A pushed overlay: header with the
+   turn selector, honesty banner, changed-file tree beside a windowed diff
+   pane. Heights are explicit everywhere a Horizontal/Vertical appears --
+   the fr-inside-flex default has bitten this codebase repeatedly (approval
+   card TASK-1846, MCP lockstep rules). */
+#change-review-screen {
+    height: 1fr;
+    width: 1fr;
+}
+#change-review-header {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+}
+#change-review-title {
+    width: auto;
+    padding-right: 2;
+    text-style: bold;
+}
+#change-review-turn-select {
+    width: 44;
+}
+#change-review-totals {
+    width: 1fr;
+    content-align: right middle;
+}
+.change-review-banner {
+    height: auto;
+    padding: 0 1;
+    color: $ds-status-warning;
+}
+#change-review-body {
+    height: 1fr;
+}
+#change-review-tree {
+    width: 46;
+    height: 1fr;
+}
+#change-review-diff {
+    width: 1fr;
+    height: 1fr;
+    padding: 0 1;
+}
+.change-review-diff-body {
+    width: 1fr;
+    height: auto;
+}
+#change-review-footer {
+    height: 1;
+    color: $ds-text-muted;
+    padding: 0 1;
+}
+
+/* TASK-1974: the revert confirm modal. Small and centered, per this repo's
+   modal discipline; the edited-since warning carries the guard's payload. */
+ChangeRevertConfirmModal {
+    align: center middle;
+}
+#change-revert-confirm {
+    width: 70;
+    height: auto;
+    max-height: 24;
+    padding: 1 2;
+    background: $ds-surface-panel;
+    border: round $ds-status-approval-required;
+}
+#change-revert-edited-warning {
+    height: auto;
+    margin: 1 0;
+    color: $ds-status-warning;
+}
+#change-revert-buttons {
+    height: auto;
+    min-height: 1;
+    margin-top: 1;
+}

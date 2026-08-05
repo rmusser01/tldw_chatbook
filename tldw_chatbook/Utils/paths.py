@@ -18,8 +18,6 @@ try:
         log,
         PROJECT_ROOT_DIR,
         CONFIG_FILE_PATH,
-        USER_DB_PATH,
-        USER_DB_DIR,
     )
 except ImportError:
     # Set defaults if imports fail
@@ -27,8 +25,6 @@ except ImportError:
     log = logging
     PROJECT_ROOT_DIR = None
     CONFIG_FILE_PATH = None
-    USER_DB_PATH = None
-    USER_DB_DIR = None
 #
 #######################################################################################################################
 #
@@ -141,11 +137,9 @@ if __name__ == "__main__":
 
     print(f"\nProject Root: {get_project_root()}")
     print(f"Config File Path (Constant): {CONFIG_FILE_PATH}")
-    print(f"User DB Path (Constant): {USER_DB_PATH}")
 
-    # FIXME: load_comprehensive_config and get_user_database_path are not
-    # available in this module. Re-enable these tests once the helpers are
-    # imported or defined here.
+    # FIXME: load_comprehensive_config is not available in this module.
+    # Re-enable these tests once the helper is imported or defined here.
     # try:
     #     # Create dummy config for loading test
     #     if not CONFIG_FILE_PATH.exists():
@@ -159,12 +153,6 @@ if __name__ == "__main__":
     #     #     print("Cleaned up dummy config.")
     # except Exception as e:
     #     print(f"\nError loading config: {e}")
-
-    # try:
-    #     user_db = get_user_database_path()
-    #     print(f"\nUser Database Path (Ensured Dir): {user_db}")
-    # except Exception as e:
-    #     print(f"\nError getting user database path: {e}")
 
     try:
         proj_db_dir = get_project_databases_dir()
@@ -200,53 +188,6 @@ def get_project_root() -> Path:
     # This is now determined as a constant at the top
     log.debug(f"Returning project root: {PROJECT_ROOT_DIR}")
     return PROJECT_ROOT_DIR
-
-
-def get_user_database_path(username: str = None) -> Path:
-    """
-    Returns the absolute path to the user's primary database file.
-    If username is provided, it creates a user-specific database file.
-    Otherwise, it uses the default database path.
-
-    Args:
-        username: Optional username for user-specific database paths.
-                 If None, uses the default database path.
-
-    Returns:
-        pathlib.Path: The absolute Path object for the user database file.
-    """
-    try:
-        # Ensure the directory ~/.config/tldw_cli exists
-        USER_DB_DIR.mkdir(parents=True, exist_ok=True)
-        log.info(f"Ensured user database directory exists: {USER_DB_DIR}")
-
-        if username:
-            # Create a sanitized filename for the user-specific database
-            safe_username = "".join(
-                c for c in username if c.isalnum() or c in ("_", "-")
-            )
-            if not safe_username:
-                safe_username = "default"
-            user_db_path = USER_DB_DIR / f"tldw_cli_{safe_username}.db"
-            log.debug(
-                f"Returning user-specific database path for '{username}': {user_db_path}"
-            )
-            return user_db_path
-        else:
-            # Use the default database path
-            log.debug(f"Returning default user database path: {USER_DB_PATH}")
-            return USER_DB_PATH
-    except OSError as e:
-        log.error(
-            f"Could not create or access user database directory {USER_DB_DIR}: {e}",
-            exc_info=True,
-        )
-        # Depending on requirements, you might want to raise an exception here
-        # or return None, or let the subsequent DB access fail.
-        # For now, let's re-raise to make the problem explicit.
-        raise OSError(
-            f"Failed to ensure user database directory exists at {USER_DB_DIR}"
-        ) from e
 
 
 #

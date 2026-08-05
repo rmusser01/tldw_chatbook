@@ -20,15 +20,17 @@ committed as fixture files, to keep the fixtures directory small.
 
 from __future__ import annotations
 
+import shutil
 import time
 from pathlib import Path
 
 import pytest
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input
 
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
 from tldw_chatbook.tldw_api.skills_schemas import SKILL_NAME_PATTERN
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 from Tests.Skills.test_skills_library_flow import (
     _real_trust_service,
@@ -40,7 +42,7 @@ from Tests.UI.test_library_shell import (
     _active_library_screen,
     _wait_for_library_shell,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "superpowers_skills"
@@ -109,7 +111,9 @@ async def _run_skills_import_via_ui(
     carries the imported skill's NAME, so callers assert the name-specific
     line and a stale success from the previous import can never satisfy it.
     """
-    previous = str(screen.query_one("#library-skills-import-status", Static).renderable)
+    status_widgets = list(screen.query("#library-skills-import-status"))
+    assert status_widgets, "Skills import status did not mount"
+    previous = str(status_widgets[0].renderable)
     screen.query_one("#library-skills-import-path", Input).value = str(path)
     await pilot.pause()
     screen.query_one("#library-skills-import-run", Button).press()
@@ -117,11 +121,11 @@ async def _run_skills_import_via_ui(
     status_text = previous
     deadline = time.monotonic() + deadline_seconds
     while time.monotonic() < deadline:
-        status_text = str(
-            screen.query_one("#library-skills-import-status", Static).renderable
-        )
-        if status_text != previous:
-            return status_text
+        status_widgets = list(screen.query("#library-skills-import-status"))
+        if status_widgets:
+            status_text = str(status_widgets[0].renderable)
+            if status_text != previous:
+                return status_text
         await pilot.pause(0.02)
     return status_text
 
@@ -137,13 +141,17 @@ async def test_import_real_superpowers_skills_lands_trust_pending(tmp_path):
     the 64-char limit; the real descriptions are well under 1000 chars).
     """
     local_service, service = _real_skills_scope_service_with_trust(tmp_path)
-    app = _build_test_app()
+    app = _build_test_app(configured_default="library")
     _wire_empty_non_skill_services(app)
     app.skills_scope_service = service
-    host = LibraryHarness(app)
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
+    async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        for _ in range(200):
+            if isinstance(app.screen, LibraryScreen):
+                break
+            await pilot.pause(0.01)
+        assert isinstance(app.screen, LibraryScreen)
+        screen = app.screen
         await _wait_for_library_shell(screen, pilot)
         await _open_skills_import_row(screen, pilot)
 
@@ -183,6 +191,17 @@ async def test_import_skill_via_skill_md_file_path_derives_name_from_parent_dire
     call would) produces the same wrong name ("skill") for every import
     regardless of which skill it actually is. ``_run_library_skills_import``
     must use the PARENT DIRECTORY's name instead for this exact shape.
+
+    Merge-gate regression (PR #784, IMPORTANT finding): this shape used to
+    fall through to a flat, text-only read (dropping nested subfolders,
+    binaries, and the executable bit) instead of routing through the SAME
+    faithful ``import_skill_directory`` copy the directory-path shape
+    already used -- since a SKILL.md file's PARENT dir IS the skill
+    directory, both shapes must behave identically. Proven here by copying
+    the real fixture (never mutating the committed copy -- see the
+    fixtures README's "unmodified copies" provenance note) into ``tmp_path``
+    and adding a nested ``references/`` subfolder plus an executable
+    sibling script before importing via the SKILL.md FILE path.
     """
     local_service, service = _real_skills_scope_service_with_trust(tmp_path)
     app = _build_test_app()
@@ -190,12 +209,27 @@ async def test_import_skill_via_skill_md_file_path_derives_name_from_parent_dire
     app.skills_scope_service = service
     host = LibraryHarness(app)
 
+    skill_dir = tmp_path / "verification-before-completion"
+    shutil.copytree(
+        FIXTURES_DIR / "verification-before-completion", skill_dir
+    )
+    references_dir = skill_dir / "references"
+    references_dir.mkdir()
+    (references_dir / "note.md").write_text(
+        "A nested reference file.", encoding="utf-8"
+    )
+    scripts_dir = skill_dir / "scripts"
+    scripts_dir.mkdir()
+    script_path = scripts_dir / "run.sh"
+    script_path.write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+    script_path.chmod(script_path.stat().st_mode | 0o100)
+
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_skills_import_row(screen, pilot)
 
-        skill_md_path = FIXTURES_DIR / "verification-before-completion" / "SKILL.md"
+        skill_md_path = skill_dir / "SKILL.md"
         status = await _run_skills_import_via_ui(screen, pilot, skill_md_path)
         assert (
             status
@@ -207,6 +241,20 @@ async def test_import_skill_via_skill_md_file_path_derives_name_from_parent_dire
     assert record["trust_blocked"] is True
     with pytest.raises(Exception):
         await local_service.get_skill("skill")
+
+    # The nested subfolder must be imported and readable by its nested key
+    # -- the flat-read fallback used to skip it entirely (nested
+    # subdirectories are NOT recursed into by a flat sibling scan).
+    supporting_files = record.get("supporting_files") or {}
+    assert supporting_files.get("references/note.md") == "A nested reference file."
+
+    # The sibling script's executable bit must survive the copy too --
+    # further proof this shape now goes through the faithful bundle copy
+    # (which preserves owner-exec), not the text-only flat read (which
+    # never even considered file modes).
+    bundle_files = {item["path"]: item for item in record.get("bundle_files") or []}
+    assert "scripts/run.sh" in bundle_files
+    assert bundle_files["scripts/run.sh"]["executable"] is True
 
 
 @pytest.mark.asyncio
@@ -478,19 +526,18 @@ async def test_import_row_rejects_oversized_content_without_partial_state(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_import_row_skips_nested_reference_subfolder_without_failing_import(
+async def test_import_row_imports_nested_reference_subfolder(
     tmp_path,
 ):
     """A skill directory with a NESTED reference subfolder (the real
     ``using-superpowers`` skill's own ``references/`` layout -- not
     copied into the fixtures dir to keep it small, reproduced here
-    structurally) must still import successfully, but the nested file is
-    NOT carried through as a supporting file: ``local_skills_service``'s
-    supporting-file name pattern has no path-separator support, so
-    recursing into subdirectories would either be silently flattened
-    (name collisions) or rejected outright. Skipping nested paths keeps
-    this import path's own limitation explicit and non-crashing rather
-    than surprising.
+    structurally) must import successfully AND carry the nested file
+    through as a supporting file, keyed by its nested relative path.
+    ``local_skills_service``'s bundle-file walk recurses into
+    subdirectories (junk pruned, symlinks skipped, caps enforced) so the
+    real skill's ``references/`` layout round-trips faithfully instead
+    of being silently dropped.
     """
     local_service, service = _real_skills_scope_service_with_trust(tmp_path)
     app = _build_test_app()
@@ -523,5 +570,142 @@ async def test_import_row_skips_nested_reference_subfolder_without_failing_impor
     record = await local_service.get_skill("nested-refs-skill")
     assert record["trust_blocked"] is True
     supporting_files = record.get("supporting_files") or {}
-    assert "references/note.md" not in supporting_files
-    assert "note.md" not in supporting_files
+    assert "references/note.md" in supporting_files
+    assert supporting_files["references/note.md"] == "A nested reference file."
+
+
+# ---------------------------------------------------------------------------
+# Task 5: the Import row's URL branch. ``install_skill_from_url`` (the
+# network-touching seam) is monkeypatched IN THE SCREEN MODULE'S OWN
+# NAMESPACE -- it is imported there directly (``from
+# ...Skills_Interop.skill_remote_fetch import install_skill_from_url``),
+# not looked up dynamically off a service object -- so these tests prove
+# routing/outcome-translation only, never real network I/O. The seam's own
+# network/classification/re-root behavior is covered by
+# ``Tests/Skills/test_skill_remote_fetch.py``.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_import_row_url_routes_to_remote_install_and_primes_review(
+    tmp_path, monkeypatch
+):
+    """A pasted ``http(s)://`` URL in the Import row's path field routes to
+    ``install_skill_from_url`` instead of the local file/folder path, and a
+    successful install reports the SAME outcome shape as every other
+    import path: the outcome line names the service-reported skill, and
+    the Review button is primed with it (mirrors
+    ``test_skills_import_success_offers_review_button`` in
+    ``Tests/UI/test_library_skills_canvas.py``).
+    """
+    from tldw_chatbook.UI.Screens import library_screen
+
+    _local_service, service = _real_skills_scope_service_with_trust(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    captured: dict = {}
+
+    async def _fake_install_skill_from_url(url, *, scope_service, **kwargs):
+        captured["url"] = url
+        captured["scope_service"] = scope_service
+        captured["kwargs"] = kwargs
+        return {"name": "remote-skill"}
+
+    monkeypatch.setattr(
+        library_screen, "install_skill_from_url", _fake_install_skill_from_url
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_skills_import_row(screen, pilot)
+
+        status = await _run_skills_import_via_ui(
+            screen, pilot, "https://github.com/o/remote-skill"
+        )
+        assert status == 'Imported "remote-skill" · re-review it in the trust panel'
+        review = screen.query_one("#library-skills-import-review", Button)
+        assert "remote-skill" in str(review.label)
+
+    assert captured["url"] == "https://github.com/o/remote-skill"
+    assert captured["scope_service"] is service
+
+
+@pytest.mark.asyncio
+async def test_import_row_url_remote_skill_error_becomes_status_line(
+    tmp_path, monkeypatch
+):
+    """``RemoteSkillError`` messages are user-presentable by construction --
+    the Import row must surface the message verbatim, not a generic
+    failure line."""
+    from tldw_chatbook.Skills_Interop.skill_remote_fetch import RemoteSkillError
+    from tldw_chatbook.UI.Screens import library_screen
+
+    _local_service, service = _real_skills_scope_service_with_trust(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    async def _fake_install_skill_from_url(url, *, scope_service, **kwargs):
+        raise RemoteSkillError("Only .zip release assets are supported.")
+
+    monkeypatch.setattr(
+        library_screen, "install_skill_from_url", _fake_install_skill_from_url
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_skills_import_row(screen, pilot)
+
+        status = await _run_skills_import_via_ui(
+            screen, pilot, "https://github.com/o/r/releases/download/v1/pkg"
+        )
+        assert status == "Only .zip release assets are supported."
+
+    context = await service.get_context(mode="local")
+    assert context["available_skills"] == []
+    assert context["blocked_skills"] == []
+
+
+@pytest.mark.asyncio
+async def test_import_row_url_generic_failure_uses_classified_name_guess(
+    tmp_path, monkeypatch
+):
+    """A non-``RemoteSkillError`` failure (e.g. the underlying
+    ``import_skill_file`` call rejecting a duplicate name) routes through
+    the SAME exception translator every other import path uses
+    (``_apply_library_skills_import_outcome_from_exception``), with a name
+    guess derived from classifying the URL -- the same "derive a plausible
+    skill name from what the user typed" convention the loose-file branch
+    uses (``file_path.stem``), here via the seam's own classification so
+    the guess matches what the seam would actually have named the skill.
+    """
+    from tldw_chatbook.UI.Screens import library_screen
+
+    _local_service, service = _real_skills_scope_service_with_trust(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    async def _fake_install_skill_from_url(url, *, scope_service, **kwargs):
+        raise ValueError("local_skill_exists: brainstorm")
+
+    monkeypatch.setattr(
+        library_screen, "install_skill_from_url", _fake_install_skill_from_url
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_skills_import_row(screen, pilot)
+
+        status = await _run_skills_import_via_ui(
+            screen, pilot, "https://github.com/o/brainstorm/tree/main"
+        )
+        assert status == 'Skipped — a skill named "brainstorm" already exists.'

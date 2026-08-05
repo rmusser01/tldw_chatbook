@@ -2,6 +2,7 @@ import builtins
 import inspect
 
 import tldw_chatbook.Chat.console_session_settings as session_settings
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
     ConsoleSettingsContextEstimate,
@@ -15,6 +16,26 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_provider_options,
     validate_console_session_settings,
 )
+
+
+def test_console_settings_exclude_presentation_while_session_owns_identity() -> None:
+    settings_fields = set(ConsoleSessionSettings.__dataclass_fields__)
+    session_fields = set(ConsoleChatSession.__dataclass_fields__)
+
+    assert "user_profile_label" not in settings_fields
+    assert "persona_label" not in settings_fields
+    assert {"assistant_kind", "assistant_name", "assistant_id"}.isdisjoint(
+        settings_fields
+    )
+    assert "assistant_name" not in session_fields
+    assert {
+        "runtime_backend",
+        "assistant_kind",
+        "assistant_id",
+        "assistant_authority_id",
+        "character_id",
+        "character_name",
+    } <= session_fields
 
 
 def test_session_settings_keeps_gateway_runtime_dependencies_out() -> None:
@@ -782,7 +803,7 @@ def test_model_section_lines_compact_summary():
         model_row="Model: gpt-4o (Missing key)",
         context_row="Context: 0 / 8,192 tokens; 4,096 response tokens",
         sampling_row="Sampling: T 0.60, P 0.95, min_p 0.05",
-        identity_row="Persona: General",
+        identity_row="Assistant: General",
         provider_row="Provider: openai",
         transport_row="Streaming: off",
     )
@@ -822,7 +843,7 @@ def test_model_section_line_truncates_long_local_model_names():
         model_row="Model: Qwen3.6-27B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf",
         context_row="Context: 0 / 4,096 tokens",
         sampling_row="Sampling: T 0.60",
-        identity_row="Persona: General",
+        identity_row="Assistant: General",
         provider_row="Provider: llama_cpp",
         transport_row="Streaming: off",
     )
@@ -894,3 +915,95 @@ def test_rail_system_line_collapses_multiline_and_truncates_long_prompts():
     assert line.endswith("…")
     preview = line.removeprefix("System: ")
     assert len(preview) <= CONSOLE_RAIL_SYSTEM_PREVIEW_MAX_CHARS
+
+
+def test_pinned_prefill_defaults_none_and_replaces():
+    from dataclasses import replace
+
+    settings = ConsoleSessionSettings(provider="llama_cpp")
+    assert settings.pinned_prefill is None
+    pinned = replace(settings, pinned_prefill="*She pauses*")
+    assert pinned.pinned_prefill == "*She pauses*"
+    assert settings.pinned_prefill is None
+
+
+def test_provider_scoped_defaults_beat_chat_defaults_for_sampling_fields():
+    """TASK-342: Save-as-default persists sampling values under
+    [console.provider_defaults.<provider>] — a section that only ever holds
+    Console-saved defaults, so the boot builder ranks it above chat_defaults
+    without letting factory api_settings scalars shadow user-tuned globals
+    (that protection is pinned by f14d22dc3's tests)."""
+    config = {
+        "chat_defaults": {
+            "provider": "llama_cpp",
+            "model": "chat-model",
+            "temperature": 0.6,
+            "top_p": 0.95,
+            "streaming": True,
+        },
+        "api_settings": {"llama_cpp": {"model": "saved-model"}},
+        "console": {
+            "provider_defaults": {
+                "llama_cpp": {
+                    "temperature": 0.88,
+                    "top_p": 0.5,
+                    "top_k": 17,
+                    "max_tokens": 1234,
+                    "seed": 42,
+                    "presence_penalty": 0.25,
+                    "frequency_penalty": 0.75,
+                    "reasoning_effort": "high",
+                    "reasoning_summary": "detailed",
+                    "verbosity": "low",
+                    "thinking_effort": "medium",
+                    "thinking_budget_tokens": 2048,
+                    "min_p": 0.07,
+                },
+            },
+        },
+    }
+
+    settings = build_default_console_session_settings(
+        app_config=config,
+        provider="llama_cpp",
+        model=None,
+    )
+
+    assert settings.temperature == 0.88
+    assert settings.top_p == 0.5
+    assert settings.min_p == 0.07
+    assert settings.top_k == 17
+    assert settings.max_tokens == 1234
+    assert settings.seed == 42
+    assert settings.presence_penalty == 0.25
+    assert settings.frequency_penalty == 0.75
+    assert settings.reasoning_effort == "high"
+    assert settings.reasoning_summary == "detailed"
+    assert settings.verbosity == "low"
+    assert settings.thinking_effort == "medium"
+    assert settings.thinking_budget_tokens == 2048
+
+
+def test_chat_defaults_still_apply_when_no_console_saved_defaults_exist():
+    # Factory api_settings sampling scalars must STILL lose to chat_defaults
+    # (f14d22dc3) — only Console-saved defaults outrank them.
+    config = {
+        "chat_defaults": {
+            "provider": "llama_cpp",
+            "model": "chat-model",
+            "temperature": 0.6,
+            "top_p": 0.9,
+        },
+        "api_settings": {
+            "llama_cpp": {"model": "saved-model", "temperature": 0.7, "top_p": 0.95}
+        },
+    }
+
+    settings = build_default_console_session_settings(
+        app_config=config,
+        provider="llama_cpp",
+        model=None,
+    )
+
+    assert settings.temperature == 0.6
+    assert settings.top_p == 0.9

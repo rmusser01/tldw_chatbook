@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Button
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_unified_shell_phase6_first_time_replay import (
     EXPECTED_NAV,
     _screen_text,
@@ -73,7 +73,7 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             )
 
             nav_buttons = list(
-                app.screen.query("MainNavigationBar").first().query(Button)
+                app.screen.query("MainNavigationBar").first().query("Button.nav-button")
             )
             assert [
                 (button.id, str(button.label).strip()) for button in nav_buttons
@@ -84,7 +84,7 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             assert "Model: Blocked" in home_text
             assert "Needs Attention" in home_text
             assert "Set up Console model" in home_text
-            assert "More: Ctrl+P" in home_text
+            assert "More ›" in home_text
 
             app.screen.query_one("#nav-console", Button).press()
             await _wait_until(
@@ -138,12 +138,12 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             await _wait_until(
                 pilot,
                 lambda: (
-                    "Global preferences, appearance, accounts, storage"
+                    "Global preferences, appearance, storage"
                     in _screen_text(app)
                 ),
             )
             settings_text = _screen_text(app)
             assert (
-                "Settings | Global preferences, appearance, accounts, storage | Local"
+                "Settings | Global preferences, appearance, storage | Local"
                 in settings_text
             )

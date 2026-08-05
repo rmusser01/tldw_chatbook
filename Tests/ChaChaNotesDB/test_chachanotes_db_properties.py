@@ -5,6 +5,8 @@
 #
 # Imports
 import uuid
+import shutil
+
 import pytest
 import json
 from pathlib import Path
@@ -29,16 +31,6 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
 #
 # Functions:
 # --- Hypothesis Tests ---
-
-settings.register_profile(
-    "db_friendly",
-    deadline=1000,
-    suppress_health_check=[
-        HealthCheck.too_slow,
-        HealthCheck.function_scoped_fixture,  # <--- THIS IS THE FIX
-    ],
-)
-settings.load_profile("db_friendly")
 
 # Strategy for generating a valid character card dictionary
 # The `.map(lambda t: ...)` part is to assemble the parts into a dictionary
@@ -67,13 +59,6 @@ st_character_card_data = st.tuples(
 # Define a strategy for a non-zero integer to add to the version
 st_version_offset = st.integers().filter(lambda x: x != 0)
 
-# To prevent tests from being too slow on complex data, we can set a deadline.
-# We also disable the 'too_slow' health check as DB operations can sometimes be slow.
-settings.register_profile(
-    "db_friendly", deadline=1000, suppress_health_check=[HealthCheck.too_slow]
-)
-settings.load_profile("db_friendly")
-
 # --- Fixtures (Copied from your existing test file for a self-contained example) ---
 
 
@@ -90,7 +75,7 @@ def db_path(tmp_path):
 
 
 @pytest.fixture(scope="function")
-def db_instance(db_path, client_id):
+def db_instance(db_path, client_id, chachanotes_template_db):
     """Creates a DB instance for each test, ensuring a fresh database."""
     current_db_path = Path(db_path)
     # Ensure no leftover files from a failed previous run
@@ -99,6 +84,7 @@ def db_instance(db_path, client_id):
         if p.exists():
             p.unlink(missing_ok=True)
 
+    shutil.copyfile(chachanotes_template_db, current_db_path)
     db = CharactersRAGDB(current_db_path, client_id)
     yield db
     db.close_connection()
@@ -1098,22 +1084,23 @@ class TestConcurrency:
         Property: The `_get_thread_connection` method must provide a unique
         connection object for each thread.
         """
-        connection_ids = set()
+        connections = []
         lock = threading.Lock()
 
-        def get_and_store_conn_id():
+        def get_and_store_connection():
             conn = db_instance.get_connection()
             with lock:
-                connection_ids.add(id(conn))
+                connections.append(conn)
 
-        threads = [threading.Thread(target=get_and_store_conn_id) for _ in range(5)]
+        threads = [threading.Thread(target=get_and_store_connection) for _ in range(5)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
 
-        # If threading.local is working, there should be 5 unique connection IDs.
-        assert len(connection_ids) == 5
+        # Retain each object through the assertion so Python cannot reuse a
+        # short-lived connection's id for a later worker.
+        assert len({id(conn) for conn in connections}) == 5
 
     def test_wal_mode_allows_concurrent_reads_during_write_transaction(
         self, db_instance: CharactersRAGDB
@@ -1230,6 +1217,5 @@ class TestDBOperations:
         backup_db.close_connection()
 
 
-#
 # End of test_chachanotes_db_properties.py
 ########################################################################################################################

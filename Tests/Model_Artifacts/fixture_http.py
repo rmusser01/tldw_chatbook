@@ -1,0 +1,250 @@
+"""Localhost HTTP fixture for artifact-fetch tests. stdlib only."""
+
+from __future__ import annotations
+
+import threading
+from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+@dataclass
+class _Route:
+    """One configured response for a fixture path."""
+
+    body: bytes
+    etag: str | None
+    support_range: bool
+    disconnect_after: int | None
+    require_token: str | None
+    last_modified: str | None = None
+    ignore_if_range: bool = False
+    pause_after: int | None = None
+    pause_event: threading.Event | None = None
+    redirect_to: str | None = None
+    omit_content_range: bool = False
+    bad_range_start: int | None = None
+
+
+class FixtureArtifactServer:
+    """Configurable localhost server: Range, ETag, faults, auth.
+
+    Use as a context manager so the background thread and socket are always
+    torn down, even on test failure::
+
+        with FixtureArtifactServer() as srv:
+            srv.serve("/f.bin", b"...")
+            ... srv.url("/f.bin") ...
+    """
+
+    def __init__(self) -> None:
+        self._routes: dict[str, _Route] = {}
+        self.requests: dict[str, list[dict]] = {}
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):  # quiet
+                pass
+
+            def _route(self):
+                return outer._routes.get(self.path)
+
+            def do_HEAD(self):
+                self._respond(head_only=True)
+
+            def do_GET(self):
+                self._respond(head_only=False)
+
+            def _respond(self, *, head_only: bool):
+                route = self._route()
+                outer.requests.setdefault(self.path, []).append(dict(self.headers))
+                if route is None:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                if route.require_token and (
+                    self.headers.get("Authorization") != f"Bearer {route.require_token}"
+                ):
+                    self.send_response(401)
+                    self.end_headers()
+                    return
+                if route.redirect_to is not None:
+                    # A 302 to a DIFFERENT origin (e.g. a second
+                    # FixtureArtifactServer on another port) -- models an
+                    # authenticated repository handing off to an
+                    # unauthenticated CDN URL. Sent unconditionally past the
+                    # require_token gate above so a caller can prove BOTH
+                    # that the credential reached this route AND that it did
+                    # NOT reach the redirect target.
+                    self.send_response(302)
+                    self.send_header("Location", route.redirect_to)
+                    self.end_headers()
+                    return
+                body = route.body
+                start = 0
+                status = 200
+                range_header = self.headers.get("Range")
+                if_range = self.headers.get("If-Range")
+                honor_range = bool(range_header) and route.support_range
+                if honor_range and if_range is not None and not route.ignore_if_range:
+                    # Real servers refuse a stale If-Range by falling back to
+                    # a full 200 -- the behavior fetch.py's resume-mismatch
+                    # detection depends on. Match against whichever validator
+                    # this route currently has (an ETag comparison and a
+                    # Last-Modified comparison are mutually exclusive in
+                    # practice since the client sends only one).
+                    current_validator = route.etag or route.last_modified
+                    if if_range != current_validator:
+                        honor_range = False
+                # ignore_if_range=True simulates a non-compliant server that
+                # honors Range unconditionally, ignoring any If-Range
+                # mismatch -- the failure mode fetch.py's post-response
+                # validator check (not the status-code check) exists for.
+                if honor_range:
+                    start = int(range_header.split("=")[1].split("-")[0])
+                    body = body[start:]
+                    status = 206
+                self.send_response(status)
+                if route.etag:
+                    self.send_header("ETag", route.etag)
+                if route.last_modified:
+                    self.send_header("Last-Modified", route.last_modified)
+                if route.support_range:
+                    self.send_header("Accept-Ranges", "bytes")
+                if status == 206 and not route.omit_content_range:
+                    # RFC 9110 14.4: a compliant 206 always carries
+                    # Content-Range so the client can confirm where the
+                    # body actually starts -- reported_start defaults to
+                    # the REAL slice offset, but a route can override it
+                    # (bad_range_start) to simulate a server that lies.
+                    reported_start = (
+                        route.bad_range_start
+                        if route.bad_range_start is not None
+                        else start
+                    )
+                    total = len(route.body)
+                    end = reported_start + len(body) - 1 if body else reported_start
+                    self.send_header(
+                        "Content-Range", f"bytes {reported_start}-{end}/{total}"
+                    )
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                if head_only:
+                    return
+                cut = route.disconnect_after
+                if cut is not None and cut < len(body):
+                    self.wfile.write(body[:cut])
+                    self.wfile.flush()
+                    self.connection.close()  # simulate mid-body drop
+                    return
+                pause_at = route.pause_after
+                if pause_at is not None and pause_at < len(body):
+                    # Write a first slice, then block this request-handler
+                    # thread on a test-supplied gate before sending the
+                    # rest -- a genuinely slow/open connection for
+                    # cancellation tests, not a sleep-based guess. Bounded
+                    # so a test that forgets to set the gate can't hang
+                    # server teardown forever.
+                    self.wfile.write(body[:pause_at])
+                    self.wfile.flush()
+                    if route.pause_event is not None:
+                        route.pause_event.wait(timeout=5.0)
+                    self.wfile.write(body[pause_at:])
+                    return
+                self.wfile.write(body)
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+
+    def serve(
+        self,
+        path: str,
+        body: bytes,
+        *,
+        etag: str | None = '"v1"',
+        weak_etag: bool = False,
+        last_modified: str | None = None,
+        support_range: bool = True,
+        disconnect_after: int | None = None,
+        require_token: str | None = None,
+        ignore_if_range: bool = False,
+        pause_after: int | None = None,
+        pause_event: threading.Event | None = None,
+        redirect_to: str | None = None,
+        omit_content_range: bool = False,
+        bad_range_start: int | None = None,
+    ) -> None:
+        """Register (or replace) a route this server responds to.
+
+        Args:
+            path: Request path, e.g. ``"/f.bin"``.
+            body: Full response body for a non-Range request. Ignored (but
+                still required) when ``redirect_to`` is set -- a redirect
+                route never writes a body of its own.
+            etag: ETag value to send (``None`` to omit the header).
+            weak_etag: Wrap ``etag`` as a weak validator (``W/"..."``).
+            last_modified: ``Last-Modified`` header value to send (``None``
+                to omit). Also doubles as the conditional-range validator
+                when ``etag`` is ``None``, mirroring real servers.
+            support_range: Whether ``Range`` requests are honored (206) or
+                ignored (always 200 with the full body).
+            disconnect_after: If set, write only this many bytes then close
+                the connection mid-body (simulates a dropped transfer).
+            require_token: If set, require ``Authorization: Bearer <token>``.
+                Checked BEFORE ``redirect_to``, so a redirect route can also
+                require a credential on the request that triggers the hop.
+            ignore_if_range: Simulate a non-compliant server: honor ``Range``
+                (206) unconditionally even when ``If-Range`` doesn't match
+                the route's current validator, instead of falling back to a
+                full 200.
+            pause_after: If set, write only this many bytes, then block the
+                request-handler thread on ``pause_event`` (bounded to 5s)
+                before sending the rest -- keeps a connection genuinely
+                open/slow for cancellation tests.
+            pause_event: The gate ``pause_after`` blocks on; the test sets
+                it to release the remainder of the body.
+            redirect_to: If set, this route answers every request with a
+                302 to this absolute URL instead of serving ``body`` --
+                typically another ``FixtureArtifactServer`` instance's
+                ``.url(...)``, to model a cross-origin hand-off (e.g. an
+                authenticated repository redirecting to an unauthenticated
+                CDN URL on a different port/origin).
+            omit_content_range: If set, a 206 response omits ``Content-
+                Range`` entirely -- simulates a non-compliant server so a
+                caller can prove a missing header is rejected, not treated
+                as an implicit match.
+            bad_range_start: If set, a 206 response's ``Content-Range``
+                header reports THIS start offset instead of the real slice
+                offset the ``Range`` request produced -- simulates a
+                server whose header disagrees with where the body (as
+                received) actually starts.
+        """
+        if etag and weak_etag:
+            etag = f"W/{etag}"
+        self._routes[path] = _Route(
+            body=body,
+            etag=etag,
+            support_range=support_range,
+            disconnect_after=disconnect_after,
+            require_token=require_token,
+            last_modified=last_modified,
+            ignore_if_range=ignore_if_range,
+            pause_after=pause_after,
+            pause_event=pause_event,
+            redirect_to=redirect_to,
+            omit_content_range=omit_content_range,
+            bad_range_start=bad_range_start,
+        )
+
+    def url(self, path: str) -> str:
+        """Absolute ``http://127.0.0.1:<port><path>`` URL for this server."""
+        host, port = self._server.server_address
+        return f"http://{host}:{port}{path}"
+
+    def __enter__(self) -> "FixtureArtifactServer":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        self._server.shutdown()
+        self._server.server_close()
+        return False

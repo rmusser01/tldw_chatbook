@@ -9,13 +9,18 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
+    LIBRARY_EXPORT_SELECTED_TOOLTIP,
+)
 from tldw_chatbook.Library.library_conversations_state import (
     LibraryConversationsCanvasState,
 )
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
-class LibraryConversationsCanvas(Vertical):
+class LibraryConversationsCanvas(RecomposeCaptureGuard, Vertical):
     """Render the saved-conversation list with a preview + Console handoff.
 
     Attributes:
@@ -103,6 +108,12 @@ class LibraryConversationsCanvas(Vertical):
                     compact=True,
                 )
                 export_selected.disabled = self.canvas.selected_count == 0
+                # F-018: a disabled action says why.
+                export_selected.tooltip = (
+                    LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
+                    if export_selected.disabled
+                    else LIBRARY_EXPORT_SELECTED_TOOLTIP
+                )
                 yield export_selected
 
         status_text = self.canvas.status_copy or self.canvas.empty_copy

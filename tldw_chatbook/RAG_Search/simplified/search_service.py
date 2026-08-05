@@ -79,7 +79,14 @@ class SimplifiedRAGSearchService:
                         {
                             "id": result.id,
                             "title": result.metadata.get("title", "Untitled"),
-                            "content": result.content,
+                            # `.document` is the real field on both
+                            # SearchResultWithCitations (citations.py) and
+                            # SearchResult (vector_store.py) -- neither
+                            # dataclass has a `.content` attribute (task-2271
+                            # round 2: this crashed with AttributeError on
+                            # every semantic search, i.e. the tool's DEFAULT
+                            # path, since use_semantic defaults True).
+                            "content": result.document,
                             "media_type": result.metadata.get("media_type", "unknown"),
                             "url": result.metadata.get("url"),
                             "file_path": result.metadata.get("file_path"),
@@ -93,8 +100,13 @@ class SimplifiedRAGSearchService:
                 # Fall back to keyword search
                 return await self.keyword_search(query, limit, media_types)
         except Exception as e:
+            # Do NOT swallow this into an empty result (task-2271): a crash
+            # here (including one that propagates up from the keyword_search
+            # fallback above) must surface as an error, never as a silent
+            # "0 results". The caller (MCP/tools.py:perform_rag_search)
+            # already catches this into the honest `[{"error": ...}]` shape.
             logger.error(f"Error in semantic_search: {e}")
-            return []
+            raise
 
     async def keyword_search(
         self, query: str, limit: int = 10, media_types: Optional[List[str]] = None
@@ -111,27 +123,50 @@ class SimplifiedRAGSearchService:
             List of search results
         """
         try:
-            # Search using the media database
-            results = []
-
-            # Search media items
-            media_results = self.media_db.search_media(
-                query=query, limit=limit, media_types=media_types
+            # Search using the media database. NOTE: the real API is
+            # `search_media_db` (there is no `search_media` method) and it
+            # returns a (rows, total_matches) tuple -- see
+            # Client_Media_DB_v2.MediaDatabase.search_media_db.
+            media_results, _total_matches = self.media_db.search_media_db(
+                search_query=query,
+                media_types=media_types,
+                results_per_page=limit,
             )
 
+            # search_media_db's row projection is metadata-only -- it does
+            # not select the (potentially large) `content` column, matching
+            # the same "second query" pattern used by
+            # MediaDatabase.search_media_by_keyword_for_embedding. Batch-fetch
+            # content for the matched ids in one query rather than N+1.
+            media_ids = [
+                item["id"] for item in media_results if item.get("id") is not None
+            ]
+            content_by_id: Dict[Any, str] = {}
+            if media_ids:
+                content_by_id = {
+                    row["id"]: row.get("content", "") or ""
+                    for row in self.media_db.get_media_by_ids_for_embedding(media_ids)
+                }
+
+            results = []
             for item in media_results:
                 results.append(
                     {
                         "id": item.get("id"),
                         "title": item.get("title", "Untitled"),
-                        "content": item.get("content", ""),
+                        "content": content_by_id.get(item.get("id"), ""),
                         "media_type": item.get("type", "unknown"),
                         "url": item.get("url"),
-                        "file_path": item.get("local_path"),
+                        # Media has no separate local-path column -- `url`
+                        # doubles as the source reference for both web and
+                        # locally-ingested items (see Client_Media_DB_v2's
+                        # Media table schema). Kept as its own key so the
+                        # outer result shape (consumed by MCP/tools.py) stays
+                        # stable; there is no distinct value to put here.
+                        "file_path": None,
                         "score": 1.0,  # Default score for keyword search
                         "metadata": {
                             "author": item.get("author"),
-                            "created_at": item.get("created_at"),
                             "ingestion_date": item.get("ingestion_date"),
                             "transcription_model": item.get("transcription_model"),
                         },
@@ -141,5 +176,8 @@ class SimplifiedRAGSearchService:
             return results[:limit]
 
         except Exception as e:
+            # Do NOT swallow this into an empty result (task-2271): a
+            # missing/renamed media_db method or any other search failure
+            # must surface as an error, never as a silent "0 results".
             logger.error(f"Error in keyword_search: {e}")
-            return []
+            raise

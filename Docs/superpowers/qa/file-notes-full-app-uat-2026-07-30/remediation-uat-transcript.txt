@@ -1,0 +1,63 @@
+TASK-1411 REMEDIATION RETEST — 2026-07-30
+
+Method
+------
+Real `python -m tldw_chatbook.app` process in a tmux PTY.
+Current branch source loaded directly through PYTHONPATH.
+No diagnostic launcher, monkeypatch, runtime layout override, or headless
+Textual harness.
+
+120x40 — visible source entry
+--------------------------------
+Library | Local
+  Database (selected)  |  Files
+
+After selecting Files:
+
+Library | Local
+  Database  |  Files (selected)
+Linked — /private/tmp/chatbook-fullapp-uat.z0StBm/repo/notes
+
+40x20 — linked-root and Prepare reachability
+---------------------------------------------
+Library | Local
+  Database  |  Files (selected)
+Linked —...o/notes  Details    Change…
+
+Activating Details opened a read-only, keyboard-focused dialog containing:
+
+Linked — /private/tmp/chatbook-fullapp-uat.z0StBm/repo/notes
+
+After a new autosaved edit:
+
+Session Git (1)
+
+Prepare initially showed the current path and status. Scrolling the same
+surface revealed:
+
+  Unstage
+  Stage all (0)    Unstage all (1)
+  Commit staged (1)
+
+The action result reported one staged session note and retained the
+session-only safety promise.
+
+40x20 — actionless keyboard scrolling
+-------------------------------------
+With no current-session changes, Shift+Tab focused the Prepare scroll surface.
+Pressing End revealed:
+
+  Commit staged (0)
+Stage at least one session note to commit
+
+40x20 — unrelated staged recovery
+----------------------------------
+After staging `unrelated.txt` outside Chatbook and entering review:
+
+The complete staged state does not exactly match this session. If Git
+has unrelated staged changes, commit or unstage them outside Chatbook;
+then Refresh and review this session again.
+
+No commit was executed during the remediation retest. The earlier full-app
+UAT had already proven the unchanged guarded commit-success path. The
+disposable fixture was returned to an unstaged worktree-only state.

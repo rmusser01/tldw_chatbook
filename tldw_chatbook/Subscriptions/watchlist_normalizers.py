@@ -83,14 +83,47 @@ def _local_source_settings(row: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def normalize_local_subscription_row(row: Mapping[str, Any]) -> dict[str, Any]:
-    """Normalize a local subscriptions DB row as a watch item."""
+    """Normalize a local subscriptions DB row as a watch item.
+
+    task-2050 (AC#1): `status_summary` precedence is
+    ``paused > error > inactive > active``. A source auto-paused by repeated
+    check failures (`SubscriptionsDB._advance_failure_and_maybe_pause`,
+    task-1410) always still carries the `last_error` that caused the pause,
+    so an error-first precedence would render ``"error (10)"`` on a source
+    that has actually STOPPED being retried -- indistinguishable from one
+    that is merely having a bad day but is still being checked on schedule.
+    That is the one fact a paused source's status needs to lead with: it
+    needs an explicit Resume, not just time. Note this is a real trade-off,
+    not a free win: today NEITHER `last_error` NOR `error_count` is
+    surfaced anywhere else in the watchlists UI for a source (only a run's
+    own `error_count` renders, in the Runs pane) -- so for the window a
+    source is both paused and carrying the error that caused it, this
+    precedence trades away the only place that error text was visible at
+    all, in exchange for the Status column no longer implying the source is
+    still being retried when it is not. The underlying `last_error`/
+    `error_count` columns are untouched by this normalizer either way, and
+    remain available to a future source-detail affordance.
+
+    Args:
+        row: A `subscriptions` table row (or an equivalent mapping) as the
+            local backend reads it.
+
+    Returns:
+        The normalized watch-item dict: namespaced ``id``, ``entity_kind``
+        ``"subscription"``, the display fields, ``paused`` (task-2050), and
+        ``status_summary`` per the precedence above.
+    """
     source_id = row["id"]
-    active = bool(row.get("is_active", True)) and not bool(row.get("is_paused", False))
+    paused = bool(row.get("is_paused", False))
+    active = bool(row.get("is_active", True)) and not paused
     error_count = int(row.get("error_count") or 0)
     last_error = row.get("last_error")
-    status_summary = "active" if active else "inactive"
-    if last_error:
+    if paused:
+        status_summary = "paused"
+    elif last_error:
         status_summary = f"error ({error_count})" if error_count else "error"
+    else:
+        status_summary = "active" if active else "inactive"
 
     return {
         "id": build_watchlist_item_id("local", "subscription", source_id),
@@ -102,6 +135,15 @@ def normalize_local_subscription_row(row: Mapping[str, Any]) -> dict[str, Any]:
         "source_type": row.get("type"),
         "url": row.get("source"),
         "active": active,
+        # task-2050 AC#1: an inactive (is_active=0) source and an
+        # auto-paused one both read `active: False` and, before this task,
+        # both fell into the same "inactive" status text -- nothing told
+        # them apart, and a paused source's only real recourse (task-1410's
+        # data-layer resume-on-success) had no UI trigger at all. Carried
+        # as its own field, distinct from `status_summary`, so a consumer
+        # that only cares about the boolean (e.g. the Resume button's
+        # visibility gate) does not have to string-match status text.
+        "paused": paused,
         "tags": _coerce_tags(row.get("tags")),
         "group_ids": [],
         "settings": _local_source_settings(row),
@@ -129,6 +171,13 @@ def normalize_server_watchlist_source(
         "source_type": payload.get("source_type"),
         "url": payload.get("url"),
         "active": bool(payload.get("active", True)),
+        # task-2050: the server watchlist source model has no auto-pause
+        # concept (no `is_paused` equivalent on the response payload) --
+        # always False here, which is also why the Resume affordance never
+        # renders for a server-backed source
+        # (`InspectorPane._is_paused_subscription` gates on `entity_kind ==
+        # "subscription"`, the local-only kind this field is meaningful for).
+        "paused": False,
         "tags": _coerce_tags(payload.get("tags")),
         "group_ids": list(payload.get("group_ids") or []),
         "settings": dict(payload.get("settings") or {}),
@@ -168,7 +217,8 @@ def normalize_watchlist_run(
     job_id = payload.get("job_id")
     if source_id is None and source == "local":
         source_id = job_id
-    return {
+    stats = dict(payload.get("stats") or {})
+    normalized = {
         "id": build_watchlist_item_id(source, "watchlist_run", run_id),
         "backend": source,
         "entity_kind": "watchlist_run",
@@ -178,7 +228,7 @@ def normalize_watchlist_run(
         "status": payload.get("status") or "unknown",
         "started_at": payload.get("started_at"),
         "finished_at": payload.get("finished_at"),
-        "stats": dict(payload.get("stats") or {}),
+        "stats": stats,
         "error_msg": payload.get("error_msg"),
         "filter_tallies": payload.get("filter_tallies"),
         "log_text": payload.get("log_text"),
@@ -186,6 +236,26 @@ def normalize_watchlist_run(
         "truncated": bool(payload.get("truncated", False)),
         "filtered_sample": payload.get("filtered_sample"),
     }
+    # TASK-1362 Task 7 (spec §4): lift a url-family run's check dispositions
+    # from the nested `stats` blob onto the run dict's own top level, the
+    # same way the Runs pane reads every other per-run counter (`found_count`
+    # and friends) -- so `RunsPane._stats_text` can render them without also
+    # knowing the `stats` nesting. Only added when present at all: a feed/API
+    # run's `stats` never carries `dispositions` (see `test_feed_runs_record_
+    # no_dispositions`), and a run dict with no key renders identically to
+    # one whose key is an empty dict, so there is no reason to fabricate one.
+    dispositions = stats.get("dispositions")
+    if isinstance(dispositions, Mapping):
+        normalized["dispositions"] = dict(dispositions)
+    # Whole-branch review, Critical 1: the same lift for the withheld
+    # magnitude, which lives beside `dispositions` rather than inside it (see
+    # `_disposition_counts`, which returns integers only). Absent whenever the
+    # run withheld nothing, so `_stats_text` appends the number only when it
+    # has one.
+    max_withheld = stats.get("max_withheld_pct")
+    if isinstance(max_withheld, (int, float)) and not isinstance(max_withheld, bool):
+        normalized["max_withheld_pct"] = float(max_withheld)
+    return normalized
 
 
 def _coerce_condition_value(value: Any) -> dict[str, Any]:
@@ -245,4 +315,28 @@ def normalize_watchlist_item(source: str, row: Mapping[str, Any]) -> dict[str, A
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "published_date": row.get("published_date"),
+        # Phase D reader fields. `get_new_items` is `SELECT i.*`, so these are
+        # already on the row -- this dict was simply not carrying them, which
+        # made every item title-only downstream regardless of what Phase A
+        # persisted.
+        "content": row.get("content"),
+        "content_kind": row.get("content_kind"),
+        # Read by `content_pane.render_article` to decide whether the body is
+        # markdown source or plain text.
+        "content_format": row.get("content_format"),
+        # `change`-kind items render from these three
+        # (`content_pane.render_change`).
+        "change_percentage": row.get("change_percentage"),
+        "change_type": row.get("change_type"),
+        "diff_summary": row.get("diff_summary"),
+        # Spec #2 phase 1 read-path lesson (Phase D's shape, repeated):
+        # `get_new_items` is `SELECT i.*`, so the DB already returns this
+        # column -- coerce SQLite's 0/1 to an actual bool, or every
+        # downstream consumer sees a truthy int instead of a real flag.
+        "queued_for_briefing": bool(row.get("queued_for_briefing")),
+        # `canonical_url` is deliberately NOT re-exported as its own key: it
+        # is already folded into `url` two lines above (`row.get("url") or
+        # row.get("canonical_url")`), and a second copy under a second name
+        # had no consumer, so it was one more thing for a reader to have to
+        # rule out.
     }

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 from loguru import logger
@@ -15,6 +16,7 @@ from tldw_chatbook.Sync_Interop.sync_readiness import (
 
 from .models import (
     DEFAULT_WORKSPACE_ID,
+    RuntimeBindingKind,
     RuntimeBindingStatus,
     WorkspaceAuthority,
     WorkspaceMembership,
@@ -53,6 +55,13 @@ class ConsoleWorkspaceConversationRow:
 CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT = 50
 CONSOLE_WORKSPACE_CONVERSATION_MIN_VISIBLE_ROWS = 4
 CONSOLE_WORKSPACE_CONVERSATION_MAX_VISIBLE_ROWS = 12
+# Nominal (minimum) rail conversation-row height: one name line + the
+# metadata line + the row's bottom margin. Rows whose names wrap to two
+# lines render one line taller. This constant intentionally stays at the
+# minimum: it only feeds the visible-row-count heuristic below, where a
+# slight overestimate merely loads a row or two more than fits (the list
+# scrolls); it must NOT be used for layout math (the tray derives real
+# heights from the wrap result -- see console_workspace_context.py).
 CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT = 3
 CONSOLE_WORKSPACE_CONVERSATION_HEIGHT_RATIO = 0.45
 
@@ -206,7 +215,18 @@ class ConsoleWorkspaceContextState:
     recovery_copy: str
     workspace_name: str = ""
     scope_label: str = ""
+    #: TASK-373: raw conversation identifier kept out of the primary
+    #: Conversation row (RAG-45: renamed from "Scope"), surfaced only as a
+    #: hover detail.
+    scope_detail: str = ""
     new_workspace_enabled: bool = False
+    #: Whether the workspace-level RAG retrieval-scope affordance (task-13)
+    #: should be enabled. ``True`` only when the active workspace is a real
+    #: registry row (``registry_service.get_active_workspace()`` returned a
+    #: concrete ``WorkspaceRecord``, including the real built-in Default
+    #: workspace) -- never for the "Local Default"/error/no-registry
+    #: sentinel states below, which have no real ``workspace_id`` to scope.
+    rag_scope_enabled: bool = False
     server_readiness_label: str = "Server: local fallback"
     server_readiness_detail: str = (
         "Local registry is authoritative. No background sync is running."
@@ -279,7 +299,13 @@ def build_console_workspace_state(
         Renderable Console workspace context state.
     """
 
-    scope_label = str(current_conversation or "")
+    # TASK-373/387: the rail Conversation row (RAG-45: renamed from "Scope",
+    # which collided with the unrelated RAG-retrieval-scope concept) showed
+    # the raw conversation UUID (no user meaning, wrapped mid-token across
+    # two lines). Show a human-readable label and keep the identifier as a
+    # hover detail (below), not in the primary row.
+    scope_label = "This conversation" if current_conversation else ""
+    scope_detail = str(current_conversation or "")
     if registry_service is None:
         acp_state = _acp_handoff_state(acp_handoff_state)
         return ConsoleWorkspaceContextState(
@@ -287,6 +313,7 @@ def build_console_workspace_state(
             workspace_label="No workspace selected",
             workspace_name="",
             scope_label=scope_label,
+            scope_detail=scope_detail,
             new_workspace_enabled=False,
             authority_label="Authority: unavailable",
             sync_label="Sync: unavailable",
@@ -322,6 +349,7 @@ def build_console_workspace_state(
             workspace_label="No workspace selected",
             workspace_name="",
             scope_label=scope_label,
+            scope_detail=scope_detail,
             new_workspace_enabled=False,
             authority_label="Authority: unavailable",
             sync_label="Sync: unavailable",
@@ -354,6 +382,7 @@ def build_console_workspace_state(
             workspace_label="Workspace: Local Default",
             workspace_name="Local Default",
             scope_label=scope_label,
+            scope_detail=scope_detail,
             new_workspace_enabled=True,
             authority_label="Authority: local registry ready",
             sync_label="Sync: not configured",
@@ -365,7 +394,7 @@ def build_console_workspace_state(
             change_workspace_recovery=(
                 ""
                 if can_switch
-                else "Create a workspace in Library > Workspaces before switching."
+                else "Create one with the rail's New button or in Settings > Workspaces."
             ),
             new_conversation_enabled=True,
             new_conversation_recovery="",
@@ -399,7 +428,9 @@ def build_console_workspace_state(
         workspace_label=f"Workspace: {active_workspace.name}",
         workspace_name=active_workspace.name,
         scope_label=scope_label,
+            scope_detail=scope_detail,
         new_workspace_enabled=True,
+        rag_scope_enabled=True,
         authority_label=f"Authority: {active_workspace.authority.value}",
         sync_label=_workspace_sync_label(active_workspace),
         runtime_label=(
@@ -594,12 +625,65 @@ def _safe_runtime_bindings(
         )
         if not runtime_bindings:
             return ()
-        return tuple(runtime_bindings)
+        return tuple(
+            _recompute_filesystem_binding_status(binding)
+            for binding in runtime_bindings
+        )
     except Exception:
         logger.opt(exception=True).warning(
             "Failed to read workspace runtime bindings for Console context rail",
         )
         return ()
+
+
+def _recompute_filesystem_binding_status(
+    binding: WorkspaceRuntimeBinding,
+) -> WorkspaceRuntimeBinding:
+    """Recompute a local-filesystem binding's status straight from disk.
+
+    Stored ``status`` is display-only and is never trusted for
+    local-filesystem bindings here: the bound folder may have been
+    deleted, or replaced by a symlink/mount that resolves somewhere else,
+    which would otherwise let the Console context rail keep reporting a
+    widened root as "ready" (ADR-028). Non local-filesystem bindings are
+    returned unchanged.
+
+    Args:
+        binding: The runtime binding to check.
+
+    Returns:
+        ``binding`` unchanged if it is not a local-filesystem binding or
+        its recomputed status matches the stored one; otherwise a copy with
+        ``status`` set to MISSING (folder gone, a symlink, or its resolved
+        path no longer matches its own stored, already-resolved locator)
+        or READY.
+    """
+    if str(binding.binding_kind) not in (
+        "local-filesystem",
+        str(RuntimeBindingKind.LOCAL_FILESYSTEM),
+    ):
+        return binding
+    folder = Path(binding.locator)
+    is_missing = True
+    if folder.is_dir() and not folder.is_symlink():
+        try:
+            is_missing = folder.resolve() != folder
+        except OSError:
+            is_missing = True
+    status = RuntimeBindingStatus.MISSING if is_missing else RuntimeBindingStatus.READY
+    if status == binding.status:
+        return binding
+    return WorkspaceRuntimeBinding(
+        workspace_id=binding.workspace_id,
+        binding_id=binding.binding_id,
+        binding_kind=binding.binding_kind,
+        label=binding.label,
+        locator=binding.locator,
+        status=status,
+        metadata=binding.metadata,
+        created_at=binding.created_at,
+        updated_at=binding.updated_at,
+    )
 
 
 def _safe_workspaces(registry_service: Any) -> tuple[WorkspaceRecord, ...]:

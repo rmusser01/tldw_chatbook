@@ -58,6 +58,14 @@ class PipelineContext(TypedDict, total=False):
     # semantic leg's unavailable/empty-index reasons (task-250). Keyed by
     # leg name (see semantic_availability.SEMANTIC_DIAGNOSTICS_KEY).
     diagnostics: Dict[str, Any]
+    # Resolved RAG retrieval scope (rag-scope narrowing, task-4). Every
+    # retrieval leg reads this key to self-enforce id/type allowlists, so
+    # builtin, parallel, and custom-TOML pipeline shapes all inherit
+    # enforcement identically. ``Chat.rag_scope.EffectiveScope`` at runtime;
+    # typed ``Any`` here to avoid a hard import dependency on ``Chat`` from
+    # this leaf types module. Absent or ``None`` = unscoped (today's
+    # behavior, unchanged).
+    scope: Any
 
 
 @dataclass

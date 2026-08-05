@@ -1,0 +1,1253 @@
+"""Tests for the script-to-audio pipeline orchestrator (spec #2 phase 2b, Task 6).
+
+`generate_script_audio` turns one cast script's turns into one stored,
+playable `briefing_audio` row: it loads the script, resolves the roster's
+voices, synthesizes and stitches every turn, and writes the finished payload
+once into `briefing_audio_dir()`. Its error-boundary contract is copied from
+`briefing_cast.generate_script` (`Subscriptions/briefing_cast.py:562`) in
+every respect -- see this module's own docstring's "Task 6 adds..." section.
+
+Per the brief, the only faked seam is the per-turn `synthesize` callable
+(the `synthesize=synthesize_turn` parameter) -- `resolve_roster_voices` runs
+for real against a fake *profile service* (mirroring
+`test_briefing_voices.py`'s own rule), and everything else, including a
+real, file-backed `SubscriptionsDB` and the real stitcher (`pydub`), is
+exercised as-is.
+
+Every test that reaches storage patches `get_user_data_dir` to `tmp_path` --
+this repo has had three separate incidents of test scaffolding touching live
+user files; treat it as the hard rule it is (see the module's own binding
+rules).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import sqlite3
+import threading
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from io import BytesIO
+from pathlib import Path
+from typing import Any
+from uuid import UUID
+
+import pytest
+
+pytest.importorskip("pydub")
+from loguru import logger
+from pydub import AudioSegment
+
+import tldw_chatbook.Subscriptions.briefing_audio as briefing_audio
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Subscriptions.briefing_audio import (
+    ERROR_CHAR_CAP,
+    STATUS_COMPLETE,
+    STATUS_FAILED,
+    STATUS_GENERATING,
+    AudioGenerationError,
+    active_audio_claim_row_ids,
+    active_audio_claims,
+    briefing_audio_dir,
+    fail_interrupted_audio,
+    generate_script_audio,
+    pending_audio_claim_script_ids,
+)
+from tldw_chatbook.Subscriptions.briefing_audio import TurnSynthesisError
+from tldw_chatbook.Subscriptions.briefing_service import GenerationInFlightError
+from tldw_chatbook.Subscriptions.briefing_voices import VoiceSelection
+from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_service import LoadedTTSProfile
+from tldw_chatbook.TTS.profile_types import TTSGenerationProfile
+from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
+
+pytestmark = pytest.mark.unit
+
+_CREATED_AT = datetime(2026, 7, 31, 12, tzinfo=UTC)
+_HOST_PROFILE_ID = UUID("11111111-1111-4111-8111-111111111111")
+_GUEST_PROFILE_ID = UUID("22222222-2222-4222-8222-222222222222")
+
+
+# --- Fixtures / builders -----------------------------------------------------
+
+
+def _db(tmp_path) -> SubscriptionsDB:
+    """A real, file-backed `SubscriptionsDB` -- not `:memory:`.
+
+    `generate_script_audio`'s DB work is dispatched via `asyncio.to_thread`
+    (2a's whole-branch ruling): `SubscriptionsDB.conn` is thread-local, so a
+    `:memory:` connection would be private to whichever thread first opened
+    it and invisible from the executor thread. Matches
+    `test_briefing_cast.py`'s own `_db` fixture and its docstring's
+    reasoning exactly.
+    """
+    return SubscriptionsDB(tmp_path / "subs.db", "test")
+
+
+def _script_id(
+    db: SubscriptionsDB,
+    *,
+    roster: list[dict[str, Any]],
+    turns: list[dict[str, str]] | None,
+    status: str = "complete",
+) -> int:
+    """Build a watchlist -> briefing -> briefing_scripts chain and return the script id.
+
+    `turns=None` leaves `turns_json` genuinely NULL (never written), the
+    "script has no turns" refusal case; a `dict` list is JSON-encoded.
+    """
+    watchlist_id = WatchlistBundleService(db).create(name="w")["id"]
+    briefing_id = db.insert_briefing(watchlist_id)
+    script_id = db.insert_briefing_script(
+        briefing_id,
+        preset_id=None,
+        preset_name="Duo",
+        roster_snapshot_json=json.dumps(roster),
+    )
+    fields: dict[str, Any] = {"status": status}
+    if turns is not None:
+        fields["turns_json"] = json.dumps(turns)
+    db.update_briefing_script(script_id, **fields)
+    return script_id
+
+
+def _profile(
+    *,
+    profile_id: UUID = _HOST_PROFILE_ID,
+    voice_id: str | None = "voice-a",
+    provider_id: str = "kokoro",
+) -> TTSGenerationProfile:
+    """A real, fully-validated `TTSGenerationProfile` fixture (legacy provider,
+    so tests never need to fake the exact/`audio_cpp` snapshot contract)."""
+    return TTSGenerationProfile(
+        profile_id=profile_id,
+        display_name="Voice",
+        normalized_name="voice",
+        provider_id=provider_id,
+        model_id="model-a",
+        voice_id=voice_id,
+        response_format="wav",
+        speed=1.0,
+        options={},
+        revision=1,
+        created_at=_CREATED_AT,
+        updated_at=_CREATED_AT,
+    )
+
+
+class _FakeProfileService:
+    """The one faked seam `resolve_roster_voices` needs (mirrors
+    `test_briefing_voices.py`'s `_FakeProfileService` exactly)."""
+
+    def __init__(self, profiles: dict[UUID, TTSGenerationProfile]) -> None:
+        self._profiles = profiles
+
+    async def get_profile(self, profile_id: UUID) -> LoadedTTSProfile:
+        profile = self._profiles.get(profile_id)
+        if profile is None:
+            raise ProfileRepositoryError("missing")
+        return LoadedTTSProfile(repository_generation=1, profile=profile)
+
+
+def _roster_entry(*, name: str, voice_profile_id: str | None) -> dict[str, Any]:
+    return {"name": name, "voice_profile_id": voice_profile_id}
+
+
+def _silence_wav(duration_ms: int = 100, frame_rate: int = 22050) -> bytes:
+    """Build a real WAV payload of `duration_ms` of silence, in-process."""
+    segment = AudioSegment.silent(duration=duration_ms, frame_rate=frame_rate)
+    buffer = BytesIO()
+    segment.export(buffer, format="wav")
+    return buffer.getvalue()
+
+
+def _decode(payload: bytes) -> AudioSegment:
+    return AudioSegment.from_file(BytesIO(payload), format="wav")
+
+
+@dataclass
+class _RecordingSynthesize:
+    """The Task 5 seam Task 6's tests fake, per the brief and module docstring.
+
+    Returns a fixed-duration silent WAV per call, in turn order, unless
+    `fail_at` matches the current `turn_index`, in which case `fail_exc` is
+    raised instead. Records every call's arguments for wiring assertions.
+    """
+
+    duration_ms: int = 100
+    frame_rate: int = 22050
+    fail_at: int | None = None
+    fail_exc: BaseException | None = None
+    calls: list[tuple[Any, VoiceSelection, str, int]] = field(
+        default_factory=list, init=False
+    )
+
+    async def __call__(
+        self, tts_service: Any, selection: VoiceSelection, text: str, *, turn_index: int
+    ) -> bytes:
+        self.calls.append((tts_service, selection, text, turn_index))
+        if self.fail_at is not None and turn_index == self.fail_at:
+            raise self.fail_exc
+        return _silence_wav(self.duration_ms, self.frame_rate)
+
+
+def _patch_user_data_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Redirect `briefing_audio_dir()` into `tmp_path` -- never real storage."""
+    monkeypatch.setattr(briefing_audio, "get_user_data_dir", lambda: tmp_path)
+
+
+# --- Happy path ---------------------------------------------------------------
+
+
+async def test_happy_path_produces_a_complete_row_with_a_working_wav_file(
+    tmp_path, monkeypatch
+) -> None:
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [
+        {"speaker": "Host", "text": "Welcome back."},
+        {"speaker": "Host", "text": "Here is what happened."},
+    ]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+    synth = _RecordingSynthesize(duration_ms=100)
+
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=synth,
+    )
+
+    assert row["status"] == STATUS_COMPLETE
+    assert row["turn_count"] == 2
+    assert row["error"] is None
+    assert len(synth.calls) == 2
+    assert [call[3] for call in synth.calls] == [0, 1]
+    assert [call[2] for call in synth.calls] == [turns[0]["text"], turns[1]["text"]]
+
+    file_path = Path(row["file_path"])
+    assert file_path.exists()
+    payload = file_path.read_bytes()
+    assert payload[:4] == b"RIFF"
+    assert payload[8:12] == b"WAVE"
+
+    decoded = _decode(payload)
+    expected_ms = 2 * 100 + 350  # two 100ms turns + concat_wav_segments' 350ms gap
+    assert len(decoded) == pytest.approx(expected_ms, abs=50)
+    assert row["duration_seconds"] == pytest.approx(expected_ms / 1000.0, abs=0.06)
+
+
+async def test_the_audio_file_lands_under_the_private_data_dir(tmp_path, monkeypatch) -> None:
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=_RecordingSynthesize(),
+    )
+
+    expected_dir = briefing_audio_dir()
+    file_path = Path(row["file_path"])
+    assert file_path.is_relative_to(expected_dir)
+    assert file_path.name == f"script-{script_id}-audio-{row['id']}.wav"
+
+
+# --- Pre-flight refusals: no row ever written ---------------------------------
+
+
+async def test_script_not_complete_is_refused_with_no_audio_row(tmp_path, monkeypatch) -> None:
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    script_id = _script_id(db, roster=roster, turns=None, status="generating")
+
+    with pytest.raises(AudioGenerationError, match="not complete"):
+        await generate_script_audio(
+            db,
+            script_id,
+            tts_service=object(),
+            profile_service=_FakeProfileService({}),
+            synthesize=_RecordingSynthesize(),
+        )
+
+    assert db.list_briefing_audio(script_id) == []
+
+
+async def test_script_with_no_turns_is_refused_with_no_row(tmp_path, monkeypatch) -> None:
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    script_id = _script_id(db, roster=roster, turns=None, status="complete")
+
+    with pytest.raises(AudioGenerationError, match="no turns"):
+        await generate_script_audio(
+            db,
+            script_id,
+            tts_service=object(),
+            profile_service=_FakeProfileService({}),
+            synthesize=_RecordingSynthesize(),
+        )
+
+    assert db.list_briefing_audio(script_id) == []
+
+
+async def test_script_with_unparsable_turns_json_is_refused_with_no_row(
+    tmp_path, monkeypatch
+) -> None:
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    script_id = _script_id(db, roster=roster, turns=None, status="generating")
+    db.update_briefing_script(script_id, status="complete", turns_json="not json at all")
+
+    with pytest.raises(AudioGenerationError):
+        await generate_script_audio(
+            db,
+            script_id,
+            tts_service=object(),
+            profile_service=_FakeProfileService({}),
+            synthesize=_RecordingSynthesize(),
+        )
+
+    assert db.list_briefing_audio(script_id) == []
+
+
+# --- pydub preflight (Qodo review round 1, FIX A): a failed row, synthesize
+# never called -----------------------------------------------------------------
+
+
+async def test_pydub_unavailable_is_a_failed_row_and_synthesize_is_never_called(
+    tmp_path, monkeypatch
+) -> None:
+    """The whole point of the preflight: without it, every turn is
+    synthesized (real provider calls, real cost, real wait) before
+    `concat_wav_segments`/`wav_duration_seconds` ever get a chance to refuse
+    for lack of pydub. Patching `PYDUB_AVAILABLE` False and asserting the
+    fake `synthesize` seam's call count is 0 is the direct proof that no
+    synthesis is attempted at all.
+    """
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    monkeypatch.setattr(briefing_audio, "PYDUB_AVAILABLE", False)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [
+        {"speaker": "Host", "text": "Welcome back."},
+        {"speaker": "Host", "text": "Here is what happened."},
+    ]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+    synth = _RecordingSynthesize()
+
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=synth,
+    )
+
+    assert row["status"] == STATUS_FAILED
+    assert "pydub" in row["error"]
+    assert "pip install pydub" in row["error"]
+    assert row["file_path"] is None
+    assert len(synth.calls) == 0, "synthesize must never be called without pydub"
+    # Exactly one row -- created directly, mirroring the voice-resolution
+    # failure's own "no generating row a caller could see" invariant.
+    assert [audio_row["id"] for audio_row in db.list_briefing_audio(script_id)] == [
+        row["id"]
+    ]
+
+
+async def test_pydub_unavailable_never_touches_the_script(tmp_path, monkeypatch) -> None:
+    """Mirrors `test_a_failed_synthesis_never_touches_the_script`: the
+    parent `briefing_scripts` row must be untouched by this failure too."""
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    monkeypatch.setattr(briefing_audio, "PYDUB_AVAILABLE", False)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+
+    before = db.get_briefing_script(script_id)
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=_RecordingSynthesize(),
+    )
+    after = db.get_briefing_script(script_id)
+
+    assert row["status"] == STATUS_FAILED
+    assert before == after
+
+
+# --- In-band failures: a `failed` row, never a raise ---------------------------
+
+
+async def test_a_turn_raising_turn_synthesis_error_is_a_failed_row_naming_speaker_and_turn(
+    tmp_path, monkeypatch
+) -> None:
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Narrator", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [
+        {"speaker": "Narrator", "text": "First turn, fine."},
+        {"speaker": "Narrator", "text": "Second turn, fails."},
+    ]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+    boom = TurnSynthesisError("speaker 'Narrator' turn 1: " + ("x" * 2000))
+    synth = _RecordingSynthesize(fail_at=1, fail_exc=boom)
+
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=synth,
+    )
+
+    assert row["status"] == STATUS_FAILED
+    assert "Narrator" in row["error"]
+    assert "turn 1" in row["error"]
+    assert len(row["error"]) <= ERROR_CHAR_CAP + len(" [...]")
+    assert row["error"].endswith(" [...]")
+    assert row["file_path"] is None
+    # No file was ever written -- the pipeline fails before reaching the
+    # write step whenever a turn's own synthesis raises.
+    assert list(briefing_audio_dir().glob("*.wav")) == []
+
+
+async def test_a_failed_synthesis_never_touches_the_script(tmp_path, monkeypatch) -> None:
+    """THE named invariant (spec §Error handling ethos): a failed audio
+    render must leave the parent `briefing_scripts` row byte-identical."""
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "This turn fails."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+    synth = _RecordingSynthesize(
+        fail_at=0, fail_exc=TurnSynthesisError("speaker 'Host' turn 0: provider exploded")
+    )
+
+    before = db.get_briefing_script(script_id)
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=synth,
+    )
+    after = db.get_briefing_script(script_id)
+
+    assert row["status"] == STATUS_FAILED
+    assert before == after
+
+
+async def test_a_turn_naming_a_speaker_absent_from_the_voice_snapshot_is_a_failed_row(
+    tmp_path, monkeypatch
+) -> None:
+    """Turn/speaker mismatch: not a crash, and not silent substitution."""
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Ghost", "text": "Nobody assigned me a voice."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=_RecordingSynthesize(),
+    )
+
+    assert row["status"] == STATUS_FAILED
+    assert "Ghost" in row["error"]
+    assert row["file_path"] is None
+
+
+async def test_voice_resolution_failure_for_a_deleted_profile_is_a_failed_row(
+    tmp_path, monkeypatch
+) -> None:
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Analyst", voice_profile_id=str(_GUEST_PROFILE_ID))]
+    turns = [{"speaker": "Analyst", "text": "Some analysis."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({})  # the profile no longer exists
+
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=_RecordingSynthesize(),
+    )
+
+    assert row["status"] == STATUS_FAILED
+    assert "Analyst" in row["error"]
+    assert str(_GUEST_PROFILE_ID) in row["error"]
+    assert row["file_path"] is None
+    # Exactly one row -- created directly, never a "generating" row a
+    # caller could see.
+    assert [audio_row["id"] for audio_row in db.list_briefing_audio(script_id)] == [row["id"]]
+
+
+async def test_a_voice_resolution_failure_never_touches_the_script(
+    tmp_path, monkeypatch
+) -> None:
+    """The named invariant's OTHER path (task-1719): `test_a_failed_
+    synthesis_never_touches_the_script` only drives a `TurnSynthesisError`
+    from inside the per-turn synthesis loop. `resolve_roster_voices` raising
+    `VoiceResolutionError` is handled by `_record_voice_resolution_failure`
+    -- different code, reached BEFORE that loop ever starts -- and had no
+    script-untouched assertion of its own. Same setup as `test_voice_
+    resolution_failure_for_a_deleted_profile_is_a_failed_row`, plus the
+    before/after comparison the synthesis-path test already makes.
+    """
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Analyst", voice_profile_id=str(_GUEST_PROFILE_ID))]
+    turns = [{"speaker": "Analyst", "text": "Some analysis."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({})  # the profile no longer exists
+
+    before = db.get_briefing_script(script_id)
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=_RecordingSynthesize(),
+    )
+    after = db.get_briefing_script(script_id)
+
+    assert row["status"] == STATUS_FAILED
+    assert before == after
+
+
+async def test_no_file_left_behind_when_something_fails_after_the_write(
+    tmp_path, monkeypatch
+) -> None:
+    """Cleanup mandate: if anything fails after the file is written, remove it."""
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+
+    def _boom(payload: bytes):
+        raise briefing_audio.AudioStitchError("could not read duration")
+
+    monkeypatch.setattr(briefing_audio, "wav_duration_seconds", _boom)
+
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=_RecordingSynthesize(),
+    )
+
+    assert row["status"] == STATUS_FAILED
+    assert row["file_path"] is None
+    assert list(briefing_audio_dir().glob("*.wav")) == []
+
+
+async def test_no_orphan_file_when_the_atomic_write_itself_raises(
+    tmp_path, monkeypatch
+) -> None:
+    """The write path's OTHER failure shape (task-1719): `test_no_file_left_
+    behind_when_something_fails_after_the_write` (above) mocks `wav_duration_
+    seconds` to raise AFTER a real write already succeeded -- a genuine
+    post-write failure. This pins the earlier one: `atomic_private_write_
+    bytes` itself raising, a real write failure, not a downstream read
+    failure.
+
+    `atomic_private_write_bytes` (`Utils/private_paths.py`) writes the
+    payload to a private temporary file and only `os.rename`s it onto the
+    destination once that write, `fsync`, and postcondition check all
+    succeed -- the destination name is never touched before that final
+    rename, and the function's own `finally` unlinks the temporary file on
+    any exit path. So a raise from it, by construction, can never leave
+    anything at the destination path; that mechanism, and its temp-file
+    cleanup under a synthetic OS-level failure, is `private_paths`' own
+    guarantee to prove against its real POSIX write path (`Tests/Utils/
+    test_private_paths.py`, `Tests/Utils/test_private_persistent_
+    artifacts.py`), not this pipeline's -- this test monkeypatches the
+    function itself away rather than forcing a failure inside its real
+    implementation. What THIS test pins is `generate_script_audio`'s own
+    contract at that call site: a raise here must become a `failed` row,
+    exactly like every other in-band failure, never an uncaught exception
+    and never a file this pipeline itself left behind.
+    """
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+
+    def _boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(briefing_audio, "atomic_private_write_bytes", _boom)
+
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=_RecordingSynthesize(),
+    )
+
+    assert row["status"] == STATUS_FAILED
+    assert row["file_path"] is None
+    assert list(briefing_audio_dir().glob("*.wav")) == []
+
+
+# --- fail_interrupted_audio -----------------------------------------------------
+
+
+def test_fail_interrupted_audio_flips_orphaned_generating_rows_and_returns_the_count(
+    tmp_path,
+) -> None:
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    script_a = _script_id(db, roster=roster, turns=[{"speaker": "Host", "text": "hi"}])
+    script_b = _script_id(db, roster=roster, turns=[{"speaker": "Host", "text": "hi"}])
+
+    zombie = db.create_briefing_audio(script_a, voice_snapshot_json="[]")
+    other_zombie = db.create_briefing_audio(script_b, voice_snapshot_json="[]")
+    done = db.create_briefing_audio(script_a, voice_snapshot_json="[]")
+    db.update_briefing_audio(done, status="complete", file_path="/tmp/x.wav")
+    already_failed = db.create_briefing_audio(script_a, voice_snapshot_json="[]")
+    db.update_briefing_audio(already_failed, status="failed", error="provider said no")
+
+    assert fail_interrupted_audio(db, script_id=script_a) == 1
+
+    assert db.get_briefing_audio(zombie)["status"] == "failed"
+    assert db.get_briefing_audio(zombie)["error"] == "interrupted"
+    assert db.get_briefing_audio(other_zombie)["status"] == "generating"
+    assert db.get_briefing_audio(done)["status"] == "complete"
+    assert db.get_briefing_audio(already_failed)["error"] == "provider said no"
+
+    assert fail_interrupted_audio(db, script_id=script_a) == 0
+
+    assert fail_interrupted_audio(db) == 1
+    assert db.get_briefing_audio(other_zombie)["status"] == "failed"
+    assert db.get_briefing_audio(other_zombie)["error"] == "interrupted"
+
+
+# --- DB error propagation + off-loop threading (binding rules) -----------------
+
+
+async def test_generate_script_audio_propagates_a_real_db_error(tmp_path, monkeypatch) -> None:
+    """A genuine DB failure at the pre-flight load must propagate, never
+    degrade into a row -- mirrors `test_generate_script_propagates_a_real_db_error`.
+    """
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    script_id = _script_id(db, roster=roster, turns=[{"speaker": "Host", "text": "hi"}])
+
+    closed_connection = db._get_connection()
+    closed_connection.close()
+    monkeypatch.setattr(db, "_get_connection", lambda: closed_connection)
+    db._local = threading.local()  # evict every thread's cached (open) connection
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        await generate_script_audio(
+            db,
+            script_id,
+            tts_service=object(),
+            profile_service=_FakeProfileService({}),
+            synthesize=_RecordingSynthesize(),
+        )
+
+
+async def test_a_db_error_finalizing_the_row_propagates_and_still_cleans_up_the_file(
+    tmp_path, monkeypatch
+) -> None:
+    """The finalize DB write is a genuine DB call: its failure must
+    propagate (not become a `failed` row) per the binding "DB errors
+    propagate" rule -- but the now-orphaned file must still be removed.
+    """
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+
+    original_update = db.update_briefing_audio
+
+    def _spy_update(audio_id, **fields):
+        if fields.get("status") == STATUS_COMPLETE:
+            raise RuntimeError("finalize boom")
+        return original_update(audio_id, **fields)
+
+    monkeypatch.setattr(db, "update_briefing_audio", _spy_update)
+
+    with pytest.raises(RuntimeError, match="finalize boom"):
+        await generate_script_audio(
+            db,
+            script_id,
+            tts_service=object(),
+            profile_service=profile_service,
+            synthesize=_RecordingSynthesize(),
+        )
+
+    # The row never reached "complete" (the DB write that would have said
+    # so is exactly what raised), and no orphan file remains on disk.
+    [row] = db.list_briefing_audio(script_id)
+    assert row["status"] == STATUS_GENERATING
+    assert list(briefing_audio_dir().glob("*.wav")) == []
+
+
+async def test_generate_script_audio_db_work_runs_off_the_event_loop_thread(
+    tmp_path, monkeypatch
+) -> None:
+    """Mirrors `test_generate_script_db_work_runs_off_the_event_loop_thread`
+    (phase 2a): every DB call, and the audio file write itself, must be
+    dispatched off the event loop thread (2a's whole-branch ruling).
+    """
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+
+    loop_thread_id = threading.get_ident()
+    write_thread_ids: list[int] = []
+
+    for name in (
+        "get_briefing_script",
+        "create_briefing_audio",
+        "update_briefing_audio",
+    ):
+        original = getattr(db, name)
+
+        def _spy(*args, __original=original, **kwargs):
+            write_thread_ids.append(threading.get_ident())
+            return __original(*args, **kwargs)
+
+        setattr(db, name, _spy)
+
+    write_call_thread_ids: list[int] = []
+    original_write = briefing_audio.atomic_private_write_bytes
+
+    def _spy_write(*args, **kwargs):
+        write_call_thread_ids.append(threading.get_ident())
+        return original_write(*args, **kwargs)
+
+    monkeypatch.setattr(briefing_audio, "atomic_private_write_bytes", _spy_write)
+
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=_RecordingSynthesize(),
+    )
+
+    assert row["status"] == STATUS_COMPLETE
+    assert len(write_thread_ids) >= 3
+    assert all(tid != loop_thread_id for tid in write_thread_ids)
+    assert len(write_call_thread_ids) == 1
+    assert write_call_thread_ids[0] != loop_thread_id
+
+
+async def test_generate_script_audio_logs_no_turn_content_on_failure(
+    tmp_path, monkeypatch
+) -> None:
+    """Egress pin: an in-band synthesis failure must never put the turn's
+    text (or a traceback that could hold it) into the log.
+
+    Corrected scope (task-1719): this module's own docstring justifies the
+    egress rule by this app's file sink running `diagnose=True`/
+    `backtrace=True`, which annotates a *logged traceback's* lines with any
+    locals those lines reference. That could only matter for a log record
+    that actually carries an exception/traceback -- and the call this test
+    pins, `generate_script_audio`'s `except Exception as exc: logger.warning
+    (f"...: synthesis failed: {type(exc).__name__}")`, never attaches one:
+    it is a plain formatted string, built from the exception's TYPE name
+    alone, with no `logger.exception(...)` and no `logger.opt(exception=...)`
+    anywhere on this path. Verified directly (not merely reasoned about):
+    swapping the fake `synthesize` stub below for the real `synthesize_turn`
+    (so the raise happens several real frames deep, holding the turn text as
+    a live local in `_synthesize_legacy_chunk`/`synthesize_turn` themselves,
+    not just this stub's own thin body) produces a byte-identical captured
+    log line -- there is no traceback in either case for diagnose to dump
+    locals from. So this test does not, and cannot, prove "a deep
+    `synthesize_turn` frame's locals are safe under diagnose" -- there is no
+    such dumped frame to inspect on this path at all. What it does prove,
+    and what `"Traceback" not in log_text` below pins directly rather than
+    only by its consequence: this specific log statement's own shape -- type
+    name only, nothing attached -- is what actually keeps turn content out,
+    independent of which internal frame originally raised.
+    """
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    canary = "ZEBRACANARY"
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": canary}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+    synth = _RecordingSynthesize(
+        fail_at=0, fail_exc=TurnSynthesisError(f"speaker 'Host' turn 0: {canary} boom")
+    )
+
+    captured: list[str] = []
+    handler = logger.add(captured.append, level="DEBUG", diagnose=True, backtrace=True, catch=False)
+    try:
+        row = await generate_script_audio(
+            db,
+            script_id,
+            tts_service=object(),
+            profile_service=profile_service,
+            synthesize=synth,
+        )
+    finally:
+        logger.remove(handler)
+
+    assert row["status"] == STATUS_FAILED
+    log_text = "".join(captured)
+    assert log_text
+    assert "synthesis failed" in log_text
+    assert "TurnSynthesisError" in log_text
+    # The mechanism itself, not just its consequence: no traceback was ever
+    # attached to this record for diagnose to annotate in the first place.
+    assert "Traceback" not in log_text
+    assert canary not in log_text
+
+
+# --- In-process audio claims (spec #2 phase 4, Task 1) -----------------------
+#
+# Mirrors `test_briefing_service.py`'s own claims section exactly, scoped to
+# a script id (a synthesis attempt's collision unit) instead of a watchlist
+# id.
+
+
+def test_active_audio_claims_is_an_empty_snapshot_by_default():
+    assert active_audio_claims() == frozenset()
+
+
+def test_fail_interrupted_audio_spares_an_excluded_row_both_directions(tmp_path):
+    """Survey finding (a)'s audio-scoped sibling, updated for task-1890
+    (mirroring task-1812): `exclude` now names the audio ROW to spare, not
+    its script -- a row survives the sweep when its id is passed via
+    `exclude`, and is swept once it is not.
+
+    A padding row is inserted (and finished) first so the row under test's
+    own id is NOT the same integer as the script's id -- proving
+    `exclude={live_row}` protects because of the ROW id, not a
+    coincidental match with the script id (see `test_briefing_service.py`'s
+    identical fixture reasoning).
+    """
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    script_id = _script_id(db, roster=roster, turns=[{"speaker": "Host", "text": "hi"}])
+    padding = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+    db.update_briefing_audio(padding, status="complete", file_path="/tmp/x.wav")
+    live_row = db.create_briefing_audio(  # stands in for a live claim's own row
+        script_id, voice_snapshot_json="[]"
+    )
+    assert live_row != script_id, "the fixture must not coincidentally align the ids"
+
+    assert fail_interrupted_audio(db, exclude={live_row}) == 0
+    assert db.get_briefing_audio(live_row)["status"] == "generating"
+
+    assert fail_interrupted_audio(db, exclude={live_row}) == 0
+    assert fail_interrupted_audio(db) == 1
+    assert db.get_briefing_audio(live_row)["status"] == "failed"
+    assert db.get_briefing_audio(live_row)["error"] == "interrupted"
+
+
+async def test_a_second_synthesis_for_a_claimed_script_raises_before_any_row_insert(
+    tmp_path, monkeypatch
+) -> None:
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+    rows_before = len(db.list_briefing_audio(script_id))
+
+    with briefing_audio._claim_audio(script_id):
+        assert script_id in active_audio_claims()
+        with pytest.raises(GenerationInFlightError, match=str(script_id)):
+            await generate_script_audio(
+                db,
+                script_id,
+                tts_service=object(),
+                profile_service=profile_service,
+                synthesize=_RecordingSynthesize(),
+            )
+
+    assert len(db.list_briefing_audio(script_id)) == rows_before
+    assert script_id not in active_audio_claims()
+
+
+async def test_the_audio_claim_is_released_after_a_successful_render(
+    tmp_path, monkeypatch
+) -> None:
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=_RecordingSynthesize(),
+    )
+
+    assert row["status"] == STATUS_COMPLETE
+    assert script_id not in active_audio_claims()
+
+
+async def test_the_audio_claim_is_released_after_a_synthesis_failure(
+    tmp_path, monkeypatch
+) -> None:
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+    synth = _RecordingSynthesize(fail_at=0, fail_exc=TurnSynthesisError("boom"))
+
+    row = await generate_script_audio(
+        db,
+        script_id,
+        tts_service=object(),
+        profile_service=profile_service,
+        synthesize=synth,
+    )
+
+    assert row["status"] == STATUS_FAILED
+    assert script_id not in active_audio_claims()
+
+
+async def test_the_audio_claim_is_released_when_a_db_error_escapes(
+    tmp_path, monkeypatch
+) -> None:
+    """Mirrors `test_generate_script_audio_propagates_a_real_db_error`, plus
+    the claim-release assertion: a stuck claim would wedge scheduling for
+    this script forever."""
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    script_id = _script_id(db, roster=roster, turns=[{"speaker": "Host", "text": "hi"}])
+
+    closed_connection = db._get_connection()
+    closed_connection.close()
+    monkeypatch.setattr(db, "_get_connection", lambda: closed_connection)
+    db._local = threading.local()
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        await generate_script_audio(
+            db,
+            script_id,
+            tts_service=object(),
+            profile_service=_FakeProfileService({}),
+            synthesize=_RecordingSynthesize(),
+        )
+
+    assert script_id not in active_audio_claims()
+
+
+async def test_a_concurrent_synthesis_for_the_same_script_is_refused(
+    tmp_path, monkeypatch
+) -> None:
+    """Pins that the claim is held through the whole synthesis pass,
+    exactly like `test_briefing_service.py`'s own concurrency pin."""
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _slow_synthesize(tts_service, selection, text, *, turn_index):
+        entered.set()
+        await release.wait()
+        return _silence_wav()
+
+    first = asyncio.ensure_future(
+        generate_script_audio(
+            db,
+            script_id,
+            tts_service=object(),
+            profile_service=profile_service,
+            synthesize=_slow_synthesize,
+        )
+    )
+    await entered.wait()
+
+    assert script_id in active_audio_claims()
+    with pytest.raises(GenerationInFlightError, match=str(script_id)):
+        await generate_script_audio(
+            db,
+            script_id,
+            tts_service=object(),
+            profile_service=profile_service,
+            synthesize=_RecordingSynthesize(),
+        )
+
+    release.set()
+    row = await first
+    assert row["status"] == STATUS_COMPLETE
+    assert script_id not in active_audio_claims()
+
+
+# --- Row-scoped sweep exclusion (task-1890, generalizing task-1812) ---------
+#
+# `fail_interrupted_audio`'s `exclude` used to be script-granular: ANY
+# `generating` audio row for a script named in `exclude` survived, on the
+# reasoning that such a row is "a LIVE, in-process render" -- true only if a
+# script can have at most one `generating` audio row at a time. It cannot: a
+# crash-zombie row left by a PRIOR process (that process's own claim died
+# with it) can coexist with a freshly-claimed live row for the SAME script,
+# and script-scoped exclusion incidentally shielded the zombie too. `active_
+# audio_claim_row_ids()` names the live ROW instead, so a same-script
+# zombie is swept exactly as if nothing were claimed at all.
+
+
+def test_active_audio_claim_row_ids_is_an_empty_snapshot_by_default():
+    """With no audio claims taken, the row-id snapshot is an empty frozenset."""
+    assert active_audio_claim_row_ids() == frozenset()
+
+
+async def test_row_scoped_exclude_sweeps_a_same_script_zombie_while_sparing_the_live_row(
+    tmp_path, monkeypatch
+) -> None:
+    """The coexistence case the docstring used to over-claim protection
+    for: a crash-zombie audio row and a genuinely live claim, both
+    `generating`, both rendered from the SAME script, in the same sweep.
+    Row-scoped `exclude` must fail the zombie and leave the live row alone
+    -- script-scoped `exclude` (the pre-task-1890 shape) cannot tell them
+    apart and would spare both.
+    """
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+
+    # Stands in for a row a PRIOR process left behind mid-render: its own
+    # claim died with that process, so nothing in THIS process's
+    # `_ACTIVE_AUDIO_CLAIM_ROW_IDS` will ever name it.
+    zombie_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _slow_synthesize(tts_service, selection, text, *, turn_index):
+        entered.set()
+        await release.wait()
+        return _silence_wav()
+
+    first = asyncio.ensure_future(
+        generate_script_audio(
+            db,
+            script_id,
+            tts_service=object(),
+            profile_service=profile_service,
+            synthesize=_slow_synthesize,
+        )
+    )
+    await entered.wait()
+
+    # The live claim now protects its OWN row, not merely its script.
+    live_ids = active_audio_claim_row_ids()
+    assert live_ids, "a live claim's row must be recorded by the time synthesis runs"
+    assert zombie_id not in live_ids, (
+        "the zombie's id must never be recorded by a claim it did not make"
+    )
+
+    swept = fail_interrupted_audio(db, exclude=live_ids)
+
+    assert swept == 1
+    assert db.get_briefing_audio(zombie_id)["status"] == "failed"
+    assert db.get_briefing_audio(zombie_id)["error"] == "interrupted"
+    live_id = next(iter(live_ids))
+    assert db.get_briefing_audio(live_id)["status"] == "generating", (
+        "row-scoped exclude must not falsify the row a live claim is "
+        "actually writing"
+    )
+
+    release.set()
+    row = await first
+    assert row["status"] == STATUS_COMPLETE
+
+
+# --- The unrecorded-claim sweep window (task-1890, generalizing the ---------
+# whole-branch review fix in chore/briefings-residuals-1810-1812) -----------
+#
+# `generate_script_audio` records `_ACTIVE_AUDIO_CLAIM_ROW_IDS[script_id]`
+# only after `db.create_briefing_audio`'s own `to_thread` call returns. For
+# the span before that call runs (script load, pydub check, voice
+# resolution) no audio row exists yet at all; once the `INSERT` itself has
+# run but before the coroutine resumes to record the id, the row exists,
+# reads `generating`, and `active_audio_claim_row_ids()` alone names
+# nothing that protects it. A sweep at that exact instant used to falsify
+# the row. `pending_audio_claim_script_ids()` closes the window: `_claim_
+# audio(script_id)` with no `audio_id` reproduces the registry state
+# mid-window directly, with no need to block inside `generate_script_audio`
+# itself.
+
+
+def test_pending_audio_claim_script_ids_is_an_empty_snapshot_by_default():
+    """With no audio claims taken, the pending (unrecorded) set is empty."""
+    assert pending_audio_claim_script_ids() == frozenset()
+
+
+def test_an_audio_claim_with_no_recorded_row_id_yet_is_named_pending(tmp_path):
+    """Direct pin of the accessor: a claim taken via `_claim_audio` without
+    an `audio_id` (exactly the registry state before `generate_script_
+    audio` resumes to record one after `db.create_briefing_audio`'s own
+    `to_thread` call) must appear in `pending_audio_claim_script_ids()`,
+    and must disappear the instant a row id IS recorded.
+    """
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    script_id = _script_id(db, roster=roster, turns=[{"speaker": "Host", "text": "hi"}])
+
+    with briefing_audio._claim_audio(script_id):
+        assert active_audio_claim_row_ids() == frozenset(), (
+            "no row id has been recorded yet -- this is the window itself"
+        )
+        assert script_id in pending_audio_claim_script_ids()
+
+    assert script_id not in pending_audio_claim_script_ids(), (
+        "the claim released -- nothing should still read as pending"
+    )
+
+    live_row = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+    with briefing_audio._claim_audio(script_id, audio_id=live_row):
+        assert script_id not in pending_audio_claim_script_ids(), (
+            "a claim whose row id IS recorded is no longer pending"
+        )
+
+
+def test_an_audio_claim_with_no_recorded_row_id_yet_survives_a_sweep_of_its_own_row(
+    tmp_path,
+):
+    """The window itself, closed: a `generating` audio row for a script
+    whose claim exists but whose row id is not yet recorded must survive a
+    sweep run at that exact instant -- reproducing the same regression
+    `test_briefing_service.py`'s own analogous test pins for briefings.
+
+    Without `exclude_scripts`, `active_audio_claim_row_ids()` alone is
+    empty here (nothing recorded yet) and the row would be swept as a
+    false zombie -- exactly the regression this pins.
+    """
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    script_id = _script_id(db, roster=roster, turns=[{"speaker": "Host", "text": "hi"}])
+    # Stands in for the row `db.create_briefing_audio` just wrote, before
+    # `generate_script_audio` resumes on the event loop to record its id.
+    live_row = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+
+    with briefing_audio._claim_audio(script_id):
+        row_ids = active_audio_claim_row_ids()
+        pending = pending_audio_claim_script_ids()
+        assert row_ids == frozenset(), "the row id is not recorded in this window"
+        assert script_id in pending
+
+        swept = fail_interrupted_audio(db, exclude=row_ids, exclude_scripts=pending)
+
+    assert swept == 0
+    assert db.get_briefing_audio(live_row)["status"] == "generating", (
+        "a claim whose row id has not been recorded yet must still spare "
+        "its own row from a concurrent sweep"
+    )
+
+
+async def test_row_scoped_exclude_still_sweeps_a_same_script_zombie_once_the_id_lands(
+    tmp_path, monkeypatch
+) -> None:
+    """The task-1890 coexistence fix, re-asserted alongside the new guard:
+    once a claim's row id IS recorded, `pending_audio_claim_script_ids()`
+    no longer names its script, so `exclude_scripts` goes back to being a
+    no-op for it and row-scoped `exclude` alone decides -- a same-script
+    crash zombie is still swept even though the script itself has a live
+    claim.
+    """
+    _patch_user_data_dir(monkeypatch, tmp_path)
+    db = _db(tmp_path)
+    roster = [_roster_entry(name="Host", voice_profile_id=str(_HOST_PROFILE_ID))]
+    turns = [{"speaker": "Host", "text": "Hello."}]
+    script_id = _script_id(db, roster=roster, turns=turns)
+    profile_service = _FakeProfileService({_HOST_PROFILE_ID: _profile()})
+
+    zombie_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _slow_synthesize(tts_service, selection, text, *, turn_index):
+        entered.set()
+        await release.wait()
+        return _silence_wav()
+
+    first = asyncio.ensure_future(
+        generate_script_audio(
+            db,
+            script_id,
+            tts_service=object(),
+            profile_service=profile_service,
+            synthesize=_slow_synthesize,
+        )
+    )
+    await entered.wait()
+
+    row_ids = active_audio_claim_row_ids()
+    pending = pending_audio_claim_script_ids()
+    assert row_ids, "the live claim's row id must be recorded by the time synthesis runs"
+    assert script_id not in pending, (
+        "once the row id lands, the script is no longer 'pending'"
+    )
+
+    swept = fail_interrupted_audio(db, exclude=row_ids, exclude_scripts=pending)
+
+    assert swept == 1
+    assert db.get_briefing_audio(zombie_id)["status"] == "failed"
+    live_id = next(iter(row_ids))
+    assert db.get_briefing_audio(live_id)["status"] == "generating", (
+        "the live row must survive even with exclude_scripts passed "
+        "alongside row-scoped exclude"
+    )
+
+    release.set()
+    row = await first
+    assert row["status"] == STATUS_COMPLETE

@@ -264,6 +264,48 @@ async def test_server_prompt_service_enforces_policy_actions():
 
 
 @pytest.mark.asyncio
+async def test_server_prompt_service_forwards_paginated_list_and_exact_search_params():
+    client = FakePromptClient()
+    service = ServerPromptService(client=client)
+
+    await service.list_prompts(
+        page=2,
+        per_page=25,
+        include_deleted=True,
+        sort_by="name",
+        sort_order="asc",
+    )
+    await service.search_prompts(
+        search_query="alpha",
+        page=1,
+        results_per_page=25,
+        include_deleted=False,
+    )
+
+    assert client.calls == [
+        (
+            "list_prompts",
+            {
+                "page": 2,
+                "per_page": 25,
+                "include_deleted": True,
+                "sort_by": "name",
+                "sort_order": "asc",
+            },
+        ),
+        (
+            "search_prompts",
+            {
+                "search_query": "alpha",
+                "page": 1,
+                "results_per_page": 25,
+                "include_deleted": False,
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_server_prompt_service_routes_prompt_version_controls():
     client = FakePromptClient()
     policy = Mock()

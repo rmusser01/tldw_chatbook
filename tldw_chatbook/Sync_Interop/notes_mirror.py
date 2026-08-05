@@ -11,6 +11,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 
@@ -23,7 +24,10 @@ class MirrorRecord:
 
 class NotesMirror:
     def __init__(self, db_path: str | Path = ":memory:") -> None:
-        self._conn = sqlite3.connect(str(self._validate_db_path(db_path)))
+        self._conn = connect_private_sqlite(
+            "sync.notes_mirror",
+            self._validate_db_path(db_path),
+        )
         self._conn.row_factory = sqlite3.Row
         with self._conn:
             self._conn.execute(

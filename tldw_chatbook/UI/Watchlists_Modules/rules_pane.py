@@ -9,6 +9,10 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Input, Select, Static, Switch
 
+from ...Widgets.prune_safe_select import PruneSafeSelect
+from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from .table_selection import highlight_is_user_driven
+
 
 class RuleSelected(Message):
     """Posted when the user selects an alert rule in the rules table."""
@@ -38,7 +42,29 @@ class EditRuleRequested(Message):
         super().__init__()
 
 
-class RulesPane(Vertical):
+class RuleFormVisibilityChanged(Message):
+    """Posted whenever the rule form opens or closes, and which rule (if any)
+    it is editing.
+
+    `RulesPane` lives inside a `WatchlistsWorkbench` region, and that
+    workbench's `region_layout` reactive is `recompose=True` — collapsing or
+    expanding *any* region (including one unrelated to Rules, e.g. `[` on the
+    left rail) rebuilds the whole workbench and constructs a brand new
+    `RulesPane`. Without this message the screen has no way to know an edit
+    was in progress, so an open edit form would be silently destroyed on the
+    next such rebuild — the same failure `CreateFormVisibilityChanged` in
+    sources_pane.py already fixes for the Sources create form. The owning
+    screen mirrors this into its own state and re-seeds it into the
+    freshly-constructed pane via `RulesPane.edit_rule`.
+    """
+
+    def __init__(self, is_open: bool, editing_rule: dict[str, Any] | None) -> None:
+        self.is_open = is_open
+        self.editing_rule = editing_rule
+        super().__init__()
+
+
+class RulesPane(RecomposeCaptureGuard, Vertical):
     """Alert rule list and editor for watchlists."""
 
     rules = reactive[list[dict[str, Any]]]([], recompose=True)
@@ -77,7 +103,7 @@ class RulesPane(Vertical):
                     id="rules-create-name",
                     value=str(rule.get("name") or "") if rule else "",
                 )
-                yield Select(
+                yield PruneSafeSelect(
                     self._CONDITION_OPTIONS,
                     value=str(rule.get("condition_type") or "no_items") if rule else "no_items",
                     id="rules-create-condition",
@@ -93,7 +119,7 @@ class RulesPane(Vertical):
                     id="rules-create-threshold",
                     value=threshold_value,
                 )
-                yield Select(
+                yield PruneSafeSelect(
                     self._SEVERITY_OPTIONS,
                     value=str(rule.get("severity") or "warning") if rule else "warning",
                     id="rules-create-severity",
@@ -130,6 +156,29 @@ class RulesPane(Vertical):
         event.stop()
         self.select_rule_by_id(str(event.cell_key.row_key.value))
 
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Select on cursor movement, which is what a mouse click produces.
+
+        TASK-1105, matching `SourcesPane`. `RowSelected`/`CellSelected` fire on
+        *activation* -- Enter, or a second click on an already-current cell --
+        so a single click on any row but the current one moved the cursor and
+        selected nothing.
+        """
+        event.stop()
+        if not highlight_is_user_driven(event):
+            return
+        if event.row_key is not None and event.row_key.value is not None:
+            self.select_rule_by_id(str(event.row_key.value))
+
+    def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
+        """Same, for a table whose cursor is cell-shaped rather than row-shaped."""
+        event.stop()
+        if not highlight_is_user_driven(event):
+            return
+        row_key = getattr(event.cell_key, "row_key", None)
+        if row_key is not None and row_key.value is not None:
+            self.select_rule_by_id(str(row_key.value))
+
     def select_rule_by_id(self, rule_id: str) -> None:
         """Select the rule with the given id and notify listeners."""
         rule = None
@@ -142,6 +191,22 @@ class RulesPane(Vertical):
     def watch_selected_rule(self, rule: dict[str, Any] | None) -> None:
         if self.is_mounted:
             self.post_message(RuleSelected(rule))
+
+    def watch_show_rule_form(self, is_open: bool) -> None:
+        """Tell the owning screen the rule form opened or closed, and on what.
+
+        Mirrors `show_rule_form` (plus which rule, if any, is being edited)
+        into a `RuleFormVisibilityChanged` message so the screen can persist
+        it across a workbench rebuild — see that message's docstring for why
+        this pane cannot just rely on its own reactives surviving a
+        recompose.
+
+        Args:
+            is_open: The form's new visibility.
+        """
+        if self.is_mounted:
+            editing_rule = self.selected_rule if self._editing_rule_id else None
+            self.post_message(RuleFormVisibilityChanged(is_open, editing_rule))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = str(event.button.id)

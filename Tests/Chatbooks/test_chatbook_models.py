@@ -30,6 +30,7 @@ class TestContentType:
         assert ContentType.MEDIA.value == "media"
         assert ContentType.PROMPT.value == "prompt"
         assert ContentType.EMBEDDING.value == "embedding"
+        assert ContentType.KEPT_BRIEFING.value == "kept_briefing"
 
 
 class TestContentItem:
@@ -320,6 +321,46 @@ class TestChatbookManifest:
         assert "created_at" in data
         assert "updated_at" in data
         assert "statistics" in data
+        assert data["statistics"]["total_kept_briefings"] == 0
+
+    def test_manifest_from_dict_defaults_total_kept_briefings_when_absent(self):
+        """Backward compat (task-1870): a manifest written before this
+        content type existed has no "total_kept_briefings" statistics key at
+        all -- `from_dict` must default it rather than raise."""
+        data = {
+            "version": "1.0",
+            "name": "Legacy Chatbook",
+            "description": "predates kept briefings",
+            "created_at": "2024-01-01T00:00:00+00:00",
+            "updated_at": "2024-01-02T00:00:00+00:00",
+            "statistics": {"total_notes": 1},
+        }
+
+        manifest = ChatbookManifest.from_dict(data)
+
+        assert manifest.total_kept_briefings == 0
+
+    def test_manifest_round_trips_kept_briefing_content_item_and_statistic(self):
+        manifest = ChatbookManifest(
+            version=ChatbookVersion.V1,
+            name="Test",
+            description="Test",
+            content_items=[
+                ContentItem(
+                    id="7",
+                    type=ContentType.KEPT_BRIEFING,
+                    title="Kept briefing 7",
+                )
+            ],
+            total_kept_briefings=1,
+        )
+
+        data = manifest.to_dict()
+        assert data["statistics"]["total_kept_briefings"] == 1
+
+        restored = ChatbookManifest.from_dict(data)
+        assert restored.total_kept_briefings == 1
+        assert restored.content_items[0].type == ContentType.KEPT_BRIEFING
 
     def test_manifest_from_dict(self):
         """Test creating manifest from dictionary."""

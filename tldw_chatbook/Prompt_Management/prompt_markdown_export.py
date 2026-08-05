@@ -3,7 +3,8 @@
 Emits the exact custom ``### SECTION ###`` grammar that
 ``Prompt_Management.Prompts_Interop.parse_markdown_prompts_from_content``
 reads (``TITLE`` -- name + optional details, ``AUTHOR``, ``SYSTEM``,
-``USER``, ``KEYWORDS``), so a Library prompt exported via
+``USER``, ``KEYWORDS``; structured artifacts also append ``ARTIFACT_TYPE``
+and ``STRUCTURE``), so a Library prompt exported via
 ``render_prompt_markdown`` and re-imported via that parser round-trips its
 name/system prompt/user prompt (and author/details/keywords, modulo the
 parser's own empty-string-vs-``None`` normalization -- see the docstring
@@ -12,6 +13,7 @@ below) unchanged. No Textual/DB imports -- this module only renders text.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Mapping
 
 __all__ = ["render_prompt_markdown"]
@@ -31,6 +33,41 @@ def _keywords_csv(value: Any) -> str:
     return ""
 
 
+def _canonical_definition(value: Any) -> Mapping[str, Any] | None:
+    """Return a definition object without transforming user-authored content."""
+    if isinstance(value, Mapping):
+        return value
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, Mapping) else None
+
+
+def _structured_markdown_sections(detail: Mapping[str, Any]) -> str:
+    """Render optional structured metadata after the legacy-compatible body."""
+    if detail.get("prompt_format") != "structured":
+        return ""
+    definition = _canonical_definition(detail.get("prompt_definition"))
+    if definition is None:
+        return ""
+    artifact_type = detail.get("artifact_type") or "prompt"
+    if artifact_type not in {"prompt", "recipe"}:
+        return ""
+    structure = json.dumps(
+        definition,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return (
+        f"\n### ARTIFACT_TYPE ###\n{artifact_type}\n"
+        f"\n### STRUCTURE ###\n```json\n{structure}\n```\n"
+    )
+
+
 def render_prompt_markdown(detail: Mapping[str, Any]) -> str:
     """Render a prompt detail mapping into the parser's custom MD grammar.
 
@@ -46,7 +83,10 @@ def render_prompt_markdown(detail: Mapping[str, Any]) -> str:
     Returns:
         Markdown text using the ``### TITLE ###`` / ``### AUTHOR ###`` /
         ``### SYSTEM ###`` / ``### USER ###`` / ``### KEYWORDS ###`` section
-        grammar ``parse_markdown_prompts_from_content`` parses.
+        grammar ``parse_markdown_prompts_from_content`` parses. Structured
+        records with a JSON-object definition append canonical
+        ``ARTIFACT_TYPE`` and fenced ``STRUCTURE`` sections after that
+        compatibility body.
 
         The ``AUTHOR`` section is ALWAYS emitted, even when ``author`` is
         blank: the parser's ``TITLE`` block only stops capturing "details"
@@ -104,4 +144,4 @@ def render_prompt_markdown(detail: Mapping[str, Any]) -> str:
     if keywords_csv:
         lines.append("### KEYWORDS ###")
         lines.append(keywords_csv)
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines) + "\n" + _structured_markdown_sections(detail)

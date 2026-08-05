@@ -8,11 +8,14 @@ Chatbook Performance Tests
 Tests focused on performance characteristics and optimization.
 """
 
+import shutil
+
 import pytest
 import time
 import threading
 import concurrent.futures
 from contextlib import contextmanager
+from statistics import median
 from typing import Dict, Any, List, Tuple
 import psutil
 import os
@@ -95,7 +98,7 @@ class TestChatbookPerformance:
     """Performance tests for chatbook operations."""
 
     @pytest.fixture
-    def performance_db_setup(self, tmp_path):
+    def performance_db_setup(self, tmp_path, chachanotes_template_db):
         """Setup databases for performance testing."""
         db_dir = tmp_path / "perf_dbs"
         db_dir.mkdir()
@@ -107,6 +110,7 @@ class TestChatbookPerformance:
         }
 
         # Initialize databases
+        shutil.copyfile(chachanotes_template_db, db_paths["ChaChaNotes"])
         chacha_db = CharactersRAGDB(db_paths["ChaChaNotes"], "perf_test")
         media_db = MediaDatabase(db_paths["Media"], "perf_test")
         prompts_db = PromptsDatabase(db_paths["Prompts"], "perf_test")
@@ -487,22 +491,20 @@ class TestChatbookPerformance:
             assert success is True
             import_times.append(import_time)
 
-        # Import times should remain consistent after the first warm-up import.
-        # These operations complete in milliseconds, so timer jitter can exceed
-        # a purely relative threshold on otherwise healthy runs.
+        # Compare robust early and late samples after the first warm-up import.
+        # These operations complete in milliseconds, so one scheduler outlier
+        # must not decide whether the whole sequence degraded.
         steady_times = import_times[1:] if len(import_times) > 1 else import_times
-        avg_time = sum(steady_times) / len(steady_times)
-        max_deviation = max(abs(t - avg_time) for t in steady_times)
+        sample_size = max(1, len(steady_times) // 2)
+        early_median = median(steady_times[:sample_size])
+        late_median = median(steady_times[-sample_size:])
 
         print(
             f"Incremental imports: times={[f'{t:.3f}' for t in import_times]}, "
-            f"avg={avg_time:.3f}s, max_deviation={max_deviation:.3f}s"
+            f"early_median={early_median:.3f}s, late_median={late_median:.3f}s"
         )
 
-        # Performance should not degrade significantly
-        assert max_deviation < max(
-            avg_time * 0.5, 0.01
-        )  # Within 50% or 10ms jitter floor
+        assert late_median < max(early_median * 3, early_median + 0.05)
 
     @pytest.mark.slow
     def test_stress_test_extreme_scale(self, performance_db_setup, tmp_path):

@@ -11,7 +11,9 @@ from tldw_chatbook.Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPS
 
 CONSOLE_RAIL_LEFT_DEFAULT_OPEN = True
 CONSOLE_RAIL_RIGHT_DEFAULT_OPEN = False
-CONSOLE_RAIL_SECTION_IDS = ("session", "context", "model", "details", "agent")
+# Task-400: the "context" (staged sources) section moved from the left rail
+# into the Inspector rail, so it is no longer a collapsible left-rail section.
+CONSOLE_RAIL_SECTION_IDS = ("session", "model", "details", "agent", "character")
 CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS = 150
 CONSOLE_RAIL_CONTEXT_LABEL = f"Context {GLYPH_COLLAPSED}"
 CONSOLE_RAIL_INSPECTOR_LABEL = f"{GLYPH_COLLAPSE_LEFT} Inspector"
@@ -69,10 +71,10 @@ class ConsoleRailPreferences:
     left_open: bool = CONSOLE_RAIL_LEFT_DEFAULT_OPEN
     right_open: bool = CONSOLE_RAIL_RIGHT_DEFAULT_OPEN
     session_open: bool = True
-    context_open: bool = True
     model_open: bool = True
     details_open: bool = False
     agent_open: bool = False
+    character_open: bool = True
 
 
 @dataclass(frozen=True)
@@ -100,10 +102,10 @@ class ConsoleRailState:
     persistence_key: str = ""
     right_forced_collapsed: bool = False
     session_open: bool = True
-    context_open: bool = True
     model_open: bool = True
     details_open: bool = False
     agent_open: bool = False
+    character_open: bool = True
 
 
 def _sanitize_key_part(value: Any) -> str:
@@ -125,6 +127,16 @@ def _build_persistence_key(workspace_id: str, scope_id: str) -> str:
     return f"{_PERSISTENCE_PREFIX}:{workspace_id}:{scope_id}"
 
 
+#: TASK-718: the single per-workspace layout scope. Rail section preferences
+#: were previously keyed per workspace+conversation, which multiplied config
+#: entries per chat and reset a user's section layout on every new
+#: conversation (a toggle made moments earlier was gone after a workspace
+#: switch round-trip). Layout is a workspace-level preference.
+CONSOLE_RAIL_LAYOUT_SCOPE = "layout"
+#: Legacy no-conversation scope kept readable as a one-time migration source.
+_LEGACY_GLOBAL_SCOPE = "global"
+
+
 def build_console_rail_preference_key(
     *,
     workspace_id: Any = None,
@@ -135,35 +147,22 @@ def build_console_rail_preference_key(
 
     Args:
         workspace_id: Workspace scope value, or global when empty.
-        conversation_id: Preferred conversation-specific scope value.
-        session_id: Temporary session scope used when no conversation exists.
+        conversation_id: Accepted for API compatibility; no longer shapes the
+            key (TASK-718 - preferences are per workspace).
+        session_id: Accepted for API compatibility; no longer shapes the key.
 
     Returns:
-        Primary preference key, with a session fallback when both conversation
-        and session scopes are available.
+        The per-workspace layout key, with the legacy ``:global`` key as the
+        read-only migration fallback (adopted by the caller's fallback
+        migration when the layout key has never been written).
     """
+    del conversation_id, session_id
     workspace_scope = _sanitize_key_part(workspace_id)
-    conversation_scope = _sanitize_optional_key_part(conversation_id)
-    session_scope = _sanitize_optional_key_part(session_id)
-
-    if conversation_scope:
-        fallback_value = (
-            _build_persistence_key(workspace_scope, session_scope)
-            if session_scope
-            else None
-        )
-        return ConsoleRailPreferenceKey(
-            workspace_id=workspace_scope,
-            scope_id=conversation_scope,
-            value=_build_persistence_key(workspace_scope, conversation_scope),
-            fallback_value=fallback_value,
-        )
-
-    scope_id = session_scope or "global"
     return ConsoleRailPreferenceKey(
         workspace_id=workspace_scope,
-        scope_id=scope_id,
-        value=_build_persistence_key(workspace_scope, scope_id),
+        scope_id=CONSOLE_RAIL_LAYOUT_SCOPE,
+        value=_build_persistence_key(workspace_scope, CONSOLE_RAIL_LAYOUT_SCOPE),
+        fallback_value=_build_persistence_key(workspace_scope, _LEGACY_GLOBAL_SCOPE),
     )
 
 
@@ -174,27 +173,22 @@ def collect_prunable_console_rail_keys(
 ) -> list[str]:
     """Return stored rail-preference keys whose scope is no longer live.
 
-    A key is prunable only when it matches the canonical
-    ``console_rail_state:<workspace>:<scope>`` shape and its scope id is
-    neither the reserved ``global`` scope nor present in ``live_scope_ids``.
-    Unrecognized key shapes are always kept.
+    TASK-718: preferences are per-workspace (``:layout`` scope) with the
+    legacy ``:global`` scope kept as the migration source, so every other
+    scoped key (per-conversation/per-session entries from the old scheme) is
+    stale by definition and safe to delete. Unrecognized key shapes are
+    always kept.
 
     Args:
         stored_keys: Iterable of stored config key strings (non-string
             entries are ignored). ``None`` is treated as empty.
-        live_scope_ids: Iterable of live scope ids (conversation ids plus
-            open session ids), matched after the module's key sanitization.
-            ``None`` is treated as empty.
+        live_scope_ids: Accepted for API compatibility; conversation/session
+            liveness no longer affects prunability.
 
     Returns:
         The subset of ``stored_keys`` safe to delete, order-preserved.
     """
-    live_sanitized = {
-        sanitized
-        for raw in (live_scope_ids or ())
-        for sanitized in (_sanitize_optional_key_part(raw),)
-        if sanitized
-    }
+    del live_scope_ids
     prunable: list[str] = []
     for key in stored_keys or ():
         if not isinstance(key, str):
@@ -203,7 +197,7 @@ def collect_prunable_console_rail_keys(
         if len(parts) != 3 or parts[0] != _PERSISTENCE_PREFIX:
             continue
         scope_id = parts[2]
-        if scope_id == "global" or scope_id in live_sanitized:
+        if scope_id in (CONSOLE_RAIL_LAYOUT_SCOPE, _LEGACY_GLOBAL_SCOPE):
             continue
         prunable.append(key)
     return prunable
@@ -231,6 +225,8 @@ def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
 
     Returns:
         Rail preferences with invalid or missing fields replaced by defaults.
+        Legacy ``context_open`` keys (persisted before task-400 moved the
+        staged-sources Context section into the Inspector rail) are ignored.
     """
     defaults = ConsoleRailPreferences()
     if not isinstance(raw, Mapping):
@@ -240,25 +236,34 @@ def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
         left_open=_coerce_bool(raw.get("left_open"), defaults.left_open),
         right_open=_coerce_bool(raw.get("right_open"), defaults.right_open),
         session_open=_coerce_bool(raw.get("session_open"), defaults.session_open),
-        context_open=_coerce_bool(raw.get("context_open"), defaults.context_open),
         model_open=_coerce_bool(raw.get("model_open"), defaults.model_open),
         details_open=_coerce_bool(raw.get("details_open"), defaults.details_open),
         agent_open=_coerce_bool(raw.get("agent_open"), defaults.agent_open),
+        character_open=_coerce_bool(raw.get("character_open"), defaults.character_open),
     )
 
 
 def serialize_console_rail_preferences(
     preferences: ConsoleRailPreferences,
 ) -> dict[str, bool]:
-    """Serialize Console rail preferences to the persistence shape."""
+    """Serialize Console rail preferences to the persistence shape.
+
+    Args:
+        preferences: Rail preferences to serialize.
+
+    Returns:
+        Persistence dict with the left/right rail flags and the five
+        left-rail section flags (task-400 dropped ``context_open``; P3c
+        added ``character_open``).
+    """
     return {
         "left_open": bool(preferences.left_open),
         "right_open": bool(preferences.right_open),
         "session_open": bool(preferences.session_open),
-        "context_open": bool(preferences.context_open),
         "model_open": bool(preferences.model_open),
         "details_open": bool(preferences.details_open),
         "agent_open": bool(preferences.agent_open),
+        "character_open": bool(preferences.character_open),
     }
 
 
@@ -288,19 +293,23 @@ def _has_active_staged_summary(value: Any) -> bool:
 
 def build_console_context_rail_badge(
     *,
-    staged_source_count: Any = 0,
-    staged_summary: Any = "",
     workspace_label: Any = "",
     session_label: Any = "",
 ) -> str:
-    """Build the left rail badge from staged context and workspace state."""
-    count = _coerce_non_negative_int(staged_source_count)
-    if count > 0:
-        return f"{count} staged"
+    """Build the left rail badge from workspace/session state.
 
-    if _has_active_staged_summary(staged_summary):
-        return "staged"
+    Task-400: staged-context signals moved to the Inspector rail badge along
+    with the staged-sources section itself, so the left badge summarizes only
+    what the left rail actually holds (workspace + session context).
 
+    Args:
+        workspace_label: Active workspace display label; default/fallback
+            labels are treated as no workspace.
+        session_label: Active session title, when any.
+
+    Returns:
+        ``"workspace"``, ``"session"``, or ``""`` when neither applies.
+    """
     workspace_text = _clean_text(workspace_label)
     if workspace_text and workspace_text.lower() not in _WORKSPACE_FALLBACK_LABELS:
         return "workspace"
@@ -375,8 +384,29 @@ def build_console_inspector_rail_badge(
     tool_count: Any = 0,
     approval_count: Any = 0,
     can_save_chatbook: bool = False,
+    staged_source_count: Any = 0,
+    staged_summary: Any = "",
 ) -> str:
-    """Build the right rail badge from run, review, tool, and artifact state."""
+    """Build the right rail badge from run, review, tool, and staged state.
+
+    Task-400: the staged-sources Context section lives in the Inspector rail,
+    so its "N staged"/"staged" badge surfaces here. Action-required signals
+    (failed/setup/blocked/approvals/tools) keep precedence; staged context
+    outranks the informational artifact/source readiness fallbacks.
+
+    Args:
+        run_status: Current Console run status value or enum.
+        inspector_rows: Inspector display rows used for keyword matching.
+        tool_count: Pending tool-call count.
+        approval_count: Pending approval count.
+        can_save_chatbook: Whether a Chatbook artifact save is available.
+        staged_source_count: Number of staged sources for the next send.
+        staged_summary: Staged-context summary line; inactive/legacy
+            empty-state copy is ignored.
+
+    Returns:
+        The highest-precedence badge string, or ``""`` when nothing applies.
+    """
     normalized_run_status = _normalized_status(run_status)
     if normalized_run_status == "failed" or _has_row_match(inspector_rows, {"failed"}):
         return "failed"
@@ -398,6 +428,13 @@ def build_console_inspector_rail_badge(
 
     if _coerce_non_negative_int(tool_count) > 0:
         return "tools"
+
+    staged_count = _coerce_non_negative_int(staged_source_count)
+    if staged_count > 0:
+        return f"{staged_count} staged"
+
+    if _has_active_staged_summary(staged_summary):
+        return "staged"
 
     if can_save_chatbook or _has_row_readiness_match(
         inspector_rows,
@@ -426,7 +463,30 @@ def build_console_rail_state(
     can_save_chatbook: bool = False,
     available_columns: int | None = None,
 ) -> ConsoleRailState:
-    """Build effective Console rail state without importing Textual."""
+    """Build effective Console rail state without importing Textual.
+
+    Args:
+        preference_key: Persistence key for the active workspace/scope.
+        stored_preferences: Raw stored preference payload, if any (legacy
+            ``context_open`` keys are ignored; task-400).
+        staged_source_count: Staged-source count routed to the Inspector
+            rail badge.
+        staged_summary: Staged-context summary routed to the Inspector
+            rail badge.
+        workspace_label: Active workspace display label for the left badge.
+        session_label: Active session title for the left badge.
+        run_status: Current Console run status for the right badge.
+        inspector_rows: Inspector display rows for right-badge matching.
+        tool_count: Pending tool-call count for the right badge.
+        approval_count: Pending approval count for the right badge.
+        can_save_chatbook: Whether a Chatbook artifact save is available.
+        available_columns: Current terminal width, when known, for the
+            compact right-rail collapse rule.
+
+    Returns:
+        Effective rail state combining stored preferences, badges, and the
+        responsive right-rail collapse.
+    """
     preferences = coerce_console_rail_preferences(stored_preferences)
     right_forced_collapsed = (
         available_columns is not None
@@ -439,8 +499,6 @@ def build_console_rail_state(
         preferred_left_open=preferences.left_open,
         preferred_right_open=preferences.right_open,
         left_badge=build_console_context_rail_badge(
-            staged_source_count=staged_source_count,
-            staged_summary=staged_summary,
             workspace_label=workspace_label,
             session_label=session_label,
         ),
@@ -450,12 +508,14 @@ def build_console_rail_state(
             tool_count=tool_count,
             approval_count=approval_count,
             can_save_chatbook=can_save_chatbook,
+            staged_source_count=staged_source_count,
+            staged_summary=staged_summary,
         ),
         persistence_key=preference_key.value,
         right_forced_collapsed=right_forced_collapsed,
         session_open=preferences.session_open,
-        context_open=preferences.context_open,
         model_open=preferences.model_open,
         details_open=preferences.details_open,
         agent_open=preferences.agent_open,
+        character_open=preferences.character_open,
     )

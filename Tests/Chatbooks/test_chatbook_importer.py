@@ -3,6 +3,7 @@
 
 import pytest
 import json
+import os
 import zipfile
 from pathlib import Path
 from datetime import datetime
@@ -14,11 +15,32 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
+import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
 from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
 
 
 class TestChatbookImporter:
     """Test ChatbookImporter functionality."""
+
+    @pytest.fixture(autouse=True)
+    def stub_citation_composition(self, monkeypatch):
+        """Keep importer unit tests on their existing mocked database seam."""
+
+        from tldw_chatbook.Chat.chat_conversation_service import (
+            ChatConversationService,
+        )
+
+        def build_local(db, *, sidecar_path):
+            return (
+                ChatConversationService(db, rag_context_store_path=sidecar_path),
+                None,
+                None,
+            )
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chatbooks.chatbook_importer.build_local_citation_conversation_service",
+            build_local,
+        )
 
     @pytest.fixture
     def temp_db_paths(self, tmp_path):
@@ -97,6 +119,68 @@ class TestChatbookImporter:
     def chatbook_importer(self, temp_db_paths):
         """Create a ChatbookImporter instance with test database paths."""
         return ChatbookImporter(db_paths=temp_db_paths)
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX temp privacy contract")
+    def test_importer_uses_secured_canonical_temp_root(
+        self,
+        temp_db_paths,
+        tmp_path,
+        monkeypatch,
+    ):
+        user_data_dir = tmp_path / "runtime-data"
+        user_data_dir.mkdir(mode=0o700)
+        imports_dir = user_data_dir / "temp" / "imports"
+        imports_dir.mkdir(parents=True, mode=0o755)
+        monkeypatch.setattr(
+            importer_module,
+            "get_user_data_dir",
+            lambda: user_data_dir,
+            raising=False,
+        )
+
+        importer = ChatbookImporter(db_paths=temp_db_paths)
+
+        assert importer.temp_dir == imports_dir
+        assert importer.temp_dir.stat().st_mode & 0o777 == 0o700
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX extraction contract")
+    def test_preview_extracts_privately_and_always_cleans_up(
+        self,
+        chatbook_importer,
+        tmp_path,
+        monkeypatch,
+    ):
+        chatbook_path = tmp_path / "private.zip"
+        with zipfile.ZipFile(chatbook_path, "w") as archive:
+            archive.writestr("manifest.json", "{}")
+            archive.writestr("content/private-note.md", "secret")
+        observed: dict[str, int] = {}
+
+        def inspect_then_fail(handle):
+            extract_dir = Path(handle.name).parent
+            note_path = extract_dir / "content" / "private-note.md"
+            observed["extract_dir"] = extract_dir.stat().st_mode & 0o777
+            observed["content_dir"] = note_path.parent.stat().st_mode & 0o777
+            observed["manifest"] = Path(handle.name).stat().st_mode & 0o777
+            observed["note"] = note_path.stat().st_mode & 0o777
+            raise RuntimeError("stop after privacy inspection")
+
+        monkeypatch.setattr(importer_module.json, "load", inspect_then_fail)
+        previous = os.umask(0)
+        try:
+            manifest, error = chatbook_importer.preview_chatbook(chatbook_path)
+        finally:
+            os.umask(previous)
+
+        assert manifest is None
+        assert "stop after privacy inspection" in error
+        assert observed == {
+            "extract_dir": 0o700,
+            "content_dir": 0o700,
+            "manifest": 0o600,
+            "note": 0o600,
+        }
+        assert list(chatbook_importer.temp_dir.iterdir()) == []
 
     @pytest.fixture
     def sample_chatbook_path(self, tmp_path):
@@ -218,6 +302,32 @@ Keywords: test, sample"""
         assert chatbook_importer.temp_dir.exists()
         assert chatbook_importer.conflict_resolver is not None
 
+    def test_temp_dir_derives_from_get_user_data_dir(
+        self, chatbook_importer, temp_db_paths
+    ):
+        """TASK-865: the extraction root must derive from
+        ``get_user_data_dir()`` -- not a ``Path.home()/".local"/"share"/
+        "tldw_cli"`` literal that omits the per-profile user-folder
+        segment. Before the fix, imports silently extracted outside the
+        per-user tree (a location a live reproduction confirmed already
+        existed on disk in production)."""
+        from tldw_chatbook.config import get_user_data_dir
+
+        assert chatbook_importer.temp_dir == get_user_data_dir() / "temp" / "imports"
+
+    def test_temp_dir_shares_a_parent_with_the_chatbook_creators_temp_root(
+        self, chatbook_importer
+    ):
+        """AC #3: the importer's extraction root and the creator's temp
+        root must derive to the same parent (``get_user_data_dir() /
+        "temp"``), not two different, disagreeing directories."""
+        from tldw_chatbook.Chatbooks.chatbook_creator import ChatbookCreator
+
+        creator = ChatbookCreator(db_paths={})
+
+        assert chatbook_importer.temp_dir.parent == creator.temp_dir.parent
+        assert chatbook_importer.temp_dir.parent.name == "temp"
+
     def test_preview_chatbook_valid(self, chatbook_importer, sample_chatbook_path):
         """Test previewing a valid chatbook."""
         manifest, error = chatbook_importer.preview_chatbook(sample_chatbook_path)
@@ -252,6 +362,33 @@ Keywords: test, sample"""
         assert error is not None
         assert "manifest.json" in error
 
+    @pytest.mark.parametrize("missing_manifest", [False, True])
+    def test_import_chatbook_early_failure_returns_message_string(
+        self,
+        chatbook_importer,
+        tmp_path,
+        missing_manifest,
+    ):
+        """Keep the documented result contract on validation failures."""
+        invalid_path = tmp_path / (
+            "no_manifest.zip" if missing_manifest else "unsupported.chatbook"
+        )
+        if missing_manifest:
+            with zipfile.ZipFile(invalid_path, "w") as zf:
+                zf.writestr("content/test.txt", "test")
+        else:
+            invalid_path.write_text("not a zip archive")
+        status = ImportStatus()
+
+        success, message = chatbook_importer.import_chatbook(
+            chatbook_path=invalid_path,
+            import_status=status,
+        )
+
+        assert success is False
+        assert isinstance(message, str)
+        assert status.errors == [message]
+
     @patch("tldw_chatbook.Chatbooks.chatbook_importer.CharactersRAGDB")
     def test_import_chatbook_no_conflicts(
         self, mock_chacha_db, chatbook_importer, sample_chatbook_path
@@ -279,6 +416,9 @@ Keywords: test, sample"""
         assert success is True
         assert status.processed_items > 0
         assert len(status.errors) == 0
+        imported_conversation = mock_db_instance.add_conversation.call_args.args[0]
+        assert imported_conversation["character_id"] == 1
+        assert imported_conversation["assistant_authority_id"] is None
 
     @patch("tldw_chatbook.Chatbooks.chatbook_importer.CharactersRAGDB")
     def test_import_chatbook_with_conflicts(
@@ -449,3 +589,235 @@ Keywords: test, sample"""
         assert manifest_obj.include_media is True
         assert manifest_obj.media_quality == "original"
         assert manifest_obj.include_embeddings is True
+
+
+# ---------------------------------------------------------------------------
+# TASK-928: ChatbookImporter's internal db_paths key casing
+# ("ChaChaNotes"/"Prompts"/"Media") must agree with
+# Chatbooks.database_paths.get_chatbook_database_paths() -- the single
+# helper every real UI call site (Tools_Settings_Window._import_chatbook,
+# the import/creation wizards, the export management window; see
+# Tests/Chatbooks/test_chatbook_database_paths.py) uses to build the
+# db_paths dict handed to ChatbookImporter. A casing mismatch between the
+# two sides is invisible to type checking and to any test that stubs one
+# side out from under the other.
+# ---------------------------------------------------------------------------
+
+
+def test_chatbook_importer_key_lookups_match_get_chatbook_database_paths():
+    """The importer's actual `self.db_paths.get("...")` lookups (scanned via
+    AST, not a hardcoded duplicate list and not a source-text/comment match)
+    must all be keys `get_chatbook_database_paths()` actually produces.
+
+    This is deliberately AST-based rather than a plain substring check: a
+    substring/text scan would pass even if the string only appeared in a
+    comment or docstring, proving nothing about the real lookup contract.
+    """
+    import ast
+    import inspect
+
+    from tldw_chatbook.Chatbooks import chatbook_importer as importer_module
+    from tldw_chatbook.Chatbooks.database_paths import get_chatbook_database_paths
+
+    tree = ast.parse(inspect.getsource(importer_module))
+    looked_up_keys: set[str] = set()
+
+    class _DbPathsGetVisitor(ast.NodeVisitor):
+        def visit_Call(self, node: ast.Call) -> None:  # noqa: N802 - ast API
+            func = node.func
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr == "get"
+                and isinstance(func.value, ast.Attribute)
+                and func.value.attr == "db_paths"
+                and isinstance(func.value.value, ast.Name)
+                and func.value.value.id == "self"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                looked_up_keys.add(node.args[0].value)
+            self.generic_visit(node)
+
+    _DbPathsGetVisitor().visit(tree)
+
+    assert looked_up_keys, (
+        "Expected to find self.db_paths.get(<string literal>) lookups in "
+        "chatbook_importer.py -- if this fails, the importer's lookup "
+        "pattern changed and this scan needs updating, not deleting."
+    )
+
+    produced_keys = set(get_chatbook_database_paths().keys())
+    missing = looked_up_keys - produced_keys
+    assert not missing, (
+        f"ChatbookImporter looks up db_paths key(s) {sorted(missing)} that "
+        f"get_chatbook_database_paths() does not produce (it produces "
+        f"{sorted(produced_keys)}). The importer's key contract and the "
+        "canonical path-resolution helper every real caller uses have "
+        "drifted apart -- see TASK-928."
+    )
+
+
+class TestChatbookImporterKeyCasingMismatch:
+    """Documents the real, verified behaviour of a db_paths key-casing
+    mismatch (TASK-928 AC: "The real behaviour of the current mismatch is
+    established and recorded"), and guards against it recurring silently.
+
+    Established live (see task-928's Implementation Notes): a mismatch does
+    not raise, and does not silently "succeed" while importing nothing --
+    every db_paths.get(...) lookup returns None, each content-type import
+    method records a "<Name> database path not configured" error and skips
+    that type, and the overall import reports success=False with that error
+    surfaced as the failure message.
+    """
+
+    @pytest.fixture(autouse=True)
+    def stub_citation_composition(self, monkeypatch):
+        """Pins the key-casing contract between ChatbookImporter and get_chatbook_database_paths().
+
+        Stubs the citation conversation service builder to keep these tests isolated
+        at the mocked database seam. This fixture exists in both TestChatbookImporter
+        and TestChatbookImporterKeyCasingMismatch: the former tests the happy path
+        where db_paths keys match the importer's literal lookups, the latter tests
+        what happens when key casing diverges (TASK-928).
+
+        Args:
+            monkeypatch: pytest monkeypatch fixture for replacing build_local_citation_conversation_service.
+        """
+        from tldw_chatbook.Chat.chat_conversation_service import (
+            ChatConversationService,
+        )
+
+        def build_local(db, *, sidecar_path):
+            return (
+                ChatConversationService(db, rag_context_store_path=sidecar_path),
+                None,
+                None,
+            )
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chatbooks.chatbook_importer.build_local_citation_conversation_service",
+            build_local,
+        )
+
+    @pytest.fixture
+    def sample_chatbook_path(self, tmp_path):
+        """Create and return a temporary chatbook ZIP file with valid structure.
+
+        Generates a minimal but complete chatbook archive with manifest and one
+        conversation, suitable for testing ChatbookImporter behavior.
+
+        Args:
+            tmp_path: pytest fixture providing a temporary directory.
+
+        Returns:
+            Path object pointing to the created sample.zip file.
+        """
+        chatbook_path = tmp_path / "sample.zip"
+        manifest = {
+            "version": "1.0",
+            "name": "Sample",
+            "description": "A sample chatbook for testing",
+            "author": "Test Author",
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "content_items": [
+                {
+                    "id": "1",
+                    "type": "conversation",
+                    "title": "Test Conversation",
+                    "created_at": datetime.now().isoformat(),
+                    "file_path": "content/conversations/conversation_1.json",
+                },
+            ],
+            "relationships": [],
+            "include_media": False,
+            "include_embeddings": False,
+            "media_quality": "thumbnail",
+            "statistics": {
+                "total_conversations": 1,
+                "total_notes": 0,
+                "total_characters": 0,
+                "total_media_items": 0,
+                "total_size_bytes": 1,
+            },
+            "tags": [],
+            "categories": [],
+            "language": "en",
+            "license": None,
+        }
+        conversation_content = {
+            "id": 1,
+            "name": "Test Conversation",
+            "title": "Test Conversation",
+            "created_at": datetime.now().isoformat(),
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Hello",
+                    "timestamp": datetime.now().isoformat(),
+                }
+            ],
+            "character_id": None,
+        }
+        with zipfile.ZipFile(chatbook_path, "w") as zf:
+            zf.writestr("manifest.json", json.dumps(manifest))
+            zf.writestr(
+                "content/conversations/conversation_1.json",
+                json.dumps(conversation_content),
+            )
+        return chatbook_path
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_importer.CharactersRAGDB")
+    def test_correctly_cased_keys_import_successfully(
+        self, mock_chacha_db, sample_chatbook_path
+    ):
+        """Control case: get_chatbook_database_paths()'s actual casing
+        imports cleanly, proving the failure below is caused by casing
+        alone."""
+        mock_db_instance = MagicMock()
+        mock_chacha_db.return_value = mock_db_instance
+        mock_db_instance.add_conversation.return_value = 1
+        mock_db_instance.add_message.return_value = True
+        mock_db_instance.get_conversation_by_name.return_value = []
+
+        importer = ChatbookImporter(
+            db_paths={"ChaChaNotes": "unused", "Prompts": "unused", "Media": "unused"}
+        )
+        status = ImportStatus()
+        success, message = importer.import_chatbook(
+            chatbook_path=sample_chatbook_path,
+            conflict_resolution=ConflictResolution.SKIP,
+            import_status=status,
+        )
+
+        assert success is True
+        assert status.successful_items == 1
+        assert status.errors == []
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_importer.CharactersRAGDB")
+    def test_mismatched_lowercase_keys_fail_cleanly_not_silently_not_crashing(
+        self, mock_chacha_db, sample_chatbook_path
+    ):
+        """The pre-consolidation bug shape: db_paths built with lowercase
+        keys ("chachanotes"/"prompts"/"media"), as _import_chatbook used to
+        before dev's get_chatbook_database_paths() consolidation."""
+        mock_chacha_db.return_value = MagicMock()
+
+        importer = ChatbookImporter(
+            db_paths={"chachanotes": "unused", "prompts": "unused", "media": "unused"}
+        )
+        status = ImportStatus()
+        success, message = importer.import_chatbook(
+            chatbook_path=sample_chatbook_path,
+            conflict_resolution=ConflictResolution.SKIP,
+            import_status=status,
+        )
+
+        # Not silent: reports failure with a specific, actionable message.
+        assert success is False
+        assert message == "Failed to import any items from chatbook"
+        # Not a crash: import_chatbook returns its normal (bool, str)
+        # contract rather than raising.
+        assert status.successful_items == 0
+        assert status.errors == ["ChaChaNotes database path not configured"]

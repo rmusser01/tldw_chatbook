@@ -1,5 +1,7 @@
 """Mounted tests for the Personas library pane."""
 
+from dataclasses import fields
+
 import pytest
 from textual.app import App
 from textual.widgets import Button, Input, ListItem, ListView, Static
@@ -25,6 +27,17 @@ def _row_text(item: ListItem) -> str:
 class LibraryPaneApp(App):
     def compose(self):
         yield PersonasLibraryPane(id="personas-library-pane")
+
+
+async def test_library_row_has_only_selection_and_display_state():
+    """Library rows carry selection state, never the human user's identity."""
+    assert tuple(field.name for field in fields(LibraryRow)) == (
+        "item_id",
+        "kind",
+        "name",
+        "is_unsaved",
+        "meta",
+    )
 
 
 async def test_pane_renders_search_toolbar_and_empty_state():
@@ -58,8 +71,44 @@ async def test_update_rows_renders_rows_and_count():
                 "#personas-library-row-character-2", ListItem
             ).classes
         )
+        # F-033: the plain total moved up into the screen's merged purpose
+        # line; the pane count line only speaks for filtered states now.
         count = pilot.app.query_one("#personas-library-count", Static)
-        assert "2 characters" in str(count.renderable)
+        assert str(count.renderable) == ""
+
+
+async def test_unfiltered_count_line_stays_empty():
+    """F-033: the unfiltered total renders once (header purpose line), never
+    duplicated at the bottom of the library pane. Singularization of the
+    total (task-445) is still covered by the filtered-count tests."""
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows(
+            (LibraryRow(item_id="1", kind="character", name="Detective Sam"),),
+            total=1,
+            noun="characters",
+        )
+        await pilot.pause()
+        count = pilot.app.query_one("#personas-library-count", Static)
+        assert str(count.renderable) == ""
+
+
+async def test_singular_filtered_count_uses_singular_noun():
+    """A filtered total of 1 (e.g. '1 of 1 dictionaries') must also read
+    singular: '1 of 1 dictionary'."""
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows(
+            (LibraryRow(item_id="1", kind="character", name="Only One"),),
+            total=1,
+            noun="dictionaries",
+            filtered=True,
+        )
+        await pilot.pause()
+        count = pilot.app.query_one("#personas-library-count", Static)
+        assert str(count.renderable) == "1 of 1 dictionary"
 
 
 async def test_filtered_count_shows_n_of_m():
@@ -213,11 +262,11 @@ async def test_set_mode_toggles_import_button_and_empty_copy():
         pane.set_mode("characters")
         assert import_button.display is True
         pane.set_mode("personas")
-        await pane.update_rows((), total=0, noun="persona profiles")
+        await pane.update_rows((), total=0, noun="personas")
         await pilot.pause()
         empty = pilot.app.query_one("#personas-library-empty", Static)
         copy = str(empty.renderable)
-        assert "No persona profiles yet" in copy
+        assert "No personas yet" in copy
         assert "Import" not in copy
 
 
@@ -423,3 +472,162 @@ async def test_colliding_item_ids_render_without_crash():
             await pilot.click(f"#{button.id}")
             await pilot.pause()
     assert received == ["a.b", "a b"]
+
+
+# ===== F-040: marks (multi-select) and keyboard sort =====
+
+
+async def _two_character_rows(pane: PersonasLibraryPane) -> None:
+    await pane.update_rows(
+        (
+            LibraryRow(item_id="1", kind="character", name="Detective Sam"),
+            LibraryRow(item_id="2", kind="character", name="Lab Assistant"),
+        ),
+        total=2,
+        noun="characters",
+    )
+
+
+async def test_m_key_marks_rows_and_posts_marks_changed():
+    received = []
+
+    class CaptureApp(LibraryPaneApp):
+        def on_persona_marks_changed(self, message) -> None:
+            received.append(message.marks)
+
+    app = CaptureApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await _two_character_rows(pane)
+        await pilot.pause()
+        list_view = pilot.app.query_one("#personas-library-rows", ListView)
+        list_view.focus()
+        list_view.index = 0
+        await pilot.pause()
+        await pilot.press("m")
+        await pilot.pause()
+        assert received[-1] == (("character", "1", "Detective Sam"),)
+        # The marked row carries the marker glyph and the pane reports it.
+        first = list_view.children[0]
+        assert _row_text(first).startswith("● ")
+        count = pilot.app.query_one("#personas-library-count", Static)
+        assert str(count.renderable) == "1 marked"
+        await pilot.press("m")  # toggles off
+        await pilot.pause()
+        assert received[-1] == ()
+        assert not _row_text(first).startswith("● ")
+        assert str(count.renderable) == ""
+
+
+async def test_marks_prune_when_rows_vanish_on_refresh():
+    received = []
+
+    class CaptureApp(LibraryPaneApp):
+        def on_persona_marks_changed(self, message) -> None:
+            received.append(message.marks)
+
+    app = CaptureApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await _two_character_rows(pane)
+        await pilot.pause()
+        list_view = pilot.app.query_one("#personas-library-rows", ListView)
+        list_view.focus()
+        list_view.index = 0
+        await pilot.pause()
+        await pilot.press("m")
+        await pilot.pause()
+        assert received[-1] == (("character", "1", "Detective Sam"),)
+        # A refresh that no longer contains the marked row drops the mark.
+        await pane.update_rows(
+            (LibraryRow(item_id="2", kind="character", name="Lab Assistant"),),
+            total=1,
+            noun="characters",
+        )
+        await pilot.pause()
+        assert received[-1] == ()
+        count = pilot.app.query_one("#personas-library-count", Static)
+        assert str(count.renderable) == ""
+
+
+async def test_marks_clear_on_mode_switch():
+    received = []
+
+    class CaptureApp(LibraryPaneApp):
+        def on_persona_marks_changed(self, message) -> None:
+            received.append(message.marks)
+
+    app = CaptureApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await _two_character_rows(pane)
+        await pilot.pause()
+        list_view = pilot.app.query_one("#personas-library-rows", ListView)
+        list_view.focus()
+        list_view.index = 1
+        await pilot.pause()
+        await pilot.press("m")
+        await pilot.pause()
+        assert received[-1] == (("character", "2", "Lab Assistant"),)
+        pane.set_mode("dictionaries")
+        await pilot.pause()
+        assert received[-1] == ()
+
+
+async def test_s_key_cycles_sort_only_when_sort_applies():
+    received = []
+
+    class CaptureApp(LibraryPaneApp):
+        def on_persona_sort_cycle_requested(self, message) -> None:
+            received.append(message)
+
+    app = CaptureApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await _two_character_rows(pane)
+        await pilot.pause()
+        list_view = pilot.app.query_one("#personas-library-rows", ListView)
+        list_view.focus()
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+        assert len(received) == 1
+        # Dictionaries mode has no sort control - the key is a no-op there.
+        pane.set_mode("dictionaries")
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+        assert len(received) == 1
+        # The sort button discloses the key.
+        assert "(s)" in str(
+            pilot.app.query_one("#personas-library-sort", Button).tooltip
+        )
+
+
+async def test_sync_control_layout_logs_and_keeps_state_on_failure(monkeypatch):
+    """Qodo review: a toolbar width-measurement failure must be logged (not
+    silently swallowed) and must leave the previous layout in place."""
+    from unittest.mock import Mock
+
+    from loguru import logger as loguru_logger
+
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        pane.set_class(True, "personas-library-stacked-controls")
+        records: list[str] = []
+        sink = loguru_logger.add(lambda m: records.append(str(m)), level="DEBUG")
+        try:
+            monkeypatch.setattr(
+                pane,
+                "_required_toolbar_row_width",
+                Mock(side_effect=RuntimeError("boom")),
+            )
+            pane._sync_control_layout()  # must not raise
+            # Fallback: the previous layout class is untouched.
+            assert pane.has_class("personas-library-stacked-controls")
+        finally:
+            loguru_logger.remove(sink)
+    assert any("toolbar" in record.lower() for record in records), (
+        f"expected a debug/warning log about the toolbar layout failure; got {records}"
+    )

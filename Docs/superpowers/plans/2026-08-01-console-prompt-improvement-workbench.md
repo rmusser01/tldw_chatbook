@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Give Console users a `Prompts` workbench action that opens a searchable Prompt/Recipe Library, safely improves the current unsent message with the active provider/model, and supports editable System/User block recipes that are first-class in Library > Prompts.
+**Goal:** Give Console users a `Prompts` entry in the composer's existing hamburger menu that opens a searchable Prompt/Recipe Library, safely improves the current unsent message with the active provider/model, and supports editable System/User block recipes that are first-class in Library > Prompts.
 
-**Architecture:** First establish the fixed-width composer/overflow-menu contract from reference `TASK-1680`; `Prompts` remains a top Workbench action and never expands the composer button row. Add an artifact-type migration plus a version-and-kind-dispatched block codec around the existing Prompt table, compile v2 blocks back to legacy System/User text, and expose source capabilities through `PromptScopeService`. A shared block editor is hosted by one mode-driven `ConsolePromptsModal` and Library > Prompts. The composer owns an immutable segment snapshot/apply/restore transaction. A headless `PromptImprovementService` calls one typed, non-streaming, sensitive auxiliary completion through `ConsoleProviderGateway`, validates the response and preservation invariants, then asks the composer/session owners to apply changes.
+**Architecture:** First establish the fixed-width composer/overflow-menu contract from reference `TASK-1680`; `Prompts` joins that existing overflow menu and does not add a top/tab-bar action or another always-visible composer control. Add an artifact-type migration plus a version-and-kind-dispatched block codec around the existing Prompt table, compile v2 blocks back to legacy System/User text, and expose source capabilities through `PromptScopeService`. A shared block editor is hosted by one mode-driven `ConsolePromptsModal` and Library > Prompts. The composer owns an immutable segment snapshot/apply/restore transaction. A headless `PromptImprovementService` calls one typed, non-streaming, sensitive auxiliary completion through `ConsoleProviderGateway`, validates the response and preservation invariants, then asks the composer/session owners to apply changes.
 
 **Tech Stack:** Python 3.11+, Textual 8.2.7, SQLite/FTS5, Pydantic, httpx, existing provider adapters and `chat_api_call`, pytest/pytest-asyncio/Hypothesis, Textual `App.run_test()`/Pilot, `tldw_server2` FastAPI/Pydantic v2 prompt APIs.
 
@@ -19,19 +19,31 @@
 
 **ADR required:** yes
 
-**ADR path:** `backlog/decisions/029-versioned-prompt-artifacts-and-safe-improvement-transactions.md`
+**ADR path:** `backlog/decisions/040-versioned-prompt-artifacts-and-safe-improvement-transactions.md`
 
 **Reason:** This feature adds a persisted Prompt/Recipe discriminator, a new structured schema family with compiled compatibility fields, cross-client/server capability and concurrency contracts, a segment-safe composer mutation boundary, sensitive provider-call behavior, and a long-lived unified Console modal.
 
 ## Backlog Handoff
 
-Do not invent task IDs in this planning checkout. Before implementation, rebase an isolated `codex/` worktree onto the current integration branch, sweep `backlog/tasks/` across local and remote worktrees using the repository's task-collision lesson, then create one atomic Backlog task for each delivery stage below. Link `TASK-1680`, ADR-029, this plan, and the design spec from each task. Put each task In Progress and add its implementation-plan excerpt before changing production code. Do not mark any task Done until its ACs, tests, static checks, documentation, implementation notes, and ADR hygiene are complete.
+The collision-swept delivery tasks are fixed for this plan; later workers must
+not invent replacements. Each links this plan, the design spec, and ADR-040;
+`TASK-1680` is linked where the composer-action prerequisite applies.
+
+1. `TASK-1773` — [Verify composer action unification for the Prompt Workbench](../../../backlog/tasks/task-1773%20-%20Verify-composer-action-unification-for-the-Prompt-Workbench.md) — **In Progress**, no dependency (Task 0; implementation-plan excerpt added).
+2. `TASK-1774` — [Build Prompt and Recipe artifact foundations](../../../backlog/tasks/task-1774%20-%20Build-Prompt-and-Recipe-artifact-foundations.md) — **To Do**, depends on `TASK-1773` (Tasks 1–5).
+3. `TASK-1775` — [Deliver unified Prompt, Recipe, and Library user interfaces](../../../backlog/tasks/task-1775%20-%20Deliver-unified-Prompt-Recipe-and-Library-user-interfaces.md) — **To Do**, depends on `TASK-1774` (Tasks 6–8).
+4. `TASK-1776` — [Add exact Console composer improvement transactions](../../../backlog/tasks/task-1776%20-%20Add-exact-Console-composer-improvement-transactions.md) — **To Do**, depends on `TASK-1775` (Task 9).
+5. `TASK-1777` — [Provide sensitive provider-boundary prompt improvement UX](../../../backlog/tasks/task-1777%20-%20Provide-sensitive-provider-boundary-prompt-improvement-UX.md) — **To Do**, depends on `TASK-1776` (Tasks 10–13).
+
+Put each task In Progress and add its plan excerpt only when that task starts.
+Do not mark any task Done until its ACs, tests, static checks, documentation,
+implementation notes, and ADR hygiene are complete.
 
 ## Global Constraints
 
 - Start from the current integration branch in a fresh worktree. `/private/tmp/ephemeral` is a read-only semantic reference whose branch also carries unrelated temporary-conversation history; do not edit it and do not blindly cherry-pick its commits or branch history.
 - `TASK-1680` semantics are a prerequisite: the composer's at-rest row is `☰`, `Send`, and `Mic`; `Stop` and attachment clear are conditional; Attach and Save Chatbook route through stable overflow-menu action IDs to existing screen handlers; disabled rows show a visible reason.
-- `Prompts` is a top Workbench action immediately after `New tab`. `Settings` is immediately before `Help`. Do not add `Prompts` to `ConsoleComposerBar` or its overflow menu.
+- `Prompts` is a stable entry in the existing `ConsoleComposerBar` hamburger menu. Do not add it to the top/tab-bar Workbench action row or as another always-visible composer button. The idle row remains `☰`, `Send`, and `Mic`; conditional Stop and attachment clear remain unchanged.
 - Preserve structured schema v1 byte/behavior compatibility. Dispatch by schema version and then definition kind; never let a Console v2 block artifact or the server's `single_text_recipe` v2 kind fall through the v1 parser.
 - Canonical structured content lives in `prompt_definition`. `system_prompt` and `user_prompt` are regenerated compatibility fields, never a second editable source of truth.
 - Existing Prompt rows migrate to `artifact_type="prompt"`. No new Prompt or Recipe table.
@@ -56,7 +68,7 @@ Do not invent task IDs in this planning checkout. Before implementation, rebase 
 |---|---|---|
 | Prerequisite | Composer buttons are unified and width-bounded before Prompt UX lands. | `tldw_chatbook` |
 | Stage 1 | Artifact migration, block codec/compiler, source capabilities, server coexistence, import/export. | both |
-| Stage 2 | Workbench action, unified Browse/Edit/Recipe modal, shared block editor, Library integration. | `tldw_chatbook` |
+| Stage 2 | Composer-menu action, unified Browse/Edit/Recipe modal, shared block editor, Library integration. | `tldw_chatbook` |
 | Stage 3 | Exact composer snapshot/apply/restore and temporary Undo. | `tldw_chatbook` |
 | Stage 4 | Sensitive auxiliary provider call, improvement orchestration, Auto/Review/Recipe fill, final QA. | `tldw_chatbook` |
 
@@ -700,6 +712,13 @@ Use exact in-process/fallback limits: `compiled_lane_limit=20_000` characters,
 A modern server's smaller advertised limit wins. These limits are validation
 errors, never truncation targets.
 
+Definition and request byte limits use the server-advertised
+`canonical_json_utf8_v1` measurement: serialize the decoded JSON value with
+sorted keys, `ensure_ascii=false`, compact separators `(",", ":")`, encode as
+UTF-8, then count bytes. Definition bytes measure the final normalized mapping
+sent to persistence; request bytes measure the decoded outgoing request mapping
+before server-side default expansion. This is not raw HTTP wire-body length.
+
 - [ ] **Step 1: Add failing normalization tests**
 
 Assert local known capabilities, modern server response, older health without capabilities, malformed health, and a server advertising only `single_text_recipe`. Older servers remain browsable, normalize missing artifact type as Prompt, and disable block-v2 Save/search as appropriate.
@@ -877,12 +896,11 @@ git add tldw_chatbook/Widgets/Prompts/__init__.py tldw_chatbook/Widgets/Prompts/
 git commit -m "feat(prompts): add shared System and User block editor"
 ```
 
-### Task 7: Add the Workbench action and unified `ConsolePromptsModal` Browse/Edit shell
+### Task 7: Add the composer-menu action and unified `ConsolePromptsModal` Browse/Edit shell
 
 **Files:**
 
-- Modify: `tldw_chatbook/Widgets/Console/console_workbench_state.py`
-- Modify: `tldw_chatbook/Widgets/Console/console_control_bar.py`
+- Modify: `tldw_chatbook/Widgets/Console/console_composer_menu_modal.py`
 - Create: `tldw_chatbook/Widgets/Console/console_prompts_state.py`
 - Create: `tldw_chatbook/Widgets/Console/console_prompts_browse.py`
 - Create: `tldw_chatbook/Widgets/Console/console_prompts_modal.py`
@@ -891,10 +909,8 @@ git commit -m "feat(prompts): add shared System and User block editor"
 - Modify: `tldw_chatbook/css/components/_agentic_terminal.tcss`
 - Regenerate: `tldw_chatbook/css/tldw_cli_modular.tcss`
 - Create: `Tests/UI/test_console_prompts_modal.py`
-- Create: `Tests/UI/test_console_control_bar_actions.py`
+- Modify: `Tests/UI/test_console_composer_menu.py`
 - Modify: `Tests/UI/test_console_workbench_contract.py`
-- Modify: `Tests/UI/test_console_workbench_parity_matrix.py`
-- Modify: `Tests/UI/test_workbench_visual_snapshots.py`
 
 **Interfaces:**
 
@@ -908,43 +924,31 @@ class PromptBrowseResult:
     total_items: int
 ```
 
-- Workbench action order is exactly `new-tab`, `prompts`, `attach-context`, `run-library-rag`, `save-chatbook`, `settings`, `help`. Remove the duplicate header `send`/`stop` actions; `ConsoleComposerBar` owns Send and conditional Stop after the prerequisite gate.
-- `ConsoleControlBar` is the visible action surface; `#console-workbench-command-strip` remains a hidden compatibility seam. Add `prompts` to `TOP_ACTION_IDS` and map it to `console-control-prompts`.
-- Pressing `#console-control-prompts` posts the existing `WorkbenchActionRequested("prompts")` path; `ChatScreen` handles that action by pushing exactly one `ConsolePromptsModal` in Browse mode. Do not add a second button-specific dispatch protocol.
-- `CONSOLE_ACTIONS_WIDE_MIN_WIDTH = 112` and `CONSOLE_ACTIONS_SINGLE_ROW_MIN_WIDTH = 80`. Width >=112 uses full labels on one row; width 80-111 uses compact labels on one row; width <80 uses compact labels split 4+3 over two rows in logical order.
-- Compact labels are exact: `New`, `Prompts`, `Attach`, `RAG`, `Save`, `Settings`, `Help`. Full labels come from Workbench state: `New tab`, `Prompts`, `Attach context`, `Run Library RAG`, `Save Chatbook`, `Settings`, `Help`.
-- `ConsoleControlBar` keeps its existing provider/model chip row above the actions. It therefore changes total height between two rows (one chip + one action) and three rows (one chip + two actions) on resize. `ChatScreen.compose_content` stops wrapping this widget in `_compact_console_workbench_widget(..., height=2)`; the other compact Workbench widgets retain their current helper behavior. Remove the fixed height/min/max declarations for `#console-control-bar` from TCSS so the widget's measured 2/3-row height is authoritative.
+- Add stable `ACTION_PROMPTS = "prompts"` to the existing composer-menu contract. In a normal saved session, the menu begins `prompts`, `attach-context`, `save-chatbook`; temporary sessions may continue to prepend `save-chat`. Remaining actions retain their current order, enabled state, and visible disabled reasons.
+- Choosing `console-composer-menu-prompts` returns the stable action ID through `ConsoleComposerMenuModal`; `ChatScreen._handle_console_composer_menu_choice` pushes exactly one `ConsolePromptsModal` in Browse mode. Reuse the existing menu callback dispatch; do not add a second button-specific protocol.
+- `ConsoleComposerBar` remains width-bounded. Its at-rest row is still `☰`, Send, and Mic; Stop and attachment clear remain conditional. `ConsoleControlBar`, `console_workbench_state`, the top/tab-bar action order, and their geometry are unchanged and contain no Prompts action.
 - `ConsolePromptsModal` internal modes: Browse, Edit, Improve, Recipe.
 - Browse places a visible `Improve My Prompt` button above the source/search controls. It enters Improve mode inside the same modal and preserves the user's Browse query, source, page, selection, and focus return point.
 - `console_prompts_state.py` owns the mode stack, source/search tokens, and selected-source identity/version; `console_prompts_browse.py` owns only source/search/pagination rendering and events; `console_prompts_modal.py` owns navigation, focus restoration, dirty dismissal, and child-mode coordination.
 - Browse dependencies are injected callables: capabilities, list page, search query, detail fetch, save.
 - Empty query -> paginated list; non-empty query -> backend search with 200 ms debounce and monotonic token.
 
-- [ ] **Step 1: Add failing action-order/geometry tests**
+- [ ] **Step 1: Add failing composer-menu ownership/routing tests**
 
-Assert full labels at wide width, compact labels at medium width, deterministic two rows at narrow width, no clipping, Prompts after New tab, and Settings immediately before Help. Assert clicking `#console-control-prompts` emits the `prompts` action and opens one Browse modal. Assert `ConsoleComposerBar` still contains no Prompts control.
+Assert the normal and temporary composer-menu order, stable Prompts ID/label/description, and unchanged Attach/Save/disabled-reason behavior. Assert choosing `#console-composer-menu-prompts` opens exactly one Browse modal. Assert `ConsoleComposerBar` still has no separate always-visible Prompts button and the top Workbench actions contain no Prompts action.
 
 ```python
-def test_console_header_actions_have_one_owner_and_expected_order():
-    state = build_console_workbench_state(control_state=ready_controls())
+def test_prompts_is_owned_by_the_existing_composer_menu():
+    entries = build_composer_menu_entries()
 
-    assert [action.id for action in state.actions] == [
-        "new-tab",
+    assert [entry.action_id for entry in entries[:3]] == [
         "prompts",
         "attach-context",
-        "run-library-rag",
         "save-chatbook",
-        "settings",
-        "help",
     ]
-    assert "console-prompts" not in inspect.getsource(ConsoleComposerBar.compose)
+    assert 'id="console-prompts"' not in inspect.getsource(ConsoleComposerBar.compose)
+    assert "prompts" not in TOP_ACTION_IDS
 ```
-
-Mounted `ConsoleControlBar` tests use sizes `(140, 30)`, `(100, 30)`, and
-`(70, 30)`. At 70 columns assert row 1 IDs are New/Prompts/Attach/RAG, row 2
-IDs are Save/Settings/Help, the chip row remains visible, bar height is 3, and
-every chip/button region lies inside the bar region. At 100/140 assert bar
-height is 2 and action row 2 is hidden.
 
 - [ ] **Step 2: Add failing modal Browse tests**
 
@@ -959,10 +963,9 @@ Supported Prompt -> Edit. Recipe -> unsaved Prompt working copy. Legacy -> conse
 ```bash
 .venv/bin/python -m pytest \
   Tests/UI/test_console_prompts_modal.py \
-  Tests/UI/test_console_control_bar_actions.py \
+  Tests/UI/test_console_composer_menu.py \
   Tests/UI/test_console_workbench_contract.py \
-  Tests/UI/test_console_workbench_parity_matrix.py \
-  Tests/UI/test_workbench_visual_snapshots.py -q
+  Tests/UI/test_destination_visual_parity_correction.py -q
 ```
 
 - [ ] **Step 5: Implement action dispatch and stable modal shell**
@@ -982,26 +985,10 @@ class ConsolePromptsModal(ModalScreen[None]):
         self._restore_mode_focus(focus_id or self._focus_by_mode.get(mode))
 ```
 
-Implement the visible action layout in `ConsoleControlBar` with one pure mode
-selector and two stable row containers:
-
-```python
-def console_action_layout(width: int) -> tuple[str, tuple[int, ...]]:
-    if width >= CONSOLE_ACTIONS_WIDE_MIN_WIDTH:
-        return "wide", (7,)
-    if width >= CONSOLE_ACTIONS_SINGLE_ROW_MIN_WIDTH:
-        return "compact", (7,)
-    return "narrow", (4, 3)
-
-
-def on_resize(self, event: Resize) -> None:
-    mode, row_lengths = console_action_layout(event.size.width)
-    self._sync_visible_action_rows(mode=mode, row_lengths=row_lengths)
-    bar_height = 1 + len(row_lengths)  # persistent chip row + action rows
-    self.styles.height = bar_height
-    self.styles.min_height = bar_height
-    self.styles.max_height = bar_height
-```
+Add one `ComposerMenuEntry(ACTION_PROMPTS, "Prompts", ...)` to
+`build_composer_menu_entries` and one corresponding branch in the existing
+composer-menu callback. Do not modify `ConsoleControlBar` layout or top-action
+state.
 
 - [ ] **Step 6: Implement source-aware Browse and guarded Edit**
 
@@ -1025,10 +1012,8 @@ async def _run_browse(self, query: str, token: int) -> None:
 .venv/bin/python tldw_chatbook/css/build_css.py
 .venv/bin/python -m pytest \
   Tests/UI/test_console_prompts_modal.py \
-  Tests/UI/test_console_control_bar_actions.py \
+  Tests/UI/test_console_composer_menu.py \
   Tests/UI/test_console_workbench_contract.py \
-  Tests/UI/test_console_workbench_parity_matrix.py \
-  Tests/UI/test_workbench_visual_snapshots.py \
   Tests/UI/test_destination_visual_parity_correction.py -q
 git diff --check
 ```
@@ -1036,8 +1021,8 @@ git diff --check
 - [ ] **Step 8: Commit**
 
 ```bash
-git add tldw_chatbook/Widgets/Console/console_workbench_state.py tldw_chatbook/Widgets/Console/console_control_bar.py tldw_chatbook/Widgets/Console/console_prompts_state.py tldw_chatbook/Widgets/Console/console_prompts_browse.py tldw_chatbook/Widgets/Console/console_prompts_modal.py tldw_chatbook/Widgets/Console/__init__.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/css/components/_agentic_terminal.tcss tldw_chatbook/css/tldw_cli_modular.tcss Tests/UI/test_console_prompts_modal.py Tests/UI/test_console_control_bar_actions.py Tests/UI/test_console_workbench_contract.py Tests/UI/test_console_workbench_parity_matrix.py Tests/UI/test_workbench_visual_snapshots.py
-git commit -m "feat(console): open Prompt Library from the workbench"
+git add tldw_chatbook/Widgets/Console/console_composer_menu_modal.py tldw_chatbook/Widgets/Console/console_prompts_state.py tldw_chatbook/Widgets/Console/console_prompts_browse.py tldw_chatbook/Widgets/Console/console_prompts_modal.py tldw_chatbook/Widgets/Console/__init__.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/css/components/_agentic_terminal.tcss tldw_chatbook/css/tldw_cli_modular.tcss Tests/UI/test_console_prompts_modal.py Tests/UI/test_console_composer_menu.py Tests/UI/test_console_workbench_contract.py
+git commit -m "feat(console): open Prompt Library from the composer menu"
 ```
 
 ### Task 8: Make Prompt/Recipe blocks first-class in Library > Prompts and guard legacy use paths
@@ -1793,7 +1778,7 @@ git commit -m "feat(console): add Auto Review and Recipe prompt improvement"
 **Files:**
 
 - Modify: `Docs/superpowers/specs/2026-08-01-console-prompt-improvement-design.md` only for verified implementation deviations.
-- Modify: `backlog/decisions/029-versioned-prompt-artifacts-and-safe-improvement-transactions.md` only if an architectural decision changed; otherwise link it unchanged.
+- Modify: `backlog/decisions/040-versioned-prompt-artifacts-and-safe-improvement-transactions.md` only if an architectural decision changed; otherwise link it unchanged.
 - Create: `Docs/superpowers/qa/console-prompt-improvement-2026-08/README.md`
 - Add captures under: `Docs/superpowers/qa/console-prompt-improvement-2026-08/`
 - Modify the stage Backlog task files with checked ACs and implementation notes.
@@ -1848,7 +1833,7 @@ git diff --check
 Use a temporary config/data profile and the real bundled stylesheet. Seed local legacy Prompt, v1 foreign structured Prompt, v2 block Prompt, v2 Recipe, malformed/future records, and enough results for pagination. Verify at 140x40, 100x30, and 80x24:
 
 - composer stays width-bounded with one menu;
-- top Workbench action order/wrapping;
+- Prompts appears in the composer hamburger menu and not the top/tab-bar actions;
 - Local/Server Browse, pagination/search/error states;
 - legacy/foreign/unsupported guards;
 - block edit/reorder/validation without cursor loss;
@@ -1880,12 +1865,12 @@ Create a traceability table in the QA README mapping spec sections 1-15 to imple
 
 - [ ] **Step 7: Complete Backlog and ADR hygiene**
 
-Check every AC, add concise Implementation Notes naming both repository commits and verification results, link ADR-029, and set a task Done only when its repository-specific DoD is fully met. Commit each resolved stage task by its exact Backlog path when closing that stage; the IDs are created during Backlog Handoff and must not be guessed in this plan. If an implementation deviation changes storage, authority, or provider boundaries, update/supersede the ADR before marking Done.
+Check every AC, add concise Implementation Notes naming both repository commits and verification results, link ADR-040, and set a task Done only when its repository-specific DoD is fully met. Commit each resolved stage task by its exact Backlog path when closing that stage. If an implementation deviation changes storage, authority, or provider boundaries, update/supersede the ADR before marking Done.
 
 - [ ] **Step 8: Final commit in Chatbook**
 
 ```bash
-git add Docs/superpowers/qa/console-prompt-improvement-2026-08 Docs/superpowers/specs/2026-08-01-console-prompt-improvement-design.md backlog/decisions/029-versioned-prompt-artifacts-and-safe-improvement-transactions.md
+git add Docs/superpowers/qa/console-prompt-improvement-2026-08 Docs/superpowers/specs/2026-08-01-console-prompt-improvement-design.md backlog/decisions/040-versioned-prompt-artifacts-and-safe-improvement-transactions.md
 git diff --cached --check
 git commit -m "docs(console): verify prompt improvement workbench"
 ```

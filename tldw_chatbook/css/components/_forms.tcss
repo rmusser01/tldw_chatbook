@@ -128,10 +128,67 @@
 }
 
 Input:focus,
-TextArea:focus,
-Select:focus {
+TextArea:focus {
     border: solid $ds-input-focus-border;
     border-bottom: solid $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
+/* TASK-2300. `Select:focus` used to be in the rule above, and it is the one
+ * member of that list that does not draw its own border.
+ *
+ * `Input` and `TextArea` each carry `border: tall $border-blurred` on
+ * themselves, so the declaration above REPLACES a border that already exists
+ * and costs nothing. A `Select` draws its border on its child
+ * `SelectCurrent` (`Select` DEFAULT_CSS: `&:focus > SelectCurrent { border:
+ * tall $border; }`) and has none of its own -- so the same declaration ADDED
+ * a second one, two rows of chrome, around a widget whose three rows were
+ * already spoken for. Measured live at 235x52, the New Rule form's condition
+ * Select with focus on it:
+ *
+ *     ┌──────────────────────┐
+ *     │▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│     <- SelectCurrent's own top border
+ *     └──────────────────────┘
+ *
+ * Three rows of frame and no value. Clicking the control to open it is what
+ * focuses it, so this is the state of every Select the moment a user reaches
+ * for one -- the same "a bare border where a control should be" the 2026-08-04
+ * UAT reported for the Items filter, on a different Select for a different
+ * reason.
+ *
+ * Only the recolouring half is kept, on the `Select` itself where it always
+ * was. The border half is not re-homed onto `SelectCurrent` -- Textual's own
+ * `&:focus > SelectCurrent { border: tall $border; }` already recolours
+ * exactly that border on focus, at exactly the geometry it is already sized
+ * for, so re-stating it here in app colours would buy a shade and cost a
+ * fight: the re-homed rule (`Select:focus > SelectCurrent`, specificity
+ * (0,1,2)) also outranked `.settings-compact-select > SelectCurrent`'s
+ * deliberate `border: none` (0,1,1), putting the frame back INSIDE a control
+ * that draws its own frame outside. Review wave, Critical 1: this family of
+ * rules keeps losing to the fact that "a Select" is three different shapes,
+ * so the app now styles only what every shape has -- its colours.
+ *
+ * ROUND 2, O1 -- and how far even that reaches is worth stating, because the
+ * previous wording claimed more than it delivered ("the recolouring half is
+ * what marks focus now"). It is NOT, on its own. `SelectCurrent` is a child
+ * with an opaque `background: $surface` covering the whole parent, so on a
+ * borderless compact `Select` this declaration is painted over completely and
+ * only Textual's 5% `background-tint` survives (~1.10:1, measured). What
+ * actually marks focus is per shape:
+ *
+ *   three-row `Select`    Textual's own `&:focus > SelectCurrent { border:
+ *                         tall $border; }` -- a real, visible border swap
+ *   `.settings-compact-*` its own `:focus` rules, border AND background
+ *   borderless compact    `Select.-textual-compact:focus > SelectCurrent`
+ *                         in components/_lists.tcss, added by O1
+ *
+ * This rule is kept because it is the one that reaches a `Select` whose child
+ * does NOT cover it (padding, a themed variant), and because removing a
+ * pre-existing app-wide declaration on the strength of one shape's geometry
+ * is how this family of bugs started.
+ */
+Select:focus {
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
 }

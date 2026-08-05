@@ -47,11 +47,13 @@ class ConsoleSaveAsModal(ModalScreen[str | None]):
         destinations: list[ConsoleSaveDestination],
         message_role: str = "Message",
         message_excerpt: str = "",
+        ephemeral: bool = False,
     ) -> None:
         super().__init__()
         self.destinations = destinations
         self.message_role = message_role.strip() or "Message"
         self.message_excerpt = message_excerpt.strip()
+        self.ephemeral = ephemeral
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-save-as-modal"):
@@ -70,8 +72,18 @@ class ConsoleSaveAsModal(ModalScreen[str | None]):
                     markup=False,
                 )
             if not any(destination.available for destination in self.destinations):
+                # F3 (task-9 review): in a temporary chat every destination
+                # is unavailable, so this copy always fires there -- the
+                # generic "not wired yet" phrasing reads as an unfinished
+                # feature instead of naming the actual (permanent) rule.
+                empty_state_text = (
+                    "This chat is temporary, so Save as destinations are "
+                    "not available."
+                    if self.ephemeral
+                    else "No Save as destinations are wired for selected messages yet."
+                )
                 yield Static(
-                    "No Save as destinations are wired for selected messages yet.",
+                    empty_state_text,
                     classes="console-save-as-empty-state",
                 )
             for destination in self.destinations:

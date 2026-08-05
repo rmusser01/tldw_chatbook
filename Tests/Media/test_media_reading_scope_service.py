@@ -1,4 +1,6 @@
 # ruff: noqa: F811
+import asyncio
+
 import pytest
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
@@ -3879,6 +3881,52 @@ async def test_scope_service_routes_local_edit_and_document_version_helpers():
         12,
         {"title": "Renamed", "media_type": "pdf"},
     ) in local.calls
+
+
+@pytest.mark.asyncio
+async def test_scope_service_orders_latest_metadata_writes_per_record():
+    release_first = asyncio.Event()
+    first_started = asyncio.Event()
+    second_started = asyncio.Event()
+    committed_titles: list[str] = []
+
+    class DelayedLocalMediaService(FakeLocalMediaService):
+        async def update_media_metadata(self, media_id, **metadata):
+            title = str(metadata["title"])
+            if title == "older":
+                first_started.set()
+                await release_first.wait()
+            else:
+                second_started.set()
+            committed_titles.append(title)
+            return {"ok": True, "media_id": media_id, "metadata": metadata}
+
+    scope_service = MediaReadingScopeService(
+        local_service=DelayedLocalMediaService(),
+        server_service=FakeServerMediaService(),
+    )
+
+    older = scope_service.update_media_metadata_latest(
+        mode=MediaReadingBackend.LOCAL,
+        media_id=12,
+        title="older",
+    )
+    older_task = asyncio.create_task(older)
+    await first_started.wait()
+
+    newer = scope_service.update_media_metadata_latest(
+        mode="local",
+        media_id="12",
+        title="newer",
+    )
+    newer_task = asyncio.create_task(newer)
+    await asyncio.sleep(0)
+
+    assert second_started.is_set() is False
+    release_first.set()
+    await asyncio.gather(older_task, newer_task)
+
+    assert committed_titles == ["older", "newer"]
 
 
 @pytest.mark.asyncio

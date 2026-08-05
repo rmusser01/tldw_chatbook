@@ -2,7 +2,8 @@
 
 Status: Accepted
 Date: 2026-07-23
-Related Task: TASK-402
+Amended: 2026-08-02
+Related Tasks: TASK-561, TASK-560, TASK-569, TASK-710, TASK-763
 Supersedes: N/A
 
 ## Decision
@@ -21,8 +22,8 @@ in either of two modes:
 - Lazily launch and supervise a user-provided binary with a user-provided
   `server.json`.
 
-Managed mode is loopback-only and, for the pinned contract, accepts only
-audio.cpp's default or explicit `127.0.0.1` IPv4 bind. Chatbook will not
+Managed mode is loopback-only and requires explicit `127.0.0.1` host plus an
+explicit valid port in the selected `server.json`. Chatbook will not
 download or build audio.cpp, generate or modify its configuration, adopt an
 existing process, expose arbitrary server-side voice paths, or provide true
 client streaming in the first milestone.
@@ -47,6 +48,143 @@ an omnibus task.
 This ADR supersedes the registration direction in the non-canonical historical
 Higgs backend-registration document. That material remains historical context
 but no longer governs new TTS provider integration.
+
+### Managed lifecycle amendment (2026-08-02)
+
+The separately deferred managed lifecycle is now fully decided. Global
+Settings owns the explicit External/Managed mode, external origin, managed
+binary path, managed `server.json` path, lifecycle timing values, and shared
+safety limits. Speech Lab owns Start/Test, Refresh, Restart, Shutdown,
+generation, and in-memory process diagnostics. Saving or mounting either
+surface never launches, stops, restarts, or probes a process.
+
+Managed mode accepts only a user-provided executable and user-provided strict
+JSON configuration with explicit `host = "127.0.0.1"` and a valid explicit
+port. It launches the direct argument vector
+`[binary_path, "--config", server_json_path]` without a shell, from the JSON
+file's parent directory, using an allowlisted non-credential child
+environment. Chatbook never edits the file, passes arbitrary command-line
+arguments, accepts a non-loopback managed bind, or adopts a listener.
+
+The application owns one `AudioCppSupervisor` and at most one managed child.
+Its process states are Stopped, Starting, Running, Unhealthy, Draining,
+Stopping, and Unavailable; TTS capability is tracked separately. Concurrent
+first use shares one retained startup. Every child, HTTP client, health probe,
+exit monitor, output drain, and state publication is process-generation-bound.
+Two failed periodic health probes mark a live child Unhealthy, one later
+success restores its process state, and no failure starts an automatic restart
+loop.
+
+A failed pre-Running launch terminates only its exact child and joins every
+generation task. Manual Restart/Shutdown use the registry's exclusive provider
+transition, reject new work, and drain admitted leases. Application shutdown
+uses the existing bounded service/registry deadline, caps child termination by
+the remaining time, and cannot complete while an owned child or lifecycle task
+remains.
+
+Durable and applied configurations may temporarily differ. Saving while a
+managed child is live stages the latest desired generation without disturbing
+the applied generation. Speech Lab exposes Restart required or a pending mode
+switch. Explicit apply, manual shutdown, a later start after exit, or the next
+application session promotes the newest eligible saved generation. Catalog
+evidence from one configuration generation cannot reject an exact selection
+for another generation; that selection remains Unverified until the matching
+configuration is explicitly applied and checked.
+
+Child stdout/stderr are continuously drained into a bounded, memory-only,
+best-effort-sanitized diagnostic ring, never general logs or persistent
+storage. Managed synthesis otherwise retains the existing native HTTP contract
+and yields one complete validated WAV response through the async-stream
+interface.
+
+The detailed normative behavior and acceptance criteria are in the
+[managed-lifecycle design](../../Docs/superpowers/specs/2026-08-02-audio-cpp-managed-lifecycle-design.md).
+
+## Implementation status
+
+Slices 1–3 are implemented. The sealed registry registers the exact native
+provider `audio_cpp` first, with no provider alias and exclusive lazy
+reconfiguration, followed by the six unchanged legacy bridge entries.
+
+TASK-560 implements external connection mode only. It reads
+`[app_tts.audio_cpp]` with `mode = "external"`, a canonical HTTP(S) origin,
+five-second connect and 600-second overall synthesis timeouts, and positive
+bounds for input characters, response bytes, metadata bytes, catalog models,
+voices per model, and identifier characters. It has no environment override,
+authentication, path, binary, `server.json`, or process-management field.
+Invalid configuration fails locally with a safe, value-independent
+`ValueError` before a provider operation; the external adapter does not emit
+the reserved provider-neutral `configuration_invalid` code.
+
+Before Slice 2B, the external native adapter has five operations:
+`ensure_ready()`, `get_catalog(refresh=False)`,
+`get_voices(model_id, refresh=False)`, `synthesize(...)`, and `close()`.
+Slice 2B adds the optional structured voice-observation operation described
+below; `get_voices()` remains its tuple compatibility projection. Catalog and
+voice discovery own their readiness; `ensure_ready()` remains the service
+synthesis prerequisite. Callers use only service/registry APIs and never
+retrieve the concrete adapter.
+
+The `audio_cpp_http_v1` fixtures and parsers are pinned to upstream commit
+[`d3d748179e5ace353386fbf17bcaedfacf482d75`](https://github.com/0xShug0/audio.cpp/tree/d3d748179e5ace353386fbf17bcaedfacf482d75).
+They require `GET /health`, `GET /v1/models`, and complete-WAV
+`POST /v1/audio/speech`; per-model
+`GET /v1/audio/voices?model=<id>` remains optional.
+
+TASK-569 implements the catalog-driven external STTS Playground vertical.
+Descriptor discovery does not materialize adapters; only a selected provider is
+resolved. Independent catalog and voice workers carry configuration, catalog,
+provider, and model revisions so stale results are discarded. audio.cpp
+generation captures an immutable provider-neutral request and uses native
+`TTSService.synthesize()`, while the six existing providers retain the
+temporary compatibility generation path.
+
+TASK-710 extends the accepted service boundary to Console defaults. Global
+provider, model mode/value, voice mode/value, format, and speed are published
+as one immutable snapshot. Request selection and revision-matched lease
+acquisition share one admission gate with settings publication. audio.cpp
+Console speech uses the native service; the six retained providers remain
+inside `LegacyTTSAdapter`.
+
+The supported audio.cpp modes are exact model or `first_available`, and exact
+voice or `server_default`. Missing mode keys plus blank legacy audio.cpp values
+read as the dynamic modes without a startup write. A settings save persists
+authoritative mode keys in one atomic canonical/legacy mutation: exact values
+are dual-written, while dynamic modes remove stale exact aliases. Publication
+runs off the Textual event loop, permits a bounded foreground pending result,
+does not cancel an admitted response, and allows only the latest pending
+generation to complete the exclusive non-overlapping adapter handoff.
+
+The Playground maps Server default to an omitted voice, locks audio.cpp to WAV
+and speed `1.0`, and restores each legacy provider's prior controls when
+switching away. A successful complete-WAV artifact retains immutable provider,
+model, optional voice, source-text, operation, actual-format, content-type, and
+safe response provenance for playback and export. Safe failures expose bounded
+recovery actions; stale discovery disables new generation without invalidating
+an existing artifact; audio.cpp never automatically falls back.
+
+The approved profile-library continuation extends this boundary in two
+specific ways. Exact native audio.cpp Playground/profile admission issues a
+text-free immutable requested-selection snapshot inside the same gate that
+acquires the revision-matched provider lease; UI code cannot reconstruct
+reusable profile provenance from mutable selectors or actual response
+metadata. The artifact field remains absent for legacy bridge generation, which
+does not enter the profile path.
+
+Profile capability status originates inside optional
+`TTSStructuredVoiceAdapter.observe_voices(...)` before discovery failure can be
+collapsed or cached as an empty tuple. audio.cpp caches the structured state
+with the voices. Registry/service code adds the configuration revision from the
+matching lease and constructs a bounded profile-facing snapshot. Tuple-only
+voice discovery remains a selector compatibility projection, but it is not
+authority for profile availability or exact-voice removal. Legacy bridge
+adapters do not implement this optional profile-capability contract.
+
+Slices 4–5 remain unimplemented. Their accepted scope is the user-provided
+prebuilt binary plus user-provided `server.json` supervisor core, followed by
+the globally owned managed fields and Speech-Lab-owned lifecycle UI described
+in the 2026-08-02 managed-lifecycle design. Slices 1–3 do not launch, monitor,
+restart, or stop audio.cpp and expose no managed process settings or actions.
 
 ## Context
 
@@ -84,11 +222,28 @@ policy, and a cross-module interface.
 | Generate audio.cpp server configuration | Duplicates an evolving upstream schema and makes Chatbook responsible for model provisioning. |
 | Require true SSE/PCM streaming initially | Adds buffering, partial-failure, sample-rate, cancellation, and playback concerns before the adapter architecture is established. |
 | Support multiple audio.cpp instances | Expands the first adapter into provider-instance routing, load balancing, and failover. |
+| Treat an empty voice tuple as authoritative absence | Conflates a valid empty optional endpoint with timeout, transport/contract failure, reconfiguration, shutdown, and model absence, causing false profile repair or removal guidance. |
 
 ## Consequences
 
 - `TTSService` and `TTSAdapterRegistry` become application-owned lifecycle
   objects.
+- Global TTS preferences are published together as one immutable snapshot.
+  Under one application-owned shared admission gate, each request freezes its
+  complete selection and acquires a provider lease carrying the same
+  configuration revision.
+- Exact native audio.cpp Playground/profile admission produces a text-free
+  requested-selection snapshot within that boundary. The snapshot records
+  requested provider, exact model, submitted voice, format, speed, validated
+  options, and admitted configuration revision separately from actual response
+  metadata.
+- Slice 2B populates that snapshot only for admitted native audio.cpp
+  Playground artifacts. Legacy bridge artifacts retain no profile provenance
+  and their generation behavior remains unchanged.
+- Settings publication holds the exclusive side of that admission gate.
+  Requests observe either the old coherent preference-and-lease pair, the new
+  coherent pair, or a structured reconfiguring/unavailable state; they never
+  combine selection from one configuration revision with a lease from another.
 - Registration at the app boundary is explicit and sealed. Legacy wildcard
   matching is quarantined inside `LegacyBackendHost`, reset deterministically
   in tests, closed to new providers, and removed with the bridge.
@@ -98,10 +253,27 @@ policy, and a cross-module interface.
 - Response lifetime extends through async byte consumption, allowing registry
   retirement without closing in-flight resources.
 - Settings updates can replace one provider without restarting the application
-  or disturbing unrelated providers.
-- audio.cpp reconfiguration is an exclusive handoff: new operations are blocked
-  while active leases drain, the old adapter and owned child close before the
-  new configuration becomes active, and the replacement remains lazy.
+  or disturbing unrelated providers. STTS settings saves reload the effective
+  configuration once after all writes succeed, map recognized
+  adapter-affecting event keys to exact provider IDs, and invoke targeted
+  reconfiguration. An unmaterialized provider receives updated lazy factory
+  input without being constructed; an unchanged effective configuration is a
+  no-op; and the compatibility accessor never consumes replacement
+  configuration.
+- Service shutdown seals admission before waiting on adapter cleanup, wakes
+  concurrency waiters, uses the registry timeout as its single drain deadline,
+  initiates close on every abandoned service-wrapped response after the bounded
+  drain, and independently releases service-owned leases and concurrency slots.
+  Definitive service shutdown leaves no admission waiter blocked and does not
+  wait indefinitely for a provider finalizer that ignores cancellation.
+- audio.cpp reconfiguration is an exclusive handoff. The foreground settings
+  wait is finite, and an admitted request keeps its old provider lease until it
+  completes; that lease is never silently cancelled. Configuration pending
+  handoff is inert, superseded pending generations cannot become active, and
+  only the latest pending generation is eligible for activation. New
+  operations are blocked while active leases drain, the old adapter closes
+  before a replacement adapter can be created, and the replacement remains
+  lazy. Managed mode applies the same rule to an owned child.
 - Provider-scoped legacy hosts preserve current implementations while isolating
   configuration replacement and backend caches. The quarantined class registry
   is their only shared legacy state.
@@ -110,45 +282,83 @@ policy, and a cross-module interface.
 - Existing callers retain their generation signature through the bridge.
   Provider-neutral, operation-scoped progress prevents UI access to concrete
   backends; progress-sink failures never fail synthesis.
-- The Playground becomes catalog-driven, while legacy catalogs remain marked as
-  approximate until migrated.
-- audio.cpp managed mode launches only a user-provided executable and
-  configuration using the pinned server's default or explicit `127.0.0.1`
-  bind; `localhost` and `::1` are not accepted by that server version.
+- Slice 3 makes the Playground catalog-driven, while legacy catalogs remain
+  marked as approximate until migrated. Descriptor reads remain non-
+  materializing; independent catalog, voice, generation, and playback
+  ownership prevents one operation from cancelling another.
+- Managed mode (Slices 4–5) launches only a user-provided executable and
+  configuration with explicit `127.0.0.1` host and explicit valid port;
+  omitted host/port, `localhost`, and `::1` are not accepted.
 - Managed process ownership is explicit: Chatbook stops only children it
   started and never silently adopts an existing listener.
-- A managed failure before first readiness rolls back the owned child and joins
-  its monitor and log drains. A live child that becomes unhealthy after reaching
-  Ready remains available for explicit restart.
+- A managed failure before first Running rolls back the owned child
+  and joins its monitor and log drains. A live child that becomes unhealthy
+  after reaching Running remains available for explicit restart.
 - The first audio.cpp contract supports complete WAV output and default speed
   only. Upstream streaming metadata does not imply client streaming support.
-- Complete-response synthesis uses a connection deadline and an overall
-  synthesis deadline, but no read-inactivity deadline that could abort quiet
-  native inference before the WAV response begins.
+- The complete response is fully buffered, bounded, and structurally validated
+  as uncompressed PCM16 WAV before it is exposed as one asynchronous response
+  chunk. This preserves the async-stream interface without claiming
+  incremental streaming.
+- `connect_timeout_seconds` configures HTTP connection establishment and also
+  provides one overall deadline around required health-plus-models discovery,
+  including an eligible safe-GET retry, plus one independent overall deadline
+  for each optional voice-discovery operation.
+- Complete-response synthesis uses that HTTP connection timeout and its own
+  overall synthesis deadline, but no read-inactivity deadline that could abort
+  quiet native inference before the WAV response begins.
 - Default safety bounds are 10,000 input characters and 128 MiB of response
   data; both remain configurable.
 - Server default is the initial voice selection because audio.cpp's configured
   default is not identified by the voices endpoint. Discovered voices remain
-  explicit alternatives.
+  explicit alternatives; omitting `voice` is the only server-default request
+  representation.
+- Slice 3 retains complete-WAV results as immutable artifacts with the request
+  and actual response provenance required for playback and export, independent
+  of later selector changes.
 - Readiness probes health and model discovery without generating hidden audio;
   speech-endpoint compatibility is established by the first user-requested
-  generation or the opt-in live smoke test.
-- External mode sends synthesis text to the configured server and communicates
-  that privacy boundary in the UI. HTTP redirects are disabled.
+  generation or the future opt-in live smoke test.
+- External mode sends synthesis text to the configured server. Slice 2
+  documentation states that privacy boundary, and Slice 3 communicates it in
+  the UI. HTTP redirects are disabled.
 - Metadata bodies, model and voice counts, and identifiers are bounded.
   Requests require identity content encoding so decompression cannot bypass
   response limits.
+- Redirects are disabled, TLS verification remains enabled for HTTPS, safe GET
+  operations may receive one bounded retry, and speech POST is never retried.
 - Bounded responses receive structural uncompressed 16-bit PCM WAV validation;
   a RIFF/WAVE signature alone is insufficient.
 - The adapter trusts the pinned structured `server_busy` response but does not
   parse free-form `server_error` text. After a speech `500`, it refreshes model
   discovery once to distinguish a vanished model from a generation failure and
   never retries the POST.
+- External failures use stable safe operation codes. Connectivity and required
+  contract failures mark cached health stale; invalid requests, optional voice
+  failures, busy responses, generation failures, invalid audio, and
+  cancellation do not. Cancellation propagates normally, and an audio.cpp
+  request never falls back to another model or provider.
 - Successful authoritative catalog refreshes invalidate voice caches through a
   new catalog revision, even when the model list is unchanged.
+- Profile capability consumers use a revision-bound structured voice
+  observation. A successful observation may authoritatively contain zero
+  voices; ambiguous discovery failures remain unverified and never prove that
+  an exact voice was removed. Compatibility tuple projections are not profile
+  authority.
+- The structured status is produced and cached at the native adapter boundary.
+  A page snapshot holds one revision-matched lease, compares mutable catalog
+  revisions instead of assuming the lease freezes them, retries a moving
+  catalog at most once, and uses one ten-second aggregate deadline with at most
+  four voice requests in flight. Cancellation and deadline cleanup always
+  release the lease so capability display cannot indefinitely block exclusive
+  reconfiguration.
 - Chatbook logs setting names and outcomes, never values or API keys. Managed
   child output is treated as potentially sensitive, retained only in a bounded
   in-memory diagnostic ring, and never copied into general logs or persisted.
+- External synthesis sends submitted text to the configured origin. Logs and
+  operation errors do not expose that text, configured origins or values, raw
+  response bodies, or rejected identifiers. Response metadata is limited to
+  safe immutable scalar provenance, sample, and bounded timing values.
 - Normal CI uses fakes and contract fixtures. audio.cpp and model downloads are
   not test dependencies.
 - Fixture provenance is pinned to audio.cpp commit
@@ -166,15 +376,20 @@ policy, and a cross-module interface.
   select another provider after a reported failure.
 - During implementation rollout, retain the provider-scoped legacy hosts and
   accessor until the bridge deletion criteria are met.
-- If the new Playground routing must be reverted, restore its legacy provider
-  selection path while leaving the native registry code unselected; no data or
-  schema migration is involved.
+- If the future Playground routing must be reverted, restore its legacy
+  provider selection path while leaving the native registry code unselected;
+  no data or schema migration is involved.
 
 ## Links
 
 - [Design spec](../../Docs/superpowers/specs/2026-07-23-audio-cpp-tts-adapter-registry-design.md)
-- [audio.cpp server guide](https://github.com/0xShug0/audio.cpp/blob/main/app/server/README.md)
-- [audio.cpp server runtime](https://github.com/0xShug0/audio.cpp/blob/main/app/server/runtime.cpp)
-- [audio.cpp license](https://github.com/0xShug0/audio.cpp/blob/main/LICENSE)
+- [Managed-lifecycle design](../../Docs/superpowers/specs/2026-08-02-audio-cpp-managed-lifecycle-design.md)
+- [TASK-560](<../tasks/task-560 - Add-external-audio.cpp-native-TTS-adapter.md>)
+- [TASK-569](<../tasks/task-569 - Complete-external-audio.cpp-STTS-Playground-vertical.md>)
+- [TASK-710](<../tasks/task-710 - Make-external-audio.cpp-Console-TTS-settings-coherent.md>)
+- [Pinned audio.cpp server guide](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/README.md)
+- [Pinned audio.cpp server runtime](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/runtime.cpp)
+- [Pinned audio.cpp busy guard](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/app/server/busy_guard.h)
+- [Pinned audio.cpp license](https://github.com/0xShug0/audio.cpp/blob/d3d748179e5ace353386fbf17bcaedfacf482d75/LICENSE)
 - [Historical Higgs backend architecture](../../Docs/Development/TTS/Higgs-ADR-001-Backend-Architecture.md)
 - [Historical Higgs backend registration](../../Docs/Development/TTS/Higgs-ADR-002-Backend-Registration.md)

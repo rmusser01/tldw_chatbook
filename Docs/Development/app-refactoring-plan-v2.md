@@ -1,5 +1,17 @@
 # App.py Refactoring Plan v2.0
+
+> [!WARNING]
+> **Historical document — do not implement.** Its root reactive state,
+> mirrored-write, persistence, and screen-caching proposals are superseded by
+> [ADR-033](../../backlog/decisions/033-application-session-state-ownership.md)
+> and the
+> [application session state ownership design](../superpowers/specs/2026-07-26-application-session-state-ownership-design.md).
+> Alternate refactored app entry points described by this document were retired
+> under TASK-105.
+
 ## Following Textual Best Practices - Corrected Version
+
+> (Describes surfaces retired in task-577, 2026-07; kept as historical record.)
 
 **Current State:** 5,857 lines, 176 methods, 65 reactive attributes  
 **Target State:** < 500 lines, < 20 methods, properly managed reactive state

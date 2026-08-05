@@ -297,8 +297,16 @@ def main():
     if args.db_path:
         db_path = args.db_path
     else:
-        db_config = get_cli_setting("database", {})
-        db_path = Path(db_config.get("media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db")).expanduser()
+        # Read the single key directly: `get_cli_setting(section, default)` is
+        # not a supported shape -- it silently ignored config and returned the
+        # default, so this script never honoured a configured DB path.
+        db_path = Path(
+            get_cli_setting(
+                "database",
+                "media_db_path",
+                "~/.local/share/tldw_cli/tldw_cli_media_v2.db",
+            )
+        ).expanduser()
     
     print(f"\nUsing database: {db_path}")
     

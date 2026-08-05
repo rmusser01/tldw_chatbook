@@ -11,6 +11,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from loguru import logger
+
+from tldw_chatbook.Character_Chat.world_info_regex import validate_regex_pattern
+
 _VALID_POSITIONS = {"before_char", "after_char", "at_start", "at_end"}
 _INT_POSITION_MAP = {0: "before_char", 1: "after_char"}
 
@@ -106,6 +110,13 @@ def _normalize_entry(entry: Any, index: int) -> Dict[str, Any]:
     else:
         enabled = not _coerce_bool(entry.get("disable"), False)
     extensions = entry.get("extensions")
+    regex_on = _coerce_bool(entry.get("regex"), False)
+    if regex_on:
+        for pat in list(keys) + _as_str_list(raw_secondary):
+            try:
+                validate_regex_pattern(pat)
+            except ValueError as exc:
+                raise ValueError(f"Entry {index + 1}: {exc}") from exc
     return {
         "keys": keys,
         "secondary_keys": _as_str_list(raw_secondary),
@@ -119,6 +130,7 @@ def _normalize_entry(entry: Any, index: int) -> Dict[str, Any]:
         "enabled": enabled,
         "priority": _coerce_int(entry.get("priority", 0), 0),
         "extensions": extensions if isinstance(extensions, dict) else {},
+        "regex": regex_on,
     }
 
 
@@ -149,3 +161,88 @@ def normalize_world_book_import(data: Any) -> Dict[str, Any]:
         raise ValueError("'entries' must be a list or an object.")
     normalized = [_normalize_entry(entry, i) for i, entry in enumerate(entries_list)]
     return {**data, "entries": normalized}
+
+
+def character_book_to_world_book_block(
+    book: Any, fallback_name: str
+) -> tuple["dict | None", int, int]:
+    """Convert a V2 card ``character_book`` into one embedded
+    ``character_world_books`` snapshot block (task-429).
+
+    Salvage-and-count: entries that ``_normalize_entry`` rejects (not a dict,
+    no keys, no content, or an invalid regex pattern) are skipped and counted,
+    so one bad entry never sinks the book. Never raises.
+
+    Args:
+        book: The card's ``character_book`` value. Untrusted import data, so
+            any shape is tolerated; a non-dict yields ``(None, 0, 0)``.
+        fallback_name: Name for the produced block when the book carries no
+            usable name of its own.
+
+    Returns:
+        ``(block_or_None, imported_count, skipped_count)``. ``None`` only when
+        ``book`` is not a dict.
+    """
+    if not isinstance(book, dict):
+        return None, 0, 0
+    raw_name = book.get("name")
+    name = (
+        raw_name.strip()
+        if isinstance(raw_name, str) and raw_name.strip()
+        else fallback_name
+    )
+    raw_entries = book.get("entries")
+    if isinstance(raw_entries, dict):
+        entries_list = list(raw_entries.values())
+    elif isinstance(raw_entries, list):
+        entries_list = raw_entries
+    else:
+        entries_list = []
+    normalized: List[Dict[str, Any]] = []
+    skipped = 0
+    for i, entry in enumerate(entries_list):
+        try:
+            normalized.append(_normalize_entry(entry, i))
+        except ValueError:
+            skipped += 1
+            logger.warning(
+                "character_book entry skipped on import (entry_index={}).",
+                i,
+            )
+    block = {
+        "name": name,
+        "description": str(book.get("description") or ""),
+        "scan_depth": _coerce_int(book.get("scan_depth"), 3),
+        "token_budget": _coerce_int(book.get("token_budget"), 500),
+        "recursive_scanning": _coerce_bool(book.get("recursive_scanning"), False),
+        "enabled": _coerce_bool(book.get("enabled"), True),
+        "entries": normalized,
+    }
+    return block, len(normalized), skipped
+
+
+def format_imported_lorebook_note(books: object) -> str:
+    """Return the toast suffix naming the lorebook an import just attached.
+
+    Args:
+        books: The character's ``extensions["character_world_books"]`` value,
+            straight from an imported record and therefore untrusted -- any
+            shape is tolerated and yields "".
+
+    Returns:
+        A leading-space suffix like ``" Lorebook 'X' attached (2 entries)."``,
+        or ``""`` when there is no usable book to name.
+
+    The LAST block is named, not the first: ``parse_v2_card`` appends the
+    converted book to whatever list the card already carried, so reading the
+    first block announced a pre-existing book instead of the imported one.
+    """
+    if not isinstance(books, list) or not books:
+        return ""
+    block = books[-1]
+    if not isinstance(block, dict):
+        return ""
+    name = str(block.get("name") or "lorebook")
+    entries = block.get("entries")
+    count = len(entries) if isinstance(entries, list) else 0
+    return f" Lorebook '{name}' attached ({count} entries)."

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Chatbooks are knowledge packs that allow you to export, share, and import curated collections of content from tldw_chatbook. They provide a way to package conversations, notes, characters, media, and prompts into a portable format.
+Chatbooks are knowledge packs that allow you to export, share, and import curated collections of content from tldw_chatbook. They provide a way to package conversations, notes, characters, media, prompts, and kept briefings (with their cast scripts) into a portable format.
 
 ## Features
 
@@ -135,11 +135,31 @@ chatbook.zip
 │   ├── notes/           # Exported notes
 │   ├── characters/      # Character profiles
 │   ├── media/          # Media files (optional)
-│   └── prompts/        # Custom prompts
+│   ├── prompts/        # Custom prompts
+│   └── kept_briefings/ # Kept briefings (JSON + Markdown; scripts nested inside)
 └── metadata/
     ├── relationships.json  # Content relationships
     └── embeddings/        # Vector embeddings (optional)
 ```
+
+### Kept Briefings
+
+A kept briefing (Watchlists/briefings you chose to keep, plus any cast
+scripts made from it) exports as one JSON file (the machine-round-trippable
+source of truth, including every provenance column) and one companion
+Markdown file (a human-readable rendition) per briefing under
+`content/kept_briefings/`. Kept scripts are not independently selectable in
+the content picker -- they always travel with their parent kept briefing,
+nested inside its JSON payload.
+
+Kept briefings/scripts are local-only for ChaChaNotes sync between devices
+(a deliberate v1 decision -- see
+`Docs/superpowers/specs/2026-08-01-kept-briefings-design.md`); chatbook
+export/import is the supported way to carry them to another device. On
+import, a kept briefing whose `source_briefing_id` already exists locally
+with different content is never silently overwritten -- it is reported as a
+conflict in the import summary, and re-importing the same chatbook never
+creates duplicates.
 
 ### Manifest Schema
 The manifest.json file contains:

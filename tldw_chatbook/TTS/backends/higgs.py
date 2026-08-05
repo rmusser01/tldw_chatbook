@@ -4,12 +4,9 @@
 # Imports
 import asyncio
 import os
-import sys
 import time
 import json
 import shutil
-import subprocess
-from contextlib import contextmanager
 from typing import AsyncGenerator, Optional, Dict, Any, List, Tuple
 from datetime import datetime
 from pathlib import Path
@@ -77,84 +74,10 @@ from tldw_chatbook.TTS.text_processing import (
 from tldw_chatbook.config import get_cli_setting
 
 
-@contextmanager
-def protect_file_descriptors():
-    """Context manager to protect file descriptors during subprocess operations.
-
-    This fixes the "bad value(s) in fds_to_keep" error on macOS when the
-    transformers library spawns subprocesses for model downloads.
-    """
-    # Save original file descriptors
-    original_stdout = sys.stdout
-    original_stderr = sys.stderr
-    original_stdin = sys.stdin
-
-    # Save original environment
-    env_backup = os.environ.copy()
-
-    # Save original subprocess.Popen to restore later
-    original_popen = subprocess.Popen
-
-    try:
-        # Ensure we have real file descriptors, not wrapped objects
-        # This is crucial for subprocess operations
-        try:
-            # Test if stdout/stderr are real files with valid file descriptors
-            stdout_fd = sys.stdout.fileno()
-            stderr_fd = sys.stderr.fileno()
-            # Verify they're valid by attempting to use them
-            os.fstat(stdout_fd)
-            os.fstat(stderr_fd)
-        except (AttributeError, ValueError, OSError):
-            # stdout/stderr are wrapped/captured or invalid, create new ones
-            # Use the original file descriptors 1 and 2 directly
-            try:
-                sys.stdout = os.fdopen(1, "w")
-                sys.stderr = os.fdopen(2, "w")
-            except OSError:
-                # If that fails, use devnull as a fallback
-                devnull = open(os.devnull, "w")
-                sys.stdout = devnull
-                sys.stderr = devnull
-
-        # Set environment to prevent subprocess issues
-        os.environ["TOKENIZERS_PARALLELISM"] = "false"
-        os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
-
-        # For macOS specifically
-        if sys.platform == "darwin":
-            os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
-            # Ensure subprocess doesn't inherit bad file descriptors
-            os.environ["PYTHONNOUSERSITE"] = "1"
-            # Force subprocess to close all file descriptors except 0,1,2
-            os.environ["PYTHON_SUBPROCESS_CLOSE_FDS"] = "1"
-
-        yield
-
-    finally:
-        # Restore original file descriptors
-        sys.stdout = original_stdout
-        sys.stderr = original_stderr
-        sys.stdin = original_stdin
-
-        # Close any temporary files we created
-        if sys.stdout != original_stdout and hasattr(sys.stdout, "close"):
-            try:
-                sys.stdout.close()
-            except Exception:
-                pass
-        if sys.stderr != original_stderr and hasattr(sys.stderr, "close"):
-            try:
-                sys.stderr.close()
-            except Exception:
-                pass
-
-        # Restore environment
-        os.environ.clear()
-        os.environ.update(env_backup)
-
-        # Restore subprocess.Popen
-        subprocess.Popen = original_popen
+# task-640: consolidated into tldw_chatbook.Utils.fd_protection (was
+# duplicated verbatim here, in Embeddings/Embeddings_Lib.py, and in
+# Local_Ingestion/transcription_service.py).
+from ...Utils.fd_protection import protect_file_descriptors  # noqa: E402,F401
 
 
 #######################################################################################################################

@@ -1,0 +1,12 @@
+RETAINED-ARTIFACT REDACTION CHECK
+
+- Real-user and fixture-path patterns: no matches.
+- Secret-canary, private-key, host-key, credential, and agent-socket patterns:
+  no matches.
+- Known disposable note-body phrases: no matches.
+- JSON parse check: passed.
+- Retained note bodies: none.
+- Raw server diagnostics: none.
+
+The scans were repeated after this file was added and before the checksum
+manifest was generated.

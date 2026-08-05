@@ -8,9 +8,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.app import TabNavigationProvider, TldwCli
 from tldw_chatbook.UI.Navigation.shell_destinations import (
     SHELL_DESTINATION_ORDER,
@@ -153,11 +153,9 @@ async def test_clean_run_tab_order_reaches_nav_and_primary_setup_action(
             focus_ids.append(focused.id or "")
 
             assert focus_ids == [*expected_focus_ids, "home-primary-action"]
-            nav_hint = str(
-                app.screen.query_one("#nav-overflow-hint", Static).renderable
-            )
-            assert "More" in nav_hint
-            assert "Ctrl+P" in nav_hint
+            nav_hint = app.screen.query_one("#nav-overflow-hint", Button)
+            assert "More" in str(nav_hint.label)
+            assert "Ctrl+P" in str(nav_hint.tooltip)
 
 
 @pytest.mark.asyncio

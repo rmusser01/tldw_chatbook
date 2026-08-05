@@ -405,3 +405,52 @@ def test_null_insertion_order_does_not_crash_sort():
     result = proc.process_messages("a b", [])  # must not raise
     injected = result["injections"]["before_char"]
     assert "content-a" in injected and "content-b" in injected
+
+
+def test_regex_entry_fires_on_pattern_a_literal_would_miss():
+    book = _book(1, "B", [_entry(1, ["ward[eo]n"], "grim jailer", regex=True)])
+    proc = WorldInfoProcessor(world_books=[book])
+    result = proc.process_messages("The Wardon appears.", [])  # matches ward[eo]n
+    assert any("grim jailer" in c for c in result["injections"]["before_char"])
+    # A literal (non-regex) entry with the same key would NOT match "Wardon".
+    lit = WorldInfoProcessor(world_books=[_book(1, "B", [_entry(1, ["ward[eo]n"], "x")])])
+    assert lit.process_messages("The Wardon appears.", [])["matched_entries"] == []
+
+
+def test_regex_entry_respects_case_sensitive():
+    book = _book(1, "B", [_entry(1, ["WARD.N"], "c", regex=True, case_sensitive=True)])
+    proc = WorldInfoProcessor(world_books=[book])
+    assert proc.process_messages("the warden", [])["matched_entries"] == []
+    assert proc.process_messages("the WARDEN", [])["matched_entries"]
+
+
+def test_regex_backstop_downgrades_bad_pattern_to_literal():
+    # Simulates an unvalidated source (e.g. a character_book) with a catastrophic
+    # pattern: the processor downgrades it to literal so matching can't hang.
+    book = _book(1, "B", [_entry(1, ["(a+)+"], "content", regex=True)])
+    proc = WorldInfoProcessor(world_books=[book])
+    assert proc.entries[0]["regex"] is False           # downgraded at load
+    # Matched literally: the literal "(a+)+" won't appear in normal text.
+    assert proc.process_messages("aaaaaaaaaa!", [])["matched_entries"] == []
+    # It DOES match the literal pattern text (proves literal matching, no hang).
+    # (Word chars must directly abut the punctuation-only literal on both sides
+    # for _keyword_in_text's \b...\b word-boundary anchors to fire.)
+    assert proc.process_messages("see x(a+)+x here", [])["matched_entries"]
+
+
+def test_non_regex_entry_unchanged_stable_no_op():
+    book = _book(1, "B", [_entry(1, ["Warden"], "grim jailer")])  # regex defaults off
+    proc = WorldInfoProcessor(world_books=[book])
+    assert proc.process_messages("The Warden.", [])["matched_entries"]
+    assert proc.process_messages("nothing here", [])["matched_entries"] == []
+
+
+def test_string_false_regex_flag_is_not_enabled():
+    """A raw character_book-style entry with regex="false" (string) must NOT
+    enable regex — bool("false") is True, so a proper coercion is required
+    (Qodo #705). The entry matches literally (word-boundary), not as regex."""
+    book = _book(1, "B", [_entry(1, ["w[ao]rden"], "grim jailer", regex="false")])
+    proc = WorldInfoProcessor(world_books=[book])
+    assert proc.entries[0]["regex"] is False
+    # literal match: the key text "w[ao]rden" won't match "the warden"
+    assert proc.process_messages("the warden appears", [])["matched_entries"] == []

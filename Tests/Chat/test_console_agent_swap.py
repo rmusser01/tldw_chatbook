@@ -7,10 +7,17 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.citation_repair import CitationRepairContract
+from tldw_chatbook.Chat.citation_trace_models import MarkerNamespace
+from tldw_chatbook.Chat.console_provider_gateway import (
+    NO_PROVIDER_CONTENT_COPY,
+    ConsoleProviderResolution,
+)
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Agents.agent_models import (
@@ -50,11 +57,108 @@ class _Gateway:
 
         return _R()
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, **kwargs):
         chunks = self._scripts[self.calls]
         self.calls += 1
         for chunk in chunks:
             yield chunk
+
+
+class _SignalGateway:
+    def __init__(self, scripts, *, mark_fallback_calls=frozenset()):
+        self._scripts = list(scripts)
+        self._mark_fallback_calls = mark_fallback_calls
+        self.calls = []
+        self.resolution = ConsoleProviderResolution(
+            provider="openai",
+            base_url="https://provider.invalid/v1",
+            model="repair-model",
+            ready=True,
+            readiness_key="openai",
+            execution_key="openai",
+            api_key="secret",
+            temperature=None,
+            top_p=None,
+            min_p=None,
+            top_k=None,
+            max_tokens=128,
+            seed=None,
+            presence_penalty=None,
+            frequency_penalty=None,
+            reasoning_effort=None,
+            reasoning_summary=None,
+            verbosity=None,
+            thinking_effort=None,
+            thinking_budget_tokens=None,
+            streaming=True,
+        )
+
+    async def resolve_for_send(self, _selection):
+        return self.resolution
+
+    async def stream_chat(self, resolution, messages, tools=None, signals=None):
+        call_index = len(self.calls)
+        self.calls.append(
+            {
+                "resolution": resolution,
+                "messages": messages,
+                "tools": tools,
+                "signals": signals,
+            }
+        )
+        if call_index in self._mark_fallback_calls:
+            signals.mark_synthetic_fallback()
+        for chunk in self._scripts[call_index]:
+            yield chunk
+
+
+def _citation_contract():
+    return CitationRepairContract(
+        schema_version=1,
+        marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+        allowed_ordinals=(1,),
+        evidence_context="[S1] MEDIA — Source\nExact evidence.",
+    )
+
+
+async def _real_agent_citation_controller(
+    tmp_path,
+    scripts,
+    *,
+    mark_fallback_calls=frozenset(),
+):
+    gateway = _SignalGateway(
+        scripts,
+        mark_fallback_calls=mark_fallback_calls,
+    )
+    store = ConsoleChatStore()
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=gateway,
+    )
+    contract = _citation_contract()
+
+    async def capture(_draft):
+        return SimpleNamespace(
+            context=contract.evidence_context,
+            citation_builder=None,
+            prompt_evidence_set_id=None,
+            citation_repair_contract=contract,
+        )
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="openai",
+        model="repair-model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+        rag_capture_provider=capture,
+    )
+    result = await controller.submit_draft("question")
+    return result, controller, store, gateway
 
 
 def _controller(tmp_path, scripts, *, enabled=True):
@@ -73,6 +177,90 @@ def _controller(tmp_path, scripts, *, enabled=True):
     return controller, store, db
 
 
+@pytest.mark.parametrize(
+    ("scripts", "fallback_call"),
+    (
+        (
+            [
+                [
+                    f"{NO_PROVIDER_CONTENT_COPY}\n"
+                    f"{_fence('calculator', {'expression': '1+1'})}"
+                ],
+                ["Primary final answer"],
+                ["Primary final answer [S1]"],
+            ],
+            0,
+        ),
+        (
+            [
+                [_fence("calculator", {"expression": "1+1"})],
+                [
+                    f"{NO_PROVIDER_CONTENT_COPY}\n"
+                    f"{_fence('calculator', {'expression': '2+2'})}"
+                ],
+                ["Primary final answer"],
+                ["Primary final answer [S1]"],
+            ],
+            1,
+        ),
+        (
+            [
+                [_fence(SPAWN_TOOL_NAME, {"task": "answer briefly"})],
+                [NO_PROVIDER_CONTENT_COPY],
+                ["Primary final answer"],
+                ["Primary final answer [S1]"],
+            ],
+            1,
+        ),
+    ),
+    ids=("first-tool-turn", "intermediate-tool-turn", "subagent-turn"),
+)
+@pytest.mark.asyncio
+async def test_citation_repair_agent_shared_fallback_signal_bypasses_after_any_earlier_turn(
+    tmp_path,
+    scripts,
+    fallback_call,
+):
+    result, _controller, store, gateway = await _real_agent_citation_controller(
+        tmp_path,
+        scripts,
+        mark_fallback_calls=frozenset({fallback_call}),
+    )
+
+    assistant = next(
+        message
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert result.visible_copy == assistant.content == "Primary final answer"
+    assert len(gateway.calls) == len(scripts) - 1
+    signals = [call["signals"] for call in gateway.calls]
+    assert signals[0] is not None
+    assert all(signal is signals[0] for signal in signals)
+    assert signals[0].synthetic_fallback_emitted is True
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_agent_real_genuine_fallback_copy_does_not_bypass(
+    tmp_path,
+):
+    repaired = f"{NO_PROVIDER_CONTENT_COPY} [S1]"
+    result, _controller, store, gateway = await _real_agent_citation_controller(
+        tmp_path,
+        [[NO_PROVIDER_CONTENT_COPY], [repaired]],
+    )
+
+    assistant = next(
+        message
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert result.visible_copy == assistant.content == repaired
+    assert len(gateway.calls) == 2
+    assert gateway.calls[0]["signals"] is gateway.calls[1]["signals"]
+    assert gateway.calls[0]["signals"].synthetic_fallback_emitted is False
+
+
 def _all_runs(db):
     """Read every persisted run record directly (AgentRunsDB has no list-all)."""
     with db.connection() as conn:
@@ -87,6 +275,199 @@ async def test_agent_send_no_tools_streams_like_today(tmp_path):
     messages = store.messages_for_session(store.active_session_id)
     assert messages[-1].role is ConsoleMessageRole.ASSISTANT
     assert messages[-1].content == "Tokyo."
+
+
+@pytest.mark.asyncio
+async def test_agent_run_records_persisted_assistant_message_id(tmp_path):
+    """The load-bearing write: after a full agent reply completes on a
+    persisted store, the primary run's ``assistant_message_id`` is the
+    reply's PERSISTED id (durable ChaChaNotes id), NOT the native in-memory
+    id -- so a later resume can anchor markers by ``persisted_message_id``.
+    The native id create_run recorded is corrected to the persisted id here.
+    """
+    from Tests.Chat.test_console_chat_store import FakePersistence
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    gateway = _Gateway([["Tok", "yo."]])
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="test-model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+
+    result = await controller.submit_draft("capital of Japan?")
+    assert result.accepted is True
+
+    session_id = store.active_session_id
+    assistant = next(
+        m
+        for m in store.messages_for_session(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert assistant.status == "complete"
+    assert assistant.persisted_message_id is not None
+
+    primary = next(r for r in _all_runs(db) if r["agent_kind"] == "primary")
+    assert primary["assistant_message_id"] == assistant.persisted_message_id
+    # The native id create_run stored was corrected to the persisted id.
+    assert primary["assistant_message_id"] != assistant.id
+
+
+@pytest.mark.asyncio
+async def test_stopped_run_records_persisted_id_not_stale_native(tmp_path):
+    """Critical regression (Phase C Task 2 review): a run STOPPED mid-flight
+    must end with the run's ``assistant_message_id`` == the stopped message's
+    PERSISTED id -- never the stale native create-time id (which can never
+    match any ``persisted_message_id`` on resume, so Task 3 would drop its
+    markers as off-path).
+
+    Reproduces the reviewer's scenario on a persistence-backed store + real
+    ``AgentRunsDB``: a real run is created (``create_run`` -- native id was
+    stored PRE-fix, NULL post-Half-1), then a Stop lands in the window after
+    the bridge returns but before ``_finalize_agent_reply``, leaving the
+    message ``stopped`` and persisted. Finalize's ``stopped_now`` branch must
+    then record the persisted id onto the run.
+
+    RED on HEAD 85e2f3d9: the run keeps the stale native id (stopped path
+    never recorded anything). GREEN with both halves: NULL at create, persisted
+    id recorded on the stopped path.
+    """
+    from Tests.Chat.test_console_chat_store import FakePersistence
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    gateway = _Gateway([["Tok", "yo."]])
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="test-model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+
+    original = controller._agent_bridge.run_reply
+
+    def stop_after_real_run(**kwargs):
+        # Run the REAL bridge (creates the run row via create_run, streams the
+        # reply into the placeholder), then simulate a Stop landing in the
+        # post-outcome / pre-finalize window: mark the message stopped (which
+        # persists it) exactly as stop_active_run would.
+        run_id, outcome = original(**kwargs)
+        store.mark_message_stopped(kwargs["assistant_message_id"])
+        return run_id, outcome
+
+    controller._agent_bridge.run_reply = stop_after_real_run
+    result = await controller.submit_draft("capital of Japan?")
+    assert result.accepted is True
+
+    session_id = store.active_session_id
+    assistant = next(
+        m
+        for m in store.messages_for_session(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert assistant.status == "stopped"
+    assert assistant.persisted_message_id is not None
+
+    primary = next(r for r in _all_runs(db) if r["agent_kind"] == "primary")
+    assert primary["assistant_message_id"] == assistant.persisted_message_id
+    assert primary["assistant_message_id"] != assistant.id
+
+
+@pytest.mark.asyncio
+async def test_failed_run_records_persisted_id_on_run(tmp_path):
+    """A run that finalizes via the FAILURE path (RUN_ERROR) must record the
+    failed reply's PERSISTED id onto the run -- same shape as the stopped-run
+    regression, exercising ``_finalize_agent_failure`` instead of the
+    ``stopped_now`` branch. RED on HEAD (only the success path recorded).
+    """
+    from Tests.Chat.test_console_chat_store import FakePersistence
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    gateway = _Gateway([["Tok", "yo."]])
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="test-model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+
+    original = controller._agent_bridge.run_reply
+
+    def error_after_real_run(**kwargs):
+        # Real run (create_run + stream), but report a non-done outcome so
+        # finalize routes through _finalize_agent_failure.
+        run_id, _outcome = original(**kwargs)
+        return run_id, RunOutcome(
+            status=RUN_ERROR,
+            steps=[AgentStep(index=0, kind=STEP_ERROR, summary="boom")],
+        )
+
+    controller._agent_bridge.run_reply = error_after_real_run
+    result = await controller.submit_draft("capital of Japan?")
+    assert result.accepted is True
+
+    session_id = store.active_session_id
+    assistant = next(
+        m
+        for m in store.messages_for_session(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert assistant.status == "failed"
+    assert assistant.persisted_message_id is not None
+
+    primary = next(r for r in _all_runs(db) if r["agent_kind"] == "primary")
+    assert primary["assistant_message_id"] == assistant.persisted_message_id
+
+
+@pytest.mark.asyncio
+async def test_stopped_run_without_persistence_stays_null_not_stale(tmp_path):
+    """With NO persistence backend, a stopped run's message never gets a
+    persisted id -- so the run's ``assistant_message_id`` must stay NULL (the
+    helper no-ops), NOT hold the stale native id. This validates Half 1 (never
+    store the native id at create): the row is NULL both at create and after
+    the null-persisted-id stop.
+    """
+    controller, store, db = _controller(tmp_path, [["Tok", "yo."]])
+
+    original = controller._agent_bridge.run_reply
+
+    def stop_after_real_run(**kwargs):
+        run_id, outcome = original(**kwargs)
+        store.mark_message_stopped(kwargs["assistant_message_id"])
+        return run_id, outcome
+
+    controller._agent_bridge.run_reply = stop_after_real_run
+    result = await controller.submit_draft("capital of Japan?")
+    assert result.accepted is True
+
+    session_id = store.active_session_id
+    assistant = next(
+        m
+        for m in store.messages_for_session(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert assistant.status == "stopped"
+    assert assistant.persisted_message_id is None
+
+    primary = next(r for r in _all_runs(db) if r["agent_kind"] == "primary")
+    assert primary["assistant_message_id"] is None
 
 
 @pytest.mark.asyncio
@@ -113,7 +494,12 @@ async def test_stop_cancels_tree_and_persists_cancelled(tmp_path):
     original = controller._agent_bridge.run_reply
 
     def cancel_after_first(*args, **kwargs):
-        controller._stop_requested = True  # simulate Stop during the run
+        # Fix round 1 (Critical 1): `should_cancel` now reads only its own
+        # run's per-session cancel_event, never the shared `_stop_requested`
+        # flag -- simulate Stop during the run via the real internal
+        # signalling path (`_run_agent_reply` already populated this run's
+        # `_active_cancel_events[session_id]` before dispatching here).
+        controller._signal_stop(session_id=kwargs["session_id"])
         return original(*args, **kwargs)
 
     controller._agent_bridge.run_reply = cancel_after_first
@@ -137,7 +523,7 @@ class _ParkingGateway:
     async def resolve_for_send(self, _selection):
         return SimpleNamespace(ready=True, provider="llama_cpp", visible_copy="")
 
-    async def stream_chat(self, _resolution, _messages):
+    async def stream_chat(self, _resolution, _messages, **kwargs):
         self.started.set()
         # Blocking (not async) wait: this runs inside the bridge's own
         # private per-run event loop (``run_loop.run_until_complete`` in
@@ -212,7 +598,7 @@ async def test_stop_during_parked_bridge_thread_persists_cancelled_not_done(tmp_
     # _run_agent_reply's finally -- exactly the moment the pre-fix bug
     # discarded the signal the still-running bridge thread depends on.
     assert controller._stop_requested is False
-    assert controller._active_stream_task is None
+    assert controller._active_stream_tasks.get(session_id) is None
 
     # Release the parked thread now -- it is STILL RUNNING on its own OS
     # thread, oblivious to the coroutine having already returned.
@@ -250,7 +636,9 @@ async def test_finalize_after_already_stopped_is_a_benign_noop(tmp_path):
         # bridge "returns" RUN_DONE, a concurrent Stop has already
         # finalized the message to "stopped".
         store.mark_message_stopped(assistant_message_id)
-        return RunOutcome(status=RUN_DONE, steps=[], final_text="late done text")
+        return "run-test", RunOutcome(
+            status=RUN_DONE, steps=[], final_text="late done text"
+        )
 
     controller._agent_bridge.run_reply = parked_run_reply
     result = await controller.submit_draft("hi")
@@ -306,9 +694,11 @@ async def test_finalize_after_already_stopped_regenerate_no_phantom_variant(tmp_
         # AND status) -- simulating a real Stop landing in the window
         # after the bridge has already produced RUN_DONE but before
         # _finalize_agent_reply runs.
-        controller._active_cancel_event.set()
+        controller._active_cancel_events[session_id].set()
         store.mark_message_stopped(assistant_message_id)
-        return RunOutcome(status=RUN_DONE, steps=[], final_text="late regenerate text")
+        return "run-test", RunOutcome(
+            status=RUN_DONE, steps=[], final_text="late regenerate text"
+        )
 
     controller._agent_bridge.run_reply = parked_regenerate_reply
     regen = await controller.regenerate_message(assistant.id)
@@ -350,9 +740,9 @@ async def test_finalize_after_already_stopped_regenerate_error_no_wedge(tmp_path
     assert assistant.status == "complete"
 
     def parked_regenerate_error_reply(*, assistant_message_id, **_kwargs):
-        controller._active_cancel_event.set()
+        controller._active_cancel_events[session_id].set()
         store.mark_message_stopped(assistant_message_id)
-        return RunOutcome(
+        return "run-test", RunOutcome(
             status=RUN_ERROR,
             steps=[
                 AgentStep(index=0, kind=STEP_ERROR, summary="late regenerate error")
@@ -371,7 +761,9 @@ async def test_finalize_after_already_stopped_regenerate_error_no_wedge(tmp_path
     # The run must not be wedged: a fresh send is accepted immediately.
     def next_send_reply(*, assistant_message_id, **_kwargs):
         store.append_stream_chunk(assistant_message_id, "next turn works.")
-        return RunOutcome(status=RUN_DONE, steps=[], final_text="next turn works.")
+        return "run-test", RunOutcome(
+            status=RUN_DONE, steps=[], final_text="next turn works."
+        )
 
     controller._agent_bridge.run_reply = next_send_reply
     second = await controller.submit_draft("still there?")
@@ -405,7 +797,10 @@ async def test_stop_before_first_token_persists_cancelled_no_agent_run_failed(tm
     gateway = controller.provider_gateway
     real_stream_chat = gateway.stream_chat
 
-    async def stop_before_first_chunk(resolution, messages):
+    # `**kwargs` (forwarded verbatim): the agent bridge now always hands the
+    # gateway this run's `signals=`, since usage capture is no longer a
+    # citation-repair-only concern.
+    async def stop_before_first_chunk(resolution, messages, **kwargs):
         # Mirror ConsoleChatController.stop_active_run(): mark the message
         # stopped and flip should_cancel *before* the gateway ever streams
         # a chunk into the store -- simulating Stop landing while the
@@ -417,8 +812,11 @@ async def test_stop_before_first_token_persists_cancelled_no_agent_run_failed(tm
             if m.role is ConsoleMessageRole.ASSISTANT
         )
         store.mark_message_stopped(assistant_message_id)
-        controller._stop_requested = True
-        async for chunk in real_stream_chat(resolution, messages):
+        # Fix round 1 (Critical 1): should_cancel now reads only its own
+        # run's per-session cancel_event, never the shared `_stop_requested`
+        # flag -- simulate Stop via the real internal signalling path.
+        controller._signal_stop(session_id=session_id)
+        async for chunk in real_stream_chat(resolution, messages, **kwargs):
             yield chunk
 
     gateway.stream_chat = stop_before_first_chunk
@@ -502,7 +900,7 @@ async def test_run_error_via_submit_is_failed_retryable_and_excluded_from_contex
         store.append_stream_chunk(
             assistant_message_id, "partial answer before erroring"
         )
-        return RunOutcome(
+        return "run-test", RunOutcome(
             status=RUN_ERROR,
             steps=[AgentStep(index=0, kind=STEP_ERROR, summary="tool exploded")],
         )
@@ -529,7 +927,7 @@ async def test_run_error_via_submit_is_failed_retryable_and_excluded_from_contex
     # Retryable: status "failed" is exactly what retry_message() requires.
     def fixed_run_reply(*, assistant_message_id, **_kwargs):
         store.append_stream_chunk(assistant_message_id, "fixed.")
-        return RunOutcome(status=RUN_DONE, steps=[], final_text="fixed.")
+        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text="fixed.")
 
     controller._agent_bridge.run_reply = fixed_run_reply
     retry_result = await controller.retry_message(assistant.id)
@@ -545,7 +943,7 @@ async def test_run_stuck_outcome_is_visibly_failed_not_silent_complete(tmp_path)
 
     def stuck_run_reply(*, assistant_message_id, **_kwargs):
         store.append_stream_chunk(assistant_message_id, "still thinking about it")
-        return RunOutcome(
+        return "run-test", RunOutcome(
             status=RUN_STUCK,
             steps=[
                 AgentStep(index=0, kind=STEP_ERROR, summary="step budget exhausted")
@@ -574,7 +972,9 @@ async def test_run_error_via_regenerate_preserves_original_answer_and_status(tmp
 
     def good_run_reply(*, assistant_message_id, **_kwargs):
         store.append_stream_chunk(assistant_message_id, "good original answer.")
-        return RunOutcome(status=RUN_DONE, steps=[], final_text="good original answer.")
+        return "run-test", RunOutcome(
+            status=RUN_DONE, steps=[], final_text="good original answer."
+        )
 
     controller._agent_bridge.run_reply = good_run_reply
     first = await controller.submit_draft("hi")
@@ -590,7 +990,7 @@ async def test_run_error_via_regenerate_preserves_original_answer_and_status(tmp
 
     def erroring_run_reply(*, assistant_message_id, **_kwargs):
         store.append_stream_chunk(assistant_message_id, "a bad partial regenerate")
-        return RunOutcome(
+        return "run-test", RunOutcome(
             status=RUN_ERROR,
             steps=[AgentStep(index=0, kind=STEP_ERROR, summary="regenerate exploded")],
         )
@@ -688,9 +1088,12 @@ async def test_continue_through_agent_path_uses_bridge_and_appends_new_message(
 
 
 @pytest.mark.asyncio
-async def test_regenerate_through_agent_path_uses_bridge_and_selects_new_variant(
+async def test_regenerate_through_agent_path_uses_bridge_and_forks_sibling(
     tmp_path,
 ):
+    """TASK-6: regenerate forks a persisted sibling node and streams into it
+    (rather than replacing the anchor's content in place as an in-message
+    variant) even when the agent-runtime bridge is the reply engine."""
     controller, store, _db = _controller(
         tmp_path, [["first answer."], ["second answer."]]
     )
@@ -715,15 +1118,21 @@ async def test_regenerate_through_agent_path_uses_bridge_and_selects_new_variant
     assert result.accepted is True
     assert calls["n"] == 1
 
-    regenerated = store.get_message(assistant.id)
+    # The anchor is untouched, off the active path -- a NEW sibling node
+    # carries the freshly generated answer and is the new active leaf.
+    unchanged_anchor = store.get_message(assistant.id)
+    assert unchanged_anchor.content == "first answer."
+    assert unchanged_anchor.variants is None
+    assert assistant.id not in store.active_path_message_ids(session_id)
+
+    siblings, _index, count = store.siblings_at(assistant.id)
+    assert count == 2
+    new_leaf_id = store.active_leaf(session_id)
+    assert new_leaf_id != assistant.id
+    regenerated = store.get_message(new_leaf_id)
     assert regenerated.content == "second answer."
     assert regenerated.status == "complete"
-    assert regenerated.variants is not None
-    assert regenerated.variants.selected_index == 1
-    assert [v.content for v in regenerated.variants.variants] == [
-        "first answer.",
-        "second answer.",
-    ]
+    assert regenerated.variants is None
 
 
 # -- Important 3: the agent-runtime gate + bridge must not be a boot snapshot --
@@ -737,7 +1146,7 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
     ``_sync_console_chat_core_state`` refreshed provider selection on every
     access but never the gate, so toggling the kill-switch had no effect
     until the whole screen was torn down and rebuilt."""
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     app = _build_test_app()
@@ -755,7 +1164,9 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
 
         def run_reply(self, **_kwargs):
             self.calls += 1
-            return RunOutcome(status=RUN_DONE, steps=[], final_text="agent answer.")
+            return "run-test", RunOutcome(
+                status=RUN_DONE, steps=[], final_text="agent answer."
+            )
 
     fake_bridge = _FakeBridge()
     screen = ChatScreen(app)
@@ -765,7 +1176,7 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
         async def resolve_for_send(self, _selection):
             return SimpleNamespace(ready=True, provider="llama_cpp", visible_copy="")
 
-        async def stream_chat(self, _resolution, _messages):
+        async def stream_chat(self, _resolution, _messages, **kwargs):
             for chunk in ["legacy answer."]:
                 yield chunk
 
@@ -800,7 +1211,9 @@ def _fake_app(service=None):
 def _capturing_run_reply(captured, *, final_text="ok."):
     def run_reply(**kwargs):
         captured.append(kwargs)
-        return RunOutcome(status=RUN_DONE, steps=[], final_text=final_text)
+        return "run-test", RunOutcome(
+            status=RUN_DONE, steps=[], final_text=final_text
+        )
 
     return run_reply
 
@@ -816,7 +1229,11 @@ async def test_mcp_provider_not_wired_when_no_unified_mcp_service(tmp_path):
 
     assert result.accepted is True
     assert captured[0]["mcp_provider"] is None
-    assert captured[0]["review_tool_calls"] is None
+    # task-545/T6: `review_tool_calls` is now wired UNCONDITIONALLY -- a
+    # user with no `unified_mcp_service` at all still gets built-in tools
+    # gated by `build_tool_review_hook`, so this is never `None` anymore.
+    assert callable(captured[0]["review_tool_calls"])
+    assert captured[0]["builtin_gate"] is not None
 
 
 @pytest.mark.asyncio
@@ -834,7 +1251,10 @@ async def test_mcp_provider_not_wired_when_kill_switch_on(tmp_path):
 
     assert result.accepted is True
     assert captured[0]["mcp_provider"] is None
-    assert captured[0]["review_tool_calls"] is None
+    # task-545/T6: unconditional now -- see the sibling "no service" test's
+    # own comment above.
+    assert callable(captured[0]["review_tool_calls"])
+    assert captured[0]["builtin_gate"] is not None
 
 
 @pytest.mark.asyncio
@@ -849,7 +1269,10 @@ async def test_mcp_provider_not_wired_when_catalog_empty(tmp_path):
 
     assert result.accepted is True
     assert captured[0]["mcp_provider"] is None
-    assert captured[0]["review_tool_calls"] is None
+    # task-545/T6: unconditional now -- see the "no service" test's own
+    # comment above.
+    assert callable(captured[0]["review_tool_calls"])
+    assert captured[0]["builtin_gate"] is not None
 
 
 @pytest.mark.asyncio
@@ -869,6 +1292,56 @@ async def test_mcp_provider_wired_when_eligible(tmp_path):
     assert isinstance(provider, MCPToolProvider)
     assert len(provider.list_catalog()) == 1
     assert callable(captured[0]["review_tool_calls"])
+    assert captured[0]["builtin_gate"] is not None
+
+
+class _SentinelBuiltinGate:
+    """A `BuiltinToolGate` double whose IDENTITY is the entire point of
+    `test_review_hook_and_run_reply_share_one_builtin_gate` -- it need not
+    implement `resolve()`/`stamp()`/`is_session_approved()` at all, since
+    that test drives the captured hook with an EMPTY call batch (nothing
+    to resolve), only proving `begin_turn()` runs on the SAME object
+    `run_reply` received."""
+
+    def __init__(self) -> None:
+        self.begin_turn_calls = 0
+
+    def begin_turn(self) -> None:
+        self.begin_turn_calls += 1
+
+
+@pytest.mark.asyncio
+async def test_review_hook_and_run_reply_share_one_builtin_gate(tmp_path, monkeypatch):
+    """Review finding 2 (T6 review, Important): the headline invariant --
+    ONE `BuiltinToolGate` shared between the review hook and the
+    `BuiltinToolProvider` `run_reply` threads into the run's registry --
+    had no regression test at the controller seam. Prior tests only
+    asserted `captured[0]["builtin_gate"] is not None`; a future refactor
+    that built a SECOND gate for the hook (or for `run_reply`) would pass
+    the whole suite while silently breaking stamp sharing. Monkeypatches
+    `build_builtin_gate` to return a sentinel and proves BOTH halves of the
+    wiring see that exact instance: the kwarg handed to `run_reply`, and
+    the object the captured `review_tool_calls` hook actually calls
+    `begin_turn()` on."""
+    controller, store, _db = _controller(tmp_path, [["ok."]])
+    captured = []
+    controller._agent_bridge.run_reply = _capturing_run_reply(captured)
+    controller.app = _fake_app()  # no unified_mcp_service -- MCP is irrelevant here
+
+    sentinel = _SentinelBuiltinGate()
+    monkeypatch.setattr(
+        controller_module, "build_builtin_gate", lambda service=None: sentinel
+    )
+
+    result = await controller.submit_draft("hi")
+
+    assert result.accepted is True
+    assert captured[0]["builtin_gate"] is sentinel
+
+    review_hook = captured[0]["review_tool_calls"]
+    assert sentinel.begin_turn_calls == 0
+    review_hook([])  # empty batch: nothing to resolve, only begin_turn() matters
+    assert sentinel.begin_turn_calls == 1
 
 
 @pytest.mark.asyncio
@@ -925,7 +1398,8 @@ async def test_mcp_tool_call_ask_state_routes_through_review_hook_and_approves(
     assert received and received[-1] is not None, "approval card was never surfaced"
     llm_name = received[-1]["calls"][0]["llm_name"]
     assert llm_name == "mcp__srv__run"
-    controller.resolve_pending_approval({llm_name: "approve_once"})
+    round_id = received[-1]["round_id"]
+    controller.resolve_pending_approval({llm_name: "approve_once"}, round_id=round_id)
 
     result = await send_task
 
@@ -971,7 +1445,8 @@ async def test_mcp_tool_call_session_approval_suppresses_card_on_next_turn(tmp_p
     assert received and received[-1] is not None, "approval card was never surfaced"
     llm_name = received[-1]["calls"][0]["llm_name"]
     assert llm_name == "mcp__srv__run"
-    controller.resolve_pending_approval({llm_name: "approve_session"})
+    round_id = received[-1]["round_id"]
+    controller.resolve_pending_approval({llm_name: "approve_session"}, round_id=round_id)
     result1 = await send_task
     assert result1.accepted is True
     cards_pushed_after_turn1 = len(received)
@@ -1034,9 +1509,9 @@ async def test_compose_mcp_provider_publishes_none_counts_when_no_service(tmp_pa
     controller, _store, _db = _controller(tmp_path, [["ok."]])
     controller.app = _fake_app()  # no unified_mcp_service attribute at all
 
-    provider, hook = await controller._compose_mcp_provider()
+    provider = await controller._compose_mcp_provider()
 
-    assert provider is None and hook is None
+    assert provider is None
     assert controller.app.console_mcp_tool_count is None
     assert controller.app.console_mcp_not_connected_count is None
 
@@ -1050,9 +1525,9 @@ async def test_compose_mcp_provider_publishes_none_counts_when_kill_switch_on(tm
     )
     controller.app = _fake_app(service)
 
-    provider, hook = await controller._compose_mcp_provider()
+    provider = await controller._compose_mcp_provider()
 
-    assert provider is None and hook is None
+    assert provider is None
     assert controller.app.console_mcp_tool_count is None
     assert controller.app.console_mcp_not_connected_count is None
 
@@ -1063,9 +1538,9 @@ async def test_compose_mcp_provider_publishes_none_counts_when_catalog_empty(tmp
     service = FakeMCPService()  # no catalog records, no builtin inventory
     controller.app = _fake_app(service)
 
-    provider, hook = await controller._compose_mcp_provider()
+    provider = await controller._compose_mcp_provider()
 
-    assert provider is None and hook is None
+    assert provider is None
     assert controller.app.console_mcp_tool_count is None
     assert controller.app.console_mcp_not_connected_count is None
 
@@ -1083,9 +1558,9 @@ async def test_compose_mcp_provider_publishes_none_counts_when_get_kill_switch_r
     controller.app = _fake_app()
     controller.app.unified_mcp_service = _RaisingService()
 
-    provider, hook = await controller._compose_mcp_provider()
+    provider = await controller._compose_mcp_provider()
 
-    assert provider is None and hook is None
+    assert provider is None
     assert controller.app.console_mcp_tool_count is None
     assert controller.app.console_mcp_not_connected_count is None
 
@@ -1108,10 +1583,9 @@ async def test_compose_mcp_provider_publishes_counts_when_eligible(tmp_path):
     )
     controller.app = _fake_app(service)
 
-    provider, hook = await controller._compose_mcp_provider()
+    provider = await controller._compose_mcp_provider()
 
     assert provider is not None
-    assert callable(hook)
     assert controller.app.console_mcp_tool_count == len(provider.list_catalog())
     assert controller.app.console_mcp_tool_count == 2
     assert (
@@ -1201,3 +1675,135 @@ async def test_mcp_review_hook_raise_fails_open_but_invoke_gate_still_refuses(tm
     assert (
         service.execute_calls == []
     )  # never invoked -- refused by invoke()'s own gate
+
+
+@pytest.mark.asyncio
+async def test_stopped_via_cancel_records_persisted_id_on_run(tmp_path):
+    """task-543: the dominant user-Stop path (``stop_active_run`` ->
+    ``task.cancel()``) raises ``CancelledError`` in the controller BEFORE
+    ``run_reply``'s ``(run_id, outcome)`` ever binds -- so the CancelledError
+    branch must recover the run id via the bridge's latest-unanchored-primary
+    lookup and record the stopped reply's PERSISTED id onto the run. Every
+    pre-existing stop test simulated the stop via a normally-returning
+    ``run_reply``, which made this gap invisible. RED pre-fix: the run row
+    stays NULL and falls to the ordinal fallback on resume.
+    """
+    from Tests.Chat.test_console_chat_store import FakePersistence
+
+    class _YieldThenParkGateway(_ParkingGateway):
+        """Streams ONE chunk before parking: a zero-chunk stop never persists
+        (empty rows defer -- the AC#3 NULL case, covered separately below), so
+        the persisted-id recording needs a partial reply in the buffer."""
+
+        async def stream_chat(self, _resolution, _messages, **kwargs):
+            yield "partial answer\n"
+            self.started.set()
+            self.release.wait(timeout=60)
+            yield "answered anyway."
+
+    gateway = _YieldThenParkGateway()
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="test-model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+
+    send_task = asyncio.ensure_future(controller.submit_draft("hello"))
+    for _ in range(3000):  # 30s deadline -- CI-contention headroom
+        if gateway.started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert gateway.started.is_set(), (
+        "bridge thread never reached the parked gateway call"
+    )
+
+    # A REAL cross-task cancellation, exactly as the Stop button delivers it.
+    assert controller.stop_active_run() is True
+    result = await send_task
+    assert result.accepted is True
+
+    session_id = store.active_session_id
+    assistant = next(
+        m
+        for m in store.messages_for_session(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert assistant.status == "stopped"
+    assert assistant.persisted_message_id is not None
+
+    gateway.release.set()
+    primary: dict | None = None
+    for _ in range(3000):  # 30s deadline -- CI-contention headroom
+        runs = [r for r in _all_runs(db) if r["agent_kind"] == "primary"]
+        if runs and runs[0]["status"] != "running":
+            primary = runs[0]
+            break
+        await asyncio.sleep(0.01)
+
+    assert primary is not None, "primary run never settled"
+    assert primary["assistant_message_id"] == assistant.persisted_message_id
+    assert primary["assistant_message_id"] != assistant.id
+
+
+@pytest.mark.asyncio
+async def test_stopped_via_cancel_without_persistence_stays_null(tmp_path):
+    """task-543 AC#3: with no persistence backend the stopped reply never gets
+    a persisted id, so the cancel-path recording must no-op and the run row
+    must stay NULL (ordinal fallback) -- never a stale/native id."""
+    gateway = _ParkingGateway()
+    store = ConsoleChatStore()
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="test-model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+
+    send_task = asyncio.ensure_future(controller.submit_draft("hello"))
+    for _ in range(3000):
+        if gateway.started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert gateway.started.is_set()
+
+    assert controller.stop_active_run() is True
+    await send_task
+    gateway.release.set()
+
+    primary: dict | None = None
+    for _ in range(3000):
+        runs = [r for r in _all_runs(db) if r["agent_kind"] == "primary"]
+        if runs and runs[0]["status"] != "running":
+            primary = runs[0]
+            break
+        await asyncio.sleep(0.01)
+    assert primary is not None
+    assert primary["assistant_message_id"] is None
+
+
+def test_latest_unanchored_primary_run_id_guards_anchored_rows(tmp_path):
+    """task-543 mis-write guard: an ultra-early Stop (before create_run
+    committed) sees the PREVIOUS run as the newest primary -- but a finished
+    run is always anchored by a finalizer path, so the lookup must return
+    None for it rather than let the caller overwrite a good anchor."""
+    store = ConsoleChatStore()
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=None)
+
+    run_id = db.create_run(conversation_id="conv-1", agent_kind="primary", task="t")
+    assert bridge.latest_unanchored_primary_run_id("conv-1") == run_id
+
+    db.set_run_assistant_message_id(run_id, "persisted-1")
+    assert bridge.latest_unanchored_primary_run_id("conv-1") is None
+    assert bridge.latest_unanchored_primary_run_id("conv-other") is None

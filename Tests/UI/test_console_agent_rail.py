@@ -18,6 +18,7 @@ from tldw_chatbook.Chat.console_agent_bridge import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
     build_console_conversation_browser_state,
@@ -95,67 +96,81 @@ def test_badge_renders_on_its_own_line_regardless_of_secondary_length():
     assert "Sub-Agents" not in "\n".join(lines[:-1])
 
 
-def test_ellipsized_title_still_pairs_with_full_badge():
-    """Long titles keep degrading via ellipsis (existing behavior); that
-    truncation must never interact with -- or swallow -- the badge, which
-    now lives on an entirely separate line."""
+def test_wrapped_title_still_pairs_with_full_badge():
+    """Long titles now wrap to two budget-width lines; that wrapping must
+    never interact with -- or swallow -- the badge, which lives on an
+    entirely separate line."""
+    from rich.cells import cell_len
+
     from tldw_chatbook.Widgets.Console.console_workspace_context import (
-        ConsoleWorkspaceContextTray,
         format_console_conversation_row_label,
+        wrap_console_conversation_title,
     )
 
-    long_title = "A" * 40
-    visible_title = ConsoleWorkspaceContextTray._conversation_visible_title(long_title)
-    assert visible_title.endswith("...")
-    assert len(visible_title) == 20
+    name_lines = wrap_console_conversation_title("A" * 50, 20)
+    assert name_lines == ("A" * 20, "A" * 19 + "…")
+    assert all(cell_len(line) <= 20 for line in name_lines)
 
-    composed = f"  {visible_title}\n  saved chat - 2m"
+    composed = "\n".join((*name_lines, "saved chat - 2m"))
     label = format_console_conversation_row_label(composed, subagent_count=5)
     lines = label.splitlines()
-    assert lines[0] == f"  {visible_title}"
+    assert lines[0] == name_lines[0]
     assert lines[-1] == "[dim]\\[5 Sub-Agents][/dim]"
+    assert "Sub-Agents" not in "\n".join(lines[:-1])
 
 
 def test_short_title_without_badge_is_unchanged():
     """Badge-less rows and short titles get no extra lines or ellipsis."""
     from tldw_chatbook.Widgets.Console.console_workspace_context import (
-        ConsoleWorkspaceContextTray,
         format_console_conversation_row_label,
+        wrap_console_conversation_title,
     )
 
-    short_title = "Short title"
-    assert (
-        ConsoleWorkspaceContextTray._conversation_visible_title(short_title)
-        == short_title
-    )
+    assert wrap_console_conversation_title("Short title", 20) == ("Short title",)
 
-    composed = f"  {short_title}\n  saved chat - 2m"
+    composed = "Short title\nsaved chat - 2m"
     label = format_console_conversation_row_label(composed, subagent_count=0)
     assert label == composed
     assert label.count("\n") == 1
 
 
-def test_conversation_row_height_grows_only_when_badge_present():
-    """The row button gains a third line (for the badge) only when a badge
-    will actually render; badge-less rows keep the original two-line height."""
+def test_conversation_row_height_tracks_name_lines_and_badge():
+    """Row height = name lines + metadata line, plus one line only when a
+    badge will actually render."""
     from tldw_chatbook.Widgets.Console.console_workspace_context import (
         ConsoleWorkspaceContextTray,
     )
 
     badge_button = ConsoleWorkspaceContextTray._conversation_button(
-        "  Title\n  secondary",
+        "Title\nsecondary",
         id="row-badge",
         conversation_id="c1",
         subagent_count=2,
     )
     plain_button = ConsoleWorkspaceContextTray._conversation_button(
-        "  Title\n  secondary",
+        "Title\nsecondary",
         id="row-plain",
         conversation_id="c2",
         subagent_count=0,
     )
+    wrapped_button = ConsoleWorkspaceContextTray._conversation_button(
+        "Title line one\nline two\nsecondary",
+        id="row-wrapped",
+        conversation_id="c3",
+        subagent_count=0,
+        name_line_count=2,
+    )
+    wrapped_badge_button = ConsoleWorkspaceContextTray._conversation_button(
+        "Title line one\nline two\nsecondary",
+        id="row-wrapped-badge",
+        conversation_id="c4",
+        subagent_count=1,
+        name_line_count=2,
+    )
     assert int(badge_button.styles.height.value) == 3
     assert int(plain_button.styles.height.value) == 2
+    assert int(wrapped_button.styles.height.value) == 3
+    assert int(wrapped_badge_button.styles.height.value) == 4
 
 
 @pytest.mark.asyncio
@@ -356,7 +371,7 @@ def test_spawn_subagent_summary_does_not_escape_markup_brackets(tmp_path):
             self._scripts = list(scripts)
             self.calls = 0
 
-        async def stream_chat(self, resolution, messages):
+        async def stream_chat(self, resolution, messages, **_kwargs):
             chunks = self._scripts[self.calls]
             self.calls += 1
             for chunk in chunks:
@@ -656,6 +671,247 @@ async def test_drilldown_render_path_rejects_record_from_other_conversation():
         status_line, _steps, _subagents = console._console_agent_section_lines()
         assert console._console_agent_drilldown_run_id is None
         assert not status_line.startswith("Sub-agent ·")
+
+
+# -- Review finding A: the rail must not re-slice an already-capped step
+# summary down to a hardcoded 80 characters -- that silently overrides any
+# configured value above 80 with no visible effect, defeating TASK-870's
+# whole point. Covers both render paths: the live/historical overview
+# (`snapshot.steps`) and the drilled-in sub-agent path (`record["steps"]`,
+# which used to bypass `_summarize_persisted_step` entirely). --
+
+_A_LONG_RESULT = (
+    "The traditional rollback procedure requires draining every in-flight "
+    "request before the schema migration begins, otherwise a half-applied "
+    "column default can leave orphaned rows that the backfill job never "
+    "revisits, which is exactly the failure mode this runbook exists to "
+    "prevent for anyone paging through it at 3am."
+)
+
+
+@pytest.mark.asyncio
+async def test_drilldown_step_text_grows_with_a_configured_cap_above_eighty(
+    monkeypatch,
+):
+    monkeypatch.delenv("TLDW_CONSOLE_TOOL_RESULT_DISPLAY_CHARS", raising=False)
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        class _FakeBridge:
+            def subagent_run(self, run_id):
+                return {
+                    "id": run_id,
+                    "conversation_id": "conv-A",
+                    "status": "done",
+                    "task": "t",
+                    "steps": [
+                        {"kind": "tool_result", "summary": _A_LONG_RESULT},
+                    ],
+                }
+
+        console._console_agent_bridge = _FakeBridge()
+        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._console_agent_drilldown_run_id = "run-x"
+        console._console_agent_drilldown_conversation_id = "conv-A"
+
+        monkeypatch.setattr(
+            "tldw_chatbook.config.get_cli_setting", lambda *a, **k: 40
+        )
+        _status, steps_at_40, _subagents = console._console_agent_section_lines()
+
+        monkeypatch.setattr(
+            "tldw_chatbook.config.get_cli_setting", lambda *a, **k: 300
+        )
+        _status, steps_at_300, _subagents = console._console_agent_section_lines()
+
+        # A bare `[:80]` slice (the pre-fix behavior) would make BOTH of
+        # these identical (both capped at 80) regardless of the configured
+        # value -- raising the cap from well below 80 to well above it
+        # must visibly show more text.
+        assert len(steps_at_300) > len(steps_at_40)
+        assert len(steps_at_300) > 80
+        assert "(+" in steps_at_40  # still truncated at the lower cap
+
+
+# -- Review finding D: the "View full log" affordance's availability check
+# (a SQLite lookup to resolve the target run id, plus a filesystem probe)
+# must not run on every 0.2s rail tick -- cached per target run id, and
+# skipped entirely while the Agent section is collapsed. --
+
+
+@pytest.mark.asyncio
+async def test_full_log_probe_never_touches_the_bridge_while_collapsed():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        probe_calls = []
+
+        class _FakeBridge:
+            def live_snapshot(self, conversation_id):
+                return AgentLiveSnapshot(status="done")
+
+            def subagent_run(self, run_id):
+                return None
+
+            def subagent_runs(self, conversation_id):
+                return []
+
+            def latest_primary_run_id(self, conversation_id):
+                return "run-1"
+
+            def run_log_available(self, run_id):
+                probe_calls.append(run_id)
+                return True
+
+        console._console_agent_bridge = _FakeBridge()
+        console._console_agent_drilldown_run_id = None
+        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._console_agent_drilldown_conversation_id = "conv-A"
+        console._current_console_rail_state = lambda: SimpleNamespace(agent_open=False)
+
+        # Several "ticks" while collapsed: not even the run-id resolution
+        # -- let alone `run_log_available` -- may run.
+        console._sync_console_agent_section()
+        console._sync_console_agent_section()
+        console._sync_console_agent_section()
+
+        assert probe_calls == []
+
+
+@pytest.mark.asyncio
+async def test_full_log_probe_is_cached_per_run_id_while_open():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        probe_calls = []
+
+        class _FakeBridge:
+            def __init__(self):
+                self.target_run_id = "run-1"
+
+            def live_snapshot(self, conversation_id):
+                return AgentLiveSnapshot(status="done")
+
+            def subagent_run(self, run_id):
+                return None
+
+            def subagent_runs(self, conversation_id):
+                return []
+
+            def latest_primary_run_id(self, conversation_id):
+                return self.target_run_id
+
+            def run_log_available(self, run_id):
+                probe_calls.append(run_id)
+                return True
+
+        fake_bridge = _FakeBridge()
+        console._console_agent_bridge = fake_bridge
+        console._console_agent_drilldown_run_id = None
+        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._console_agent_drilldown_conversation_id = "conv-A"
+        console._current_console_rail_state = lambda: SimpleNamespace(agent_open=True)
+
+        # Steady state (same target run id across ticks): probed once, then
+        # every later tick is a cache hit.
+        console._sync_console_agent_section()
+        console._sync_console_agent_section()
+        console._sync_console_agent_section()
+        assert probe_calls == ["run-1"]
+
+        # The target run changes (e.g. a new primary run started) -- the
+        # cache must invalidate and re-probe exactly once for the new id.
+        fake_bridge.target_run_id = "run-2"
+        console._sync_console_agent_section()
+        console._sync_console_agent_section()
+        assert probe_calls == ["run-1", "run-2"]
+
+
+# -- Review finding C: the full-log load (filesystem read + record parse +
+# formatting) must happen off the UI thread -- the modal is only ever
+# pushed once control is back on it. --
+
+
+@pytest.mark.asyncio
+async def test_view_full_log_loads_off_thread_then_opens_the_modal():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        class _FakeBridge:
+            def live_snapshot(self, conversation_id):
+                return AgentLiveSnapshot(status="done")
+
+            def subagent_run(self, run_id):
+                return None
+
+            def subagent_runs(self, conversation_id):
+                return []
+
+            def latest_primary_run_id(self, conversation_id):
+                return "run-1"
+
+            def run_log_available(self, run_id):
+                return True
+
+            def load_run_log_text(self, run_id):
+                return "full untruncated log text for run-1"
+
+        console._console_agent_bridge = _FakeBridge()
+        console._console_agent_drilldown_run_id = None
+        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._console_agent_drilldown_conversation_id = "conv-A"
+
+        stack_len_before = len(host.screen_stack)
+        console._open_console_agent_run_log_viewer()
+        # The call itself only dispatches a worker -- it must return without
+        # blocking and without having pushed the modal yet.
+        assert len(host.screen_stack) == stack_len_before
+
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(host.screen_stack) == stack_len_before + 1
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsoleRunLogModal)
+        assert modal._run_id == "run-1"
+        assert modal._log_text == "full untruncated log text for run-1"
+
+
+@pytest.mark.asyncio
+async def test_view_full_log_no_ops_when_there_is_no_target_run():
+    """No bridge/conversation/target -- must not dispatch a worker or push anything."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        console._console_agent_bridge = None  # no agent runtime available
+        console._console_agent_drilldown_run_id = None
+
+        stack_len_before = len(host.screen_stack)
+        console._open_console_agent_run_log_viewer()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(host.screen_stack) == stack_len_before
 
 
 @pytest.mark.asyncio

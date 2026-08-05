@@ -6,32 +6,9 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
 
-SENSITIVE_CONFIG_EXACT_KEYS = frozenset(
-    {
-        "api_key",
-        "apikey",
-        "api-key",
-        "api_token",
-        "auth_token",
-        "access_token",
-        "refresh_token",
-        "client_secret",
-        "secret_key",
-        "secret",
-        "token",
-        "password",
-    }
-)
-SENSITIVE_CONFIG_KEY_PATTERNS = (
-    "api_key",
-    "apikey",
-    "api-key",
-    "_key",
-    "_token",
-    "_secret",
-    "_password",
-)
+
 SAFE_SKILL_TRUST_STATUSES = frozenset(
     {
         "trusted",
@@ -135,6 +112,37 @@ def build_settings_privacy_posture(
     )
 
 
+def env_var_summary(*, present: int, missing: int, configured: int) -> str:
+    """Summarize provider env-var readiness with the counts' relationship.
+
+    "0 present / 19 missing / 19 configured" read as contradictory (rescore
+    P3): "configured" meant env-var REFERENCES in config, not set values.
+
+    Args:
+        present: Referenced env vars that are set in the environment.
+        missing: Referenced env vars that are unset.
+        configured: Total env-var references in the provider config.
+
+    Returns:
+        A single row stating how many referenced env vars are actually set.
+    """
+    return (
+        f"{present} of {configured} referenced env vars are set ({missing} unset)"
+    )
+
+
+def skill_trust_display(status: str) -> str:
+    """Strip the raw enum prefix from a skill-trust status for display.
+
+    Args:
+        status: The stored skill-trust status (e.g. "trust_uninitialized").
+
+    Returns:
+        The user-facing form without the "trust_" prefix.
+    """
+    return status.removeprefix("trust_")
+
+
 def build_privacy_posture_rows(posture: SettingsPrivacyPosture) -> tuple[str, ...]:
     """Return stable redacted rows for visible Privacy & Security status.
 
@@ -153,14 +161,16 @@ def build_privacy_posture_rows(posture: SettingsPrivacyPosture) -> tuple[str, ..
         f"Sensitive config fields: {posture.sensitive_config_fields} present",
         (
             "Provider env vars: "
-            f"{posture.provider_env_present} present / "
-            f"{posture.provider_env_missing} missing / "
-            f"{posture.provider_env_configured} configured"
+            + env_var_summary(
+                present=posture.provider_env_present,
+                missing=posture.provider_env_missing,
+                configured=posture.provider_env_configured,
+            )
         ),
         f"Provider config secrets: {posture.provider_config_secrets} present",
         (
             "Skill trust: "
-            f"{posture.skill_trust_status if posture.skill_trust_enabled else 'disabled'}"
+            f"{skill_trust_display(posture.skill_trust_status) if posture.skill_trust_enabled else 'disabled'}"
         ),
         (
             "Skill trust keyring convenience: enabled"
@@ -185,15 +195,6 @@ def _safe_skill_trust_status(value: object) -> str:
 
 def _safe_bool(value: object) -> bool:
     return value is True
-
-
-def _is_sensitive_config_key(key: object) -> bool:
-    key_text = str(key).strip().lower()
-    if not key_text or key_text.endswith("_env_var"):
-        return False
-    return key_text in SENSITIVE_CONFIG_EXACT_KEYS or any(
-        key_text.endswith(pattern) for pattern in SENSITIVE_CONFIG_KEY_PATTERNS
-    )
 
 
 def _is_configured_secret_value(value: object) -> bool:
@@ -227,7 +228,7 @@ def _sensitive_config_field_count(app_config: object) -> int:
     return sum(
         1
         for key, value in _iter_config_leaf_values(app_config)
-        if _is_sensitive_config_key(key) and _is_configured_secret_value(value)
+        if is_sensitive_config_key(key) and _is_configured_secret_value(value)
     )
 
 
@@ -270,6 +271,6 @@ def _provider_config_secret_count(app_config: object) -> int:
         count += sum(
             1
             for key, value in _iter_config_leaf_values(provider_config)
-            if _is_sensitive_config_key(key) and _is_configured_secret_value(value)
+            if is_sensitive_config_key(key) and _is_configured_secret_value(value)
         )
     return count

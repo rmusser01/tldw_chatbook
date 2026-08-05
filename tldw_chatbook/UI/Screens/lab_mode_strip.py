@@ -43,6 +43,14 @@ class LabModeStrip(DestinationModeStrip):
 
     # Height/border guard for harness apps that do not load the app CSS
     # bundle; mirrors the Personas screen's #personas-mode-strip rules.
+    #
+    # This is a fallback copy, not the authoritative one: at runtime the
+    # app-tier rules in tldw_chatbook/css/features/_lab.tcss win (app-tier
+    # CSS beats DEFAULT_CSS regardless of specificity -- that mismatch is
+    # exactly the bug PR0 fixed). This copy only matters for harness apps
+    # that mount LabModeStrip without loading the bundle. The two files have
+    # already diverged (this one adds min-height; the app-tier copy adds
+    # background/color) -- keep them in lockstep when either changes.
     DEFAULT_CSS = """
     LabModeStrip {
         height: 1;

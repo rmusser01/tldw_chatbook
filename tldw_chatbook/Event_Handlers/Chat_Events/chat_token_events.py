@@ -25,6 +25,15 @@ if TYPE_CHECKING:
 # Functions:
 
 
+def _resolve_token_display_limit(total_limit: int, custom_limit: int) -> int:
+    """Gauge denominator: the model input window, unless a positive custom limit is set.
+
+    task-320 AC#3: usage is measured against the model *input* context window,
+    not the ~2048-token output-response budget.
+    """
+    return custom_limit if custom_limit > 0 else total_limit
+
+
 def _estimate_tokens_cached(
     app: "TldwCli",
     chat_history: list,
@@ -150,19 +159,14 @@ async def update_chat_token_counter(app: "TldwCli") -> None:
             system_prompt=system_prompt,
         )
 
-        # Use max_tokens_response as the display limit instead of model's total limit
-        # This allows users to see how their conversation measures against their configured limit
-        display_limit = max_tokens_response
-
-        # Check if there's a custom token limit setting (we'll add this later)
+        # task-320 AC#3: measure usage against the model input window (total_limit),
+        # not the output-response budget. A positive custom-limit widget still wins.
         try:
             custom_limit_widget = app.query_one("#chat-custom-token-limit", Input)
             custom_limit = int(custom_limit_widget.value or "0")
-            if custom_limit > 0:
-                display_limit = custom_limit
         except (QueryError, ValueError):
-            # No custom limit widget or invalid value, use max_tokens_response
-            pass
+            custom_limit = 0
+        display_limit = _resolve_token_display_limit(total_limit, custom_limit)
 
         # Update the display in footer
         try:
@@ -277,17 +281,14 @@ async def update_chat_token_counter_with_pending(
             system_prompt=system_prompt,
         )
 
-        # Use max_tokens_response as the display limit instead of model's total limit
-        display_limit = max_tokens_response
-
-        # Check if there's a custom token limit setting
+        # task-320 AC#3: measure usage against the model input window (total_limit),
+        # not the output-response budget. A positive custom-limit widget still wins.
         try:
             custom_limit_widget = app.query_one("#chat-custom-token-limit", Input)
             custom_limit = int(custom_limit_widget.value or "0")
-            if custom_limit > 0:
-                display_limit = custom_limit
         except (QueryError, ValueError):
-            pass
+            custom_limit = 0
+        display_limit = _resolve_token_display_limit(total_limit, custom_limit)
 
         # Update the display in footer with a pending indicator
         try:

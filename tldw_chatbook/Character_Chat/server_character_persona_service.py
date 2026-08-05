@@ -168,7 +168,9 @@ class ServerCharacterPersonaService:
         client = self._require_client()
         return await client.get_persona_profile(persona_id)
 
-    async def create_persona_profile(self, request_data: PersonaProfileCreate) -> Any:
+    async def create_persona_profile(
+        self, request_data: PersonaProfileCreate
+    ) -> Any:
         self._enforce(self._persona_action_id("create"))
         client = self._require_client()
         return await client.create_persona_profile(request_data)

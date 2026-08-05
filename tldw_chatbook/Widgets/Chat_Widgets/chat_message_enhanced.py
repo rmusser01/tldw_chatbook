@@ -36,13 +36,14 @@ except (ImportError, TypeError, Exception):
 #
 # Local Imports
 from tldw_chatbook.Utils.file_extraction import FileExtractor
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 #
 #######################################################################################################################
 #
 # Functions:
 
 
-class ChatMessageEnhanced(Widget):
+class ChatMessageEnhanced(RecomposeCaptureGuard, Widget):
     """Enhanced chat message widget with image support."""
 
     class Action(Message):

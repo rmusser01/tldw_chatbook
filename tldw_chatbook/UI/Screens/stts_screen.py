@@ -1,28 +1,116 @@
-"""
-STTS (Speech-to-Text/Text-to-Speech) Screen
-Screen wrapper for STTS functionality in screen-based navigation.
-"""
+"""Speech: the Lab destination's text-to-speech and speech-to-text screen."""
 
+from __future__ import annotations
+
+import unicodedata
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
+
+from loguru import logger
+from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.reactive import reactive
-from typing import Optional, TYPE_CHECKING
-from loguru import logger
+from textual.widget import Widget
+from textual.widgets import Button, Static
 
-from ..Navigation.base_app_screen import BaseAppScreen
-from ..STTS_Window import STTSWindow
+from ...TTS import TTSPlaygroundSelectionPreset
+from ...TTS.provider_ids import BUILT_IN_TTS_PROVIDER_IDS
+from ..Lab_Modules.lab_speech_status import (
+    SPEECH_CAPABILITY_SELECTOR,
+    speech_capability_detail,
+    speech_capability_text,
+    speech_capability_tooltip,
+)
+from ..Lab_Modules.lab_workbench import LAB_RAIL_ROW_CLASS
+from ..STTS_Window import STTS_VIEW_KEYS, STTSWindow
+from ..Speech.speech_runtime_status import (
+    speech_tts_navigation_target_from_context,
+)
+from ..Speech.speech_playground_model import AXIS_CONTROLS
+from ..Speech.speech_settings_contracts import SpeechTTSNavigationTarget
 from ..Workbench.workbench_state import WorkbenchHeaderState
-from ..Workbench.workbench_widgets import DestinationHeader
-from .lab_mode_strip import LabModeStrip
+from .lab_frame import LabScreen
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 
+#: (section title, ((view key, label), ...)) in rail order.
+#:
+#: The emoji are deliberate, not decoration: they were the sidebar's only
+#: per-item visual anchor, and dropping them was one of the things that made
+#: the first attempt at this screen unreadable.
+#:
+#: View keys map to ``STTSWindow.current_view`` except the two that switch no
+#: view at all -- ``voice-cloning`` pushes its own screen and ``effects`` is
+#: unbuilt. Both are handled in ``_handle_rail_press``.
+SPEECH_RAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    (
+        "Speech",
+        (
+            ("playground", "🎤 TTS Playground"),
+            ("profiles", "🗣️ Voice Profiles"),
+            ("settings", "⚙️ Studio TTS Preferences"),
+            ("audiobook", "📚 AudioBook/Podcast"),
+        ),
+    ),
+    (
+        "Additional features",
+        (
+            ("voice-cloning", "🎙️ Voice Cloning"),
+            ("dictation", "🔤 Speech Recognition"),
+            ("effects", "🎵 Audio Effects"),
+        ),
+    ),
+)
 
-class STTSScreen(BaseAppScreen):
-    """Screen wrapper for Speech-to-Text/Text-to-Speech functionality."""
+#: Rail rows that do not correspond to an ``STTSWindow.current_view``.
+#: `voice-cloning` pushes its own screen rather than switching the view.
+#: `effects` used to be here too, as a disabled row that opened nothing;
+#: it has a placeholder view now, which explains itself.
+#: Rail rows with no `STTSWindow.current_view` behind them. Empty now:
+#: `effects` gained a placeholder view and `voice-cloning` became a
+#: view instead of a pushed screen. Kept so the next such row has a
+#: home, and so the branch that handles them stays exercised.
+SPEECH_NON_VIEW_KEYS: frozenset[str] = frozenset()
+_SPEECH_PLAYGROUND_AXES_STATE_KEY = "speech_playground_axes"
+_MAX_PROCESS_LOCAL_AXIS_LENGTH = 4096
+
+
+def _bounded_playground_axes(value: object) -> dict[str, str]:
+    """Accept only bounded comparison axes for process-local screen restore."""
+
+    if not isinstance(value, Mapping):
+        return {}
+    axes: dict[str, str] = {}
+    for control_id in AXIS_CONTROLS:
+        candidate = value.get(control_id)
+        if (
+            type(candidate) is not str
+            or not candidate
+            or len(candidate) > _MAX_PROCESS_LOCAL_AXIS_LENGTH
+            or any(
+                unicodedata.category(character) in {"Cc", "Cf", "Cs"}
+                for character in candidate
+            )
+        ):
+            continue
+        axes[control_id] = candidate
+    if axes.get("tts-provider-select") not in BUILT_IN_TTS_PROVIDER_IDS:
+        return {}
+    return axes
+
+
+class STTSScreen(LabScreen):
+    """Speech mode: view rail, capability line, and the legacy STTS window.
+
+    The ``DestinationHeader`` above the rail is composed by the ``LabScreen``
+    frame from this mode's ``lab_header_state()`` (a ``WorkbenchHeaderState``)
+    and re-synced on every ``refresh_lab_status()`` pass.
+    """
 
     #: Footer hint context (registered on mount; matches BINDINGS, ADR-031).
+    #: The inherited Lab mode hints (``[ / ]``/``Enter``) register from
+    #: ``LabScreen.on_mount``; these are the Speech playground keys.
     STTS_SHORTCUTS: tuple[tuple[str, str], ...] = (
         ("g", "generate"),
         ("r", "random text"),
@@ -42,14 +130,32 @@ class STTSScreen(BaseAppScreen):
         Binding("s", "stop_audio", "Stop Audio", show=False),
     ]
 
-    # Screen-specific state
-    current_model: reactive[str] = reactive("")
-    is_processing: reactive[bool] = reactive(False)
-    audio_file_path: reactive[Optional[str]] = reactive(None)
+    def __init__(self, app_instance: "TldwCli", **kwargs: Any) -> None:
+        """Create the Speech screen.
 
-    def __init__(self, app_instance: "TldwCli", **kwargs):
+        Args:
+            app_instance: The running application.
+            kwargs: Forwarded to ``LabScreen``.
+        """
         super().__init__(app_instance, "stts", **kwargs)
-        self.stts_window: Optional[STTSWindow] = None
+        self.stts_window: STTSWindow | None = None
+        self._pending_navigation_context: (
+            tuple[
+                str,
+                TTSPlaygroundSelectionPreset | None,
+                SpeechTTSNavigationTarget | None,
+            ]
+            | None
+        ) = None
+        self._restored_playground_axes: dict[str, str] = {}
+
+    def on_mount(self) -> None:
+        """Register the Speech playground hints after the Lab frame's."""
+        super().on_mount()
+        self.register_footer_shortcuts(
+            source="stts",
+            shortcuts=self.STTS_SHORTCUTS + self.LAB_FOOTER_SHORTCUTS,
+        )
 
     def _playground(self):
         """Return the playground widget, if mounted."""
@@ -80,54 +186,229 @@ class STTSScreen(BaseAppScreen):
         if widget := self._playground():
             widget.action_stop_audio()
 
-    def compose_content(self) -> ComposeResult:
-        """Compose the STTS screen with the STTS window and its destination header."""
-        logger.info("Composing STTS screen")
-        yield DestinationHeader(
-            WorkbenchHeaderState(
-                title="Speech",
-                subtitle="Speech-to-text and text-to-speech tools.",
-                status="ready",
-                status_label="Speech tools ready",
-            ),
-            id="stts-destination-header",
+    def lab_header_state(self) -> WorkbenchHeaderState:
+        """Return the Speech header copy and derived readiness.
+
+        Returns:
+            Ready destination state. Individual local capabilities report
+            their own availability and do not gate external providers.
+        """
+        return WorkbenchHeaderState(
+            title="Speech",
+            subtitle="Speech-to-text and text-to-speech tools.",
+            status="ready",
         )
-        yield LabModeStrip(active_route="stts", id="lab-mode-strip")
-        self.stts_window = STTSWindow(self.app_instance, classes="window")
-        # Leave room for the destination header above the window.
+
+    def compose_lab_rail(self) -> ComposeResult:
+        """Yield the two rail sections and their seven view rows."""
+        for title, entries in SPEECH_RAIL_SECTIONS:
+            yield Static(title, classes="lab-rail-section")
+            for view_key, label in entries:
+                row = Button(
+                    label,
+                    id=f"lab-speech-row-{view_key}",
+                    classes=LAB_RAIL_ROW_CLASS,
+                    # Audio Effects has no implementation. An enabled button
+                    # whose only handler toasts "coming soon" is the
+                    # dead-end-toast pattern; disabling says it once, in the
+                    # control itself, exactly as the old sidebar did.
+                )
+                # Carried as an attribute rather than parsed back out of the
+                # id, mirroring LLMScreen's lab_view_key.
+                row.lab_view_key = view_key
+                yield row
+
+        # One line, stating the fact. The full recovery taxonomy is ~14
+        # rendered lines; inline here it buried the seven rows above it, so it
+        # lives in the inspector instead (compose_lab_inspector below).
+        summary = Static(
+            speech_capability_text(),
+            id="speech-capability-summary",
+            classes="speech-capability-status",
+            markup=False,
+        )
+        summary.tooltip = speech_capability_tooltip()
+        yield summary
+
+    def compose_lab_inspector(self) -> ComposeResult:
+        """Yield the local-speech recovery detail.
+
+        Carries ``SPEECH_CAPABILITY_SELECTOR`` because this is the widget
+        holding the recovery copy that selector names -- headline, why, the
+        exact pip command, and where to go next. The inspector is the frame's
+        region for exactly this: detail that must stay reachable without
+        hovering, but must not crowd the rail.
+        """
+        yield Static("Local speech", classes="lab-rail-section")
+        yield Static(
+            speech_capability_detail(),
+            id=SPEECH_CAPABILITY_SELECTOR,
+            classes="speech-capability-status",
+            markup=False,
+        )
+
+    def build_lab_body(self) -> Widget:
+        """Build the body: the window, which owns view switching.
+
+        Returning the playground pane directly -- as this did while the
+        rebuild was the only redesigned view -- left `self.stts_window` None
+        forever, and every rail press hit its `is None` guard and did
+        nothing. TTS Settings, AudioBook and Speech Recognition were all
+        unreachable; only Voice Cloning worked, because it pushes a screen
+        before that check.
+
+        The window mounts `SpeechPlaygroundPane` for the playground view
+        itself, so the rebuild is still what the user lands on.
+
+        Returns:
+            The ``STTSWindow``, mounted after first paint like every Lab
+            body.
+        """
+        self.stts_window = STTSWindow(
+            self.app_instance,
+            classes="window",
+            playground_axis_values=self._restored_playground_axes,
+        )
         self.stts_window.styles.height = "1fr"
-        yield self.stts_window
+        return self.stts_window
 
-    async def on_mount(self) -> None:
-        """Initialize STTS services when screen is mounted."""
-        logger.info("STTS screen mounted")
-        self.register_footer_shortcuts(
-            source="stts", shortcuts=self.STTS_SHORTCUTS
+    def save_state(self) -> dict[str, object]:
+        """Save only bounded process-local Playground comparison axes."""
+
+        state = dict(super().save_state() or {})
+        axes = self._restored_playground_axes
+        if self.stts_window is not None:
+            axes = self.stts_window.playground_axis_snapshot()
+        bounded = _bounded_playground_axes(axes)
+        if bounded:
+            state[_SPEECH_PLAYGROUND_AXES_STATE_KEY] = bounded
+        else:
+            state.pop(_SPEECH_PLAYGROUND_AXES_STATE_KEY, None)
+        return state
+
+    def restore_state(self, state: dict[str, object]) -> None:
+        """Seed bounded axes before the fresh deferred Speech body mounts."""
+
+        super().restore_state(state)
+        self._restored_playground_axes = _bounded_playground_axes(
+            state.get(_SPEECH_PLAYGROUND_AXES_STATE_KEY)
+            if isinstance(state, Mapping)
+            else None
         )
 
-        # Get the STTS window
-        stts_window = self.stts_window or self.query_one(STTSWindow)
+    def on_lab_body_ready(self) -> None:
+        """Bind the rail highlight to the window's ``current_view``.
 
-        # Initialize any services if needed
-        if hasattr(stts_window, "initialize"):
-            await stts_window.initialize()
+        Registered here because the window does not exist earlier, and
+        re-registered against the fresh instance after a screen-level
+        recompose -- exactly as ``LLMScreen`` does. ``init=True`` seeds the
+        highlight on arrival, which matters because ``STTSWindow`` sets
+        ``current_view`` itself rather than waiting for a press.
+        """
+        if self.stts_window is None:
+            # Redesigned panes own their own state; nothing to bind yet.
+            return
+        self.watch(self.stts_window, "current_view", self._sync_rail_active, init=True)
+        self._apply_pending_navigation_context()
 
-    async def on_screen_suspend(self) -> None:
-        """Clean up when screen is suspended (navigated away)."""
-        logger.debug("STTS screen suspended")
+    def apply_navigation_context(self, context: Mapping[str, object]) -> None:
+        """Retain one validated process-local Speech destination request."""
 
-        # Stop any ongoing audio processing
-        if self.is_processing:
-            stts_window = self.stts_window or self.query_one(STTSWindow)
-            if hasattr(stts_window, "stop_processing"):
-                await stts_window.stop_processing()
-            self.is_processing = False
+        if not isinstance(context, Mapping):
+            return
+        keys = set(context)
+        view = context.get("view")
+        if type(view) is not str or view not in STTS_VIEW_KEYS:
+            return
+        has_preset = "profile_preset" in context
+        preset = context.get("profile_preset")
+        if has_preset and (
+            keys != {"view", "profile_preset"}
+            or view != "playground"
+            or type(preset) is not TTSPlaygroundSelectionPreset
+        ):
+            return
+        navigation_target: SpeechTTSNavigationTarget | None = None
+        if not has_preset and keys != {"view"}:
+            if view != "playground" or not keys.issubset(
+                {"view", "provider", "intent"}
+            ):
+                return
+            navigation_target = speech_tts_navigation_target_from_context(
+                {key: value for key, value in context.items() if key != "view"}
+            )
+            if navigation_target is None:
+                return
+        exact_preset = preset if has_preset else None
+        self._pending_navigation_context = (
+            view,
+            exact_preset,
+            navigation_target,
+        )
+        self._apply_pending_navigation_context()
 
-    async def on_screen_resume(self) -> None:
-        """Restore state when screen is resumed."""
-        logger.debug("STTS screen resumed")
+    def _apply_pending_navigation_context(self) -> None:
+        window = self.stts_window
+        context = self._pending_navigation_context
+        if window is None or context is None:
+            return
+        self._pending_navigation_context = None
+        view, preset, navigation_target = context
+        self.run_worker(
+            window.request_view(
+                view,
+                profile_preset=preset,
+                navigation_target=navigation_target,
+            ),
+            group="speech-view-navigation",
+            exclusive=True,
+            exit_on_error=False,
+        )
 
-        # Restore any necessary state
-        stts_window = self.stts_window or self.query_one(STTSWindow)
-        if hasattr(stts_window, "restore_state"):
-            await stts_window.restore_state()
+    def _sync_rail_active(self, current_view: str) -> None:
+        """Move the rail highlight to the row matching the active view.
+
+        Args:
+            current_view: The window's current view key.
+        """
+        for row in self.query(f".{LAB_RAIL_ROW_CLASS}").results(Button):
+            row.set_class(
+                getattr(row, "lab_view_key", None) == current_view, "is-active"
+            )
+
+    @on(Button.Pressed, f".{LAB_RAIL_ROW_CLASS}")
+    def _handle_rail_press(self, event: Button.Pressed) -> None:
+        """Route a rail press to a view switch, or to its own action.
+
+        The rows are this screen's children now, so ``STTSWindow``'s own
+        ``on_button_pressed`` never sees them and its sidebar branches are
+        unreachable from here -- this method owns that routing. That
+        handler's *else* branch, which forwards presses to the active
+        content widget, is untouched and still load-bearing.
+        """
+        event.stop()
+        view_key = getattr(event.button, "lab_view_key", None)
+        if view_key is None:
+            return
+
+        if view_key in SPEECH_NON_VIEW_KEYS:
+            # `effects` composes disabled, so this is unreachable through the
+            # UI; it remains the explicit "no view behind this key" branch.
+            return
+
+        if self.stts_window is None:
+            logger.warning("Speech rail pressed before the body mounted; ignored.")
+            return
+        self.run_worker(
+            self.stts_window.request_view(view_key),
+            group="speech-view-navigation",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def flush_pending_work(self) -> bool:
+        """Protect a dirty Studio preference draft before screen navigation."""
+
+        if self.stts_window is None:
+            return True
+        return await self.stts_window.confirm_studio_preferences_leave()

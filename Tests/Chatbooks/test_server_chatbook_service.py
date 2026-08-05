@@ -1,4 +1,5 @@
 import inspect
+import os
 from unittest.mock import Mock
 
 import pytest
@@ -694,10 +695,16 @@ async def test_service_downloads_export_job_to_destination(tmp_path):
     service = ServerChatbookService(client=FakeClient())
     destination = tmp_path / "Pack.chatbook.zip"
 
-    result = await service.download_export_job("export-job-1", destination)
+    previous = os.umask(0)
+    try:
+        result = await service.download_export_job("export-job-1", destination)
+    finally:
+        os.umask(previous)
 
     assert result == destination
     assert destination.read_bytes() == b"chatbook-zip"
+    if os.name == "posix":
+        assert destination.stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.asyncio

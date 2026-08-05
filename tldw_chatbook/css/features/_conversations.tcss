@@ -305,14 +305,14 @@ Collapsible {
     margin-bottom: 1;
 }
 
-Collapsible > .collapsible--header {
+Collapsible > CollapsibleTitle {
     background: $primary-background-darken-1;
     color: $text;
     padding: 0 1;
     height: 3;
 }
 
-Collapsible.-active > .collapsible--header {
+Collapsible.-active > CollapsibleTitle {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
@@ -337,12 +337,9 @@ Checkbox {
     padding: 1;
 }
 
-/* Ensure proper scrolling */
-VerticalScroll {
-    scrollbar-background: $surface-darken-1;
-    scrollbar-color: $primary;
-    scrollbar-size: 1 1;
-}
+/* Scrollbar styling is now an app-wide default in core/_base.tcss (TASK-394):
+ * a bare `VerticalScroll` type selector here applied to every scroll view in
+ * the app, not just conversations. */
 
 /* Note: Textual doesn't support @media queries for responsive design */
 /* Width adjustments would need to be handled programmatically */

@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
 from .writing_normalizers import normalize_writing_record, normalize_writing_structure
 
 
@@ -48,13 +50,27 @@ class LocalWritingService:
 
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._memory_conn: sqlite3.Connection | None = None
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        if str(self.db_path) == ":memory:":
+            if self._memory_conn is None:
+                self._memory_conn = connect_private_sqlite(
+                    "writing.local",
+                    self.db_path,
+                )
+                self._memory_conn.row_factory = sqlite3.Row
+            return self._memory_conn
+        conn = connect_private_sqlite("writing.local", self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
+
+    def close(self) -> None:
+        """Close the persistent in-memory connection, when present."""
+        if self._memory_conn is not None:
+            self._memory_conn.close()
+            self._memory_conn = None
 
     @staticmethod
     def _now() -> str:

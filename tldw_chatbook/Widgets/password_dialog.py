@@ -15,6 +15,18 @@ from textual.widgets import Button, Label, Input, Static
 from textual.validation import Length
 from loguru import logger
 
+#: Shown wherever a user is about to enable config encryption for the first
+#: time. Encrypting rewrites config.toml through a TOML parse/serialize
+#: round-trip (tomllib.load + toml.dumps), which preserves every value and
+#: type losslessly but drops comments and reorders tables -- there is no
+#: comment-preserving TOML writer in use here, and the fix for this review
+#: is to warn, not to silently rewrite an annotated config (see task-851
+#: review finding 3).
+COMMENT_LOSS_WARNING = (
+    "• Saving will rewrite config.toml: any comments or custom formatting "
+    "in it will be lost (all values are preserved)"
+)
+
 
 class PasswordDialog(ModalScreen):
     """Dialog for entering master password for config encryption."""
@@ -386,6 +398,7 @@ class EncryptionSetupDialog(ModalScreen):
                         "• If you forget the password, you'll need to re-enter your API keys"
                     )
                     yield Static("• Make sure to use a strong, memorable password")
+                    yield Static(COMMENT_LOSS_WARNING)
 
                 # Buttons
                 with Horizontal(classes="button-container"):

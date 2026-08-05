@@ -11,7 +11,7 @@ from textual.css.query import QueryError
 from loguru import logger
 
 if TYPE_CHECKING:
-    from textual.app import App
+    from textual.widget import Widget
 
 
 class LogWidgetManager:
@@ -23,8 +23,8 @@ class LogWidgetManager:
         "transformers": "#transformers-log-output",
         "llamafile": "#llamafile-log-output",
         "vllm": "#vllm-log-output",
-        "model_download": "#model-download-log-output",
         "mlx": "#mlx-log-output",
+        "onnx": "#onnx-log-output",
     }
 
     # User-friendly names for error messages
@@ -33,17 +33,17 @@ class LogWidgetManager:
         "transformers": "Transformers",
         "llamafile": "Llamafile",
         "vllm": "vLLM",
-        "model_download": "model download",
         "mlx": "MLX-LM",
+        "onnx": "ONNX",
     }
 
     @staticmethod
-    def update_log(app: "App", log_type: str, message: str) -> None:
+    def update_log(query_root: "Widget", log_type: str, message: str) -> None:
         """
         Update a specific log widget with a message.
 
         Args:
-            app: The Textual app instance
+            query_root: The mounted destination widget that owns the log.
             log_type: The type of log to update (e.g., 'llamacpp', 'vllm')
             message: The message to write to the log
         """
@@ -55,39 +55,18 @@ class LogWidgetManager:
         log_name = LogWidgetManager.LOG_NAMES.get(log_type, log_type)
 
         try:
-            log_widget = app.query_one(widget_id, RichLog)
+            log_widget = query_root.query_one(widget_id, RichLog)
             log_widget.write(message)
         except QueryError:
             logger.error(f"Failed to query {widget_id} to write message.")
-        except Exception as e:
-            logger.opt(exception=True).error(f"Error writing to {log_name} log: {e}")
+        except Exception as exc:
+            logger.error(
+                "Destination log update failed (log={}, category={}).",
+                log_name,
+                type(exc).__name__,
+            )
 
     @staticmethod
-    def update_llamacpp_log(app: "App", message: str) -> None:
-        """Helper to write messages to the Llama.cpp log widget."""
-        LogWidgetManager.update_log(app, "llamacpp", message)
-
-    @staticmethod
-    def update_transformers_log(app: "App", message: str) -> None:
+    def update_transformers_log(query_root: "Widget", message: str) -> None:
         """Helper to write messages to the Transformers log widget."""
-        LogWidgetManager.update_log(app, "transformers", message)
-
-    @staticmethod
-    def update_llamafile_log(app: "App", message: str) -> None:
-        """Helper to write messages to the Llamafile log widget."""
-        LogWidgetManager.update_log(app, "llamafile", message)
-
-    @staticmethod
-    def update_vllm_log(app: "App", message: str) -> None:
-        """Helper to write messages to the vLLM log widget."""
-        LogWidgetManager.update_log(app, "vllm", message)
-
-    @staticmethod
-    def update_model_download_log(app: "App", message: str) -> None:
-        """Helper to write messages to the model download log widget."""
-        LogWidgetManager.update_log(app, "model_download", message)
-
-    @staticmethod
-    def update_mlx_log(app: "App", message: str) -> None:
-        """Helper to write messages to the MLX-LM log widget."""
-        LogWidgetManager.update_log(app, "mlx", message)
+        LogWidgetManager.update_log(query_root, "transformers", message)

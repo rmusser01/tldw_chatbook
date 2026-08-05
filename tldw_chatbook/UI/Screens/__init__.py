@@ -11,9 +11,7 @@ from importlib import import_module
 
 _SCREEN_EXPORTS = {
     "ChatScreen": ".chat_screen",
-    "MediaIngestScreen": ".media_ingest_screen",
     "MediaScreen": ".media_screen",
-    "SearchScreen": ".search_screen",
     "EvalsScreen": ".evals_screen",
     "ToolsSettingsScreen": ".tools_settings_screen",
     "LLMScreen": ".llm_screen",
@@ -23,9 +21,7 @@ _SCREEN_EXPORTS = {
 
 __all__ = [
     "ChatScreen",
-    "MediaIngestScreen",
     "MediaScreen",
-    "SearchScreen",
     "EvalsScreen",
     "ToolsSettingsScreen",
     "LLMScreen",

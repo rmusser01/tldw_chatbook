@@ -2,7 +2,28 @@ import inspect
 
 import pytest
 
-from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from Tests.Chat.test_citation_trace_repository import (
+    _TrackingKeyProvider,
+    _exact_governed_payload_write,
+    _identity as citation_identity,
+    _repository as citation_repository,
+    _sealed_write,
+)
+from tldw_chatbook.Chat.chat_persistence_service import (
+    ChatPersistenceService,
+    CitationPersistenceUnavailable,
+)
+from tldw_chatbook.Chat.citation_provenance_runtime import (
+    CitationProvenanceRuntimePolicy,
+)
+from tldw_chatbook.Chat.citation_trace_identity import (
+    CitationFingerprintCodec,
+    local_trace_namespace,
+)
+from tldw_chatbook.Chat.citation_trace_repository import (
+    ActiveCitationTraceState,
+    CitationTraceRepository,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, MessageAttachment
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -29,22 +50,1187 @@ def db_instance(db_path, client_id):
 
 @pytest.mark.integration
 class TestChatPersistenceService:
+    def test_create_conversation_documents_public_contract(self):
+        method = ChatPersistenceService.create_conversation
+        doc = inspect.getdoc(method)
+
+        assert doc is not None
+        assert "Args:" in doc
+        for name in inspect.signature(method).parameters:
+            if name != "self":
+                assert f"{name}:" in doc
+        assert "Omitting" in doc
+        assert "``None`` explicitly" in doc
+        assert "explicit normalized" in doc
+        assert "best-effort" in doc
+        assert "Returns:" in doc
+        assert "Raises:" in doc
+
     def test_persistence_service_never_uses_display_name_as_assistant_id(
         self, db_instance: CharactersRAGDB
     ):
         service = ChatPersistenceService(db_instance)
         character_id = db_instance.add_character_card({"name": "Alice"})
+        authority_id = db_instance.get_local_authority_id()
         conversation_id = service.create_conversation(
             character_id=character_id,
             character_name="Alice",
             assistant_kind="character",
-            assistant_id="char.local.alice",
+            assistant_id=str(character_id),
+            assistant_authority_id=authority_id,
             runtime_backend="local",
             discovery_owner="ccp_character",
             discovery_entity_id="char.local.alice",
         )
         conversation = db_instance.get_conversation_by_id(conversation_id)
-        assert conversation["assistant_id"] == "char.local.alice"
+        assert conversation["title"] == "Chat with Alice"
+        assert conversation["assistant_id"] == str(character_id)
+        assert conversation["assistant_id"] != "Alice"
+        assert conversation["assistant_authority_id"] == authority_id
+
+    def test_unspecified_local_authority_is_left_for_database_inference(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+        character_id = db_instance.add_character_card({"name": "Bob"})
+
+        inferred_conversation_id = service.create_conversation(
+            character_id=character_id,
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            runtime_backend="local",
+        )
+        unproven_conversation_id = service.create_conversation(
+            character_id=character_id,
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            assistant_authority_id=None,
+            runtime_backend="local",
+        )
+
+        inferred = db_instance.get_conversation_by_id(inferred_conversation_id)
+        unproven = db_instance.get_conversation_by_id(unproven_conversation_id)
+        assert inferred["assistant_authority_id"] == (
+            db_instance.get_local_authority_id()
+        )
+        assert unproven["assistant_authority_id"] is None
+
+    def test_canonical_citation_writes_ready_requires_matching_ready_repository(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        repository = citation_repository(db_instance)
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=repository,
+        )
+
+        assert service.canonical_citation_writes_ready is True
+        assert service.citation_repository is repository
+        assert service.db is repository.db
+
+    def test_canonical_citation_writes_ready_is_false_without_repository(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        service = ChatPersistenceService(db_instance)
+
+        assert service.canonical_citation_writes_ready is False
+
+    def test_canonical_citation_writes_ready_rejects_repository_database_mismatch(
+        self,
+        db_instance: CharactersRAGDB,
+        tmp_path,
+    ):
+        other_db = CharactersRAGDB(
+            tmp_path / "readiness-other.sqlite",
+            client_id="readiness-other",
+        )
+        try:
+            service = ChatPersistenceService(
+                db_instance,
+                citation_repository=citation_repository(other_db),
+            )
+
+            assert service.canonical_citation_writes_ready is False
+        finally:
+            other_db.close_connection()
+
+    @pytest.mark.parametrize(
+        "unready_reason",
+        (
+            "disabled",
+            "missing_identity",
+            "missing_codec",
+            "missing_persisted_identity",
+            "mismatched_identity",
+        ),
+    )
+    def test_canonical_citation_writes_ready_fails_closed_for_unready_repository(
+        self,
+        db_instance: CharactersRAGDB,
+        unready_reason: str,
+    ):
+        identity = citation_identity(db_instance)
+        repository = CitationTraceRepository(
+            db_instance,
+            policy=CitationProvenanceRuntimePolicy(
+                canonical_writes_enabled=unready_reason != "disabled",
+            ),
+            identity_context=(
+                None
+                if unready_reason == "missing_identity"
+                else identity.model_copy(
+                    update={"local_authority_id": "mismatched-local-authority"}
+                )
+                if unready_reason == "mismatched_identity"
+                else identity
+            ),
+            fingerprint_codec=(
+                None
+                if unready_reason == "missing_codec"
+                else CitationFingerprintCodec(b"k" * 32)
+            ),
+        )
+        if unready_reason == "missing_persisted_identity":
+            with db_instance.transaction() as cursor:
+                cursor.execute(
+                    "DELETE FROM rag_identity_context WHERE context_name = 'default'"
+                )
+
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=repository,
+        )
+
+        assert service.canonical_citation_writes_ready is False
+
+    def test_canonical_citation_writes_ready_is_read_only_and_side_effect_free(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        identity = citation_identity(db_instance)
+        provider = _TrackingKeyProvider(b"k" * 32)
+        repository = CitationTraceRepository.from_key_provider(
+            db_instance,
+            policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
+            identity_context=identity,
+            key_provider=provider,
+        )
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=repository,
+        )
+        expected_key_calls = [identity.fingerprint_key_id]
+        original_policy = repository.policy.model_dump()
+
+        readiness = service.canonical_citation_writes_ready
+
+        assert type(readiness) is bool
+        assert readiness is True
+        assert provider.calls == expected_key_calls
+        assert repository.policy.model_dump() == original_policy
+        with pytest.raises(AttributeError):
+            service.canonical_citation_writes_ready = False  # type: ignore[misc]
+
+    def test_citation_write_requires_an_explicit_available_repository_before_transaction(
+        self,
+        db_instance: CharactersRAGDB,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "No repository", "character_id": None}
+        )
+        transaction_calls = 0
+        original_transaction = db_instance.transaction
+
+        def counted_transaction():
+            nonlocal transaction_calls
+            transaction_calls += 1
+            return original_transaction()
+
+        monkeypatch.setattr(db_instance, "transaction", counted_transaction)
+        service = ChatPersistenceService(db_instance)
+
+        with pytest.raises(
+            CitationPersistenceUnavailable,
+            match="citation_repository_unavailable",
+        ):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Answer [S1].",
+                message_id="no-repository-message",
+                citation_write=_sealed_write(),
+            )
+
+        assert transaction_calls == 0
+        assert db_instance.get_message_by_id("no-repository-message") is None
+
+    @pytest.mark.parametrize(
+        ("enabled", "identity_present", "codec_present", "reason"),
+        [
+            (False, True, True, "canonical_citation_writes_disabled"),
+            (True, False, True, "citation_identity_context_unavailable"),
+            (True, True, False, "fingerprint_key_unavailable"),
+        ],
+    )
+    def test_citation_preflight_denials_open_no_transaction(
+        self,
+        db_instance: CharactersRAGDB,
+        monkeypatch: pytest.MonkeyPatch,
+        enabled: bool,
+        identity_present: bool,
+        codec_present: bool,
+        reason: str,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Denied citation", "character_id": None}
+        )
+        identity = citation_identity(db_instance)
+        repository = CitationTraceRepository(
+            db_instance,
+            policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=enabled),
+            identity_context=identity if identity_present else None,
+            fingerprint_codec=(
+                CitationFingerprintCodec(b"k" * 32) if codec_present else None
+            ),
+        )
+        transaction_calls = 0
+        original_transaction = db_instance.transaction
+
+        def counted_transaction():
+            nonlocal transaction_calls
+            transaction_calls += 1
+            return original_transaction()
+
+        monkeypatch.setattr(db_instance, "transaction", counted_transaction)
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=repository,
+        )
+
+        with pytest.raises(CitationPersistenceUnavailable, match=reason):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Answer [S1].",
+                message_id="denied-message",
+                citation_write=_sealed_write(),
+            )
+
+        assert transaction_calls == 0
+        assert db_instance.get_message_by_id("denied-message") is None
+
+    def test_invalid_sealed_write_fails_before_opening_a_transaction(
+        self,
+        db_instance: CharactersRAGDB,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Invalid citation", "character_id": None}
+        )
+        transaction_calls = 0
+        original_transaction = db_instance.transaction
+
+        def counted_transaction():
+            nonlocal transaction_calls
+            transaction_calls += 1
+            return original_transaction()
+
+        monkeypatch.setattr(db_instance, "transaction", counted_transaction)
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=citation_repository(db_instance),
+        )
+        hostile = _sealed_write().model_copy(update={"evidence_snapshot_payloads": ()})
+
+        with pytest.raises(
+            CitationPersistenceUnavailable,
+            match="invalid_sealed_citation_write",
+        ):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Answer [S1].",
+                message_id="invalid-citation-message",
+                citation_write=hostile,
+            )
+
+        assert transaction_calls == 0
+        assert db_instance.get_message_by_id("invalid-citation-message") is None
+
+    def test_mismatched_run_authority_fails_before_opening_a_transaction(
+        self,
+        db_instance: CharactersRAGDB,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Hostile run authority", "character_id": None}
+        )
+        transaction_calls = 0
+        original_transaction = db_instance.transaction
+
+        def counted_transaction():
+            nonlocal transaction_calls
+            transaction_calls += 1
+            return original_transaction()
+
+        monkeypatch.setattr(db_instance, "transaction", counted_transaction)
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=citation_repository(db_instance),
+        )
+
+        with pytest.raises(
+            CitationPersistenceUnavailable,
+            match="run_authority_mismatch",
+        ):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Answer [S1].",
+                message_id="hostile-authority-message",
+                citation_write=_sealed_write(authority_id="hostile-authority"),
+            )
+
+        assert transaction_calls == 0
+        assert db_instance.get_message_by_id("hostile-authority-message") is None
+
+    def test_governed_payload_one_byte_over_limit_fails_before_transaction(
+        self,
+        db_instance: CharactersRAGDB,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Oversized governed payload", "character_id": None}
+        )
+        transaction_calls = 0
+        original_transaction = db_instance.transaction
+
+        def counted_transaction():
+            nonlocal transaction_calls
+            transaction_calls += 1
+            return original_transaction()
+
+        monkeypatch.setattr(db_instance, "transaction", counted_transaction)
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=citation_repository(db_instance),
+        )
+        exact = _exact_governed_payload_write()
+        snapshot = exact.evidence_snapshot_payloads[0]
+        assert snapshot.title is not None
+        oversized = exact.model_copy(
+            update={
+                "evidence_snapshot_payloads": (
+                    snapshot.model_copy(update={"title": snapshot.title + "x"}),
+                )
+            }
+        )
+
+        with pytest.raises(
+            CitationPersistenceUnavailable,
+            match="invalid_sealed_citation_write",
+        ):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Answer [S1].",
+                message_id="oversized-citation-message",
+                citation_write=oversized,
+            )
+
+        assert transaction_calls == 0
+        assert db_instance.get_message_by_id("oversized-citation-message") is None
+
+    def test_citation_repository_for_another_database_fails_before_transaction(
+        self,
+        db_instance: CharactersRAGDB,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Wrong repository database", "character_id": None}
+        )
+        other_db = CharactersRAGDB(
+            tmp_path / "other-citation.sqlite",
+            client_id="other-citation",
+        )
+        transaction_calls = 0
+        original_transaction = db_instance.transaction
+
+        def counted_transaction():
+            nonlocal transaction_calls
+            transaction_calls += 1
+            return original_transaction()
+
+        monkeypatch.setattr(db_instance, "transaction", counted_transaction)
+        try:
+            service = ChatPersistenceService(
+                db_instance,
+                citation_repository=citation_repository(other_db),
+            )
+
+            with pytest.raises(
+                CitationPersistenceUnavailable,
+                match="citation_repository_database_mismatch",
+            ):
+                service.create_message(
+                    conversation_id=conversation_id,
+                    sender="assistant",
+                    content="Answer [S1].",
+                    message_id="wrong-repository-database",
+                    citation_write=_sealed_write(),
+                )
+        finally:
+            other_db.close_connection()
+
+        assert transaction_calls == 0
+        assert db_instance.get_message_by_id("wrong-repository-database") is None
+
+    def test_message_attachments_feedback_and_trace_commit_atomically(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Atomic citation", "character_id": None}
+        )
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=citation_repository(db_instance),
+        )
+
+        message_id = service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="Answer [S1].",
+            message_id="atomic-citation-message",
+            feedback="1;grounded",
+            attachments=[
+                {
+                    "position": 0,
+                    "data": b"preview",
+                    "mime_type": "image/png",
+                    "display_name": "preview.png",
+                },
+                {
+                    "position": 1,
+                    "data": b"source",
+                    "mime_type": "text/plain",
+                    "display_name": "source.txt",
+                },
+            ],
+            citation_write=_sealed_write(),
+        )
+
+        message = db_instance.get_message_by_id(message_id)
+        assert message["feedback"] == "1;grounded"
+        assert message["image_data"] == b"preview"
+        assert (
+            db_instance.get_attachments_for_messages([message_id])[message_id][0][
+                "data"
+            ]
+            == b"source"
+        )
+        assert (
+            db_instance.get_connection()
+            .execute(
+                "SELECT count(*) FROM rag_message_trace_owners WHERE message_id = ?",
+                (message_id,),
+            )
+            .fetchone()[0]
+            == 1
+        )
+
+    def test_selected_answer_mismatch_rolls_back_message_and_citation_rows(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Selected answer mismatch", "character_id": None}
+        )
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=citation_repository(db_instance),
+        )
+
+        with pytest.raises(
+            CitationPersistenceUnavailable,
+            match="selected_answer_message_mismatch",
+        ):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Different persisted answer.",
+                message_id="selected-answer-mismatch",
+                citation_write=_sealed_write(),
+            )
+
+        assert db_instance.get_message_by_id("selected-answer-mismatch") is None
+        connection = db_instance.get_connection()
+        for table in (
+            "rag_citation_traces",
+            "rag_evidence_runs",
+            "rag_evidence_snapshots",
+            "rag_answer_attempt_payloads",
+            "rag_trace_evidence_refs",
+            "rag_message_trace_owners",
+        ):
+            assert (
+                connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+            )
+
+    def test_repository_failure_rolls_back_message_sidecars_feedback_and_trace(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Rollback citation", "character_id": None}
+        )
+        repository = citation_repository(db_instance, failure_after="owner")
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=repository,
+        )
+
+        with pytest.raises(RuntimeError, match="forced_failure_after_owner"):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Answer [S1].",
+                message_id="atomic-rollback-message",
+                feedback="1;grounded",
+                attachments=[
+                    {
+                        "position": 1,
+                        "data": b"source",
+                        "mime_type": "text/plain",
+                        "display_name": "source.txt",
+                    }
+                ],
+                generation_metadata=[
+                    {
+                        "position": 1,
+                        "prompt": "source-grounded image",
+                        "backend": "swarmui",
+                        "seed": 7,
+                    }
+                ],
+                citation_write=_sealed_write(),
+            )
+
+        connection = db_instance.get_connection()
+        assert db_instance.get_message_by_id("atomic-rollback-message") is None
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM message_attachments WHERE message_id = ?",
+                ("atomic-rollback-message",),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM message_generation_metadata WHERE message_id = ?",
+                ("atomic-rollback-message",),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute("SELECT count(*) FROM rag_citation_traces").fetchone()[0]
+            == 0
+        )
+
+    def test_caller_can_explicitly_retry_without_citation_as_ungrounded(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Ungrounded retry", "character_id": None}
+        )
+        service = ChatPersistenceService(db_instance)
+        with pytest.raises(CitationPersistenceUnavailable):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Answer [S1].",
+                message_id="explicit-ungrounded",
+                citation_write=_sealed_write(),
+            )
+
+        assert (
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Answer [S1].",
+                message_id="explicit-ungrounded",
+            )
+            == "explicit-ungrounded"
+        )
+        assert db_instance.get_message_by_id("explicit-ungrounded") is not None
+        assert (
+            db_instance.get_connection()
+            .execute("SELECT count(*) FROM rag_message_trace_owners")
+            .fetchone()[0]
+            == 0
+        )
+
+    def test_uncertain_commit_retry_returns_the_exact_existing_aggregate(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Uncertain citation commit", "character_id": None}
+        )
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=citation_repository(db_instance),
+        )
+        arguments = {
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "Answer [S1].",
+            "message_id": "uncertain-citation-message",
+            "feedback": "1;grounded",
+            "attachments": [
+                {
+                    "position": 1,
+                    "data": b"source",
+                    "mime_type": "text/plain",
+                    "display_name": "source.txt",
+                }
+            ],
+            "citation_write": _sealed_write(),
+        }
+
+        assert service.create_message(**arguments) == "uncertain-citation-message"
+        assert service.create_message(**arguments) == "uncertain-citation-message"
+
+        connection = db_instance.get_connection()
+        expected_counts = {
+            "messages": 1,
+            "message_attachments": 1,
+            "rag_citation_traces": 1,
+            "rag_evidence_runs": 1,
+            "rag_evidence_snapshots": 1,
+            "rag_answer_attempt_payloads": 1,
+            "rag_trace_evidence_refs": 1,
+            "rag_message_trace_owners": 1,
+        }
+        for table, expected in expected_counts.items():
+            assert (
+                connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+                == expected
+            )
+
+    def test_citation_retry_requires_exact_generation_metadata(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Citation image metadata", "character_id": None}
+        )
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=citation_repository(db_instance),
+        )
+        arguments = {
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "Answer [S1].",
+            "message_id": "citation-generation-metadata",
+            "attachments": [
+                {
+                    "position": 0,
+                    "data": b"image",
+                    "mime_type": "image/png",
+                }
+            ],
+            "generation_metadata": [
+                {
+                    "position": 0,
+                    "prompt": "source-grounded image",
+                    "backend": "swarmui",
+                    "seed": 7,
+                }
+            ],
+            "citation_write": _sealed_write(),
+        }
+
+        assert service.create_message(**arguments) == "citation-generation-metadata"
+        assert service.create_message(**arguments) == "citation-generation-metadata"
+        metadata = db_instance.get_generation_metadata_for_messages(
+            ["citation-generation-metadata"]
+        )
+        assert metadata["citation-generation-metadata"][0]["seed"] == 7
+
+        changed_arguments = dict(arguments)
+        changed_arguments["generation_metadata"] = [
+            {
+                "position": 0,
+                "prompt": "source-grounded image",
+                "backend": "swarmui",
+                "seed": 8,
+            }
+        ]
+        with pytest.raises(
+            CitationPersistenceUnavailable,
+            match="message_identity_conflict",
+        ):
+            service.create_message(**changed_arguments)
+
+        metadata = db_instance.get_generation_metadata_for_messages(
+            ["citation-generation-metadata"]
+        )
+        assert metadata["citation-generation-metadata"][0]["seed"] == 7
+
+    @pytest.mark.parametrize("mutation", ("body", "trace", "governed"))
+    def test_uncertain_commit_retry_with_changed_immutable_input_fails_closed(
+        self,
+        db_instance: CharactersRAGDB,
+        mutation: str,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Conflicting citation retry", "character_id": None}
+        )
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=citation_repository(db_instance),
+        )
+        write = _sealed_write()
+        service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="Answer [S1].",
+            message_id="conflicting-citation-retry",
+            citation_write=write,
+        )
+        content = "Answer [S1]."
+        if mutation == "body":
+            content = "Changed answer [S1]."
+        elif mutation == "trace":
+            write = write.model_copy(
+                update={
+                    "trace": write.trace.model_copy(
+                        update={"generation_id": "changed-generation"}
+                    )
+                }
+            )
+        else:
+            snapshot = write.evidence_snapshot_payloads[0]
+            write = write.model_copy(
+                update={
+                    "evidence_snapshot_payloads": (
+                        snapshot.model_copy(update={"title": "changed-title"}),
+                    )
+                }
+            )
+
+        with pytest.raises(
+            CitationPersistenceUnavailable,
+            match="identity_conflict",
+        ):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content=content,
+                message_id="conflicting-citation-retry",
+                citation_write=write,
+            )
+
+        connection = db_instance.get_connection()
+        assert (
+            db_instance.get_message_by_id("conflicting-citation-retry")["content"]
+            == "Answer [S1]."
+        )
+        assert (
+            connection.execute("SELECT count(*) FROM rag_citation_traces").fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM rag_message_trace_owners"
+            ).fetchone()[0]
+            == 1
+        )
+
+    def test_update_with_matching_body_carries_active_owner_to_new_revision(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Matching citation edit", "character_id": None}
+        )
+        repository = citation_repository(db_instance)
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=repository,
+        )
+        message_id = service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="Answer [S1].",
+            message_id="matching-citation-edit",
+            citation_write=_sealed_write(),
+        )
+
+        assert service.update_message_content(
+            message_id=message_id,
+            content="Answer [S1].",
+            image_data=None,
+            image_mime_type=None,
+            feedback="still grounded",
+            update_feedback=True,
+        )
+        updated = db_instance.get_message_by_id(message_id)
+        active = repository.get_active_trace_for_message(
+            message_id,
+            updated["version"],
+            updated["content"],
+            CitationFingerprintCodec(b"k" * 32),
+        )
+
+        assert active.state is ActiveCitationTraceState.ACTIVE
+        assert active.summary is not None
+        assert (
+            db_instance.get_connection()
+            .execute(
+                """
+            SELECT count(*) FROM rag_message_trace_owners
+            WHERE message_id = ? AND state = 'active'
+            """,
+                (message_id,),
+            )
+            .fetchone()[0]
+            == 2
+        )
+
+    def test_update_with_changed_body_invalidates_active_owner_but_keeps_trace(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Mismatching citation edit", "character_id": None}
+        )
+        repository = citation_repository(db_instance)
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=repository,
+        )
+        message_id = service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="Answer [S1].",
+            message_id="mismatching-citation-edit",
+            citation_write=_sealed_write(),
+        )
+
+        assert service.update_message_content(
+            message_id=message_id,
+            content="Edited answer [S1].",
+            image_data=None,
+            image_mime_type=None,
+        )
+
+        connection = db_instance.get_connection()
+        assert (
+            connection.execute(
+                """
+            SELECT state FROM rag_message_trace_owners
+            WHERE message_id = ? AND message_revision = 1
+            """,
+                (message_id,),
+            ).fetchone()[0]
+            == "body_mismatch"
+        )
+        assert (
+            connection.execute("SELECT count(*) FROM rag_citation_traces").fetchone()[0]
+            == 1
+        )
+        identity = citation_identity(db_instance)
+        assert (
+            repository.get_trace_summary(
+                local_trace_namespace(identity, trace_id="trace-1")
+            )
+            is not None
+        )
+
+    def test_update_without_fingerprint_key_invalidates_owner_and_keeps_message_edit(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Unverifiable citation edit", "character_id": None}
+        )
+        writer = citation_repository(db_instance)
+        message_id = ChatPersistenceService(
+            db_instance,
+            citation_repository=writer,
+        ).create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="Answer [S1].",
+            message_id="unverifiable-citation-edit",
+            citation_write=_sealed_write(),
+        )
+        reader_without_key = CitationTraceRepository(
+            db_instance,
+            policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=False),
+            identity_context=citation_identity(db_instance),
+            fingerprint_codec=None,
+        )
+
+        assert ChatPersistenceService(
+            db_instance,
+            citation_repository=reader_without_key,
+        ).update_message_content(
+            message_id=message_id,
+            content="Edited without key [S1].",
+            image_data=None,
+            image_mime_type=None,
+        )
+
+        message = db_instance.get_message_by_id(message_id)
+        assert message["content"] == "Edited without key [S1]."
+        assert (
+            db_instance.get_connection()
+            .execute(
+                """
+            SELECT state FROM rag_message_trace_owners
+            WHERE message_id = ?
+            """,
+                (message_id,),
+            )
+            .fetchone()[0]
+            == "body_mismatch"
+        )
+        assert (
+            reader_without_key.get_active_trace_for_message(
+                message_id,
+                message["version"],
+                message["content"],
+                None,
+            ).state
+            is ActiveCitationTraceState.UNVERIFIABLE
+        )
+
+    def test_update_without_injected_identity_still_invalidates_persisted_owner(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Missing identity citation edit", "character_id": None}
+        )
+        writer = citation_repository(db_instance)
+        message_id = ChatPersistenceService(
+            db_instance,
+            citation_repository=writer,
+        ).create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="Answer [S1].",
+            message_id="missing-identity-citation-edit",
+            citation_write=_sealed_write(),
+        )
+        reader_without_identity_or_key = CitationTraceRepository(
+            db_instance,
+            policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=False),
+            identity_context=None,
+            fingerprint_codec=None,
+        )
+
+        assert ChatPersistenceService(
+            db_instance,
+            citation_repository=reader_without_identity_or_key,
+        ).update_message_content(
+            message_id=message_id,
+            content="Edited without identity [S1].",
+            image_data=None,
+            image_mime_type=None,
+        )
+
+        assert (
+            db_instance.get_connection()
+            .execute(
+                """
+            SELECT state FROM rag_message_trace_owners
+            WHERE message_id = ?
+            """,
+                (message_id,),
+            )
+            .fetchone()[0]
+            == "body_mismatch"
+        )
+
+    def test_edit_wins_over_stale_uncertain_retry_without_reactivating_owner(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Edit retry race", "character_id": None}
+        )
+        repository = citation_repository(db_instance)
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=repository,
+        )
+        message_id = service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="Answer [S1].",
+            message_id="edit-retry-race",
+            citation_write=_sealed_write(),
+        )
+        assert service.update_message_content(
+            message_id=message_id,
+            content="Edited answer [S1].",
+            image_data=None,
+            image_mime_type=None,
+        )
+
+        with pytest.raises(
+            CitationPersistenceUnavailable,
+            match="message_identity_conflict",
+        ):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Answer [S1].",
+                message_id=message_id,
+                citation_write=_sealed_write(),
+            )
+
+        connection = db_instance.get_connection()
+        assert db_instance.get_message_by_id(message_id)["content"] == (
+            "Edited answer [S1]."
+        )
+        assert (
+            connection.execute(
+                """
+            SELECT count(*) FROM rag_message_trace_owners
+            WHERE message_id = ? AND state = 'active'
+            """,
+                (message_id,),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute("SELECT count(*) FROM rag_citation_traces").fetchone()[0]
+            == 1
+        )
+
+    def test_stale_retry_cannot_invent_an_owner_for_a_later_unverified_revision(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Revision retry race", "character_id": None}
+        )
+        repository = citation_repository(db_instance)
+        citation_service = ChatPersistenceService(
+            db_instance,
+            citation_repository=repository,
+        )
+        message_id = citation_service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="Answer [S1].",
+            message_id="revision-retry-race",
+            citation_write=_sealed_write(),
+        )
+        assert ChatPersistenceService(db_instance).update_message_content(
+            message_id=message_id,
+            content="Answer [S1].",
+            image_data=None,
+            image_mime_type=None,
+            feedback=None,
+            update_feedback=True,
+        )
+
+        with pytest.raises(
+            CitationPersistenceUnavailable,
+            match="owner_identity_conflict",
+        ):
+            citation_service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Answer [S1].",
+                message_id=message_id,
+                citation_write=_sealed_write(),
+            )
+
+        connection = db_instance.get_connection()
+        assert (
+            connection.execute(
+                """
+                SELECT count(*) FROM rag_message_trace_owners
+                WHERE message_id = ?
+                """,
+                (message_id,),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                """
+                SELECT count(*) FROM rag_message_trace_owners
+                WHERE message_id = ? AND message_revision = 2
+                """,
+                (message_id,),
+            ).fetchone()[0]
+            == 0
+        )
+
+    def test_message_update_and_owner_transition_rollback_together(
+        self,
+        db_instance: CharactersRAGDB,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Atomic citation edit", "character_id": None}
+        )
+        repository = citation_repository(db_instance)
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=repository,
+        )
+        message_id = service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="Answer [S1].",
+            message_id="atomic-citation-edit",
+            citation_write=_sealed_write(),
+        )
+
+        def fail_transition(*args, **kwargs):
+            raise RuntimeError("forced owner transition failure")
+
+        monkeypatch.setattr(
+            repository,
+            "transition_owner_for_message_update",
+            fail_transition,
+        )
+        with pytest.raises(RuntimeError, match="forced owner transition failure"):
+            service.update_message_content(
+                message_id=message_id,
+                content="Edited answer [S1].",
+                image_data=None,
+                image_mime_type=None,
+            )
+
+        assert db_instance.get_message_by_id(message_id)["content"] == "Answer [S1]."
+        assert (
+            db_instance.get_connection()
+            .execute(
+                """
+            SELECT state FROM rag_message_trace_owners
+            WHERE message_id = ?
+            """,
+                (message_id,),
+            )
+            .fetchone()[0]
+            == "active"
+        )
 
     def test_update_message_content_preserves_topology_variant_and_feedback(
         self, db_instance: CharactersRAGDB
@@ -579,6 +1765,139 @@ class TestChatPersistenceService:
         assert extra[0]["data"] == b"img-1"
         # The service-level batch read is a passthrough to the DB method.
         assert service.get_attachments_for_messages([msg_id]) == {msg_id: extra}
+
+    def test_create_message_with_generation_metadata_atomic(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+        conv_id = db_instance.add_conversation({"title": "t"})
+        msg_id = service.create_message(
+            conversation_id=conv_id,
+            sender="assistant",
+            content="[image] x",
+            attachments=[
+                {"position": 0, "data": b"a", "mime_type": "image/png"},
+                {"position": 1, "data": b"b", "mime_type": "image/png"},
+            ],
+            generation_metadata=[
+                {
+                    "position": 0,
+                    "prompt": "x",
+                    "negative_prompt": "",
+                    "backend": "swarmui",
+                    "model": None,
+                    "seed": 1,
+                    "style": None,
+                    "params_json": "{}",
+                },
+                {
+                    "position": 1,
+                    "prompt": "x",
+                    "negative_prompt": "",
+                    "backend": "swarmui",
+                    "model": None,
+                    "seed": 2,
+                    "style": None,
+                    "params_json": "{}",
+                },
+            ],
+        )
+        got = db_instance.get_generation_metadata_for_messages([msg_id])
+        assert [r["seed"] for r in got[msg_id]] == [1, 2]
+
+    def test_create_message_rolls_back_row_when_generation_metadata_write_fails(
+        self, db_instance: CharactersRAGDB, monkeypatch
+    ):
+        """The message insert, attachment write, and sidecar-metadata write
+        must be one atomic unit: a metadata-write failure rolls back the
+        row and the attachments too."""
+        service = ChatPersistenceService(db_instance)
+        conv_id = db_instance.add_conversation({"title": "t"})
+
+        def _boom(message_id, rows):
+            raise RuntimeError("metadata write failed")
+
+        monkeypatch.setattr(
+            db_instance, "set_message_generation_metadata", _boom
+        )
+        with pytest.raises(RuntimeError, match="metadata write failed"):
+            service.create_message(
+                conversation_id=conv_id,
+                sender="assistant",
+                content="[image] x",
+                message_id="msg-atomic-metadata",
+                attachments=[
+                    {"position": 0, "data": b"a", "mime_type": "image/png"},
+                ],
+                generation_metadata=[
+                    {
+                        "position": 0,
+                        "prompt": "x",
+                        "negative_prompt": "",
+                        "backend": "swarmui",
+                        "model": None,
+                        "seed": 1,
+                        "style": None,
+                        "params_json": "{}",
+                    },
+                ],
+            )
+        assert db_instance.get_message_by_id("msg-atomic-metadata") is None
+
+    def test_append_message_attachment_wrapper_delegates_to_db(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+        conv_id = db_instance.add_conversation({"title": "t"})
+        msg_id = db_instance.add_message(
+            {
+                "conversation_id": conv_id,
+                "sender": "assistant",
+                "content": "[image] x",
+                "image_data": b"png0",
+                "image_mime_type": "image/png",
+            }
+        )
+        pos = service.append_message_attachment(
+            msg_id,
+            data=b"png1",
+            mime_type="image/png",
+            generation_metadata={
+                "prompt": "x",
+                "negative_prompt": "",
+                "backend": "swarmui",
+                "model": None,
+                "seed": 42,
+                "style": None,
+                "params_json": "{}",
+            },
+        )
+        assert pos == 1
+        extra = db_instance.get_attachments_for_messages([msg_id])[msg_id]
+        assert extra[0]["data"] == b"png1"
+        got = db_instance.get_generation_metadata_for_messages([msg_id])
+        assert got[msg_id][0]["seed"] == 42
+
+    def test_keep_message_attachment_wrapper_delegates_to_db(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+        conv_id = db_instance.add_conversation({"title": "t"})
+        msg_id = db_instance.add_message(
+            {
+                "conversation_id": conv_id,
+                "sender": "assistant",
+                "content": "[image] x",
+                "image_data": b"png0",
+                "image_mime_type": "image/png",
+            }
+        )
+        service.append_message_attachment(msg_id, data=b"png1", mime_type="image/png")
+        service.keep_message_attachment(msg_id, 1)
+        row = db_instance.get_message_by_id(msg_id)
+        assert row["image_data"] == b"png1"
+        extra = db_instance.get_attachments_for_messages([msg_id])[msg_id]
+        assert extra[0]["data"] == b"png0"
 
     def test_update_without_attachments_leaves_table_and_columns_alone(
         self, db_instance: CharactersRAGDB

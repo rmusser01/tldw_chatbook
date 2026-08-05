@@ -45,6 +45,37 @@ from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _stt_provenance_document() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "attempt_id": "attempt-1",
+        "batch_id": None,
+        "job_id": None,
+        "retry_of_attempt_id": None,
+        "retry_of_job_id": None,
+        "provider_id": "parakeet-onnx",
+        "model_id": "parakeet-v2",
+        "artifact_root": None,
+        "artifact_dependencies": [],
+        "precision": "int8",
+        "requested_device": "auto",
+        "effective_device": "cpu",
+        "requested_language": "en",
+        "effective_language": "en",
+        "detected_language": None,
+        "task": "transcribe",
+        "produced_capabilities": {
+            "timestamps": "none",
+            "punctuation": True,
+            "capitalization": True,
+            "vad": False,
+            "diarization": False,
+        },
+        "warnings": [],
+        "failed_attempt": None,
+    }
+
+
 def test_process_document_auto_falls_back_when_docling_import_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -256,6 +287,32 @@ def test_persist_url_payload_writes_article_row_no_filesystem() -> None:
     assert row is not None
     assert row["url"] == "https://example.com/post"
     assert row["type"] == "article"
+
+
+def test_persist_threads_optional_stt_model_and_provenance_into_media() -> None:
+    document = _stt_provenance_document()
+    payload = {
+        "file_type": "audio",
+        "media_type": "audio",
+        "title": "Transcribed audio",
+        "content": "hello",
+        "keywords": [],
+        "url": "local://audio/test",
+        "analysis_content": "",
+        "author": "Unknown",
+        "chunks": None,
+        "chunk_options": None,
+        "file_path": "/tmp/test.wav",
+        "transcription_model": "parakeet-v2",
+        "transcription_provenance": document,
+    }
+    db = MediaDatabase(":memory:", client_id="stt-persist")
+
+    media_id, _, _ = persist_parsed_media(payload, db)
+
+    row = db.get_media_by_id(media_id)
+    assert row["transcription_model"] == "parakeet-v2"
+    assert json.loads(row["transcription_provenance_json"]) == document
 
 
 def test_persist_db_failure_is_wrapped_as_file_ingestion_error(tmp_path: Path) -> None:
@@ -616,3 +673,83 @@ def test_run_parse_job_through_real_spawn_pool(tmp_path: Path) -> None:
     assert (
         result["payload"]["content"] == "Parsed inside a real spawned worker process."
     )
+
+
+# --- empty-extraction guard (task-677) --------------------------------------
+
+
+def test_persist_rejects_payload_with_no_extracted_content(tmp_path: Path) -> None:
+    """A parse that yielded nothing must fail, not quietly succeed.
+
+    A PDF whose extraction produced nothing was written as a media row with
+    empty content, reported as done in the queue and counted in the library
+    total. The user got an entry that looks imported but returns nothing from
+    search or RAG, with no signal anything went wrong (task-677).
+    """
+    source = tmp_path / "scanned.pdf"
+    source.write_bytes(b"%PDF-1.4 not really extractable")
+    payload = {
+        "file_path": str(source),
+        "file_type": "pdf",
+        "media_type": "pdf",
+        "title": "Scanned",
+        "content": "",
+        "keywords": [],
+        "url": None,
+        "analysis_content": None,
+        "author": None,
+        "chunks": None,
+        "chunk_options": None,
+    }
+
+    db = MediaDatabase(":memory:", client_id="test-empty-guard")
+    with pytest.raises(FileIngestionError, match="No text could be extracted"):
+        persist_parsed_media(payload, db)
+
+    # No half-imported row is left behind for the user to trip over.
+    with db.get_connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM Media").fetchone()[0] == 0
+
+
+def test_persist_reports_an_empty_source_file_differently(tmp_path: Path) -> None:
+    """A genuinely empty file is not an extraction failure."""
+    source = tmp_path / "blank.txt"
+    source.write_text("", encoding="utf-8")
+    payload = {
+        "file_path": str(source),
+        "file_type": "plaintext",
+        "media_type": "plaintext",
+        "title": "Blank",
+        "content": "",
+        "keywords": [],
+        "url": None,
+        "analysis_content": None,
+        "author": None,
+        "chunks": None,
+        "chunk_options": None,
+    }
+
+    db = MediaDatabase(":memory:", client_id="test-empty-source")
+    with pytest.raises(FileIngestionError, match="is empty"):
+        persist_parsed_media(payload, db)
+
+
+def test_persist_allows_whitespace_only_url_payload_to_fail_clearly() -> None:
+    """A URL payload with no content fails without touching the filesystem."""
+    payload = {
+        "file_path": "https://example.com/article",
+        "file_type": "article",
+        "media_type": "article",
+        "title": "Empty article",
+        "content": "   \n\t ",
+        "keywords": [],
+        "url": "https://example.com/article",
+        "analysis_content": None,
+        "author": None,
+        "chunks": None,
+        "chunk_options": None,
+    }
+
+    db = MediaDatabase(":memory:", client_id="test-empty-url")
+    with pytest.raises(FileIngestionError, match="No text could be extracted"):
+        persist_parsed_media(payload, db)

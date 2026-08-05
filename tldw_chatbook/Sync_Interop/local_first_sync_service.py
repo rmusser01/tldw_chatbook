@@ -33,7 +33,7 @@ class LocalFirstSyncService:
         self.server_service = server_service
         self.state_repository = state_repository
         self.local_store = local_store
-        self.dataset_keys = dataset_keys or {}
+        self.dataset_keys = dataset_keys if dataset_keys is not None else {}
 
     async def sync_once(
         self,

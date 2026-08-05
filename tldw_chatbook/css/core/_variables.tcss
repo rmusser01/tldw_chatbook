@@ -15,11 +15,27 @@ $ds-text-muted: $text-muted;
 $ds-text-disabled: $text-disabled;
 $ds-action-focus: $primary;
 $ds-focus-fg: $ds-text-primary;
-$ds-focus-bg: $ds-surface-raised;
+/* TASK-345: the focus background must be visibly distinct from resting
+   surfaces — it previously aliased $ds-surface-raised (= $surface), which
+   nullified the non-obscuring focus contract's own mechanism (~1.1:1 focus
+   shifts measured live; an invisible-focus Tab+Enter activated 'Save as…').
+   A raised steel-blue, ~3:1 against the dark control/panel surfaces, still
+   muted enough to keep the contract's no-accent character. */
+$ds-focus-bg: #51677e;
 $ds-focus-accent: $primary;
 $ds-input-focus-border: $primary;
-$ds-input-focus-bg: $ds-surface-raised;
+/* task-1586: this token still aliased $ds-surface-raised (= $surface),
+   re-creating the exact nullified-focus failure the comment above
+   documents — settings fields' focus bg swap was a no-op. Point it at
+   the corrected focus surface. */
+$ds-input-focus-bg: $ds-focus-bg;
 $ds-input-focus-accent: $primary;
+/* task-1586 control convention: editable fields carry a one-column left
+   edge at rest — presence of the edge (a structural marker), not its
+   color, distinguishes controls from prose. Muted at rest (cozy), the
+   edge flips to thick $ds-action-focus on focus. Left borders cost a
+   column, never a row, so dense one-row forms keep their height. */
+$ds-control-edge: $surface-lighten-2;
 $ds-status-ready: $success;
 $ds-status-running: $primary;
 $ds-status-info: $accent;
@@ -27,6 +43,12 @@ $ds-status-warning: $warning;
 $ds-status-approval-required: $warning;
 $ds-status-blocked: $error;
 $ds-status-error: $error;
+/* task-2230 (a11y): $error measures 3.06:1 on the app's dark canvases --
+   an AA fail, and LESS readable than ordinary help text (7.21:1), which
+   inverts the importance hierarchy. This token is the readable error
+   foreground (7.71:1) for text and marks that must be READ, while
+   $ds-status-error stays the decorative status hue. */
+$ds-status-error-readable: #ff8fa3;
 $ds-status-paused: $warning;
 $ds-status-unsaved: $warning;
 $ds-status-recovered: $success;
@@ -45,7 +67,7 @@ $ds-home-control-button-height: 1;
 $ds-home-compact-row-height: 1;
 $ds-home-followup-row-height: 6;
 $ds-console-workspace-grid-height: 1fr;
-$ds-console-control-bar-height: 2;
+$ds-console-control-bar-height: 1;
 $ds-console-composer-height: 5;
 $ds-library-mode-chip-height: 1;
 $ds-library-mode-chip-min-width: 10;

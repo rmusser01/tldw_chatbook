@@ -140,8 +140,10 @@ from pathlib import Path  # noqa: E402
 
 def load_note_templates():
     """Load note templates from JSON file or use defaults."""
+    from ..config import _get_effective_config_path
+
     # Try to load from user's config directory first
-    user_config_path = Path.home() / ".config" / "tldw_cli" / "note_templates.json"
+    user_config_path = _get_effective_config_path().parent / "note_templates.json"
 
     # Fallback to app's config directory
     app_config_path = (

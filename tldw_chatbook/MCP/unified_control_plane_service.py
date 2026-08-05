@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json
 import time
-from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,19 +10,19 @@ from typing import Any
 
 from loguru import logger
 
-from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
+from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
-from .execution_log import MCPExecutionLog, RESULT_EXCERPT_LIMIT, build_record
+from .execution_log import MCPExecutionLog, build_record
 from .hub_tool_catalog import HubTool
 from .permission_store import (
     EffectiveToolState,
+    HASH_FREE_SERVER_KEYS,
     MCPPermissionStore,
     definition_hash,
     resolve_effective_state,
     resolve_effective_state_by_key,
 )
-from .redaction import redact_mapping
 from .server_target_store import ConfiguredServerTargetStore
 from .unified_context_store import UnifiedMCPContextStore
 from .unified_control_models import ServerAccessContext, UnifiedMCPContext
@@ -2080,8 +2078,12 @@ class UnifiedMCPControlPlaneService:
         *,
         ok: bool,
         duration_ms: int,
-        error: str | None,
+        status: str,
+        error_category: str | None,
+        exception_type: str | None,
+        status_code: int | None,
         arguments: dict[str, Any],
+        registered_argument_names: set[str] | None,
         result: Any,
         initiator: str = "test",
         decision: str = "allowed",
@@ -2111,34 +2113,20 @@ class UnifiedMCPControlPlaneService:
                 initiator=initiator,
                 decision=decision,
                 ok=ok,
+                status=status,
                 duration_ms=duration_ms,
-                error=error,
+                error_category=error_category,
+                exception_type=exception_type,
+                status_code=status_code,
                 arguments=arguments,
-                # I2: `build_record()`/`MCPExecutionLog.append()` only
-                # redact `arguments`, never the result -- a Mapping result
-                # (the common shape: `test_hub_tool()`'s MCP call_tool
-                # response) is redacted here first, mirroring the UI's own
-                # result-formatting path (mcp_workbench.py's
-                # `_run_tool_test()`), so a secret echoed back in a tool's
-                # result can never reach disk unredacted.
-                result_excerpt=(
-                    json.dumps(redact_mapping(result), default=str)[
-                        :RESULT_EXCERPT_LIMIT
-                    ]
-                    if isinstance(result, Mapping)
-                    else str(result)[:RESULT_EXCERPT_LIMIT]
-                ),
-                # Coerce: a mis-typed config string like "false" is truthy,
-                # which would silently keep argument capture ON against the
-                # user's stated intent (Qodo #639 finding).
-                capture_args=coerce_bool_setting(
-                    get_cli_setting("mcp", "log_tool_arguments", True), True
-                ),
+                registered_argument_names=registered_argument_names,
+                result=result,
             )
             log.append(record)
         except Exception as exc:
             logger.warning(
-                f"MCP execution log record failed for {server_key}/{tool_name}: {exc}"
+                "MCP execution log record failed (exception_type={})",
+                type(exc).__name__,
             )
 
     async def execute_hub_tool(
@@ -2150,6 +2138,7 @@ class UnifiedMCPControlPlaneService:
         initiator: str = "test",
         decision: str = "allowed",
         timeout_seconds: float | None = None,
+        registered_argument_names: set[str] | None = None,
     ) -> dict[str, Any]:
         """Execute one tool call against a local or built-in server.
 
@@ -2165,8 +2154,8 @@ class UnifiedMCPControlPlaneService:
 
         Args:
             server_key: Prefixed server key (``local:<profile_id>`` or
-                ``builtin:<id>``). Server-source keys are rejected until
-                Phase 4.
+                ``builtin:<id>``). Server-source keys are display-only
+                and rejected here.
             tool_name: Name of the tool to execute.
             arguments: Tool arguments; defaults to an empty dict.
             initiator: Who initiated the call, recorded on the execution
@@ -2178,6 +2167,9 @@ class UnifiedMCPControlPlaneService:
             timeout_seconds: Per-call timeout override; defaults to
                 :meth:`_tool_call_timeout` (``[mcp]
                 tool_call_timeout_seconds``) when omitted.
+            registered_argument_names: Optional schema-approved argument
+                names. Values are never persisted; supplied unknown names are
+                counted.
 
         Returns:
             The raw result payload from the underlying service call.
@@ -2201,7 +2193,7 @@ class UnifiedMCPControlPlaneService:
                 normalized_tool_name, normalized_arguments
             )
         else:
-            raise ValueError("Tool testing for server-source tools arrives in Phase 4.")
+            raise ValueError("Server-source tools are display-only.")
 
         timeout = (
             timeout_seconds
@@ -2219,8 +2211,12 @@ class UnifiedMCPControlPlaneService:
                 normalized_tool_name,
                 ok=False,
                 duration_ms=duration_ms,
-                error=message,
+                status="timeout",
+                error_category="timeout",
+                exception_type="TimeoutError",
+                status_code=None,
                 arguments=normalized_arguments,
+                registered_argument_names=registered_argument_names,
                 result=None,
                 initiator=initiator,
                 decision=decision,
@@ -2228,13 +2224,29 @@ class UnifiedMCPControlPlaneService:
             raise RuntimeError(message) from None
         except Exception as exc:
             duration_ms = int((time.monotonic() - started) * 1000)
+            response = getattr(exc, "response", None)
+            raw_status_code = getattr(response, "status_code", None)
+            if raw_status_code is None:
+                raw_status_code = getattr(exc, "status_code", None)
+            try:
+                status_code = (
+                    int(raw_status_code) if raw_status_code is not None else None
+                )
+            except (TypeError, ValueError):
+                status_code = None
             self._record_tool_execution(
                 normalized_key,
                 normalized_tool_name,
                 ok=False,
                 duration_ms=duration_ms,
-                error=str(exc),
+                status="http_error" if status_code is not None else "error",
+                error_category=(
+                    "http_error" if status_code is not None else "execution_failed"
+                ),
+                exception_type=type(exc).__name__,
+                status_code=status_code,
                 arguments=normalized_arguments,
+                registered_argument_names=registered_argument_names,
                 result=None,
                 initiator=initiator,
                 decision=decision,
@@ -2247,8 +2259,12 @@ class UnifiedMCPControlPlaneService:
             normalized_tool_name,
             ok=True,
             duration_ms=duration_ms,
-            error=None,
+            status="success",
+            error_category=None,
+            exception_type=None,
+            status_code=None,
             arguments=normalized_arguments,
+            registered_argument_names=registered_argument_names,
             result=result,
             initiator=initiator,
             decision=decision,
@@ -2260,23 +2276,29 @@ class UnifiedMCPControlPlaneService:
         server_key: str,
         tool_name: str,
         arguments: dict[str, Any] | None = None,
+        *,
+        decision: str = "allowed",
     ) -> dict[str, Any]:
         """Execute one tool test against a local or built-in server.
 
         Thin delegate to :meth:`execute_hub_tool` fixed to the Hub Test
-        Tool runner's semantics: ``initiator="test"``,
-        ``decision="allowed"``, and the lifecycle timeout
-        (``[mcp] hub_lifecycle_timeout_seconds`` via
+        Tool runner's semantics: ``initiator="test"`` and the lifecycle
+        timeout (``[mcp] hub_lifecycle_timeout_seconds`` via
         :meth:`_lifecycle_timeout`) rather than the chat-bridge's
         per-call timeout knob -- preserved unchanged so existing callers
         and their pinned tests keep seeing identical behavior.
 
         Args:
             server_key: Prefixed server key (``local:<profile_id>`` or
-                ``builtin:<id>``). Server-source keys are rejected until
-                Phase 4.
+                ``builtin:<id>``). Server-source keys are display-only
+                and rejected here.
             tool_name: Name of the tool to execute.
             arguments: Tool arguments; defaults to an empty dict.
+            decision: The permission decision under which this test run
+                dispatched, recorded on the execution log (RAG-51). The
+                Hub UI passes ``"approved"`` for an Ask-gated tool the
+                user just confirmed; every other caller keeps the default
+                ``"allowed"`` this method has always recorded.
 
         Returns:
             The raw result payload from the underlying service call.
@@ -2291,7 +2313,7 @@ class UnifiedMCPControlPlaneService:
             tool_name,
             arguments,
             initiator="test",
-            decision="allowed",
+            decision=decision,
             timeout_seconds=self._lifecycle_timeout(),
         )
 
@@ -2404,13 +2426,25 @@ class UnifiedMCPControlPlaneService:
                 initiator=initiator,
                 decision=decision,
                 ok=False,
+                status="blocked",
                 duration_ms=0,
-                error=error,
+                error_category=(
+                    "approval_timeout"
+                    if "timeout" in decision
+                    else "approval_cancelled"
+                    if decision == "denied" and error
+                    else "denied"
+                    if decision == "denied"
+                    else "execution_bridge_failed"
+                    if error
+                    else "blocked"
+                ),
             )
             log.append(record)
         except Exception as exc:
             logger.warning(
-                f"MCP tool decision record failed for {server_key}/{tool_name}: {exc}"
+                "MCP tool decision record failed (exception_type={})",
+                type(exc).__name__,
             )
 
     # ---- Typed permission methods (Phase 4) ----------------------------
@@ -2496,13 +2530,15 @@ class UnifiedMCPControlPlaneService:
                 initiator="system",
                 decision="downgraded",
                 ok=False,
+                status="blocked",
                 duration_ms=0,
-                error=f"{tool.name} definition changed since you allowed it — review and re-allow",
+                error_category="definition_changed",
             )
             log.append(record)
         except Exception as exc:
             logger.warning(
-                f"MCP permission downgrade audit failed for {tool.server_key}/{tool.name}: {exc}"
+                "MCP permission downgrade audit failed (exception_type={})",
+                type(exc).__name__,
             )
 
     def set_tool_state(
@@ -2523,16 +2559,18 @@ class UnifiedMCPControlPlaneService:
             tool: Required when ``ui_state`` is ``"allow"`` -- its
                 description/input_schema are fingerprinted into the stored
                 ``definition_hash`` the rug-pull guard compares against
-                later.
+                later. Not required (and not hashed) when ``server_key`` is
+                in ``HASH_FREE_SERVER_KEYS`` (e.g. ``agent:builtin``).
 
         Raises:
-            ValueError: ``ui_state`` is ``"allow"`` but ``tool`` is None.
+            ValueError: ``ui_state`` is ``"allow"``, ``tool`` is None, and
+                ``server_key`` is not in ``HASH_FREE_SERVER_KEYS``.
         """
         store = self.permission_store
         if store is None:
             return
         hash_value: str | None = None
-        if ui_state == "allow":
+        if ui_state == "allow" and server_key not in HASH_FREE_SERVER_KEYS:
             if tool is None:
                 raise ValueError(
                     "tool is required to set state 'allow' (need its description/input_schema)"

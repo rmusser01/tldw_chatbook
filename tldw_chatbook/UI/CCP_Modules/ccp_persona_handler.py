@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from loguru import logger
 
 from .ccp_messages import PersonaMessage, ViewChangeMessage
-from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
+from ...tldw_api.character_persona_schemas import (
+    LocalPersonaProfileCreate,
+    LocalPersonaProfileUpdate,
+    PersonaProfileCreate,
+    PersonaProfileUpdate,
+)
 
 if TYPE_CHECKING:
     from ..Screens.personas_screen import PersonasScreen
@@ -127,7 +132,7 @@ class CCPPersonaHandler:
                 "Persona scope service unavailable; returning empty persona list"
             )
             if raise_on_unavailable:
-                raise RuntimeError("Persona profile service is unavailable.")
+                raise RuntimeError("Persona service is unavailable.")
             self.persona_list = []
             return self.persona_list
 
@@ -160,7 +165,7 @@ class CCPPersonaHandler:
             logger.warning(
                 "Persona scope service unavailable; cannot load persona {}", persona_id
             )
-            self._notify("Persona profiles are not available in the current backend.")
+            self._notify("Personas are not available in the current backend.")
             return
 
         try:
@@ -176,13 +181,13 @@ class CCPPersonaHandler:
             return
         except Exception:
             logger.opt(exception=True).error("Error loading persona {}", persona_id)
-            self._notify("Failed to load persona profile.", severity="error")
+            self._notify("Failed to load Persona.", severity="error")
             return
 
         normalized = self._normalize_persona_record(persona_data)
         if not normalized:
             logger.warning("Persona {} not found", persona_id)
-            self._notify("Persona profile could not be loaded.", severity="warning")
+            self._notify("Persona could not be loaded.", severity="warning")
             return
 
         self.current_persona_id = normalized["id"] or persona_id
@@ -215,7 +220,7 @@ class CCPPersonaHandler:
         if persona_id and persona_id != self.current_persona_id:
             await self.load_persona(persona_id)
         if not self.current_persona_data:
-            self._notify("Load a persona profile before editing it.")
+            self._notify("Load a Persona before editing it.")
             return
         self._load_editor(self.current_persona_data)
         self.window.post_message(
@@ -229,7 +234,7 @@ class CCPPersonaHandler:
         """Create or update a persona profile through the shared scope service."""
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None:
-            self._notify("Persona profiles are not available in the current backend.")
+            self._notify("Personas are not available in the current backend.")
             return
 
         name = str(persona_data.get("name", "") or "").strip()
@@ -242,11 +247,27 @@ class CCPPersonaHandler:
 
         try:
             if self.current_persona_id:
-                request_data = PersonaProfileUpdate(
-                    name=name,
-                    mode=mode,
-                    system_prompt=persona_data.get("system_prompt"),
-                )
+                update_payload: dict[str, Any] = {
+                    "name": name,
+                }
+                for field_name in (
+                    "character_card_id",
+                    "mode",
+                    "system_prompt",
+                    "is_active",
+                    "use_persona_state_context_default",
+                    "voice_defaults",
+                    "setup",
+                ):
+                    if field_name in persona_data:
+                        update_payload[field_name] = persona_data[field_name]
+                if current_mode == "local":
+                    for field_name in ("description", "personality_traits"):
+                        if field_name in persona_data:
+                            update_payload[field_name] = persona_data[field_name]
+                    request_data = LocalPersonaProfileUpdate(**update_payload)
+                else:
+                    request_data = PersonaProfileUpdate(**update_payload)
                 result = await service.update_persona_profile(
                     self.current_persona_id,
                     request_data,
@@ -254,15 +275,30 @@ class CCPPersonaHandler:
                     mode=current_mode,
                 )
             else:
-                request_data = PersonaProfileCreate(
-                    id=persona_data.get("id"),
-                    name=name,
-                    mode=mode,
-                    system_prompt=persona_data.get("system_prompt"),
-                    is_active=bool(persona_data.get("is_active", True)),
-                    setup=persona_data.get("setup") or {},
-                    voice_defaults=persona_data.get("voice_defaults") or {},
-                )
+                create_payload: dict[str, Any] = {
+                    "id": persona_data.get("id"),
+                    "name": name,
+                    "mode": mode,
+                    "system_prompt": persona_data.get("system_prompt"),
+                    "is_active": bool(persona_data.get("is_active", True)),
+                    "setup": persona_data.get("setup") or {},
+                    "voice_defaults": persona_data.get("voice_defaults") or {},
+                }
+                for field_name in (
+                    "archetype_key",
+                    "character_card_id",
+                    "use_persona_state_context_default",
+                ):
+                    if field_name in persona_data:
+                        create_payload[field_name] = persona_data[field_name]
+                if current_mode == "local":
+                    create_payload["description"] = persona_data.get("description")
+                    create_payload["personality_traits"] = str(
+                        persona_data.get("personality_traits") or ""
+                    )
+                    request_data = LocalPersonaProfileCreate(**create_payload)
+                else:
+                    request_data = PersonaProfileCreate(**create_payload)
                 result = await service.create_persona_profile(
                     request_data,
                     mode=current_mode,
@@ -273,7 +309,7 @@ class CCPPersonaHandler:
             return
         except Exception:
             logger.opt(exception=True).error("Error saving persona profile")
-            self._notify("Failed to save persona profile.", severity="error")
+            self._notify("Failed to save Persona.", severity="error")
             return
 
         normalized = self._normalize_persona_record(result)

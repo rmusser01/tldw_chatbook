@@ -2,7 +2,7 @@
 
 **Status:** approved by the user on 2026-07-23; review amendments approved on 2026-07-23
 **Date:** 2026-07-23
-**Related task:** TASK-400
+**Related task:** TASK-503
 
 ## Goal
 

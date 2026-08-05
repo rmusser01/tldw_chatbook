@@ -343,9 +343,16 @@ To manually integrate file operation auditing into Claude Code:
    await record_file_operation("Edit", file_path, content_before=old_content, content_after=new_content)
    ```
 
-3. Register the audit tool in tool_executor.py by adding:
-   ```python
-   from .code_audit_tool import CodeAuditTool
-   _global_executor.register_tool(CodeAuditTool())
-   ```
+3. Registering the audit tool: THERE IS CURRENTLY NO SEAM FOR THIS.
+
+   These instructions used to say to register CodeAuditTool on
+   tool_executor.py's `_global_executor`. That executor was System A, which
+   had no production callers and was deleted in TASK-545 P3 -- so following
+   the old step now raises AttributeError, and auditing is not installed by
+   any code path.
+
+   The live built-in tool path is Agents/tool_catalog.py's
+   BuiltinToolProvider, whose tools run behind the permission gate. Rehoming
+   auditing onto that seam (or deleting this module as dead code) is
+   TASK-743.
 """

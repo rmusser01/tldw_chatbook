@@ -88,6 +88,18 @@ def _transcript_tail_is_anchored(transcript: ConsoleTranscript) -> bool:
     )
 
 
+def test_small_ordinary_paste_keeps_explicit_paste_origin_when_not_collapsed():
+    composer = ConsoleComposerBar(paste_collapse_threshold=50)
+
+    composer.insert_pasted_text("small paste")
+
+    snapshot = composer.capture_draft_snapshot()
+    assert [
+        (segment.origin, segment.collapse_state) for segment in snapshot.segments
+    ] == [("paste", "literal")]
+    assert composer.has_paste_segments() is True
+
+
 def _assert_full_button_label_fits(button: Button, expected_label: str) -> None:
     """Assert the mounted button renders its complete label inside its chrome."""
     rendered_line = button.render_line(0)
@@ -632,6 +644,36 @@ async def test_console_collapsed_status_uses_presence_only(
 
 
 @pytest.mark.asyncio
+async def test_console_collapsed_status_sync_does_not_join_canonical_draft(
+    monkeypatch,
+):
+    host = _ready_console_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("retained draft")
+        composer.set_collapsed(True)
+        await pilot.pause()
+
+        def _reject_draft_join(_composer: ConsoleComposerBar) -> str:
+            raise AssertionError("collapsed status must not materialize the draft")
+
+        monkeypatch.setattr(ConsoleComposerBar, "draft_text", _reject_draft_join)
+
+        composer.sync_action_state(
+            has_draft=True,
+            run_active=True,
+            can_save_chatbook=False,
+        )
+
+        status = composer.query_one("#console-composer-collapsed-status", Static)
+        assert str(status.renderable) == (
+            "Composer hidden · Generating · Draft retained"
+        )
+
+
+@pytest.mark.asyncio
 async def test_console_composer_round_trip_preserves_editor_and_attachment_state():
     host = _ready_console_host()
 
@@ -744,3 +786,70 @@ def test_console_composer_has_no_status_strip_selector_dependency():
     source = inspect.getsource(ConsoleComposerBar)
 
     assert "console-status-chips" not in source
+
+
+@pytest.mark.asyncio
+async def test_composer_bar_no_longer_owns_the_save_chatbook_button():
+    """Save Chatbook moved into the composer's ☰ menu.
+
+    The temporary-chat block this test used to assert here moved with it and
+    is covered in `Tests/UI/test_console_composer_menu.py`. What remains
+    worth pinning is that the button did not stay behind: two surfaces for
+    one action is how this branch previously ended up with save-chatbook
+    blocked in one place and reachable in two others.
+    """
+    app = _ComposerGeometryApp()
+
+    async with app.run_test(size=(140, 42)) as pilot:
+        composer = app.query_one("#console-native-composer", ConsoleComposerBar)
+        await pilot.pause()
+
+        assert not composer.query("#console-save-chatbook")
+        assert not composer.query("#console-attach-context")
+        assert composer.query_one("#console-composer-menu", Button)
+
+
+@pytest.mark.asyncio
+async def test_composer_row_menu_left_of_draft_send_beside_draft_mic_gapped():
+    """Pin the requested composer row order and the Send/Mic buffer.
+
+    ☰ sits left of the draft (right of Composer ▾) so overflow actions live
+    on the left button cluster; Send hugs the draft's right edge; Mic
+    follows Send across a >=2-cell empty gap so a press aimed at one cannot
+    land on the other. Stop's budgeted-but-hidden slot sits AFTER Mic, so a
+    run starting or stopping never shifts Send or Mic.
+    """
+    app = _ComposerGeometryApp()
+
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        collapse = app.query_one("#console-composer-collapse", Button)
+        menu = app.query_one("#console-composer-menu", Button)
+        draft = app.query_one("#console-command-visible-text", Static)
+        mic = app.query_one("#console-dictation", Button)
+        send = app.query_one("#console-send-message", Button)
+
+        assert collapse.region.right <= menu.region.x
+        assert menu.region.right <= draft.region.x
+        # Send is adjacent to the draft (the draft keeps its 1-cell margin);
+        # a right-aligned actions row would park Stop's hidden 8-cell budget
+        # here instead.
+        assert draft.region.right <= send.region.x
+        assert send.region.x - draft.region.right <= 2
+        # The anti-misclick buffer between Send and Mic.
+        assert mic.region.x - send.region.right >= 2
+
+        composer = app.query_one("#console-native-composer", ConsoleComposerBar)
+        mic_x, send_x = mic.region.x, send.region.x
+        composer.sync_action_state(
+            has_draft=True,
+            run_active=True,
+            can_save_chatbook=False,
+        )
+        await pilot.pause()
+        stop = app.query_one("#console-stop-generation", Button)
+        assert stop.display
+        # Stop appears in its budgeted slot right of Mic without moving
+        # Send or Mic.
+        assert mic.region.right <= stop.region.x
+        assert (mic.region.x, send.region.x) == (mic_x, send_x)

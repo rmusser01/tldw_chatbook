@@ -1,5 +1,5 @@
 """Handler for character-related operations in the Personas screen."""
-
+import asyncio
 from functools import partial
 from typing import TYPE_CHECKING, Optional, Dict, Any, List, Union
 
@@ -147,6 +147,29 @@ def import_character_card(file_path: str) -> Any:
     from ...Character_Chat.Character_Chat_Lib import import_and_save_character_from_file
 
     return import_and_save_character_from_file(_default_character_db(), file_path)
+
+
+def inspect_character_card_tts_attachment(file_input: Any) -> Any:
+    """Read and validate only a local card's transient TTS attachment."""
+
+    from ...Character_Chat.Character_Chat_Lib import (
+        inspect_character_card_tts_attachment as inspect_attachment,
+    )
+
+    return inspect_attachment(file_input)
+
+
+def import_character_card_with_outcome(file_input: Any) -> Any:
+    """Return the structured local import outcome used by Personas."""
+
+    from ...Character_Chat.Character_Chat_Lib import (
+        import_and_save_character_from_file_with_outcome,
+    )
+
+    return import_and_save_character_from_file_with_outcome(
+        _default_character_db(),
+        file_input,
+    )
 
 
 class CCPCharacterHandler:
@@ -355,7 +378,11 @@ class CCPCharacterHandler:
     async def refresh_character_list(self) -> None:
         """Refresh the character select dropdown."""
         try:
-            self.character_list = fetch_all_characters()
+            # Off the loop (TASK-1320): `fetch_all_characters()` is a blocking
+            # read of the entire character library. Awaited from a screen mount
+            # it froze the whole app; every other caller of this method was
+            # stalling the loop for the same read.
+            self.character_list = await asyncio.to_thread(fetch_all_characters)
             options = [
                 (char.get("name", "Unnamed"), str(char.get("id")))
                 for char in self.character_list
@@ -911,15 +938,23 @@ class CCPCharacterHandler:
         try:
             # Create filters for character card files
             # Filters need callable testers; glob strings crash the picker.
+            # import_and_save_character_from_file extracts embedded card JSON
+            # from both .png and .webp images (task-431 AC#1) - keep this
+            # route's "Character Cards" default in sync with that.
             filters = Filters(
                 (
                     "Character Cards",
-                    lambda p: p.suffix.lower() in (".json", ".png", ".yaml", ".yml"),
+                    lambda p: p.suffix.lower()
+                    in (".json", ".png", ".webp", ".yaml", ".yml"),
                 ),
                 ("JSON Files", lambda p: p.suffix.lower() == ".json"),
                 (
                     "PNG Files (with embedded data)",
                     lambda p: p.suffix.lower() == ".png",
+                ),
+                (
+                    "WEBP Files (with embedded data)",
+                    lambda p: p.suffix.lower() == ".webp",
                 ),
                 ("YAML Files", lambda p: p.suffix.lower() in (".yaml", ".yml")),
                 ("All Files", lambda p: True),

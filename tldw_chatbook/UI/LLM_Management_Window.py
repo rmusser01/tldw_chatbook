@@ -2,7 +2,8 @@
 #
 #
 # Imports
-from typing import TYPE_CHECKING
+import inspect
+from typing import TYPE_CHECKING, Callable
 
 #
 # 3rd-Party Imports
@@ -16,7 +17,31 @@ from textual.widgets import Static, Button, Input, RichLog, Label, TextArea, Col
 from loguru import logger
 
 # Local Imports
-#
+from ..Event_Handlers.LLM_Management_Events.llm_management_events import (
+    LLM_MANAGEMENT_BUTTON_HANDLERS,
+)
+from ..Event_Handlers.LLM_Management_Events.llm_management_events_mlx_lm import (
+    MLX_LM_BUTTON_HANDLERS,
+)
+from ..Event_Handlers.LLM_Management_Events.llm_management_events_ollama import (
+    OLLAMA_BUTTON_HANDLERS,
+)
+from ..Event_Handlers.LLM_Management_Events.llm_management_events_onnx import (
+    ONNX_BUTTON_HANDLERS,
+)
+from ..Event_Handlers.LLM_Management_Events.llm_management_events_transformers import (
+    TRANSFORMERS_BUTTON_HANDLERS,
+)
+from ..Event_Handlers.LLM_Management_Events.llm_management_events_vllm import (
+    VLLM_BUTTON_HANDLERS,
+)
+from ..Event_Handlers.LLM_Management_Events.server_lifecycle import (
+    current_llm_destination,
+    server_is_active,
+)
+from ..Utils.log_widget_manager import LogWidgetManager
+from ..Widgets.ModelArtifacts import InstallProgressed, InstallStatusChanged
+
 if TYPE_CHECKING:
     from ..app import TldwCli
 #
@@ -32,63 +57,17 @@ class LLMManagementWindow(Container):
     """
 
     DEFAULT_CSS = """
-    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
-    $ds-focus-bg: $surface;
-    $ds-focus-fg: $text;
-    $ds-surface-raised: $surface;
-    $ds-text-primary: $text;
-
     LLMManagementWindow {
         layout: horizontal;
         height: 100%;
         width: 100%;
     }
-    
-    #llm-sidebar {
-        width: 20;
-        min-width: 20;
-        max-width: 30;
-        height: 100%;
-        border-right: solid $primary;
-        background: $panel;
-        padding: 1 1;
-    }
-    
+
     #llm-main-content {
         width: 1fr;
         height: 100%;
         background: $background;
         padding: 1 2;
-    }
-    
-    .llm-nav-button {
-        width: 100%;
-        margin: 0 0 1 0;
-        text-align: left;
-        padding: 0 1;
-    }
-    
-    .llm-nav-button:hover {
-        background: $ds-surface-raised;
-        color: $ds-text-primary;
-    }
-    
-    .llm-nav-button.-active {
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
-        text-style: bold underline;
-    }
-    
-    .sidebar-title {
-        text-style: bold;
-        margin: 0 0 1 0;
-        color: $text;
-    }
-
-    .sidebar-hint {
-        color: $text-muted;
-        margin: 0 0 1 0;
-        height: auto;
     }
 
     .prereq-hint {
@@ -96,7 +75,7 @@ class LLMManagementWindow(Container):
         margin: 0 0 1 0;
         height: auto;
     }
-    
+
     .llm-view {
         display: none;
         height: 100%;
@@ -259,10 +238,32 @@ class LLMManagementWindow(Container):
     }
     """
 
-    # Reactive property to track active view. Defaults to Ollama: the
-    # sidebar's own first-timer hint recommends it as the easiest path, so
-    # the landed surface should match the recommendation (UX-070).
-    active_view = reactive("ollama", recompose=False)
+    # Reactive property to track active view. Starts at "" with init=False
+    # rather than "llama-cpp": Textual's reactive default-value watcher
+    # otherwise fires once at mount, before the Lab frame's deferred body
+    # mount means this window's own child views exist -- ten QueryErrors,
+    # every arrival. Starting at "" (never a real view key, and init=False
+    # skips even that empty-value fire) means the FIRST real assignment,
+    # in _initialize_view, is the one and only trigger, made after the
+    # children exist.
+    active_view = reactive("", recompose=False, init=False)
+
+    ACTION_HANDLERS: dict[str, Callable] = {
+        **LLM_MANAGEMENT_BUTTON_HANDLERS,
+        **MLX_LM_BUTTON_HANDLERS,
+        **OLLAMA_BUTTON_HANDLERS,
+        **ONNX_BUTTON_HANDLERS,
+        **TRANSFORMERS_BUTTON_HANDLERS,
+        **VLLM_BUTTON_HANDLERS,
+    }
+    SERVER_CONTROLS = {
+        "llamacpp": ("llamacpp-start-server-button", "llamacpp-stop-server-button"),
+        "llamafile": ("llamafile-start-server-button", "llamafile-stop-server-button"),
+        "vllm": ("vllm-start-server-button", "vllm-stop-server-button"),
+        "onnx": ("onnx-start-server-button", "onnx-stop-server-button"),
+        "mlx": ("mlx-start-server-button", "mlx-stop-server-button"),
+        "ollama": ("ollama-start-service-button", "ollama-stop-service-button"),
+    }
 
     # htop-style view cycling (single printable keys; focused text inputs
     # consume them first, so forms are unaffected). See ADR-031.
@@ -283,6 +284,9 @@ class LLMManagementWindow(Container):
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        self._async_presentation_generations: dict[str, int] = {}
+        self._managed_install_active = False
+        self._managed_install_progress = None
 
         # Map navigation button IDs to view IDs. Order matters: it drives the
         # [/] cycling and the position indicator, so it matches the sidebar's
@@ -295,15 +299,18 @@ class LLMManagementWindow(Container):
             "onnx": "llm-view-onnx",
             "transformers": "llm-view-transformers",
             "mlx-lm": "llm-view-mlx-lm",
-            "local-models": "llm-view-local-models",
+            "curated": "llm-view-curated",
+            "installed": "llm-view-installed",
+            "remote": "llm-view-remote",
             "download-models": "llm-view-download-models",
         }
 
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
         logger.debug("LLMManagementWindow.on_mount called")
-        # Trigger the watcher to set up the initial view state
-        # This ensures buttons and views are properly initialized
+        # The child views don't exist until after this refresh (the window
+        # itself may be mounted lazily by its parent screen), so defer the
+        # initial activation until they do.
         self.call_after_refresh(self._initialize_view)
         # Autofill the Ollama executable when it's discoverable (UX-078).
         self.call_after_refresh(self._autofill_ollama_path)
@@ -429,10 +436,17 @@ class LLMManagementWindow(Container):
             path_input.focus()
 
     def _initialize_view(self) -> None:
-        """Initialize the active view after mounting."""
-        # Force the watcher to run by setting the value
-        # Even though it's the same as the default, this ensures proper initialization
-        self.active_view = "ollama"
+        """Activate the initial view now that the child views exist.
+
+        Assigns ``"llama-cpp"`` rather than hand-invoking ``watch_active_view``:
+        with the reactive's default now ``""`` (see ``active_view`` above),
+        this is a genuine value change, so it fires the normal reactive
+        path -- ``watch_active_view`` plus any external watchers registered
+        via ``self.watch(...)`` (e.g. the Lab rail highlighter) -- with the
+        child views already mounted.
+        """
+        self.active_view = "llama-cpp"
+        self._sync_all_process_controls()
 
     def _ollama_prereq_text(self) -> str:
         """Prereq line for the Ollama view, with PATH detection (UX-070)."""
@@ -448,32 +462,6 @@ class LLMManagementWindow(Container):
 
     def compose(self) -> ComposeResult:
         """Compose the LLM Management UI with sidebar navigation and content area."""
-        # Sidebar with navigation, grouped by job: running servers vs.
-        # managing the local model library.
-        with VerticalScroll(id="llm-sidebar"):
-            yield Static("Serve a model", classes="sidebar-title")
-            yield Static(
-                "New here? Ollama is the easiest way to run a local model.",
-                classes="sidebar-hint",
-            )
-            yield Button("1 Ollama", id="nav-ollama", classes="llm-nav-button")
-            yield Button("2 Llama.cpp", id="nav-llama-cpp", classes="llm-nav-button")
-            yield Button("3 Llamafile", id="nav-llamafile", classes="llm-nav-button")
-            yield Button("4 vLLM", id="nav-vllm", classes="llm-nav-button")
-            yield Button("5 ONNX", id="nav-onnx", classes="llm-nav-button")
-            yield Button(
-                "6 Transformers", id="nav-transformers", classes="llm-nav-button"
-            )
-            yield Button("7 MLX-LM", id="nav-mlx-lm", classes="llm-nav-button")
-            yield Static("Model library", classes="sidebar-title")
-            yield Button(
-                "8 Local Models", id="nav-local-models", classes="llm-nav-button"
-            )
-            yield Button(
-                "9 Download Models", id="nav-download-models", classes="llm-nav-button"
-            )
-            yield Static("", id="llm-sidebar-hint", classes="sidebar-hint")
-
         # Main content area
         with Container(id="llm-main-content"):
             # Llama.cpp View
@@ -500,6 +488,7 @@ class LLMManagementWindow(Container):
                         "Stop Server",
                         id="llamacpp-stop-server-button",
                         classes="action_button",
+                        disabled=True,
                     )
 
                 with Container(classes="input_container"):
@@ -592,6 +581,7 @@ class LLMManagementWindow(Container):
                         "Stop Server",
                         id="llamafile-stop-server-button",
                         classes="action_button",
+                        disabled=True,
                     )
 
 
@@ -676,6 +666,7 @@ class LLMManagementWindow(Container):
                         "Stop Server",
                         id="vllm-stop-server-button",
                         classes="action_button",
+                        disabled=True,
                     )
 
 
@@ -744,6 +735,7 @@ class LLMManagementWindow(Container):
                         "Stop ONNX Server",
                         id="onnx-stop-server-button",
                         classes="action_button",
+                        disabled=True,
                     )
 
 
@@ -862,63 +854,7 @@ class LLMManagementWindow(Container):
                     classes="action_button",
                 )
 
-                yield Static("---", classes="separator")
-
-                yield Label(
-                    "Run Custom Transformers Server Script:", classes="section_label"
-                )
-                yield Label("Python Interpreter:", classes="label")
-                yield Input(
-                    id="transformers-python-path",
-                    value="python",
-                    placeholder="e.g., /path/to/venv/bin/python",
-                )
-
-                with Container(classes="input_container"):
-                    yield Label("Path to your Server Script (.py):", classes="inline-label")
-                    yield Input(
-                        id="transformers-script-path",
-                        placeholder="/path/to/your_transformers_server_script.py",
-                    )
-                    yield Button(
-                        "Browse Script",
-                        id="transformers-browse-script-button",
-                        classes="browse_button",
-                        tooltip="Choose the custom Transformers server script to run.",
-                    )
-
-                yield Label("Model to Load (ID or Path for script):", classes="label")
-                yield Input(
-                    id="transformers-server-model-arg",
-                    placeholder="Script-dependent model identifier",
-                )
-
-                yield Label("Host:", classes="label")
-                yield Input(id="transformers-server-host", value="127.0.0.1")
-
-                yield Label("Port:", classes="label")
-                yield Input(id="transformers-server-port", placeholder="8003")
-                yield Static("Default 8003 — change it if another server already uses that port.", classes="prereq-hint")
-
-                yield Label("Additional Script Arguments:", classes="label")
-                yield TextArea(
-                    id="transformers-server-additional-args",
-                    classes="additional_args_textarea",
-                    theme="vscode_dark",
-                )
-
-                yield Button(
-                    "Start Transformers Server",
-                    id="transformers-start-server-button",
-                    classes="action_button",
-                )
-                yield Button(
-                    "Stop Transformers Server",
-                    id="transformers-stop-server-button",
-                    classes="action_button",
-                )
-
-                yield Label("Operations Log:", classes="section_label")
+                yield Label("Model Operations Output", classes="section_label")
                 yield RichLog(
                     id="transformers-log-output",
                     classes="log_output",
@@ -984,6 +920,7 @@ class LLMManagementWindow(Container):
                         "Stop MLX Server",
                         id="mlx-stop-server-button",
                         classes="action_button",
+                        disabled=True,
                     )
 
                 yield RichLog(
@@ -1012,7 +949,11 @@ class LLMManagementWindow(Container):
                     yield Button(
                         "Start Ollama Service", id="ollama-start-service-button"
                     )
-                    yield Button("Stop Ollama Service", id="ollama-stop-service-button")
+                    yield Button(
+                        "Stop Ollama Service",
+                        id="ollama-stop-service-button",
+                        disabled=True,
+                    )
 
                 yield Label(
                     "Ollama API Management (requires running service)",
@@ -1168,11 +1109,35 @@ class LLMManagementWindow(Container):
                     classes="log_output_large",
                 )
 
-            # Local Models View (preserved unchanged)
-            with Container(id="llm-view-local-models", classes="llm-view"):
-                from ..Widgets.HuggingFace import LocalModelsWidget
+            # Curated and Installed stay idle until their rail row is selected.
+            with Container(id="llm-view-curated", classes="llm-view"):
+                from .Screens.model_curated_view import CuratedView
 
-                yield LocalModelsWidget(self.app_instance, id="local-models-widget")
+                yield CuratedView(id="curated-models-view")
+
+            with Container(id="llm-view-installed", classes="llm-view"):
+                from .Screens.model_installed_view import InstalledView
+
+                legacy_dir = None
+                app_config = getattr(self.app_instance, "app_config", {})
+                if isinstance(app_config, dict):
+                    configured = app_config.get("llm_management", {}).get(
+                        "model_download_dir"
+                    )
+                    if configured:
+                        from pathlib import Path
+
+                        legacy_dir = Path(str(configured)).expanduser()
+                yield InstalledView(
+                    legacy_dir=legacy_dir,
+                    id="installed-models-view",
+                )
+
+            # Remote is explicitly idle until Search is submitted.
+            with Container(id="llm-view-remote", classes="llm-view"):
+                from .Screens.model_remote_view import RemoteView
+
+                yield RemoteView(id="remote-models-view")
 
             # Download Models View (preserved unchanged)
             with Container(id="llm-view-download-models", classes="llm-view"):
@@ -1182,24 +1147,148 @@ class LLMManagementWindow(Container):
                     self.app_instance, id="huggingface-model-browser"
                 )
 
-    @on(Button.Pressed, ".llm-nav-button")
-    def handle_nav_button(self, event: Button.Pressed) -> None:
-        """Handle navigation button clicks."""
+    @on(InstallProgressed)
+    def _managed_install_progressed(self, event: InstallProgressed) -> None:
+        """Mirror Curated progress into the persistent Installed view."""
+        from .Screens.model_installed_view import InstalledView
+
+        self._managed_install_active = True
+        self._managed_install_progress = event.progress
+        try:
+            installed = self.query_one("#installed-models-view", InstalledView)
+        except QueryError:
+            return
+        installed.set_install_state(event.progress, active=True)
+
+    @on(InstallStatusChanged)
+    def _managed_install_status_changed(self, event: InstallStatusChanged) -> None:
+        """Synchronize install lifecycle state and refresh completed inventory."""
+        from .Screens.model_installed_view import InstalledView
+
+        self._managed_install_active = event.active
+        if not event.active:
+            self._managed_install_progress = None
+        try:
+            installed = self.query_one("#installed-models-view", InstalledView)
+        except QueryError:
+            return
+        installed.set_install_state(
+            self._managed_install_progress,
+            active=event.active,
+        )
+        if not event.active:
+            installed.ensure_loaded(force=True)
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Route allowlisted actions inside this destination."""
+
+        event.stop()
         button = event.button
         if not button.id:
             return
 
-        # Extract view name from button ID (nav-llama-cpp -> llama-cpp)
-        view_name = button.id.replace("nav-", "")
-
-        # Don't switch if already active
-        if view_name == self.active_view:
+        callback = self.ACTION_HANDLERS.get(button.id)
+        if callback is None:
             return
 
-        logger.debug(f"Switching LLM view to: {view_name}")
+        try:
+            result = callback(self, self.app_instance, event)
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:
+            self._recover_failed_action(button.id, exc)
 
-        # Update active view (will trigger watcher)
-        self.active_view = view_name
+    def _recover_failed_action(self, action_id: str, exc: Exception) -> None:
+        """Restore truthful controls and surface bounded, non-sensitive recovery."""
+
+        exception_category = type(exc).__name__
+        logger.error(
+            "LLM destination action failed (action_id={}, exception_category={})",
+            action_id,
+            exception_category,
+        )
+        self._restore_process_controls(action_id)
+        message = (
+            f"Action {action_id} failed ({exception_category}). "
+            "Try again or check application logs."
+        )[:200]
+        log_type = self._log_type_for_action(action_id)
+        if log_type is not None:
+            LogWidgetManager.update_log(self, log_type, message)
+        self.app_instance.notify(message, severity="error")
+
+    def _restore_process_controls(self, action_id: str) -> None:
+        """Set start/stop controls from the actual process handle after a failure."""
+
+        provider = next(
+            (name for name in self.SERVER_CONTROLS if action_id.startswith(f"{name}-")),
+            None,
+        )
+        if provider is None:
+            return
+        self._sync_process_controls(provider)
+
+    def _sync_process_controls(self, provider: str) -> None:
+        """Render one provider's controls from app-owned lifecycle state."""
+
+        start_id, stop_id = self.SERVER_CONTROLS[provider]
+        active = server_is_active(self.app_instance, provider)
+        try:
+            self.query_one(f"#{start_id}", Button).disabled = active
+            self.query_one(f"#{stop_id}", Button).disabled = not active
+        except QueryError:
+            logger.warning(
+                "Could not restore LLM process controls (provider={})",
+                provider,
+            )
+
+    def _handle_server_process_state_change(
+        self,
+        provider: str,
+        status: str | None = None,
+    ) -> None:
+        """Refresh one destination and surface only bounded worker status."""
+
+        self._sync_process_controls(provider)
+        if status is not None:
+            self.app_instance.notify(status[:200], severity="error")
+
+    def _sync_all_process_controls(self) -> None:
+        """Render every process control pair from app-owned lifecycle state."""
+
+        for provider in self.SERVER_CONTROLS:
+            self._sync_process_controls(provider)
+
+    def _begin_async_presentation(self, channel: str) -> int:
+        """Reserve the next local completion generation for one output channel."""
+
+        generation = self._async_presentation_generations.get(channel, 0) + 1
+        self._async_presentation_generations[channel] = generation
+        return generation
+
+    def _owns_async_presentation(self, channel: str, generation: int) -> bool:
+        """Return whether this mounted destination still owns one completion."""
+
+        return (
+            self._async_presentation_generations.get(channel) == generation
+            and current_llm_destination(self.app_instance) is self
+        )
+
+    @staticmethod
+    def _log_type_for_action(action_id: str) -> str | None:
+        """Return the destination log category associated with an action."""
+
+        if action_id.startswith("llamacpp-"):
+            return "llamacpp"
+        if action_id.startswith("llamafile-"):
+            return "llamafile"
+        if action_id.startswith("vllm-"):
+            return "vllm"
+        if action_id.startswith("mlx-"):
+            return "mlx"
+        if action_id.startswith("transformers-"):
+            return "transformers"
+        return None
 
     def action_prev_llm_view(self) -> None:
         """Cycle to the previous sidebar view ([ key)."""
@@ -1228,27 +1317,6 @@ class LLMManagementWindow(Container):
         """React to active view changes."""
         logger.debug(f"LLM view changing from '{old_view}' to '{new_view}'")
 
-        # Sidebar position indicator: keeps keyboard cycling oriented.
-        views = list(self.view_mapping)
-        try:
-            hint = self.query_one("#llm-sidebar-hint", Static)
-            position = views.index(new_view) + 1 if new_view in views else 1
-            hint.update(f"[ / ] switch view · {position} of {len(views)}")
-        except QueryError:
-            pass
-
-        # Update navigation buttons
-        for button in self.query(".llm-nav-button"):
-            button.remove_class("-active")
-
-        # Set active button
-        active_button_id = f"nav-{new_view}"
-        try:
-            active_button = self.query_one(f"#{active_button_id}", Button)
-            active_button.add_class("-active")
-        except QueryError:
-            logger.warning(f"Navigation button #{active_button_id} not found")
-
         # Update view visibility
         for view_id in self.view_mapping.values():
             try:
@@ -1267,8 +1335,43 @@ class LLMManagementWindow(Container):
 
                 # Populate help text for specific views
                 self._populate_help_text(new_view, target_view)
+                self._start_view_work(new_view, target_view)
             except QueryError:
                 logger.error(f"Target view #{target_view_id} not found")
+
+    def _start_view_work(self, view_name: str, view_widget) -> None:
+        """Kick off work a view should only do once it is actually shown.
+
+        `compose()` builds all nine views eagerly, so anything a view does
+        at mount time happens on every visit to this screen regardless of
+        which view the user wanted. The HuggingFace browse was doing exactly
+        that -- a live request to huggingface.co on arrival, for users who
+        never open Download Models (task-887).
+        """
+        if view_name in {"curated", "installed"}:
+            try:
+                managed_view = view_widget.query_one(
+                    "#curated-models-view"
+                    if view_name == "curated"
+                    else "#installed-models-view"
+                )
+            except QueryError:
+                logger.debug(f"{view_name.title()} view is unavailable; skipped.")
+                return
+            managed_view.ensure_loaded()
+            return
+        if view_name != "download-models":
+            return
+        # Local import: this module is on the Models mount path, and the
+        # point of the change is to keep that path cheap.
+        from ..Widgets.HuggingFace.model_search_widget import ModelSearchWidget
+
+        try:
+            search = view_widget.query_one(ModelSearchWidget)
+        except QueryError:
+            logger.debug("Download Models view has no ModelSearchWidget; skipped.")
+            return
+        search.ensure_initial_browse()
 
     def _populate_help_text(self, view_name: str, view_widget) -> None:
         """Populate help text for views that have it."""

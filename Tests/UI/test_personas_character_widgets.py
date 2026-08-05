@@ -76,10 +76,28 @@ class TestCharacterCard:
         async with app.run_test() as pilot:
             assert pilot.app.query_one("#personas-character-card-empty").display is True
             assert pilot.app.query_one("#personas-character-card-body").display is False
-            assert (
-                pilot.app.query_one("#personas-card-edit-character", Button).disabled
-                is True
-            )
+            edit = pilot.app.query_one("#personas-card-edit-character", Button)
+            assert edit.disabled is True
+            # F-037: the disabled Edit says why.
+            assert edit.tooltip == "Select a character to edit."
+
+    async def test_edit_tooltip_explains_unsaved_record_state(self):
+        """F-037: an id-less (never-saved) card keeps Edit disabled with a reason."""
+        app = WidgetApp()
+        async with app.run_test() as pilot:
+            card = pilot.app.query_one(PersonasCharacterCardWidget)
+            record = dict(CHARACTER)
+            record.pop("id")
+            card.load_character(record)
+            await pilot.pause()
+            edit = pilot.app.query_one("#personas-card-edit-character", Button)
+            assert edit.disabled is True
+            assert edit.tooltip == "This character has no saved record to edit."
+            # A saved record re-enables Edit and drops the reason.
+            card.load_character(dict(CHARACTER))
+            await pilot.pause()
+            assert edit.disabled is False
+            assert edit.tooltip is None
 
     async def test_load_populates_fields_and_enables_edit(self):
         app = WidgetApp()
@@ -279,8 +297,11 @@ class TestCharacterEditor:
             collected = editor.get_character_data()
             assert collected["alternate_greetings"] == ["para1\n\npara2"]
 
-    async def test_edited_greetings_are_reparsed_per_line(self):
-        """Once the TextArea is edited, greetings re-parse one per line."""
+    async def test_greeting_update_keeps_embedded_newlines_as_one_entry(self):
+        """Updating a single greeting (via the list editor's mutation API,
+        Roleplay P3b Task 3) never re-splits it by line - each greeting is a
+        discrete list entry, not a line-delimited blob, so embedded blank
+        lines within one greeting survive an explicit edit intact."""
         app = WidgetApp()
         async with app.run_test() as pilot:
             editor = pilot.app.query_one(PersonasCharacterEditorWidget)
@@ -288,11 +309,9 @@ class TestCharacterEditor:
             data["alternate_greetings"] = ["para1\n\npara2"]
             editor.load_character(data)
             await pilot.pause()
-            pilot.app.query_one(
-                "#personas-char-editor-alt-greetings", TextArea
-            ).text = "first\n\nsecond"
+            editor._greetings_update(0, "first\n\nsecond")
             collected = editor.get_character_data()
-            assert collected["alternate_greetings"] == ["first", "second"]
+            assert collected["alternate_greetings"] == ["first\n\nsecond"]
 
     async def test_empty_version_defaults_to_1_0(self):
         """Empty/whitespace Version collects as the new-character default."""

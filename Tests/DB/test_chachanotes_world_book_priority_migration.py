@@ -9,6 +9,26 @@ def test_world_book_entries_priority_migrate_v20_to_v21(tmp_path):
     conn.execute("DROP TRIGGER IF EXISTS world_book_entries_sync_create")
     conn.execute("DROP TRIGGER IF EXISTS world_book_entries_sync_update")
     conn.execute("ALTER TABLE world_book_entries DROP COLUMN priority")
+    # A V20 fixture also predates the V27->V28 character-authority column.
+    conn.execute("ALTER TABLE conversations DROP COLUMN assistant_authority_id")
+    # A V20 fixture also predates the V29->V30 local-only usage_json column.
+    conn.execute("ALTER TABLE messages DROP COLUMN usage_json")
+    # A v20 fixture must not retain citation tables introduced at v26→v27.
+    for table in (
+        "rag_artifact_owner_operations",
+        "rag_artifact_owner_leases",
+        "rag_source_observations",
+        "rag_message_trace_owners",
+        "rag_trace_evidence_refs",
+        "rag_answer_attempt_payloads",
+        "rag_evidence_runs",
+        "rag_citation_traces",
+        "rag_evidence_snapshots",
+        "rag_payload_tombstones",
+        "rag_legacy_migration_journal",
+        "rag_identity_context",
+    ):
+        conn.execute(f"DROP TABLE {table}")
     conn.execute(
         "UPDATE db_schema_version SET version = 20 WHERE schema_name = ?",
         (db._SCHEMA_NAME,),
@@ -23,7 +43,9 @@ def test_world_book_entries_priority_migrate_v20_to_v21(tmp_path):
         "SELECT version FROM db_schema_version WHERE schema_name = ?",
         (migrated._SCHEMA_NAME,),
     ).fetchone()
-    assert version["version"] == migrated._CURRENT_SCHEMA_VERSION == 21
+    # A simulated-V20 DB migrates all the way to the current version (which keeps
+    # advancing as later migrations are added), not a hardcoded 21.
+    assert version["version"] == migrated._CURRENT_SCHEMA_VERSION
     cols = {
         r[1] for r in mconn.execute("PRAGMA table_info(world_book_entries)").fetchall()
     }

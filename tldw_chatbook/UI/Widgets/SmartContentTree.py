@@ -135,6 +135,12 @@ class SmartContentTree(Container):
                 yield Checkbox(
                     "Prompts", True, id="filter-prompts", classes="category-checkbox"
                 )
+                yield Checkbox(
+                    "Kept Briefings",
+                    True,
+                    id="filter-kept-briefings",
+                    classes="category-checkbox",
+                )
 
             # Selection controls
             with Horizontal(classes="selection-controls"):
@@ -195,6 +201,9 @@ class SmartContentTree(Container):
                 ContentType.CHARACTER: root.add("👤 Characters", expand=True),
                 ContentType.MEDIA: root.add("🎬 Media", expand=False),
                 ContentType.PROMPT: root.add("💡 Prompts", expand=False),
+                ContentType.KEPT_BRIEFING: root.add(
+                    "📰 Kept Briefings", expand=False
+                ),
             }
 
             # Add content nodes
@@ -282,6 +291,7 @@ class SmartContentTree(Container):
             "filter-characters": ContentType.CHARACTER,
             "filter-media": ContentType.MEDIA,
             "filter-prompts": ContentType.PROMPT,
+            "filter-kept-briefings": ContentType.KEPT_BRIEFING,
         }
 
         content_type = type_map.get(checkbox_id)

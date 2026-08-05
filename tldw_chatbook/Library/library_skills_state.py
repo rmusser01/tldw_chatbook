@@ -8,8 +8,8 @@ Consumes record mappings shaped like ``LocalSkillsService.get_context``'s
 ``trust_reason_code``/``trust_changed_files``/... from
 ``LocalSkillsService._trust_fields_for_record``) and detail mappings shaped
 like ``LocalSkillsService.get_skill``'s response (a ``SkillResponse`` dump --
-adds ``content``, ``supporting_files``, ``version`` -- plus the same trust
-fields).
+adds ``content``, ``supporting_files``, ``bundle_files``, ``version`` -- plus
+the same trust fields).
 
 No Textual/DB/IO imports. The only non-stdlib imports are ``yaml`` (frontmatter
 serialization -- matches the service's own use of it), the static
@@ -44,8 +44,55 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         "find_tools",
         "load_tools",
         "prompt",
+        # PR #729's /prefill command (sync test flagged the gap).
+        "prefill",
         "system",
         "skills",
+        # The skill_file runtime tool (reference-file reachability; the
+        # drift-guard sync test flagged the gap when it joined
+        # RUNTIME_TOOL_NAMES).
+        "skill_file",
+        # The install_skill runtime tool (same drift-guard rationale as
+        # skill_file above).
+        "install_skill",
+        # The run_skill_script runtime tool (same drift-guard rationale as
+        # skill_file/install_skill above).
+        "run_skill_script",
+        # The agent run-log search runtime tool must not be shadowed by an
+        # installed skill with the same invocation name.
+        "search_run_log",
+        # The primary-agent run-log aggregation and contiguous-range tools
+        # share the same reserved runtime namespace.
+        "run_log_stats",
+        "run_log_slice",
+        # task-580: console commands from the /rewind and image-generation
+        # features. These were added to the command registry without updating
+        # this set, so the drift guard below failed and was carried as an
+        # accepted baseline across several branches -- which is exactly the
+        # signal-erosion the guard exists to prevent.
+        "rewind",
+        "generate-image",
+        # The sandbox-rooted file tools. These are CONFIG-GATED (off by
+        # default), so the drift guard -- which builds a BuiltinToolProvider
+        # with default config -- cannot see them and would not have caught
+        # their absence. Listed explicitly: a skill named after one of them
+        # still shadows a real builtin the moment a user enables the gate.
+        "read_file",
+        "list_directory",
+        # TASK-545 P2's mutating tools. Same rationale as the two above:
+        # CONFIG-GATED, so the drift guard (which builds a
+        # BuiltinToolProvider with default config) cannot see them. A skill
+        # named `write_file` shadows a real builtin the moment a user turns
+        # the gate on.
+        "write_file",
+        "create_note",
+        "update_note",
+        # The sensitive-path-hardening glob_files/grep_files tools. Same
+        # rationale as the file tools above: CONFIG-GATED, so the drift
+        # guard (which builds a BuiltinToolProvider with default config)
+        # cannot see them.
+        "glob_files",
+        "grep_files",
     )
 )
 
@@ -88,6 +135,25 @@ class SkillsListState:
 
 
 @dataclass(frozen=True)
+class SkillEditorSupportingFile:
+    """One row in the skill editor's read-only supporting-files list.
+
+    Attributes:
+        name: The file's path, relative to the skill's directory. Nested
+            paths (e.g. ``"references/api.md"``) render as-is.
+        size: The file's size in bytes.
+        is_text: Whether the file is text. ``False`` marks a binary file
+            as view-only (it can't be edited as text). Defaults to
+            ``True`` so the ``supporting_files``-only fallback path
+            (which only ever carries decoded text) stays correct.
+    """
+
+    name: str
+    size: int
+    is_text: bool = True
+
+
+@dataclass(frozen=True)
 class SkillEditorState:
     """Display state for the Library Skills canvas's in-canvas editor.
 
@@ -106,7 +172,9 @@ class SkillEditorState:
         body: The skill's prompt body (the text after the frontmatter
             block), verbatim.
         supporting_files: The skill's supporting files as sorted
-            ``(name, byte_length)`` pairs.
+            ``SkillEditorSupportingFile`` rows (built from ``bundle_files``
+            when present -- covering nested paths and binaries -- falling
+            back to ``supporting_files`` (text only) otherwise).
         version: The skill's optimistic-lock version, or ``None`` when
             unknown.
         trust_status: The skill's current trust status.
@@ -124,11 +192,15 @@ class SkillEditorState:
     context: str
     model: str | None
     body: str
-    supporting_files: tuple[tuple[str, int], ...]
+    supporting_files: tuple[SkillEditorSupportingFile, ...]
     version: int | None
     trust_status: str
     trust_blocked: bool
     trust_changed_files: tuple[str, ...]
+    # task-419: the record's description was derived from the first body
+    # line (no frontmatter description on disk) -- shown as a hint, never
+    # echoed into the Description field.
+    description_derived: bool = False
 
 
 def _text(value: Any) -> str:
@@ -172,17 +244,19 @@ def skill_flags_line(user_invocable: bool, disable_model_invocation: bool) -> st
             CAN invoke it when this is ``False``).
 
     Returns:
-        ``"user · agent"`` when both a user and the agent can invoke it,
-        ``"user"``/``"agent"`` when only one can, or ``"not invocable"``
-        when neither can.
+        A spelled-out invocability summary (task-418: the bare
+        ``"user · agent"`` tokens had no legend anywhere in the UI):
+        ``"invocable: user & agent"`` when both can invoke it,
+        ``"invocable: user only"``/``"invocable: agent only"`` when one
+        can, or ``"not invocable"`` when neither can.
     """
     agent_invocable = not disable_model_invocation
     if user_invocable and agent_invocable:
-        return "user · agent"
+        return "invocable: user & agent"
     if user_invocable:
-        return "user"
+        return "invocable: user only"
     if agent_invocable:
-        return "agent"
+        return "invocable: agent only"
     return "not invocable"
 
 
@@ -218,6 +292,53 @@ def save_marks_needs_review(trust_status: str, trust_blocked: bool) -> bool:
         needs-review).
     """
     return trust_status == "trusted" and not trust_blocked
+
+
+def skill_trust_header_line(posture: str, blocked_count: int) -> tuple[str, str] | None:
+    """Return (copy, action_id) for the Skills-list trust header, or None to hide.
+
+    Args:
+        posture: The trust service's ``trust_posture()`` value -- one of
+            ``"needs_setup"``, ``"needs_resetup"``, ``"unavailable"``,
+            ``"locked"``, ``"error"``, ``"ready"`` (Task 3). Any other
+            unrecognized/empty value hides the header (``None``) -- the
+            list canvas already degrades gracefully with no header, and
+            surfacing raw trust-service errors here would be noise the user
+            can't act on from this screen. ``"error"`` (a corrupt/tampered
+            manifest) still gets a header, though: without one, blocked
+            skills would render with no list-level recovery action at all,
+            forcing the user to open a skill just to find the reset path.
+        blocked_count: Number of rows in the current list state that are
+            currently trust-blocked (``row.blocked``).
+
+    Returns:
+        ``(copy, action_id)`` where ``action_id`` is one of ``"setup"``,
+        ``"resetup"``, ``"retry"``, ``"unlock"``, ``"review"``, or ``""``
+        (posture is ``"ready"`` with nothing blocked -- shown but with no
+        action), or ``None`` to hide the header entirely.
+    """
+    if posture == "needs_setup":
+        return (
+            "Skill trust isn't set up — set it up to review and use skills.",
+            "setup",
+        )
+    if posture == "needs_resetup":
+        return ("Skill trust needs to be set up again after an update.", "resetup")
+    if posture == "unavailable":
+        return ("Skill trust is temporarily unavailable — try again.", "retry")
+    if posture == "locked":
+        return ("Skill trust is locked for this session.", "unlock")
+    if posture == "error":
+        # Reuses the "resetup" action_id -- it already routes to
+        # reset-then-bootstrap, the only recovery that makes sense when the
+        # trust manifest itself can't be read/verified.
+        return ("Skill trust can't be verified — set it up again.", "resetup")
+    if posture == "ready":
+        if blocked_count > 0:
+            noun = "skill needs" if blocked_count == 1 else "skills need"
+            return (f"{blocked_count} {noun} review before use.", "review")
+        return ("Skill trust: ready.", "")
+    return None
 
 
 def _matches_query(record: Mapping[str, Any], query_lower: str) -> bool:
@@ -317,26 +438,66 @@ def build_skill_editor_state(detail: Mapping[str, Any]) -> SkillEditorState:
     Returns:
         Immutable editor state, with ``allowed_tools`` joined into a
         single comma-separated string and ``supporting_files`` reduced to
-        sorted ``(name, byte_length)`` pairs.
+        sorted ``SkillEditorSupportingFile`` rows -- built from
+        ``bundle_files`` (nested paths, binaries included) when present,
+        falling back to ``supporting_files`` (text only, e.g. a
+        remote/server skill that doesn't populate ``bundle_files``)
+        otherwise.
     """
     if not isinstance(detail, Mapping):
         detail = {}
     content = _raw_text(detail.get("content"))
-    _, body = LocalSkillsService._parse_front_matter(content)
+    front_matter, body = LocalSkillsService._parse_front_matter(content)
 
-    supporting_source = detail.get("supporting_files") or {}
-    supporting_files = tuple(
-        sorted(
-            (name, len(str(text).encode("utf-8")))
-            for name, text in supporting_source.items()
+    bundle_source = detail.get("bundle_files")
+    if bundle_source:
+        supporting_files = tuple(
+            sorted(
+                (
+                    SkillEditorSupportingFile(
+                        name=_text(entry.get("path")),
+                        size=_to_int(entry.get("size")) or 0,
+                        is_text=bool(entry.get("is_text", True)),
+                    )
+                    for entry in bundle_source
+                    if isinstance(entry, Mapping)
+                ),
+                key=lambda row: row.name,
+            )
         )
-    )
+    else:
+        supporting_source = detail.get("supporting_files") or {}
+        supporting_files = tuple(
+            sorted(
+                (
+                    SkillEditorSupportingFile(
+                        name=name, size=len(str(text).encode("utf-8"))
+                    )
+                    for name, text in supporting_source.items()
+                ),
+                key=lambda row: row.name,
+            )
+        )
 
     changed_files = detail.get("trust_changed_files") or ()
 
+    # task-419: the service backfills a missing frontmatter description
+    # from the first body line for LIST display. Echoing that into the
+    # editor's Description field would misrepresent the file -- and a
+    # later save would ratchet the derived text into the frontmatter.
+    # Exact discriminator: derived iff the record carries a description
+    # but the parsed frontmatter does not.
+    record_description = _text(detail.get("description"))
+    front_matter_description = (
+        _text(front_matter.get("description"))
+        if isinstance(front_matter, Mapping)
+        else ""
+    )
+    description_derived = bool(record_description) and not front_matter_description
     return SkillEditorState(
         name=_text(detail.get("name")),
-        description=_text(detail.get("description")),
+        description="" if description_derived else record_description,
+        description_derived=description_derived,
         argument_hint=_text(detail.get("argument_hint")) or None,
         allowed_tools_csv=_csv_from_list(detail.get("allowed_tools")),
         user_invocable=bool(detail.get("user_invocable", True)),

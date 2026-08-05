@@ -10,19 +10,33 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Iterable, Mapping, Protocol
+from typing import Any, Iterable, Mapping, NamedTuple, Protocol
+
+from loguru import logger
 
 from tldw_chatbook.Tools.tool_executor import CalculatorTool, DateTimeTool
 
 from .agent_models import (
     DIRECT_DISCLOSE_THRESHOLD,
     FIND_TOOLS_NAME,
+    INSTALL_SKILL_TOOL_NAME,
     LOAD_TOOLS_NAME,
+    RUN_LOG_SLICE_TOOL_NAME,
+    RUN_LOG_STATS_TOOL_NAME,
+    RUN_SKILL_SCRIPT_TOOL_NAME,
     RunBudget,
+    SEARCH_RUN_LOG_TOOL_NAME,
+    SKILL_FILE_TOOL_NAME,
     SPAWN_TOOL_NAME,
     ToolCatalogEntry,
     ToolResult,
     ToolSchema,
+)
+from .run_log_search import (
+    MAX_CROSS_RUN_RUNS,
+    MAX_SLICE_RECORDS,
+    MAX_STATS_GROUPS,
+    STATS_GROUP_BY_FIELDS,
 )
 
 SPAWN_TOOL_SCHEMA = ToolSchema(
@@ -66,6 +80,265 @@ LOAD_TOOLS_SCHEMA = ToolSchema(
     },
 )
 
+SKILL_FILE_TOOL_SCHEMA = ToolSchema(
+    id="runtime:skill_file",
+    name=SKILL_FILE_TOOL_NAME,
+    description=(
+        "Read a bundled reference file of a skill active in this run. "
+        "Args: skill_name (the skill whose bundle to read), path (relative "
+        "POSIX path, e.g. references/api.md). Text files only."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "skill_name": {"type": "string"},
+            "path": {"type": "string"},
+        },
+        "required": ["skill_name", "path"],
+    },
+)
+
+INSTALL_SKILL_TOOL_SCHEMA = ToolSchema(
+    id="runtime:install_skill",
+    name=INSTALL_SKILL_TOOL_NAME,
+    description=(
+        "Install a skill from a GitHub repository/tree URL or a direct "
+        "https .zip URL. The user is asked to confirm before anything is "
+        "downloaded. On success the skill is installed but left pending the "
+        "user's review — it cannot run until the user approves it in "
+        "Library > Skills. If the repository contains multiple skills, the "
+        "tool returns the list of candidates; re-call with a URL that points "
+        "at one skill's subdirectory."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "description": (
+                    "A GitHub repo/tree URL or a direct https .zip URL for "
+                    "the skill to install."
+                ),
+            }
+        },
+        "required": ["url"],
+    },
+)
+
+RUN_SKILL_SCRIPT_TOOL_SCHEMA = ToolSchema(
+    id="runtime:run_skill_script",
+    name=RUN_SKILL_SCRIPT_TOOL_NAME,
+    description=(
+        "Run a script bundled with a trusted skill. The user is asked to "
+        "confirm each run unless they have granted this skill standing "
+        "permission. The script runs with a scrubbed environment in a "
+        "temporary working directory (not the skill's own folder), under CPU "
+        "and time limits; only its stdout/stderr and exit code come back, and "
+        "any files it writes are discarded. Args: skill_name (the skill that "
+        "owns the script), script_path (relative POSIX path, e.g. "
+        "scripts/extract.py), args (optional list of string arguments)."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "skill_name": {
+                "type": "string",
+                "description": "The skill whose bundled script to run.",
+            },
+            "script_path": {
+                "type": "string",
+                "description": (
+                    "Relative POSIX path of the script inside the skill's "
+                    "bundle, e.g. scripts/extract.py."
+                ),
+            },
+            "args": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional string arguments passed to the script.",
+            },
+        },
+        "required": ["skill_name", "script_path"],
+    },
+)
+
+
+SEARCH_RUN_LOG_TOOL_SCHEMA = ToolSchema(
+    id="runtime:search_run_log",
+    name=SEARCH_RUN_LOG_TOOL_NAME,
+    description=(
+        "Search this run's own complete log. Your context holds a truncated "
+        "view; the log holds every model turn, tool call, and tool result in "
+        "full. Use it to recover a truncated result or recall an earlier step "
+        "instead of re-running work. 'contains' (literal substring) and "
+        "'pattern' (regular expression, first 500 characters per record "
+        "only) both match a record's CONTENT ONLY -- never its metadata. "
+        "Use 'tool', 'type', 'status', and 'kind' to filter by metadata "
+        "instead -- e.g. to find every call to a specific tool, filter "
+        "with 'tool' rather than 'contains', since the tool's name may "
+        "never appear inside its own arguments or result. A record's "
+        "rendered content is windowed: when 'contains' or 'pattern' is set, "
+        "the window is centred on that record's first match; otherwise it "
+        "starts at the beginning. When a record is shown only partially, "
+        "the render states the character range and total size, and the "
+        "'offset' to pass next to keep reading. By default this searches "
+        "only THIS run; set 'scope' to also search this conversation's "
+        "earlier runs."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "scope": {
+                "type": "string",
+                "description": (
+                    "Which run(s) to search. 'run' (default): only this "
+                    "run's own log, exactly as before. 'conversation': "
+                    "also search this conversation's earlier runs, newest "
+                    f"first, up to {MAX_CROSS_RUN_RUNS} runs per call -- "
+                    "each hit is labelled with which run it came from and "
+                    "whether it is this run. A run whose log cannot be "
+                    "found under the current root (e.g. the workspace "
+                    "folder was bound, rebound, or unbound since) is "
+                    "reported as unavailable rather than silently omitted "
+                    "-- the response always states how many runs were "
+                    "actually searched vs. could not be located."
+                ),
+            },
+            "contains": {
+                "type": "string",
+                "description": "Literal substring to find in a record's content "
+                "(case-insensitive). Never matches metadata such as the tool "
+                "name -- use 'tool' for that.",
+            },
+            "pattern": {
+                "type": "string",
+                "description": "Regular expression over a record's content "
+                "only; first 500 chars per record.",
+            },
+            "tool": {"type": "string", "description": "Filter by tool name."},
+            "type": {
+                "type": "string",
+                "description": "Filter by record type: model, tool_call, tool_result.",
+            },
+            "status": {"type": "string", "description": "Filter: ok or error."},
+            "kind": {
+                "type": "string",
+                "description": "Filter by agent kind: primary or subagent.",
+            },
+            "from_record": {"type": "integer", "description": "Lowest record number."},
+            "to_record": {"type": "integer", "description": "Highest record number."},
+            "context": {
+                "type": "integer",
+                "description": "Records to include either side of each hit.",
+            },
+            "offset": {
+                "type": "integer",
+                "description": "Character offset into each record's rendered "
+                "content to start from. Use this to page through a record "
+                "larger than the render window -- the previous result names "
+                "the offset to pass next. Defaults to 0; ignored in favour "
+                "of a match-centred window when 'contains' or 'pattern' "
+                "matches and no offset is given.",
+            },
+        },
+        "required": [],
+    },
+)
+
+
+# Phase 2 (run-log spec §10, task-1271): two more runtime tools that COMPUTE
+# over the log rather than only retrieving from it -- registered exactly
+# like SEARCH_RUN_LOG_TOOL_SCHEMA above (same runtime-tool pattern, same
+# primary-agent-only gate in agent_service.py's `log_active` block).
+
+RUN_LOG_STATS_TOOL_SCHEMA = ToolSchema(
+    id="runtime:run_log_stats",
+    name=RUN_LOG_STATS_TOOL_NAME,
+    description=(
+        "Get bounded aggregate statistics over this run's own log WITHOUT "
+        "paging individual records through your context -- counts, error "
+        "counts, and content-byte totals grouped by tool, record type, "
+        "status, or agent kind (primary vs. sub-agent). Use this to answer "
+        "'which tool have I called most, and how often did it fail?' "
+        "Output is one line per distinct group value, never one line per "
+        "record, so it stays small no matter how long this run gets. At "
+        f"most {MAX_STATS_GROUPS} groups are shown per call, ranked by "
+        "count (the most frequent survive); if more distinct values "
+        "exist, the response says so explicitly with a count of how many "
+        "were omitted -- narrow with tool=/type=/status=/kind= or a "
+        "record range to see the rest. "
+        "Per-record token counts are not tracked in this run's log -- only "
+        "the whole run's total token spend is recorded once the run "
+        "finishes -- so this tool cannot report a live token total; "
+        "content_bytes is reported instead as an exact, always-available "
+        "proxy for how much content each group has produced."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "group_by": {
+                "type": "string",
+                "description": "Dimension to group by: " + ", ".join(STATS_GROUP_BY_FIELDS)
+                + " (default: tool). An unrecognised value falls back to tool.",
+            },
+            "tool": {
+                "type": "string",
+                "description": "Restrict to records for this tool before grouping.",
+            },
+            "type": {
+                "type": "string",
+                "description": "Restrict to this record type before grouping: "
+                "model, tool_call, tool_result.",
+            },
+            "status": {
+                "type": "string",
+                "description": "Restrict to this status before grouping: ok or error.",
+            },
+            "kind": {
+                "type": "string",
+                "description": "Restrict to this agent kind before grouping: "
+                "primary or subagent.",
+            },
+            "from_record": {"type": "integer", "description": "Lowest record number."},
+            "to_record": {"type": "integer", "description": "Highest record number."},
+        },
+        "required": [],
+    },
+)
+
+RUN_LOG_SLICE_TOOL_SCHEMA = ToolSchema(
+    id="runtime:run_log_slice",
+    name=RUN_LOG_SLICE_TOOL_NAME,
+    description=(
+        "Retrieve a contiguous range of this run's own log records as one "
+        "coherent unit, so you can reconstruct a stretch of your own "
+        "reasoning instead of assembling it from separate search_run_log "
+        "hits. Bounded the same way search_run_log bounds its own output: "
+        f"at most {MAX_SLICE_RECORDS} records per call regardless of how "
+        "wide the requested range is, and each record's content is "
+        "windowed at this run's own tool-result limit. When the requested "
+        "range is wider than what one call returns, the rendering states "
+        "how many records were shown and the from_record to pass next to "
+        "continue."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "from_record": {
+                "type": "integer",
+                "description": "Lowest record number to include. Coerced to "
+                "1 if missing or invalid.",
+            },
+            "to_record": {
+                "type": "integer",
+                "description": "Highest record number to include. Omit for "
+                "a default-width window starting at from_record.",
+            },
+        },
+        "required": ["from_record"],
+    },
+)
+
 
 class ToolProvider(Protocol):
     """The capability interface providers implement."""
@@ -77,16 +350,214 @@ class ToolProvider(Protocol):
     def invoke(self, tool_id: str, args: dict) -> ToolResult: ...
 
 
+def build_builtin_gate(*args: Any, **kwargs: Any) -> Any:
+    """Thin, monkeypatchable indirection to the real gate builder.
+
+    Defined here (rather than imported at module scope) so this module
+    stays dependency-light: `builtin_tool_gate` (which pulls in the MCP
+    permission store) is only imported the first time this is actually
+    *called*, not merely when `tool_catalog` itself is imported. Keeping
+    it as a real module-level name -- instead of a `from ... import` done
+    inline inside `_resolve_gate` -- is what lets tests monkeypatch
+    `tool_catalog.build_builtin_gate` directly to prove a bare
+    `BuiltinToolProvider()` is gated by default (Constraint 6): a
+    function-local import only ever binds a local name, never a module
+    attribute, so `monkeypatch.setattr(module, "build_builtin_gate", ...)`
+    would have nothing to patch without this indirection.
+    """
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        build_builtin_gate as _build_builtin_gate,
+    )
+
+    return _build_builtin_gate(*args, **kwargs)
+
+
+class GateableTool(NamedTuple):
+    """A built-in tool that a ``[tools]`` config flag turns on or off.
+
+    Attributes:
+        gate_key: The ``[tools]`` key that enables it (default False).
+        module_name: Module under ``tldw_chatbook.Tools`` defining it.
+        factory_name: Class name to instantiate.
+        tool_name: The name the LLM calls it by.
+    """
+
+    gate_key: str
+    module_name: str
+    factory_name: str
+    tool_name: str
+
+
+#: Built-ins registered unconditionally -- no gate, cannot be turned off.
+ALWAYS_ON_BUILTIN_NAMES: tuple[str, ...] = ("calculator", "get_current_datetime")
+
+#: THE source of truth for config-gateable built-ins. Both
+#: `BuiltinToolProvider.__init__` and the Settings UI derive from this, so
+#: they cannot disagree about which tools exist. The UI needs entries for
+#: tools whose gate is OFF -- which is exactly why it cannot ask a provider,
+#: since a provider only lists what its gates already permit.
+_GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
+    GateableTool(
+        "read_file_enabled", "file_operation_tools", "ReadFileTool", "read_file"
+    ),
+    GateableTool(
+        "list_directory_enabled",
+        "file_operation_tools",
+        "ListDirectoryTool",
+        "list_directory",
+    ),
+    GateableTool(
+        "write_file_enabled", "file_operation_tools", "WriteFileTool", "write_file"
+    ),
+    GateableTool(
+        "create_note_enabled", "note_management_tools", "CreateNoteTool", "create_note"
+    ),
+    GateableTool(
+        "update_note_enabled", "note_management_tools", "UpdateNoteTool", "update_note"
+    ),
+    GateableTool(
+        "glob_files_enabled", "file_operation_tools", "GlobFiles", "glob_files"
+    ),
+    GateableTool(
+        "grep_files_enabled", "file_operation_tools", "GrepFiles", "grep_files"
+    ),
+)
+
+
+def gateable_builtin_tools() -> tuple[GateableTool, ...]:
+    """Every config-gateable built-in, whether or not its gate is on.
+
+    Returns:
+        The full table, in registration order.
+    """
+    return _GATEABLE_BUILTINS
+
+
+def build_gateable_tool(entry: GateableTool) -> Any:
+    """Instantiate ``entry``'s tool class.
+
+    Raises rather than returning ``None`` so callers can report *why* a tool
+    is unavailable -- the registration loop logs the exception, and the
+    Settings UI degrades the row.
+
+    Args:
+        entry: The table entry to construct.
+
+    Returns:
+        The instantiated ``Tool``.
+
+    Raises:
+        Exception: Whatever import or construction raised.
+    """
+    import importlib
+
+    module = importlib.import_module(
+        f"..Tools.{entry.module_name}", package=__package__
+    )
+    return getattr(module, entry.factory_name)()
+
+
 class BuiltinToolProvider:
     """Wraps tool_executor's built-in tools behind the provider interface."""
 
     SOURCE = "builtin"
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        gate: Any | None = None,
+        workspace_id: str | None = None,
+        ephemeral: bool = False,
+    ) -> None:
+        # settings-workspaces-folder-roots spec §3: the run's workspace,
+        # bound around every tool execution (see `invoke`) so file tools
+        # resolve THIS run's folder roots -- never whatever workspace the
+        # user happens to be looking at when the tool actually fires.
+        # `None` (the default -- every construction site that never cares
+        # about workspace-scoped file roots, e.g. Settings-time enumeration
+        # in `builtin_tool_gate.builtin_permission_rows`) leaves
+        # `allowed_file_roots` to fall back to the active workspace.
+        self._workspace_id = workspace_id
+        # final-review F4: whether THIS run's owning Console session is
+        # temporary. Mirrors `_workspace_id` exactly -- `False` (the
+        # default) preserves every pre-existing construction site's
+        # behavior unchanged; `console_agent_bridge._compose_run_registry_
+        # and_allowed` threads the real value through for an actual
+        # Console run. `invoke()` uses it to refuse the write-shaped
+        # built-ins (`create_note`/`update_note`/`write_file`) -- an
+        # ordinary agent reply composes and dispatches these exactly like
+        # any other built-in, independently of the Console UI action-id
+        # registry in `Chat/console_ephemeral.py`.
+        self._ephemeral = ephemeral
         self._tools = {t.name: t for t in (CalculatorTool(), DateTimeTool())}
+        # task-584: surface the app's existing sandbox-rooted file tools to the
+        # agent loop. They were registered on the global ToolExecutor but never
+        # reachable from here, so retained script output -- deliberately written
+        # under the file-tool sandbox root -- had no consumer. Behind the SAME
+        # [tools] gates that already govern them, which default to DISABLED:
+        # this changes reachability, not the default posture. TASK-545 P2 adds
+        # the mutating tools on the same terms.
+        for entry in _GATEABLE_BUILTINS:
+            try:
+                from ..config import get_cli_setting
+
+                if not get_cli_setting("tools", entry.gate_key, False):
+                    continue
+                tool = build_gateable_tool(entry)
+            except Exception as exc:  # noqa: BLE001 — an unavailable tool is just absent
+                # Log rather than vanish silently. The gate-off path `continue`s
+                # ABOVE this handler, so reaching here means the user asked for
+                # the tool and it could not be built -- indistinguishable from
+                # "gate is off" without this line. That is not hypothetical:
+                # note_management_tools was unimportable on dev for an unknown
+                # period (it imported a name that exists only inside a string
+                # literal in config.py) and nothing surfaced it. The legacy
+                # path logged the same failure before it was retired (P3).
+                # opt(exception=True), not exc_info=True: loguru ignores the
+                # latter, and an import-time failure is undiagnosable without
+                # the traceback naming the module and line.
+                logger.opt(exception=True).warning(
+                    f"Could not register builtin tool {entry.factory_name} "
+                    f"(gate {entry.gate_key} is enabled): {exc}"
+                )
+                continue
+            self._tools[tool.name] = tool
+        # `None` means "build the real gate on first use" -- NOT "ungated".
+        # Every construction site (console_agent_bridge's default registry
+        # and its per-run registry) passes nothing today, so an ungated
+        # default would silently leave the shipping path unprotected.
+        self._gate = gate
 
     def _tool_id(self, name: str) -> str:
         return f"{self.SOURCE}:{name}"
+
+    def tool_for(self, name: str) -> Any | None:
+        """Return the built-in ``Tool`` registered under ``name``, if any."""
+        return self._tools.get(name)
+
+    def timeout_for(self, tool_id: str) -> float | None:
+        """Return this tool's own timeout ceiling, if it declares one."""
+        tool = self._tools.get(tool_id.split(":", 1)[-1])
+        seconds = float(getattr(tool, "timeout_seconds", 0.0) or 0.0)
+        return seconds if seconds > 0 else None
+
+    def _resolve_gate(self) -> Any:
+        """Return the provider's gate, building one lazily on first use.
+
+        Note: nothing here calls `begin_turn()` on a lazily-built gate,
+        so its permission-store payload is loaded once and never
+        invalidated for the life of this provider. Harmless today --
+        `build_builtin_gate()`'s default, service-less gate always has
+        an empty `{}` payload -- but any gate handed to (or built by)
+        this provider must be driven by a caller that calls
+        `begin_turn()` once per turn, as `console_chat_controller`'s
+        review-hook path already does, or its permission state will
+        freeze at first use.
+        """
+        if self._gate is None:
+            # Module-global lookup (not a local import) so a test's
+            # monkeypatch of `tool_catalog.build_builtin_gate` is honored.
+            self._gate = build_builtin_gate()
+        return self._gate
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
         return [
@@ -114,11 +585,45 @@ class BuiltinToolProvider:
         tool = self._tools.get(name)
         if tool is None:
             return ToolResult(ok=False, error=f"Unknown builtin tool: {name}")
+        # final-review F4: a temporary Console session must refuse the
+        # write-shaped built-ins outright, BEFORE the approval gate below
+        # -- this is an absolute local-durability boundary, not a
+        # permission decision, so it must win even for a tool the user has
+        # already approved (session or always-allow). Checked first, same
+        # reasoning `_console_save_as_destinations` already uses for the
+        # per-message Save-as row: "the write itself is the problem,
+        # service/approval readiness is moot."
+        if self._ephemeral:
+            from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+
+            reason = blocked_reason(name, ephemeral=True)
+            if reason is not None:
+                return ToolResult(ok=False, error=reason)
+        # Defense in depth: the run-level review hook is the primary gate
+        # (it batches approvals into one card per turn), but a caller that
+        # reaches invoke() without going through it must still not execute
+        # ungated. A gate that raises fails CLOSED -- never into the pure
+        # loop, which must not see exceptions from tool invocation.
+        try:
+            refusal = self._resolve_gate().check(tool)
+        except Exception as exc:  # noqa: BLE001 — fail closed
+            return ToolResult(ok=False, error=f"permission check failed: {exc}")
+        if refusal is not None:
+            return ToolResult(ok=False, error=refusal)
+        from tldw_chatbook.Tools.workspace_file_roots import run_workspace
+
         try:
             # Providers bridge async tools; the loop's interface is sync.
             # Safe here: the service runs in a worker thread with no
-            # running event loop.
-            raw = asyncio.run(tool.execute(**args))
+            # running event loop. `run_workspace` binds this run's
+            # workspace for the DURATION of the call only (context-managed,
+            # reset in its own `finally`) so file tools (`allowed_file_
+            # roots`) resolve THIS run's folder bindings, never a stale or
+            # concurrent run's. `self._workspace_id=None` keeps the
+            # ContextVar at `None`, which is `allowed_file_roots`' own
+            # documented fallback to the active workspace.
+            with run_workspace(self._workspace_id):
+                raw = asyncio.run(tool.execute(**args))
         except Exception as exc:  # noqa: BLE001 — captured, never escapes
             return ToolResult(ok=False, error=str(exc))
         if isinstance(raw, dict) and raw.get("error"):
@@ -259,19 +764,42 @@ class SkillToolProvider:
 class ToolCatalogRegistry:
     """Ordered provider registry: catalog, search, schema, invocation."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, ephemeral: bool = False) -> None:
         self._providers: list[ToolProvider] = []
+        # Whether the Console session owning THIS run is temporary ("not
+        # saved locally"). Enforced in `invoke_by_name` -- the one choke
+        # point every provider's `invoke()` is reached through -- rather
+        # than inside any individual provider, so the guarantee does not
+        # depend on each provider (including ones added later) remembering
+        # to implement it. `BuiltinToolProvider` keeps its own equivalent
+        # check as defense in depth; this one is the load-bearing gate.
+        # `False` (the default) preserves every pre-existing construction
+        # site's behavior exactly.
+        self._ephemeral = ephemeral
         # tool_id -> owning provider, and name -> tool_id, both built
         # together (lazily) by _ensure_catalog_cache() and scoped PER RUN
         # (see reset_catalog_cache()). `None` means "not built yet" and is
         # distinct from an empty-but-built cache. The two dicts are always
         # populated from the SAME `list_catalog()` sweep (see
         # _build_owner_cache()), so a name resolved from `_name_to_id_cache`
-        # is always present in `_owner_cache` too — `resolve_name()` and
-        # `_owner_and_id()` can never observe different generations of the
-        # catalog within one lookup.
+        # is always present in `_owner_cache` too PROVIDED the two reads
+        # aren't interleaved with a concurrent rebuild — true when every
+        # `invoke_by_name()` call ran serialized on one thread, which is no
+        # longer guaranteed: task-327's per-call timeout runs each call on
+        # its own daemon thread and abandons (never joins) one that hangs,
+        # so an abandoned call's `resolve_name()`/`_owner_and_id()` pair can
+        # now overlap a later call's own pair, or a `register_provider()`
+        # invalidation, with no lock guarding `_owner_cache`/
+        # `_name_to_id_cache` — two concurrent lookups CAN observe different
+        # generations of the catalog.
         self._owner_cache: dict[str, ToolProvider] | None = None
         self._name_to_id_cache: dict[str, str] | None = None
+        # tool_id -> the owning catalog entry's `source` ("builtin"/"skill"/
+        # "mcp"/...), built in the SAME sweep as the two maps above and used
+        # only by the ephemeral gate in `invoke_by_name`. A tool_id missing
+        # from this map resolves to `None`, which that gate treats as
+        # "unknown source" and refuses — the fail-toward-not-writing default.
+        self._source_cache: dict[str, str] | None = None
 
     def register_provider(self, provider: ToolProvider) -> None:
         self._providers.append(provider)
@@ -279,6 +807,7 @@ class ToolCatalogRegistry:
         # cache already built — invalidate so the next lookup rebuilds it.
         self._owner_cache = None
         self._name_to_id_cache = None
+        self._source_cache = None
 
     def reset_catalog_cache(self) -> None:
         """Drop the owner-map/name-map cache; call once at the start of a run.
@@ -291,6 +820,7 @@ class ToolCatalogRegistry:
         """
         self._owner_cache = None
         self._name_to_id_cache = None
+        self._source_cache = None
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
         entries: list[ToolCatalogEntry] = []
@@ -308,9 +838,12 @@ class ToolCatalogRegistry:
             if needle in e.name.lower() or needle in e.one_line_description.lower()
         ]
 
-    def _build_owner_cache(self) -> tuple[dict[str, ToolProvider], dict[str, str]]:
+    def _build_owner_cache(
+        self,
+    ) -> tuple[dict[str, ToolProvider], dict[str, str], dict[str, str]]:
         owner: dict[str, ToolProvider] = {}
         name_to_id: dict[str, str] = {}
+        source_by_id: dict[str, str] = {}
         for provider in self._providers:
             for entry in provider.list_catalog():
                 owner.setdefault(entry.id, provider)
@@ -320,7 +853,12 @@ class ToolCatalogRegistry:
                 # always win a name collision) without adding a second,
                 # independently-ordered pass over the providers.
                 name_to_id.setdefault(entry.name, entry.id)
-        return owner, name_to_id
+                # Keyed by id, like `owner`, and populated with the same
+                # first-wins rule so the source always describes the entry
+                # whose provider `owner` will actually dispatch to.
+                if entry.source is not None:
+                    source_by_id.setdefault(entry.id, entry.source)
+        return owner, name_to_id, source_by_id
 
     def _ensure_catalog_cache(self) -> None:
         # This is the fix MCP (task-201) also needs: a network-backed
@@ -334,12 +872,38 @@ class ToolCatalogRegistry:
         # provider on every call, so invoke_by_name() (resolve_name() then
         # _owner_and_id()) still paid a full per-provider sweep on every
         # invocation despite the owner-map cache existing.
-        if self._owner_cache is None:
-            self._owner_cache, self._name_to_id_cache = self._build_owner_cache()
+        # Guard BOTH caches, not just _owner_cache: the two stores are
+        # assigned together as a tuple below, but task-327's per-call daemon
+        # threads mean an abandoned thread can still be mid-flight when
+        # reset_catalog_cache() runs on a later call, interleaving with this
+        # method elsewhere and leaving one store populated while the other
+        # was reset to None. A single-cache guard would then skip the
+        # rebuild and leave _name_to_id_cache (or _owner_cache) permanently
+        # None for the rest of the run.
+        if (
+            self._owner_cache is None
+            or self._name_to_id_cache is None
+            or self._source_cache is None
+        ):
+            (
+                self._owner_cache,
+                self._name_to_id_cache,
+                self._source_cache,
+            ) = self._build_owner_cache()
 
     def _owner_and_id(self, tool_id: str):
         self._ensure_catalog_cache()
         return self._owner_cache.get(tool_id)
+
+    def _source_for(self, tool_id: str) -> str | None:
+        """Return the catalog ``source`` that owns ``tool_id``, if known.
+
+        ``None`` when the id is absent from the cache — which the ephemeral
+        gate treats as an unaudited source and refuses, never as "allow".
+        """
+        self._ensure_catalog_cache()
+        cache = self._source_cache
+        return cache.get(tool_id) if cache else None
 
     def load_schema(self, tool_id: str) -> ToolSchema:
         provider = self._owner_and_id(tool_id)
@@ -349,7 +913,8 @@ class ToolCatalogRegistry:
 
     def resolve_name(self, name: str) -> str | None:
         self._ensure_catalog_cache()
-        return self._name_to_id_cache.get(name)
+        cache = self._name_to_id_cache
+        return cache.get(name) if cache else None
 
     def invoke_by_name(self, name: str, args: dict) -> ToolResult:
         tool_id = self.resolve_name(name)
@@ -357,15 +922,55 @@ class ToolCatalogRegistry:
             return ToolResult(ok=False, error=f"Unknown tool: {name}")
         provider = self._owner_and_id(tool_id)
         if provider is None:
-            # Defensive only: resolve_name()/_owner_and_id() now share one
-            # cache built atomically from a single list_catalog() sweep, so
-            # a name resolved above is always present in the owner map too
-            # within the SAME cache generation — this branch is no longer
-            # reachable via a same-lookup race. It stays as insurance
-            # against a future change to the cache-building code, and never
-            # lets a `None` owner surface as an AttributeError.
+            # resolve_name()/_owner_and_id() share one cache built from a
+            # single list_catalog() sweep, so within one SERIALIZED lookup
+            # a name resolved above is always present in the owner map too.
+            # That no longer makes this branch unreachable, though: this
+            # registry has no lock, and task-327's per-call timeout can run
+            # invoke_by_name() calls concurrently (one call's cache read
+            # racing another call's, or a register_provider() rebuild), so
+            # `tool_id` above can genuinely belong to a since-superseded
+            # generation by the time this line runs. This fallback never
+            # lets a `None` owner surface as an AttributeError either way.
             return ToolResult(ok=False, error=f"Tool provider not found for: {name}")
+        # THE choke point for the temporary-session ("not saved locally")
+        # guarantee. Every provider's invoke() is reached through this one
+        # line, so gating here -- rather than in each provider -- is what
+        # makes the guarantee hold for MCP tools, skill tools, and any
+        # provider added later, without each of them having to opt in.
+        # `tool_blocked_reason` owns the policy (built-ins judged per name,
+        # everything else refused); an unresolvable source refuses too.
+        # Returns a ToolResult rather than raising: the pure loop must never
+        # see an exception out of tool invocation.
+        if self._ephemeral:
+            from tldw_chatbook.Chat.console_ephemeral import tool_blocked_reason
+
+            reason = tool_blocked_reason(
+                name, source=self._source_for(tool_id), ephemeral=True
+            )
+            if reason is not None:
+                return ToolResult(ok=False, error=reason)
         return provider.invoke(tool_id, args)
+
+    def timeout_for(self, name: str) -> float | None:
+        """Resolve a tool's per-call timeout override by LLM-facing name.
+
+        Duck-typed like the rest of the provider interface: a provider that
+        does not implement ``timeout_for`` simply has no overrides, so MCP
+        and skill tools keep using the run budget unchanged.
+
+        Args:
+            name: The tool name the model called.
+
+        Returns:
+            A positive seconds value, or None to use the run default.
+        """
+        tool_id = self.resolve_name(name)
+        if tool_id is None:
+            return None
+        provider = self._owner_and_id(tool_id)
+        getter = getattr(provider, "timeout_for", None)
+        return getter(tool_id) if getter is not None else None
 
 
 def initial_disclosure(

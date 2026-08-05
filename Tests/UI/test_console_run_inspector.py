@@ -200,3 +200,34 @@ async def test_inspector_equal_state_sync_is_noop():
             inspector.query_one("#console-inspector-provider", Static)
             is provider_row_before
         )
+
+
+def test_prefill_rows_route_into_selected_conversation_group():
+    """Prefill rows must render inside the Selected Conversation group with
+    stable ids -- not fall through to the unrouted tail after Selected
+    Message (which also leaves them below the fold in a collapsed rail)."""
+    state = _base_state(
+        rows=(
+            ConsoleDisplayRow("Selected conversation", "Chat 1"),
+            ConsoleDisplayRow("Conversation source", "native Console session"),
+            ConsoleDisplayRow("Workspace", "Default"),
+            ConsoleDisplayRow("Resume state", "local session, not persisted yet"),
+            ConsoleDisplayRow("Prefill (next send only)", "Sure thing:"),
+            ConsoleDisplayRow("Prefill (pinned)", "*Ship AI:*"),
+            ConsoleDisplayRow("Selected message", "None selected"),
+        ),
+    )
+    entries = ConsoleRunInspector._rendered_row_entries(state)
+    ids = [entry_id for entry_id, _text, _status in entries]
+    assert "console-inspector-prefill-one-shot" in ids
+    assert "console-inspector-prefill-pinned" in ids
+    # Grouped BEFORE the Selected Message group's rows, not after them.
+    assert ids.index("console-inspector-prefill-pinned") < ids.index(
+        "console-inspector-selected-message"
+    )
+    # No prefill row left in the unrouted fallback tail (generic row-N ids).
+    assert not [
+        entry_id
+        for entry_id, text, _status in entries
+        if "Prefill" in text and entry_id.startswith("console-inspector-row-")
+    ]

@@ -25,6 +25,7 @@ class FakePromptDB:
                     "prompt_format": "legacy",
                     "prompt_schema_version": None,
                     "prompt_definition": None,
+                    "artifact_type": "prompt",
                     "version": 1,
                     "last_modified": "2026-04-20T00:00:00Z",
                 },
@@ -56,6 +57,7 @@ class FakePromptDB:
                     "prompt_format": "structured",
                     "prompt_schema_version": 1,
                     "prompt_definition": '{"messages":[{"role":"user","content":"hi"}]}',
+                    "artifact_type": "recipe",
                     "version": 2,
                     "last_modified": "2026-04-20T00:02:00Z",
                 },
@@ -103,6 +105,7 @@ async def test_local_prompt_service_lists_prompt_versions_from_sync_log_snapshot
         versions[0]["prompt_definition"]
         == '{"messages":[{"role":"user","content":"hi"}]}'
     )
+    assert versions[0]["artifact_type"] == "recipe"
 
 
 @pytest.mark.asyncio
@@ -124,6 +127,7 @@ async def test_local_prompt_service_restores_prompt_version_from_sync_log_snapsh
             "prompt_format": "legacy",
             "prompt_schema_version": None,
             "prompt_definition": None,
+            "artifact_type": "prompt",
         },
     )
 

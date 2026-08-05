@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from loguru import logger
 
 from .skill_trust_crypto import (
     SkillTrustKeys,
@@ -35,10 +38,15 @@ from .skill_trust_models import (
     TRUST_STATUS_UNINITIALIZED,
 )
 from .skill_trust_scanner import scan_skill_directory
-from .skill_trust_store import SkillTrustMarkerUnavailable, SkillTrustStore
+from .skill_trust_store import (
+    SkillTrustMarkerUnavailable,
+    SkillTrustStore,
+    _atomic_write_json,
+)
 
 
 _SKILL_FILENAME = "SKILL.md"
+_SCRIPT_GRANTS_FILENAME = "skill_script_grants.json"
 
 
 def _now_iso() -> str:
@@ -88,6 +96,38 @@ class SkillTrustService:
         self.key_cache.save_keys(keys, salt=salt)
         self.keyring_convenience_enabled = True
 
+    def _try_cached_unlock(self) -> None:
+        """Load cached trust keys if this session has none yet (task-624).
+
+        Enabling keyring convenience persists the derived keys precisely so the
+        passphrase need not be re-entered, but nothing consumed them: every
+        lockedness decision saw ``self._keys is None`` and reported "locked for
+        this session" while the keys sat unused in the keychain. Every such
+        decision point now calls this first.
+
+        Deliberately silent and non-raising: a missing, stale, or broken cache
+        simply leaves the session locked, so the existing Unlock path stays the
+        fallback.
+
+        NOT latched on failure. An earlier revision cached the negative result
+        to spare the keychain on every render, but a *transient* backend error
+        would then suppress every later attempt for the life of the process --
+        directly contradicting ``trust_posture()``'s contract that an
+        unavailable keyring is recoverable by Retry. A successful load needs no
+        latch anyway: it sets ``self._keys``, which short-circuits this method
+        thereafter, so the happy path still reads the keychain exactly once.
+        """
+        if self._keys is not None or self.key_cache is None:
+            # Already unlocked, or there is no cache to consult -- the only
+            # definitively hopeless case, and it costs nothing to re-check.
+            return
+        try:
+            self.unlock_from_keyring_convenience()
+        except Exception:  # noqa: BLE001 — an unusable cache is just "locked"
+            logger.opt(exception=True).debug(
+                "Cached skill-trust key unlock failed; staying locked"
+            )
+
     def unlock_from_keyring_convenience(self) -> bool:
         """Load derived trust keys from a salt-bound secure keyring cache."""
 
@@ -108,6 +148,7 @@ class SkillTrustService:
     def overall_status(self) -> str:
         """Return a global Settings-friendly trust posture from live files."""
 
+        self._try_cached_unlock()
         if not self.trust_store.has_manifest():
             missing_status = self._manifest_missing_status("<all>")
             return missing_status.trust_status
@@ -129,6 +170,80 @@ class SkillTrustService:
                 return status.trust_status
         return TRUST_STATUS_TRUSTED
 
+    def reset_trust(self) -> None:
+        """Clear all local trust state, returning the profile to first-run.
+
+        Destructive: drops the trusted baseline (every skill returns to
+        "needs review"). Skills themselves are untouched. Best-effort and
+        non-raising so a partially-available keyring never blocks recovery.
+        """
+        try:
+            self.trust_store.delete_manifest()
+        except Exception:
+            pass
+        for target in (self.trust_store.marker_store, self.key_cache):
+            clear = getattr(target, "clear", None)
+            if callable(clear):
+                try:
+                    clear()
+                except Exception:
+                    pass
+        self._keys = None
+        self._salt = None
+        self.keyring_convenience_enabled = False
+
+    def _safe_load_marker(self) -> tuple[dict[str, Any] | None, bool]:
+        """Return (marker, available). available=False iff the marker store raised."""
+        try:
+            return self.trust_store.marker_store.load_marker(), True
+        except SkillTrustMarkerUnavailable:
+            return None, False
+        except Exception:
+            return None, False
+
+    def trust_posture(self) -> str:
+        """Structured global trust posture for the Skills list header.
+
+        See the plan's Task 3 interface contract for the exact mapping.
+
+        Returns:
+            One of six posture strings:
+
+            - ``"unavailable"`` -- the marker store *raised* (e.g. a locked
+              OS keyring), so trust cannot be read or written right now and
+              neither setup nor unlock could succeed. Checked FIRST so a
+              transiently-broken keyring is never mistaken for a fresh
+              install or an orphaned manifest; recoverable by Retry, never
+              destructively.
+            - ``"needs_setup"`` -- no manifest and no marker: a genuine
+              first run.
+            - ``"needs_resetup"`` -- either no manifest but a marker is
+              present (a foreign/inherited marker), or a manifest exists
+              with its marker cleanly absent (the orphaned-manifest upgrade
+              case). Recover via reset-then-setup.
+            - ``"locked"`` -- manifest and marker both present but this
+              session has not unlocked the trust keys.
+            - ``"error"`` -- keys are loaded but the manifest fails to
+              validate.
+            - ``"ready"`` -- trust is set up, unlocked, and valid.
+        """
+        has_manifest = self.trust_store.has_manifest()
+        self._try_cached_unlock()
+        marker, available = self._safe_load_marker()
+        if not available:
+            return "unavailable"
+        if not has_manifest:
+            return "needs_resetup" if marker else "needs_setup"
+        if marker is None:
+            return "needs_resetup"  # orphaned manifest (upgrade case)
+        if self._keys is None:
+            return "locked"
+        try:
+            self._load_valid_manifest()
+        except (SkillTrustMarkerUnavailable, ValueError):
+            return "error"
+        return "ready"
+
     def bootstrap_trust(
         self, passphrase: str | None = None, *, salt: bytes | None = None
     ) -> None:
@@ -145,8 +260,6 @@ class SkillTrustService:
 
         for normalized_name, skill_dir in self._iter_skill_dirs():
             snapshot = scan_skill_directory(normalized_name, skill_dir)
-            if snapshot.unsupported_paths:
-                raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
             snapshot_id = self._snapshot_id(normalized_name, generation)
             self.trust_store.save_snapshot(
                 snapshot_id,
@@ -177,6 +290,7 @@ class SkillTrustService:
     def status_for_skill(self, skill_name: str) -> SkillTrustStatus:
         """Return visible trust status without raising for locked or bad manifests."""
 
+        self._try_cached_unlock()
         try:
             normalized_name = self._normalize_skill_name(skill_name)
         except ValueError:
@@ -273,6 +387,73 @@ class SkillTrustService:
             last_verified_at=_now_iso(),
         )
 
+    def trusted_file_paths(self, skill_name: str) -> frozenset[str]:
+        """Return the bundle-relative paths the trust manifest vouches for.
+
+        The authoritative allow-list for "is this file trust material?".
+        `status_for_skill` compares the manifest's per-file entries against a
+        LIVE scan, and that scan deliberately prunes VCS/OS/build junk
+        (`skill_trust_scanner.SUPPORTING_JUNK_DIRS`/`_FILES`/`_SUFFIXES`) so a
+        real bundle's `node_modules/` or `*.pyc` litter cannot make the skill
+        permanently untrustable. The consequence is that a pruned path is
+        never fingerprinted, never diffed, and never shown in a trust review
+        -- so "the skill is trusted" says NOTHING about it. Callers that gate
+        an action on a specific file (notably script execution) must ask THIS
+        method, not merely `ensure_skill_trusted`.
+
+        Read-side: never raises, and fails CLOSED. An uninitialized, locked,
+        unreadable, or schema-invalid manifest, a malformed `skill_name`, or a
+        skill absent from the manifest all yield an EMPTY set -- i.e. nothing
+        is trusted -- rather than a permissive default. Mirrors
+        `status_for_skill`/`script_execution_granted`'s tolerance of malformed
+        or untrusted input names.
+
+        Note this reports what the manifest RECORDS, not whether live content
+        still matches it; pair it with `ensure_skill_trusted` (which does the
+        live-diff check) to gate an action on a specific trusted file.
+
+        Args:
+            skill_name: Skill name (normalized internally).
+
+        Returns:
+            The manifest's recorded relative paths for this skill (POSIX,
+            relative to the skill directory), or an empty frozenset whenever
+            trust cannot be established.
+        """
+        try:
+            normalized_name = self._normalize_skill_name(skill_name)
+        except ValueError:
+            return frozenset()
+        self._try_cached_unlock()
+        if self._keys is None or not self.trust_store.has_manifest():
+            return frozenset()
+        try:
+            manifest = self._load_valid_manifest()
+            trusted = manifest["skills"].get(normalized_name)
+            if trusted is None:
+                return frozenset()
+            return frozenset(self._trusted_file_map(trusted))
+        except Exception:  # noqa: BLE001 — unreadable trust state ⇒ nothing trusted
+            return frozenset()
+
+    def is_trusted_file(self, skill_name: str, relative_path: str) -> bool:
+        """Return whether one bundle-relative path is recorded trust material.
+
+        Convenience wrapper over `trusted_file_paths` with the same
+        never-raises, fail-closed semantics; see that method for why manifest
+        membership -- not "the scanner did not reject it" -- is the question
+        that matters.
+
+        Args:
+            skill_name: Skill name (normalized internally).
+            relative_path: POSIX path relative to the skill directory.
+
+        Returns:
+            True only when the manifest records a fingerprint for exactly this
+            path under this skill.
+        """
+        return relative_path in self.trusted_file_paths(skill_name)
+
     def ensure_skill_trusted(self, skill_name: str) -> None:
         """Raise only at use time when a local skill is trust-blocked."""
 
@@ -327,11 +508,22 @@ class SkillTrustService:
             skill_content=skill_content,
             supporting_files=supporting_files,
         )
-        missing = set(trusted_files) - set(current_files)
+        # The in-memory reconstruction is text-only and mode-blind. Binary and
+        # executable files cannot be represented here, so scope the in-memory
+        # comparison to reconstructable (text, non-executable) trusted files;
+        # ensure_skill_trusted() above already verified the full on-disk bundle
+        # (binaries + exec bits) against the manifest via a recursive scan.
+        reconstructable = {
+            path
+            for path, entry in trusted_files.items()
+            if entry.get("file_type") != "supporting_binary"
+            and not entry.get("executable")
+        }
+        missing = reconstructable - set(current_files)
         added = set(current_files) - set(trusted_files)
         modified = {
             path
-            for path in trusted_files.keys() & current_files.keys()
+            for path in reconstructable & current_files.keys()
             if trusted_files[path] != current_files[path]
         }
         changed = tuple(sorted(missing | added | modified))
@@ -431,8 +623,6 @@ class SkillTrustService:
         manifest = self._load_valid_manifest()
         generation = int(manifest["generation"]) + 1
         current = snapshot or self._scan_skill(normalized_name)
-        if current.unsupported_paths:
-            raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
         if not current.fingerprints:
             raise ValueError(TRUST_REASON_SKILL_DELETED)
 
@@ -457,6 +647,169 @@ class SkillTrustService:
             }
         )
         self.trust_store.save_manifest(manifest, keys, salt=self._require_salt())
+
+    def _script_grants_path(self) -> Path:
+        """Return the local-only script-grant sidecar path.
+
+        Deliberately a sibling of the trust manifest rather than a field
+        inside it: granting a run must never perturb the MAC'd fingerprint
+        material that trust review depends on.
+
+        Returns:
+            Path to the grant sidecar (may not exist yet).
+        """
+        return self.trust_store.store_dir / _SCRIPT_GRANTS_FILENAME
+
+    def _load_script_grants(self) -> dict[str, str]:
+        """Load the script-grant sidecar, tolerating absence or corruption.
+
+        Returns:
+            A mapping of normalized skill name to the fingerprint digest the
+            grant was pinned to. Empty when the sidecar is missing or unusable.
+        """
+        path = self._script_grants_path()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return {
+            str(key): str(value)
+            for key, value in data.items()
+            if isinstance(key, str) and isinstance(value, str)
+        }
+
+    def _save_script_grants(self, grants: dict[str, str]) -> None:
+        """Atomically persist the script-grant sidecar.
+
+        Reuses the trust store's `_atomic_write_json` helper (a private but
+        already package-internal helper; other modules here import
+        underscore-prefixed siblings the same way, e.g.
+        `_normalize_skill_name` from `tldw_api.skills_schemas`) instead of a
+        second hand-rolled write-temp-then-replace path, so the sidecar gets
+        the same symlink/path validation against the store dir that manifest
+        and snapshot writes already receive.
+
+        Args:
+            grants: Mapping of normalized skill name to pinned fingerprint digest.
+        """
+        _atomic_write_json(
+            self._script_grants_path(),
+            grants,
+            base_dir=self.trust_store.store_dir,
+        )
+
+    def current_fingerprint_digest(self, skill_name: str) -> str:
+        """Return the digest of a skill's live on-disk fingerprints.
+
+        Write/derive-side helper (mirrors `capture_review`/`trust_current_skill`
+        in this class): a malformed name is a caller bug, not untrusted input
+        to shrug off, so it is surfaced rather than swallowed. Callers that
+        need a non-raising read over a possibly-malformed or untrusted name
+        should use `script_execution_granted`/`script_grant_digest` instead.
+
+        Args:
+            skill_name: Skill name (normalized internally).
+
+        Returns:
+            The same digest value that invalidates a captured trust review,
+            so any content change also invalidates a script grant.
+
+        Raises:
+            ValueError: If `skill_name` cannot be normalized (empty, contains
+                characters outside lowercase letters/digits/hyphens, or
+                starts/ends with or doubles a hyphen).
+        """
+        normalized = self._normalize_skill_name(skill_name)
+        return self._fingerprints_digest(self._scan_skill(normalized))
+
+    def script_grant_digest(self, skill_name: str) -> str | None:
+        """Return the fingerprint digest a script grant was pinned to.
+
+        Read-side: never raises. Mirrors `status_for_skill`'s handling of
+        `_normalize_skill_name` -- a malformed `skill_name` (e.g. from a UI
+        render path or agent-supplied input) is treated the same as "no
+        grant recorded" rather than propagating a `ValueError`.
+
+        Args:
+            skill_name: Skill name (normalized internally).
+
+        Returns:
+            The pinned digest, or None when no grant is recorded or
+            `skill_name` cannot be normalized.
+        """
+        try:
+            normalized = self._normalize_skill_name(skill_name)
+        except ValueError:
+            return None
+        return self._load_script_grants().get(normalized)
+
+    def grant_script_execution(self, skill_name: str) -> None:
+        """Record an 'always allow scripts' grant pinned to current content.
+
+        Write-side: see `current_fingerprint_digest` for why a malformed
+        name raises here instead of failing silently.
+
+        Args:
+            skill_name: Skill name (normalized internally).
+
+        Raises:
+            ValueError: If `skill_name` cannot be normalized.
+        """
+        normalized = self._normalize_skill_name(skill_name)
+        grants = self._load_script_grants()
+        grants[normalized] = self.current_fingerprint_digest(normalized)
+        self._save_script_grants(grants)
+
+    def revoke_script_execution(self, skill_name: str) -> None:
+        """Drop any standing script grant for a skill.
+
+        Write-side: see `current_fingerprint_digest` for why a malformed
+        name raises here instead of failing silently.
+
+        Args:
+            skill_name: Skill name (normalized internally).
+
+        Raises:
+            ValueError: If `skill_name` cannot be normalized.
+        """
+        normalized = self._normalize_skill_name(skill_name)
+        grants = self._load_script_grants()
+        if grants.pop(normalized, None) is not None:
+            self._save_script_grants(grants)
+
+    def script_execution_granted(self, skill_name: str) -> bool:
+        """Return whether scripts may run for this skill without a prompt.
+
+        The grant is honoured only while the skill's content still matches the
+        digest it was pinned to; any change (which already forces a trust
+        re-review) drops it back to per-run confirmation.
+
+        Read-side: never raises. Mirrors `status_for_skill`'s handling of
+        `_normalize_skill_name` -- a malformed `skill_name` (e.g. from a UI
+        render path guarded only against `(NoMatches, QueryError,
+        AttributeError)`, or an agent-supplied name) is treated as "not
+        granted" rather than propagating a `ValueError`.
+
+        Args:
+            skill_name: Skill name (normalized internally).
+
+        Returns:
+            True only when a grant exists AND still matches live content.
+            False for a malformed `skill_name`.
+        """
+        try:
+            normalized = self._normalize_skill_name(skill_name)
+        except ValueError:
+            return False
+        granted = self._load_script_grants().get(normalized)
+        if not granted:
+            return False
+        try:
+            return granted == self.current_fingerprint_digest(normalized)
+        except Exception:  # noqa: BLE001 — unreadable content ⇒ no grant
+            return False
 
     def _iter_skill_dirs(self) -> list[tuple[str, Path]]:
         if not self.skills_dir.exists():
@@ -505,6 +858,7 @@ class SkillTrustService:
         return manifest
 
     def _require_keys(self) -> SkillTrustKeys:
+        self._try_cached_unlock()
         if self._keys is None:
             raise SkillTrustBlockedError(
                 skill_name="<all>",

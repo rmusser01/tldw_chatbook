@@ -21,6 +21,8 @@ from tldw_chatbook.tldw_api import (
     IngestionSourcePatchRequest,
     MediaDetailResponse,
     MediaIdentifierLookupResponse,
+    MediaIngestJobItem,
+    MediaIngestJobStatus,
     MediaKeywordsResponse,
     MediaKeywordListResponse,
     MediaKeywordsUpdateRequest,
@@ -51,6 +53,57 @@ from tldw_chatbook.tldw_api import (
     UnifiedItem,
     UnifiedItemsListResponse,
 )
+
+
+def _transcription_provenance() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "attempt_id": "attempt-1",
+        "batch_id": None,
+        "job_id": None,
+        "retry_of_attempt_id": None,
+        "retry_of_job_id": None,
+        "provider_id": "parakeet-onnx",
+        "model_id": "parakeet-v2",
+        "artifact_root": None,
+        "artifact_dependencies": [],
+        "precision": "int8",
+        "requested_device": "auto",
+        "effective_device": "cpu",
+        "requested_language": "en",
+        "effective_language": "en",
+        "detected_language": None,
+        "task": "transcribe",
+        "produced_capabilities": {
+            "timestamps": "none",
+            "punctuation": True,
+            "capitalization": True,
+            "vad": False,
+            "diarization": False,
+        },
+        "warnings": [],
+        "failed_attempt": None,
+    }
+
+
+def _failed_attempt() -> dict[str, object]:
+    return {
+        "attempt_id": "attempt-1",
+        "batch_id": "batch-1",
+        "job_id": "ingest-job-1",
+        "provider_id": "parakeet-onnx",
+        "model_id": "parakeet-v2",
+        "artifact_root": None,
+        "artifact_dependencies": [],
+        "precision": "int8",
+        "requested_device": "auto",
+        "effective_device": "cpu",
+        "requested_language": "en",
+        "effective_language": "en",
+        "detected_language": None,
+        "task": "transcribe",
+        "error_code": "inference_failed",
+    }
 
 
 def test_server_media_listing_and_search_adjunct_models_match_server_contracts():
@@ -100,6 +153,70 @@ def test_server_media_listing_and_search_adjunct_models_match_server_contracts()
     assert metadata_search.results[0]["safe_metadata"]["doi"] == "10/example"
     assert identifier_lookup.total == 1
     assert empty_trash.deleted_count == 2
+
+
+def test_media_api_schemas_preserve_and_validate_stt_provenance() -> None:
+    provenance = _transcription_provenance()
+    failed_attempt = _failed_attempt()
+    listing = ServerMediaListResponse(
+        items=[
+            {
+                "id": 99,
+                "title": "Transcript",
+                "url": "/api/v1/media/99",
+                "type": "audio",
+                "transcription_provenance": provenance,
+            }
+        ],
+        pagination={
+            "page": 1,
+            "results_per_page": 20,
+            "total_pages": 1,
+            "total_items": 1,
+        },
+    )
+    submitted = MediaIngestJobItem(
+        id=2,
+        source="/tmp/audio.wav",
+        source_kind="file",
+        status="queued",
+        retry_of_job_id=1,
+        retry_source_failure_provenance=failed_attempt,
+    )
+    failed = MediaIngestJobStatus(
+        id=2,
+        status="failed",
+        job_type="media_ingest",
+        stt_failure_provenance=failed_attempt,
+        retry_source_failure_provenance=failed_attempt,
+        retry_of_job_id="ingest-job-1",
+    )
+
+    assert listing.items[0].transcription_provenance == provenance
+    assert submitted.retry_of_job_id == 1
+    assert submitted.retry_source_failure_provenance == failed_attempt
+    assert failed.stt_failure_provenance == failed_attempt
+
+    invalid = dict(provenance)
+    invalid["raw_exception"] = "private traceback"
+    with pytest.raises(ValueError):
+        ServerMediaListResponse(
+            items=[
+                {
+                    "id": 99,
+                    "title": "Transcript",
+                    "url": "/api/v1/media/99",
+                    "type": "audio",
+                    "transcription_provenance": invalid,
+                }
+            ],
+            pagination={
+                "page": 1,
+                "results_per_page": 20,
+                "total_pages": 1,
+                "total_items": 1,
+            },
+        )
 
 
 def test_media_transcription_models_response_matches_server_contract():
@@ -202,6 +319,7 @@ def test_media_item_models_match_server_contracts():
         ],
         has_original_file=True,
         original_file_url="/api/v1/media/99/file",
+        transcription_provenance=_transcription_provenance(),
     )
     update = MediaUpdateRequest(
         title=" New title ",
@@ -217,6 +335,7 @@ def test_media_item_models_match_server_contracts():
     assert detail.source.title == "Paper"
     assert detail.keywords == ["ai", "testing"]
     assert detail.versions[0].version_number == 1
+    assert detail.transcription_provenance == _transcription_provenance()
     assert update.model_dump(exclude_none=True, mode="json") == {
         "title": "New title",
         "content": "Body 2",

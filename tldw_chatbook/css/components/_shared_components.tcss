@@ -1,0 +1,105 @@
+/* Shared UI component styles.
+ *
+ * TASK-394: these generic, app-wide component classes (used across settings
+ * forms, previews, eval/dataset/coderepo panels, etc.) previously lived in
+ * `components/_settings_splash_theme.tcss` -- a feature module whose bare
+ * definitions leaked and, worse, disguised their app-wide reach. They are moved
+ * here verbatim, at the SAME bundle position (right after the splash/theme
+ * module), so the effective cascade is unchanged while the splash module stops
+ * owning generic component styles. (Consolidating these with the other bare
+ * duplicate definitions scattered across feature modules is a larger,
+ * out-of-scope cleanup; this move only relocates the splash module's copies.)
+ */
+
+/* Scrollable card / preview lists */
+.card-list {
+    height: 1fr;
+    scrollbar-size: 1 1;
+}
+
+/* Preview panels shared by settings, coderepo, dataset, eval, chunk previews */
+.preview-panel {
+    width: 1fr;
+    height: 100%;
+    border: solid $primary;
+    padding: 1;
+}
+
+.preview-container {
+    width: 1fr;
+    layout: vertical;
+    border: solid $primary;
+    padding: 1;
+}
+
+.preview-content {
+    padding: 1;
+    text-align: center;
+}
+
+/* Settings form components */
+.settings-section {
+    height: auto;
+    padding: 1;
+    margin-top: 1;
+    border-top: solid $primary;
+}
+
+.setting-label {
+    width: 20;
+    text-align: right;
+    margin-right: 1;
+}
+
+.section-header {
+    text-style: bold;
+    color: $primary;
+    padding: 1 0;
+}
+
+.help-text {
+    text-style: italic;
+    color: $text-muted;
+    padding: 0 0 1 0;
+    text-align: center;
+}
+
+/* Action button rows */
+.action-buttons {
+    height: 3;
+    layout: horizontal;
+    align: center middle;
+    padding: 1;
+    margin-top: 1;
+}
+
+.action-buttons Button {
+    margin: 0 1;
+}
+
+/* Generic window heading. Relocated from features/_ingest_tldw_api_tabs.tcss
+   when that sheet was retired with the standalone ingest window (task-745):
+   the rule is unscoped and was the ONLY bundled definition of .window-title,
+   while ChatbookExportManagementWindow, ChatbookTemplatesWindow and
+   Voice_Cloning_Window all mount it. Deleting the sheet without moving this
+   would have silently unstyled three live windows. */
+.window-title {
+    text-style: bold;
+    text-align: center;
+    padding: 1 0;
+    background: $primary;
+    color: $text;
+}
+
+/* Relocated from features/_search-rag.tcss (RAG UX v2 PR-2 Task 2) when that
+   sheet was retired: both rules are unscoped and were the ONLY bundled
+   definitions of their class, while CodeRepoCopyPasteWindow (.action-spacer)
+   and MediaViewerPanel (.param-group) still mount them. Deleting the sheet
+   without moving these would have silently unstyled both live widgets. */
+.action-spacer {
+    width: 1fr;
+}
+
+.param-group {
+    width: 1fr;
+}

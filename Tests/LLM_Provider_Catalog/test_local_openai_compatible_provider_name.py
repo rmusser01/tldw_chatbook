@@ -28,7 +28,11 @@ def _run_handler_capturing_kwargs(handler, settings_payload):
             "_chat_with_openai_compatible_local_server",
             side_effect=fake_helper,
         ),
-        patch.object(local_calls, "settings", settings_payload),
+        patch.object(
+            local_calls,
+            "get_runtime_config_snapshot",
+            return_value=type("Snapshot", (), {"values": settings_payload})(),
+        ),
     ):
         result = handler(input_data=_MESSAGES, model="test-model")
     return captured, result
@@ -47,7 +51,7 @@ def test_custom_openai_passes_string_provider_name():
 def test_local_llm_passes_string_provider_name():
     captured, result = _run_handler_capturing_kwargs(
         local_calls.chat_with_local_llm,
-        {"local-llm": {"api_ip": "http://127.0.0.1:9/v1"}},
+        {"api_settings": {"local-llm": {"api_ip": "http://127.0.0.1:9/v1"}}},
     )
     assert isinstance(captured["provider_name"], str)
     assert captured["provider_name"] == "Local-LLM"

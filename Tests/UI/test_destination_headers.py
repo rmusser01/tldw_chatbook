@@ -13,28 +13,46 @@ import pytest
 from textual.app import App
 from textual.widgets import Static
 
+from tldw_chatbook.UI.Navigation.pending_handoff_store import PendingHandoffStore
 from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 
 # route -> (screen import path pieces resolved lazily in the test), title
+#
+# "evals" is deliberately absent (PR3a Task 3): it moved from the flat
+# compose_content() pattern this list assumes -- DestinationHeader as
+# widgets[0], callable via list(screen.compose_content()) with no running
+# app -- to the three-pane workbench shell, which wraps everything in
+# with Vertical(id="evals-shell"): ..., and entering that context manager
+# requires an active Textual app. This mirrors why skills/mcp/personas/
+# watchlists_collections (already on the workbench shell pattern) were
+# never in this list either. See
+# test_evals_screen_composes_destination_header_in_the_workbench_shell
+# below for the equivalent header-identity coverage through a real
+# running app.
+#
+# "llm" is absent for the same reason as of the Lab-frame PR2 adoption
+# (Task 6): LLMScreen now extends LabScreen, whose compose_content() enters
+# `with Horizontal(id="lab-status-row"): ...` whenever lab_status_chips() is
+# non-empty -- and Models' running-server chip always is -- which also needs
+# an active Textual app. See
+# test_llm_screen_composes_destination_header_in_the_lab_frame below.
 _SIMPLE_SCREEN_ROUTES = (
-    ("search", "Search"),
     ("media", "Media"),
     ("writing", "Writing"),
-    ("llm", "Models"),
-    ("stts", "Speech"),
+    # "stts" removed with the Speech Lab-frame adoption: STTSScreen extends
+    # LabScreen, whose compose_content() enters
+    # `with Horizontal(id="lab-header-row"): ...`, and entering that context
+    # manager without a running app raises NoActiveAppError -- the same
+    # reason "evals" was never in this list. Covered instead by
+    # test_stts_screen_composes_destination_header_in_the_lab_frame below.
     ("logs", "Logs"),
     ("stats", "Stats"),
-    ("evals", "Evals"),
 )
 
 
 def _screen_for_route(route: str, app):
-    if route == "search":
-        from tldw_chatbook.UI.Screens.search_screen import SearchScreen
-
-        return SearchScreen(app)
     if route == "media":
         from tldw_chatbook.UI.Screens.media_screen import MediaScreen
 
@@ -43,10 +61,6 @@ def _screen_for_route(route: str, app):
         from tldw_chatbook.UI.Screens.writing_screen import WritingScreen
 
         return WritingScreen(app)
-    if route == "llm":
-        from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
-
-        return LLMScreen(app)
     if route == "stts":
         from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 
@@ -59,10 +73,6 @@ def _screen_for_route(route: str, app):
         from tldw_chatbook.UI.Screens.stats_screen import StatsScreen
 
         return StatsScreen(app)
-    if route == "evals":
-        from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
-
-        return EvalsScreen(app)
     raise AssertionError(f"unmapped route: {route}")
 
 
@@ -89,6 +99,103 @@ def test_folded_screen_composes_destination_header_first(route, expected_title):
     assert header.state.status == ("empty" if route == "llm" else "ready")
 
 
+@pytest.mark.asyncio
+async def test_evals_screen_composes_destination_header_in_the_workbench_shell():
+    """Equivalent of test_folded_screen_composes_destination_header_first
+    for Evals, which no longer fits that test's flat-compose_content()
+    assumption (see the comment on _SIMPLE_SCREEN_ROUTES above) -- driven
+    through a real running app instead, mirroring
+    test_study_screen_mounts_destination_header_and_boxes_library below.
+    """
+    from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
+
+    class _EvalsHarness(App):
+        def __init__(self, app_instance):
+            super().__init__()
+            self._app_instance = app_instance
+
+        async def on_mount(self) -> None:
+            await self.push_screen(EvalsScreen(self._app_instance))
+
+    app_instance = SimpleNamespace(
+        evaluation_orchestrator=None,
+        notify=lambda *args, **kwargs: None,
+    )
+    app = _EvalsHarness(app_instance)
+
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.1)
+        screen = app.screen_stack[-1]
+
+        header = screen.query_one("#lab-destination-header", DestinationHeader)
+        assert header.has_class("workbench-header")
+        assert header.has_class("ds-destination-header")
+        title = screen.query_one(
+            "#lab-destination-header #workbench-header-title", Static
+        )
+        assert str(title.renderable) == "Evals"
+        subtitle = screen.query_one(
+            "#lab-destination-header #workbench-header-subtitle", Static
+        )
+        subtitle_text = str(subtitle.renderable)
+        # Plain purpose copy, kept short, with no em dashes.
+        assert subtitle_text
+        assert len(subtitle_text) <= 60
+        assert "—" not in subtitle_text
+        assert "--" not in subtitle_text
+        # States are text-labeled, never color-only.
+        status = screen.query_one(
+            "#lab-destination-header #workbench-header-status", Static
+        )
+        assert str(status.renderable) == "Ready"
+
+
+@pytest.mark.asyncio
+async def test_llm_screen_composes_destination_header_in_the_lab_frame():
+    """Equivalent of test_folded_screen_composes_destination_header_first
+    for Models (llm), which no longer fits that test's flat-compose_content()
+    assumption (see the comment on _SIMPLE_SCREEN_ROUTES above) -- driven
+    through a real running app instead. Unlike Evals, the header id is the
+    Lab frame's shared "lab-destination-header", not a route-specific one."""
+    from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
+
+    class _LLMHarness(App):
+        def __init__(self, app_instance):
+            super().__init__()
+            self._app_instance = app_instance
+
+        async def on_mount(self) -> None:
+            await self.push_screen(LLMScreen(self._app_instance))
+
+    app = _LLMHarness(_build_test_app())
+
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.1)
+        screen = app.screen_stack[-1]
+
+        header = screen.query_one("#lab-destination-header", DestinationHeader)
+        assert header.has_class("workbench-header")
+        assert header.has_class("ds-destination-header")
+        title = screen.query_one(
+            "#lab-destination-header #workbench-header-title", Static
+        )
+        assert str(title.renderable) == "Models"
+        subtitle = screen.query_one(
+            "#lab-destination-header #workbench-header-subtitle", Static
+        )
+        subtitle_text = str(subtitle.renderable)
+        # Plain purpose copy, kept short, with no em dashes.
+        assert subtitle_text
+        assert len(subtitle_text) <= 60
+        assert "—" not in subtitle_text
+        assert "--" not in subtitle_text
+        # States are text-labeled, never color-only.
+        status = screen.query_one(
+            "#lab-destination-header #workbench-header-status", Static
+        )
+        assert str(status.renderable) == "Ready"
+
+
 class _StudyHarness(App):
     def __init__(self, app_instance):
         super().__init__()
@@ -111,6 +218,12 @@ async def test_study_screen_mounts_destination_header_and_boxes_library():
         runtime_backend=None,
         app_config={},
         notify=lambda *args, **kwargs: None,
+        # StudyScreen.on_mount -> _apply_pending_scope_handoff reads this
+        # unconditionally (study_screen.py:1172, :1196), as artifacts_screen
+        # and chat_screen do. The real app always has one
+        # (app.py:3667), so a fake without it is the fake being wrong, not
+        # the screen being unguarded -- give it a real, empty store.
+        pending_handoffs=PendingHandoffStore(),
     )
     app = _StudyHarness(app_instance)
 
@@ -165,3 +278,53 @@ async def test_folded_screens_box_owning_destination_in_nav():
         async with app.run_test(size=(180, 20)) as pilot:
             await pilot.pause(0.1)
             assert app.query_one(f"#{expected_button_id}").has_class("is-active"), route
+
+
+@pytest.mark.asyncio
+async def test_stts_screen_composes_destination_header_in_the_lab_frame():
+    """Equivalent of test_folded_screen_composes_destination_header_first for
+    Speech, which left that test's flat-compose_content() assumption when it
+    adopted the Lab frame (see the comment on _SIMPLE_SCREEN_ROUTES above).
+
+    Like Models, the header id is the frame's shared
+    "lab-destination-header", not a route-specific one -- the old
+    "stts-destination-header" is gone with the screen's own compose_content.
+    """
+    from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
+
+    class _STTSHarness(App):
+        def __init__(self, app_instance):
+            super().__init__()
+            self._app_instance = app_instance
+
+        async def on_mount(self) -> None:
+            await self.push_screen(STTSScreen(self._app_instance))
+
+    app = _STTSHarness(_build_test_app())
+
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.1)
+        screen = app.screen_stack[-1]
+
+        header = screen.query_one("#lab-destination-header", DestinationHeader)
+        assert header.has_class("workbench-header")
+        assert header.has_class("ds-destination-header")
+        title = screen.query_one(
+            "#lab-destination-header #workbench-header-title", Static
+        )
+        assert str(title.renderable) == "Speech"
+        subtitle = screen.query_one(
+            "#lab-destination-header #workbench-header-subtitle", Static
+        )
+        subtitle_text = str(subtitle.renderable)
+        assert subtitle_text
+        assert len(subtitle_text) <= 60
+        assert "—" not in subtitle_text
+        assert "--" not in subtitle_text
+        # Readiness is derived from local speech dependencies, so this is
+        # whichever of Ready/Blocked matches this machine -- but never blank,
+        # and never color-only.
+        status = screen.query_one(
+            "#lab-destination-header #workbench-header-status", Static
+        )
+        assert str(status.renderable) in {"Ready", "Blocked"}

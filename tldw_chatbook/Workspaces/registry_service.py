@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import json
+from pathlib import Path
 import sqlite3
 from uuid import uuid4
 
 from loguru import logger
 
+from tldw_chatbook.Chat.rag_scope import RagScope, parse_scope, serialize_scope
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
 
 from .models import (
     DEFAULT_WORKSPACE_DESCRIPTION,
@@ -30,6 +33,34 @@ from .models import (
 _STORAGE_FAILURE_MESSAGE = "Workspace registry storage failed."
 
 
+def _filesystem_binding_missing(locator: str) -> bool:
+    """Whether a local-filesystem binding's locator no longer resolves safely.
+
+    A bound folder counts as missing not only once it no longer exists, but
+    also once the path has been replaced by a symlink or its resolved form
+    no longer matches the stored locator. ``add_folder_binding`` always
+    stores an already-resolved path, so any drift here means a symlink or
+    mount trick appeared along the path after binding -- trusting it could
+    silently widen the sandboxed root at enforcement time (ADR-028).
+
+    Args:
+        locator: The binding's stored (already-resolved) folder path.
+
+    Returns:
+        True if the locator no longer points at a real, non-symlinked
+        directory matching its own resolved form; False otherwise.
+    """
+    folder = Path(locator)
+    if folder.is_symlink():
+        return True
+    if not folder.is_dir():
+        return True
+    try:
+        return folder.resolve() != folder
+    except OSError:
+        return True
+
+
 class WorkspaceRegistryServiceError(Exception):
     """Base exception for workspace registry failures."""
 
@@ -40,6 +71,14 @@ class WorkspaceNotFound(WorkspaceRegistryServiceError):
 
 class DuplicateWorkspace(WorkspaceRegistryServiceError):
     """Raised when a workspace id already exists."""
+
+
+class BindingNotFound(WorkspaceRegistryServiceError):
+    """Raised when a runtime binding id does not exist."""
+
+    def __init__(self, binding_id: str) -> None:
+        super().__init__(f"Runtime binding not found: {binding_id}")
+        self.binding_id = binding_id
 
 
 class LocalWorkspaceRegistryService:
@@ -77,6 +116,7 @@ class LocalWorkspaceRegistryService:
             created_at=now,
             updated_at=now,
         )
+        self._reject_duplicate_name(record.name)
         try:
             with self.db.transaction() as conn:
                 conn.execute(
@@ -107,6 +147,10 @@ class LocalWorkspaceRegistryService:
                     ),
                 )
         except sqlite3.IntegrityError as exc:
+            if "idx_workspace_records_name_ci" in str(exc):
+                raise WorkspaceRegistryServiceError(
+                    f"A workspace named {record.name} already exists."
+                ) from exc
             raise DuplicateWorkspace(record.workspace_id) from exc
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
@@ -159,6 +203,158 @@ class LocalWorkspaceRegistryService:
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return _workspace_from_row(row) if row is not None else None
+
+    def rename_workspace(self, workspace_id: str, name: str) -> WorkspaceRecord:
+        """Rename a workspace (TASK-714).
+
+        The built-in Default workspace keeps its identity: rail copy and
+        runtime rules reference it by name, so it is protected from rename.
+
+        Args:
+            workspace_id: Workspace to rename.
+            name: New user-facing name (must be non-blank).
+
+        Returns:
+            The updated workspace record.
+
+        Raises:
+            WorkspaceNotFound: Unknown or archived workspace.
+            WorkspaceRegistryServiceError: Blank name, Default workspace, or
+                storage failure.
+        """
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        safe_name = str(name or "").strip()
+        if not safe_name:
+            raise WorkspaceRegistryServiceError("Workspace name cannot be blank.")
+        if safe_workspace_id == DEFAULT_WORKSPACE_ID:
+            raise WorkspaceRegistryServiceError(
+                "The Default workspace cannot be renamed."
+            )
+        record = self.get_workspace(safe_workspace_id)
+        if record is None or record.archived:
+            raise WorkspaceNotFound(safe_workspace_id)
+        self._reject_duplicate_name(safe_name, exclude_workspace_id=safe_workspace_id)
+        now = self._now_factory()
+        try:
+            with self.db.transaction() as conn:
+                conn.execute(
+                    """
+                    UPDATE workspace_records
+                    SET name = ?, updated_at = ?
+                    WHERE workspace_id = ?
+                    """,
+                    (safe_name, now, safe_workspace_id),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise WorkspaceRegistryServiceError(
+                f"A workspace named {safe_name} already exists."
+            ) from exc
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        renamed = self.get_workspace(safe_workspace_id)
+        if renamed is None:
+            raise WorkspaceRegistryServiceError("Workspace rename failed.")
+        return renamed
+
+    def archive_workspace(self, workspace_id: str) -> WorkspaceRecord:
+        """Archive a workspace, hiding it from listings (TASK-714).
+
+        Conversations and memberships are untouched - archiving only removes
+        the workspace from the switcher/browser. When the archived workspace
+        was active, the built-in Default workspace becomes active so Console
+        always has a real context.
+
+        Args:
+            workspace_id: Workspace to archive.
+
+        Returns:
+            The archived workspace record.
+
+        Raises:
+            WorkspaceNotFound: Unknown or already-archived workspace.
+            WorkspaceRegistryServiceError: Default workspace or storage
+                failure.
+        """
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        if safe_workspace_id == DEFAULT_WORKSPACE_ID:
+            raise WorkspaceRegistryServiceError(
+                "The Default workspace cannot be archived."
+            )
+        record = self.get_workspace(safe_workspace_id)
+        if record is None or record.archived:
+            raise WorkspaceNotFound(safe_workspace_id)
+        was_active = record.active
+        now = self._now_factory()
+        try:
+            with self.db.transaction() as conn:
+                conn.execute(
+                    """
+                    UPDATE workspace_records
+                    SET archived = 1, active = 0, updated_at = ?
+                    WHERE workspace_id = ?
+                    """,
+                    (now, safe_workspace_id),
+                )
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        if was_active:
+            self.ensure_default_workspace()
+            self.set_active_workspace(DEFAULT_WORKSPACE_ID)
+        archived = self.get_workspace(safe_workspace_id)
+        if archived is None:
+            raise WorkspaceRegistryServiceError("Workspace archive failed.")
+        return archived
+
+    def unarchive_workspace(self, workspace_id: str) -> WorkspaceRecord:
+        """Restore an archived workspace to listings (spec §2).
+
+        Never auto-activates: the user chooses when to switch.
+
+        Raises:
+            WorkspaceNotFound: Unknown or not-archived workspace.
+            WorkspaceRegistryServiceError: Storage failure.
+        """
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        record = self.get_workspace(safe_workspace_id)
+        if record is None or not record.archived:
+            raise WorkspaceNotFound(safe_workspace_id)
+        now = self._now_factory()
+        try:
+            with self.db.transaction() as conn:
+                conn.execute(
+                    """
+                    UPDATE workspace_records
+                    SET archived = 0, updated_at = ?
+                    WHERE workspace_id = ?
+                    """,
+                    (now, safe_workspace_id),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise WorkspaceRegistryServiceError(
+                f"A workspace named {record.name} already exists; rename it before unarchiving."
+            ) from exc
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        restored = self.get_workspace(safe_workspace_id)
+        if restored is None:
+            raise WorkspaceRegistryServiceError("Workspace unarchive failed.")
+        return restored
+
+    def _reject_duplicate_name(
+        self, name: str, *, exclude_workspace_id: str | None = None
+    ) -> None:
+        """Raise when a non-archived workspace already uses ``name``.
+
+        Case-insensitive; archived workspaces do not block reuse (spec §2).
+        """
+        needle = name.strip().casefold()
+        for record in self.list_workspaces():
+            if exclude_workspace_id and record.workspace_id == exclude_workspace_id:
+                continue
+            if str(record.name or "").strip().casefold() == needle:
+                raise WorkspaceRegistryServiceError(
+                    f"A workspace named {name} already exists."
+                )
 
     def set_active_workspace(self, workspace_id: str) -> WorkspaceRecord:
         """Set exactly one active workspace."""
@@ -460,6 +656,179 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError("Runtime binding save failed.")
         return stored
 
+    def add_folder_binding(
+        self,
+        workspace_id: str,
+        path: str | Path,
+        *,
+        allow_write: bool = False,
+    ) -> WorkspaceRuntimeBinding:
+        """Bind a folder as a file-tool access root (spec §2).
+
+        Read-only by default; canonical (resolved) locator; denies the
+        filesystem root, the home directory itself, non-directories,
+        duplicate/nested roots within the same workspace, and any root
+        that is or contains a path ``Utils.sensitive_paths`` protects
+        (TASK-857). Default-workspace and unknown-workspace rejection is
+        delegated to ``save_runtime_binding``.
+        """
+        candidate = Path(path).expanduser()
+        try:
+            resolved = candidate.resolve()
+        except OSError as exc:
+            raise WorkspaceRegistryServiceError(
+                f"Folder path could not be resolved: {candidate}"
+            ) from exc
+        if not resolved.is_dir():
+            raise WorkspaceRegistryServiceError(
+                f"Folder does not exist or is not a directory: {resolved}"
+            )
+        if resolved == Path(resolved.anchor):
+            raise WorkspaceRegistryServiceError(
+                "The filesystem root cannot be bound to a workspace."
+            )
+        if resolved == Path.home().resolve():
+            raise WorkspaceRegistryServiceError(
+                "Your home directory itself cannot be bound; choose a "
+                "project folder inside it."
+            )
+        # TASK-857: the sensitive-path denylist used to only be consulted
+        # at file-tool READ/WRITE time, never here at the binding gate --
+        # so binding e.g. ~/.config/tldw_cli (this app's own config,
+        # API keys included), get_user_data_dir() (every app database), or
+        # ~/.ssh as a workspace folder root all passed this check, widening
+        # what the agent file tools can reach up to the edge of whatever
+        # the denylist enumerates. See ``find_root_binding_conflict`` for
+        # the exact "is, or contains, or is contained by" rule.
+        conflict = find_root_binding_conflict(resolved)
+        if conflict is not None:
+            raise WorkspaceRegistryServiceError(
+                f"'{resolved}' cannot be bound: it is, or contains, the "
+                f"protected path '{conflict}'. Choose a folder that does "
+                f"not overlap this application's own data, configuration, "
+                f"or credential directories."
+            )
+        for existing in self.list_folder_bindings(workspace_id):
+            existing_path = Path(existing.locator)
+            if resolved == existing_path:
+                raise WorkspaceRegistryServiceError(
+                    f"{resolved} is already bound to this workspace."
+                )
+            if existing_path in resolved.parents:
+                raise WorkspaceRegistryServiceError(
+                    f"{resolved} is inside the already-bound folder "
+                    f"{existing_path}."
+                )
+            if resolved in existing_path.parents:
+                raise WorkspaceRegistryServiceError(
+                    f"The already-bound folder {existing_path} is inside "
+                    f"{resolved}; remove it first."
+                )
+        binding = WorkspaceRuntimeBinding(
+            workspace_id=workspace_id,
+            binding_id=f"folder-{uuid4().hex[:12]}",
+            binding_kind=RuntimeBindingKind.LOCAL_FILESYSTEM,
+            label=resolved.name or str(resolved),
+            locator=str(resolved),
+            status=RuntimeBindingStatus.READY,
+            metadata={"access": "rw" if allow_write else "ro"},
+        )
+        binding_result = self.save_runtime_binding(binding)
+        # TASK-1971 (Agent Change Review): the FIRST shadow snapshot of a
+        # root happens here, at registration, on a background thread -- the
+        # first agent send must never absorb the cost of hashing a whole
+        # tree. Best-effort: failures log and are disclosed on first use.
+        try:
+            from tldw_chatbook.Workspaces.change_bounds import (
+                change_review_enabled_globally,
+            )
+            from tldw_chatbook.Workspaces.change_turn_tracker import (
+                initial_snapshot_in_background,
+            )
+
+            # TASK-1979 (Qodo #1264): the opt-out gates registration too —
+            # a disabled workspace (or a global kill) must not grow shadow
+            # state when a binding is added.
+            if change_review_enabled_globally() and self.change_review_enabled(
+                workspace_id
+            ):
+                initial_snapshot_in_background(resolved)
+        except Exception:  # noqa: BLE001 -- registration must never fail on this
+            logger.opt(exception=True).debug(
+                "change_review: initial-snapshot hook failed at registration"
+            )
+        return binding_result
+
+    def list_folder_bindings(
+        self, workspace_id: str
+    ) -> tuple[WorkspaceRuntimeBinding, ...]:
+        """Local-filesystem bindings with status recomputed from disk."""
+        bindings = self.list_runtime_bindings(workspace_id)
+        # Filter to only local-filesystem bindings
+        filtered = [
+            b
+            for b in bindings
+            if str(b.binding_kind)
+            in ("local-filesystem", str(RuntimeBindingKind.LOCAL_FILESYSTEM))
+        ]
+        refreshed: list[WorkspaceRuntimeBinding] = []
+        for binding in filtered:
+            actual = (
+                RuntimeBindingStatus.MISSING
+                if _filesystem_binding_missing(binding.locator)
+                else RuntimeBindingStatus.READY
+            )
+            refreshed.append(
+                WorkspaceRuntimeBinding(
+                    workspace_id=binding.workspace_id,
+                    binding_id=binding.binding_id,
+                    binding_kind=binding.binding_kind,
+                    label=binding.label,
+                    locator=binding.locator,
+                    status=actual,
+                    metadata=binding.metadata,
+                    created_at=binding.created_at,
+                    updated_at=binding.updated_at,
+                )
+            )
+        return tuple(refreshed)
+
+    def remove_runtime_binding(self, binding_id: str) -> None:
+        """Delete a runtime binding row (spec §2)."""
+        safe_binding_id = _normalize_required_text(binding_id, "binding_id")
+        try:
+            with self.db.transaction() as conn:
+                cursor = conn.execute(
+                    "DELETE FROM workspace_runtime_bindings WHERE binding_id = ?",
+                    (safe_binding_id,),
+                )
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        if cursor.rowcount == 0:
+            raise BindingNotFound(safe_binding_id)
+
+    def set_folder_binding_access(
+        self, binding_id: str, *, allow_write: bool
+    ) -> WorkspaceRuntimeBinding:
+        """Flip a folder binding's ro/rw access flag (spec §4 toggle)."""
+        existing = self.get_runtime_binding(binding_id)
+        if existing is None:
+            raise BindingNotFound(binding_id)
+        metadata = dict(existing.metadata)
+        metadata["access"] = "rw" if allow_write else "ro"
+        return self.save_runtime_binding(
+            WorkspaceRuntimeBinding(
+                workspace_id=existing.workspace_id,
+                binding_id=existing.binding_id,
+                binding_kind=existing.binding_kind,
+                label=existing.label,
+                locator=existing.locator,
+                status=existing.status,
+                metadata=metadata,
+                created_at=existing.created_at,
+            )
+        )
+
     def get_runtime_binding(self, binding_id: str) -> WorkspaceRuntimeBinding | None:
         """Return one runtime binding if it exists."""
 
@@ -508,6 +877,176 @@ class LocalWorkspaceRegistryService:
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_runtime_binding_from_row(row) for row in rows)
+
+    def change_review_enabled(self, workspace_id: str) -> bool:
+        """Whether change review tracks this workspace's roots (TASK-1979).
+
+        Absent row reads as ENABLED (the toggle is an opt-out); a storage
+        error also reads as enabled — tracking availability must not flip
+        off because a read failed.
+
+        Args:
+            workspace_id: Workspace identifier.
+
+        Returns:
+            The stored toggle, default True.
+        """
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        try:
+            with self.db.connection() as conn:
+                row = conn.execute(
+                    """
+                    SELECT enabled FROM workspace_change_review
+                    WHERE workspace_id = ?
+                    """,
+                    (safe_workspace_id,),
+                ).fetchone()
+        except sqlite3.Error:
+            logger.opt(exception=True).debug(
+                "change_review toggle read failed; treating as enabled"
+            )
+            return True
+        if row is None:
+            return True
+        return bool(row["enabled"])
+
+    def set_change_review_enabled(self, workspace_id: str, enabled: bool) -> None:
+        """Persist the per-workspace change-review toggle (TASK-1979).
+
+        Args:
+            workspace_id: Workspace identifier.
+            enabled: Whether the workspace's roots are tracked.
+
+        Raises:
+            WorkspaceRegistryServiceError: If the write fails.
+        """
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        try:
+            with self.db.transaction() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO workspace_change_review
+                        (workspace_id, enabled, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(workspace_id) DO UPDATE SET
+                        enabled = excluded.enabled,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        safe_workspace_id,
+                        1 if enabled else 0,
+                        self._now_factory(),
+                    ),
+                )
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+
+    def get_workspace_scope(self, workspace_id: str) -> RagScope | None:
+        """Return a workspace's stored RAG retrieval scope, guarded.
+
+        Reads the ``workspace_rag_scopes`` table -- co-located with the
+        workspace registry (this database), not ``ChaChaNotes_DB``, since a
+        workspace has no row there to hang metadata off of (design spec
+        section 2). Guarded end to end, mirroring
+        ``Chat.rag_scope.read_conversation_scope``: a missing row, malformed
+        payload JSON, a non-dict payload, or a malformed/forward-versioned
+        scope payload (``parse_scope``'s own guards) all read as unscoped
+        (``None``) rather than raising. A stored zero-item scope also reads
+        as ``None`` -- same "no distinct scoped-with-nothing state" contract
+        as the conversation level.
+
+        Args:
+            workspace_id: Workspace identifier.
+
+        Returns:
+            The stored ``RagScope``, or ``None`` when unscoped, missing,
+            malformed, or empty.
+
+        Raises:
+            WorkspaceRegistryServiceError: If the underlying read fails.
+        """
+
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        try:
+            with self.db.connection() as conn:
+                row = conn.execute(
+                    """
+                    SELECT payload
+                    FROM workspace_rag_scopes
+                    WHERE workspace_id = ?
+                    """,
+                    (safe_workspace_id,),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        if row is None:
+            return None
+        try:
+            raw = json.loads(row["payload"])
+        except (TypeError, ValueError):
+            logger.warning(
+                "workspace rag_scope payload malformed for {}; treating as unscoped",
+                safe_workspace_id,
+            )
+            return None
+        scope = parse_scope(raw)
+        if scope is not None and not scope.items:
+            return None
+        return scope
+
+    def set_workspace_scope(self, workspace_id: str, scope: RagScope | None) -> None:
+        """Persist or clear a workspace's RAG retrieval scope.
+
+        ``scope=None`` deletes the stored row entirely. A zero-item scope
+        also normalizes to a delete, mirroring
+        ``Chat.rag_scope.write_conversation_scope``'s "save with zero
+        selected clears the scope" contract (design spec section 4) -- there
+        is no "scoped with nothing selected" state.
+
+        Deleting a scope for a workspace id that has none (or that does not
+        exist) is a harmless no-op. Setting a non-empty scope for a
+        workspace id that does not exist in ``workspace_records`` raises
+        ``WorkspaceNotFound`` (enforced by the table's foreign key, mirroring
+        ``link_membership``'s existence check).
+
+        Args:
+            workspace_id: Workspace identifier.
+            scope: The scope to persist, or ``None``/empty to clear it.
+
+        Raises:
+            WorkspaceNotFound: If ``scope`` is non-empty and ``workspace_id``
+                does not reference an existing workspace.
+            WorkspaceRegistryServiceError: If the underlying write fails.
+        """
+
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        if scope is not None and not scope.items:
+            scope = None
+        try:
+            with self.db.transaction() as conn:
+                if scope is None:
+                    conn.execute(
+                        "DELETE FROM workspace_rag_scopes WHERE workspace_id = ?",
+                        (safe_workspace_id,),
+                    )
+                else:
+                    payload = json.dumps(serialize_scope(scope))
+                    conn.execute(
+                        """
+                        INSERT INTO workspace_rag_scopes (
+                            workspace_id, payload, updated_at
+                        )
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(workspace_id) DO UPDATE SET
+                            payload = excluded.payload,
+                            updated_at = excluded.updated_at
+                        """,
+                        (safe_workspace_id, payload, scope.updated_at),
+                    )
+        except sqlite3.IntegrityError as exc:
+            raise WorkspaceNotFound(safe_workspace_id) from exc
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
 
     def _delete_default_runtime_bindings(self) -> None:
         """Remove stale runtime bindings from the safe built-in Default workspace."""

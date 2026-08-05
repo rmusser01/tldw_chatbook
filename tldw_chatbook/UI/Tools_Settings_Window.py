@@ -2,11 +2,15 @@
 #
 #
 # Imports
-from typing import TYPE_CHECKING, Optional, List, Dict, Any
-import shutil
-import sqlite3
+from typing import TYPE_CHECKING, Optional, List, Dict, NamedTuple
+import asyncio
+import io
 import json
+import os
+import sys
+import tempfile
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 
 #
@@ -32,14 +36,17 @@ from textual.widgets import (
     ListView,
 )
 from textual.message import Message
+from textual.worker import NoActiveWorker, get_current_worker
 from textual.widgets import Markdown
 from textual import on
 
 # Local Imports
 from tldw_chatbook.config import (
     load_cli_config_and_ensure_existence,
-    DEFAULT_CONFIG_PATH,
     save_setting_to_cli_config,
+    delete_settings_from_cli_config,
+    replace_cli_config,
+    export_cli_config_snapshot,
     API_MODELS_BY_PROVIDER,
     check_encryption_needed,
     get_detected_api_providers,
@@ -49,12 +56,23 @@ from tldw_chatbook.config import (
     get_encryption_password,
     get_cli_setting,
     get_prompts_db_path,
+    get_chachanotes_db_path,
+    get_media_db_path,
+    get_evals_db_path,
+    get_rag_indexing_db_path,
+    get_subscriptions_db_path,
+    get_user_data_dir,
 )
 from loguru import logger
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
-from ..DB.Client_Media_DB_v2 import MediaDatabase
-from ..DB.Prompts_DB import PromptsDatabase
-from .MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
+from ..DB.private_sqlite import (
+    SQLiteRestoreIndeterminateError,
+    connect_private_sqlite,
+    copy_private_sqlite,
+    restore_private_sqlite,
+)
+from ..Utils.path_validation import validate_path_simple
+from ..Utils.private_paths import create_private_text, secure_private_directory
 from .Outputs_Panel import OutputsPanel
 from .Sharing_Panel import SharingPanel
 from .Widgets import ConfigSearchResult, UIElementSearchEngine
@@ -64,22 +82,47 @@ from ..Chat.provider_readiness import (
     chat_api_key_field_state,
     chat_api_key_value_to_persist,
 )
+from ..Chatbooks.database_paths import (
+    get_chatbook_database_paths,
+    get_private_chatbooks_dir,
+)
 
 #
 # Local Imports
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
+
+
+class _BackupManifestPublication(NamedTuple):
+    """Immutable ownership token for one staged manifest publication."""
+
+    stage_path: Path
+    final_path: Path
+
+
 #
 #######################################################################################################################
 #
 # Functions:
+
+SETTINGS_DATABASES = (
+    ("chachanotes", "ChaChaNotes", "tldw_chatbook_ChaChaNotes"),
+    ("prompts", "Prompts", "tldw_cli_prompts"),
+    ("media", "Media", "tldw_cli_media_v2"),
+    ("evals", "Evals", "tldw_cli_evals"),
+    ("rag", "RAG", "tldw_cli_rag_indexing"),
+    ("subscriptions", "Subscriptions", "tldw_cli_subscriptions"),
+)
 
 
 class ToolsSettingsWindow(Container):
     """
     Container for the Tools & Settings Tab's UI.
     """
+
+    _BACKUP_COPY_WORKER_DESCRIPTION = "Copy legacy database backups"
+    _BACKUP_MANIFEST_WORKER_DESCRIPTION = "Write database backup manifest"
 
     class IngestUiStyleChanged(Message):
         """Request that the app refresh the active ingest view after a style change."""
@@ -488,7 +531,7 @@ class ToolsSettingsWindow(Container):
         super().__init__(**kwargs)
         self._app_instance = app_instance
         self.config_data = load_cli_config_and_ensure_existence()
-        self._pending_unified_mcp_view_state: Optional[Dict[str, Any]] = None
+        self._backup_all_in_progress = False
 
     @property
     def app_instance(self):
@@ -787,51 +830,6 @@ class ToolsSettingsWindow(Container):
                         placeholder="0.0 - 2.0",
                         tooltip="Controls randomness in responses (0=focused, 2=creative)",
                     )
-
-            # Add spacing before Chat Interface Settings section
-            yield Static("", classes="settings-section-spacer")
-            yield Static("", classes="settings-section-spacer")
-
-            # Chat Interface Settings Group
-            with Container(classes="settings-group"):
-                yield Static("🖥️ Interface Options", classes="settings-group-title")
-
-                yield Checkbox(
-                    "Use Enhanced Chat Window",
-                    value=chat_config.get("use_enhanced_window", False),
-                    id="general-enhanced-chat-window",
-                    classes="settings-checkbox",
-                    tooltip="Enable advanced features like image support and rich formatting",
-                )
-                yield Static(
-                    "⚡ Enhanced mode provides image support, better formatting, and advanced features",
-                    classes="help-text settings-indent",
-                )
-
-                yield Static("", classes="settings-separator")
-
-                yield Checkbox(
-                    "Enable Chat Tabs",
-                    value=chat_config.get("enable_tabs", False),
-                    id="general-enable-chat-tabs",
-                    classes="settings-checkbox",
-                    tooltip="Allow multiple chat conversations in tabs",
-                )
-
-                with Container(classes="settings-indent"):
-                    yield Label("Maximum Tabs:", classes="settings-label")
-                    yield Input(
-                        value=str(chat_config.get("max_tabs", 10)),
-                        id="general-max-chat-tabs",
-                        classes="settings-input settings-short-input",
-                        placeholder="10",
-                        tooltip="Maximum number of concurrent chat tabs",
-                    )
-
-                yield Static(
-                    "🔄 Interface changes require app restart to take effect",
-                    classes="help-text warning-text",
-                )
 
             # Add spacing before Quick Actions section
             yield Static("", classes="settings-section-spacer")
@@ -1720,24 +1718,20 @@ class ToolsSettingsWindow(Container):
         yield Container(
             Label("ChaChaNotes Database Path:", classes="form-label"),
             Input(
-                value=db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                ),
+                # Resolved through _DB_PATH_RESOLVERS -- the same
+                # profile-aware resolver the vacuum/backup/check workers
+                # use -- not a hardcoded literal (TASK-927).
+                value=self._resolved_db_path_display("chachanotes"),
                 id="config-db-chachanotes-path",
             ),
             Label("Prompts Database Path:", classes="form-label"),
             Input(
-                value=db_config.get(
-                    "prompts_db_path", "~/.local/share/tldw_cli/tldw_cli_prompts.db"
-                ),
+                value=self._resolved_db_path_display("prompts"),
                 id="config-db-prompts-path",
             ),
             Label("Media Database Path:", classes="form-label"),
             Input(
-                value=db_config.get(
-                    "media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
-                ),
+                value=self._resolved_db_path_display("media"),
                 id="config-db-media-path",
             ),
             Label("User Database Base Directory:", classes="form-label"),
@@ -2237,14 +2231,6 @@ class ToolsSettingsWindow(Container):
                 "Strip Thinking Tags",
                 value=chat_config.get("strip_thinking_tags", True),
                 id="config-chat-strip-thinking",
-            )
-        )
-
-        widgets.append(
-            Checkbox(
-                "Use Enhanced Window (with image support)",
-                value=chat_config.get("use_enhanced_window", False),
-                id="config-chat-enhanced-window",
             )
         )
 
@@ -2825,7 +2811,7 @@ class ToolsSettingsWindow(Container):
                     ),
                     Static(
                         "Last Backup: Loading...",
-                        id="db-backup-chachanotes",
+                        id="db-last-backup-chachanotes",
                         classes="db-status",
                     ),
                     classes="db-status-container",
@@ -2869,7 +2855,7 @@ class ToolsSettingsWindow(Container):
                     ),
                     Static(
                         "Last Backup: Loading...",
-                        id="db-backup-media",
+                        id="db-last-backup-media",
                         classes="db-status",
                     ),
                     classes="db-status-container",
@@ -2906,7 +2892,7 @@ class ToolsSettingsWindow(Container):
                     ),
                     Static(
                         "Last Backup: Loading...",
-                        id="db-backup-prompts",
+                        id="db-last-backup-prompts",
                         classes="db-status",
                     ),
                     classes="db-status-container",
@@ -2940,7 +2926,7 @@ class ToolsSettingsWindow(Container):
                     ),
                     Static(
                         "Last Backup: Loading...",
-                        id="db-backup-evals",
+                        id="db-last-backup-evals",
                         classes="db-status",
                     ),
                     classes="db-status-container",
@@ -2979,7 +2965,7 @@ class ToolsSettingsWindow(Container):
                     ),
                     Static(
                         "Last Backup: Loading...",
-                        id="db-backup-rag",
+                        id="db-last-backup-rag",
                         classes="db-status",
                     ),
                     classes="db-status-container",
@@ -3020,7 +3006,7 @@ class ToolsSettingsWindow(Container):
                     ),
                     Static(
                         "Last Backup: Loading...",
-                        id="db-backup-subscriptions",
+                        id="db-last-backup-subscriptions",
                         classes="db-status",
                     ),
                     classes="db-status-container",
@@ -3293,91 +3279,56 @@ class ToolsSettingsWindow(Container):
             # Get tool configuration from config
             tools_config = self.config_data.get("tools", {})
 
-            # Get available tools from the tool executor
-            from ..Tools import get_tool_executor
-
-            executor = get_tool_executor()
-            available_tools = executor.get_available_tools()
+            from ..Agents.tool_catalog import (
+                ALWAYS_ON_BUILTIN_NAMES,
+                build_gateable_tool,
+                gateable_builtin_tools,
+            )
 
             yield Label("Available Tools", classes="settings-label")
             yield Static(
-                "Enable or disable tools for LLM interactions:",
+                "Enable tools for the agent. Enabling one makes it reachable, "
+                "not automatic: a tool with a risk tag asks for approval before "
+                "each call, unless you have granted it standing permission in "
+                "MCP Hub \u25b8 Permissions.",
                 classes="section-description",
             )
 
-            # Create a switch for each available tool
-            for tool_info in available_tools:
-                tool_name = tool_info["function"]["name"]
-                tool_description = tool_info["function"]["description"]
+            for tool_name in ALWAYS_ON_BUILTIN_NAMES:
+                with Horizontal(classes="tool-item"):
+                    with Container(classes="tool-info"):
+                        yield Label(tool_name, classes="tool-name")
+                        yield Static(
+                            "Always available", classes="tool-description"
+                        )
 
-                # Check if tool is enabled (default to True if not specified)
-                is_enabled = tools_config.get(f"{tool_name}_enabled", True)
+            for entry in gateable_builtin_tools():
+                try:
+                    tool = build_gateable_tool(entry)
+                    description = tool.description
+                    tags = ", ".join(tool.risk_tags)
+                except Exception as exc:  # noqa: BLE001 — degrade the row, not the screen
+                    # opt(exception=True): loguru ignores exc_info=True, and the
+                    # row only says "Unavailable" without the traceback.
+                    logger.opt(exception=True).warning(
+                        f"Could not describe builtin tool {entry.factory_name}: {exc}"
+                    )
+                    description = "Unavailable on this system."
+                    tags = ""
+
+                # Parentheses, NOT brackets: Textual parses [reads] as markup.
+                label = f"{entry.tool_name}  ({tags})" if tags else entry.tool_name
+                is_enabled = bool(tools_config.get(entry.gate_key, False))
 
                 with Horizontal(classes="tool-item"):
                     yield Switch(
                         value=is_enabled,
-                        id=f"tool-switch-{tool_name}",
+                        id=f"tool-switch-{entry.tool_name}",
                         classes="tool-switch",
                     )
                     with Container(classes="tool-info"):
-                        yield Label(f"{tool_name}", classes="tool-name")
-                        yield Static(tool_description, classes="tool-description")
-
-            # Tool-specific settings section
-            with Collapsible(title="Tool Configuration", collapsed=True):
-                yield Label("Timeout Settings", classes="settings-label")
-
-                # Tool execution timeout
-                timeout = tools_config.get("timeout_seconds", 30)
-                yield Label("Tool Execution Timeout (seconds):", classes="form-label")
-                yield Input(
-                    value=str(timeout),
-                    id="tool-timeout-input",
-                    type="integer",
-                    placeholder="30",
-                )
-
-                # Max concurrent executions
-                max_workers = tools_config.get("max_workers", 4)
-                yield Label("Max Concurrent Tool Executions:", classes="form-label")
-                yield Input(
-                    value=str(max_workers),
-                    id="tool-max-workers-input",
-                    type="integer",
-                    placeholder="4",
-                )
-
-                # Cache settings
-                yield Label("Cache Settings", classes="settings-label")
-                yield Checkbox(
-                    "Enable tool result caching",
-                    value=tools_config.get("cache_enabled", False),
-                    id="tool-cache-enabled",
-                )
-
-                cache_max_size = tools_config.get("cache_max_size", 100)
-                yield Label("Cache Max Size (entries):", classes="form-label")
-                yield Input(
-                    value=str(cache_max_size),
-                    id="tool-cache-max-size-input",
-                    type="integer",
-                    placeholder="100",
-                )
-
-                cache_ttl = tools_config.get("cache_default_ttl", 3600)
-                yield Label("Cache Default TTL (seconds):", classes="form-label")
-                yield Input(
-                    value=str(cache_ttl),
-                    id="tool-cache-ttl-input",
-                    type="integer",
-                    placeholder="3600",
-                )
-
-                yield Checkbox(
-                    "Persist cache to disk",
-                    value=tools_config.get("cache_persist", True),
-                    id="tool-cache-persist",
-                )
+                        yield Label(label, classes="tool-name")
+                        yield Static(description, classes="tool-description")
 
             # Save and reset buttons
             with Horizontal(classes="button-row"):
@@ -3458,12 +3409,7 @@ Thank you for using tldw-chatbook! 🎉
                 "Database Tools", id="ts-nav-db-tools", classes="ts-nav-button"
             )
             yield Button("Appearance", id="ts-nav-appearance", classes="ts-nav-button")
-            yield Button(
-                "Tool Settings", id="ts-nav-tool-settings", classes="ts-nav-button"
-            )
-            yield Button(
-                "Unified MCP", id="ts-nav-unified-mcp", classes="ts-nav-button"
-            )
+            yield Button("Tool Settings", id="ts-nav-tool-settings", classes="ts-nav-button")
             yield Button("Outputs", id="ts-nav-outputs", classes="ts-nav-button")
             yield Button("Sharing", id="ts-nav-sharing", classes="ts-nav-button")
             yield Button("About", id="ts-nav-about", classes="ts-nav-button")
@@ -3496,11 +3442,6 @@ Thank you for using tldw-chatbook! 🎉
             yield Container(
                 *self._compose_tool_settings(),
                 id="ts-view-tool-settings",
-                classes="ts-view-area",
-            )
-            yield Container(
-                UnifiedMCPPanel(self.app_instance, id="unified-mcp-panel"),
-                id="ts-view-unified-mcp",
                 classes="ts-view-area",
             )
             yield Container(
@@ -3562,8 +3503,6 @@ Thank you for using tldw-chatbook! 🎉
             await self._show_view("ts-view-appearance")
         elif button_id == "ts-nav-tool-settings":
             await self._show_view("ts-view-tool-settings")
-        elif button_id == "ts-nav-unified-mcp":
-            await self._show_view("ts-view-unified-mcp")
         elif button_id == "ts-nav-outputs":
             await self._show_view("ts-view-outputs")
         elif button_id == "ts-nav-sharing":
@@ -3895,61 +3834,6 @@ Thank you for using tldw-chatbook! 🎉
                     "Invalid chat temperature value", severity="warning"
                 )
 
-            # Enhanced Chat Window
-            enhanced_window = self.query_one(
-                "#general-enhanced-chat-window", Checkbox
-            ).value
-            current_enhanced = self.config_data.get("chat_defaults", {}).get(
-                "use_enhanced_window", False
-            )
-            if enhanced_window != current_enhanced:
-                if save_setting_to_cli_config(
-                    "chat_defaults", "use_enhanced_window", enhanced_window
-                ):
-                    saved_count += 1
-                    self.app_instance.notify(
-                        "Enhanced chat window setting changed. Please restart the app for this change to take effect.",
-                        severity="warning",
-                        timeout=8,
-                    )
-
-            # Chat Tabs Settings
-            enable_tabs = self.query_one("#general-enable-chat-tabs", Checkbox).value
-            current_tabs_enabled = self.config_data.get("chat_defaults", {}).get(
-                "enable_tabs", False
-            )
-            if enable_tabs != current_tabs_enabled:
-                if save_setting_to_cli_config(
-                    "chat_defaults", "enable_tabs", enable_tabs
-                ):
-                    saved_count += 1
-                    self.app_instance.notify(
-                        "Chat tabs setting changed. Please restart the app for this change to take effect.",
-                        severity="warning",
-                        timeout=8,
-                    )
-
-            max_tabs_str = self.query_one("#general-max-chat-tabs", Input).value
-            try:
-                max_tabs = int(max_tabs_str)
-                if max_tabs < 1:
-                    max_tabs = 1
-                    self.app_instance.notify(
-                        "Maximum tabs set to minimum value of 1", severity="info"
-                    )
-                elif max_tabs > 50:
-                    max_tabs = 50
-                    self.app_instance.notify(
-                        "Maximum tabs set to maximum value of 50", severity="info"
-                    )
-                if save_setting_to_cli_config("chat_defaults", "max_tabs", max_tabs):
-                    saved_count += 1
-            except ValueError:
-                self.app_instance.notify(
-                    f"Invalid max tabs value: {max_tabs_str}. Must be a number.",
-                    severity="warning",
-                )
-
             # Character Defaults
             if save_setting_to_cli_config(
                 "character_defaults",
@@ -3997,12 +3881,22 @@ Thank you for using tldw-chatbook! 🎉
                             severity="information",
                         )
 
-                    # Get password from user
+                    # Get password from user. Note: this toggle path saves
+                    # directly (unlike _setup_encryption()'s EncryptionSetupDialog
+                    # detour), so the comment-loss caveat has to live in this
+                    # dialog's own message instead -- see task-851 review
+                    # finding 3.
                     password = await self.app_instance.push_screen(
                         PasswordDialog(
                             mode="setup",
                             title="Setup Config Encryption",
-                            message="Create a master password to encrypt your configuration file:",
+                            message=(
+                                "Create a master password to encrypt your "
+                                "configuration file.\n\n"
+                                "Note: saving will rewrite config.toml -- any "
+                                "comments or custom formatting in it will be "
+                                "lost (all values are preserved)."
+                            ),
                             on_submit=lambda p: None,
                             on_cancel=lambda: None,
                         ),
@@ -4118,15 +4012,6 @@ Thank you for using tldw-chatbook! 🎉
             ).value = default_chat_provider
             self.query_one("#general-chat-model", Input).value = "gpt-4o"
             self.query_one("#general-chat-temperature", Input).value = "0.6"
-            self.query_one(
-                "#general-enhanced-chat-window", Checkbox
-            ).value = False  # Default is disabled
-            self.query_one(
-                "#general-enable-chat-tabs", Checkbox
-            ).value = False  # Default is disabled
-            self.query_one(
-                "#general-max-chat-tabs", Input
-            ).value = "10"  # Default is 10 tabs
 
             # Reset Character Defaults
             default_char_provider = (
@@ -4177,23 +4062,25 @@ Thank you for using tldw-chatbook! 🎉
             self.app_instance.notify(f"Testing connection to {provider}...", timeout=2)
 
             # Simple test message
-            from ..LLM_Calls.LLM_API_Calls import chat_with_provider
+            from ..Chat.Chat_Functions import chat_api_call, extract_response_content
 
-            test_response = await self.run_worker(
-                lambda: chat_with_provider(
-                    provider=provider,
-                    model=model,
-                    messages=[
+            raw = await self.run_worker(
+                lambda: chat_api_call(
+                    api_endpoint=provider,
+                    messages_payload=[
                         {"role": "user", "content": "Test connection. Reply with 'OK'."}
                     ],
-                    temperature=0.1,
+                    model=model,
+                    temp=0.1,
                     max_tokens=10,
+                    streaming=False,
                 ),
                 thread=True,
                 exclusive=True,
             )
+            test_response = extract_response_content(raw)
 
-            if test_response and "OK" in str(test_response).upper():
+            if test_response and "OK" in test_response.upper():
                 self.app_instance.notify(
                     f"✅ Connection to {provider} successful!", severity="information"
                 )
@@ -4314,21 +4201,22 @@ Thank you for using tldw-chatbook! 🎉
                     model = models[0]
 
                     # Test with a simple message
-                    from ..LLM_Calls.LLM_API_Calls import chat_with_provider
+                    from ..Chat.Chat_Functions import chat_api_call, extract_response_content
 
-                    test_response = await self.run_worker(
-                        lambda: chat_with_provider(
-                            provider=provider,
+                    raw = await self.run_worker(
+                        lambda: chat_api_call(
+                            api_endpoint=provider,
+                            messages_payload=[{"role": "user", "content": "Test. Reply OK."}],
                             model=model,
-                            messages=[{"role": "user", "content": "Test. Reply OK."}],
-                            temperature=0.1,
+                            temp=0.1,
                             max_tokens=10,
+                            streaming=False,
                         ),
                         thread=True,
                         exclusive=True,
                     )
 
-                    if test_response:
+                    if extract_response_content(raw):
                         results.append(f"✅ {provider}: Working")
                     else:
                         results.append(f"❌ {provider}: Failed")
@@ -4348,93 +4236,30 @@ Thank you for using tldw-chatbook! 🎉
     async def _save_tool_settings(self) -> None:
         """Save Tool Settings to the configuration file."""
         try:
-            saved_count = 0
-            tools_config = {}
+            from ..Agents.tool_catalog import gateable_builtin_tools
+            from ..config import (
+                load_cli_config_and_ensure_existence,
+                save_settings_to_cli_config,
+            )
 
-            # Get available tools
-            from ..Tools import get_tool_executor
-
-            executor = get_tool_executor()
-            available_tools = executor.get_available_tools()
-
-            # Save enabled/disabled state for each tool
-            for tool_info in available_tools:
-                tool_name = tool_info["function"]["name"]
-                switch_id = f"tool-switch-{tool_name}"
+            updates: dict = {}
+            for entry in gateable_builtin_tools():
                 try:
-                    switch = self.query_one(f"#{switch_id}", Switch)
-                    tools_config[f"{tool_name}_enabled"] = switch.value
-                    saved_count += 1
-                except Exception:
-                    pass
+                    switch = self.query_one(f"#tool-switch-{entry.tool_name}", Switch)
+                except Exception:  # noqa: BLE001 — a row that isn't mounted
+                    continue
+                updates[entry.gate_key] = switch.value
 
-            # Save timeout settings
-            try:
-                timeout = int(self.query_one("#tool-timeout-input", Input).value)
-                tools_config["timeout_seconds"] = timeout
-                saved_count += 1
-            except Exception:
-                pass
-
-            # Save max workers
-            try:
-                max_workers = int(
-                    self.query_one("#tool-max-workers-input", Input).value
-                )
-                tools_config["max_workers"] = max_workers
-                saved_count += 1
-            except Exception:
-                pass
-
-            # Save cache settings
-            try:
-                cache_enabled = self.query_one("#tool-cache-enabled", Checkbox).value
-                tools_config["cache_enabled"] = cache_enabled
-                saved_count += 1
-            except Exception:
-                pass
-
-            try:
-                cache_max_size = int(
-                    self.query_one("#tool-cache-max-size-input", Input).value
-                )
-                tools_config["cache_max_size"] = cache_max_size
-                saved_count += 1
-            except Exception:
-                pass
-
-            try:
-                cache_ttl = int(self.query_one("#tool-cache-ttl-input", Input).value)
-                tools_config["cache_default_ttl"] = cache_ttl
-                saved_count += 1
-            except Exception:
-                pass
-
-            try:
-                cache_persist = self.query_one("#tool-cache-persist", Checkbox).value
-                tools_config["cache_persist"] = cache_persist
-                saved_count += 1
-            except Exception:
-                pass
-
-            # Save the entire tools section
-            if save_setting_to_cli_config("tools", None, tools_config):
+            # Merges: [tools] keys with no switch here are left untouched, so
+            # a save can never silently disable a hand-edited flag. The old
+            # single-key save helper, called with a dict value and no key,
+            # raised KeyError: 'None' -- there is no section-replacement API.
+            if save_settings_to_cli_config({"tools": updates}):
                 self.app_instance.notify(
-                    f"Tool Settings saved! ({saved_count} settings)",
+                    f"Tool Settings saved! ({len(updates)} settings)",
                     severity="information",
                 )
-
-                # Update the config data
                 self.config_data = load_cli_config_and_ensure_existence()
-
-                # Reload the tool executor with new settings
-                from ..Tools import reload_tool_executor
-
-                reload_tool_executor()
-
-                self.app_instance.notify(
-                    "Tool executor reloaded with new settings", severity="information"
-                )
             else:
                 self.app_instance.notify(
                     "Failed to save Tool Settings", severity="error"
@@ -4446,36 +4271,26 @@ Thank you for using tldw-chatbook! 🎉
             )
 
     async def _reset_tool_settings(self) -> None:
-        """Reset Tool Settings to default values."""
+        """Reset Tool Settings to defaults (every gated tool OFF)."""
         try:
-            # Get available tools
-            from ..Tools import get_tool_executor
+            from ..Agents.tool_catalog import gateable_builtin_tools
 
-            executor = get_tool_executor()
-            available_tools = executor.get_available_tools()
-
-            # Reset all tool switches to enabled (default)
-            for tool_info in available_tools:
-                tool_name = tool_info["function"]["name"]
-                switch_id = f"tool-switch-{tool_name}"
+            reset_count = 0
+            for entry in gateable_builtin_tools():
                 try:
-                    switch = self.query_one(f"#{switch_id}", Switch)
-                    switch.value = True  # Default is enabled
-                except Exception:
-                    pass
+                    switch = self.query_one(f"#tool-switch-{entry.tool_name}", Switch)
+                except Exception:  # noqa: BLE001 — a row that isn't mounted
+                    continue
+                # Defaults are DISABLED. The previous implementation reset every
+                # switch to True, which would now enable mutating tools.
+                switch.value = False
+                reset_count += 1
 
-            # Reset timeout settings
-            self.query_one("#tool-timeout-input", Input).value = "30"
-            self.query_one("#tool-max-workers-input", Input).value = "4"
-
-            # Reset cache settings
-            self.query_one("#tool-cache-enabled", Checkbox).value = False
-            self.query_one("#tool-cache-max-size-input", Input).value = "100"
-            self.query_one("#tool-cache-ttl-input", Input).value = "3600"
-            self.query_one("#tool-cache-persist", Checkbox).value = True
-
-            self.app_instance.notify("Tool Settings reset to defaults!")
-
+            self.app_instance.notify(
+                f"Tool Settings reset to defaults ({reset_count} tools disabled). "
+                "Save to apply.",
+                severity="information",
+            )
         except Exception as e:
             self.app_instance.notify(
                 f"Error resetting Tool Settings: {e}", severity="error"
@@ -4488,19 +4303,7 @@ Thank you for using tldw-chatbook! 🎉
             # Parse the TOML to validate it
             config_data = toml.loads(config_text_area.text)
 
-            # Ensure the config directory exists
-            DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-            # Write the configuration to file
-            with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
-                toml.dump(config_data, f)
-
-            # Force reload the configuration to update all caches
-            from tldw_chatbook.config import load_settings
-
-            self.config_data = load_cli_config_and_ensure_existence(force_reload=True)
-            # Also reload the main settings cache
-            load_settings(force_reload=True)
+            self.config_data = replace_cli_config(config_data)
 
             self.app_instance.notify(
                 "Configuration saved successfully!", severity="successful"
@@ -4940,23 +4743,72 @@ Thank you for using tldw-chatbook! 🎉
                 f"Error resetting API config: {e}", severity="error"
             )
 
+    @staticmethod
+    def _db_paths_equivalent(a: str, b: str) -> bool:
+        """True when two path strings resolve to the same location.
+
+        Compares raw strings first, then falls back to an
+        expanduser+resolve-normalised comparison so a ``~``-form or a
+        non-normalised-but-equivalent path is still recognised as
+        "unchanged" (TASK-927 follow-up: see ``_save_db_path_field``).
+        """
+        if a == b:
+            return True
+        try:
+            return Path(a).expanduser().resolve() == Path(b).expanduser().resolve()
+        except Exception:
+            return False
+
+    def _save_db_path_field(self, *, input_id: str, db_name: str, key: str) -> None:
+        """Persist one database-path Input as an override only if it truly is one.
+
+        ``_compose_database_config_form`` deliberately displays the fully
+        resolved, profile-aware path (TASK-927) so the form always shows
+        what the app will actually use. But that means an *untouched*
+        Input already contains a value that looks like a custom path --
+        if Save always wrote it verbatim, merely opening Settings and
+        pressing Save (or pressing Reset then Save) would silently pin the
+        current profile's resolved path as a permanent override, breaking
+        profile switching the same way TASK-860 did, just from the
+        opposite direction (TASK-927 follow-up). So Save must recognise
+        "the Input still matches the profile-aware default" and clear any
+        stored override instead of writing one.
+        """
+        value = self.query_one(f"#{input_id}", Input).value
+        default_value = self._resolved_db_path_display(db_name, ignore_override=True)
+
+        if self._db_paths_equivalent(value, default_value):
+            # Unmodified (or Reset-then-Save): discard any previously
+            # configured override rather than pinning the currently
+            # resolved path. delete_settings_from_cli_config is a no-op
+            # (returns True) when the key was never present.
+            if not delete_settings_from_cli_config("database", [key]):
+                logger.error(
+                    "Failed to clear stale {} override while saving database config",
+                    key,
+                )
+            return
+
+        # A genuine custom path -- persist it as an explicit override.
+        save_setting_to_cli_config("database", key, value)
+
     async def _save_database_config_form(self) -> None:
         """Save database configuration form."""
         try:
-            save_setting_to_cli_config(
-                "database",
-                "chachanotes_db_path",
-                self.query_one("#config-db-chachanotes-path", Input).value,
+            self._save_db_path_field(
+                input_id="config-db-chachanotes-path",
+                db_name="chachanotes",
+                key="chachanotes_db_path",
             )
-            save_setting_to_cli_config(
-                "database",
-                "prompts_db_path",
-                self.query_one("#config-db-prompts-path", Input).value,
+            self._save_db_path_field(
+                input_id="config-db-prompts-path",
+                db_name="prompts",
+                key="prompts_db_path",
             )
-            save_setting_to_cli_config(
-                "database",
-                "media_db_path",
-                self.query_one("#config-db-media-path", Input).value,
+            self._save_db_path_field(
+                input_id="config-db-media-path",
+                db_name="media",
+                key="media_db_path",
             )
             save_setting_to_cli_config(
                 "database",
@@ -4995,15 +4847,23 @@ Thank you for using tldw-chatbook! 🎉
     async def _reset_database_config_form(self) -> None:
         """Reset database configuration form to defaults."""
         try:
+            # Resolved through the same _DB_PATH_RESOLVERS the vacuum/
+            # backup/check workers use, not hardcoded literals (TASK-927).
+            # ignore_override=True discards any explicitly-configured
+            # custom path so "Reset" restores the pure profile-aware
+            # default, matching what Reset has always meant -- see
+            # _resolved_db_path_display (TASK-927 follow-up).
             self.query_one(
                 "#config-db-chachanotes-path", Input
-            ).value = "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db"
+            ).value = self._resolved_db_path_display(
+                "chachanotes", ignore_override=True
+            )
             self.query_one(
                 "#config-db-prompts-path", Input
-            ).value = "~/.local/share/tldw_cli/tldw_cli_prompts.db"
+            ).value = self._resolved_db_path_display("prompts", ignore_override=True)
             self.query_one(
                 "#config-db-media-path", Input
-            ).value = "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
+            ).value = self._resolved_db_path_display("media", ignore_override=True)
             self.query_one(
                 "#config-db-base-dir", Input
             ).value = "~/.local/share/tldw_cli/"
@@ -5426,14 +5286,7 @@ Thank you for using tldw-chatbook! 🎉
     async def _export_configuration(self) -> None:
         """Export configuration to a backup file."""
         try:
-            import datetime
-
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_path = DEFAULT_CONFIG_PATH.parent / f"config_backup_{timestamp}.toml"
-
-            with open(backup_path, "w") as f:
-                toml.dump(self.config_data, f)
-
+            backup_path = export_cli_config_snapshot(self.config_data)
             self.app_instance.notify(f"Configuration exported to {backup_path}")
         except Exception as e:
             self.app_instance.notify(
@@ -5506,12 +5359,6 @@ Thank you for using tldw-chatbook! 🎉
                 "chat_defaults",
                 "strip_thinking_tags",
                 self.query_one("#config-chat-strip-thinking", Checkbox).value,
-            ):
-                saved_count += 1
-            if save_setting_to_cli_config(
-                "chat_defaults",
-                "use_enhanced_window",
-                self.query_one("#config-chat-enhanced-window", Checkbox).value,
             ):
                 saved_count += 1
 
@@ -5605,7 +5452,6 @@ Thank you for using tldw-chatbook! 🎉
             self.query_one("#config-chat-min-p", Input).value = "0.05"
             self.query_one("#config-chat-top-k", Input).value = "50"
             self.query_one("#config-chat-strip-thinking", Checkbox).value = True
-            self.query_one("#config-chat-enhanced-window", Checkbox).value = False
 
             # Reset image settings
             self.query_one("#config-chat-images-enabled", Checkbox).value = True
@@ -5916,8 +5762,7 @@ Thank you for using tldw-chatbook! 🎉
             "ts-view-db-tools": "ts-nav-db-tools",
             "ts-view-appearance": "ts-nav-appearance",
             "ts-view-tool-settings": "ts-nav-tool-settings",
-            "ts-view-unified-mcp": "ts-nav-unified-mcp",
-            "ts-view-about": "ts-nav-about",
+            "ts-view-about": "ts-nav-about"
         }
 
         for v_id, btn_id in nav_buttons.items():
@@ -5970,46 +5815,41 @@ Thank you for using tldw-chatbook! 🎉
         try:
             db_config = self.config_data.get("database", {})
             vacuumed = []
+            unresolved = []
 
-            # Vacuum ChaChaNotes database
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                )
-            ).expanduser()
-            if chachanotes_path.exists():
-                db = CharactersRAGDB(str(chachanotes_path), "vacuum_operation")
-                db.vacuum()
-                db.close_connection()
-                vacuumed.append("ChaChaNotes")
-
-            # Vacuum Prompts database
-            prompts_path = get_prompts_db_path()
-            if prompts_path.exists():
-                db = PromptsDatabase(str(prompts_path), "vacuum_operation")
-                db.vacuum()
-                db.close_connection()
-                vacuumed.append("Prompts")
-
-            # Vacuum Media database
-            media_path = Path(
-                db_config.get(
-                    "media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
-                )
-            ).expanduser()
-            if media_path.exists():
-                db = MediaDatabase(str(media_path), "vacuum_operation")
-                db.vacuum()
-                db.close_connection()
-                vacuumed.append("Media")
+            for db_name, display_name, _backup_stem in SETTINGS_DATABASES:
+                db_path = self._get_database_path(db_name, db_config)
+                if db_path is None:
+                    unresolved.append(display_name)
+                    self.app.call_from_thread(
+                        self.app_instance.notify,
+                        f"Cannot vacuum {display_name} database: no resolvable path is configured for it",
+                        severity="error",
+                    )
+                    continue
+                if not db_path.exists():
+                    continue
+                conn = connect_private_sqlite("settings.vacuum", db_path)
+                try:
+                    conn.execute("VACUUM")
+                    conn.commit()
+                finally:
+                    conn.close()
+                vacuumed.append(display_name)
 
             # Update UI from worker thread
-            self.app.call_from_thread(
-                self.app_instance.notify,
-                f"Successfully vacuumed databases: {', '.join(vacuumed)}",
-                severity="success",
-            )
+            if vacuumed:
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    f"Successfully vacuumed databases: {', '.join(vacuumed)}",
+                    severity="success",
+                )
+            elif not unresolved:
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    "No databases found to vacuum",
+                    severity="warning",
+                )
 
             # Update database sizes
             self.app.call_from_thread(self._update_database_sizes)
@@ -6023,83 +5863,363 @@ Thank you for using tldw-chatbook! 🎉
 
     async def _backup_databases(self) -> None:
         """Create timestamped backups of all databases."""
-        try:
+        if getattr(self, "_backup_all_in_progress", False):
             self.app_instance.notify(
-                "Starting database backup...", severity="information"
+                "Database backup is already in progress.",
+                severity="warning",
             )
+            return
 
-            # Run backup in a worker
-            self.run_worker(self._backup_worker, name="backup_worker")
+        self._backup_all_in_progress = True
+        try:
+            try:
+                self.app_instance.notify(
+                    "Starting database backup...", severity="information"
+                )
 
-        except Exception as e:
-            self.app_instance.notify(f"Error starting backup: {e}", severity="error")
+                backup_worker = self.run_worker(
+                    self._backup_worker,
+                    name="backup_worker",
+                    group="tts_profile_backup_all",
+                    description=self._BACKUP_COPY_WORKER_DESCRIPTION,
+                    thread=True,
+                    exclusive=True,
+                    exit_on_error=False,
+                )
+                timestamp, backup_dir, backed_up = await self._wait_for_backup_worker(
+                    backup_worker
+                )
+            except Exception:
+                self._raise_if_backup_cancelled()
+                logger.warning("Database backup phase=legacy failed")
+                self.app_instance.notify("Database backup failed.", severity="error")
+                return
 
-    @work(thread=True)
-    def _backup_worker(self) -> None:
-        """Worker to backup databases in background."""
+            profile_backup_succeeded = False
+            try:
+                repository = await self.app_instance._ensure_tts_profile_repository()
+                if repository is not None:
+                    profile_backup_path = (
+                        backup_dir / f"tldw_chatbook_tts_profiles_{timestamp}.db"
+                    )
+                    await repository.backup_to(profile_backup_path)
+                    backed_up.append(("TTS Profiles", profile_backup_path))
+                    profile_backup_succeeded = True
+                else:
+                    logger.warning("Database backup phase=tts_profiles unavailable")
+            except Exception:
+                self._raise_if_backup_cancelled()
+                logger.warning("Database backup phase=tts_profiles failed")
+
+            manifest_publication: _BackupManifestPublication | None = None
+            try:
+                manifest_publication = self._build_backup_manifest_publication(
+                    backup_dir
+                )
+                manifest_worker = self.run_worker(
+                    partial(
+                        self._write_backup_manifest,
+                        timestamp,
+                        tuple(backed_up),
+                        manifest_publication,
+                    ),
+                    name="backup_manifest_worker",
+                    group="tts_profile_backup_all",
+                    description=self._BACKUP_MANIFEST_WORKER_DESCRIPTION,
+                    thread=True,
+                    exclusive=True,
+                    exit_on_error=False,
+                )
+                manifest_publication = await self._wait_for_backup_worker(
+                    manifest_worker
+                )
+                self._raise_if_backup_cancelled()
+                os.replace(
+                    manifest_publication.stage_path,
+                    manifest_publication.final_path,
+                )
+                manifest_publication = None
+            except Exception:
+                self._raise_if_backup_cancelled()
+                logger.warning("Database backup phase=manifest failed")
+                self.app_instance.notify("Database backup failed.", severity="error")
+                return
+            finally:
+                if manifest_publication is not None:
+                    self._unlink_backup_artifact(
+                        manifest_publication.stage_path,
+                        "manifest",
+                        preserve_control_flow=self._has_active_control_flow(),
+                    )
+
+            if profile_backup_succeeded:
+                self.app_instance.notify(
+                    "Database backup completed successfully.",
+                    severity="success",
+                )
+                return
+
+            self.app_instance.notify(
+                "Database backup completed with a partial failure; "
+                "TTS profiles were not backed up.",
+                severity="warning",
+            )
+        finally:
+            self._backup_all_in_progress = False
+
+    @staticmethod
+    def _raise_if_backup_cancelled() -> None:
+        """Restore caller cancellation converted by Textual worker waiting."""
+
+        current_task = asyncio.current_task()
+        if current_task is not None and current_task.cancelling():
+            raise asyncio.CancelledError from None
+
+    @staticmethod
+    async def _wait_for_backup_worker(worker):
+        """Await a Textual worker and always signal it when waiting aborts."""
+
+        try:
+            return await worker.wait()
+        except BaseException:
+            try:
+                worker.cancel()
+            except BaseException:
+                logger.warning("Database backup worker cancellation signal failed")
+            raise
+
+    @staticmethod
+    def _raise_if_textual_worker_cancelled() -> None:
+        """Cooperatively stop executor work after its Textual worker is cancelled."""
+
+        try:
+            worker = get_current_worker()
+        except NoActiveWorker:
+            return
+        if worker.is_cancelled:
+            raise asyncio.CancelledError from None
+
+    @staticmethod
+    def _has_active_control_flow() -> bool:
+        """Return whether cleanup is unwinding a non-Exception signal."""
+
+        active_exception = sys.exception()
+        return active_exception is not None and not isinstance(
+            active_exception,
+            Exception,
+        )
+
+    @staticmethod
+    def _unlink_backup_artifact(
+        path: Path,
+        phase: str,
+        *,
+        preserve_control_flow: bool = False,
+    ) -> None:
+        """Remove an unpublished artifact without masking control flow."""
+
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            logger.warning("Database backup phase={} cleanup=unlink failed", phase)
+        except BaseException:
+            if not preserve_control_flow:
+                raise
+            logger.warning("Database backup phase={} cleanup=unlink failed", phase)
+
+    @staticmethod
+    def _remove_empty_backup_directory(
+        path: Path,
+        *,
+        preserve_control_flow: bool = False,
+    ) -> None:
+        """Best-effort removal of a failed legacy phase's reserved directory."""
+
+        try:
+            path.rmdir()
+        except Exception:
+            logger.warning("Database backup phase=legacy cleanup=rmdir failed")
+        except BaseException:
+            if not preserve_control_flow:
+                raise
+            logger.warning("Database backup phase=legacy cleanup=rmdir failed")
+
+    @staticmethod
+    def _build_backup_manifest_publication(
+        backup_dir: Path,
+    ) -> _BackupManifestPublication:
+        """Build a path-only token for a same-directory manifest stage."""
+
+        return _BackupManifestPublication(
+            stage_path=backup_dir / ".backup_info.json.tmp",
+            final_path=backup_dir / "backup_info.json",
+        )
+
+    def _backup_worker(self) -> tuple[str, Path, list[tuple[str, Path]]]:
+        """Copy the legacy databases and return their backup entries."""
+
+        staged_paths: list[Path] = []
+        published_paths: list[Path] = []
+        backup_dir: Path | None = None
+        completed = False
         try:
             db_config = self.config_data.get("database", {})
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-            # Create backup directory
-            backup_dir = (
-                Path.home() / ".local" / "share" / "tldw_cli" / "backups" / timestamp
+            # Profile-scoped, matching _backup_single_worker/_restore_single_database
+            # and every export directory in this file (TASK-927 follow-up: the
+            # legacy bulk backup was the one remaining backup root that still
+            # used the flat, non-profile-aware literal).
+            backup_root = get_user_data_dir() / "backups"
+            secure_private_directory(
+                backup_root,
+                create=True,
+                application_owned=True,
             )
-            backup_dir.mkdir(parents=True, exist_ok=True)
-
-            backed_up = []
-
-            # Backup ChaChaNotes database
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
+            backup_dir = Path(
+                tempfile.mkdtemp(
+                    dir=backup_root,
+                    prefix=f"{timestamp}_",
                 )
-            ).expanduser()
-            if chachanotes_path.exists():
-                backup_path = backup_dir / f"tldw_chatbook_ChaChaNotes_{timestamp}.db"
-                shutil.copy2(chachanotes_path, backup_path)
-                backed_up.append(("ChaChaNotes", backup_path))
+            )
 
-            # Backup Prompts database
+            # Resolved through the same _DB_PATH_RESOLVERS mechanism the
+            # vacuum/integrity workers use, not hardcoded literals
+            # (TASK-927 follow-up).
+            chachanotes_path = self._get_database_path("chachanotes", db_config)
             prompts_path = get_prompts_db_path()
-            if prompts_path.exists():
-                backup_path = backup_dir / f"tldw_cli_prompts_{timestamp}.db"
-                shutil.copy2(prompts_path, backup_path)
-                backed_up.append(("Prompts", backup_path))
+            media_path = self._get_database_path("media", db_config)
 
-            # Backup Media database
-            media_path = Path(
-                db_config.get(
-                    "media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
+            # Unlike vacuum/integrity (which silently skip a database that
+            # can't be resolved), a *backup* must never start copying a
+            # partial set while claiming success -- an unresolvable
+            # database here fails the whole legacy backup phase loudly
+            # instead (falls through to the generic "Database backup
+            # failed." notification in _backup_databases()).
+            unresolved = [
+                name
+                for name, path in (
+                    ("ChaChaNotes", chachanotes_path),
+                    ("Media", media_path),
                 )
-            ).expanduser()
-            if media_path.exists():
-                backup_path = backup_dir / f"tldw_cli_media_v2_{timestamp}.db"
-                shutil.copy2(media_path, backup_path)
-                backed_up.append(("Media", backup_path))
+                if path is None
+            ]
+            if unresolved:
+                raise RuntimeError(
+                    f"unresolvable database paths: {', '.join(unresolved)}"
+                )
 
-            # Create backup info file
-            info_path = backup_dir / "backup_info.json"
+            candidates = (
+                (
+                    "ChaChaNotes",
+                    chachanotes_path,
+                    backup_dir / f"tldw_chatbook_ChaChaNotes_{timestamp}.db",
+                ),
+                (
+                    "Prompts",
+                    prompts_path,
+                    backup_dir / f"tldw_cli_prompts_{timestamp}.db",
+                ),
+                (
+                    "Media",
+                    media_path,
+                    backup_dir / f"tldw_cli_media_v2_{timestamp}.db",
+                ),
+            )
+            staged_backups: list[tuple[str, Path, Path]] = []
+            for name, source_path, backup_path in candidates:
+                self._raise_if_textual_worker_cancelled()
+                if source_path is None or not source_path.exists():
+                    continue
+                descriptor, temporary_name = tempfile.mkstemp(
+                    dir=backup_dir,
+                    prefix=f".{backup_path.name}.",
+                    suffix=".tmp",
+                )
+                temporary_path = Path(temporary_name)
+                staged_paths.append(temporary_path)
+                os.close(descriptor)
+                copy_private_sqlite(
+                    "settings.bulk_backup",
+                    source_path,
+                    temporary_path,
+                )
+                self._raise_if_textual_worker_cancelled()
+                staged_backups.append((name, temporary_path, backup_path))
+
+            backed_up: list[tuple[str, Path]] = []
+            self._raise_if_textual_worker_cancelled()
+            for name, temporary_path, backup_path in staged_backups:
+                self._raise_if_textual_worker_cancelled()
+                os.replace(temporary_path, backup_path)
+                staged_paths.remove(temporary_path)
+                published_paths.append(backup_path)
+                self._raise_if_textual_worker_cancelled()
+                backed_up.append((name, backup_path))
+
+            completed = True
+            return timestamp, backup_dir, backed_up
+        except Exception:
+            raise RuntimeError("legacy_database_backup_failed") from None
+        finally:
+            preserve_control_flow = self._has_active_control_flow()
+            for temporary_path in staged_paths:
+                self._unlink_backup_artifact(
+                    temporary_path,
+                    "legacy",
+                    preserve_control_flow=preserve_control_flow,
+                )
+            if not completed:
+                for published_path in published_paths:
+                    self._unlink_backup_artifact(
+                        published_path,
+                        "legacy",
+                        preserve_control_flow=preserve_control_flow,
+                    )
+                if backup_dir is not None:
+                    self._remove_empty_backup_directory(
+                        backup_dir,
+                        preserve_control_flow=preserve_control_flow,
+                    )
+
+    @staticmethod
+    def _write_backup_manifest(
+        timestamp: str,
+        backed_up: tuple[tuple[str, Path], ...],
+        publication: _BackupManifestPublication,
+    ) -> _BackupManifestPublication:
+        """Serialize and sync a staged manifest without publishing it."""
+
+        stage_created = False
+        completed = False
+        try:
             backup_info = {
                 "timestamp": timestamp,
                 "databases": [
                     {"name": name, "path": str(path)} for name, path in backed_up
                 ],
             }
-            with open(info_path, "w") as f:
-                json.dump(backup_info, f, indent=2)
-
-            self.app.call_from_thread(
-                self.app_instance.notify,
-                f"Backup completed! Saved to: {backup_dir}",
-                severity="success",
+            ToolsSettingsWindow._raise_if_textual_worker_cancelled()
+            serialized = io.StringIO()
+            json.dump(backup_info, serialized, indent=2)
+            create_private_text(
+                publication.stage_path,
+                serialized.getvalue(),
+                application_owned_directory=publication.stage_path.parent,
             )
-
-        except Exception as e:
-            self.app.call_from_thread(
-                self.app_instance.notify, f"Error during backup: {e}", severity="error"
-            )
+            stage_created = True
+            ToolsSettingsWindow._raise_if_textual_worker_cancelled()
+            completed = True
+            return publication
+        except Exception:
+            raise RuntimeError("backup_manifest_write_failed") from None
+        finally:
+            if stage_created and not completed:
+                ToolsSettingsWindow._unlink_backup_artifact(
+                    publication.stage_path,
+                    "manifest",
+                    preserve_control_flow=ToolsSettingsWindow._has_active_control_flow(),
+                )
 
     async def _check_database_integrity(self) -> None:
         """Check integrity of all databases."""
@@ -6123,43 +6243,33 @@ Thank you for using tldw-chatbook! 🎉
             db_config = self.config_data.get("database", {})
             results = []
 
-            # Check ChaChaNotes database
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
+            for db_name, display_name, _backup_stem in SETTINGS_DATABASES:
+                db_path = self._get_database_path(db_name, db_config)
+                if db_path is None:
+                    results.append(
+                        f"{display_name}: UNRESOLVED (no resolvable path configured)"
+                    )
+                    continue
+                if not db_path.exists():
+                    continue
+                conn = connect_private_sqlite(
+                    "settings.integrity",
+                    db_path,
+                    read_only=True,
                 )
-            ).expanduser()
-            if chachanotes_path.exists():
-                db = CharactersRAGDB(str(chachanotes_path), "integrity_check")
-                result = db.check_integrity()
-                db.close_connection()
-                results.append(f"ChaChaNotes: {'OK' if result else 'FAILED'}")
-
-            # Check Prompts database
-            prompts_path = get_prompts_db_path()
-            if prompts_path.exists():
-                db = PromptsDatabase(str(prompts_path), "integrity_check")
-                result = db.check_integrity()
-                db.close_connection()
-                results.append(f"Prompts: {'OK' if result else 'FAILED'}")
-
-            # Check Media database
-            media_path = Path(
-                db_config.get(
-                    "media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
-                )
-            ).expanduser()
-            if media_path.exists():
-                db = MediaDatabase(str(media_path), "integrity_check")
-                result = db.check_integrity()
-                db.close_connection()
-                results.append(f"Media: {'OK' if result else 'FAILED'}")
+                try:
+                    row = conn.execute("PRAGMA integrity_check").fetchone()
+                finally:
+                    conn.close()
+                result = bool(row and row[0] == "ok")
+                results.append(f"{display_name}: {'OK' if result else 'FAILED'}")
 
             # Report results
-            all_ok = all("OK" in r for r in results)
+            all_ok = bool(results) and all(r.endswith("OK") for r in results)
             severity = "success" if all_ok else "error"
-            message = "Integrity check results:\n" + "\n".join(results)
+            message = "Integrity check results:\n" + "\n".join(results) if results else (
+                "No databases found to check"
+            )
 
             self.app.call_from_thread(
                 self.app_instance.notify, message, severity=severity
@@ -6198,23 +6308,34 @@ Thank you for using tldw-chatbook! 🎉
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
             # Create export directory
-            export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
-            export_dir.mkdir(parents=True, exist_ok=True)
+            export_dir = get_user_data_dir() / "exports"
+            secure_private_directory(
+                export_dir,
+                create=True,
+                application_owned=True,
+            )
 
             # Export from ChaChaNotes database
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
+            chachanotes_path = self._get_database_path("chachanotes", db_config)
+            if chachanotes_path is None:
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    "Cannot export conversations: no resolvable path is configured "
+                    "for the ChaChaNotes database",
+                    severity="error",
                 )
-            ).expanduser()
+                return
+
             if chachanotes_path.exists():
                 db = CharactersRAGDB(str(chachanotes_path), "export_operation")
                 conversations = db.list_all_active_conversations(limit=10000)
 
                 export_path = export_dir / f"conversations_{timestamp}.json"
-                with open(export_path, "w", encoding="utf-8") as f:
-                    json.dump(conversations, f, indent=2, ensure_ascii=False)
+                create_private_text(
+                    export_path,
+                    json.dumps(conversations, indent=2, ensure_ascii=False),
+                    application_owned_directory=export_dir,
+                )
 
                 db.close_connection()
 
@@ -6257,24 +6378,22 @@ Thank you for using tldw-chatbook! 🎉
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
             # Create export directory
-            export_dir = (
-                Path.home()
-                / ".local"
-                / "share"
-                / "tldw_cli"
-                / "exports"
-                / f"notes_{timestamp}"
+            export_root = get_user_data_dir() / "exports"
+            secure_private_directory(
+                export_root,
+                create=True,
+                application_owned=True,
             )
-            export_dir.mkdir(parents=True, exist_ok=True)
+            export_dir = export_root / f"notes_{timestamp}"
+            secure_private_directory(
+                export_dir,
+                create=True,
+                application_owned=True,
+            )
 
             # Export from ChaChaNotes database
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                )
-            ).expanduser()
-            if chachanotes_path.exists():
+            chachanotes_path = self._get_database_path("chachanotes", db_config)
+            if chachanotes_path and chachanotes_path.exists():
                 db = CharactersRAGDB(str(chachanotes_path), "export_operation")
                 notes = db.list_notes(limit=10000)
 
@@ -6286,11 +6405,17 @@ Thank you for using tldw-chatbook! 🎉
                     filename = f"{safe_title}_{note['id']}.md"
 
                     note_path = export_dir / filename
-                    with open(note_path, "w", encoding="utf-8") as f:
-                        f.write(f"# {note['title']}\n\n")
-                        f.write(f"Created: {note['created_at']}\n")
-                        f.write(f"Modified: {note['updated_at']}\n\n")
-                        f.write(note["content"])
+                    note_text = (
+                        f"# {note['title']}\n\n"
+                        f"Created: {note['created_at']}\n"
+                        f"Modified: {note['updated_at']}\n\n"
+                        f"{note['content']}"
+                    )
+                    create_private_text(
+                        note_path,
+                        note_text,
+                        application_owned_directory=export_dir,
+                    )
 
                 db.close_connection()
 
@@ -6335,23 +6460,25 @@ Thank you for using tldw-chatbook! 🎉
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
             # Create export directory
-            export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
-            export_dir.mkdir(parents=True, exist_ok=True)
+            export_dir = get_user_data_dir() / "exports"
+            secure_private_directory(
+                export_dir,
+                create=True,
+                application_owned=True,
+            )
 
             # Export from ChaChaNotes database
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                )
-            ).expanduser()
-            if chachanotes_path.exists():
+            chachanotes_path = self._get_database_path("chachanotes", db_config)
+            if chachanotes_path and chachanotes_path.exists():
                 db = CharactersRAGDB(str(chachanotes_path), "export_operation")
                 characters = db.list_character_cards(limit=10000)
 
                 export_path = export_dir / f"characters_{timestamp}.json"
-                with open(export_path, "w", encoding="utf-8") as f:
-                    json.dump(characters, f, indent=2, ensure_ascii=False)
+                create_private_text(
+                    export_path,
+                    json.dumps(characters, indent=2, ensure_ascii=False),
+                    application_owned_directory=export_dir,
+                )
 
                 db.close_connection()
 
@@ -6405,52 +6532,21 @@ Thank you for using tldw-chatbook! 🎉
         )
 
     def _update_database_sizes(self) -> None:
-        """Update the displayed database sizes."""
-        try:
-            db_config = self.config_data.get("database", {})
-
-            # Update ChaChaNotes size
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                )
-            ).expanduser()
-            if chachanotes_path.exists():
-                size = self._format_file_size(chachanotes_path.stat().st_size)
-                try:
-                    size_widget = self.query_one("#db-size-chachanotes")
-                    size_widget.update(f"Size: {size}")
-                except Exception:
-                    pass
-
-            # Update Prompts size
-            prompts_path = get_prompts_db_path()
-            if prompts_path.exists():
-                size = self._format_file_size(prompts_path.stat().st_size)
-                try:
-                    size_widget = self.query_one("#db-size-prompts")
-                    size_widget.update(f"Size: {size}")
-                except Exception:
-                    pass
-
-            # Update Media size
-            media_path = Path(
-                db_config.get(
-                    "media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
-                )
-            ).expanduser()
-            if media_path.exists():
-                size = self._format_file_size(media_path.stat().st_size)
-                try:
-                    size_widget = self.query_one("#db-size-media")
-                    size_widget.update(f"Size: {size}")
-                except Exception:
-                    pass
-
-        except Exception:
-            # Silently fail - this is non-critical
-            pass
+        """Update the displayed database sizes for every known database."""
+        db_config = self.config_data.get("database", {})
+        for db_name in self._DB_PATH_RESOLVERS:
+            try:
+                db_path = self._get_database_path(db_name, db_config)
+                if db_path and db_path.exists():
+                    size = self._format_file_size(db_path.stat().st_size)
+                    try:
+                        size_widget = self.query_one(f"#db-size-{db_name}")
+                        size_widget.update(f"Size: {size}")
+                    except Exception:
+                        pass
+            except Exception:
+                # Silently fail per-database - this is non-critical UI polish
+                continue
 
     def _format_file_size(self, size_bytes: int) -> str:
         """Format file size in human-readable format."""
@@ -6483,27 +6579,42 @@ Thank you for using tldw-chatbook! 🎉
             db_config = self.config_data.get("database", {})
             db_path = self._get_database_path(db_name, db_config)
 
-            if db_path and db_path.exists():
-                conn = sqlite3.connect(str(db_path))
-                try:
-                    original_size = db_path.stat().st_size
-                    conn.execute("VACUUM")
-                    conn.commit()
-                    new_size = db_path.stat().st_size
+            if db_path is None:
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    f"Cannot vacuum {db_name} database: no resolvable path is configured for it",
+                    severity="error",
+                )
+                return
 
-                    saved = original_size - new_size
-                    saved_mb = saved / (1024 * 1024)
+            if not db_path.exists():
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    f"{db_name.title()} database not found at {db_path}; nothing to vacuum",
+                    severity="warning",
+                )
+                return
 
-                    self.call_from_thread(
-                        self.app_instance.notify,
-                        f"{db_name.title()} database vacuumed successfully. Saved {saved_mb:.1f} MB",
-                        severity="success",
-                    )
-                finally:
-                    conn.close()
-                    self.call_from_thread(self._update_database_sizes)
+            conn = connect_private_sqlite("settings.vacuum", db_path)
+            try:
+                original_size = db_path.stat().st_size
+                conn.execute("VACUUM")
+                conn.commit()
+                new_size = db_path.stat().st_size
+
+                saved = original_size - new_size
+                saved_mb = saved / (1024 * 1024)
+
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    f"{db_name.title()} database vacuumed successfully. Saved {saved_mb:.1f} MB",
+                    severity="success",
+                )
+            finally:
+                conn.close()
+                self.app.call_from_thread(self._update_database_sizes)
         except Exception as e:
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.app_instance.notify,
                 f"Error vacuuming {db_name} database: {e}",
                 severity="error",
@@ -6530,46 +6641,77 @@ Thank you for using tldw-chatbook! 🎉
             db_config = self.config_data.get("database", {})
             db_path = self._get_database_path(db_name, db_config)
 
-            if db_path and db_path.exists():
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                backup_dir = (
-                    Path.home() / ".local" / "share" / "tldw_cli" / "backups" / db_name
-                )
-                backup_dir.mkdir(parents=True, exist_ok=True)
-
-                backup_path = backup_dir / f"{db_name}_backup_{timestamp}.db"
-
-                import shutil
-
-                shutil.copy2(db_path, backup_path)
-
-                # Create metadata file
-                metadata_path = backup_path.with_suffix(".json")
-                metadata = {
-                    "database": db_name,
-                    "original_path": str(db_path),
-                    "backup_time": datetime.now().isoformat(),
-                    "file_size": db_path.stat().st_size,
-                    "schema_version": self._get_schema_version(db_path),
-                }
-
-                import json
-
-                with open(metadata_path, "w") as f:
-                    json.dump(metadata, f, indent=2)
-
-                self.call_from_thread(
+            if db_path is None:
+                self.app.call_from_thread(
                     self.app_instance.notify,
-                    f"{db_name.title()} database backed up to {backup_path.name}",
-                    severity="success",
+                    f"Cannot back up {db_name} database: no resolvable path is configured for it",
+                    severity="error",
                 )
+                return
 
-                # Update last backup status
-                self.call_from_thread(
-                    self._update_last_backup_status, db_name, timestamp
+            db_path = self._validate_maintenance_path(
+                db_path, label=f"{db_name} database source"
+            )
+            if db_path is None:
+                return
+
+            if not db_path.exists():
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    f"{db_name.title()} database not found at {db_path}; nothing to back up",
+                    severity="warning",
                 )
+                return
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_dir = get_user_data_dir() / "backups" / db_name
+            secure_private_directory(
+                backup_dir,
+                create=True,
+                application_owned=True,
+            )
+
+            backup_path = backup_dir / f"{db_name}_backup_{timestamp}.db"
+            backup_path = self._validate_maintenance_path(
+                backup_path, label=f"{db_name} backup destination"
+            )
+            if backup_path is None:
+                return
+
+            copy_private_sqlite(
+                "settings.single_backup",
+                db_path,
+                backup_path,
+            )
+
+            # Create metadata file
+            metadata_path = backup_path.with_suffix(".json")
+            metadata = {
+                "database": db_name,
+                "original_path": str(db_path),
+                "backup_time": datetime.now().isoformat(),
+                "file_size": db_path.stat().st_size,
+                "schema_version": self._get_schema_version(db_path),
+            }
+
+            create_private_text(
+                metadata_path,
+                json.dumps(metadata, indent=2),
+                application_owned_directory=backup_dir,
+            )
+
+            self.app.call_from_thread(
+                self.app_instance.notify,
+                f"{db_name.title()} database backed up to {backup_path.name}",
+                severity="success",
+            )
+
+            # Update last backup status
+            self.app.call_from_thread(
+                self._update_last_backup_status, db_name, timestamp
+            )
         except Exception as e:
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.app_instance.notify,
                 f"Error backing up {db_name} database: {e}",
                 severity="error",
@@ -6577,21 +6719,24 @@ Thank you for using tldw-chatbook! 🎉
 
     async def _restore_single_database(self, db_name: str) -> None:
         """Restore a single database from backup."""
-        from ..Widgets.file_picker_dialog import FilePickerDialog
+        from ..Widgets.enhanced_file_picker import EnhancedFileOpen
 
         try:
             # Show file picker to select backup
-            backup_dir = (
-                Path.home() / ".local" / "share" / "tldw_cli" / "backups" / db_name
+            backup_dir = get_user_data_dir() / "backups" / db_name
+            secure_private_directory(
+                backup_dir,
+                create=True,
+                application_owned=True,
             )
-            backup_dir.mkdir(parents=True, exist_ok=True)
 
             file_path = await self.app_instance.push_screen(
-                FilePickerDialog(
+                EnhancedFileOpen(
+                    location=backup_dir,
                     title=f"Select {db_name} Database Backup",
-                    start_path=str(backup_dir),
-                    file_filter="*.db",
-                    allow_create_new=False,
+                    filters=["*.db"],
+                    must_exist=True,
+                    context=f"database_restore_{db_name}",
                 ),
                 wait_for_dismiss=True,
             )
@@ -6644,30 +6789,85 @@ Thank you for using tldw-chatbook! 🎉
             db_config = self.config_data.get("database", {})
             db_path = self._get_database_path(db_name, db_config)
 
-            if db_path:
-                # Create a backup of current database before restoring
-                if db_path.exists():
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    pre_restore_backup = (
-                        db_path.parent / f"{db_path.stem}_pre_restore_{timestamp}.db"
-                    )
-
-                    import shutil
-
-                    shutil.copy2(db_path, pre_restore_backup)
-
-                # Restore the backup
-                shutil.copy2(backup_path, db_path)
-
-                self.call_from_thread(
+            if db_path is None:
+                self.app.call_from_thread(
                     self.app_instance.notify,
-                    f"{db_name.title()} database restored successfully",
-                    severity="success",
+                    f"Cannot restore {db_name} database: no resolvable path is configured for it",
+                    severity="error",
+                )
+                return
+
+            db_path = self._validate_maintenance_path(
+                db_path, label=f"{db_name} database target"
+            )
+            if db_path is None:
+                return
+
+            backup_path = self._validate_maintenance_path(
+                backup_path, label=f"{db_name} backup source"
+            )
+            if backup_path is None:
+                return
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            if not db_path.exists():
+                # A configured custom database path is a legitimate restore
+                # target even when it has never been opened before --
+                # DB/base_db.py creates a database's parent directory as a
+                # side effect of opening it, so restore must behave
+                # consistently rather than refusing outright (TASK-899
+                # finding 4). There is no live database here to quiesce or
+                # snapshot, so this is a plain copy into a fresh private
+                # target rather than a guarded live restore.
+                try:
+                    db_path.parent.mkdir(parents=True, exist_ok=True)
+                except OSError as e:
+                    logger.error(
+                        "Could not create restore target directory {} for {}: {}",
+                        db_path.parent,
+                        db_name,
+                        e,
+                    )
+                    self.app.call_from_thread(
+                        self.app_instance.notify,
+                        f"Cannot restore {db_name} database: could not create "
+                        f"target directory {db_path.parent}: {e}",
+                        severity="error",
+                    )
+                    return
+                copy_private_sqlite(
+                    "settings.restore",
+                    backup_path,
+                    db_path,
+                )
+            else:
+                pre_restore_backup = (
+                    db_path.parent / f"{db_path.stem}_pre_restore_{timestamp}.db"
+                )
+                restore_private_sqlite(
+                    "settings.restore",
+                    "settings.pre_restore_backup",
+                    backup_path,
+                    db_path,
+                    pre_restore_backup,
                 )
 
-                self.call_from_thread(self._update_database_sizes)
+            self.app.call_from_thread(
+                self.app_instance.notify,
+                f"{db_name.title()} database restored successfully",
+                severity="success",
+            )
+
+            self.app.call_from_thread(self._update_database_sizes)
+        except SQLiteRestoreIndeterminateError as e:
+            self.app.call_from_thread(
+                self.app_instance.notify,
+                str(e),
+                severity="error",
+            )
         except Exception as e:
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.app_instance.notify,
                 f"Error restoring {db_name} database: {e}",
                 severity="error",
@@ -6694,66 +6894,175 @@ Thank you for using tldw-chatbook! 🎉
             db_config = self.config_data.get("database", {})
             db_path = self._get_database_path(db_name, db_config)
 
-            if db_path and db_path.exists():
-                conn = sqlite3.connect(str(db_path))
-                try:
-                    cursor = conn.execute("PRAGMA integrity_check")
-                    result = cursor.fetchone()
+            if db_path is None:
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    f"Cannot check {db_name} database: no resolvable path is configured for it",
+                    severity="error",
+                )
+                return
 
-                    if result and result[0] == "ok":
-                        self.call_from_thread(
-                            self.app_instance.notify,
-                            f"{db_name.title()} database integrity check passed ✓",
-                            severity="success",
-                        )
-                    else:
-                        self.call_from_thread(
-                            self.app_instance.notify,
-                            f"{db_name.title()} database has integrity issues!",
-                            severity="error",
-                        )
-                finally:
-                    conn.close()
+            if not db_path.exists():
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    f"{db_name.title()} database not found at {db_path}; nothing to check",
+                    severity="warning",
+                )
+                return
+
+            conn = connect_private_sqlite(
+                "settings.integrity",
+                db_path,
+                read_only=True,
+            )
+            try:
+                cursor = conn.execute("PRAGMA integrity_check")
+                result = cursor.fetchone()
+
+                if result and result[0] == "ok":
+                    self.app.call_from_thread(
+                        self.app_instance.notify,
+                        f"{db_name.title()} database integrity check passed ✓",
+                        severity="success",
+                    )
+                else:
+                    self.app.call_from_thread(
+                        self.app_instance.notify,
+                        f"{db_name.title()} database has integrity issues!",
+                        severity="error",
+                    )
+            finally:
+                conn.close()
         except Exception as e:
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.app_instance.notify,
                 f"Error checking {db_name} database: {e}",
                 severity="error",
             )
 
-    def _get_database_path(self, db_name: str, db_config: dict) -> Optional[Path]:
-        """Get the path for a specific database."""
-        path_map = {
-            "chachanotes": db_config.get(
-                "chachanotes_db_path",
-                "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-            ),
-            "media": db_config.get(
-                "media_db_path", "~/.local/share/tldw_cli/tldw_media_db.db"
-            ),
-            "prompts": db_config.get(
-                "prompts_db_path", "~/.local/share/tldw_cli/tldw_prompts_db.db"
-            ),
-            "evals": db_config.get(
-                "evals_db_path", "~/.local/share/tldw_cli/tldw_evals_db.db"
-            ),
-            "rag": db_config.get(
-                "rag_db_path", "~/.local/share/tldw_cli/tldw_rag_db.db"
-            ),
-            "subscriptions": db_config.get(
-                "subscriptions_db_path",
-                "~/.local/share/tldw_cli/tldw_subscriptions_db.db",
-            ),
-        }
+    # Single source of truth mapping database-maintenance names to the
+    # project's canonical, profile-aware config.py resolvers -- the exact
+    # functions the application itself uses to open these databases. See
+    # TASK-899. "rag" resolves to the RAG indexing-state DB
+    # (rag_indexing.db); there is no separate "main" RAG database.
+    _DB_PATH_RESOLVERS = {
+        "chachanotes": get_chachanotes_db_path,
+        "media": get_media_db_path,
+        "prompts": get_prompts_db_path,
+        "evals": get_evals_db_path,
+        "rag": get_rag_indexing_db_path,
+        "subscriptions": get_subscriptions_db_path,
+    }
 
-        if db_name in path_map:
-            return Path(path_map[db_name]).expanduser()
-        return None
+    def _get_database_path(self, db_name: str, db_config: dict) -> Optional[Path]:
+        """Resolve the on-disk path for a specific database.
+
+        Delegates to ``_DB_PATH_RESOLVERS`` -- the project's canonical
+        resolvers in config.py -- instead of hardcoded, profile-unaware
+        literals (TASK-899). ``db_config`` is accepted for backward-compatible
+        call-site signatures but is not consulted directly: each resolver
+        already reads any custom override straight from the live config via
+        ``get_cli_setting()``.
+
+        Returns ``None`` when ``db_name`` has no resolver, or when the
+        resolver itself raises. Callers MUST treat ``None`` as "cannot
+        resolve" and fail loudly (notify an error) rather than silently
+        doing nothing.
+        """
+        resolver = self._DB_PATH_RESOLVERS.get(db_name)
+        if resolver is None:
+            return None
+        try:
+            return resolver()
+        except Exception as e:
+            logger.error("Could not resolve path for {} database: {}", db_name, e)
+            return None
+
+    def _get_chatbook_import_database_paths(self, db_config: dict) -> dict[str, str]:
+        """Return canonical paths using the Chatbook importer's key contract."""
+
+        return get_chatbook_database_paths()
+
+    def _resolved_db_path_display(
+        self, db_name: str, *, ignore_override: bool = False
+    ) -> str:
+        """Return the display value for a database-path config Input.
+
+        This is the *actual resolved* path -- the same one
+        ``_DB_PATH_RESOLVERS`` (and therefore the vacuum/backup/check
+        workers) would use -- not a hardcoded literal (TASK-927).
+
+        By default (``ignore_override=False``, used by
+        ``_compose_database_config_form``) an explicitly-configured custom
+        override is returned unchanged, exactly matching what the app will
+        actually use.
+
+        With ``ignore_override=True`` (used by
+        ``_reset_database_config_form``) this instead returns the pure
+        profile-aware default, discarding any configured override --
+        restoring what "Reset" has always meant. The resolvers themselves
+        (e.g. ``get_chachanotes_db_path(ignore_override=True)``) already
+        compute this in their own ``else`` branch, so this reuses that
+        single source of truth for the per-database filename rather than
+        duplicating it here (TASK-927 follow-up).
+        """
+        resolver = self._DB_PATH_RESOLVERS.get(db_name)
+        if resolver is None:
+            return ""
+        try:
+            db_path = (
+                resolver(ignore_override=True) if ignore_override else resolver()
+            )
+        except Exception as e:
+            logger.error(
+                "Could not resolve {}display path for {} database: {}",
+                "default " if ignore_override else "",
+                db_name,
+                e,
+            )
+            return ""
+        return str(db_path)
+
+    def _validate_maintenance_path(self, path: Path, *, label: str) -> Optional[Path]:
+        """Validate a path immediately before a backup/restore worker passes
+        it to the private SQLite backup/restore seams (TASK-899 finding 1).
+
+        Both the config-derived database path and the user-selected backup
+        path reach filesystem writes without going through the project's
+        central path-safety helper; this closes that gap for the
+        single-database backup/restore workers.
+
+        ``validate_path_simple`` rejects a literal ``~/`` outright, so the
+        path is always expanded first -- every resolved database path
+        already lives under a dotted directory (``~/.local/share/...``),
+        which is why ``validate_path_simple`` (no base-directory / no
+        hidden-component check) is used here rather than ``validate_path``.
+
+        Must run on a worker thread. On rejection this notifies
+        ``severity="error"`` naming the offending path and the reason, then
+        returns ``None`` -- it never raises out of the worker and never
+        fails silently. Callers must treat ``None`` as "stop, do not write"
+        and return.
+        """
+        try:
+            return validate_path_simple(Path(path).expanduser(), require_exists=False)
+        except ValueError as e:
+            logger.error("Refused unsafe {} path '{}': {}", label, path, e)
+            self.app.call_from_thread(
+                self.app_instance.notify,
+                f"Refused to use {label} path '{path}': {e}",
+                severity="error",
+            )
+            return None
 
     def _get_schema_version(self, db_path: Path) -> Optional[int]:
         """Get the schema version from a database."""
         try:
-            conn = sqlite3.connect(str(db_path))
+            conn = connect_private_sqlite(
+                "settings.schema",
+                db_path,
+                read_only=True,
+            )
             try:
                 cursor = conn.execute("PRAGMA user_version")
                 return cursor.fetchone()[0]
@@ -6765,7 +7074,7 @@ Thank you for using tldw-chatbook! 🎉
     def _update_last_backup_status(self, db_name: str, timestamp: str) -> None:
         """Update the last backup status display for a database."""
         try:
-            widget_id = f"db-backup-{db_name}"
+            widget_id = f"db-last-backup-{db_name}"
             widget = self.query_one(f"#{widget_id}", Static)
             formatted_time = datetime.strptime(timestamp, "%Y%m%d_%H%M%S").strftime(
                 "%Y-%m-%d %H:%M"
@@ -6851,49 +7160,27 @@ Thank you for using tldw-chatbook! 🎉
 
     async def _import_chatbook(self) -> None:
         """Import a chatbook."""
-        from ..Widgets.file_picker_dialog import FilePickerDialog
+        from ..Widgets.enhanced_file_picker import EnhancedFileOpen
         from ..Chatbooks.chatbook_importer import ChatbookImporter
 
         try:
             # Show file picker to select chatbook
-            chatbooks_dir = Path.home() / ".local" / "share" / "tldw_cli" / "chatbooks"
-            chatbooks_dir.mkdir(parents=True, exist_ok=True)
+            chatbooks_dir = get_private_chatbooks_dir()
 
             file_path = await self.app_instance.push_screen(
-                FilePickerDialog(
+                EnhancedFileOpen(
+                    location=chatbooks_dir,
                     title="Select Chatbook to Import",
-                    start_path=str(chatbooks_dir),
-                    file_filter="*.zip",
-                    allow_create_new=False,
+                    filters=["*.zip"],
+                    must_exist=True,
+                    context="chatbook_import",
                 ),
                 wait_for_dismiss=True,
             )
 
             if file_path:
-                # Get database paths from config
                 db_config = self.config_data.get("database", {})
-                db_paths = {
-                    "chachanotes": db_config.get(
-                        "chachanotes_db_path",
-                        "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                    ),
-                    "prompts": db_config.get(
-                        "prompts_db_path", "~/.local/share/tldw_cli/tldw_prompts_db.db"
-                    ),
-                    "media": db_config.get(
-                        "media_db_path", "~/.local/share/tldw_cli/tldw_media_db.db"
-                    ),
-                    "evals": db_config.get(
-                        "evals_db_path", "~/.local/share/tldw_cli/tldw_evals_db.db"
-                    ),
-                    "rag": db_config.get(
-                        "rag_db_path", "~/.local/share/tldw_cli/tldw_rag_db.db"
-                    ),
-                    "subscriptions": db_config.get(
-                        "subscriptions_db_path",
-                        "~/.local/share/tldw_cli/tldw_subscriptions_db.db",
-                    ),
-                }
+                db_paths = self._get_chatbook_import_database_paths(db_config)
 
                 # Initialize importer
                 importer = ChatbookImporter(db_paths)
@@ -6934,22 +7221,24 @@ Thank you for using tldw-chatbook! 🎉
     def _import_chatbook_worker(self, file_path: str, db_paths: dict) -> None:
         """Worker to import chatbook in background."""
         try:
-            from ..Chatbooks.chatbook_importer import ChatbookImporter
+            from ..Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
             from ..Chatbooks.conflict_resolver import ConflictResolution
 
             importer = ChatbookImporter(db_paths)
+            status = ImportStatus()
 
             # Import with default settings
-            success, status = importer.import_chatbook(
+            success, _message = importer.import_chatbook(
                 chatbook_path=Path(file_path),
                 conflict_resolution=ConflictResolution.RENAME,
                 prefix_imported=True,
                 import_media=True,
                 import_embeddings=False,
+                import_status=status,
             )
 
             if success:
-                self.call_from_thread(
+                self.app.call_from_thread(
                     self.app_instance.notify,
                     f"Successfully imported {status.successful_items} items "
                     f"({status.skipped_items} skipped, {status.failed_items} failed)",
@@ -6959,7 +7248,7 @@ Thank you for using tldw-chatbook! 🎉
                 error_msg = "Import failed"
                 if status.errors:
                     error_msg += f": {status.errors[0]}"
-                self.call_from_thread(
+                self.app.call_from_thread(
                     self.app_instance.notify, error_msg, severity="error"
                 )
 
@@ -6968,7 +7257,7 @@ Thank you for using tldw-chatbook! 🎉
                 logger.warning(f"Import warning: {warning}")
 
         except Exception as e:
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.app_instance.notify,
                 f"Error during import: {str(e)}",
                 severity="error",
@@ -6991,21 +7280,6 @@ Thank you for using tldw-chatbook! 🎉
                 content_switcher.current = "ts-view-general-settings"
         except Exception as e:
             logger.debug(f"Could not verify initial view: {e}")
-
-    def get_unified_mcp_view_state(self) -> Dict[str, Any]:
-        try:
-            panel = self.query_one("#unified-mcp-panel", UnifiedMCPPanel)
-            return panel.get_view_state()
-        except QueryError:
-            return dict(self._pending_unified_mcp_view_state or {})
-
-    def set_unified_mcp_view_state(self, state: Optional[Dict[str, Any]]) -> None:
-        self._pending_unified_mcp_view_state = dict(state or {})
-        try:
-            panel = self.query_one("#unified-mcp-panel", UnifiedMCPPanel)
-        except QueryError:
-            return
-        panel.set_initial_view_state(self._pending_unified_mcp_view_state)
 
     async def _setup_encryption(self) -> None:
         """Setup encryption for the config file."""

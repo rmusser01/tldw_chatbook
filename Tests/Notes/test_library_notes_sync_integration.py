@@ -10,12 +10,15 @@ state helpers.
 import shutil
 import tempfile
 import time
+import os
+import stat
 from pathlib import Path
 
 import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+from tldw_chatbook.Notes import sync_paths
 from tldw_chatbook.Notes.sync_engine import ConflictResolution, SyncDirection
 from tldw_chatbook.Notes.sync_service import NotesSyncService
 
@@ -24,7 +27,7 @@ USER_ID = "library-sync-user"
 
 @pytest.fixture
 def temp_dir():
-    temp_path = tempfile.mkdtemp()
+    temp_path = Path(tempfile.mkdtemp()).resolve(strict=True)
     yield Path(temp_path)
     shutil.rmtree(temp_path, ignore_errors=True)
 
@@ -236,3 +239,255 @@ async def test_library_notes_sync_progress_callback_reports_completion(
     assert updates
     assert updates[-1] == (3, 3)
     assert progress.processed_files == 3
+
+
+@pytest.mark.asyncio
+async def test_library_notes_sync_skips_outside_link_and_imports_safe_sibling(
+    sync_service,
+    notes_service,
+    temp_dir,
+):
+    sync_dir = temp_dir / "sync_root"
+    sync_dir.mkdir()
+    outside = temp_dir / "OUTSIDE-TASK493-SENTINEL.md"
+    outside.write_text("OUTSIDE-TASK493-SENTINEL", encoding="utf-8")
+    (sync_dir / "outside.md").symlink_to(outside)
+    (sync_dir / "safe.md").write_text("safe sibling", encoding="utf-8")
+
+    _, progress = await sync_service.sync_folder(
+        root_folder=sync_dir,
+        user_id=USER_ID,
+        direction=SyncDirection.DISK_TO_DB,
+        conflict_resolution=ConflictResolution.ASK,
+    )
+
+    notes = notes_service.list_notes(USER_ID)
+    assert [note["title"] for note in notes] == ["safe"]
+    assert notes[0]["content"] == "safe sibling"
+    assert ("outside.md", "link_or_reparse") in progress.skipped_items
+    assert progress.errors == []
+
+
+@pytest.mark.asyncio
+async def test_rejected_link_is_not_treated_as_confirmed_disk_deletion(
+    sync_service,
+    notes_service,
+    temp_dir,
+):
+    sync_dir = temp_dir / "sync_root"
+    sync_dir.mkdir()
+    outside = temp_dir / "outside.md"
+    outside.write_text("outside", encoding="utf-8")
+    linked = sync_dir / "linked.md"
+    linked.symlink_to(outside)
+    note_id = notes_service.add_note(
+        user_id=USER_ID,
+        title="Linked Note",
+        content="database content",
+    )
+    note = notes_service.get_note_by_id(USER_ID, note_id)
+    notes_service.update_note_sync_metadata(
+        user_id=USER_ID,
+        note_id=note_id,
+        sync_metadata={
+            "file_path_on_disk": str(linked),
+            "relative_file_path_on_disk": "linked.md",
+            "sync_root_folder": str(sync_dir),
+            "is_externally_synced": 1,
+            "file_extension": ".md",
+        },
+        expected_version=note["version"],
+    )
+
+    _, progress = await sync_service.sync_folder(
+        root_folder=sync_dir,
+        user_id=USER_ID,
+        direction=SyncDirection.DISK_TO_DB,
+        conflict_resolution=ConflictResolution.DISK_WINS,
+    )
+
+    refreshed = notes_service.get_note_by_id(USER_ID, note_id)
+    assert refreshed["is_externally_synced"] == 1
+    assert progress.conflicts == []
+    assert ("linked.md", "link_or_reparse") in progress.skipped_items
+
+
+@pytest.mark.asyncio
+async def test_invalid_stored_relative_path_is_skipped_not_unlinked(
+    sync_service,
+    notes_service,
+    temp_dir,
+):
+    sync_dir = temp_dir / "sync_root"
+    sync_dir.mkdir()
+    note_id = notes_service.add_note(
+        user_id=USER_ID,
+        title="Escaping Note",
+        content="database content",
+    )
+    note = notes_service.get_note_by_id(USER_ID, note_id)
+    notes_service.update_note_sync_metadata(
+        user_id=USER_ID,
+        note_id=note_id,
+        sync_metadata={
+            "file_path_on_disk": str(temp_dir / "escape.md"),
+            "relative_file_path_on_disk": "../escape.md",
+            "sync_root_folder": str(sync_dir),
+            "is_externally_synced": 1,
+            "file_extension": ".md",
+        },
+        expected_version=note["version"],
+    )
+
+    _, progress = await sync_service.sync_folder(
+        root_folder=sync_dir,
+        user_id=USER_ID,
+        direction=SyncDirection.DISK_TO_DB,
+        conflict_resolution=ConflictResolution.DISK_WINS,
+    )
+
+    refreshed = notes_service.get_note_by_id(USER_ID, note_id)
+    assert refreshed["is_externally_synced"] == 1
+    assert not (temp_dir / "escape.md").exists()
+    assert ("../escape.md", "invalid_relative_path") in progress.skipped_items
+    assert progress.conflicts == []
+
+
+@pytest.mark.asyncio
+async def test_library_notes_sync_matches_lexical_root_alias_and_normalizes_metadata(
+    sync_service,
+    notes_service,
+    temp_dir,
+):
+    canonical_root = temp_dir / "canonical"
+    canonical_root.mkdir()
+    selected_root = temp_dir / "selected"
+    selected_root.symlink_to(canonical_root, target_is_directory=True)
+    note_id = notes_service.add_note(
+        user_id=USER_ID,
+        title="Alias Note",
+        content="alias content",
+    )
+    note = notes_service.get_note_by_id(USER_ID, note_id)
+    notes_service.update_note_sync_metadata(
+        user_id=USER_ID,
+        note_id=note_id,
+        sync_metadata={
+            "file_path_on_disk": str(selected_root / "alias.md"),
+            "relative_file_path_on_disk": "alias.md",
+            "sync_root_folder": str(selected_root),
+            "is_externally_synced": 1,
+            "file_extension": ".md",
+        },
+        expected_version=note["version"],
+    )
+
+    _, progress = await sync_service.sync_folder(
+        root_folder=selected_root,
+        user_id=USER_ID,
+        direction=SyncDirection.DB_TO_DISK,
+        conflict_resolution=ConflictResolution.ASK,
+    )
+
+    written = canonical_root / "alias.md"
+    refreshed = notes_service.get_note_by_id(USER_ID, note_id)
+    assert written.read_text(encoding="utf-8") == "alias content"
+    assert stat.S_IMODE(written.stat().st_mode) == 0o600
+    assert refreshed["sync_root_folder"] == str(canonical_root.resolve(strict=True))
+    assert refreshed["file_path_on_disk"] == str(written.resolve(strict=True))
+    assert progress.skipped_items == []
+
+
+@pytest.mark.asyncio
+async def test_unsupported_containment_skips_db_entry_without_writing(
+    sync_service,
+    notes_service,
+    temp_dir,
+    monkeypatch,
+):
+    sync_dir = temp_dir / "sync_root"
+    sync_dir.mkdir()
+    note_id = notes_service.add_note(
+        user_id=USER_ID,
+        title="Unsupported Note",
+        content="must not be written",
+    )
+    note = notes_service.get_note_by_id(USER_ID, note_id)
+    notes_service.update_note_sync_metadata(
+        user_id=USER_ID,
+        note_id=note_id,
+        sync_metadata={
+            "file_path_on_disk": str(sync_dir / "unsupported.md"),
+            "relative_file_path_on_disk": "unsupported.md",
+            "sync_root_folder": str(sync_dir),
+            "is_externally_synced": 1,
+            "file_extension": ".md",
+        },
+        expected_version=note["version"],
+    )
+    monkeypatch.setattr(
+        sync_paths,
+        "_descriptor_guards_available",
+        lambda: False,
+    )
+
+    _, progress = await sync_service.sync_folder(
+        root_folder=sync_dir,
+        user_id=USER_ID,
+        direction=SyncDirection.DB_TO_DISK,
+        conflict_resolution=ConflictResolution.ASK,
+    )
+
+    assert not (sync_dir / "unsupported.md").exists()
+    assert (".", "unsupported_platform") in progress.skipped_items
+    assert ("unsupported.md", "unsupported_platform") in progress.skipped_items
+    assert progress.errors == []
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX mode contract")
+@pytest.mark.parametrize("mode", [0o600, 0o640, 0o644])
+@pytest.mark.asyncio
+async def test_library_notes_sync_preserves_existing_mode(
+    sync_service,
+    notes_service,
+    temp_dir,
+    mode,
+):
+    sync_dir = temp_dir / "sync_root"
+    sync_dir.mkdir()
+    target = sync_dir / "mode.md"
+    target.write_text("old content", encoding="utf-8")
+    target.chmod(mode)
+    note_id = notes_service.add_note(
+        user_id=USER_ID,
+        title="Mode Note",
+        content="new content",
+    )
+    note = notes_service.get_note_by_id(USER_ID, note_id)
+    notes_service.update_note_sync_metadata(
+        user_id=USER_ID,
+        note_id=note_id,
+        sync_metadata={
+            "file_path_on_disk": str(target),
+            "relative_file_path_on_disk": "mode.md",
+            "sync_root_folder": str(sync_dir),
+            "is_externally_synced": 1,
+            "file_extension": ".md",
+            "last_synced_disk_file_hash": (
+                sync_service.sync_engine._calculate_hash("old content")
+            ),
+            "last_synced_disk_file_mtime": target.stat().st_mtime,
+        },
+        expected_version=note["version"],
+    )
+
+    _, progress = await sync_service.sync_folder(
+        root_folder=sync_dir,
+        user_id=USER_ID,
+        direction=SyncDirection.DB_TO_DISK,
+        conflict_resolution=ConflictResolution.ASK,
+    )
+
+    assert target.read_text(encoding="utf-8") == "new content"
+    assert stat.S_IMODE(target.stat().st_mode) == mode
+    assert progress.errors == []

@@ -17,7 +17,7 @@ PersonaWorkbenchMode = Literal[
 ]
 PersonaEntityKind = Literal[
     "character",
-    "persona_profile",
+    "persona",
     "prompt",
     "dictionary",
     "lore",
@@ -87,12 +87,44 @@ class PersonaActionRequested(Message):
         self.entity_id = entity_id
 
 
+class PersonaSortCycleRequested(Message):
+    """The user asked to advance the library sort (screen decides the next key)."""
+
+
+class PersonaTagFilterRequested(Message):
+    """The user asked to open the tag filter (characters only)."""
+
+
+class PersonaPageChanged(Message):
+    """The user asked to move the library page window."""
+
+    def __init__(self, delta: int) -> None:
+        super().__init__()
+        self.delta = delta
+
+
+class PersonaMarksChanged(Message):
+    """The library pane's marked (multi-selected) row set changed (F-040).
+
+    ``marks`` is a tuple of ``(kind, item_id, name)`` triples in row order;
+    empty when the last mark was cleared.
+    """
+
+    def __init__(self, marks: tuple[tuple[str, str, str], ...]) -> None:
+        super().__init__()
+        self.marks = marks
+
+
 __all__ = [
     "PersonaAction",
     "PersonaActionRequested",
     "PersonaEntityKind",
     "PersonaEntitySelected",
+    "PersonaMarksChanged",
     "PersonaModeChanged",
+    "PersonaPageChanged",
     "PersonaSearchChanged",
+    "PersonaSortCycleRequested",
+    "PersonaTagFilterRequested",
     "PersonaWorkbenchMode",
 ]

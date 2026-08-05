@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.widget import Widget
@@ -15,17 +17,21 @@ from textual.widgets import Button, Checkbox, DataTable, Static
 from tldw_chatbook.MCP.readiness import (
     STATE_CSS_CLASSES,
     STATE_GLYPHS,
+    STATE_LABELS,
     HubAction,
     ReadinessSnapshot,
     ReadinessState,
     aggregate_summary,
     env_placeholder_names,
+    is_off_opt_in,
     worst_state,
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_url
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
+from tldw_chatbook.UI.Widgets.table_click_select import DataTableClickSelectMixin
 
 _MUTATIONS_GATED_TOOLTIP = "Requires team, org, or system-admin scope."
 # I3: Import always writes to the LOCAL profile store (`_apply_import()` in
@@ -34,11 +40,9 @@ _MUTATIONS_GATED_TOOLTIP = "Requires team, org, or system-admin scope."
 # different source/table entirely), so the button is gated off there rather
 # than silently landing writes nobody looking at this screen would see.
 _IMPORT_GATED_TOOLTIP = "Import creates LOCAL server profiles — switch Source to Local."
-_IMPORT_LOCAL_TOOLTIP = (
-    "Import servers from a Claude-Desktop-style mcpServers JSON file or paste."
-)
+_IMPORT_LOCAL_TOOLTIP = "Import servers from a Claude-Desktop-style mcpServers JSON file or paste."
 
-_TABLE_COLUMNS = ("Name", "Transport", "Status", "Tools", "Auth", "Scope")
+_TABLE_COLUMNS = ("Name", "Connection", "Status", "Tools", "Auth", "Scope")
 # Task 11: the Local source never has a meaningful Scope (built-in is
 # stdio-only; local profiles are always "Personal") -- the overview table
 # omits the column entirely there instead of rendering a column of dashes.
@@ -48,6 +52,130 @@ _TABLE_COLUMNS_NO_SCOPE = _TABLE_COLUMNS[:-1]
 # table -- beyond that, a single "+N more" Static points back at the table
 # rather than growing the callout list without bound.
 _CALLOUT_CAP = 4
+
+# F-057: column drop order when the overview table is too narrow for its
+# full column set -- lowest priority first. Name/Status are never dropped
+# (identity + readiness are the table's primary content); the dropped
+# columns' facts remain one click away in the detail pane.
+_COLUMN_DROP_PRIORITY = ("Auth", "Connection")
+
+# F-058: readiness-glyph legend for the Servers overview -- one quiet dim
+# line, derived from STATE_GLYPHS/STATE_LABELS so the legend can never
+# drift from the statuses the table/rail/inspector actually render, plus
+# the ⌂ built-in marker (mcp_rail.py's row prefix), which had no
+# explanation anywhere. Mirrors Permissions mode's `#mcp-perm-legend`
+# (mcp_permissions_mode.py) in placement (after the content) and styling.
+_SERVERS_LEGEND_TEXT = " · ".join(
+    f"{glyph} {STATE_LABELS[state].lower()}" for state, glyph in STATE_GLYPHS.items()
+) + " · ⌂ built-in"
+
+
+def _fit_columns(
+    snapshots: list[ReadinessSnapshot], *, show_scope: bool, available: int
+) -> list[str]:
+    """Choose the overview table's column set for its rendered width (F-057).
+
+    Estimates each column's rendered width as its longest content string
+    (header or cell, the same plain strings the cells are built from) plus
+    DataTable's per-cell padding, and drops columns in
+    `_COLUMN_DROP_PRIORITY` order until the set fits `available`. Name and
+    Status are always kept. An unknown width (`available <= 0`, e.g. before
+    the first layout) keeps the full per-source set.
+    """
+    columns = list(_TABLE_COLUMNS if show_scope else _TABLE_COLUMNS_NO_SCOPE)
+    if available <= 0:
+        return columns
+
+    cell_text: dict[str, Any] = {
+        "Name": lambda s: s.label,
+        "Connection": lambda s: s.transport,
+        "Status": lambda s: s.badge_text(),
+        "Tools": lambda s: "—" if s.tool_count is None else str(s.tool_count),
+        "Auth": lambda s: s.auth_display,
+        "Scope": lambda s: s.scope_display,
+    }
+
+    def fits(candidate: list[str]) -> bool:
+        total = 0
+        for column in candidate:
+            longest = max(
+                [len(column)] + [len(cell_text[column](snap)) for snap in snapshots]
+            )
+            total += longest + 2  # DataTable per-cell padding
+        return total <= available
+
+    while not fits(columns) and len(columns) > 2:
+        droppable = next((c for c in _COLUMN_DROP_PRIORITY if c in columns), None)
+        if droppable is None:
+            break
+        columns.remove(droppable)
+    return columns
+
+# `_named_items_text()`'s "show at most this many names, then '+N more'"
+# cap -- pulled out to a named constant (was three inline `8` literals) so
+# the truncation point and the "how many are left" arithmetic can't drift
+# apart from each other.
+_NAMED_ITEMS_CAP = 8
+
+# Task 1 (MCP Hub Phase 6): the overview Status cell's `state_text()` kind,
+# derived from `STATE_CSS_CLASSES` (readiness.py) rather than a second,
+# parallel `ReadinessState -> kind` table -- every class name in that dict is
+# already exactly `"mcp-status-{kind}"` (Task 3/11's own CSS-class
+# precedent, reused verbatim by `mcp_rail.py`'s rows and `mcp_inspector.py`'s
+# readiness Static), so stripping the shared prefix reuses that single
+# source of truth instead of duplicating it.
+def _readiness_kind(state: ReadinessState) -> str:
+    return STATE_CSS_CLASSES[state].removeprefix("mcp-status-")
+
+
+def _callout_tooltip(snap: ReadinessSnapshot) -> str:
+    """"Open {label}." for a callout, prefixed by any technical detail the
+    snapshot carries (F-050 -- e.g. the disabled built-in's config syntax,
+    which no longer appears in the one-line callout label itself)."""
+    technical = str((snap.detail or {}).get("technical_detail") or "").strip()
+    open_line = f"Open {snap.label}."
+    return escape_markup(f"{technical} {open_line}" if technical else open_line)
+
+
+def _count_display(value: int | None) -> str:
+    """"—" for an unreported count, else the plain integer as a string.
+
+    Mirrors `update_overview()`'s own inline `"—" if snap.tool_count is
+    None else str(snap.tool_count)` ternary for the overview table's Tools
+    cell -- pulled out to a shared helper now that `_detail_text()`'s
+    server-source branch (Task 5, MCP Hub Phase 6) needs the identical
+    "unreported vs. zero" distinction for resource/prompt counts too.
+    """
+    return "—" if value is None else str(value)
+
+
+def _named_items_text(items: Any, *, key: str) -> str:
+    """"{count}: {comma-joined names}" for a Servers-mode detail line, or
+    the literal "none" when there's nothing to show (Task 5, MCP Hub Phase
+    6 -- see `_detail_text()`'s local-source Tools/Resources/Prompts
+    lines).
+
+    Defensive reads: a missing/malformed `discovery_snapshot` field (not a
+    list or tuple at all) is treated as empty rather than raising; a
+    non-Mapping entry within an otherwise-list/tuple field falls back to
+    `str(item)` instead of assuming `.get()` exists. `key` is tried first
+    (`"uri"` for resources, `"name"` for tools/prompts), falling back to
+    whichever of `name`/`uri` the entry actually carries, then a literal
+    `"?"` -- mirrors the pre-Task-5 inline join this replaces.
+    """
+    if not isinstance(items, (list, tuple)) or not items:
+        return "none"
+    names: list[str] = []
+    for item in items[:_NAMED_ITEMS_CAP]:
+        if isinstance(item, Mapping):
+            names.append(str(item.get(key) or item.get("name") or item.get("uri") or "?"))
+        else:
+            names.append(str(item))
+    text = ", ".join(names)
+    if len(items) > _NAMED_ITEMS_CAP:
+        text += f", … +{len(items) - _NAMED_ITEMS_CAP} more"
+    return f"{len(items)}: {text}"
+
 
 # Task 10: the built-in detail view's Checkbox ids -> the `[mcp]` config key
 # (and `BuiltinFlagChanged.key`) each one edits.
@@ -59,8 +187,13 @@ _BUILTIN_CHECKBOX_KEYS: dict[str, str] = {
 }
 
 
-class MCPServersMode(Vertical):
-    """Canvas for the Servers mode. Read-only in Phase 1."""
+class MCPServersMode(DataTableClickSelectMixin, Vertical):
+    """Canvas for the Servers mode."""
+
+    # F-056: Escape disarms a pending delete confirmation (same path as the
+    # arm-then-confirm pair's "Keep" button) -- a destructive confirm must
+    # never require the mouse to back out of. No-op when unarmed.
+    BINDINGS = [Binding("escape", "disarm_delete", "Cancel delete", show=False)]
 
     DEFAULT_CSS = """
     MCPServersMode {
@@ -103,8 +236,26 @@ class MCPServersMode(Vertical):
     #mcp-overview-summary-glyph {
         width: 2;
     }
+    /* F-057: let the aggregate sentence WRAP at narrow widths instead of
+    clipping mid-sentence -- the shared `.ds-status-badge` rule pins
+    `height: 1`. This override covers the bare test harnesses that never
+    load the app bundle; the REAL app gets the identical rule from
+    _agentic_terminal.tcss (app-tier CSS beats widget DEFAULT_CSS on ties
+    in this Textual version, so the bundle carries its own copy -- the
+    established lockstep pattern documented there). */
     #mcp-overview-summary {
         width: 1fr;
+        height: auto;
+        min-height: 1;
+    }
+    /* F-058: the legend is a single dimmed hint line under the overview
+    content -- mirrors `#mcp-perm-legend` (mcp_permissions_mode.py), same
+    raw `$text-muted` token rationale: this widget's unit tests mount it
+    without the app bundle where the `$ds-*` aliases are defined. */
+    #mcp-servers-legend {
+        height: auto;
+        min-height: 0;
+        color: $text-muted;
     }
     """
 
@@ -152,7 +303,8 @@ class MCPServersMode(Vertical):
         `save_setting_to_cli_config("mcp", key, value)` (a thread-offloaded
         config write; see `MCPWorkbench._save_builtin_flag()`) and then
         reloading the catalog so the built-in row's readiness reflects the
-        change (Phase 1 derivation: `enabled=False` -> NEEDS_SETUP).
+        change (Phase 1 derivation: `enabled=False` -> the muted OFF_OPT_IN
+        display state, task-2239).
         """
 
         def __init__(self, key: str, value: bool) -> None:
@@ -196,6 +348,29 @@ class MCPServersMode(Vertical):
         # `on_button_pressed` translate a callout click back to the
         # server_key to select.
         self._callout_keys: list[str] = []
+        # F-057: the table width the current column set was fitted to
+        # (0 = never fitted) -- `on_resize` refits only on real changes.
+        self._table_width: int = 0
+
+    def on_resize(self) -> None:
+        """F-057: refit the overview's column set when the table's rendered
+        width changes (terminal resize, compact-mode rebalance). The first
+        fit at mount ran pre-layout (width 0 = full set); this is what
+        corrects it once the real width is known."""
+        table = self.query_one("#mcp-servers-table", DataTable)
+        width = table.region.width
+        if width > 0 and width != self._table_width:
+            self._table_width = width
+            self.run_worker(
+                self.update_overview(
+                    self._snapshots,
+                    source=self._source,
+                    mutations_available=self._mutations_available,
+                    mutation_target_label=self._mutation_target_label,
+                ),
+                group="mcp-overview-refit",
+                exclusive=True,
+            )
 
     def compose(self) -> ComposeResult:
         with Vertical(id="mcp-servers-overview"):
@@ -222,21 +397,16 @@ class MCPServersMode(Vertical):
             # the sentence Static stays plain (`ds-status-badge` only).
             with Horizontal(id="mcp-overview-summary-row"):
                 yield Static(
-                    "",
-                    id="mcp-overview-summary-glyph",
-                    classes="ds-status-badge",
-                    markup=False,
+                    "", id="mcp-overview-summary-glyph", classes="ds-status-badge", markup=False,
                 )
-                yield Static(
-                    "",
-                    id="mcp-overview-summary",
-                    classes="ds-status-badge",
-                    markup=False,
-                )
+                yield Static("", id="mcp-overview-summary", classes="ds-status-badge", markup=False)
             table = DataTable(id="mcp-servers-table")
             table.cursor_type = "row"
             yield table
             yield Vertical(id="mcp-overview-callouts")
+            # F-058: quiet glyph legend under the overview content (mirrors
+            # Permissions mode's legend placement).
+            yield Static(_SERVERS_LEGEND_TEXT, id="mcp-servers-legend", markup=False)
         with Vertical(id="mcp-servers-detail"):
             with Horizontal(id="mcp-detail-header", classes="ds-toolbar"):
                 yield Button(
@@ -247,16 +417,11 @@ class MCPServersMode(Vertical):
                     tooltip="Return to the overview table.",
                 )
                 yield Static(
-                    "",
-                    id="mcp-detail-title",
-                    classes="destination-section",
-                    markup=False,
+                    "", id="mcp-detail-title", classes="destination-section", markup=False
                 )
             yield Horizontal(id="mcp-detail-toolbar", classes="ds-toolbar")
             with VerticalScroll(id="mcp-detail-scroll"):
-                yield Static(
-                    "", id="mcp-detail-body", classes="ds-field-row", markup=False
-                )
+                yield Static("", id="mcp-detail-body", classes="ds-field-row", markup=False)
                 yield Vertical(id="mcp-detail-builtin-toggles")
                 yield Button(
                     "Copy client config",
@@ -463,6 +628,16 @@ class MCPServersMode(Vertical):
         glyph.add_class(STATE_CSS_CLASSES[worst])
         glyph.update(STATE_GLYPHS[worst])
         table = self.query_one("#mcp-servers-table", DataTable)
+        # F-057: remember the width this call fitted its columns to, so
+        # `on_resize` only refits when the rendered width actually changed.
+        self._table_width = table.region.width
+        # Task 11: per-source columns -- Local (built-in + local profiles)
+        # has no meaningful Scope (stdio-only / always "Personal"), so the
+        # column is omitted there rather than rendering a column of dashes.
+        # Columns are rebuilt from scratch every call (not just when the
+        # set actually changes) -- simpler than tracking the previously
+        # rendered column set, and this only runs on an actual overview
+        # resync, not per keystroke.
         # Task 11: per-source columns -- Local (built-in + local profiles)
         # has no meaningful Scope (stdio-only / always "Personal"), so the
         # column is omitted there rather than rendering a column of dashes.
@@ -471,8 +646,23 @@ class MCPServersMode(Vertical):
         # rendered column set, and this only runs on an actual overview
         # resync, not per keystroke.
         show_scope = source != "local"
+        # F-057: at narrow widths the full column set overflows the
+        # viewport and the right-most columns silently vanish behind the
+        # DataTable's horizontal scroll. Drop the lowest-priority columns
+        # (Auth, then Connection) until the estimated content fits the
+        # table's current rendered width -- Name/Status always stay, and
+        # the dropped facts remain one click away in the detail pane
+        # (env/credential lines, `Connection · ...`). Unknown width (0,
+        # pre-layout) keeps the full set, matching pre-F-057 behavior.
+        # Rebuilding moves the cursor to row 0 before the key-based restore
+        # below puts it back; declaring the rebuild keeps that transient from
+        # being read as a selection (DataTableClickSelectMixin).
+        self.repopulating_table()
         table.clear(columns=True)
-        table.add_columns(*(_TABLE_COLUMNS if show_scope else _TABLE_COLUMNS_NO_SCOPE))
+        columns = _fit_columns(
+            self._snapshots, show_scope=show_scope, available=table.region.width
+        )
+        table.add_columns(*columns)
         seen_keys: set[str] = set()
         self._row_key_to_server_key = {}
         for snap in self._snapshots:
@@ -499,22 +689,50 @@ class MCPServersMode(Vertical):
             # profile ids, server-reported names) and DataTable parses
             # plain str cells as Rich markup -- wrap in Text so a value like
             # "[/bold]docs" can't crash the app (MarkupError) and
-            # "[red]x[/red]" can't inject styling. Status cells stay plain
-            # (theme-token colors aren't addressable per-cell in a
-            # DataTable -- Task 11 documented decision; the rail row and
-            # inspector badge carry the status color instead).
-            row_cells: list[Any] = [
-                Text(snap.label),
-                snap.transport,
-                snap.badge_text(),
-                "—" if snap.tool_count is None else str(snap.tool_count),
-                Text(snap.auth_display),
-            ]
-            if show_scope:
-                row_cells.append(Text(snap.scope_display))
-            table.add_row(*row_cells, key=row_key)
+            # "[red]x[/red]" can't inject styling. Status cells now carry
+            # the readiness state's color too (Task 1, MCP Hub Phase 6,
+            # supersedes the old Task 11 "stays plain" decision above this
+            # comment used to describe) -- `state_text()` colors the WHOLE
+            # cell (glyph + word together, one string), mirroring
+            # `mcp_rail.py`'s row Buttons, which already color both the
+            # same way via `STATE_CSS_CLASSES`.
+            row_cells_by_name: dict[str, Any] = {
+                "Name": Text(snap.label),
+                "Connection": snap.transport,
+                "Status": state_text(snap.badge_text(), _readiness_kind(snap.state)),
+                "Tools": "—" if snap.tool_count is None else str(snap.tool_count),
+                "Auth": Text(snap.auth_display),
+                "Scope": Text(snap.scope_display),
+            }
+            table.add_row(
+                *(row_cells_by_name[column] for column in columns), key=row_key
+            )
         callouts = self.query_one("#mcp-overview-callouts", Vertical)
         await callouts.remove_children()
+        callout_widgets: list[Widget] = []
+        # F-051: the disabled built-in is an OFF/opt-in state, not a
+        # problem -- it never files a recovery callout. Instead it gets a
+        # calm Enable affordance whose click performs the fix directly
+        # (BuiltinFlagChanged("enabled", True), the same message the detail
+        # view's Enabled checkbox posts), rendered in the same one-line
+        # callout row style.
+        for snap in self._snapshots:
+            if not is_off_opt_in(snap):
+                continue
+            technical = str((snap.detail or {}).get("technical_detail") or "").strip()
+            enable_tooltip = (
+                f"{technical} Enable the built-in MCP server so an MCP client "
+                "can launch it."
+            ).strip()
+            callout_widgets.append(
+                Button(
+                    escape_markup(f"{snap.label} is turned off — Enable"),
+                    id="mcp-builtin-enable",
+                    classes="mcp-callout mcp-optin console-action-subdued",
+                    compact=True,
+                    tooltip=escape_markup(enable_tooltip),
+                )
+            )
         # Task 11: callouts are now actionable one-line Buttons (posting
         # ServerRowSelected straight to the problem row) instead of inert
         # Statics -- capped at _CALLOUT_CAP with a final "+N more" Static
@@ -524,22 +742,21 @@ class MCPServersMode(Vertical):
             snap
             for snap in self._snapshots
             if snap.state not in (ReadinessState.READY, ReadinessState.CHECKING)
+            and not is_off_opt_in(snap)
         ]
         visible = problem_snapshots[:_CALLOUT_CAP]
         overflow = len(problem_snapshots) - len(visible)
         self._callout_keys = [snap.server_key for snap in visible]
-        callout_widgets: list[Widget] = [
+        callout_widgets.extend(
             Button(
-                escape_markup(
-                    f"{STATE_GLYPHS[snap.state]} {snap.label}: {snap.message}"
-                ),
+                escape_markup(f"{STATE_GLYPHS[snap.state]} {snap.label}: {snap.message}"),
                 id=f"mcp-callout-{index}",
                 classes="mcp-callout console-action-subdued",
                 compact=True,
-                tooltip=f"Open {escape_markup(snap.label)}.",
+                tooltip=_callout_tooltip(snap),
             )
             for index, snap in enumerate(visible)
-        ]
+        )
         if overflow > 0:
             callout_widgets.append(
                 Static(
@@ -701,6 +918,11 @@ class MCPServersMode(Vertical):
         self._delete_armed = False
         await self._rebuild_detail_toolbar()
 
+    async def action_disarm_delete(self) -> None:
+        """F-056: Escape -- disarm exactly like the "Keep" button (no-op
+        when nothing is armed)."""
+        await self.disarm_delete()
+
     async def _rebuild_detail_toolbar(self) -> None:
         """Rebuild `#mcp-detail-toolbar` from `_detail_toolbar_widgets()`.
 
@@ -719,6 +941,16 @@ class MCPServersMode(Vertical):
         toolbar.display = bool(widgets)
         if widgets:
             await toolbar.mount_all(widgets)
+            if self._delete_armed:
+                # F-056: arming the delete confirmation moves keyboard focus
+                # onto the SAFE option ("Keep") -- a keyboard user can back
+                # out with Enter or Escape immediately, and an accidental
+                # Enter never confirms the delete. Only the arm pair gets
+                # this (the plain Edit/Disconnect/Delete toolbar never
+                # steals focus).
+                self.call_after_refresh(
+                    self.query_one("#mcp-detail-delete-cancel", Button).focus
+                )
 
     def _builtin_toggle_widgets(self) -> list[Widget]:
         """Build the built-in detail's enable/expose Checkbox rows + note.
@@ -733,7 +965,7 @@ class MCPServersMode(Vertical):
         detail = snapshot.detail or {}
         # `enabled` is read directly off `detail["enabled"]` (populated by
         # `builtin_readiness()`, Task 10) rather than re-derived from
-        # `snapshot.state is not ReadinessState.NEEDS_SETUP` -- see the
+        # `snapshot.state is not ReadinessState.OFF_OPT_IN` -- see the
         # comment on that call site for why. The `True` fallback only
         # matters for a hypothetical builtin-source snapshot built without
         # going through `builtin_readiness()` at all (none do today).
@@ -790,9 +1022,7 @@ class MCPServersMode(Vertical):
         if widgets:
             await container.mount_all(widgets)
 
-    def _detail_text(
-        self, snapshot: ReadinessSnapshot, *, mutations_available: bool = False
-    ) -> str:
+    def _detail_text(self, snapshot: ReadinessSnapshot, *, mutations_available: bool = False) -> str:
         detail = snapshot.detail or {}
         lines: list[str] = [snapshot.message, ""]
         if snapshot.source == "server" and isinstance(detail.get("raw"), dict):
@@ -803,17 +1033,25 @@ class MCPServersMode(Vertical):
             # `show_server_mutations()` instead (see
             # `MCPWorkbench._show_selected_detail()`).
             raw = detail["raw"]
-            lines.append(f"Transport · {snapshot.transport}")
+            lines.append(f"Connection · {snapshot.transport}")
             lines.append(f"Enabled · {'yes' if raw.get('enabled', True) else 'no'}")
             lines.append(f"Credentials · {snapshot.auth_display}")
+            # Task 5 (MCP Hub Phase 6, §14 Advanced-opt-in compensation):
+            # server-source records show resource/prompt COUNTS only --
+            # straight off the snapshot fields `server_external_record_
+            # readiness()` derives from the record's own reported counts (or
+            # raw lists), the same existing payload the overview table's
+            # Tools column already reads. No names/URIs: the server owns
+            # those, and the read-only listing lives on the LOCAL discovery
+            # snapshot below; test-read/test-get remain via opt-in Advanced.
+            lines.append(f"Resources · {_count_display(snapshot.resource_count)}")
+            lines.append(f"Prompts · {_count_display(snapshot.prompt_count)}")
             if not mutations_available:
                 lines.append("")
                 lines.append(_MUTATIONS_GATED_TOOLTIP)
         elif snapshot.source == "local":
             args = redact_args([str(a) for a in detail.get("args") or []])
-            lines.append(
-                f"Command · {detail.get('command') or '—'} {' '.join(args)}".rstrip()
-            )
+            lines.append(f"Command · {detail.get('command') or '—'} {' '.join(args)}".rstrip())
             placeholders = detail.get("env_placeholders") or {}
             missing = set(detail.get("missing_env") or [])
             for env_key, raw in placeholders.items():
@@ -827,19 +1065,34 @@ class MCPServersMode(Vertical):
                 is_missing = bool(names) and names[0] in missing
                 marker = "missing" if is_missing else "set"
                 lines.append(f"Env · {env_key} ({marker})")
+            # Task 5 (MCP Hub Phase 6, §14 Advanced-opt-in compensation):
+            # resources and prompts get their own compact, always-present
+            # lines here -- with Advanced now opt-in (see mcp_inspector.py),
+            # this detail body is the only place a user sees a local
+            # server's resource URIs or prompt names without deliberately
+            # revealing the legacy runner. Tools keeps the same "Kind · N:
+            # names" shape it always had; `_named_items_text()` now backs
+            # all three uniformly (defensive reads, explicit "none" empty
+            # copy) rather than duplicating the join/truncate logic per kind.
             discovery = detail.get("discovery_snapshot") or {}
-            for kind in ("tools", "resources", "prompts"):
-                items = discovery.get(kind) or []
-                names = ", ".join(
-                    str(item.get("name") or item.get("uri") or "?")
-                    for item in items[:8]
-                )
-                suffix = f": {names}" if names else ""
-                lines.append(f"{kind.title()} · {len(items)}{suffix}")
+            lines.append(f"Tools · {_named_items_text(discovery.get('tools'), key='name')}")
+            lines.append("")
+            lines.append(f"Resources · {_named_items_text(discovery.get('resources'), key='uri')}")
+            lines.append(f"Prompts · {_named_items_text(discovery.get('prompts'), key='name')}")
         elif snapshot.source == "server":
             base_url = str(detail.get("base_url") or "")
             lines.append(f"Base URL · {redact_url(base_url) if base_url else '—'}")
             lines.append(f"Auth · {snapshot.auth_display}")
+            # Task 5 (MCP Hub Phase 6): server-source records don't carry a
+            # local discovery_snapshot to list names/URIs from -- counts
+            # only, straight off the snapshot's own tool_count/
+            # resource_count/prompt_count fields (the same "existing
+            # payload" tool_count already reads for the overview table's
+            # Tools column; server_external_record_readiness() populates
+            # resource_count/prompt_count the identical record.get(...)-or-
+            # len(list) way).
+            lines.append(f"Resources · {_count_display(snapshot.resource_count)}")
+            lines.append(f"Prompts · {_count_display(snapshot.prompt_count)}")
             lines.append("External server records: see Advanced ▸ External Servers.")
         else:  # builtin
             lines.append("Runs over stdio when an MCP client launches it:")
@@ -895,6 +1148,13 @@ class MCPServersMode(Vertical):
             event.stop()
             self.post_message(self.ServerRowSelected(None))
             return
+        if button_id == "mcp-builtin-enable":
+            # F-051: the off/opt-in affordance performs the fix itself --
+            # same message the detail view's Enabled checkbox posts; the
+            # workbench persists [mcp].enabled and resyncs.
+            event.stop()
+            self.post_message(self.BuiltinFlagChanged("enabled", True))
+            return
         if button_id.startswith("mcp-callout-"):
             # Task 11: actionable callout -- jump straight to the problem
             # server's detail view, same destination a table-row click for
@@ -908,9 +1168,7 @@ class MCPServersMode(Vertical):
             event.stop()
             snippet = ""
             if self._detail_snapshot is not None:
-                snippet = str(
-                    (self._detail_snapshot.detail or {}).get("client_snippet") or ""
-                )
+                snippet = str((self._detail_snapshot.detail or {}).get("client_snippet") or "")
             if snippet:
                 self.app.copy_to_clipboard(snippet)
                 self.app.notify("Client config copied to clipboard.")
@@ -931,9 +1189,7 @@ class MCPServersMode(Vertical):
         if button_id == "mcp-detail-disconnect":
             event.stop()
             if self._detail_snapshot is not None:
-                self.post_message(
-                    self.DisconnectRequested(self._detail_snapshot.server_key)
-                )
+                self.post_message(self.DisconnectRequested(self._detail_snapshot.server_key))
             return
         if button_id == "mcp-detail-delete":
             event.stop()
@@ -950,7 +1206,5 @@ class MCPServersMode(Vertical):
             self._delete_armed = False
             await self._rebuild_detail_toolbar()
             if self._detail_snapshot is not None:
-                self.post_message(
-                    self.DeleteConfirmed(self._detail_snapshot.server_key)
-                )
+                self.post_message(self.DeleteConfirmed(self._detail_snapshot.server_key))
             return

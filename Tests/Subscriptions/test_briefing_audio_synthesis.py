@@ -1,0 +1,767 @@
+"""Tests for per-turn TTS synthesis across the exact and legacy provider paths.
+
+`synthesize_turn` is the piece that turns one script turn -- one speaker,
+one resolved voice, one block of text -- into WAV bytes, on any configured
+TTS provider. The only faked seam is the TTS service itself (a stub
+exposing `synthesize_exact` and `generate_audio_stream`, mirroring
+`TTSService`'s own call shape); everything else, including the real
+`TTSAudioResponse`, `TextChunker`, and `concat_wav_segments` (via `pydub`),
+is exercised as-is.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field
+from io import BytesIO
+from typing import Any
+
+import pytest
+
+pytest.importorskip("pydub")
+from pydub import AudioSegment
+
+import tldw_chatbook.Subscriptions.briefing_audio as briefing_audio
+from tldw_chatbook.Subscriptions.briefing_audio import (
+    MAX_TURN_CHARS,
+    TurnSynthesisError,
+    synthesize_turn,
+)
+from tldw_chatbook.Subscriptions.briefing_voices import VoiceSelection
+from tldw_chatbook.TTS.adapter_types import TTSAudioResponse, TTSRequest
+from tldw_chatbook.TTS.audio_stitch import AudioStitchError
+from tldw_chatbook.TTS.legacy_bridge import UnknownLegacyModelError, resolve_legacy_route
+from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
+
+pytestmark = pytest.mark.unit
+
+_DEFAULT_GAP_MS = 350
+
+
+def _silence_wav(duration_ms: int = 100, frame_rate: int = 22050) -> bytes:
+    """Build a real WAV payload of `duration_ms` of silence, in-process."""
+    segment = AudioSegment.silent(duration=duration_ms, frame_rate=frame_rate)
+    buffer = BytesIO()
+    segment.export(buffer, format="wav")
+    return buffer.getvalue()
+
+
+def _decode(payload: bytes) -> AudioSegment:
+    return AudioSegment.from_file(BytesIO(payload), format="wav")
+
+
+def _exact_selection(
+    *,
+    speaker: str = "Host",
+    model_id: str = "model-a",
+    voice_id: str | None = "voice-a",
+    speed: float = 1.0,
+    options: dict[str, Any] | None = None,
+) -> VoiceSelection:
+    return VoiceSelection(
+        speaker=speaker,
+        provider_id="audio_cpp",
+        model_id=model_id,
+        voice_id=voice_id,
+        response_format="wav",
+        speed=speed,
+        options={} if options is None else options,
+        profile_id="11111111-1111-4111-8111-111111111111",
+        profile_revision=1,
+    )
+
+
+def _legacy_selection(
+    *,
+    speaker: str = "Host",
+    provider_id: str = "kokoro",
+    model_id: str = "model-a",
+    voice_id: str | None = "bella",
+    speed: float = 1.0,
+    options: dict[str, Any] | None = None,
+) -> VoiceSelection:
+    return VoiceSelection(
+        speaker=speaker,
+        provider_id=provider_id,
+        model_id=model_id,
+        voice_id=voice_id,
+        response_format="wav",
+        speed=speed,
+        options={} if options is None else options,
+        profile_id="22222222-2222-4222-8222-222222222222",
+        profile_revision=1,
+    )
+
+
+def _exact_snapshot(
+    *,
+    model_id: str = "model-a",
+    voice_id: str | None = "voice-a",
+) -> TTSRequestedSelectionSnapshot:
+    return TTSRequestedSelectionSnapshot(
+        provider_id="audio_cpp",
+        model_id=model_id,
+        voice_id=voice_id,
+        response_format="wav",
+        speed=1.0,
+        options={},
+        configuration_revision=1,
+    )
+
+
+@dataclass
+class _ExactPlan:
+    """One programmed `synthesize_exact` call's outcome.
+
+    `snapshot` is typed `object`, not `TTSRequestedSelectionSnapshot`, on
+    purpose: some tests deliberately program a non-snapshot (`None`, or a
+    same-shaped look-alike) to prove `_validate_exact_snapshot` rejects
+    anything that is not the exact real type.
+    """
+
+    snapshot: object
+    chunks: list[bytes]
+    stream_error: BaseException | None = None
+
+
+@dataclass
+class _LegacyPlan:
+    """One programmed `generate_audio_stream` call's outcome."""
+
+    chunks: list[bytes]
+
+
+@dataclass
+class _FakeTTSService:
+    """The one faked seam: mirrors `TTSService`'s exact/legacy call shape.
+
+    `exact_plans`/`legacy_plans` are queues, one entry consumed per call --
+    a long turn (chunked into several pieces) makes several calls, so each
+    can hand back its own audio and snapshot. `legacy_repeat_chunk`, when
+    set, makes every `generate_audio_stream` call yield the same fixed
+    chunk instead, for a long-turn test that does not care how many pieces
+    `TextChunker` produces, only that there is more than one.
+
+    `aclose_count` counts actual *calls* to the response's `aclose()`,
+    wrapping the real bound method rather than registering a cleanup
+    callback: `TTSAudioResponse.aclose()` is itself idempotent (a second
+    call short-circuits before running any cleanup callback,
+    `adapter_types.py:388-390`), so a callback-based counter would not
+    notice the module under test calling `aclose()` twice. Wrapping the
+    method call itself does.
+
+    `exact_error`/`legacy_error`, when set, make the corresponding method
+    raise instead of returning a plan -- simulating an adapter/network
+    failure (FIX 2: neither call site is wrapped by anything but the
+    module under test). `generate_audio_stream` also calls the real
+    `resolve_legacy_route(internal_model_id)` before yielding anything,
+    mirroring `TTSService.generate_audio_stream`'s own first step, so an
+    `internal_model_id` the compatibility bridge does not enumerate (an
+    OpenAI profile whose model is not one of the four known ids) raises a
+    genuine `UnknownLegacyModelError` -- not a hand-rolled test double --
+    without needing its own `legacy_error` stub.
+    """
+
+    exact_plans: list[_ExactPlan] = field(default_factory=list)
+    legacy_plans: list[_LegacyPlan] = field(default_factory=list)
+    legacy_repeat_chunk: bytes | None = None
+    exact_error: BaseException | None = None
+    legacy_error: BaseException | None = None
+    exact_requests: list[TTSRequest] = field(default_factory=list, init=False)
+    legacy_requests: list[tuple[Any, str]] = field(default_factory=list, init=False)
+    aclose_count: int = field(default=0, init=False)
+
+    async def synthesize_exact(self, request: TTSRequest, progress_sink: Any = None):
+        self.exact_requests.append(request)
+        if self.exact_error is not None:
+            raise self.exact_error
+        plan = self.exact_plans.pop(0)
+
+        async def _stream():
+            for chunk in plan.chunks:
+                yield chunk
+            if plan.stream_error is not None:
+                raise plan.stream_error
+
+        response = TTSAudioResponse(
+            provider_id=request.provider_id,
+            model_id=request.model_id,
+            audio_format="wav",
+            content_type="audio/wav",
+            byte_stream=_stream(),
+        )
+        original_aclose = response.aclose
+
+        async def _counting_aclose() -> None:
+            self.aclose_count += 1
+            await original_aclose()
+
+        response.aclose = _counting_aclose
+        return response, plan.snapshot
+
+    async def generate_audio_stream(
+        self,
+        request: Any,
+        internal_model_id: str,
+        progress_sink: Any = None,
+    ):
+        self.legacy_requests.append((request, internal_model_id))
+        if self.legacy_error is not None:
+            raise self.legacy_error
+        resolve_legacy_route(internal_model_id)
+        if self.legacy_repeat_chunk is not None:
+            yield self.legacy_repeat_chunk
+            return
+        plan = self.legacy_plans.pop(0)
+        for chunk in plan.chunks:
+            yield chunk
+
+
+# --------------------------------------------------------------------------
+# Exact path (audio_cpp)
+# --------------------------------------------------------------------------
+
+
+async def test_exact_path_builds_request_and_closes_the_response_once() -> None:
+    wav = _silence_wav(120)
+    selection = _exact_selection(model_id="model-a", voice_id="voice-a", speed=1.0)
+    service = _FakeTTSService(
+        exact_plans=[_ExactPlan(snapshot=_exact_snapshot(), chunks=[wav])]
+    )
+
+    result = await synthesize_turn(service, selection, "hello", turn_index=0)
+
+    assert result == wav
+    assert service.aclose_count == 1
+    [request] = service.exact_requests
+    assert request.provider_id == "audio_cpp"
+    assert request.model_id == "model-a"
+    assert request.voice == "voice-a"
+    assert request.response_format == "wav"
+    assert request.speed == 1.0
+    assert dict(request.options) == {}
+
+
+async def test_exact_path_closes_response_exactly_once_when_the_drain_raises() -> None:
+    """The leak this guards: a failed drain must still release the response.
+
+    A failed drain that skips `aclose()` would leave the exact provider's
+    registry lease held -- see the module docstring's cross-reference to
+    `TTSEventHandler._generate_tts`'s `finally`.
+    """
+    selection = _exact_selection()
+    boom = RuntimeError("stream broke mid-drain")
+    service = _FakeTTSService(
+        exact_plans=[
+            _ExactPlan(
+                snapshot=_exact_snapshot(),
+                chunks=[b"partial-bytes"],
+                stream_error=boom,
+            )
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="stream broke mid-drain"):
+        await synthesize_turn(service, selection, "hello", turn_index=0)
+
+    assert service.aclose_count == 1
+
+
+async def test_exact_path_contract_violation_names_speaker_index_and_both_voices() -> (
+    None
+):
+    selection = _exact_selection(speaker="Narrator", voice_id="voice-a")
+    mismatched_snapshot = _exact_snapshot(voice_id="voice-b")
+    service = _FakeTTSService(
+        exact_plans=[
+            _ExactPlan(snapshot=mismatched_snapshot, chunks=[_silence_wav(80)])
+        ]
+    )
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        await synthesize_turn(service, selection, "hello", turn_index=3)
+
+    message = str(caught.value)
+    assert "Narrator" in message
+    assert "turn 3" in message
+    assert "voice-a" in message
+    assert "voice-b" in message
+    # The response must still be released even though validation failed.
+    assert service.aclose_count == 1
+
+
+async def test_exact_path_rejects_a_missing_snapshot_naming_speaker_and_index() -> None:
+    """The provider returning no provenance at all must not be treated as OK."""
+    selection = _exact_selection(speaker="Host")
+    service = _FakeTTSService(
+        exact_plans=[_ExactPlan(snapshot=None, chunks=[_silence_wav(80)])]
+    )
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        await synthesize_turn(service, selection, "hello", turn_index=7)
+
+    message = str(caught.value)
+    assert "Host" in message
+    assert "turn 7" in message
+    assert service.aclose_count == 1
+
+
+async def test_exact_path_rejects_a_look_alike_snapshot_object() -> None:
+    """A same-shaped object that is not the real snapshot type must still fail.
+
+    `_validate_exact_snapshot` uses `type(...) is not
+    TTSRequestedSelectionSnapshot`, not `isinstance`/duck-typing,
+    specifically so a look-alike object (right attribute names, wrong
+    type) cannot slip through.
+    """
+
+    @dataclass
+    class _LookAlikeSnapshot:
+        provider_id: str
+        model_id: str
+        voice_id: str | None
+        response_format: str
+        speed: float
+        options: dict
+
+    selection = _exact_selection(speaker="Host", model_id="model-a", voice_id="voice-a")
+    look_alike = _LookAlikeSnapshot(
+        provider_id="audio_cpp",
+        model_id="model-a",
+        voice_id="voice-a",
+        response_format="wav",
+        speed=1.0,
+        options={},
+    )
+    service = _FakeTTSService(
+        exact_plans=[_ExactPlan(snapshot=look_alike, chunks=[_silence_wav(80)])]
+    )
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        await synthesize_turn(service, selection, "hello", turn_index=8)
+
+    message = str(caught.value)
+    assert "Host" in message
+    assert "turn 8" in message
+    assert service.aclose_count == 1
+
+
+# --------------------------------------------------------------------------
+# `_validate_exact_snapshot` mismatch reporting (Qodo review round 1, FIX C)
+# --------------------------------------------------------------------------
+#
+# `TTSRequestedSelectionSnapshot.__post_init__` itself enforces
+# `provider_id == "audio_cpp"`, `response_format == "wav"`, `speed == 1.0`,
+# and empty `options` -- so a REAL snapshot object can only ever disagree
+# with a request on `model_id`/`voice_id` (through the full `synthesize_
+# turn` pipeline, where `response_format` is always hard-coded `"wav"` on
+# both sides) or on `speed`/`options` (only if a caller's own `TTSRequest`
+# asks for something other than the exact path's implicit defaults). A
+# "format" or "options" disagreement can therefore only be exercised by
+# calling `_validate_exact_snapshot` directly with a mismatched `TTSRequest`
+# -- there is no way to provoke it by going through `synthesize_turn`,
+# because `_synthesize_exact_chunk` always builds `response_format="wav"`
+# itself. These tests call the private function directly for exactly that
+# reason.
+
+
+def _request_for_snapshot(
+    *,
+    voice: str | None = "voice-a",
+    response_format: str = "wav",
+    speed: float = 1.0,
+    options: dict[str, Any] | None = None,
+) -> TTSRequest:
+    return TTSRequest(
+        provider_id="audio_cpp",
+        model_id="model-a",
+        text="hello",
+        voice=voice,
+        response_format=response_format,
+        speed=speed,
+        options={} if options is None else options,
+    )
+
+
+def test_validate_exact_snapshot_voice_mismatch_still_names_the_voice() -> None:
+    request = _request_for_snapshot(voice="voice-a")
+    snapshot = _exact_snapshot(voice_id="voice-b")
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        briefing_audio._validate_exact_snapshot(
+            request, snapshot, speaker="Narrator", turn_index=3
+        )
+
+    message = str(caught.value)
+    assert "Narrator" in message
+    assert "turn 3" in message
+    assert "voice-a" in message
+    assert "voice-b" in message
+    assert "format" not in message
+
+
+def test_validate_exact_snapshot_format_mismatch_names_the_format_not_the_voice() -> None:
+    """FIX C's headline case: before this fix, ANY mismatch -- including
+    this one, where the voice matches perfectly -- was reported as "TTS
+    provider used voice 'wav', requested voice 'mp3'", a false lead.
+    """
+    request = _request_for_snapshot(voice="voice-a", response_format="mp3")
+    snapshot = _exact_snapshot(voice_id="voice-a")
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        briefing_audio._validate_exact_snapshot(
+            request, snapshot, speaker="Narrator", turn_index=3
+        )
+
+    message = str(caught.value)
+    assert "Narrator" in message
+    assert "turn 3" in message
+    assert "format" in message
+    assert "mp3" in message
+    assert "voice" not in message, "a format-only mismatch must never mention voice"
+
+
+def test_validate_exact_snapshot_options_mismatch_names_only_the_differing_keys() -> None:
+    """Bounded reporting: an options mismatch must name the differing
+    KEYS, never dump the whole (potentially large, provider-specific)
+    mapping into the error message."""
+    request = _request_for_snapshot(options={"a": 1, "b": 2, "c": 3})
+    # A real snapshot's own constructor forces `options` to `{}`, so any
+    # non-empty request `options` already disagrees with every real
+    # snapshot -- no look-alike object needed here.
+    snapshot = _exact_snapshot()
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        briefing_audio._validate_exact_snapshot(
+            request, snapshot, speaker="Host", turn_index=0
+        )
+
+    message = str(caught.value)
+    assert "options key(s)" in message
+    assert "'a'" in message
+    assert "'b'" in message
+    assert "'c'" in message
+
+
+# --------------------------------------------------------------------------
+# Legacy path (everything else)
+# --------------------------------------------------------------------------
+
+
+async def test_legacy_path_builds_request_via_the_shared_builder_and_joins_chunks() -> (
+    None
+):
+    wav = _silence_wav(90)
+    midpoint = len(wav) // 2
+    selection = _legacy_selection(provider_id="kokoro", model_id="ignored", voice_id="bella")
+    service = _FakeTTSService(
+        legacy_plans=[_LegacyPlan(chunks=[wav[:midpoint], wav[midpoint:]])]
+    )
+
+    result = await synthesize_turn(service, selection, "hello", turn_index=0)
+
+    assert result == wav
+    [(request, internal_model_id)] = service.legacy_requests
+    assert internal_model_id == "local_kokoro_default_onnx"
+    assert request.voice == "bella"
+    assert request.model == "kokoro"
+    assert request.response_format == "wav"
+
+
+async def test_legacy_path_zero_byte_result_raises_naming_speaker_and_index() -> None:
+    selection = _legacy_selection(speaker="Guest")
+    service = _FakeTTSService(legacy_plans=[_LegacyPlan(chunks=[])])
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        await synthesize_turn(service, selection, "hello", turn_index=5)
+
+    message = str(caught.value)
+    assert "Guest" in message
+    assert "turn 5" in message
+
+
+async def test_legacy_path_non_wav_payload_raises_naming_speaker_and_index() -> None:
+    selection = _legacy_selection(speaker="Guest")
+    service = _FakeTTSService(legacy_plans=[_LegacyPlan(chunks=[b"not audio at all"])])
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        await synthesize_turn(service, selection, "hello", turn_index=2)
+
+    message = str(caught.value)
+    assert "Guest" in message
+    assert "turn 2" in message
+
+
+async def test_legacy_path_rejects_an_unmapped_provider_id_naming_it() -> None:
+    """Closes Task 2's carried finding: an unmapped provider must never reach
+    the shared builder, since its `model_id` could collide with a reserved
+    internal id (e.g. `"local_kokoro_default_onnx"`) and silently mis-route.
+    """
+    selection = _legacy_selection(
+        speaker="Guest",
+        provider_id="mystery_tts",
+        model_id="local_kokoro_default_onnx",
+    )
+    service = _FakeTTSService()
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        await synthesize_turn(service, selection, "hello", turn_index=1)
+
+    message = str(caught.value)
+    assert "Guest" in message
+    assert "turn 1" in message
+    assert "mystery_tts" in message
+    # The builder (and the service) must never have been reached.
+    assert service.legacy_requests == []
+
+
+async def test_legacy_path_rejects_an_empty_voice_naming_speaker_and_index() -> None:
+    selection = _legacy_selection(speaker="Guest", voice_id=None)
+    service = _FakeTTSService()
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        await synthesize_turn(service, selection, "hello", turn_index=4)
+
+    message = str(caught.value)
+    assert "Guest" in message
+    assert "turn 4" in message
+    assert service.legacy_requests == []
+
+
+# --------------------------------------------------------------------------
+# Long-turn chunking (both paths funnel through the same stitcher)
+# --------------------------------------------------------------------------
+
+
+async def test_long_turn_text_is_chunked_and_stitched_covering_all_pieces() -> None:
+    sentence = "This sentence repeats to build a turn longer than the character gate. "
+    text = sentence * 40
+    assert len(text) > MAX_TURN_CHARS
+
+    chunk_wav = _silence_wav(120)
+    selection = _legacy_selection(provider_id="kokoro")
+    service = _FakeTTSService(legacy_repeat_chunk=chunk_wav)
+
+    result = await synthesize_turn(service, selection, text, turn_index=0)
+
+    piece_count = len(service.legacy_requests)
+    assert piece_count > 1
+
+    decoded = _decode(result)
+    expected_ms = piece_count * 120 + (piece_count - 1) * _DEFAULT_GAP_MS
+    assert decoded.frame_count() == pytest.approx(
+        decoded.frame_rate * expected_ms / 1000.0, rel=0.01
+    )
+    assert len(decoded) == pytest.approx(expected_ms, abs=50)
+
+
+async def test_short_turn_is_not_chunked_and_needs_only_one_provider_call() -> None:
+    wav = _silence_wav(100)
+    selection = _legacy_selection(provider_id="kokoro")
+    service = _FakeTTSService(legacy_plans=[_LegacyPlan(chunks=[wav])])
+
+    text = "A short turn well under the character gate."
+    assert len(text) <= MAX_TURN_CHARS
+
+    result = await synthesize_turn(service, selection, text, turn_index=0)
+
+    assert result == wav
+    assert len(service.legacy_requests) == 1
+
+
+async def test_hard_cap_splits_dense_no_whitespace_text_under_the_character_gate() -> (
+    None
+):
+    """`TextChunker` cannot split text with no whitespace at all.
+
+    Its own word-count-based token estimate for a single whitespace-free
+    run is `1` (`len(text.split())`), nowhere near any chunk budget, so it
+    comes back as one oversized piece regardless of `_CHUNK_MAX_TOKENS` --
+    this is the "3000 chars -> 1 piece" failure mode from review round 1.
+    `_hard_split_piece` is the backstop that makes `MAX_TURN_CHARS` an
+    actual cap: assert every request this turn produces carries text at or
+    under the limit.
+    """
+    text = "字" * 3000  # dense CJK-style run with no whitespace anywhere
+    assert len(text) > MAX_TURN_CHARS
+
+    selection = _legacy_selection(provider_id="kokoro")
+    service = _FakeTTSService(legacy_repeat_chunk=_silence_wav(50))
+
+    await synthesize_turn(service, selection, text, turn_index=0)
+
+    assert len(service.legacy_requests) > 1
+    for request, _internal_model_id in service.legacy_requests:
+        assert len(request.input) <= MAX_TURN_CHARS
+
+
+async def test_stitch_failure_on_a_long_turn_raises_naming_speaker_and_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A multi-chunk turn whose pieces cannot be stitched must still fail by name.
+
+    Forces `concat_wav_segments` to raise (rather than relying on an
+    undecodable chunk, which `_looks_like_wav`/`pydub` might reject earlier
+    for a different reason) so this pins the stitch-failure wrapping path
+    specifically, independent of any other validation.
+    """
+
+    def _boom(segments: list[bytes], *, gap_ms: int = 350) -> bytes:
+        raise AudioStitchError("segment 1 could not be decoded", segment_index=1)
+
+    monkeypatch.setattr(briefing_audio, "concat_wav_segments", _boom)
+
+    sentence = "This sentence repeats to build a turn longer than the character gate. "
+    text = sentence * 40
+    assert len(text) > MAX_TURN_CHARS
+
+    selection = _legacy_selection(provider_id="kokoro", speaker="Narrator")
+    service = _FakeTTSService(legacy_repeat_chunk=_silence_wav(80))
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        await synthesize_turn(service, selection, text, turn_index=9)
+
+    message = str(caught.value)
+    assert "Narrator" in message
+    assert "turn 9" in message
+    assert len(service.legacy_requests) > 1
+
+
+# --------------------------------------------------------------------------
+# ElevenLabs (whole-branch FIX 1: every elevenlabs turn used to fail)
+# --------------------------------------------------------------------------
+
+
+async def test_legacy_path_elevenlabs_yields_a_valid_wav_from_a_realistic_pcm_response() -> (
+    None
+):
+    """FIX 1: elevenlabs must actually be able to produce audio.
+
+    `TTS.legacy_request_builder._LEGACY_FORMAT_OVERRIDES` unconditionally
+    forces elevenlabs's response_format to `"mp3"` (a table this module
+    must not change -- other callers depend on it verbatim). This module
+    instead overrides that to `"pcm"` in its own copy of the request before
+    calling the provider, then wraps the returned headerless PCM samples
+    into a WAV container itself. A realistic ElevenLabs `"pcm"` response is
+    raw 16-bit little-endian mono samples at 44.1kHz with **no header at
+    all** -- build one directly (not via `_silence_wav`, which already has
+    a WAV header) to prove the wrap handles genuinely headerless input.
+    """
+    sample_rate = 44100
+    duration_ms = 120
+    frame_count = sample_rate * duration_ms // 1000
+    raw_pcm = b"\x00\x00" * frame_count  # 16-bit silence, headerless
+
+    selection = _legacy_selection(speaker="Host", provider_id="elevenlabs", voice_id="rachel")
+    service = _FakeTTSService(legacy_plans=[_LegacyPlan(chunks=[raw_pcm])])
+
+    result = await synthesize_turn(service, selection, "hello", turn_index=0)
+
+    [(request, internal_model_id)] = service.legacy_requests
+    assert request.response_format == "pcm"
+    assert internal_model_id == "elevenlabs_elevenlabs"
+
+    decoded = _decode(result)
+    assert decoded.frame_rate == sample_rate
+    assert decoded.channels == 1
+    assert len(decoded) == pytest.approx(duration_ms, abs=5)
+
+
+async def test_legacy_path_elevenlabs_zero_byte_result_still_raises_naming_speaker_and_index() -> (
+    None
+):
+    """The zero-byte check must run BEFORE the PCM-to-WAV wrap.
+
+    Wrapping an empty payload first would produce a "valid" (but silent)
+    WAV container, masking a real "no audio came back" failure as success.
+    """
+    selection = _legacy_selection(speaker="Guest", provider_id="elevenlabs")
+    service = _FakeTTSService(legacy_plans=[_LegacyPlan(chunks=[])])
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        await synthesize_turn(service, selection, "hello", turn_index=3)
+
+    message = str(caught.value)
+    assert "Guest" in message
+    assert "turn 3" in message
+
+
+# --------------------------------------------------------------------------
+# Provider/adapter failures (whole-branch FIX 2: these used to escape raw,
+# naming neither speaker nor turn, once they reached
+# `generate_script_audio`'s broad `except Exception`).
+# --------------------------------------------------------------------------
+
+
+async def test_exact_path_provider_failure_is_wrapped_naming_speaker_and_index() -> None:
+    selection = _exact_selection(speaker="Host")
+    boom = RuntimeError("adapter blew up")
+    service = _FakeTTSService(exact_error=boom)
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        await synthesize_turn(service, selection, "hello", turn_index=6)
+
+    assert caught.value.__cause__ is boom
+    message = str(caught.value)
+    assert "Host" in message
+    assert "turn 6" in message
+
+
+async def test_legacy_path_provider_failure_is_wrapped_naming_speaker_and_index() -> None:
+    selection = _legacy_selection(speaker="Guest", provider_id="kokoro")
+    boom = RuntimeError("network blew up")
+    service = _FakeTTSService(legacy_error=boom)
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        await synthesize_turn(service, selection, "hello", turn_index=10)
+
+    assert caught.value.__cause__ is boom
+    message = str(caught.value)
+    assert "Guest" in message
+    assert "turn 10" in message
+
+
+async def test_legacy_path_unmapped_openai_model_raises_a_wrapped_unknown_legacy_model_error() -> (
+    None
+):
+    """A realistic failure, not a hand-rolled test double.
+
+    An OpenAI TTS profile whose model id is not one of the four the
+    compatibility bridge enumerates (`legacy_bridge.py`'s
+    `OPENAI_INTERNAL_IDS`) -- for example `"gpt-4o-mini-tts"` -- makes
+    `build_legacy_speech_request` emit an internal model id
+    (`"openai_official_gpt-4o-mini-tts"`) that `resolve_legacy_route` does
+    not recognize, raising a genuine `UnknownLegacyModelError` from inside
+    `generate_audio_stream` itself (the fake reproduces that same first
+    step -- see `_FakeTTSService`'s docstring).
+    """
+    selection = _legacy_selection(
+        speaker="Narrator", provider_id="openai", model_id="gpt-4o-mini-tts"
+    )
+    service = _FakeTTSService()
+
+    with pytest.raises(TurnSynthesisError) as caught:
+        await synthesize_turn(service, selection, "hello", turn_index=2)
+
+    assert isinstance(caught.value.__cause__, UnknownLegacyModelError)
+    message = str(caught.value)
+    assert "Narrator" in message
+    assert "turn 2" in message
+
+
+async def test_exact_path_cancellation_propagates_untouched_not_wrapped() -> None:
+    """`asyncio.CancelledError` is a `BaseException`, not an `Exception` --
+    it must never become a `TurnSynthesisError`."""
+    selection = _exact_selection(speaker="Host")
+    service = _FakeTTSService(exact_error=asyncio.CancelledError())
+
+    with pytest.raises(asyncio.CancelledError):
+        await synthesize_turn(service, selection, "hello", turn_index=0)
+
+
+async def test_legacy_path_cancellation_propagates_untouched_not_wrapped() -> None:
+    selection = _legacy_selection(speaker="Host", provider_id="kokoro")
+    service = _FakeTTSService(legacy_error=asyncio.CancelledError())
+
+    with pytest.raises(asyncio.CancelledError):
+        await synthesize_turn(service, selection, "hello", turn_index=0)

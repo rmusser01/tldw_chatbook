@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import List, Dict, Optional, Any, Union
 from loguru import logger
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from .private_sqlite import connect_private_sqlite
+from tldw_chatbook.Utils.private_paths import lexical_path
 
 
 class RAGIndexingDB:
@@ -47,25 +49,21 @@ class RAGIndexingDB:
         # Handle path types consistently
         if isinstance(db_path, Path):
             self.is_memory_db = False
-            self.db_path = db_path.resolve()
+            self.db_path = lexical_path(db_path)
         else:
             self.is_memory_db = db_path == ":memory:"
             self.db_path = (
-                Path(db_path).resolve() if not self.is_memory_db else Path(":memory:")
+                lexical_path(db_path) if not self.is_memory_db else Path(":memory:")
             )
 
         self.db_path_str = str(self.db_path) if not self.is_memory_db else ":memory:"
         self.client_id = client_id
 
-        # Create directory if needed for file-based DB
-        if not self.is_memory_db:
-            self.db_path.parent.mkdir(parents=True, exist_ok=True)
-
         self._initialize_schema()
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get a database connection with row factory."""
-        conn = sqlite3.connect(self.db_path_str)
+        conn = connect_private_sqlite("db.rag_indexing", self.db_path_str)
         conn.row_factory = sqlite3.Row
         return conn
 

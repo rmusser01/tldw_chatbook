@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Sequence
+
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 _DB_SCHEMA_VERSION_TABLE_SQL = """
@@ -178,3 +182,20 @@ def create_legacy_v13_conversations_db(
         insert_columns=_LEGACY_V13_INSERT_COLUMNS,
         rows=rows,
     )
+
+
+@contextmanager
+def migrated_legacy_conversations_db(
+    db_path: Path,
+    migration: Callable[[CharactersRAGDB, sqlite3.Connection], None],
+) -> Iterator[sqlite3.Connection]:
+    """Run one conversation migration without initializing unrelated schemas."""
+    connection = sqlite3.connect(str(db_path))
+    connection.row_factory = sqlite3.Row
+    db = CharactersRAGDB.__new__(CharactersRAGDB)
+    db.db_path_str = str(db_path)
+    try:
+        migration(db, connection)
+        yield connection
+    finally:
+        connection.close()

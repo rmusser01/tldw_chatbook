@@ -7,6 +7,7 @@ import os
 import base64
 from typing import Dict, Optional, Any
 from enum import Enum
+from urllib.parse import urlparse
 import requests
 from requests.auth import HTTPBasicAuth
 
@@ -17,6 +18,7 @@ from loguru import logger
 #
 # Local imports
 from ..cookie_scraping.cookie_cloner import get_cookies
+from ...Utils.egress import MAX_FETCH_BYTES_PAGE, check_url_or_raise, guarded_fetch_requests, origin_set
 #
 #######################################################################################################################
 #
@@ -256,9 +258,23 @@ class ConfluenceAuth:
             kwargs["headers"] = {}
         kwargs["headers"].setdefault("Accept", "application/json")
         kwargs["headers"].setdefault("Content-Type", "application/json")
+        kwargs.setdefault("timeout", 30)
 
-        # Make request
-        response = self.session.request(method, url, **kwargs)
+        trusted = origin_set(self.base_url)
+        if method.upper() == "GET" and set(kwargs) <= {"headers", "timeout"}:
+            response = guarded_fetch_requests(
+                url,
+                session=self.session,
+                max_bytes=MAX_FETCH_BYTES_PAGE,
+                trusted_origins=trusted,
+                timeout=kwargs["timeout"],
+                headers=kwargs["headers"],
+            )
+        else:
+            # Non-GET / param-carrying calls: pre-check + timeout (no manual
+            # redirect loop; the Confluence API does not redirect these).
+            check_url_or_raise(url, trusted_origins=trusted)
+            response = self.session.request(method, url, **kwargs)
 
         # Log request details for debugging
         logger.debug(f"{method} {url} - Status: {response.status_code}")

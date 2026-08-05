@@ -1570,7 +1570,7 @@ class MediaViewerPanel(Container):
             ]
 
             # Update select widget from thread
-            self.call_from_thread(self._update_prompt_select, options)
+            self.app.call_from_thread(self._update_prompt_select, options)
 
         except Exception as e:
             logger.error(f"Error searching prompts: {e}")

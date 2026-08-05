@@ -11,10 +11,18 @@ asyncio.to_thread). No widget mutation.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Callable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable, Sequence
+
+if TYPE_CHECKING:
+    from tldw_chatbook.UI.Screens.change_review_screen import (
+        AgentRunsChangeReviewProvider,
+    )
 
 from loguru import logger
 
@@ -32,6 +40,7 @@ from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     AgentStep,
     RunOutcome,
+    SkillFileBindings,
     ToolCall,
     ToolCatalogEntry,
     ToolResult,
@@ -49,18 +58,28 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
-from tldw_chatbook.Chat.console_provider_gateway import ProviderToolCalls
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderStreamSignals,
+    ProviderToolCalls,
+)
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
+from tldw_chatbook.Internal_Prompts import get_internal_prompt
+from tldw_chatbook.Internal_Prompts.catalog import CATALOG
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 
-CONSOLE_AGENT_OPERATING_PROMPT = (
-    "You are a capable assistant with optional tools. Answer directly when no "
-    "tool is needed. When a tool would help, call exactly one tool per reply "
-    "using the fenced protocol described below, then continue once you have the "
-    "result. Use spawn_subagent to delegate a self-contained sub-task to an "
-    "isolated helper. Keep replies concise."
-)
+# Catalog-default re-export: keeps existing imports/tests valid and pins
+# the "shipped default" text. compose_agent_system_prompt below resolves
+# the live (possibly overridden) value at call time via get_internal_prompt.
+CONSOLE_AGENT_OPERATING_PROMPT = CATALOG["agents.console_agent_operating"].default
+
+# Every `agents.subagent_system` value ever resolved by `_is_subagent`
+# (below) this process, seeded with the shipped default. Grows by at most
+# one entry per distinct override text a user configures -- see
+# `_StreamingModelAdapter._is_subagent` for why a single current-value
+# check is not enough.
+_KNOWN_SUBAGENT_PREFIXES: set[str] = {SUBAGENT_SYSTEM_PROMPT}
 
 # Skills Phase-2 gate finding 1 (Task-14 report, scenario 5: "Find a skill
 # that can shout, load it, and use it on: hello"): a discovery-heavy run --
@@ -79,24 +98,116 @@ CONSOLE_AGENT_OPERATING_PROMPT = (
 # task-244 adds a model-turn budget tier (agent_models.RunBudget.
 # max_model_turns) and makes IT, not the raw step count, this run's PRIMARY
 # limiter. Two additional real tool rounds beyond the 4-turn/10-step floor
-# cost 2 more turns / 6 more steps (6 turns / 16 steps total); under
-# max_model_turns=8 the floor plus those two extra rounds fits with 2 turns
-# to spare. max_steps=32 is a backstop, not a derived worst case: fence
-# turns cost at most 3 steps (one tool call per reply), but a NATIVE
-# multi-call batch (task-243) costs 1 + 2N steps per turn, so a run of
-# heavy parallel batches can legitimately hit the step backstop before the
-# 8-turn cap — that is the backstop doing its job. Either way it can no
-# longer starve a discovery run one step short of its wrap-up the way the
-# bare step default once did.
-# max_wall_seconds stays at the prior 480s (25-50s/turn x up to 8 model
-# turns at the slow local-model pace this gate exercises). The engine's own
-# RunBudget defaults (agent_models.RunBudget) are left UNCHANGED -- this
-# override applies only at the Console bridge's own config-assembly site
-# (run_reply below); other callers of RunBudget()/AgentConfig keep the bare
-# engine default.
-CONSOLE_RUN_BUDGET = RunBudget(max_steps=32, max_wall_seconds=480.0, max_model_turns=8)
+# cost 2 more turns / 6 more steps (6 turns / 16 steps total), so even the
+# old 8-turn cap cleared the floor with room to spare.
+#
+# The four numbers below are sized TOGETHER so that max_model_turns stays
+# the primary limiter -- raising it alone would just move the wall to
+# whichever of the other constants binds first:
+#   * max_model_turns=30 gives ~30 tool-calling rounds per user message
+#     (raised from 20).
+#   * max_steps=96: a fence tool round costs 3 steps (STEP_MODEL +
+#     STEP_TOOL_CALL + STEP_TOOL_RESULT), so 29 rounds + 1 wrap-up
+#     STEP_MODEL = 3*29 + 1 = 88 steps. 96 clears that while staying a real
+#     backstop: a NATIVE multi-call batch (task-243) costs 1 + 2N steps per
+#     turn, so a run of heavy parallel batches can still legitimately hit the
+#     step backstop before the turn cap -- that is the backstop doing its job.
+#   * max_wall_seconds=1800: derived as 25-50s/turn x 30 model turns at the
+#     slow local-model pace this gate exercises = 750-1500s at N=30. 1800s
+#     covers the 30-turn worst case. This is a backstop, not a target -- fast
+#     cloud models finish 30 turns in a fraction of it, and the user can Stop
+#     at any point (the tool-call wrapper polls cancellation every 0.5s, task-327).
+#   * max_total_tokens=1_000_000: Sub-agents inherit the turn and step budget
+#     (agent_models.clamp_child_budget, operator decision 2026-07-25), so one
+#     message can reach 30 * (1 + max_subagents) = 90 provider turns. The wall
+#     clock bounds that in TIME but not in SPEND. This ceiling is a PER-RUN
+#     bound, not a shared one: `agent_runtime.run_agent_loop`'s
+#     `total_tokens` is a local to each run, and `clamp_child_budget` passes
+#     `max_total_tokens` through to a child UNCHANGED rather than dividing
+#     it -- so the parent and each of up to max_subagents=2 children can
+#     independently spend up to this ceiling. The real worst-case aggregate
+#     across one Console message is therefore roughly 3x this value
+#     (~3M tokens), not a value bounded BY it directly. It still sits far
+#     above any normal 30-turn run.
+# The engine's own RunBudget defaults (agent_models.RunBudget) keep the
+# bare max_steps=8, so this override applies only at the Console bridge's
+# own config-assembly site (run_reply below); other callers of
+# RunBudget()/AgentConfig keep the conservative engine default.
+#: Tool-calling rounds the Console agent gets per user message. THE primary
+#: limiter -- the constants below exist to keep it reachable and to bound
+#: what it costs.
+CONSOLE_MAX_MODEL_TURNS = 30
+
+#: Step backstop. A fence round costs 3 steps (STEP_MODEL + STEP_TOOL_CALL +
+#: STEP_TOOL_RESULT) and the wrap-up reply costs 1, so N turns need
+#: 3*(N-1)+1 steps -- 88 at N=30. 96 clears that while staying a real
+#: backstop for native multi-call batches (1 + 2N steps per turn).
+#: `test_console_budget_step_cap_admits_a_full_model_turn_run` fails if this
+#: ever drops below the derived minimum.
+CONSOLE_MAX_STEPS = 96
+
+#: Wall-clock backstop, at the slow local-model pace this gate exercises
+#: (25-50s per turn x CONSOLE_MAX_MODEL_TURNS = 750-1500s at N=30).
+CONSOLE_MAX_WALL_SECONDS = 1800.0
+
+#: Cumulative prompt+completion spend ceiling -- but a PER-RUN one:
+#: `agent_runtime.run_agent_loop`'s `total_tokens` is a per-run local, and
+#: `clamp_child_budget` passes this value through to each sub-agent
+#: UNCHANGED rather than dividing it among children. Sub-agents also
+#: inherit the turn and step budget (agent_models.clamp_child_budget,
+#: operator decision 2026-07-25), so one message can reach
+#: 30 * (1 + max_subagents) = 90 provider turns across the parent and up to
+#: max_subagents=2 children -- each independently able to spend up to this
+#: ceiling, for a real worst-case aggregate of roughly 3x this value
+#: (~3M tokens), not a value THIS constant bounds directly. It still sits
+#: far above any normal 30-turn run.
+CONSOLE_MAX_TOTAL_TOKENS = 1_000_000
+
+CONSOLE_RUN_BUDGET = RunBudget(
+    max_steps=CONSOLE_MAX_STEPS,
+    max_wall_seconds=CONSOLE_MAX_WALL_SECONDS,
+    max_model_turns=CONSOLE_MAX_MODEL_TURNS,
+    max_total_tokens=CONSOLE_MAX_TOTAL_TOKENS,
+)
 
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
+
+
+def _combine_state_scopes(scopes: list) -> "Any | None":
+    """Combine per-turn state scopes into the one ``review_state_scope`` seam.
+
+    ``AgentService.review_state_scope`` holds a single
+    ``Callable[[], AbstractContextManager]``, but more than one component
+    can own per-turn stamp state that a nested sub-agent run would clobber
+    (task-628): the MCP provider's ``_stamped_decisions`` and the built-in
+    gate's ``_stamps``. Entering them together keeps the seam's shape while
+    guarding both.
+
+    Args:
+        scopes: Zero or more zero-argument callables, each returning a
+            context manager that snapshots and restores its owner's
+            per-turn state.
+
+    Returns:
+        ``None`` when ``scopes`` is empty (the service then uses a
+        ``nullcontext``), the single callable when there is exactly one
+        (byte-identical to the pre-task-628 wiring), else a callable that
+        enters every scope on an ``ExitStack`` so all are restored in
+        reverse order even if the nested run raises.
+    """
+    if not scopes:
+        return None
+    if len(scopes) == 1:
+        return scopes[0]
+
+    @contextlib.contextmanager
+    def _combined():
+        with contextlib.ExitStack() as stack:
+            for scope in scopes:
+                stack.enter_context(scope())
+            yield
+
+    return _combined
 
 
 def compose_agent_system_prompt(session_prompt: str) -> str:
@@ -106,14 +217,211 @@ def compose_agent_system_prompt(session_prompt: str) -> str:
         session_prompt: The Console session's own system prompt, if any.
 
     Returns:
-        ``session_prompt`` followed by ``CONSOLE_AGENT_OPERATING_PROMPT``
-        (blank-line separated), or just the operating prompt when
-        ``session_prompt`` is blank.
+        ``session_prompt`` followed by the (registry-resolved) console agent
+        operating prompt (blank-line separated), or just the operating
+        prompt when ``session_prompt`` is blank.
     """
+    operating = get_internal_prompt("agents.console_agent_operating")
     base = (session_prompt or "").strip()
     if not base:
-        return CONSOLE_AGENT_OPERATING_PROMPT
-    return f"{session_prompt}\n\n{CONSOLE_AGENT_OPERATING_PROMPT}"
+        return operating
+    return f"{session_prompt}\n\n{operating}"
+
+
+#: TASK-870: kept ONLY for ``Tests/Utils/test_path_validation_multi.py``,
+#: which imports this symbol directly to exercise ``_truncate_step_text``
+#: at "the transcript marker's limit" without depending on config/env
+#: resolution. Equal to ``config.DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS``
+#: (hardcoded rather than imported so this module never needs a top-level
+#: dependency on ``tldw_chatbook.config`` just for a test fixture) -- no
+#: production code path reads it anymore. See ``_console_tool_result_
+#: display_cap`` for what the live/marker/resumed paths actually use.
+_STEP_MARKER_RESULT_LIMIT = 160
+
+#: Env-var override for the Console tool-result display cap, one tier above
+#: ``[console] tool_result_display_chars`` in config.toml -- see
+#: ``_console_tool_result_display_cap``. Named ``TLDW_`` + the config
+#: SECTION (``console``) + the key, this repo's existing per-setting
+#: override convention (e.g. ``TLDW_CONSOLE_LLAMA_CPP_BASE_URL`` in
+#: ``UI/Screens/chat_screen.py``).
+_TOOL_RESULT_DISPLAY_ENV_VAR = "TLDW_CONSOLE_TOOL_RESULT_DISPLAY_CHARS"
+
+
+def _console_tool_result_display_cap() -> int:
+    """Resolve the Console's agent tool-result display cap.
+
+    TASK-870: the single, user-adjustable setting that now governs how much
+    of a tool result the Console *shows* -- the live step summary
+    (``_summarize``), the transcript TOOL marker
+    (``format_agent_step_marker``), and a resumed/persisted step's summary
+    (``_summarize_persisted_step``) all resolve through this one function,
+    so none of the three can drift from the others or from a user's
+    Settings change. Distinct from ``RunBudget.max_tool_result_chars``,
+    which governs how much the MODEL saw and is never read here.
+
+    Resolution order mirrors ``run_log._setting`` (CLAUDE.md: "env vars ->
+    config.toml -> defaults"), which this deliberately stays consistent
+    with: ``TLDW_CONSOLE_TOOL_RESULT_DISPLAY_CHARS``, then
+    ``[console] tool_result_display_chars``, then
+    ``DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS``. Read fresh on every call
+    -- nothing in this module caches it -- so a Settings save (which
+    reloads the config cache ``get_cli_setting`` reads from) takes effect
+    on the very next step rendered, live or resumed, with no app restart.
+
+    Returns:
+        The configured cap, clamped to ``[MIN_CONSOLE_TOOL_RESULT_DISPLAY_
+        CHARS, MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS]``; an unparsable or
+        out-of-range value falls back to
+        ``DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS``.
+    """
+    from tldw_chatbook.config import (
+        DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        coerce_int_setting,
+    )
+
+    env_value = os.environ.get(_TOOL_RESULT_DISPLAY_ENV_VAR)
+    if env_value not in (None, ""):
+        return coerce_int_setting(
+            env_value,
+            DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+            minimum=MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+            maximum=MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        )
+    try:
+        from tldw_chatbook.config import get_cli_setting
+
+        value = get_cli_setting(
+            "console",
+            "tool_result_display_chars",
+            DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        )
+    except Exception:
+        return DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS
+    return coerce_int_setting(
+        value,
+        DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        minimum=MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        maximum=MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+    )
+
+
+def _truncate_step_text(text: str, *, limit: int) -> str:
+    """Collapse long step text to a preview with an explicit truncation affordance.
+
+    TASK-350: a tool result that IS the full answer must not be dumped verbatim
+    into a transcript marker (it duplicated the assistant bubble word-for-word),
+    and a truncated summary must never be a silent mid-word clip ("the traditional
+    rollba"). Cuts on a word boundary when one sits reasonably close to ``limit``,
+    then appends an ellipsis and a ``(+N chars)`` hint so the reader can see it was
+    collapsed and by how much. Deterministic, so the shared live/resume marker
+    formatter stays byte-identical.
+    """
+    text = str(text if text is not None else "")
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rstrip()
+    # Cut on any whitespace boundary (space/newline/tab/CR), not just a literal
+    # space — markdown and structured tool output split on newlines/tabs, so a
+    # space-only search would still clip those mid-token (Qodo #3).
+    boundary = max(cut.rfind(ws) for ws in (" ", "\n", "\t", "\r"))
+    if boundary >= limit // 2:
+        cut = cut[:boundary].rstrip()
+    hidden = len(text) - len(cut)
+    return f"{cut}… (+{hidden} chars)"
+
+
+def full_step_output(
+    kind: str,
+    *,
+    result: Any = None,
+    summary: str | None = None,
+    marker_text: str | None = None,
+) -> str | None:
+    """Return the FULL text behind a step's marker, or None when there is none.
+
+    TASK-1860. `format_agent_step_marker` collapses a result to a preview
+    capped by the Console display setting, so the whole result was
+    unreachable from the transcript. This is the untruncated counterpart,
+    shared by the live run and by resume re-derivation so an expanded marker
+    reads identically either way.
+
+    A FAILED or errored step returns its summary: "whatever output it did
+    produce" is exactly what the user asks for when a call fails, and for an
+    error step the summary IS the produced text.
+
+    Args:
+        kind: The ``AgentStep`` kind this marker was built from.
+        result: The step's raw tool result, for ``STEP_TOOL_RESULT``.
+        summary: The step's summary text, for ``STEP_ERROR``.
+        marker_text: The marker as it will be displayed. When the full text
+            already appears there, ``None`` is returned -- an expand control
+            that opens an identical view is a dead affordance.
+
+    Returns:
+        The untruncated text behind the marker, or ``None`` when the marker
+        already shows everything (or the kind carries no output at all).
+    """
+    if kind == STEP_TOOL_RESULT:
+        text = str(result if result is not None else "")
+    elif kind == STEP_ERROR:
+        text = str(summary or "")
+    else:
+        return None
+    if not text:
+        return None
+    if marker_text is not None and text in marker_text:
+        # The marker already shows the whole thing -- carrying it again would
+        # light up an expand control that opens an identical view, the dead
+        # affordance TASK-1843 removed from the Inspector.
+        return None
+    return text
+
+
+#: TASK-1844: transcript marker kind for an approval that expired. Not an
+#: `AgentStep` kind -- the timeout happens in the approval round, before any
+#: step exists -- but it renders through the same formatter so live and
+#: resumed transcripts stay byte-identical.
+STEP_APPROVAL_TIMEOUT = "approval_timeout"
+
+
+def format_change_summary_marker(
+    files_changed: int, adds: int, dels: int
+) -> str:
+    """The change-summary transcript row for one turn (TASK-1972).
+
+    Shared by the live emit (run_reply's finally) and resume re-derivation
+    (`resume_marker_messages`) so both render byte-identical -- the same
+    discipline `format_agent_step_marker` documents. Kept raw / markup-off
+    like every transcript marker.
+
+    Args:
+        files_changed: Changed-file count across the turn's roots.
+        adds: Total added lines.
+        dels: Total deleted lines.
+
+    Returns:
+        The row text.
+    """
+    noun = "file" if files_changed == 1 else "files"
+    return (
+        f"✎ Edited {files_changed} {noun}  +{adds} −{dels}"
+        " — review with `v`"
+    )
+
+
+def format_change_tracking_failure_marker(root: str, error: str) -> str:
+    """The disclosure row for a root whose tracking failed (TASK-1972).
+
+    Args:
+        root: The root whose snapshot failed.
+        error: The recorded tracking error.
+
+    Returns:
+        The row text ("⚠ change tracking failed ...").
+    """
+    return f"⚠ change tracking failed for {root}: {error}"
 
 
 def format_agent_step_marker(
@@ -145,7 +453,23 @@ def format_agent_step_marker(
     if kind == STEP_SPAWN:
         return f"⤷ spawned sub-agent: {summary}"
     if kind == STEP_TOOL_RESULT and tool_name not in _QUIET_STEP_TOOLS:
-        return f"⚙ {tool_name} → {result}"
+        # Collapse the result to a preview: a spawn_subagent result IS the full
+        # answer, and dumping it verbatim duplicated the assistant bubble (task-350).
+        # TASK-870: limit is the user-configurable Console display cap, not a
+        # hardcoded constant -- shared with the live step summary and the
+        # resumed/persisted step summary below (AC#4).
+        preview = _truncate_step_text(
+            str(result if result is not None else ""),
+            limit=_console_tool_result_display_cap(),
+        )
+        return f"⚙ {tool_name} → {preview}"
+    if kind == STEP_APPROVAL_TIMEOUT:
+        # TASK-1844: an expired approval used to make the card vanish with no
+        # marker at all -- indistinguishable from "I denied it" or "it never
+        # ran". Name the actor: the SYSTEM auto-denied, the user did not.
+        seconds = str(summary or "").strip()
+        window = f" after {seconds}s" if seconds else ""
+        return f"⚠ {tool_name}: approval timed out{window} — auto-denied, not run"
     if kind == STEP_ERROR:
         return f"⚠ {summary}"
     return None
@@ -153,22 +477,34 @@ def format_agent_step_marker(
 
 def inject_resume_agent_markers(
     messages: list[ConsoleChatMessage],
-    marker_blocks: list[list[ConsoleChatMessage]],
+    anchored_blocks: list[tuple[str | None, list[ConsoleChatMessage]]],
 ) -> list[ConsoleChatMessage]:
     """Interleave AgentRunsDB-derived TOOL marker blocks into a resumed transcript.
 
-    Placement (Plan-B final-review Medium-1): each run's marker block is
-    matched ordinally to the Nth ASSISTANT message in ``messages`` --
-    oldest run <-> oldest assistant reply -- so in the common case (every
-    assistant reply in the conversation came from the agent path) each
-    run's markers land directly after the answer they belong to, exactly
-    mirroring where they rendered live. This is the "simplest correct"
-    placement given persisted messages carry no per-step timestamp to
-    interleave by more precisely. A run left over with no corresponding
-    assistant message -- only possible when ``agent_runtime`` was toggled
-    off mid-conversation after some replies already used the agent path --
-    has its block appended at the end of the transcript instead of being
-    silently dropped.
+    Task 3 placement, anchored by the run's ``assistant_message_id`` (the
+    persisted id of the reply it produced -- see
+    ``ConsoleAgentBridge.record_run_assistant_message``, written on every
+    terminal path since Task 2):
+
+    - **Anchor id set and it matches** a message's ``persisted_message_id``
+      in ``messages`` -- the block is inserted immediately after that
+      message, wherever it sits (this is exact, not ordinal: a resumed
+      transcript may have been edited/branched since the run happened, so
+      the Nth run no longer need be the Nth reply).
+    - **Anchor id set but it matches no message in ``messages``** -- the
+      reply that run produced lives on a different branch than the one
+      currently active (an edit/regenerate moved the active path off of
+      it). The block is **dropped**: showing that run's tool trace next to
+      a DIFFERENT reply would misattribute it, so hiding it is correct.
+    - **Anchor id is ``None``** -- a legacy (pre-Phase-C) run, a sub-agent
+      run, or one whose terminal path never got to record the id (crash /
+      never-persisted reply). Falls back to the prior ordinal placement:
+      the Nth null-anchored block is matched to the Nth ASSISTANT message
+      in ``messages`` that isn't already claimed by an id-anchored block,
+      oldest first. A null block left over with no unclaimed assistant
+      message to pair with is appended at the end of the transcript
+      instead of being silently dropped, preserving the pre-Task-3
+      leftover behavior for this fallback path.
 
     Idempotent: a block whose marker texts are already present as TOOL
     messages anywhere in ``messages`` is skipped, so calling this twice (or
@@ -179,15 +515,16 @@ def inject_resume_agent_markers(
         messages: The rebuilt transcript (ChaChaNotes-derived; never
             contains TOOL rows on its own, since markers are appended
             live with ``persist=False``).
-        marker_blocks: Per-run marker-message blocks, oldest run first
-            (see ``ConsoleAgentBridge.resume_marker_messages``).
+        anchored_blocks: Per-run ``(assistant_message_id, marker_block)``
+            pairs, oldest run first (see
+            ``ConsoleAgentBridge.resume_marker_messages``).
 
     Returns:
         A new list with marker blocks interleaved; ``messages`` itself is
         not mutated.
     """
-    non_empty_blocks = [block for block in marker_blocks if block]
-    if not non_empty_blocks:
+    non_empty = [(anchor, block) for anchor, block in anchored_blocks if block]
+    if not non_empty:
         return list(messages)
 
     existing_tool_contents = {
@@ -195,23 +532,44 @@ def inject_resume_agent_markers(
         for message in messages
         if message.role is ConsoleMessageRole.TOOL
     }
-    assistant_indexes = [
-        index
-        for index, message in enumerate(messages)
-        if message.role is ConsoleMessageRole.ASSISTANT
-    ]
-    matched = dict(zip(assistant_indexes, non_empty_blocks))
-    leftover_blocks = non_empty_blocks[len(assistant_indexes) :]
 
     def _already_present(block: list[ConsoleChatMessage]) -> bool:
         return all(marker.content in existing_tool_contents for marker in block)
 
+    by_persisted = {
+        message.persisted_message_id: index
+        for index, message in enumerate(messages)
+        if message.persisted_message_id
+    }
+
+    matched: dict[int, list[list[ConsoleChatMessage]]] = {}
+    null_blocks: list[list[ConsoleChatMessage]] = []
+    used_indexes: set[int] = set()
+    for anchor_id, block in non_empty:
+        if anchor_id is None:
+            null_blocks.append(block)
+            continue
+        index = by_persisted.get(anchor_id)
+        if index is None:
+            continue  # off-path: this run's reply lives on another branch
+        matched.setdefault(index, []).append(block)
+        used_indexes.add(index)
+
+    unclaimed_assistant_indexes = [
+        index
+        for index, message in enumerate(messages)
+        if message.role is ConsoleMessageRole.ASSISTANT and index not in used_indexes
+    ]
+    for index, block in zip(unclaimed_assistant_indexes, null_blocks):
+        matched.setdefault(index, []).append(block)
+    leftover_blocks = null_blocks[len(unclaimed_assistant_indexes) :]
+
     result: list[ConsoleChatMessage] = []
     for index, message in enumerate(messages):
         result.append(message)
-        block = matched.get(index)
-        if block is not None and not _already_present(block):
-            result.extend(block)
+        for block in matched.get(index, ()):
+            if not _already_present(block):
+                result.extend(block)
     for block in leftover_blocks:
         if not _already_present(block):
             result.extend(block)
@@ -284,8 +642,9 @@ class _StreamingModelAdapter:
     AgentService calls it as ``chat_call(api_endpoint=…, messages_payload=…,
     streaming=False, model=…)`` and expects a
     ``{"choices":[{"message":{"content": <full text>}}]}`` response. Sub-agent
-    turns (leading system content == SUBAGENT_SYSTEM_PROMPT) are streamed to a
-    throwaway gate and never touch the transcript.
+    turns (leading system content prefixed by the registry-resolved or
+    shipped-default ``agents.subagent_system`` prompt — see ``_is_subagent``)
+    are streamed to a throwaway gate and never touch the transcript.
 
     Every non-sealed primary turn streams live to the store as it arrives —
     not just the final answer — since the gate cannot know in advance
@@ -332,6 +691,7 @@ class _StreamingModelAdapter:
         assistant_message_id,
         should_cancel,
         loop,
+        provider_stream_signals: ConsoleProviderStreamSignals | None = None,
     ):
         self._store = store
         self._gateway = provider_gateway
@@ -339,6 +699,7 @@ class _StreamingModelAdapter:
         self._assistant_message_id = assistant_message_id
         self._should_cancel = should_cancel
         self._loop = loop
+        self._provider_stream_signals = provider_stream_signals
 
     def chat_call(
         self,
@@ -368,6 +729,8 @@ class _StreamingModelAdapter:
             # this task's own `tools=None` contract see identical behavior
             # either way, since the callee-side default is also None.
             stream_kwargs = {"tools": tools} if tools is not None else {}
+            if self._provider_stream_signals is not None:
+                stream_kwargs["signals"] = self._provider_stream_signals
             async for chunk in self._gateway.stream_chat(
                 self._resolution, messages_payload, **stream_kwargs
             ):
@@ -417,9 +780,24 @@ class _StreamingModelAdapter:
         if not messages_payload:
             return False
         first = messages_payload[0]
-        return first.get("role") == "system" and str(
-            first.get("content", "")
-        ).startswith(SUBAGENT_SYSTEM_PROMPT)
+        if first.get("role") != "system":
+            return False
+        content = str(first.get("content", ""))
+        # Multi-prefix match: a sub-agent's system prompt is baked into its
+        # messages_payload once, at spawn time (agent_service.py:411's own
+        # get_internal_prompt call), then stays fixed for the rest of that
+        # sub-agent's multi-step tool loop. Comparing only against the
+        # CURRENTLY resolved override (plus the shipped default) can flip
+        # false if `agents.subagent_system` is edited live -- e.g. from
+        # Settings, on the UI thread, mid-run -- to a *different* override
+        # rather than reverted to the default: an already-spawned
+        # sub-agent's later turns would then match neither and leak into
+        # the primary transcript. Accumulating every value resolved so far
+        # this process (starting from the shipped default) keeps detection
+        # stable no matter when the override changed.
+        resolved = get_internal_prompt("agents.subagent_system")
+        _KNOWN_SUBAGENT_PREFIXES.add(resolved)
+        return any(content.startswith(prefix) for prefix in _KNOWN_SUBAGENT_PREFIXES)
 
 
 def _eligible_skill_entries(context: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -427,7 +805,7 @@ def _eligible_skill_entries(context: Mapping[str, Any]) -> list[Mapping[str, Any
 
     Mirrors ``ChatScreen._console_skill_trusted_candidates_from_context``'s
     defensive filter shape, but scoped to model-invocation eligibility
-    rather than user (``/skill-name``) invocation: a skill is eligible here
+    rather than user (``$skill-name``) invocation: a skill is eligible here
     when it is not ``trust_blocked`` (the local-skill-trust-integrity gate)
     and does not opt out of model calls via ``disable_model_invocation``
     (the skill author's own front-matter flag). Both fields default to
@@ -603,10 +981,102 @@ def _non_colliding_mcp_names(
         The subset of ``mcp_provider.list_catalog()`` names not present in
         ``collision_names``, in catalog order.
     """
-    return tuple(
-        entry.name
-        for entry in mcp_provider.list_catalog()
-        if entry.name not in collision_names
+    non_colliding, _shadowed = _partition_mcp_catalog_by_collision(
+        mcp_provider, collision_names
+    )
+    return non_colliding
+
+
+def shadowed_mcp_names(
+    mcp_provider: Any,
+    collision_names: frozenset[str] | set[str],
+) -> tuple[str, ...]:
+    """MCP tool names this run drops because a built-in owns the name.
+
+    The exact complement of ``_non_colliding_mcp_names``. Built-ins win
+    collisions deliberately -- letting the MCP side win would let a
+    compromised server name-squat an audited built-in like ``write_file``
+    and intercept calls the user believes are gated -- but a user whose
+    configured tool silently stops working has no way to discover why.
+
+    Both this function and ``_non_colliding_mcp_names`` delegate to
+    ``_partition_mcp_catalog_by_collision``, which walks the catalog once
+    and buckets every entry into exactly one side. That keeps the two
+    public results an exact partition by construction -- there is no
+    second copy of the ``entry.name in collision_names`` test to drift out
+    of sync as the collision rule evolves.
+
+    Args:
+        mcp_provider: A composed ``MCPToolProvider`` (or test double).
+        collision_names: Names owned by builtins, runtime tools, or skills.
+
+    Returns:
+        The dropped names, in catalog order.
+    """
+    _non_colliding, shadowed = _partition_mcp_catalog_by_collision(
+        mcp_provider, collision_names
+    )
+    return shadowed
+
+
+def _partition_mcp_catalog_by_collision(
+    mcp_provider: Any,
+    collision_names: frozenset[str] | set[str],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Split an MCP provider's catalog into (non-colliding, shadowed) names.
+
+    The single place the collision predicate is evaluated. Both
+    ``_non_colliding_mcp_names`` and ``shadowed_mcp_names`` are thin views
+    onto this partition, so they can never disagree about which side a
+    given name falls on.
+
+    Args:
+        mcp_provider: A composed ``MCPToolProvider`` (or test double) whose
+            ``list_catalog()`` has already been built.
+        collision_names: Names that must never be treated as a distinct
+            MCP tool -- builtins, ``RUNTIME_TOOL_NAMES``, and this run's
+            own eligible skill names.
+
+    Returns:
+        A ``(non_colliding, shadowed)`` pair, each in catalog order, whose
+        union (in either order) reproduces the full catalog's names with
+        no overlap and no omission.
+    """
+    non_colliding: list[str] = []
+    shadowed: list[str] = []
+    for entry in mcp_provider.list_catalog():
+        bucket = shadowed if entry.name in collision_names else non_colliding
+        bucket.append(entry.name)
+    return tuple(non_colliding), tuple(shadowed)
+
+
+# Names already warned about being shadowed by a built-in, this process --
+# mirrors `Internal_Prompts.resolver`'s `_warn_once` idiom (a module-level
+# dedup set plus a guard function), kept as THIS module's own set rather
+# than sharing resolver's: `_compose_run_registry_and_allowed` runs once per
+# Console message (finding 8, substrate review), so without this a long
+# session re-logs the identical warning every single turn. Tests that need
+# a fresh warning must clear this between cases -- see
+# `Tests/Chat/test_console_agent_bridge.py`'s reset fixture, mirroring
+# `Tests/Internal_Prompts/conftest.py`'s `resolver._warned_ids.clear()`.
+_WARNED_SHADOWED_MCP_NAMES: set[str] = set()
+
+
+def _warn_shadowed_mcp_name_once(name: str) -> None:
+    """Log the shadowed-MCP-tool warning for ``name`` at most once per process.
+
+    Args:
+        name: An MCP tool name dropped because a built-in owns it (one
+            entry of ``_partition_mcp_catalog_by_collision``'s ``shadowed``
+            side).
+    """
+    if name in _WARNED_SHADOWED_MCP_NAMES:
+        return
+    _WARNED_SHADOWED_MCP_NAMES.add(name)
+    logger.warning(
+        "MCP tool {name} is shadowed by a built-in of the same name "
+        "and is not offered this run",
+        name=name,
     )
 
 
@@ -614,6 +1084,9 @@ def _compose_run_registry_and_allowed(
     context: Mapping[str, Any],
     *,
     mcp_provider: Any | None = None,
+    builtin_gate: Any | None = None,
+    workspace_id: str | None = None,
+    ephemeral: bool = False,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
@@ -625,7 +1098,9 @@ def _compose_run_registry_and_allowed(
     (P5-T6, only when there is at least one non-colliding eligible entry)
     an already-composed MCP provider -- shadowing order: builtins beat
     skills beat MCP, matching the allow-list's own
-    ``builtins ∪ skills ∪ mcp`` ordering.
+    ``builtins ∪ skills ∪ mcp`` ordering. For a temporary session
+    (``ephemeral=True``) neither the skill nor the MCP provider is
+    registered at all, and the allow-list is builtins-only.
 
     Args:
         context: A fresh ``get_context(mode="local")`` payload.
@@ -634,6 +1109,35 @@ def _compose_run_registry_and_allowed(
             on the main loop BEFORE this function runs), or ``None`` when
             no MCP tools should be offered this run (no service, kill
             switch on, or composition yielded nothing).
+        builtin_gate: task-545/T6 -- THIS run's ``BuiltinToolGate``,
+            threaded into the freshly-constructed ``BuiltinToolProvider``
+            so its ``invoke()`` enforces the SAME gate instance the run's
+            review hook stamps (``console_chat_controller.
+            build_tool_review_hook``). ``None`` leaves the provider to
+            build its own lazy gate on first use (``BuiltinToolProvider``'s
+            own fail-closed default) -- callers that care about the hook
+            and ``invoke()`` agreeing on stamps must pass the same object
+            to both.
+        workspace_id: task-6 (settings-workspaces-folder-roots spec §3) --
+            the running session's workspace id, threaded into the
+            freshly-constructed ``BuiltinToolProvider`` so its ``invoke()``
+            binds THIS run's workspace (via ``run_workspace``) around every
+            tool call, and file tools resolve that workspace's folder
+            roots. ``None`` (the default) leaves the ContextVar unset for
+            the run, which is ``allowed_file_roots``'s own documented
+            fallback to whatever workspace is currently active.
+        ephemeral: whether THIS run's owning Console session is temporary.
+            Threaded into three places: the freshly-constructed
+            ``BuiltinToolProvider`` (whose ``invoke()`` refuses the
+            write-shaped built-ins ``create_note``/``update_note``/
+            ``write_file``), the ``ToolCatalogRegistry`` itself (whose
+            ``invoke_by_name`` is the choke point that refuses skill and
+            MCP calls outright -- arbitrary third-party code whose write
+            behavior cannot be established statically), and this
+            function's own composition, which additionally leaves skill
+            and MCP tools out of the run's catalog and allow-list so the
+            model is never offered them. ``False`` (the default)
+            preserves every pre-existing caller's behavior unchanged.
 
     Returns:
         ``(registry, allowed_tools, builtin_names)`` -- the per-run
@@ -643,18 +1147,37 @@ def _compose_run_registry_and_allowed(
         declared ``allowed_tools`` against -- never against skill names,
         so a skill's sub-agent can never call another skill).
     """
-    registry = ToolCatalogRegistry()
-    builtin_provider = BuiltinToolProvider()
+    registry = ToolCatalogRegistry(ephemeral=ephemeral)
+    builtin_provider = BuiltinToolProvider(
+        gate=builtin_gate, workspace_id=workspace_id, ephemeral=ephemeral
+    )
     registry.register_provider(builtin_provider)
     builtin_names = tuple(entry.name for entry in builtin_provider.list_catalog())
     eligible = _non_colliding_skill_entries(context, builtin_names)
-    if eligible:
+    # Defense in depth, NOT the guarantee: a temporary session refuses every
+    # skill and MCP call at `ToolCatalogRegistry.invoke_by_name` regardless
+    # of what is advertised here. Dropping them from the run's catalog and
+    # allow-list as well just means the model is never offered a tool whose
+    # only possible outcome is a refusal -- a UX improvement layered on top
+    # of the choke point, which stays load-bearing on its own.
+    if eligible and not ephemeral:
         registry.register_provider(SkillToolProvider(eligible))
-    skill_names = tuple(str(item["name"]) for item in eligible)
+    skill_names = () if ephemeral else tuple(str(item["name"]) for item in eligible)
     allowed_tools = tuple(builtin_names) + skill_names
-    if mcp_provider is not None:
+    if mcp_provider is not None and not ephemeral:
         collision_names = set(builtin_names) | set(skill_names) | RUNTIME_TOOL_NAMES
-        mcp_names = _non_colliding_mcp_names(mcp_provider, collision_names)
+        # Single partition call (finding 8, substrate review): the two
+        # public wrappers (`_non_colliding_mcp_names`, `shadowed_mcp_names`)
+        # each independently call `_partition_mcp_catalog_by_collision`,
+        # which walks `mcp_provider.list_catalog()` -- so calling BOTH
+        # wrappers here walked the catalog twice per run. Calling the
+        # partition directly gets both sides from the one walk it already
+        # does internally.
+        mcp_names, shadowed_names = _partition_mcp_catalog_by_collision(
+            mcp_provider, collision_names
+        )
+        for shadowed in shadowed_names:
+            _warn_shadowed_mcp_name_once(shadowed)
         if mcp_names:
             registry.register_provider(
                 _CollisionFilteredMCPProvider(mcp_provider, frozenset(mcp_names))
@@ -673,7 +1196,7 @@ class _BridgeSkillRunner:
     a cached snapshot -- so a skill approved when the catalog was built but
     revoked before the model actually calls it still refuses (mirrors
     ``ConsoleChatController._apply_skill_substitution``'s own re-verification
-    discipline for the ``/skill-name`` user-invocation path).
+    discipline for the ``$skill-name`` user-invocation path).
     """
 
     def __init__(
@@ -682,10 +1205,12 @@ class _BridgeSkillRunner:
         skills_service: Any,
         skill_names: frozenset[str],
         builtin_names: tuple[str, ...],
+        skill_file_bindings: SkillFileBindings | None = None,
     ) -> None:
         self._skills_service = skills_service
         self._skill_names = skill_names
         self._builtin_names = builtin_names
+        self._skill_file_bindings = skill_file_bindings
 
     def is_skill_tool(self, name: str) -> bool:
         return name in self._skill_names
@@ -709,6 +1234,23 @@ class _BridgeSkillRunner:
         allowed_tools = intersect_skill_tools(
             declared_allowed_tools, self._builtin_names
         )
+        # task-4 (skills-fork-reachability): grant the spawned skill's own
+        # name skill_file authorization BEFORE spawn -- so the child's very
+        # first turn can already read its own bundled reference files (see
+        # SkillFileBindings' own docstring: authorization lives here, never
+        # in config.allowed_tools) -- then append a "Bundled files" pointer
+        # block to the rendered task text whenever execute_skill reported
+        # any (absent when the skill has no bundle beyond SKILL.md).
+        if self._skill_file_bindings is not None:
+            self._skill_file_bindings.authorized.add(name)
+        refs = result.get("reference_files") if isinstance(result, Mapping) else None
+        if refs and self._skill_file_bindings is not None:
+            rows = ", ".join(
+                f"{r['path']} ({r['size']} bytes"
+                f"{'' if r.get('is_text', True) else ', binary'})"
+                for r in refs
+            )
+            rendered = f"{rendered}\n\nBundled files (readable via skill_file): {rows}"
         return spawn(rendered, allowed_tools=allowed_tools)
 
 
@@ -725,8 +1267,13 @@ class ConsoleAgentBridge:
         clock: Callable[[], float] = time.monotonic,
         skills_service: Any | None = None,
         native_tools_enabled: Callable[[], bool] | None = None,
+        change_tracker: Any | None = None,
     ) -> None:
         self._db = agent_runs_db
+        # TASK-1971: optional Agent Change Review turn tracker. None (the
+        # default, and every pre-existing construction site) disables
+        # tracking entirely.
+        self._change_tracker = change_tracker
         self._store = store
         self._gateway = provider_gateway
         self._clock = clock
@@ -757,14 +1304,17 @@ class ConsoleAgentBridge:
             except Exception as exc:  # pragma: no cover - defensive only
                 logger.warning(
                     "Failed to load schema for {tool_id}: {exc}",
-                    tool_id=entry.id, exc=exc,
+                    tool_id=entry.id,
+                    exc=exc,
                 )
                 continue
-            schemas.append({
-                "name": schema.name,
-                "description": schema.description,
-                "parameters": schema.parameters,
-            })
+            schemas.append(
+                {
+                    "name": schema.name,
+                    "description": schema.description,
+                    "parameters": schema.parameters,
+                }
+            )
         return schemas
 
     # -- run ------------------------------------------------------------
@@ -780,13 +1330,72 @@ class ConsoleAgentBridge:
         session_system_prompt: str,
         agent_messages: list[dict],
         should_cancel: Callable[[], bool],
+        provider_stream_signals: ConsoleProviderStreamSignals | None = None,
         supersede_previous: bool = False,
         mcp_provider: Any | None = None,
+        builtin_gate: Any | None = None,
         review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None,
-    ) -> RunOutcome:
+        change_roots: Sequence[Path] | None = None,
+        turn_skill_bindings: tuple[str, ...] = (),
+        turn_bundle_block: str = "",
+        request_skill_install_confirm: Callable[[str], bool] | None = None,
+        request_skill_script_confirm: Callable[[dict], dict] | None = None,
+    ) -> tuple[str, RunOutcome]:
+        """Run the agent loop as the Console reply engine.
+
+        The primary run row is created with a NULL ``assistant_message_id``
+        (the native ``assistant_message_id`` argument is used only for
+        streaming into the placeholder, never forwarded to ``run_turn`` --
+        see the ``run_turn`` call below for why a native id must never be
+        stored on the run). The caller records the reply's durable persisted
+        id onto the run on every terminal path via
+        ``record_run_assistant_message`` once the reply is persisted; an
+        unfinished/crashed run stays NULL for resume's null->ordinal fallback.
+
+        Concurrency: this bridge does NOT serialize runs. The
+        ``_live``/``_historical_cache`` dicts are per-conversation DISPLAY
+        snapshots, not a mutual-exclusion guard. Serialization is enforced
+        upstream by ``ConsoleChatController`` (its ``_active_run_rejection``
+        / ``run_state.is_send_allowed`` gate -- covered by
+        ``Tests/UI/test_console_run_gate.py``), and that gate is actually
+        CONTROLLER-WIDE (only one run active across the whole controller at
+        a time), which trivially bounds it per conversation too: a second
+        send -- whether to the same conversation or a different, otherwise-
+        idle one -- while any run is live is rejected there before
+        ``run_reply`` is ever called. Do not add a competing guard here.
+
+        task-545/T6: ``builtin_gate`` (when passed) is threaded into this
+        run's freshly-built ``BuiltinToolProvider`` so its ``invoke()``
+        checks the SAME gate instance the caller's review hook
+        (``console_chat_controller.build_tool_review_hook``) already
+        stamped -- see ``_compose_run_registry_and_allowed``'s own
+        docstring for why two independently-built gates would silently
+        desynchronize. Passing ``None`` (the default -- existing callers
+        that don't care about built-in gating are unaffected) leaves a
+        skills/MCP-free run on the shared, construction-time
+        ``self._registry``/``self._allowed_tools`` fast path unchanged.
+
+        task-6 (settings-workspaces-folder-roots spec §3): whenever this
+        run takes the fresh-build branch below, ``self._store``'s own
+        record of ``session_id``'s bound workspace is looked up and
+        threaded into ``_compose_run_registry_and_allowed`` as
+        ``workspace_id`` -- so this run's ``BuiltinToolProvider`` binds
+        THIS session's workspace, not whatever workspace is active in the
+        UI by the time a file tool actually fires. A missing store or an
+        already-closed session degrades to ``None`` (the documented
+        active-workspace fallback) rather than failing the run over an
+        ancillary lookup.
+
+        Returns:
+            A ``(run_id, outcome)`` tuple: the primary run's id (so the
+            caller can record the produced reply's persisted id onto the run
+            via ``record_run_assistant_message`` after the reply is
+            persisted) and its terminal ``RunOutcome``.
+        """
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
-        # MCP): rebuilt FRESH for this run whenever there is a skills
-        # service OR an already-composed MCP provider for this run (never
+        # MCP, and by task-545/T6 for a per-run builtin_gate): rebuilt FRESH
+        # for this run whenever there is a skills service, an already-
+        # composed MCP provider, OR a builtin_gate for this run (never
         # cached across runs, and never the shared self._registry/
         # self._allowed_tools built at construction) -- so a skill or MCP
         # tool approved/edited/revoked since the last run always takes
@@ -795,30 +1404,291 @@ class ConsoleAgentBridge:
         # provider, on the running Textual main loop, BEFORE this method
         # is dispatched onto asyncio.to_thread) -- see MCPToolProvider's
         # own module docstring for why `compose_catalog()`'s async I/O can
-        # never run from inside this worker-thread method. Neither a
-        # skills service nor an MCP provider: the shipped shared
-        # registry/allow-list is used unchanged -- the no-skills, no-MCP
-        # path stays byte-identical to before this task.
+        # never run from inside this worker-thread method. `builtin_gate`
+        # MUST route through this fresh-build branch rather than the
+        # shared fast path below: the shared path's own `BuiltinToolProvider`
+        # is built once at bridge-construction time with `gate=None` (its
+        # own lazy default), which would be a SECOND, independently-built
+        # gate the run's review hook never stamps -- see
+        # `_compose_run_registry_and_allowed`'s own docstring for the
+        # desync this would cause. None of skills service, MCP provider,
+        # or builtin_gate: the shipped shared registry/allow-list is used
+        # unchanged -- the no-skills, no-MCP, no-gate path stays
+        # byte-identical to before this task (existing callers that never
+        # pass `builtin_gate` see no behavior change at all).
         registry = self._registry
         allowed_tools = self._allowed_tools
         skill_runner = None
-        if self._skills_service is not None or mcp_provider is not None:
+        # task-4 (skills-fork-reachability): one SkillFileBindings per run,
+        # handed to BOTH AgentService (the loop's authorization + reader
+        # closure -- Task 3) and this run's _BridgeSkillRunner (which grants
+        # a spawned skill's own name pre-spawn) -- never two independently-
+        # seeded copies, or the runner's grant would never reach the loop's
+        # check. `authorized` starts empty here (Task 5 seeds the turn's
+        # $skill names); the reader is a SYNC adapter over the async scope-
+        # service read, matching _BridgeSkillRunner.run's own
+        # asyncio.run-in-worker-thread pattern just below.
+        skill_file_bindings = None
+        if (
+            self._skills_service is not None
+            or mcp_provider is not None
+            or builtin_gate is not None
+        ):
             context: Mapping[str, Any] = {}
             if self._skills_service is not None:
                 context = asyncio.run(self._skills_service.get_context(mode="local"))
+            # task-6: `self._store` is `None` in some bridge-construction-only
+            # tests, and `session_id` could in principle name an already-
+            # closed session -- either degrades to `None`, never raises,
+            # matching `allowed_file_roots`'s own fail-safe posture.
+            run_workspace_id: str | None = None
+            # final-review F4: same fail-safe pattern as `run_workspace_id`
+            # immediately above, mirrored for the session's `ephemeral`
+            # flag. An unresolvable session degrades to `False` (not
+            # temporary) rather than raising -- consistent with every
+            # other lookup on this path, and the worst case is a normal
+            # run behaving normally, not a run crashing.
+            run_is_ephemeral = False
+            if self._store is not None:
+                try:
+                    run_workspace_id = self._store.session_workspace_id(session_id)
+                except KeyError:
+                    run_workspace_id = None
+                try:
+                    run_is_ephemeral = self._store.session_is_ephemeral(session_id)
+                except KeyError:
+                    run_is_ephemeral = False
             registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(
-                context, mcp_provider=mcp_provider
+                context,
+                mcp_provider=mcp_provider,
+                builtin_gate=builtin_gate,
+                workspace_id=run_workspace_id,
+                ephemeral=run_is_ephemeral,
             )
             if self._skills_service is not None:
                 skill_names = frozenset(
                     str(item["name"])
                     for item in _non_colliding_skill_entries(context, builtin_names)
                 )
+                skill_file_bindings = SkillFileBindings(
+                    authorized=set(),
+                    reader=lambda skill_name, path: asyncio.run(
+                        self._skills_service.read_skill_file(
+                            skill_name, path, mode="local"
+                        )
+                    ),
+                )
                 skill_runner = _BridgeSkillRunner(
                     skills_service=self._skills_service,
                     skill_names=skill_names,
                     builtin_names=builtin_names,
+                    skill_file_bindings=skill_file_bindings,
                 )
+        # task-5 (skills-fork-reachability): seed this run's own bindings
+        # with the names the CONTROLLER already resolved/spliced for the
+        # triggering turn (a leading `$skill` mention, or embedded mentions
+        # that actually spliced) -- so the primary agent's very first turn
+        # can already read that skill's bundle via skill_file, matching
+        # what a spawned skill child gets for its OWN bundle (Task 4).
+        # `skill_file_bindings` is None whenever there is no skills service
+        # for this run, in which case a non-empty `turn_skill_bindings`
+        # (which can only happen when the controller's own skills-service-
+        # gated substitution ran) has nothing to seed.
+        if skill_file_bindings is not None:
+            skill_file_bindings.authorized.update(turn_skill_bindings)
+        # Agent-callable skill install (5th runtime tool). Built only when
+        # BOTH a skills service AND a confirm callback exist -- without a
+        # callback the tool is simply absent (never advertised) rather than
+        # auto-denying every call; wired to AgentService, which pins/
+        # dispatches it for the top-level agent only. Order (load-bearing):
+        # enforce policy (no prompt on denial) -> classify URL (no prompt on
+        # a bad URL) -> in-chat confirm (plain blocking call, OUTSIDE asyncio.run)
+        # -> asyncio.run(install) -> broad-catch wrap. import_skill_file
+        # raises a bare ValueError("local_skill_exists:...") on collision, so
+        # the install catch is broad.
+        install_skill_tool = None
+        if (
+            self._skills_service is not None
+            and request_skill_install_confirm is not None
+        ):
+            scope = self._skills_service
+
+            def install_skill_tool(url: str) -> ToolResult:
+                from tldw_chatbook.Skills_Interop.skill_remote_fetch import (
+                    classify_skill_source_url,
+                    install_skill_from_url,
+                )
+                from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+
+                try:
+                    scope.enforce_install_remote()
+                except PolicyDeniedError as exc:
+                    return ToolResult(ok=False, error=exc.user_message)
+                except Exception as exc:  # noqa: BLE001
+                    return ToolResult(ok=False, error=str(exc))
+                try:
+                    classify_skill_source_url(url)
+                except Exception as exc:  # noqa: BLE001 (RemoteSkillError etc.)
+                    return ToolResult(ok=False, error=str(exc))
+                try:
+                    allowed = bool(
+                        request_skill_install_confirm(url)
+                        if request_skill_install_confirm is not None
+                        else False
+                    )
+                except Exception:  # noqa: BLE001 — a UI error fails closed
+                    allowed = False
+                if not allowed:
+                    return ToolResult(
+                        ok=False, error="The user declined to install this skill."
+                    )
+                try:
+                    result = asyncio.run(
+                        install_skill_from_url(url, scope_service=scope)
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    return ToolResult(ok=False, error=str(exc))
+                name = result.get("name", "") if isinstance(result, dict) else ""
+                return ToolResult(
+                    ok=True,
+                    content=(
+                        f'Installed "{name}" — it is pending your review and '
+                        "cannot run until you approve it in Library > Skills."
+                    ),
+                )
+
+        # Trust-gated skill script execution (6th runtime tool). Built only
+        # when a skills service AND a confirm callback exist AND this
+        # platform's sandbox is actually usable -- without any one of the
+        # three the tool is absent (never advertised) rather than
+        # auto-denying every call. The platform check matters because the
+        # sandbox (skill_script_runner.run_script_subprocess) depends on
+        # POSIX-only primitives (process-group teardown, RLIMIT_* via the
+        # `resource` module) that do not exist on Windows: "advertised must
+        # equal usable" -- a tool the model can call but that always raises
+        # is a defect, not a graceful degradation, so it must simply not be
+        # wired on an unsupported platform. Order (load-bearing): enforce
+        # policy (no prompt on denial) -> describe/resolve (no prompt on a
+        # bad path or an unrunnable type) -> grant check (no prompt when the
+        # user already granted this skill) -> confirm (plain blocking call,
+        # OUTSIDE any asyncio.run) -> run -> broad-catch wrap.
+        # run_skill_script re-verifies policy/trust/path authoritatively, so
+        # a stale plan can never widen what actually executes.
+        from tldw_chatbook.Skills_Interop.skill_script_runner import (
+            sandbox_supported,
+        )
+
+        run_skill_script_tool = None
+        if (
+            self._skills_service is not None
+            and request_skill_script_confirm is not None
+            and sandbox_supported()
+        ):
+            scope = self._skills_service
+            trust_service = getattr(
+                getattr(scope, "local_service", None), "trust_service", None
+            )
+
+            def run_skill_script_tool(
+                skill_name: str, script_path: str, args: list[str]
+            ) -> ToolResult:
+                from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+
+                try:
+                    scope.enforce_run_script()
+                except PolicyDeniedError as exc:
+                    return ToolResult(ok=False, error=exc.user_message)
+                except Exception as exc:  # noqa: BLE001
+                    return ToolResult(ok=False, error=str(exc))
+                try:
+                    plan = asyncio.run(
+                        scope.describe_skill_script(skill_name, script_path)
+                    )
+                except Exception as exc:  # noqa: BLE001 (trust/path/type)
+                    return ToolResult(ok=False, error=f"run_skill_script: {exc}")
+
+                granted = False
+                if trust_service is not None:
+                    try:
+                        granted = bool(
+                            trust_service.script_execution_granted(skill_name)
+                        )
+                    except Exception:  # noqa: BLE001 — doubt ⇒ prompt
+                        granted = False
+                if not granted:
+                    try:
+                        decision = request_skill_script_confirm(
+                            {
+                                # plan.skill_name, not the agent's raw
+                                # spelling: the service normalizes the name
+                                # it acts on, and a consent card must show
+                                # the value that will actually be used.
+                                "skill_name": str(
+                                    getattr(plan, "skill_name", None) or skill_name
+                                ),
+                                "script_path": script_path,
+                                "mechanism": plan.mechanism,
+                                "interpreter": plan.interpreter_display,
+                                "is_binary": plan.is_binary,
+                                "args": [str(a) for a in args],
+                            }
+                        )
+                    except Exception:  # noqa: BLE001 — a UI error fails closed
+                        decision = {"allow": False, "remember": False}
+                    if not isinstance(decision, Mapping):
+                        decision = {"allow": False, "remember": False}
+                    if not decision.get("allow", False):
+                        return ToolResult(
+                            ok=False, error="The user declined to run this script."
+                        )
+                    if decision.get("remember", False) and trust_service is not None:
+                        # Deliberate ordering: this persists the standing
+                        # grant BEFORE run_skill_script below actually runs,
+                        # so "remember my choice" sticks even if this
+                        # particular run then fails (e.g. trust revoked
+                        # mid-flight). That is fine -- run_skill_script
+                        # re-verifies policy/trust/path authoritatively on
+                        # every call regardless of this grant, so recording
+                        # it early never widens what is allowed to execute.
+                        try:
+                            trust_service.grant_script_execution(skill_name)
+                        except Exception:  # noqa: BLE001 — grant is best-effort
+                            logger.opt(exception=True).debug(
+                                "Failed to persist skill script grant"
+                            )
+                try:
+                    outcome = asyncio.run(
+                        scope.run_skill_script(skill_name, script_path, list(args))
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    return ToolResult(ok=False, error=f"run_skill_script: {exc}")
+
+                lines = [f"exit_code: {outcome.exit_code}"]
+                if outcome.timed_out:
+                    lines.append("timed out — the script was killed")
+                if outcome.output_capped:
+                    lines.append("output was truncated at the size cap")
+                for warning in outcome.sandbox_warnings:
+                    lines.append(f"note: {warning}")
+                if outcome.stdout:
+                    lines.append(f"stdout:\n{outcome.stdout}")
+                if outcome.stderr:
+                    lines.append(f"stderr:\n{outcome.stderr}")
+                # task-584: report WHAT was produced, never its contents. This
+                # string enters the model's context, and a script's artifact is
+                # not trust-reviewed material -- the listing is name + size, and
+                # the path lets the user (or a file tool, where enabled) open it.
+                if outcome.output_files:
+                    listed = ", ".join(
+                        f"{item['name']} ({item['size']} bytes)"
+                        for item in outcome.output_files
+                    )
+                    lines.append(
+                        f"produced {len(outcome.output_files)} file(s): {listed}"
+                    )
+                    lines.append(f"output directory: {outcome.output_dir}")
+                return ToolResult(ok=True, content="\n".join(lines))
+
         # [console] native_tool_calls kill-switch (Task 5): a caller-supplied
         # predicate (chat_screen.py's _console_native_tool_calls_enabled)
         # gates whether this run may use native provider tool-calls at all;
@@ -853,6 +1723,7 @@ class ConsoleAgentBridge:
             assistant_message_id=assistant_message_id,
             should_cancel=should_cancel,
             loop=run_loop,
+            provider_stream_signals=provider_stream_signals,
         )
 
         live_steps: list[AgentLiveStep] = []
@@ -882,7 +1753,16 @@ class ConsoleAgentBridge:
                     summary=step.summary,
                 )
                 if marker_text is not None:
-                    self._append_marker(session_id, marker_text)
+                    self._append_marker(
+                        session_id,
+                        marker_text,
+                        full_output=full_step_output(
+                            step.kind,
+                            result=step.result,
+                            summary=step.summary,
+                            marker_text=marker_text,
+                        ),
+                    )
             # Diagnostic logging for every tool call and result. The actual
             # tool invocation lives inside AgentService, so we observe it
             # through the step stream it emits.
@@ -924,11 +1804,52 @@ class ConsoleAgentBridge:
         # stamp_scope at all, and MUST NOT be forced to); production always
         # hands in a real, fully-composed MCPToolProvider here, which always
         # has it.
-        review_state_scope = (
-            getattr(mcp_provider, "stamp_scope", None)
-            if mcp_provider is not None
-            else None
-        )
+        # task-628: the seam holds ONE context manager, but two components
+        # now own per-turn stamp state a nested sub-agent run would clobber
+        # -- the MCP provider's `_stamped_decisions` and the built-in gate's
+        # `_stamps`. Compose whichever exist rather than leaving the gate's
+        # state unguarded (it was, before this task, and unlike MCP it has
+        # no per-call approval fallback to degrade to: a lost stamp fails
+        # closed outright).
+        _scopes = [
+            scope
+            for scope in (
+                getattr(mcp_provider, "stamp_scope", None)
+                if mcp_provider is not None
+                else None,
+                getattr(builtin_gate, "stamp_scope", None)
+                if builtin_gate is not None
+                else None,
+            )
+            if scope is not None
+        ]
+        review_state_scope = _combine_state_scopes(_scopes)
+
+        # TASK-1971 (Agent Change Review): kick the baseline snapshot in the
+        # background NOW -- it rides the model's first-token latency -- and
+        # gate tool dispatch on its completion by wrapping the review hook,
+        # which the runtime invokes before every tool batch executes. A tool
+        # writing before B settles would race its own change into the
+        # baseline and vanish from the diff. Tracking failures never block
+        # the run (spec failure posture): begin_turn cannot raise, and the
+        # wrapper's await records timeouts as per-root disclosures.
+        change_handle = None
+        if self._change_tracker is not None and change_roots:
+            try:
+                change_handle = self._change_tracker.begin_turn(change_roots)
+            except Exception:  # noqa: BLE001 -- tracking must never block a run
+                logger.opt(exception=True).warning(
+                    "change_review: begin_turn failed; turn untracked"
+                )
+        if change_handle is not None:
+            _inner_review = review_tool_calls
+            _handle = change_handle
+
+            def review_tool_calls(calls):  # type: ignore[no-redef]
+                _handle.await_baseline()
+                if _inner_review is None:
+                    return {}
+                return _inner_review(calls)
         service = AgentService(
             self._db,
             registry,
@@ -936,8 +1857,11 @@ class ConsoleAgentBridge:
             clock=self._clock,
             on_step=on_step,
             skill_runner=skill_runner,
+            skill_file_bindings=skill_file_bindings,
             review_tool_calls=review_tool_calls,
             review_state_scope=review_state_scope,
+            install_skill_tool=install_skill_tool,
+            run_skill_script_tool=run_skill_script_tool,
         )
 
         supersede_run_id = (
@@ -945,11 +1869,48 @@ class ConsoleAgentBridge:
             if supersede_previous
             else None
         )
+        # task-5 (skills-fork-reachability): append the turn's pre-rendered
+        # "Bundled files" block (built controller-side as pure string work
+        # over `execute_skill` results already in hand -- Task 4's
+        # byte-identical row format) to the LAST role=="user" entry of THIS
+        # run's OWN copy of `agent_messages` -- the caller's list and
+        # message dict are never mutated. This is the only place the block
+        # is ever inserted into a payload: substitution built it but never
+        # wrote it into messages, and plain (non-agent) sends never call
+        # run_reply at all, so they drop it unused. No-op (the original
+        # `agent_messages` list is used unchanged) when there is no block
+        # to append or no user message to append it to.
+        run_messages = agent_messages
+        if turn_bundle_block:
+            for index in range(len(agent_messages) - 1, -1, -1):
+                message = agent_messages[index]
+                content = message.get("content")
+                if message.get("role") == ConsoleMessageRole.USER.value and isinstance(
+                    content, str
+                ):
+                    run_messages = list(agent_messages)
+                    run_messages[index] = {
+                        **message,
+                        "content": f"{content}\n\n{turn_bundle_block}",
+                    }
+                    break
         try:
-            _run_id, outcome = service.run_turn(
+            run_id, outcome = service.run_turn(
                 conversation_id=conversation_id,
-                messages=agent_messages,
+                messages=run_messages,
                 config=config,
+                # Intentionally NOT forwarding the native in-memory id here.
+                # create_run would store it, but the native id can never match
+                # any persisted_message_id -- so a run left unfinished (stopped
+                # mid-run, cancelled, failed, or crashed) would hold a stale,
+                # non-null id that resume anchoring can never match (and Task 3
+                # would drop as "off-path", silently hiding its markers). By
+                # omitting it the run row starts NULL; the controller writes the
+                # durable PERSISTED id onto the run on EVERY terminal path once
+                # the reply is persisted (see record_run_assistant_message), and
+                # any still-unfinished run stays NULL for resume's null->ordinal
+                # fallback. run_turn's assistant_message_id threading stays a
+                # generic service capability (its own tests call it directly).
                 # execution_key-first (Task 5): the service's capability
                 # check keys off api_endpoint, and execution_key is by
                 # definition "Provider key passed to chat_api_call" — the
@@ -968,6 +1929,50 @@ class ConsoleAgentBridge:
             )
         finally:
             run_loop.close()
+            # TASK-1971: E snapshot on EVERY terminal path -- completed,
+            # failed, cancelled, or crashed. A run that died halfway through
+            # editing is when review matters most. `run_id` is unbound when
+            # run_turn itself raised before creating the run row; the
+            # records are then logged instead of stored (nothing to attach
+            # them to), and the exception still propagates unchanged.
+            if change_handle is not None:
+                try:
+                    _steps = (
+                        outcome.steps if "outcome" in locals() else []
+                    )
+                    _records = self._change_tracker.end_turn(
+                        change_handle,
+                        touched_paths=ChangeTurnTracker.tool_touched_paths(
+                            _steps
+                        ),
+                    )
+                    if "run_id" in locals():
+                        for _rec in _records:
+                            self._db.record_change_snapshot(
+                                run_id=run_id,
+                                root=_rec.root,
+                                baseline_sha=_rec.baseline_sha,
+                                end_sha=_rec.end_sha,
+                                files_changed=_rec.files_changed,
+                                adds=_rec.adds,
+                                dels=_rec.dels,
+                                tracking_error=_rec.tracking_error,
+                                untracked_oversize=_rec.untracked_oversize,
+                                nested_repos=_rec.nested_repos,
+                            )
+                        self._append_change_markers(
+                            session_id, run_id, _records
+                        )
+                    elif _records:
+                        logger.warning(
+                            "change_review: run crashed before a run row "
+                            f"existed; {len(_records)} change record(s) "
+                            "not stored"
+                        )
+                except Exception:  # noqa: BLE001 -- never mask the run's outcome
+                    logger.opt(exception=True).warning(
+                        "change_review: end_turn failed; turn changes untracked"
+                    )
         for step in outcome.steps:
             logger.info(
                 "agent run step",
@@ -996,7 +2001,7 @@ class ConsoleAgentBridge:
         # rather than reading this run's now-superseded snapshot (belt and
         # braces on top of the pop at run start above).
         self._historical_cache.pop(conversation_id, None)
-        return outcome
+        return run_id, outcome
 
     # -- rail reads -----------------------------------------------------
 
@@ -1044,6 +2049,195 @@ class ConsoleAgentBridge:
     def subagent_run(self, run_id: str) -> dict | None:
         return self._db.get_run(run_id)
 
+    def latest_primary_run_id(self, conversation_id: str) -> str | None:
+        """Return the most recent non-superseded PRIMARY run's id, if any.
+
+        TASK-870: what the "View full log" affordance targets when the
+        Agent rail is showing the top-level overview (not drilled into a
+        sub-agent run, which already carries its own explicit run id) --
+        the run whose live/historical steps the overview is currently
+        summarizing is always this one. Present from the moment a run
+        starts (``AgentService._run_one`` calls ``self.db.create_run()``
+        before any step happens), so this resolves correctly for a run
+        still in progress, not only a finished one.
+
+        Args:
+            conversation_id: Durable conversation id whose runs to inspect.
+
+        Returns:
+            The newest non-superseded primary run's id, or ``None`` when
+            the conversation has never run an agent.
+        """
+        record = self._db.latest_primary_run(conversation_id)
+        return record["id"] if record is not None else None
+
+    def _owning_run_id_for_log(self, run_id: str) -> str:
+        """Return the run id whose ON-DISK log directory holds ``run_id``'s records.
+
+        Review finding B (PR #1082): only a PRIMARY run ever binds a
+        ``RunLogWriter`` (``AgentService._run_one`` binds the shared writer
+        to the primary run's id; a spawned sub-agent shares that SAME
+        writer instance rather than binding its own). A sub-agent's own
+        records are therefore appended to its PRIMARY's log directory,
+        each one individually tagged with the sub-agent's own run id (see
+        ``run_log_format.RunLogRecord.run_id``) -- there is no directory
+        named after the sub-agent's run id at all. Looking a sub-agent's
+        run id up directly (the pre-fix behavior) could therefore never
+        find a log, and the "View full log" affordance could never appear
+        once drilled into a sub-agent.
+
+        Args:
+            run_id: A run id that may be either a primary or a sub-agent
+                run.
+
+        Returns:
+            ``run_id`` unchanged when it is a primary run (or unknown to
+            this bridge's ``AgentRunsDB`` -- treated as "its own owner" so
+            an unresolvable id still gets a definite, if empty, answer
+            rather than a lookup error); its ``parent_run_id`` when it is
+            a recorded sub-agent run.
+        """
+        record = self.subagent_run(run_id)
+        parent_run_id = record.get("parent_run_id") if record else None
+        return parent_run_id or run_id
+
+    def run_log_available(self, run_id: str) -> bool:
+        """Whether an on-disk run log exists for ``run_id``.
+
+        TASK-870 (AC#6/#7): gates the Console's "View full log" affordance
+        -- present only when this is ``True``, absent (not merely disabled)
+        otherwise, so the button can never dangle on a run that has nothing
+        to show (logging disabled, no root resolvable, or a run so short it
+        never wrote a single record).
+
+        Review finding B: ``run_id`` may name a sub-agent run, whose
+        records live inside its PRIMARY's log directory rather than one of
+        its own (see ``_owning_run_id_for_log``). For a primary run this is
+        exactly the pre-fix check (directory exists and holds a segment
+        file); for a sub-agent, that same directory check only proves the
+        PRIMARY logged something -- this additionally confirms at least one
+        record in it actually carries the sub-agent's own run id, so the
+        affordance never appears for a sub-agent that itself never
+        produced a single logged step even though its primary did.
+
+        Args:
+            run_id: The run's id (``AgentRunsDB`` run id, matches
+                ``RunLogRecord.run_id``).
+
+        Returns:
+            ``True`` when a log exists for ``run_id`` -- its own directory
+            for a primary run, or at least one tagged record within its
+            owning primary's directory for a sub-agent run.
+        """
+        from tldw_chatbook.Agents.run_log import resolve_existing_log_dir
+
+        owner_run_id = self._owning_run_id_for_log(run_id)
+        log_dir = resolve_existing_log_dir(owner_run_id)
+        if log_dir is None:
+            return False
+        if owner_run_id == run_id:
+            return True
+        from tldw_chatbook.Agents.run_log_search import load_records
+
+        return any(record.run_id == run_id for record in load_records(log_dir))
+
+    def load_run_log_text(self, run_id: str) -> str:
+        """Render ``run_id``'s full, untruncated run log for display.
+
+        TASK-870 (AC#6): the counterpart to ``run_log_available`` -- callers
+        should check that first (or simply accept an empty string here when
+        no log exists, which this also returns safely rather than raising).
+        Every record the run wrote (model turns, tool calls, tool results,
+        spawns) is rendered in full via ``run_log_search.format_results``.
+
+        Review finding B: resolves and reads the OWNING primary's log
+        directory (see ``_owning_run_id_for_log``) and, when ``run_id``
+        names a sub-agent, filters the loaded records down to only the
+        ones that sub-agent itself produced -- the shared directory also
+        holds the primary's own records and any OTHER sub-agent's, none of
+        which belong in this run's viewer.
+
+        Review finding E: the per-record rendering window is no longer a
+        fixed 2,000,000 characters. ``run_log_max_record_bytes`` (the
+        WRITER's per-record ceiling) has no enforced maximum, so a fixed,
+        smaller viewer window could leave a real, fully-stored record
+        behind an unreachable "Use offset=N to continue" marker -- that
+        marker exists for ``search_run_log``'s interactive paging, which
+        this one-shot static viewer has no way to act on. The window is
+        instead ``max(2_000_000, configured_max_record_bytes())``: the
+        default behavior is unchanged (2,000,000 already exceeds the
+        default 1MB/record cap), and a larger configured cap grows the
+        window to match, so a freshly-written record -- bounded by the
+        writer to at most the CURRENT ``run_log_max_record_bytes`` bytes,
+        and UTF-8-decoded char count never exceeds byte count -- always
+        fits within one render.
+
+        Args:
+            run_id: The run's id to load.
+
+        Returns:
+            The rendered log text, or ``""`` when no log exists for
+            ``run_id``.
+        """
+        from tldw_chatbook.Agents.run_log import (
+            configured_max_record_bytes,
+            resolve_existing_log_dir,
+        )
+        from tldw_chatbook.Agents.run_log_search import format_results, load_records
+
+        owner_run_id = self._owning_run_id_for_log(run_id)
+        log_dir = resolve_existing_log_dir(owner_run_id)
+        if log_dir is None:
+            return ""
+        records = load_records(log_dir)
+        if owner_run_id != run_id:
+            records = [record for record in records if record.run_id == run_id]
+        if not records:
+            return ""
+        max_chars = max(2_000_000, configured_max_record_bytes())
+        return format_results(records, max_chars=max_chars)
+
+    def record_run_assistant_message(
+        self, run_id: str, persisted_message_id: str
+    ) -> None:
+        """Record the persisted id of the assistant reply ``run_id`` produced.
+
+        Delegates to ``AgentRunsDB.set_run_assistant_message_id``. Called by
+        the controller AFTER the reply is persisted (its native create-time
+        id is thereby corrected to the durable persisted id), so a later
+        resume can anchor markers by ``persisted_message_id``.
+        """
+        self._db.set_run_assistant_message_id(run_id, persisted_message_id)
+
+    def latest_unanchored_primary_run_id(self, conversation_id: str) -> str | None:
+        """Return the newest non-superseded PRIMARY run's id while unanchored.
+
+        task-543 seam for the stopped-via-cancel path: ``stop_active_run``'s
+        ``task.cancel()`` raises ``CancelledError`` in the controller before
+        ``run_reply``'s ``(run_id, outcome)`` ever binds, so the controller
+        cannot learn the run id from the return value -- but the run ROW
+        already exists (``create_run`` runs at loop start, long before the
+        first chunk can stream), and the newest non-superseded primary is by
+        construction the active run. The ``assistant_message_id IS NULL``
+        guard covers the one exception: a Stop delivered before
+        ``create_run`` committed would surface the PREVIOUS run here, and a
+        finished run always has its anchor recorded by a finalizer terminal
+        path -- so an already-anchored newest row means "record nothing"
+        (row stays NULL -> ordinal fallback, the pre-fix behavior), never
+        "overwrite a good anchor".
+
+        Args:
+            conversation_id: Durable conversation id whose runs to inspect.
+
+        Returns:
+            The newest non-superseded primary run's id when its
+            ``assistant_message_id`` is still NULL, else ``None``.
+        """
+        record = self._db.latest_primary_run(conversation_id)
+        if record is None or record.get("assistant_message_id") is not None:
+            return None
+        return record["id"]
+
     def subagent_count(self, conversation_id: str) -> int:
         return self._db.count_subagent_runs(conversation_id)
 
@@ -1057,7 +2251,7 @@ class ConsoleAgentBridge:
 
     def resume_marker_messages(
         self, conversation_id: str
-    ) -> list[list[ConsoleChatMessage]]:
+    ) -> list[tuple[str | None, list[ConsoleChatMessage]]]:
         """Re-derive transcript TOOL marker messages from ``AgentRunsDB`` for resume.
 
         Plan-B final-review Medium-1: the rail (``historical_snapshot``) and
@@ -1067,16 +2261,24 @@ class ConsoleAgentBridge:
         ``persist=False``, so a session rebuilt fresh from ChaChaNotes never
         sees them.
 
-        Returns one marker-message block per non-superseded PRIMARY run for
-        the conversation, oldest run first (``list_runs`` itself returns
-        newest-first, so the order is reversed here). Each block holds that
-        run's own TOOL marker messages, in the run's recorded step order,
-        built with ``format_agent_step_marker`` -- the same formatter the
-        live bridge uses -- so a resumed transcript's markers are
-        byte-identical to what the live run produced. A run with no
-        marker-worthy steps (e.g. a plain answer, no tool/spawn/error step)
-        yields an empty block; callers should skip those rather than inject
-        nothing.
+        Returns one ``(assistant_message_id, marker_block)`` pair per
+        non-superseded PRIMARY run for the conversation, oldest run first
+        (``list_runs`` itself returns newest-first, so the order is
+        reversed here). ``assistant_message_id`` is the run's own
+        ``record["assistant_message_id"]`` -- the persisted id of the
+        reply it produced (set on every terminal path since Task 2), or
+        ``None`` for a legacy/pre-Phase-C run, a sub-agent run, or one
+        whose reply was never persisted -- Task 3's
+        ``inject_resume_agent_markers`` is what turns this id into an
+        anchored (or ordinal-fallback, or dropped) placement.
+
+        Each block holds that run's own TOOL marker messages, in the run's
+        recorded step order, built with ``format_agent_step_marker`` -- the
+        same formatter the live bridge uses -- so a resumed transcript's
+        markers are byte-identical to what the live run produced. A run
+        with no marker-worthy steps (e.g. a plain answer, no
+        tool/spawn/error step) yields an empty block; callers should skip
+        those rather than inject nothing.
 
         Placement of the returned blocks into a transcript is the caller's
         job -- see ``inject_resume_agent_markers``.
@@ -1087,7 +2289,18 @@ class ConsoleAgentBridge:
             if record["agent_kind"] == AGENT_KIND_PRIMARY
         ]
         records.reverse()  # list_runs is newest-first; markers must read chronologically
-        blocks: list[list[ConsoleChatMessage]] = []
+        # TASK-1972 review round: ONE conversation-level query, grouped in
+        # memory -- the per-run lookup was an N+1 over sqlite on every
+        # resume (finding 3).
+        snap_by_run: dict[str, list[dict]] = {}
+        try:
+            for _row in self._db.change_snapshots_for_conversation(
+                conversation_id
+            ):
+                snap_by_run.setdefault(str(_row["run_id"]), []).append(_row)
+        except Exception:  # noqa: BLE001 -- resume must not die on this
+            snap_by_run = {}
+        blocks: list[tuple[str | None, list[ConsoleChatMessage]]] = []
         for record in records:
             block: list[ConsoleChatMessage] = []
             for step in record.get("steps") or []:
@@ -1103,14 +2316,128 @@ class ConsoleAgentBridge:
                             role=ConsoleMessageRole.TOOL,
                             content=text,
                             status="complete",
+                            # AC#5: a resumed marker is as expandable as a
+                            # live one -- the step rows carry the full result.
+                            tool_output_full=full_step_output(
+                                str(step.get("kind") or ""),
+                                result=step.get("result"),
+                                summary=step.get("summary"),
+                                marker_text=text,
+                            ),
                         )
                     )
-            blocks.append(block)
+            snap_rows = snap_by_run.get(str(record.get("id")), [])
+            clean = [r for r in snap_rows if not r.get("tracking_error")]
+            files = sum(int(r.get("files_changed") or 0) for r in clean)
+            if files:
+                block.append(
+                    ConsoleChatMessage(
+                        role=ConsoleMessageRole.TOOL,
+                        content=format_change_summary_marker(
+                            files,
+                            sum(int(r.get("adds") or 0) for r in clean),
+                            sum(int(r.get("dels") or 0) for r in clean),
+                        ),
+                        status="complete",
+                        change_review_run_id=str(record.get("id")),
+                    )
+                )
+            # Parity for the FAILURE shape too (review finding 2): live
+            # emits a disclosure row per failed root; resume must render
+            # byte-identical or a resumed transcript hides that a turn's
+            # tracking failed.
+            for _row in snap_rows:
+                if _row.get("tracking_error"):
+                    block.append(
+                        ConsoleChatMessage(
+                            role=ConsoleMessageRole.TOOL,
+                            content=format_change_tracking_failure_marker(
+                                str(_row.get("root", "")),
+                                str(_row.get("tracking_error", "")),
+                            ),
+                            status="complete",
+                        )
+                    )
+            blocks.append((record.get("assistant_message_id"), block))
         return blocks
 
     # -- internals ------------------------------------------------------
 
-    def _append_marker(self, session_id: str, text: str) -> None:
+    def _append_change_markers(
+        self, session_id: str, run_id: str, records: list
+    ) -> None:
+        """Append the turn's change rows to the transcript (TASK-1972).
+
+        One counts row when anything changed, plus one disclosure row per
+        tracking failure. Display-only TOOL markers -- same anchoring rules
+        as every other marker (TASK-1842's arc), so they survive recompute
+        and session switch. Never raises.
+
+        Args:
+            session_id: The run's owning session.
+            run_id: The run the rows review (carried on the counts row).
+            records: The turn's ``TurnChangeRecord`` list.
+        """
+        try:
+            changed = [r for r in records if not r.tracking_error]
+            files = sum(r.files_changed for r in changed)
+            if files:
+                self._store.append_message(
+                    session_id,
+                    role=ConsoleMessageRole.TOOL,
+                    content=format_change_summary_marker(
+                        files,
+                        sum(r.adds for r in changed),
+                        sum(r.dels for r in changed),
+                    ),
+                    change_review_run_id=run_id,
+                )
+            for rec in records:
+                if rec.tracking_error:
+                    self._store.append_message(
+                        session_id,
+                        role=ConsoleMessageRole.TOOL,
+                        content=format_change_tracking_failure_marker(
+                            rec.root, rec.tracking_error
+                        ),
+                    )
+        except Exception:  # noqa: BLE001 -- a marker must never fail the run
+            logger.opt(exception=True).warning(
+                "change_review: could not append transcript rows"
+            )
+
+    @property
+    def change_tracking_enabled(self) -> bool:
+        """Whether this bridge tracks changes (tracker present = git found)."""
+        return self._change_tracker is not None
+
+    def change_review_provider(
+        self, conversation_id: str
+    ) -> "AgentRunsChangeReviewProvider | None":
+        """Build the Review screen's data provider for a conversation.
+
+        Args:
+            conversation_id: The conversation whose turns are reviewable.
+
+        Returns:
+            An ``AgentRunsChangeReviewProvider``, or ``None`` when change
+            tracking is disabled on this bridge (no tracker / no git).
+        """
+        if self._change_tracker is None:
+            return None
+        from tldw_chatbook.UI.Screens.change_review_screen import (
+            AgentRunsChangeReviewProvider,
+        )
+
+        return AgentRunsChangeReviewProvider(
+            db=self._db,
+            service=self._change_tracker.service,
+            conversation_id=conversation_id,
+        )
+
+    def _append_marker(
+        self, session_id: str, text: str, *, full_output: str | None = None
+    ) -> None:
         # Kept raw (no escaping): both consumers render markup-off --
         # console_transcript.py's _message_render_text builds a Content via
         # Content.assemble (never markup-parsed) and chat_screen.py's legacy
@@ -1120,7 +2447,10 @@ class ConsoleAgentBridge:
         # `fetch \[docs]`).
         try:
             self._store.append_message(
-                session_id, role=ConsoleMessageRole.TOOL, content=text
+                session_id,
+                role=ConsoleMessageRole.TOOL,
+                content=text,
+                tool_output_full=full_output,
             )
         except KeyError:
             pass  # session vanished mid-run; the rail still has the live snapshot
@@ -1134,7 +2464,10 @@ class ConsoleAgentBridge:
         # TOOL marker path (_append_marker) is also raw, since its consumers
         # never parse the text as markup either.
         raw = step.summary or step.result or step.tool_name or step.kind
-        return str(raw)[:200]
+        # task-350: mark truncation with an ellipsis + affordance instead of a
+        # silent mid-word clip for the run inspector's live-step lines.
+        # TASK-870: limit is the user-configurable Console display cap.
+        return _truncate_step_text(str(raw), limit=_console_tool_result_display_cap())
 
     def _previous_primary_run_id(self, conversation_id: str) -> str | None:
         for record in self._db.list_runs(conversation_id, include_superseded=False):
@@ -1190,4 +2523,12 @@ class ConsoleAgentBridge:
             or step.get("kind")
             or ""
         )
-        return str(raw)[:200]
+        # TASK-870 (AC#5): a resumed/historical run used to get a bare
+        # `str(raw)[:200]` slice here -- a silent mid-word clip, the exact
+        # defect task-350 fixed for the LIVE path (`_summarize`, above) but
+        # never carried over to this persisted-step twin. Now shares both
+        # the same word-boundary + "(+N chars)" affordance (via
+        # `_truncate_step_text`) AND the same user-configurable cap, so a
+        # resumed transcript's step summaries render byte-identical to what
+        # a live run of the same steps would have shown.
+        return _truncate_step_text(str(raw), limit=_console_tool_result_display_cap())

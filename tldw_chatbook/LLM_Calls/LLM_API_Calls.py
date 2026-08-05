@@ -24,6 +24,7 @@
 # Import necessary libraries
 import json
 import time
+from collections.abc import Mapping
 from typing import List, Any, Optional, Tuple, Dict, Union
 from urllib.parse import urlparse
 
@@ -44,9 +45,23 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatProviderError,
     ChatConfigurationError,
 )
-from tldw_chatbook.config import load_settings, settings
+from tldw_chatbook.Chat.console_provider_endpoints import builtin_provider_endpoint
+from tldw_chatbook.config import (
+    get_cli_setting,
+    get_runtime_config_snapshot,
+    load_settings,
+)
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.input_validation import validate_url
+from tldw_chatbook.Utils.sensitive_llm_logging import (
+    is_sensitive_llm_request,
+    llm_content_byte_count,
+    llm_retry_count,
+    safe_llm_error_detail,
+    safe_llm_exception_message,
+    safe_llm_request_payload_summary,
+    safe_llm_url_host,
+)
 #
 #######################################################################################################################
 # Provider Parameter Support Documentation
@@ -181,20 +196,64 @@ _ANTHROPIC_ADAPTIVE_THINKING_MODEL_MARKERS = (
     "sonnet-4-6",
     "sonnet-4.6",
 )
+_ANTHROPIC_SONNET_5_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
 
 def _is_present_setting(value: object) -> bool:
     return value is not None and str(value).strip() != ""
 
 
+def _is_openai_gpt_5_6_model(model: object) -> bool:
+    """Return whether ``model`` is an unprefixed OpenAI GPT-5.6 family ID."""
+    if not isinstance(model, str):
+        return False
+    normalized_model = model.strip().lower()
+    return normalized_model == "gpt-5.6" or normalized_model.startswith("gpt-5.6-")
+
+
+def _normalize_openai_reasoning_effort(value: object) -> Optional[str]:
+    """Return a normalized OpenAI reasoning effort, if one was provided."""
+    if not _is_present_setting(value):
+        return None
+    return str(value).strip().lower()
+
+
 def _openai_use_responses_api(
-    reasoning_effort: object,
+    normalized_reasoning_effort: Optional[str],
     reasoning_summary: object,
     verbosity: object,
+    is_gpt_5_6_model: bool,
 ) -> bool:
+    return (
+        normalized_reasoning_effort is not None
+        and (normalized_reasoning_effort != "none" or not is_gpt_5_6_model)
+    ) or (_is_present_setting(reasoning_summary) or _is_present_setting(verbosity))
+
+
+_OPENAI_REASONING_MODEL_FAMILIES = ("o1", "o3", "o4", "gpt-5")
+
+
+def _is_openai_reasoning_model(model: object) -> bool:
+    """Return True for OpenAI reasoning-family models (o-series, gpt-5).
+
+    These models reject classic sampling parameters (``temperature``,
+    ``top_p``) with HTTP 400 on both the Chat Completions and Responses
+    APIs, so the handler must not inject its config-backed defaults for
+    them (task-404). Family names match exactly or at a ``-``/``.``
+    boundary so e.g. ``o365-copilot`` or ``olmo-7b`` never match.
+
+    Args:
+        model: Model identifier as passed to the OpenAI handler.
+
+    Returns:
+        True when the model belongs to a reasoning family.
+    """
+    normalized = str(model or "").strip().lower()
     return any(
-        _is_present_setting(value)
-        for value in (reasoning_effort, reasoning_summary, verbosity)
+        normalized == family
+        or normalized.startswith(family + "-")
+        or normalized.startswith(family + ".")
+        for family in _OPENAI_REASONING_MODEL_FAMILIES
     )
 
 
@@ -277,6 +336,9 @@ def _responses_stream_to_chat_sse(response, *, model: str):
                     "model": model,
                     "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
                 }
+                completed_usage = (event.get("response") or {}).get("usage")
+                if isinstance(completed_usage, dict):
+                    chunk["usage"] = completed_usage
                 yield f"data: {json.dumps(chunk)}\n\n"
             elif event_type == "error":
                 yield f"data: {payload_text}\n\n"
@@ -302,30 +364,54 @@ def _anthropic_uses_adaptive_thinking(model: object) -> bool:
     )
 
 
+def _anthropic_is_sonnet_5(model: object) -> bool:
+    """Return whether model is the documented unprefixed Claude Sonnet 5 family."""
+    model_name = str(model or "").lower()
+    return model_name == "claude-sonnet-5" or model_name.startswith("claude-sonnet-5-")
+
+
 def _anthropic_thinking_config(
     *,
     model: object,
     thinking_effort: object,
     thinking_budget_tokens: object,
     max_tokens: int,
-) -> tuple[dict[str, object] | None, int]:
+) -> tuple[dict[str, object] | None, dict[str, object] | None, int]:
+    """Map Anthropic thinking settings to thinking and output configuration."""
     effort = str(thinking_effort or "").strip().lower()
+    is_sonnet_5 = _anthropic_is_sonnet_5(model)
     if effort == "off":
-        return None, max_tokens
+        if is_sonnet_5:
+            if thinking_budget_tokens is not None:
+                logger.warning(
+                    "Anthropic: ignoring fixed thinking budget for Claude Sonnet 5 model %s",
+                    model,
+                )
+            return {"type": "disabled"}, None, max_tokens
+        return None, None, max_tokens
     budget = _safe_cast(thinking_budget_tokens, int)
+    if is_sonnet_5:
+        if thinking_budget_tokens is not None:
+            logger.warning(
+                "Anthropic: ignoring fixed thinking budget for Claude Sonnet 5 model %s",
+                model,
+            )
+        if effort in _ANTHROPIC_SONNET_5_EFFORTS:
+            return None, {"effort": effort}, max_tokens
+        return None, None, max_tokens
     if _anthropic_uses_adaptive_thinking(model):
         if effort:
-            return {"type": "adaptive", "effort": effort}, max_tokens
+            return {"type": "adaptive"}, {"effort": effort}, max_tokens
         if budget is not None:
             logger.warning(
                 "Anthropic: ignoring fixed thinking budget for adaptive-thinking model %s",
                 model,
             )
-        return None, max_tokens
+        return None, None, max_tokens
     if budget is None and effort:
         budget = _ANTHROPIC_THINKING_BUDGETS_BY_EFFORT.get(effort)
     if budget is None:
-        return None, max_tokens
+        return None, None, max_tokens
     final_budget = max(1024, int(budget))
     final_max_tokens = max_tokens
     if final_budget >= final_max_tokens:
@@ -335,7 +421,7 @@ def _anthropic_thinking_config(
             final_max_tokens,
             final_budget,
         )
-    return {"type": "enabled", "budget_tokens": final_budget}, final_max_tokens
+    return {"type": "enabled", "budget_tokens": final_budget}, None, final_max_tokens
 
 
 def get_openai_embeddings(input_data: str, model: str) -> List[float]:
@@ -438,6 +524,7 @@ def chat_with_openai(
     reasoning_summary: Optional[str] = None,
     verbosity: Optional[str] = None,
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     """
     Sends a chat completion request to the OpenAI API.
@@ -463,13 +550,35 @@ def chat_with_openai(
         tools: A list of tools the model may call.
         tool_choice: Controls which (if any) function is called by the model.
         user: A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse.
-        reasoning_effort: Responses API reasoning effort for supported models.
+        reasoning_effort: Uses the Responses API for supported models; GPT-5.6
+            keeps an explicit ``none`` effort on Chat Completions for
+            non-reasoning compatibility.
         reasoning_summary: Responses API reasoning summary detail for supported models.
         verbosity: Responses API text verbosity for GPT-5-style models.
         custom_prompt_arg: Legacy, largely ignored.
     """
     loaded_config_data = load_settings()
-    openai_config = loaded_config_data.get("openai_api", {})
+    legacy_openai_config = loaded_config_data.get("openai_api", {})
+    api_settings = loaded_config_data.get("api_settings", {})
+    canonical_openai_config = (
+        api_settings.get("openai", {}) if isinstance(api_settings, Mapping) else {}
+    )
+    openai_config = (
+        dict(legacy_openai_config) if isinstance(legacy_openai_config, Mapping) else {}
+    )
+    if isinstance(canonical_openai_config, Mapping):
+        # Speech Settings owns the canonical credential, while the canonical
+        # provider table may also contain defaults for unrelated chat axes.
+        # Overlay only connection-owned values so moving the credential does
+        # not silently change established model or sampling behavior.
+        for key in ("api_key", "api_base_url"):
+            if key in canonical_openai_config:
+                openai_config[key] = canonical_openai_config[key]
+    if not openai_config.get("api_key") and isinstance(legacy_openai_config, Mapping):
+        # The legacy projection resolves environment-backed credentials.
+        # Keep that resolved value when the canonical table intentionally
+        # stores only api_key_env_var or an empty local fallback.
+        openai_config["api_key"] = legacy_openai_config.get("api_key")
 
     final_api_key = api_key or openai_config.get("api_key")
     if not final_api_key:
@@ -482,7 +591,7 @@ def chat_with_openai(
 
     # Resolve parameters: User-provided > Function arg default > Config default > Hardcoded default
     final_model = (
-        model if model is not None else openai_config.get("model", "gpt-4o-mini")
+        model if model is not None else openai_config.get("model", "gpt-5.6-terra")
     )
     final_temp = (
         temp if temp is not None else float(openai_config.get("temperature", 0.7))
@@ -520,10 +629,13 @@ def chat_with_openai(
         api_messages.append({"role": "system", "content": system_message})
     api_messages.extend(input_data)
 
+    normalized_reasoning_effort = _normalize_openai_reasoning_effort(reasoning_effort)
+    is_gpt_5_6_model = _is_openai_gpt_5_6_model(final_model)
     use_responses_api = _openai_use_responses_api(
-        reasoning_effort,
+        normalized_reasoning_effort,
         reasoning_summary,
         verbosity,
+        is_gpt_5_6_model,
     )
     payload = {
         "model": final_model,
@@ -533,13 +645,28 @@ def chat_with_openai(
         payload["input"] = api_messages
     else:
         payload["messages"] = api_messages
-    # Add optional parameters if they have a value
-    if final_temp is not None:
-        payload["temperature"] = final_temp
-    if final_top_p is not None:
-        payload["top_p"] = final_top_p  # OpenAI uses top_p
+    if final_streaming and not use_responses_api:
+        payload["stream_options"] = {"include_usage": True}
+    # Add optional parameters if they have a value. Reasoning-family models
+    # (and therefore every Responses-API request, which this handler only
+    # builds for reasoning params) reject temperature/top_p with HTTP 400,
+    # so the config-backed defaults must not be injected there (task-404).
+    omit_sampling_params = use_responses_api or _is_openai_reasoning_model(final_model)
+    if omit_sampling_params:
+        if temp is not None or maxp is not None:
+            logger.warning(
+                "OpenAI: dropping explicit temperature/top_p for reasoning "
+                f"model '{final_model}' — the API rejects them."
+            )
+    else:
+        if final_temp is not None:
+            payload["temperature"] = final_temp
+        if final_top_p is not None:
+            payload["top_p"] = final_top_p  # OpenAI uses top_p
     if final_max_tokens is not None and use_responses_api:
         payload["max_output_tokens"] = final_max_tokens
+    elif final_max_tokens is not None and is_gpt_5_6_model:
+        payload["max_completion_tokens"] = final_max_tokens
     elif final_max_tokens is not None:
         payload["max_tokens"] = final_max_tokens
     if frequency_penalty is not None:
@@ -571,8 +698,8 @@ def chat_with_openai(
         payload["tools"] = tools
     if use_responses_api:
         reasoning_options = {}
-        if _is_present_setting(reasoning_effort):
-            reasoning_options["effort"] = str(reasoning_effort).strip().lower()
+        if normalized_reasoning_effort is not None:
+            reasoning_options["effort"] = normalized_reasoning_effort
         if _is_present_setting(reasoning_summary):
             summary_value = str(reasoning_summary).strip().lower()
             if summary_value != "none":
@@ -581,6 +708,8 @@ def chat_with_openai(
             payload["reasoning"] = reasoning_options
         if _is_present_setting(verbosity):
             payload.setdefault("text", {})["verbosity"] = str(verbosity).strip().lower()
+    elif is_gpt_5_6_model:
+        payload["reasoning_effort"] = normalized_reasoning_effort or "none"
 
     # Then conditionally add tool_choice:
     if payload.get("tools") and tool_choice is not None:
@@ -594,15 +723,27 @@ def chat_with_openai(
         "Authorization": f"Bearer {final_api_key}",
         "Content-Type": "application/json",
     }
-    logger.debug(
-        "OpenAI Request Payload (excluding messages): {k: v for k, v in payload.items() if k != 'messages'}"
-    )
+    if not is_sensitive_llm_request():
+        # task-2116: this now actually interpolates (it used to be a plain
+        # string missing its `f` prefix, so it silently logged literal
+        # template text). Skipped entirely for sensitive/auxiliary requests
+        # -- the payload can carry a caller-supplied system prompt or other
+        # request content that must never reach a log in that context (see
+        # Tests/Chat/test_sensitive_llm_logging.py).
+        # task-2117 Qodo round: an allowlisted summary, not a denylist -- the
+        # Responses API puts the WHOLE conversation under "input", which the
+        # old "excluding messages" denylist never accounted for.
+        logger.debug(
+            "OpenAI Request Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(payload, content_keys=('input', 'messages'))}"
+        )
 
     api_path = "/responses" if use_responses_api else "/chat/completions"
     api_url = (
-        openai_config.get("api_base_url", "https://api.openai.com/v1").rstrip("/")
-        + api_path
-    )
+        api_base_url
+        or openai_config.get("api_base_url")
+        or builtin_provider_endpoint("openai", openai_config)
+    ).rstrip("/") + api_path
 
     start_time = time.time()
     log_counter(
@@ -622,6 +763,24 @@ def chat_with_openai(
                     response = session.post(
                         api_url, headers=headers, json=payload, stream=True, timeout=180
                     )
+                    if (
+                        response.status_code == 400
+                        and "stream_options" in payload
+                        and "stream_options" in (response.text or "")
+                    ):
+                        logger.warning(
+                            "OpenAI: endpoint rejected stream_options; retrying without usage reporting."
+                        )
+                        retry_payload = {
+                            k: v for k, v in payload.items() if k != "stream_options"
+                        }
+                        response = session.post(
+                            api_url,
+                            headers=headers,
+                            json=retry_payload,
+                            stream=True,
+                            timeout=180,
+                        )
                     response.raise_for_status()
                     if use_responses_api:
                         yield from _responses_stream_to_chat_sse(
@@ -678,7 +837,7 @@ def chat_with_openai(
             )  # Ensure float
 
             retry_strategy = Retry(
-                total=retry_count,
+                total=llm_retry_count(retry_count),
                 backoff_factor=retry_delay,
                 status_forcelist=[429, 500, 502, 503, 504],
                 allowed_methods=["POST"],  # Changed from method_whitelist
@@ -732,6 +891,12 @@ def chat_with_openai(
                     usage.get("total_tokens", 0),
                     labels={"model": final_model},
                 )
+                log_histogram(
+                    "openai_api_cached_tokens",
+                    (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+                    or 0,
+                    labels={"model": final_model},
+                )
 
             logger.debug("OpenAI: Non-streaming request successful.")
             if use_responses_api:
@@ -760,11 +925,16 @@ def chat_with_openai(
         )
 
         if e.response is not None:
+            error_detail = str(safe_llm_error_detail(e.response.text))
             logger.error(
-                f"OpenAI Full Error Response (status {e.response.status_code}): {e.response.text}"
+                "OpenAI request failed; "
+                f"status={e.response.status_code}; detail={error_detail}"
             )
         else:
-            logger.error(f"OpenAI HTTPError with no response object: {e}")
+            logger.error(
+                "OpenAI HTTPError with no response object; "
+                f"error_type={safe_llm_exception_message(e)}"
+            )
         raise
         # if e.response is not None:
         #     error_content_text = e.response.text
@@ -788,7 +958,11 @@ def chat_with_openai(
             duration,
             labels={"model": final_model, "error_type": "network"},
         )
-        logger.opt(exception=True).error(f"OpenAI RequestException: {e}")
+        error_detail = safe_llm_exception_message(e)
+        if is_sensitive_llm_request():
+            logger.error(f"OpenAI RequestException: {error_detail}")
+        else:
+            logger.opt(exception=True).error(f"OpenAI RequestException: {error_detail}")
         raise
     except Exception as e:  # Catch any other unexpected error
         # Log unexpected error metrics
@@ -797,10 +971,15 @@ def chat_with_openai(
             "openai_api_error",
             labels={"model": final_model, "error_type": "unexpected"},
         )
-        logger.opt(exception=True).error(
-            f"OpenAI: Unexpected error in chat_with_openai: {e}"
+        error_detail = safe_llm_exception_message(e)
+        error_copy = f"OpenAI: Unexpected error: {error_detail}"
+        if is_sensitive_llm_request():
+            logger.error(error_copy)
+        else:
+            logger.opt(exception=True).error(error_copy)
+        raise ChatProviderError(
+            provider="openai", message=f"Unexpected error: {error_detail}"
         )
-        raise ChatProviderError(provider="openai", message=f"Unexpected error: {e}")
 
 
 def _anthropic_block_index(event: dict) -> int | None:
@@ -826,12 +1005,88 @@ def _anthropic_block_index(event: dict) -> int | None:
     return None
 
 
+def _anthropic_supports_caching(model: str) -> bool:
+    """True for Claude models that support prompt caching (``cache_control``).
+
+    All modern Claude (3 / 3.5 / 3.7 / 4+) support it; legacy ``claude-2*`` and
+    ``claude-instant*`` do not.
+
+    Args:
+        model: The model identifier.
+
+    Returns:
+        True when the model accepts ``cache_control`` breakpoints.
+    """
+    m = (model or "").lower()
+    return (
+        m.startswith("claude-") and not m.startswith("claude-2") and "instant" not in m
+    )
+
+
+def _anthropic_caching_enabled() -> bool:
+    """[caching].anthropic_enabled kill-switch for ALL Anthropic cache_control.
+
+    Defaults to True when the section or key is absent (prompt caching is the
+    shipped task-323 behavior; this gate only adds an opt-out). Any config
+    read failure also defaults to True so a broken config file cannot
+    silently change request shapes.
+
+    Returns:
+        True when cache_control breakpoints should be emitted.
+    """
+    try:
+        return bool(get_cli_setting("caching", "anthropic_enabled", True))
+    except Exception as exc:
+        logger.warning(
+            f"caching config read failed; defaulting anthropic prompt caching ON: {exc!r}"
+        )
+        return True
+
+
+def _without_cache_control(obj: Any) -> Any:
+    """Deep-copy ``obj`` with every ``cache_control`` key removed.
+
+    Args:
+        obj: Any JSON-shaped structure (dicts/lists/scalars).
+
+    Returns:
+        The same structure minus all ``cache_control`` entries.
+    """
+    if isinstance(obj, dict):
+        return {
+            key: _without_cache_control(value)
+            for key, value in obj.items()
+            if key != "cache_control"
+        }
+    if isinstance(obj, list):
+        return [_without_cache_control(item) for item in obj]
+    return obj
+
+
+def _contains_cache_control(obj: Any) -> bool:
+    """True when any nested dict carries a ``cache_control`` key.
+
+    Args:
+        obj: Any JSON-shaped structure (dicts/lists/scalars).
+
+    Returns:
+        True when ``cache_control`` appears anywhere within ``obj``.
+    """
+    if isinstance(obj, dict):
+        return "cache_control" in obj or any(
+            _contains_cache_control(value) for value in obj.values()
+        )
+    if isinstance(obj, list):
+        return any(_contains_cache_control(item) for item in obj)
+    return False
+
+
 def _anthropic_tools_payload(tools: list) -> list:
     """Convert OpenAI function-format tool entries to Anthropic's format.
 
-    Entries already in Anthropic shape (carrying ``input_schema``) pass
-    through untouched — the handler's historical contract. Non-dict junk is
-    dropped.
+    Valid entries already in Anthropic shape are copied through with their
+    native fields preserved. Malformed entries are dropped with a bounded
+    diagnostic.
 
     Args:
         tools: The ``tools`` list as received (OpenAI or Anthropic shaped).
@@ -842,6 +1097,9 @@ def _anthropic_tools_payload(tools: list) -> list:
     converted = []
     for entry in tools or []:
         if not isinstance(entry, dict):
+            logger.warning(
+                "Anthropic: dropping invalid tools entry (expected a mapping)."
+            )
             continue
         function = entry.get("function")
         if entry.get("type") == "function" and isinstance(function, dict):
@@ -861,12 +1119,16 @@ def _anthropic_tools_payload(tools: list) -> list:
                     "input_schema": parameters,
                 }
             )
+        elif (
+            isinstance(entry.get("name"), str)
+            and entry["name"].strip()
+            and isinstance(entry.get("input_schema"), dict)
+        ):
+            converted.append(dict(entry))
         else:
-            # v2's native tools shape IS the OpenAI shape -- anything that
-            # isn't a valid function entry is junk and would 400 the request
-            # (Qodo #690-6).
             logger.warning(
-                "Cohere: dropping tools entry that is not a valid function tool."
+                "Anthropic: dropping invalid tools entry "
+                "(expected an OpenAI function tool or Anthropic native tool)."
             )
     return converted
 
@@ -885,11 +1147,72 @@ def chat_with_anthropic(
     tools: Optional[List[Dict[str, Any]]] = None,  # New: Anthropic tool format
     thinking_effort: Optional[str] = None,
     thinking_budget_tokens: Optional[int] = None,
+    prompt_caching: Optional[bool] = None,
     # Anthropic doesn't typically use seed, response_format (for JSON object mode directly), n, user identifier, logit_bias,
     # presence_penalty, frequency_penalty, logprobs, top_logprobs in the same way as OpenAI.
     # tool_choice is usually implicit with tools or controlled differently.
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
+    """Call the Anthropic Messages API (streaming or non-streaming).
+
+    Args:
+        input_data: List of message objects (OpenAI-style ``role``/``content``
+            dicts). ``role: "tool"`` entries are converted to Anthropic
+            ``tool_result`` blocks; assistant ``tool_calls`` echoes are
+            converted to ``tool_use`` blocks.
+        model: Anthropic model ID. Falls back to config, then
+            ``"claude-sonnet-5"``.
+        api_key: Anthropic API key. Falls back to config; raises if still
+            missing.
+        system_prompt: Optional system prompt sent as the top-level
+            ``system`` field.
+        temp: Sampling temperature. Falls back to config, then ``0.7``.
+        topp: Nucleus sampling parameter (Anthropic ``top_p``).
+        topk: Anthropic ``top_k`` sampling parameter.
+        streaming: Whether to stream the response via SSE. Falls back to
+            config, then ``False``.
+        max_tokens: Maximum tokens to generate. Falls back to config
+            (``max_tokens_to_sample``/``max_tokens``), then ``4096``.
+        stop_sequences: Custom stop sequences (Anthropic ``stop_sequences``).
+        tools: Tools in OpenAI function-call or native Anthropic shape;
+            normalized to Anthropic's ``{name, description, input_schema}``.
+        thinking_effort: Extended-thinking effort level, when the model
+            supports it (translated to a thinking token budget).
+        thinking_budget_tokens: Explicit extended-thinking token budget;
+            takes precedence over ``thinking_effort`` when both are set.
+        prompt_caching: Opt-in for the PER-TURN message ``cache_control``
+            breakpoint. Only multi-turn callers (the Console gateway) should
+            pass True: the breakpoint bills the whole conversation prefix at
+            the 1.25x cache-write premium, which a one-shot call (media
+            summarization, websearch, evals, document generation) can never
+            earn back because it never sends a second turn. The system and
+            last-tool breakpoints are NOT gated on this flag — those shipped
+            provider-wide in task-323 and are harmless for one-shots, whose
+            short system prefix falls below the cacheable minimum and is
+            simply not cached. Also subject to the provider-wide
+            ``[caching].anthropic_enabled`` kill-switch
+            (``_anthropic_caching_enabled()``), which disables ALL
+            ``cache_control`` breakpoints regardless of this flag.
+        custom_prompt_arg: Legacy/unused prompt override, retained for call
+            signature compatibility.
+
+    Returns:
+        Non-streaming: a normalized OpenAI-style response dict (``choices``
+        with ``message``, ``usage``, etc.) built from the Anthropic Messages
+        API response. Streaming: a generator yielding OpenAI-style SSE
+        strings (``"data: {...}\\n\\n"``, terminated by ``"data: [DONE]\\n\\n"``).
+
+    Raises:
+        ChatConfigurationError: No API key is available (argument or config).
+        ChatBadRequestError: No valid user message could be built from
+            ``input_data``, or the API returned a 4xx error other than 401/429.
+        ChatAuthenticationError: The API returned 401 (invalid/expired key).
+        ChatRateLimitError: The API returned 429 (rate limited).
+        ChatProviderError: Any other HTTP error status, a network-level
+            request failure, or an unexpected exception while calling the
+            API.
+    """
     # Assuming load_settings is defined elsewhere
     loaded_config_data = load_settings()
     anthropic_config = loaded_config_data.get("anthropic_api", {})
@@ -901,7 +1224,7 @@ def chat_with_anthropic(
 
     logger.debug("Anthropic: API key provided.")
 
-    current_model = model or anthropic_config.get("model", "claude-3-haiku-20240307")
+    current_model = model or anthropic_config.get("model", "claude-sonnet-5")
     default_temperature = float(anthropic_config.get("temperature", 0.7))
     current_temp = temp if temp is not None else default_temperature
     current_top_p = topp
@@ -924,7 +1247,7 @@ def chat_with_anthropic(
         )
     )
     current_max_tokens = max_tokens if max_tokens is not None else default_max_tokens
-    thinking_config, current_max_tokens = _anthropic_thinking_config(
+    thinking_config, output_config, current_max_tokens = _anthropic_thinking_config(
         model=current_model,
         thinking_effort=thinking_effort,
         thinking_budget_tokens=thinking_budget_tokens,
@@ -1062,6 +1385,7 @@ def chat_with_anthropic(
         "anthropic-version": anthropic_config.get("api_version", "2023-06-01"),
         "Content-Type": "application/json",
     }
+    caching_active = _anthropic_supports_caching(current_model) and _anthropic_caching_enabled()
     data = {
         "model": current_model,
         "max_tokens": current_max_tokens,  # Changed from max_tokens_to_sample to the parameter
@@ -1069,8 +1393,21 @@ def chat_with_anthropic(
         "stream": current_streaming,
     }
     if system_prompt is not None:
-        data["system"] = system_prompt  # Anthropic uses 'system' at the top level
-    if thinking_config is None:
+        if caching_active and system_prompt:
+            # cache_control on the system prompt (the largest stable prefix)
+            # activates Anthropic prompt caching; per the tools->system->messages
+            # hierarchy this caches tools+system. Applied for both streaming and
+            # non-streaming (the payload is built before the streaming branch).
+            data["system"] = [
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+        else:
+            data["system"] = system_prompt  # unchanged for non-caching models
+    if thinking_config is None and not _anthropic_is_sonnet_5(current_model):
         if temp is not None:
             data["temperature"] = current_temp
             if current_top_p is not None:
@@ -1084,23 +1421,73 @@ def chat_with_anthropic(
         if current_top_k is not None:
             data["top_k"] = current_top_k
     elif any(value is not None for value in (temp, current_top_p, current_top_k)):
-        logger.warning(
-            "Anthropic: omitting temperature/top_p/top_k because thinking is enabled."
-        )
+        if _anthropic_is_sonnet_5(current_model):
+            logger.warning(
+                "Anthropic: omitting temperature/top_p/top_k because Claude Sonnet 5 "
+                "requires default sampling."
+            )
+        else:
+            logger.warning(
+                "Anthropic: omitting temperature/top_p/top_k because thinking is enabled."
+            )
     if stop_sequences is not None:
         data["stop_sequences"] = stop_sequences
     if tools is not None:
-        data["tools"] = _anthropic_tools_payload(tools)
+        tools_payload = _anthropic_tools_payload(tools)
+        if caching_active and tools_payload:
+            # Optional second breakpoint on the last converted tool. A fresh dict
+            # so the caller's input `tools` are never mutated.
+            tools_payload[-1] = {
+                **tools_payload[-1],
+                "cache_control": {"type": "ephemeral"},
+            }
+        data["tools"] = tools_payload
     if thinking_config is not None:
         data["thinking"] = thinking_config
+    if output_config is not None:
+        data["output_config"] = output_config
+
+    if (
+        caching_active
+        and prompt_caching
+        and anthropic_messages
+        and isinstance(anthropic_messages[-1].get("content"), list)
+        and anthropic_messages[-1]["content"]
+    ):
+        # Per-turn breakpoint (cost-ticker PR2): mark the last content block
+        # of the final message so the WHOLE conversation prefix becomes a
+        # reusable cache entry next turn -- the task-323 system/tools
+        # breakpoints alone never cache message history. Budget:
+        # system(1) + last-tool(1) + this(1) = 3 of the 4 allowed.
+        #
+        # OPT-IN (`prompt_caching`), unlike the two breakpoints above: this
+        # one bills the entire conversation prefix at the 1.25x write
+        # premium, so a one-shot caller pays ~25% extra input and can never
+        # read the entry back. Only the Console gateway (multi-turn by
+        # construction) sets the flag; every other caller of
+        # `chat_with_anthropic` leaves it None and is unaffected.
+        #
+        # Fresh dict so no caller-held block is mutated (same rule as the
+        # tools breakpoint above).
+        last_content = anthropic_messages[-1]["content"]
+        last_content[-1] = {
+            **last_content[-1],
+            "cache_control": {"type": "ephemeral"},
+        }
 
     api_url = (
-        anthropic_config.get("api_base_url", "https://api.anthropic.com/v1").rstrip("/")
-        + "/messages"
-    )
-    logger.debug(
-        "Anthropic Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
-    )
+        api_base_url
+        or anthropic_config.get("api_base_url")
+        or builtin_provider_endpoint("anthropic", anthropic_config)
+    ).rstrip("/") + "/messages"
+    if not is_sensitive_llm_request():
+        # task-2116: see the OpenAI branch above for why this is gated.
+        # task-2117 Qodo round: allowlisted summary -- "system" carries the
+        # actual system-prompt text and must never be logged verbatim.
+        logger.debug(
+            "Anthropic Request Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(data, system_keys=('system',))}"
+        )
 
     start_time = time.time()
     log_counter(
@@ -1112,7 +1499,7 @@ def chat_with_anthropic(
         retry_count = int(anthropic_config.get("api_retries", 3))
         retry_delay = float(anthropic_config.get("api_retry_delay", 1))
         retry_strategy = Retry(
-            total=retry_count,
+            total=llm_retry_count(retry_count),
             backoff_factor=retry_delay,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["POST"],
@@ -1127,7 +1514,31 @@ def chat_with_anthropic(
                 stream=current_streaming,
                 timeout=180,
             )
-        response.raise_for_status()
+            if (
+                response.status_code == 400
+                and _contains_cache_control(data)
+                and "cache_control" in (response.text or "")
+            ):
+                # Caching must never break sends (cost-ticker PR2): odd
+                # proxies/gateways can reject cache_control. Retry exactly
+                # once without any breakpoints; every other error path is
+                # untouched. Reading .text here is safe -- it is the error
+                # body, not a stream.
+                logger.warning(
+                    "Anthropic: endpoint rejected cache_control; retrying without prompt caching."
+                )
+                log_counter(
+                    "anthropic_cache_control_degrade",
+                    labels={"model": current_model},
+                )
+                response = session.post(
+                    api_url,
+                    headers=headers,
+                    json=_without_cache_control(data),
+                    stream=current_streaming,
+                    timeout=180,
+                )
+            response.raise_for_status()
 
         if current_streaming:
             logger.debug(
@@ -1150,6 +1561,22 @@ def chat_with_anthropic(
                 tool_call_positions = {}
                 next_tool_position = 0
 
+                usage_accumulator: dict = {}
+                output_captured = False
+
+                def _usage_sse_chunk(usage: dict | None = None) -> str:
+                    sse_chunk = {
+                        "id": completion_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_ts,
+                        "model": current_model,
+                        "choices": [],
+                        "usage": dict(
+                            usage if usage is not None else usage_accumulator
+                        ),
+                    }
+                    return f"data: {json.dumps(sse_chunk)}\n\n"
+
                 try:
                     for line_bytes in response.iter_lines():  # iter_lines gives bytes
                         line = line_bytes.decode("utf-8").strip()
@@ -1168,6 +1595,29 @@ def chat_with_anthropic(
                                 delta_content = None
                                 finish_reason = None
                                 tool_calls_delta = None  # For future tool streaming
+
+                                if anthropic_event.get("type") == "message_start":
+                                    message_obj = anthropic_event.get("message")
+                                    start_usage = (
+                                        message_obj.get("usage")
+                                        if isinstance(message_obj, dict)
+                                        else None
+                                    )
+                                    if isinstance(start_usage, dict) and start_usage:
+                                        usage_accumulator.update(start_usage)
+                                        # message_start's usage always carries a
+                                        # small placeholder output_tokens value
+                                        # (Anthropic bills it before generation
+                                        # starts) -- never surface it as if it
+                                        # were authoritative output usage.
+                                        input_usage = {
+                                            k: v
+                                            for k, v in start_usage.items()
+                                            if k != "output_tokens"
+                                        }
+                                        if input_usage:
+                                            yield _usage_sse_chunk(input_usage)
+                                    continue
 
                                 if anthropic_event.get("type") == "content_block_start":
                                     block = anthropic_event.get("content_block") or {}
@@ -1214,7 +1664,11 @@ def chat_with_anthropic(
                                     finish_reason_anth = anthropic_event.get(
                                         "delta", {}
                                     ).get("stop_reason")
-                                    # usage_anth = anthropic_event.get("usage") # Can capture usage here
+                                    delta_usage = anthropic_event.get("usage")
+                                    if isinstance(delta_usage, dict):
+                                        usage_accumulator.update(delta_usage)
+                                        if "output_tokens" in delta_usage:
+                                            output_captured = True
                                     if finish_reason_anth:
                                         finish_reason_map = {
                                             "end_turn": "stop",
@@ -1265,6 +1719,9 @@ def chat_with_anthropic(
                                 logger.warning(
                                     f"Anthropic Stream: Could not decode JSON: {event_data_str}"
                                 )
+
+                    if output_captured:
+                        yield _usage_sse_chunk()
                 except (
                     requests.exceptions.ChunkedEncodingError
                 ) as e:  # ... error handling ...
@@ -1379,13 +1836,25 @@ def chat_with_anthropic(
                     total_tokens,
                     labels={"model": current_model},
                 )
+                log_histogram(
+                    "anthropic_api_cache_read_input_tokens",
+                    usage.get("cache_read_input_tokens") or 0,
+                    labels={"model": current_model},
+                )
+                log_histogram(
+                    "anthropic_api_cache_creation_input_tokens",
+                    usage.get("cache_creation_input_tokens") or 0,
+                    labels={"model": current_model},
+                )
 
             return normalized_response
 
     except requests.exceptions.HTTPError as e:
-        # ... (error handling from your file, ensure provider is "anthropic") ...
         status_code = e.response.status_code if e.response is not None else 500
-        error_text = e.response.text if e.response is not None else "No response text"
+        raw_error_text = (
+            e.response.text if e.response is not None else safe_llm_exception_message(e)
+        )
+        error_text = str(safe_llm_error_detail(raw_error_text))
 
         # Log error metrics
         duration = time.time() - start_time
@@ -1434,8 +1903,11 @@ def chat_with_anthropic(
             duration,
             labels={"model": current_model, "error_type": "network_error"},
         )
+        error_text = safe_llm_exception_message(e)
         raise ChatProviderError(
-            provider="anthropic", message=f"Network error: {str(e)}", status_code=504
+            provider="anthropic",
+            message=f"Network error: {error_text}",
+            status_code=504,
         ) from e
     except Exception as e:
         # Log unexpected error metrics
@@ -1449,8 +1921,16 @@ def chat_with_anthropic(
             duration,
             labels={"model": current_model, "error_type": "unexpected_error"},
         )
-        logger.opt(exception=True).error(f"Anthropic: Unexpected error: {e}")
-        raise ChatProviderError(provider="anthropic", message=f"Unexpected error: {e}")
+        error_text = safe_llm_exception_message(e)
+        if is_sensitive_llm_request():
+            logger.error(f"Anthropic: Unexpected error: {error_text}")
+        else:
+            logger.opt(exception=True).error(
+                f"Anthropic: Unexpected error: {error_text}"
+            )
+        raise ChatProviderError(
+            provider="anthropic", message=f"Unexpected error: {error_text}"
+        ) from e
 
 
 def _cohere_tools_payload(tools: list) -> list:
@@ -1624,12 +2104,13 @@ def chat_with_cohere(
     custom_prompt_arg: Optional[
         str
     ] = None,  # Kept for legacy, but focus on structured input
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
     logger.debug(
         f"Cohere Chat: Request process starting for model '{model}' (Streaming: {streaming})"
     )
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     cohere_config = cli_api_settings.get(
         "cohere", {}
     )  # Get the [api_settings.cohere] sub-table
@@ -1651,9 +2132,11 @@ def chat_with_cohere(
     log_counter(
         "cohere_api_request", labels={"model": final_model, "streaming": str(streaming)}
     )
-    api_base_url = cohere_config.get("api_base_url", "https://api.cohere.com").rstrip(
-        "/"
-    )
+    api_base_url = (
+        api_base_url
+        or cohere_config.get("api_base_url")
+        or builtin_provider_endpoint("cohere", cohere_config)
+    ).rstrip("/")
     # task-267: migrated v1 /chat -> v2 /chat. v1's flat parameter_definitions
     # cannot express nested JSON Schema (MCP tools inexpressible), tool_results
     # lived outside the history model, and there were no call ids. v2 is
@@ -1690,7 +2173,8 @@ def chat_with_cohere(
         sys_content = sys_msg.get("content") or ""
         cohere_messages.append({"role": "system", "content": str(sys_content)})
         logger.debug(
-            f"Cohere: Using leading system message as v2 system entry: '{str(sys_content)[:100]}...'"
+            "Cohere: Using leading system message as v2 system entry; "
+            f"content_bytes={llm_content_byte_count(sys_content)}"
         )
 
     # task-267 Task 2: role="tool" history and assistant tool_calls echoes
@@ -1821,8 +2305,13 @@ def chat_with_cohere(
             f"Cohere: 'num_generations' ({num_generations}) is v1-only and has no v2 equivalent; dropping."
         )
 
-    logger.debug(f"Cohere Request Payload: {json.dumps(payload, indent=2)}")
-    logger.debug(f"Cohere Request URL: {COHERE_CHAT_URL}")
+    logger.debug(
+        "Cohere request metadata: "
+        f"model={final_model}; streaming={bool(streaming)}; "
+        f"message_count={len(cohere_messages)}; "
+        f"content_bytes={llm_content_byte_count(cohere_messages)}"
+    )
+    logger.debug(f"Cohere request host: {safe_llm_url_host(COHERE_CHAT_URL)}")
 
     # --- Retry Mechanism ---
     session = requests.Session()
@@ -1832,7 +2321,7 @@ def chat_with_cohere(
     )  # Ensure float for backoff_factor
 
     retry_strategy = Retry(
-        total=retry_count,
+        total=llm_retry_count(retry_count),
         backoff_factor=retry_delay,
         status_forcelist=[429, 500, 502, 503, 504],  # Standard retry statuses
         allowed_methods=["POST"],  # Retry only for POST requests
@@ -2078,7 +2567,9 @@ def chat_with_cohere(
             response.raise_for_status()  # Will raise HTTPError for bad responses (4xx or 5xx) after retries
             response_data = response.json()
             logger.debug(
-                f"Cohere non-streaming response data: {json.dumps(response_data, indent=2)}"
+                "Cohere non-streaming response metadata: "
+                f"status={response.status_code}; "
+                f"content_bytes={llm_content_byte_count(response_data)}"
             )
 
             # ---- v2 response shape ----
@@ -2098,7 +2589,9 @@ def chat_with_cohere(
             )
             if not message:
                 logger.warning(
-                    f"Cohere non-streaming response missing 'message': {response_data}"
+                    "Cohere non-streaming response missing 'message'; "
+                    f"response_type={type(response_data).__name__}; "
+                    f"content_bytes={llm_content_byte_count(response_data)}"
                 )
 
             raw_finish_reason = response_data.get("finish_reason")
@@ -2193,9 +2686,14 @@ def chat_with_cohere(
 
     except requests.exceptions.HTTPError as e:
         status_code = getattr(e.response, "status_code", 500)
-        error_text = getattr(e.response, "text", str(e))
+        raw_error_text = getattr(e.response, "text", None)
+        if raw_error_text is None:
+            raw_error_text = safe_llm_exception_message(e)
+        error_text = str(safe_llm_error_detail(raw_error_text))
         logger.error(
-            f"Cohere API call HTTPError to {COHERE_CHAT_URL} status {status_code}. Details: {error_text[:500]}"
+            "Cohere API call failed; "
+            f"host={safe_llm_url_host(COHERE_CHAT_URL)}; "
+            f"status={status_code}; detail={error_text[:500]}"
         )
 
         # Log HTTP error metrics
@@ -2237,9 +2735,16 @@ def chat_with_cohere(
     except (
         requests.exceptions.RequestException
     ) as e:  # Includes ReadTimeout, ConnectionError etc.
-        logger.opt(exception=True).error(
-            f"Cohere API request failed (network error) for {COHERE_CHAT_URL}: {e}"
+        error_detail = safe_llm_exception_message(e)
+        error_copy = (
+            "Cohere API request failed; reason=network_error; "
+            f"host={safe_llm_url_host(COHERE_CHAT_URL)}; "
+            f"error_type={error_detail}"
         )
+        if is_sensitive_llm_request():
+            logger.error(error_copy)
+        else:
+            logger.opt(exception=True).error(error_copy)
 
         # Log network error metrics
         duration = time.time() - start_time
@@ -2255,11 +2760,18 @@ def chat_with_cohere(
         # This will catch the ReadTimeout after retries are exhausted
         raise ChatProviderError(
             provider="cohere",
-            message=f"Network error after retries: {e}",
+            message=f"Network error after retries: {error_detail}",
             status_code=504,
         )  # 504 for gateway timeout like
     except Exception as e:
-        logger.opt(exception=True).error(f"Cohere API call: Unexpected error: {e}")
+        error_detail = safe_llm_exception_message(e)
+        error_copy = (
+            f"Cohere API call failed; reason=unexpected; error_type={error_detail}"
+        )
+        if is_sensitive_llm_request():
+            logger.error(error_copy)
+        else:
+            logger.opt(exception=True).error(error_copy)
 
         # Log unexpected error metrics
         duration = time.time() - start_time
@@ -2274,7 +2786,8 @@ def chat_with_cohere(
         )
         if not isinstance(e, ChatAPIError):
             raise ChatAPIError(
-                provider="cohere", message=f"Unexpected error in Cohere API call: {e}"
+                provider="cohere",
+                message=f"Unexpected error in Cohere API call: {error_detail}",
             )
         else:
             raise
@@ -2306,9 +2819,10 @@ def chat_with_deepseek(
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,  # If supported
     logit_bias: Optional[Dict[str, float]] = None,  # If supported
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     deepseek_config = cli_api_settings.get(
         "deepseek", {}
     )  # Get the [api_settings.deepseek] sub-table
@@ -2320,7 +2834,7 @@ def chat_with_deepseek(
 
     logger.debug("DeepSeek: API key provided.")
     current_model = model or deepseek_config.get(
-        "model", "deepseek-chat"
+        "model", "deepseek-v4-flash"
     )  # Or deepseek-coder
     current_temp = (
         temp if temp is not None else float(deepseek_config.get("temperature", 0.1))
@@ -2395,12 +2909,18 @@ def chat_with_deepseek(
         data["logit_bias"] = logit_bias
 
     api_url = (
-        deepseek_config.get("api_base_url", "https://api.deepseek.com").rstrip("/")
-        + "/chat/completions"
-    )
-    logger.debug(
-        "DeepSeek Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
-    )
+        api_base_url
+        or deepseek_config.get("api_base_url")
+        or builtin_provider_endpoint("deepseek", deepseek_config)
+    ).rstrip("/") + "/chat/completions"
+    if not is_sensitive_llm_request():
+        # task-2116: see the OpenAI branch above for why this is gated.
+        # task-2117 Qodo round: allowlisted summary, see the Anthropic
+        # branch above for why a denylist isn't safe here.
+        logger.debug(
+            "DeepSeek Request Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(data)}"
+        )
 
     try:
         if current_streaming:
@@ -2449,7 +2969,7 @@ def chat_with_deepseek(
             # ... (non-streaming, retry) ...
             adapter = HTTPAdapter(
                 max_retries=Retry(
-                    total=int(deepseek_config.get("api_retries", 3)),
+                    total=llm_retry_count(int(deepseek_config.get("api_retries", 3))),
                     backoff_factor=float(deepseek_config.get("api_retry_delay", 1)),
                     status_forcelist=[429, 500, 502, 503, 504],
                     allowed_methods=["POST"],
@@ -2618,9 +3138,10 @@ def chat_with_google(
     response_format: Optional[Dict[str, str]] = None,  # for response_mime_type
     tools: Optional[List[Dict[str, Any]]] = None,  # Gemini 'tools' config
     custom_prompt_arg: Optional[str] = None,
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
-    loaded_config_data = settings.get("api_settings", {})
+    loaded_config_data = get_runtime_config_snapshot().values.get("api_settings", {})
     google_config = loaded_config_data.get("google_api", {})
     final_api_key = api_key or google_config.get("api_key")
     if not final_api_key:
@@ -2802,20 +3323,39 @@ def chat_with_google(
     stream_suffix = (
         ":streamGenerateContent?alt=sse" if current_streaming else ":generateContent"
     )
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}{stream_suffix}"
+    google_api_base = (
+        api_base_url
+        or google_config.get("api_base_url")
+        or builtin_provider_endpoint("google", google_config)
+    ).rstrip("/")
+    api_url = f"{google_api_base}/models/{current_model}{stream_suffix}"
     headers = {"x-goog-api-key": final_api_key, "Content-Type": "application/json"}
+    if not is_sensitive_llm_request():
+        # task-2116: see the OpenAI branch above for why this is gated.
+        # task-2117 Qodo round: allowlisted summary -- "system_instruction"
+        # carries the actual system-prompt text and must never be logged
+        # verbatim. generationConfig is flattened to the top level first so
+        # its (camelCase) sampling params can be picked up by the allowlist.
+        google_log_payload = {
+            **payload,
+            **payload.get("generationConfig", {}),
+            "streaming": current_streaming,
+        }
+        logger.debug(
+            "Google Gemini Request Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(google_log_payload, content_keys=('contents',), system_keys=('system_instruction',))}"
+        )
     logger.debug(
-        "Google Gemini Request Payload (excluding contents): {k: v for k,v in payload.items() if k != 'contents'}"
-    )
-    logger.debug(
-        f"Google Gemini Contents (first item parts): {payload.get('contents', [{}])[0].get('parts', [])[:2] if payload.get('contents') else 'No contents'}"
+        "Google Gemini request content metadata: "
+        f"message_count={len(gemini_contents)}; "
+        f"content_bytes={llm_content_byte_count(gemini_contents)}"
     )
 
     response = None  # Initialize response to None for the finally block
     try:
         adapter = HTTPAdapter(
             max_retries=Retry(
-                total=int(google_config.get("api_retries", 3)),
+                total=llm_retry_count(int(google_config.get("api_retries", 3))),
                 backoff_factor=float(google_config.get("api_retry_delay", 1)),
                 status_forcelist=[429, 500, 503],
                 allowed_methods=["POST"],
@@ -2829,6 +3369,29 @@ def chat_with_google(
                 json=payload,
                 stream=current_streaming,
                 timeout=180,
+                # task-686 AC #3: the API key travels in the custom
+                # `x-goog-api-key` header. `requests` strips `Authorization`
+                # across a redirect host change but NOT custom headers, so a
+                # 3xx from this endpoint would re-send the key wherever
+                # `Location` points. Refuse to follow rather than silently
+                # forward credentials -- see the explicit 3xx check below.
+                allow_redirects=False,
+            )
+        if 300 <= response.status_code < 400:
+            location = response.headers.get("Location", "<no Location header>")
+            logger.error(
+                f"Google Gemini: API endpoint returned a redirect "
+                f"({response.status_code} -> {location}); refusing to follow "
+                f"with the x-goog-api-key credential."
+            )
+            response.close()
+            raise ChatProviderError(
+                provider="google",
+                message=(
+                    "Google endpoint redirected unexpectedly -- refusing to "
+                    "follow with credentials."
+                ),
+                status_code=response.status_code,
             )
         response.raise_for_status()
 
@@ -3120,9 +3683,13 @@ def chat_with_google(
 
     except requests.exceptions.HTTPError as e:
         status_code = e.response.status_code if e.response is not None else 500
-        error_text = e.response.text if e.response is not None else "No response text"
+        raw_error_text = (
+            e.response.text if e.response is not None else safe_llm_exception_message(e)
+        )
+        error_text = str(safe_llm_error_detail(raw_error_text))
         logger.error(
-            f"Google Gemini API call HTTPError {status_code}. Details: {error_text[:500]}"
+            "Google Gemini API call failed; "
+            f"status={status_code}; detail={error_text[:500]}"
         )
 
         # Log HTTP error metrics
@@ -3141,6 +3708,11 @@ def chat_with_google(
             labels={"model": current_model, "status_code": str(status_code)},
         )
         if status_code == 400:
+            if is_sensitive_llm_request():
+                raise ChatBadRequestError(
+                    provider="google",
+                    message=f"Bad request ({status_code}). Detail: {error_text[:200]}",
+                ) from e
             try:
                 error_json = e.response.json()
                 detail = error_json.get("error", {}).get("message", error_text)
@@ -3190,11 +3762,17 @@ def chat_with_google(
             duration,
             labels={"model": current_model, "error_type": "network_error"},
         )
+        error_detail = safe_llm_exception_message(e)
         raise ChatProviderError(
-            provider="google", message=f"Network error: {str(e)}", status_code=504
+            provider="google", message=f"Network error: {error_detail}", status_code=504
         ) from e
     except Exception as e:
-        logger.opt(exception=True).error(f"Google Gemini: Unexpected error: {e}")
+        error_detail = safe_llm_exception_message(e)
+        error_copy = f"Google Gemini: Unexpected error: {error_detail}"
+        if is_sensitive_llm_request():
+            logger.error(error_copy)
+        else:
+            logger.opt(exception=True).error(error_copy)
 
         # Log unexpected error metrics
         duration = time.time() - start_time
@@ -3212,7 +3790,7 @@ def chat_with_google(
             raise
         else:
             raise ChatProviderError(
-                provider="google", message=f"Unexpected error: {str(e)}"
+                provider="google", message=f"Unexpected error: {error_detail}"
             ) from e
     finally:
         # If streaming, the response object is closed inside stream_generator's finally.
@@ -3264,9 +3842,10 @@ def chat_with_groq(
     logprobs: Optional[bool] = None,
     top_logprobs: Optional[int] = None,
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     groq_config = cli_api_settings.get(
         "groq", {}
     )  # Get the [api_settings.cohere] sub-table
@@ -3350,12 +3929,18 @@ def chat_with_groq(
         data["top_logprobs"] = top_logprobs
 
     api_url = (
-        groq_config.get("api_base_url", "https://api.groq.com/openai/v1").rstrip("/")
-        + "/chat/completions"
-    )
-    logger.debug(
-        "Groq Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
-    )
+        api_base_url
+        or groq_config.get("api_base_url")
+        or builtin_provider_endpoint("groq", groq_config)
+    ).rstrip("/") + "/chat/completions"
+    if not is_sensitive_llm_request():
+        # task-2116: see the OpenAI branch above for why this is gated.
+        # task-2117 Qodo round: allowlisted summary, see the Anthropic
+        # branch above for why a denylist isn't safe here.
+        logger.debug(
+            "Groq Request Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(data)}"
+        )
     try:
         if current_streaming:
             # ... (OpenAI-like streaming logic, ensure "Groq" in logs) ...
@@ -3411,7 +3996,7 @@ def chat_with_groq(
             retry_count = int(groq_config.get("api_retries", 3))  # ... retry setup ...
             adapter = HTTPAdapter(
                 max_retries=Retry(
-                    total=retry_count,
+                    total=llm_retry_count(retry_count),
                     backoff_factor=float(groq_config.get("api_retry_delay", 1)),
                     status_forcelist=[429, 500, 502, 503, 504],
                     allowed_methods=["POST"],
@@ -3521,6 +4106,7 @@ def chat_with_huggingface(
     logprobs: Optional[bool] = None,  # OpenAI compatible name
     top_logprobs: Optional[int] = None,  # OpenAI compatible name
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
     logger.debug(
@@ -3568,11 +4154,11 @@ def chat_with_huggingface(
         # This format explicitly puts the model in the URL path.
         # User must ensure router_base_url and model_id result in a valid endpoint.
         router_base = _optional_config_string(
-            hf_config.get(
-                "router_base_url",
-                hf_config.get("huggingface_router_base_url"),
+            api_base_url
+            or hf_config.get(
+                "router_base_url", hf_config.get("huggingface_router_base_url")
             ),
-            default="https://router.huggingface.co/hf-inference",
+            default=builtin_provider_endpoint("huggingface", hf_config) or "",
         ).rstrip("/")
         chat_path = _optional_config_string(
             hf_config.get("api_chat_path"), "v1/chat/completions"
@@ -3586,10 +4172,13 @@ def chat_with_huggingface(
         else:
             api_url = f"{router_base}/models/{model_path_part}/{chat_path}"
         logger.info(
-            f"HuggingFace: Using explicit 'use_router_url_format=true'. Target URL: {api_url}"
+            "HuggingFace: Using explicit 'use_router_url_format=true'. "
+            f"Target host: {safe_llm_url_host(api_url)}"
         )
     else:  # use_router_url_format is false, standard URL construction
-        configured_api_base_url = _optional_config_string(hf_config.get("api_base_url"))
+        configured_api_base_url = _optional_config_string(
+            api_base_url or hf_config.get("api_base_url")
+        )
         # Default chat path can be just "chat/completions" if base_url includes /v1, or "v1/chat/completions" if not.
         # Let's make the default api_chat_path more flexible.
         # If using the public HF API, base is /v1 and path is chat/completions.
@@ -3617,20 +4206,21 @@ def chat_with_huggingface(
             else:
                 api_url = f"{configured_api_base}/{chat_completions_path}"
             logger.info(
-                f"HuggingFace: Using configured 'api_base_url' ('{configured_api_base_url}') and 'api_chat_path' ('{chat_completions_path}'). Target URL: {api_url}. Model is in payload."
+                "HuggingFace: Using configured endpoint; "
+                f"host={safe_llm_url_host(api_url)}; model_in_payload=true."
             )
         else:
             # Fallback if no api_base_url is configured.
             # Use the public Hugging Face Inference API endpoint for OpenAI-like chat completions.
-            default_hf_api_base = (
-                "https://api-inference.huggingface.co/v1"  # Base includes /v1
-            )
+            default_hf_api_base = builtin_provider_endpoint("huggingface", hf_config)
             default_chat_path_for_api_inference = (
                 "chat/completions"  # Path relative to /v1 base
             )
             api_url = f"{default_hf_api_base.rstrip('/')}/{default_chat_path_for_api_inference}"
             logger.warning(
-                f"HuggingFace: 'api_base_url' not configured. Defaulting to public Inference API endpoint: {api_url}. Model is in payload."
+                "HuggingFace: 'api_base_url' not configured. "
+                f"Defaulting to host={safe_llm_url_host(api_url)}; "
+                "model_in_payload=true."
             )
     # --- End URL Construction ---
 
@@ -3724,10 +4314,19 @@ def chat_with_huggingface(
     # Remove None values from payload before sending, common practice
     payload = {k: v for k, v in payload.items() if v is not None}
 
-    logger.debug(
-        f"HuggingFace Final Payload (excluding messages, tools): {{ {', '.join(f'{k}: {v}' for k, v in payload.items() if k not in ['messages', 'tools'])} }}"
-    )
-    if "tools" in payload:
+    if is_sensitive_llm_request():
+        logger.debug(
+            "HuggingFace request metadata: "
+            f"model={final_model_for_payload}; "
+            f"streaming={final_streaming_payload_val}; "
+            f"message_count={len(api_messages)}; "
+            f"content_bytes={llm_content_byte_count(api_messages)}"
+        )
+    else:
+        logger.debug(
+            f"HuggingFace Final Payload (excluding messages, tools): {{ {', '.join(f'{k}: {v}' for k, v in payload.items() if k not in ['messages', 'tools'])} }}"
+        )
+    if "tools" in payload and not is_sensitive_llm_request():
         logger.debug(f"HuggingFace Tools: {payload['tools']}")
     redacted_headers = {
         key: "<redacted>" if key.lower() == "authorization" else value
@@ -3741,7 +4340,10 @@ def chat_with_huggingface(
 
     try:
         if final_streaming_payload_val:  # Check the boolean intended for payload
-            logger.debug(f"HuggingFace: Posting streaming request to {api_url}")
+            logger.debug(
+                "HuggingFace: Posting streaming request to "
+                f"host={safe_llm_url_host(api_url)}"
+            )
             # Session might not be strictly necessary for a single streaming POST, but good for potential keep-alive
             response = requests.post(
                 api_url,
@@ -3814,10 +4416,13 @@ def chat_with_huggingface(
 
             return stream_generator_huggingface()
         else:  # Non-streaming
-            logger.debug(f"HuggingFace: Posting non-streaming request to {api_url}")
+            logger.debug(
+                "HuggingFace: Posting non-streaming request to "
+                f"host={safe_llm_url_host(api_url)}"
+            )
             adapter = HTTPAdapter(
                 max_retries=Retry(
-                    total=int(hf_config.get("api_retries", 3)),
+                    total=llm_retry_count(int(hf_config.get("api_retries", 3))),
                     backoff_factor=float(hf_config.get("api_retry_delay", 1)),
                     status_forcelist=[429, 500, 502, 503, 504],
                     allowed_methods=[
@@ -3877,9 +4482,14 @@ def chat_with_huggingface(
 
     except requests.exceptions.HTTPError as e:
         status_code = getattr(e.response, "status_code", 500)
-        error_text = getattr(e.response, "text", str(e))
+        raw_error_text = getattr(e.response, "text", None)
+        if raw_error_text is None:
+            raw_error_text = safe_llm_exception_message(e)
+        error_text = str(safe_llm_error_detail(raw_error_text))
+        endpoint_copy = safe_llm_url_host(api_url)
         logger.error(
-            f"HuggingFace API call failed to {api_url} with status {status_code}. Details: {error_text[:500]}"
+            "HuggingFace API call failed; "
+            f"host={endpoint_copy}; status={status_code}; detail={error_text[:500]}"
         )
 
         # Log HTTP error metrics
@@ -3905,7 +4515,7 @@ def chat_with_huggingface(
         elif status_code == 404:  # Specifically handle 404 for URL/model issues
             raise ChatBadRequestError(
                 provider="huggingface",
-                message=f"Endpoint or Model not found (404) at {api_url}. Detail: {error_text[:200]}",
+                message=f"Endpoint or Model not found (404) at {endpoint_copy}. Detail: {error_text[:200]}",
             )
         elif status_code == 429:
             raise ChatRateLimitError(
@@ -3915,20 +4525,27 @@ def chat_with_huggingface(
         elif 400 <= status_code < 500:  # Other 4xx
             raise ChatBadRequestError(
                 provider="huggingface",
-                message=f"Bad request (Status {status_code}) to {api_url}. Detail: {error_text[:200]}",
+                message=f"Bad request (Status {status_code}) to {endpoint_copy}. Detail: {error_text[:200]}",
             )
         else:  # 5xx
             raise ChatProviderError(
                 provider="huggingface",
-                message=f"Server error (Status {status_code}) from {api_url}. Detail: {error_text[:200]}",
+                message=f"Server error (Status {status_code}) from {endpoint_copy}. Detail: {error_text[:200]}",
                 status_code=status_code,
             )
     except (
         requests.exceptions.RequestException
     ) as e:  # Covers DNS, Connection, Timeout errors
-        logger.opt(exception=True).error(
-            f"HuggingFace API request failed to {api_url} (network error): {e}"
+        endpoint_copy = safe_llm_url_host(api_url)
+        error_detail = safe_llm_exception_message(e)
+        error_copy = (
+            "HuggingFace API request failed; reason=network_error; "
+            f"host={endpoint_copy}; error_type={error_detail}"
         )
+        if is_sensitive_llm_request():
+            logger.error(error_copy)
+        else:
+            logger.opt(exception=True).error(error_copy)
 
         # Log network error metrics
         duration = time.time() - start_time
@@ -3943,13 +4560,20 @@ def chat_with_huggingface(
         )
         raise ChatProviderError(
             provider="huggingface",
-            message=f"Network error connecting to {api_url}: {e}",
+            message=f"Network error connecting to {endpoint_copy}: {error_detail}",
             status_code=504,
         )  # 504 for timeout/gateway like
     except Exception as e:
-        logger.opt(exception=True).error(
-            f"HuggingFace API call to {api_url}: Unexpected error: {e}"
+        endpoint_copy = safe_llm_url_host(api_url)
+        error_detail = safe_llm_exception_message(e)
+        error_copy = (
+            "HuggingFace API call failed; reason=unexpected; "
+            f"host={endpoint_copy}; error_type={error_detail}"
         )
+        if is_sensitive_llm_request():
+            logger.error(error_copy)
+        else:
+            logger.opt(exception=True).error(error_copy)
 
         # Log unexpected error metrics
         duration = time.time() - start_time
@@ -3965,7 +4589,7 @@ def chat_with_huggingface(
         if not isinstance(e, ChatAPIError):  # Avoid re-wrapping known chat errors
             raise ChatAPIError(
                 provider="huggingface",
-                message=f"Unexpected error in HuggingFace API call: {e}",
+                message=f"Unexpected error in HuggingFace API call: {error_detail}",
             )
         else:
             raise  # Re-raise if it's already a ChatAPIError subtype
@@ -3987,9 +4611,10 @@ def chat_with_mistral(
     tool_choice: Optional[str] = None,
     response_format: Optional[Dict[str, str]] = None,
     custom_prompt_arg: Optional[str] = None,
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     mistral_config = cli_api_settings.get(
         "mistral", {}
     )  # Get the [api_settings.mistral] sub-table
@@ -4074,12 +4699,18 @@ def chat_with_mistral(
         data["response_format"] = response_format  # {"type": "json_object"}
 
     api_url = (
-        mistral_config.get("api_base_url", "https://api.mistral.ai/v1").rstrip("/")
-        + "/chat/completions"
-    )
-    logger.debug(
-        "Mistral Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
-    )
+        api_base_url
+        or mistral_config.get("api_base_url")
+        or builtin_provider_endpoint("mistralai", mistral_config)
+    ).rstrip("/") + "/chat/completions"
+    if not is_sensitive_llm_request():
+        # task-2116: see the OpenAI branch above for why this is gated.
+        # task-2117 Qodo round: allowlisted summary, see the Anthropic
+        # branch above for why a denylist isn't safe here.
+        logger.debug(
+            "Mistral Request Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(data)}"
+        )
 
     try:
         if current_streaming:
@@ -4122,7 +4753,7 @@ def chat_with_mistral(
             # ... (non-streaming, retry) ...
             adapter = HTTPAdapter(
                 max_retries=Retry(
-                    total=int(mistral_config.get("api_retries", 3)),
+                    total=llm_retry_count(int(mistral_config.get("api_retries", 3))),
                     backoff_factor=float(mistral_config.get("api_retry_delay", 1)),
                     status_forcelist=[429, 500, 502, 503, 504],
                     allowed_methods=["POST"],
@@ -4230,9 +4861,10 @@ def chat_with_openrouter(
     logprobs: Optional[bool] = None,
     top_logprobs: Optional[int] = None,
     custom_prompt_arg: Optional[str] = None,
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     openrouter_config = cli_api_settings.get(
         "openrouter", {}
     )  # Get the [api_settings.cohere] sub-table
@@ -4320,14 +4952,18 @@ def chat_with_openrouter(
         data["top_logprobs"] = top_logprobs
 
     api_url = (
-        openrouter_config.get("api_base_url", "https://openrouter.ai/api/v1").rstrip(
-            "/"
+        api_base_url
+        or openrouter_config.get("api_base_url")
+        or builtin_provider_endpoint("openrouter", openrouter_config)
+    ).rstrip("/") + "/chat/completions"
+    if not is_sensitive_llm_request():
+        # task-2116: see the OpenAI branch above for why this is gated.
+        # task-2117 Qodo round: allowlisted summary, see the Anthropic
+        # branch above for why a denylist isn't safe here.
+        logger.debug(
+            "OpenRouter Request Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(data)}"
         )
-        + "/chat/completions"
-    )
-    logger.debug(
-        "OpenRouter Request Payload (excluding messages): {k: v for k, v in data.items() if k != 'messages'}"
-    )
 
     try:
         if current_streaming:
@@ -4371,7 +5007,7 @@ def chat_with_openrouter(
             # ... (retry setup) ...
             adapter = HTTPAdapter(
                 max_retries=Retry(
-                    total=int(openrouter_config.get("api_retries", 3)),
+                    total=llm_retry_count(int(openrouter_config.get("api_retries", 3))),
                     backoff_factor=float(openrouter_config.get("api_retry_delay", 1)),
                     status_forcelist=[429, 500, 502, 503, 504],
                     allowed_methods=["POST"],
@@ -4476,6 +5112,7 @@ def chat_with_moonshot(
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     user: Optional[str] = None,  # User identifier
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     """
     Sends a chat completion request to the Moonshot AI API.
@@ -4689,18 +5326,24 @@ def chat_with_moonshot(
         "Authorization": f"Bearer {final_api_key}",
         "Content-Type": "application/json",
     }
-    logger.debug(
-        "Moonshot Request Payload (excluding messages): {k: v for k, v in payload.items() if k != 'messages'}"
-    )
+    if not is_sensitive_llm_request():
+        # task-2116: see the OpenAI branch above for why this is gated.
+        # task-2117 Qodo round: allowlisted summary, see the Anthropic
+        # branch above for why a denylist isn't safe here.
+        logger.debug(
+            "Moonshot Request Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(payload)}"
+        )
 
     # Determine API endpoint based on config (default to international)
-    api_region = moonshot_config.get("api_region", "international").lower()
-    if api_region == "china":
-        api_base_url = moonshot_config.get("api_base_url", "https://api.moonshot.cn/v1")
+    if api_base_url:
+        effective_api_base_url = api_base_url
     else:
-        api_base_url = moonshot_config.get("api_base_url", "https://api.moonshot.ai/v1")
+        effective_api_base_url = moonshot_config.get(
+            "api_base_url"
+        ) or builtin_provider_endpoint("moonshot", moonshot_config)
 
-    api_url = api_base_url.rstrip("/") + "/chat/completions"
+    api_url = effective_api_base_url.rstrip("/") + "/chat/completions"
 
     start_time = time.time()
     log_counter(
@@ -4762,7 +5405,7 @@ def chat_with_moonshot(
             retry_delay = float(moonshot_config.get("api_retry_delay", 1.0))
 
             retry_strategy = Retry(
-                total=retry_count,
+                total=llm_retry_count(retry_count),
                 backoff_factor=retry_delay,
                 status_forcelist=[429, 500, 502, 503, 504],
                 allowed_methods=["POST"],
@@ -4840,11 +5483,16 @@ def chat_with_moonshot(
         )
 
         if e.response is not None:
+            error_detail = str(safe_llm_error_detail(e.response.text))
             logger.error(
-                f"Moonshot Full Error Response (status {e.response.status_code}): {e.response.text}"
+                "Moonshot request failed; "
+                f"status={e.response.status_code}; detail={error_detail}"
             )
         else:
-            logger.error(f"Moonshot HTTPError with no response object: {e}")
+            logger.error(
+                "Moonshot HTTPError with no response object; "
+                f"error_type={safe_llm_exception_message(e)}"
+            )
         raise
     except requests.exceptions.RequestException as e:
         # Log network error metrics
@@ -4858,7 +5506,13 @@ def chat_with_moonshot(
             duration,
             labels={"model": final_model, "error_type": "network"},
         )
-        logger.opt(exception=True).error(f"Moonshot RequestException: {e}")
+        error_detail = safe_llm_exception_message(e)
+        if is_sensitive_llm_request():
+            logger.error(f"Moonshot RequestException: {error_detail}")
+        else:
+            logger.opt(exception=True).error(
+                f"Moonshot RequestException: {error_detail}"
+            )
         raise
     except Exception as e:
         # Log unexpected error metrics
@@ -4867,10 +5521,15 @@ def chat_with_moonshot(
             "moonshot_api_error",
             labels={"model": final_model, "error_type": "unexpected"},
         )
-        logger.opt(exception=True).error(
-            f"Moonshot: Unexpected error in chat_with_moonshot: {e}"
+        error_detail = safe_llm_exception_message(e)
+        error_copy = f"Moonshot: Unexpected error: {error_detail}"
+        if is_sensitive_llm_request():
+            logger.error(error_copy)
+        else:
+            logger.opt(exception=True).error(error_copy)
+        raise ChatProviderError(
+            provider="moonshot", message=f"Unexpected error: {error_detail}"
         )
-        raise ChatProviderError(provider="moonshot", message=f"Unexpected error: {e}")
 
 
 def chat_with_zai(
@@ -4887,6 +5546,7 @@ def chat_with_zai(
     do_sample: Optional[bool] = None,
     request_id: Optional[str] = None,
     custom_prompt_arg: Optional[str] = None,  # Legacy
+    api_base_url: Optional[str] = None,
 ):
     """
     Sends a chat completion request to the Z.AI API.
@@ -4913,7 +5573,7 @@ def chat_with_zai(
         request_id: Optional request ID for tracking.
         custom_prompt_arg: Legacy, largely ignored.
     """
-    cli_api_settings = settings.get("api_settings", {})
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     zai_config = cli_api_settings.get("zai", {})
 
     final_api_key = api_key or zai_config.get("api_key")
@@ -4985,12 +5645,21 @@ def chat_with_zai(
         "Content-Type": "application/json",
     }
 
-    api_base_url = zai_config.get("api_base_url", "https://api.z.ai/api/paas/v4")
-    api_url = api_base_url.rstrip("/") + "/chat/completions"
-
-    logger.debug(
-        "Z.AI Request Payload (excluding messages): {k: v for k, v in payload.items() if k != 'messages'}"
+    effective_api_base_url = (
+        api_base_url
+        or zai_config.get("api_base_url")
+        or builtin_provider_endpoint("zai", zai_config)
     )
+    api_url = effective_api_base_url.rstrip("/") + "/chat/completions"
+
+    if not is_sensitive_llm_request():
+        # task-2116: see the OpenAI branch above for why this is gated.
+        # task-2117 Qodo round: allowlisted summary, see the Anthropic
+        # branch above for why a denylist isn't safe here.
+        logger.debug(
+            "Z.AI Request Payload (safe fields only): "
+            f"{safe_llm_request_payload_summary(payload)}"
+        )
 
     start_time = time.time()
 
@@ -5048,7 +5717,7 @@ def chat_with_zai(
             retry_delay = float(zai_config.get("api_retry_delay", 1.0))
 
             retry_strategy = Retry(
-                total=retry_count,
+                total=llm_retry_count(retry_count),
                 backoff_factor=retry_delay,
                 status_forcelist=[429, 500, 502, 503, 504],
                 allowed_methods=["POST"],
@@ -5105,7 +5774,10 @@ def chat_with_zai(
 
     except requests.exceptions.HTTPError as e:
         status_code = e.response.status_code if e.response is not None else 500
-        error_text = e.response.text if e.response is not None else str(e)
+        raw_error_text = (
+            e.response.text if e.response is not None else safe_llm_exception_message(e)
+        )
+        error_text = str(safe_llm_error_detail(raw_error_text))
 
         # Log HTTP error metrics
         duration = time.time() - start_time
@@ -5124,7 +5796,7 @@ def chat_with_zai(
         )
 
         logger.error(
-            f"Z.AI Full Error Response (status {status_code}): {error_text[:500]}"
+            f"Z.AI request failed; status={status_code}; detail={error_text[:500]}"
         )
 
         if status_code == 401:
@@ -5159,8 +5831,14 @@ def chat_with_zai(
             duration,
             labels={"model": current_model, "error_type": "network"},
         )
-        logger.opt(exception=True).error(f"Z.AI RequestException: {e}")
-        raise ChatProviderError(provider="zai", message=f"Network error: {str(e)}")
+        error_detail = safe_llm_exception_message(e)
+        if is_sensitive_llm_request():
+            logger.error(f"Z.AI RequestException: {error_detail}")
+        else:
+            logger.opt(exception=True).error(f"Z.AI RequestException: {error_detail}")
+        raise ChatProviderError(
+            provider="zai", message=f"Network error: {error_detail}"
+        )
 
     except Exception as e:
         # Log unexpected error metrics
@@ -5168,10 +5846,15 @@ def chat_with_zai(
         log_counter(
             "zai_api_error", labels={"model": current_model, "error_type": "unexpected"}
         )
-        logger.opt(exception=True).error(
-            f"Z.AI: Unexpected error in chat_with_zai: {e}"
+        error_detail = safe_llm_exception_message(e)
+        error_copy = f"Z.AI: Unexpected error: {error_detail}"
+        if is_sensitive_llm_request():
+            logger.error(error_copy)
+        else:
+            logger.opt(exception=True).error(error_copy)
+        raise ChatProviderError(
+            provider="zai", message=f"Unexpected error: {error_detail}"
         )
-        raise ChatProviderError(provider="zai", message=f"Unexpected error: {e}")
 
 
 #

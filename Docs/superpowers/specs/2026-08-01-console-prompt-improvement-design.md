@@ -13,7 +13,8 @@ reusable structured prompt recipes without silently changing session state.
 
 Success means:
 
-- Prompts are reachable from a new top-row `Prompts` action.
+- Prompts are reachable from a `Prompts` entry in the Console composer's
+  existing hamburger menu.
 - The current unsent message can be auto-improved, improved for review, or
   mapped into an editable structured recipe.
 - The effective current system prompt may be included as analysis context, but
@@ -74,35 +75,35 @@ with one overflow menu and moves Attach/Save Chatbook through stable action IDs
 to the screen's existing handlers. Because the reference branch also carries
 unrelated temporary-conversation history, implementation must port or verify
 the behavior on the current target branch rather than blindly cherry-pick its
-commits or branch history. `Prompts` remains a top Workbench action; it is not
-added to the width-bounded composer row.
+commits or branch history. `Prompts` is added to the existing hamburger menu
+opened from the width-bounded composer row; it is not added to the tab-bar or
+top Workbench action row and it does not add another always-visible composer
+button.
 
-## 1. Console Entry Point and Action-Row Contract
+## 1. Console Entry Point and Composer-Menu Contract
 
-Add `Prompts` immediately after `New tab`. Move `Settings` to the end of the
-top action row immediately before `Help`:
+Add a stable `prompts` action to the existing composer hamburger menu. In a
+normal saved session, the menu order begins:
 
-1. New tab
-2. Prompts
-3. Attach context
-4. Run Library RAG
-5. Save Chatbook
-6. Settings
-7. Help
+1. Prompts
+2. Attach context
+3. Save Chatbook
 
-This feature amends the one-row action invariant in
-`2026-07-21-console-top-area-layout-design.md`. The action set must never be
-silently clipped:
+The existing remaining composer-menu actions follow in their current order.
+Temporary sessions may continue to prepend `Save this chat`. The menu entry is
+always visible and uses the same stable-ID dispatch model as Attach and Save
+Chatbook.
 
-- Wide terminals show full labels on one row.
-- Medium terminals use `New`, `Prompts`, `Attach`, `RAG`, `Save`, `Settings`,
-  and `Help` on one row.
-- Narrow terminals use two deterministic rows in the same logical order.
-- `Settings` remains immediately before `Help` at every width.
+The composer's always-visible idle row remains exactly `☰`, `Send`, and `Mic`;
+conditional Stop and attachment-clear controls retain their existing behavior.
+The top/tab-bar Workbench action row is unchanged by this feature. In
+particular, it contains no `Prompts` action, and its existing `Settings` and
+`Help` ordering remains intact.
 
-Activating `Prompts` opens `ConsolePromptsModal` in Browse mode. The modal uses
-the existing context modal's border, header rhythm, and maximum footprint, but
-sizes responsively instead of fixing itself at 95 by 40 cells.
+Choosing `Prompts` from the hamburger menu opens `ConsolePromptsModal` in
+Browse mode. The modal uses the existing context modal's border, header rhythm,
+and maximum footprint, but sizes responsively instead of fixing itself at 95
+by 40 cells.
 
 ## 2. Unified Modal Navigation
 
@@ -821,8 +822,9 @@ Implementation should be planned as four reviewable stages:
 1. Local/server `artifact_type` migrations, schema-v2 codec and dispatch,
    capability contract, import/export, normalized artifact states, and v1
    preservation.
-2. Prompts action, Browse list/search, Library integration, block editor,
-   Recipe execution guards, responsive action row, and source-aware saving.
+2. Composer-menu Prompts action, Browse list/search, Library integration,
+   block editor, Recipe execution guards, unchanged width-bounded composer
+   geometry, and source-aware saving.
 3. Public composer snapshot/apply/restore transaction, inline-file projection,
    stale checks, application, and exact temporary Undo.
 4. Sensitive auxiliary provider seam, adapter logging hardening,
@@ -837,14 +839,14 @@ tests before the next stage begins.
 ADR required: yes
 
 ADR path:
-`backlog/decisions/029-versioned-prompt-artifacts-and-safe-improvement-transactions.md`
+`backlog/decisions/040-versioned-prompt-artifacts-and-safe-improvement-transactions.md`
 
 Reason: The feature establishes a migrated Prompt/Recipe artifact type,
 separate structured-v2 storage and v1 preservation, canonical-versus-compiled
 ownership, a segment-safe composer transaction, a sensitive auxiliary
-provider-call contract, and a long-lived Console modal boundary. ADR-029
-supersedes ADR-028 after the existing server-v1 and composer-segment conflicts
-were identified during written-spec review.
+provider-call contract, and a long-lived Console modal boundary. ADR-040
+records the server-v1 compatibility and composer-segment constraints that
+require these boundaries.
 
 Related decisions:
 

@@ -30,43 +30,6 @@
     text-align: left;
 }
 
-/* Preset bar for quick configuration */
-.preset-bar {
-    height: 3;
-    padding: 0 1;
-    background: $surface 15%;
-    border-bottom: solid $surface-lighten-1;
-    align: left middle;
-}
-
-.preset-button {
-    width: auto;
-    min-width: 10;
-    margin: 0 1;
-    padding: 0 1;
-    background: $surface;
-    border: tall $surface-lighten-1;
-}
-
-.preset-button.active {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    border: tall $ds-focus-accent;
-    text-style: bold underline;
-}
-
-.preset-button:hover {
-    background: $surface-lighten-1;
-    color: $text;
-}
-
-.preset-button.active:hover {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    border: tall $ds-focus-accent;
-    text-style: bold underline;
-}
-
 /* Search container with better visibility */
 .search-container {
     height: 3;
@@ -235,30 +198,6 @@
     display: none; /* ensures it doesn't grab focus */
 }
 
-/* Right sidebar (chat-right-sidebar) */
-#chat-right-sidebar {
-    dock: right;
-    width: 25%;  /* Default width, will be dynamically updated */
-    min-width: 15%; /* Minimum width - absolute units work better */
-    max-width: 50%; /* Maximum width */
-    background: $boost;
-    padding: 1 2;
-    border-left: thick $background-darken-1; /* Border on the left */
-    height: 100%;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-/* Collapsed state for the new right sidebar */
-#chat-right-sidebar.collapsed {
-    width: 0 !important;
-    min-width: 0 !important; /* Ensure min-width is also 0 */
-    border-left: none !important;
-    padding: 0 !important;
-    overflow: hidden !important;
-    display: none; /* Ensures it doesn't take space or grab focus */
-}
-
 /* Common sidebar elements */
 .sidebar-title { text-style: bold; margin-bottom: 1; width: 100%; text-align: left; }
 
@@ -273,25 +212,6 @@
     width: 1fr;
 }
 
-/* Sidebar resize buttons */
-.sidebar-resize-button {
-    width: 8;
-    min-width: 8;
-    height: 3;
-    padding: 0 1;
-    margin: 0 1;
-    text-align: center;
-    background: $primary;
-    color: $text;
-    text-style: bold;
-    border: tall $primary;
-}
-
-.sidebar-resize-button:hover {
-    background: $surface-lighten-1;
-    color: $text;
-    text-style: bold;
-}
 .sidebar-label { margin-top: 1; text-style: bold; }
 .sidebar-input {
     width: 100%;
@@ -364,40 +284,6 @@
     height: 10; /* Example height for listviews in sidebars */
     border: round $primary-lighten-2;
     background: $primary-background;
-}
-
-/* World Books specific styling */
-.worldbook-association-controls {
-    height: 3;
-    align: center middle;
-    margin: 1 0;
-}
-
-.worldbook-priority-select {
-    width: 30%;
-    min-width: 15;
-    margin-left: 1;
-}
-
-#chat-worldbook-available-listview {
-    height: 5;
-    border: round $primary-lighten-2;
-    background: $primary-background;
-    margin-bottom: 1;
-}
-
-#chat-worldbook-active-listview {
-    height: 5;
-    border: round $accent;
-    background: $primary-background;
-    margin-bottom: 1;
-}
-
-#chat-worldbook-details-display {
-    height: 8;
-    border: round $secondary;
-    background: $primary-background;
-    /* font-size: 11; - not supported in TCSS */
 }
 
 /* Enhanced sidebar sections with UX improvements */

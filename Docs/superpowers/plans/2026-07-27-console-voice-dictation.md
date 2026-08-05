@@ -138,10 +138,12 @@ LOCAL_PROVIDER_MODULES: dict[str, str] = {
     "lightning-whisper-mlx": "lightning_whisper_mlx",
 }
 
+CAPTURE_REASON = "No microphone backend installed."
 CAPTURE_REMEDY = (
     "Microphone support isn't installed. "
     "Install with: pip install 'tldw_chatbook[speech_recording]'"
 )
+PROVIDER_REASON = "No speech-to-text provider installed."
 PROVIDER_REMEDY = (
     "No speech-to-text provider installed. "
     "Install with: pip install 'tldw_chatbook[transcription_faster_whisper]'"
@@ -193,7 +195,7 @@ def probe() -> Availability:
         return Availability(
             ok=False,
             kind="missing-capture",
-            reason="No microphone backend installed.",
+            reason=CAPTURE_REASON,
             remedy=CAPTURE_REMEDY,
         )
     if not installed_local_providers():
@@ -201,7 +203,7 @@ def probe() -> Availability:
         return Availability(
             ok=False,
             kind="missing-provider",
-            reason="No speech-to-text provider installed.",
+            reason=PROVIDER_REASON,
             remedy=PROVIDER_REMEDY,
         )
     return Availability(ok=True)
@@ -252,15 +254,25 @@ def _stub_settings(monkeypatch, values: dict[str, object]) -> None:
 
 
 def test_resolve_keeps_configured_provider_when_installed(monkeypatch):
+    """The configured provider must NOT be at index 0.
+
+    With `configured` first, deleting the entire honor-configured branch and
+    always taking `installed[0]` would still pass -- the fallback happens to
+    produce the same answer. Ordering it second is what makes this test
+    detect that deletion.
+    """
     monkeypatch.setattr(
-        cvi, "installed_local_providers", lambda: ("faster-whisper", "parakeet-mlx")
+        cvi, "installed_local_providers", lambda: ("parakeet-mlx", "faster-whisper")
     )
     _stub_settings(
         monkeypatch,
         {
-            "transcription.provider": "faster-whisper",
-            "transcription.model": "base",
-            "transcription.language": "en",
+            "transcription.default_provider": "faster-whisper",
+            "transcription.default_model": "base",
+            # Deliberately not "en": DEFAULT_LANGUAGE is also "en", so an "en"
+            # stub can't tell a correct `default_language` read apart from a
+            # mutated `language` read silently falling back to the default.
+            "transcription.default_language": "fr",
         },
     )
 
@@ -269,13 +281,38 @@ def test_resolve_keeps_configured_provider_when_installed(monkeypatch):
     assert effective is not None
     assert effective.provider == "faster-whisper"
     assert effective.model == "base"
+    assert effective.language == "fr"
+    assert effective.was_overridden is False
+
+
+def test_resolve_falls_back_to_stt_settings_section_name(monkeypatch):
+    """Pins the STT_settings key name specifically, not just default_provider.
+
+    `test_resolve_reads_the_real_config_key_names` always stubs
+    `transcription.default_provider`, so the `or get_cli_setting("STT_settings", ...)`
+    fallback branch is never reached there and a `STT_settings` -> `STTSettings`
+    mutation would pass unnoticed. This test leaves `transcription.default_provider`
+    unset so only the fallback section name can produce the expected result.
+    """
+    monkeypatch.setattr(
+        cvi, "installed_local_providers", lambda: ("parakeet-mlx", "faster-whisper")
+    )
+    _stub_settings(
+        monkeypatch, {"STT_settings.default_stt_provider": "faster-whisper"}
+    )
+
+    effective = cvi.resolve()
+
+    assert effective is not None
+    assert effective.configured_provider == "faster-whisper"
+    assert effective.provider == "faster-whisper"
     assert effective.was_overridden is False
 
 
 def test_resolve_flags_override_instead_of_swapping_silently(monkeypatch):
     """A configured provider that is not installed is replaced, and it shows."""
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
-    _stub_settings(monkeypatch, {"transcription.provider": "parakeet-mlx"})
+    _stub_settings(monkeypatch, {"transcription.default_provider": "parakeet-mlx"})
 
     effective = cvi.resolve()
 
@@ -288,7 +325,7 @@ def test_resolve_flags_override_instead_of_swapping_silently(monkeypatch):
 def test_resolve_never_returns_an_uninstalled_provider(monkeypatch):
     """This is the guard against the service's parakeet-mlx rewrite."""
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
-    _stub_settings(monkeypatch, {"transcription.provider": "lightning-whisper-mlx"})
+    _stub_settings(monkeypatch, {"transcription.default_provider": "lightning-whisper-mlx"})
 
     effective = cvi.resolve()
 
@@ -296,9 +333,50 @@ def test_resolve_never_returns_an_uninstalled_provider(monkeypatch):
     assert effective.provider in cvi.installed_local_providers()
 
 
+def test_resolve_fallback_prefers_the_first_declared_provider(monkeypatch):
+    """With several installed and none configured, declaration order decides.
+
+    Task 1 pins `installed_local_providers()`' order; this pins that `resolve()`
+    consumes it as a preference order rather than sorting it. A single-element
+    `installed` tuple cannot detect `sorted(installed)[0]`.
+    """
+    monkeypatch.setattr(
+        cvi,
+        "installed_local_providers",
+        lambda: ("parakeet-mlx", "faster-whisper", "lightning-whisper-mlx"),
+    )
+    _stub_settings(monkeypatch, {"transcription.default_provider": "qwen2audio"})
+
+    effective = cvi.resolve()
+
+    assert effective is not None
+    assert effective.provider == "parakeet-mlx"
+    assert effective.was_overridden is True
+
+
+def test_resolve_reads_the_real_config_key_names(monkeypatch):
+    """Guards the exact bug this task shipped once already.
+
+    [transcription] uses default_provider (config.py:3333), and the raw TOML
+    section STTSettings lands under STT_settings (config.py:1548). Reading
+    "provider" or "STTSettings" silently yields the default, so `configured`
+    is always "" and resolve() degrades to always-fallback.
+    """
+    monkeypatch.setattr(
+        cvi, "installed_local_providers", lambda: ("parakeet-mlx", "faster-whisper")
+    )
+    _stub_settings(monkeypatch, {"transcription.default_provider": "faster-whisper"})
+
+    effective = cvi.resolve()
+
+    assert effective is not None
+    assert effective.configured_provider == "faster-whisper"
+    assert effective.was_overridden is False
+
+
 def test_resolve_returns_none_when_nothing_installed(monkeypatch):
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ())
-    _stub_settings(monkeypatch, {"transcription.provider": "faster-whisper"})
+    _stub_settings(monkeypatch, {"transcription.default_provider": "faster-whisper"})
 
     assert cvi.resolve() is None
 ```
@@ -349,9 +427,14 @@ def resolve() -> EffectiveConfig | None:
     if not installed:
         return None
 
-    configured = get_cli_setting("transcription", "provider", None) or get_cli_setting(
-        "STTSettings", "default_stt_provider", ""
-    )
+    # Key names matter and are easy to get wrong: the [transcription] section
+    # uses `default_provider`/`default_model`/`default_language` (config.py:3333),
+    # and the raw TOML section `STTSettings` is stored in the loaded config under
+    # `STT_settings` (config.py:1548). Reading `provider`/`model`/`language` or
+    # `STTSettings` silently returns the default and defeats this whole function.
+    configured = get_cli_setting(
+        "transcription", "default_provider", None
+    ) or get_cli_setting("STT_settings", "default_stt_provider", "")
     configured = str(configured or "")
 
     if configured in installed:
@@ -366,8 +449,8 @@ def resolve() -> EffectiveConfig | None:
                 provider,
             )
 
-    model = get_cli_setting("transcription", "model", None)
-    language = get_cli_setting("transcription", "language", DEFAULT_LANGUAGE)
+    model = get_cli_setting("transcription", "default_model", None)
+    language = get_cli_setting("transcription", "default_language", DEFAULT_LANGUAGE)
 
     return EffectiveConfig(
         provider=provider,
@@ -396,6 +479,121 @@ Expected: 8 passed
 ```bash
 git add tldw_chatbook/Chat/console_voice_input.py Tests/Chat/test_console_voice_input.py
 git commit -m "feat(console): resolve dictation provider before the service can swap it"
+```
+
+---
+
+### Task 2b: Make resolve()'s guarantee true for lightning-whisper-mlx
+
+`resolve()` promises the service is always handed a local, installed provider so
+its rewrite branch never fires. That promise is false for exactly one provider:
+the service's allowlist contains the string `"lightning-whisper"`, but the real
+provider id everywhere else is `"lightning-whisper-mlx"`, so a correctly resolved
+`lightning-whisper-mlx` still fails the check and is still rewritten to
+`parakeet-mlx` — Apple-Silicon-only, and not what the user asked for.
+
+**Files:**
+- Modify: `tldw_chatbook/Audio/dictation_service_lazy.py:341`
+- Test: `Tests/Audio/test_dictation_privacy_allowlist.py`
+
+**Interfaces:**
+- Consumes: nothing from earlier tasks.
+- Produces: nothing later tasks import. This is a bug fix that makes Task 2's
+  docstring honest before Task 6 wires the two together.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `Tests/Audio/test_dictation_privacy_allowlist.py`:
+
+```python
+"""Privacy-mode provider allowlist tests."""
+
+from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.unit
+
+
+def test_allowlist_uses_real_provider_ids():
+    """The allowlist must use the ids the rest of the app uses.
+
+    `lightning-whisper` matches nothing: transcription_service dispatches on
+    `lightning-whisper-mlx`, and that is what console_voice_input resolves to.
+    A mismatch here silently rewrites the user's provider to parakeet-mlx.
+    """
+    import inspect
+
+    from tldw_chatbook.Audio import dictation_service_lazy
+
+    source = inspect.getsource(
+        dictation_service_lazy.LazyLiveDictationService._initialize_streaming_transcriber
+    )
+
+    assert '"lightning-whisper-mlx"' in source
+    assert '"lightning-whisper",' not in source
+
+
+def test_lightning_whisper_mlx_survives_privacy_mode(monkeypatch):
+    """A resolved lightning-whisper-mlx must not be rewritten."""
+    from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
+
+    service = LazyLiveDictationService.__new__(LazyLiveDictationService)
+    service.privacy_settings = {"local_only": True}
+    service.transcription_provider = "lightning-whisper-mlx"
+    service.transcription_model = None
+    service.language = "en"
+    service.streaming_transcriber = None
+
+    class _NoStreaming:
+        def create_streaming_transcriber(self, **kwargs):
+            return None
+
+    monkeypatch.setattr(
+        type(service),
+        "transcription_service",
+        property(lambda self: _NoStreaming()),
+    )
+
+    service._initialize_streaming_transcriber()
+
+    assert service.transcription_provider == "lightning-whisper-mlx"
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `.venv/bin/python -m pytest Tests/Audio/test_dictation_privacy_allowlist.py -v`
+Expected: both FAIL — the allowlist still reads `"lightning-whisper"`, so the
+source assertion fails and the provider is rewritten to `parakeet-mlx`.
+
+- [ ] **Step 3: Write minimal implementation**
+
+In `tldw_chatbook/Audio/dictation_service_lazy.py`, in
+`_initialize_streaming_transcriber`, change the allowlist:
+
+```python
+            # Ids must match transcription_service's dispatch values exactly;
+            # "lightning-whisper" matched nothing and silently rewrote the
+            # user's provider to parakeet-mlx.
+            allowed_providers = [
+                "parakeet-mlx",
+                "faster-whisper",
+                "lightning-whisper-mlx",
+            ]
+```
+
+Change nothing else in that method.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `.venv/bin/python -m pytest Tests/Audio/test_dictation_privacy_allowlist.py -v`
+Expected: 2 passed
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add tldw_chatbook/Audio/dictation_service_lazy.py Tests/Audio/test_dictation_privacy_allowlist.py
+git commit -m "fix(audio): use the real lightning-whisper-mlx id in the privacy allowlist"
 ```
 
 ---
@@ -457,17 +655,22 @@ class FakeDictationService:
         self._callbacks["on_error"](error)
 
 
-def _controller(monkeypatch, service=None):
-    """Build a controller with a synchronous spawn and a fake service."""
+def _controller(monkeypatch, service=None, spawn=None):
+    """Build a controller with a fake service.
+
+    `spawn` defaults to running the thunk inline, which is what makes the
+    state machine testable without an event loop. Pass a deferring spawn to
+    freeze the controller mid-`preparing`.
+    """
     monkeypatch.setattr(cvi, "capture_available", lambda: True)
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
-    _stub_settings(monkeypatch, {"transcription.provider": "faster-whisper"})
+    _stub_settings(monkeypatch, {"transcription.default_provider": "faster-whisper"})
 
     service = service or FakeDictationService()
     events = []
     controller = cvi.ConsoleVoiceInputController(
         emit=events.append,
-        spawn=lambda thunk: thunk(),  # synchronous: no worker in unit tests
+        spawn=spawn or (lambda thunk: thunk()),
         service_factory=lambda **kwargs: service,
     )
     return controller, events, service
@@ -483,16 +686,36 @@ def test_start_transitions_preparing_then_listening(monkeypatch):
     assert controller.is_active is True
 
 
-def test_second_start_while_preparing_is_a_no_op(monkeypatch):
+def test_second_start_while_listening_is_a_no_op(monkeypatch):
     """Rejected by our own state, not left to the service's lock."""
-    controller, events, service = _controller(monkeypatch)
+    controller, events, _ = _controller(monkeypatch)
     controller.start()
+    assert controller.state == cvi.STATE_LISTENING
     events.clear()
 
     controller.start()
 
     assert events == []
-    assert service.kwargs is not None
+
+
+def test_start_while_still_preparing_is_a_no_op(monkeypatch):
+    """The preparing window is real once `spawn` is a worker, so cover it.
+
+    A deferring spawn captures the thunk instead of running it, which is the
+    only way to observe the controller mid-`preparing`. With the inline spawn
+    used elsewhere, `start()` has already reached `listening` on return.
+    """
+    pending = []
+    controller, events, _ = _controller(monkeypatch, spawn=pending.append)
+
+    controller.start()
+    assert controller.state == cvi.STATE_PREPARING
+    events.clear()
+
+    controller.start()
+
+    assert events == []
+    assert len(pending) == 1  # the second start never queued more work
 
 
 def test_stop_returns_to_idle(monkeypatch):
@@ -567,7 +790,7 @@ def test_unavailable_start_emits_remedy(monkeypatch):
 
 def test_provider_override_is_announced_once(monkeypatch):
     controller, events, _ = _controller(monkeypatch)
-    _stub_settings(monkeypatch, {"transcription.provider": "parakeet-mlx"})
+    _stub_settings(monkeypatch, {"transcription.default_provider": "parakeet-mlx"})
 
     controller.start()
     controller.stop()
@@ -701,7 +924,7 @@ class ConsoleVoiceInputController:
 
         effective = resolve()
         if effective is None:
-            self._fail(PROVIDER_REMEDY.split(".")[0] + ".", PROVIDER_REMEDY)
+            self._fail(PROVIDER_REASON, PROVIDER_REMEDY)
             return
 
         if effective.was_overridden and not self._override_announced:
@@ -800,6 +1023,240 @@ git commit -m "feat(console): add voice dictation state machine"
 
 ---
 
+### Task 3b: Actually release the microphone on stop
+
+`LazyLiveDictationService.stop_dictation()` never releases audio capture. The
+non-lazy `dictation_service.py` calls `self.audio_service.stop_recording()`; the
+lazy variant this feature depends on does not, and its `_cleanup()` does not
+either. Reproduced against the real service: after a successful
+`controller.stop()`, the controller reports `idle` while the recorder still has
+`is_recording is True` and `stop_calls == 0`.
+
+Every normal toggle-off therefore leaves the microphone live. That defeats the
+spec's Hot-mic safety section outright and makes Task 9's five shutdown triggers
+rest on a false premise. Today the only paths that truly release capture are
+`abandon()` and — incidentally — the stop-failure path added in Task 3.
+
+Fixed in two places on purpose: the dependency, so every consumer benefits, and
+the controller, so the Console stops trusting a dependency that has already been
+wrong once.
+
+**Files:**
+- Modify: `tldw_chatbook/Audio/dictation_service_lazy.py` (`stop_dictation`)
+- Modify: `tldw_chatbook/Chat/console_voice_input.py` (`_run_finish`, `_report_service_error`)
+- Test: `Tests/Audio/test_dictation_capture_release.py`
+- Test: `Tests/Chat/test_console_voice_input.py` (append)
+
+**Interfaces:**
+- Consumes: `_claim_service()`, `_release()`, `_fail()` from Task 3.
+- Produces: no new public names.
+
+**Two details that will bite if missed:**
+
+1. **`audio_service` is a lazily-constructing property.** Reading it opens an
+   audio device. `stop_dictation()` must use the private `self._audio_service`
+   with a `None` guard — never the property — or stopping a dictation that never
+   started will construct a recorder during teardown.
+2. **`stop_recording()` early-returns when not recording** (`recording_service.py`:
+   `if not self.is_recording and not audio_buffer: return None`). So the
+   controller's belt-and-braces release cannot double-stop anything; it logs a
+   warning at worst. This is what makes fixing both layers safe.
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `Tests/Audio/test_dictation_capture_release.py`:
+
+```python
+"""Capture must actually stop when dictation stops."""
+
+from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.unit
+
+
+class _Recorder:
+    def __init__(self):
+        self.is_recording = True
+        self.stop_calls = 0
+
+    def stop_recording(self):
+        self.stop_calls += 1
+        self.is_recording = False
+        return b""
+
+
+def _service_with(recorder):
+    from tldw_chatbook.Audio.dictation_service_lazy import (
+        DictationState,
+        LazyLiveDictationService,
+    )
+
+    service = LazyLiveDictationService.__new__(LazyLiveDictationService)
+    service._audio_service = recorder
+    service.state = DictationState.LISTENING
+    service.state_lock = __import__("threading").Lock()
+    service.stop_processing = __import__("threading").Event()
+    service.processing_thread = None
+    service.transcript_segments = []
+    service.current_transcript = ""
+    service.transcript_lock = __import__("threading").Lock()
+    service.audio_buffer = []
+    service.buffer_lock = __import__("threading").Lock()
+    service.start_time = None
+    service.streaming_transcriber = None
+    service.privacy_settings = {"auto_clear_buffer": True, "save_history": False}
+    service.on_state_change = None
+    service.on_error = None
+    service.on_final_transcript = None
+    return service
+
+
+def test_stop_dictation_releases_capture():
+    """The whole point: a successful stop must stop the microphone."""
+    recorder = _Recorder()
+    service = _service_with(recorder)
+
+    service.stop_dictation()
+
+    assert recorder.stop_calls == 1
+    assert recorder.is_recording is False
+
+
+def test_stop_dictation_does_not_construct_a_recorder_when_none_exists():
+    """`audio_service` is a lazy property; reading it opens a device.
+
+    Stopping a dictation that never started must not build one during teardown.
+    """
+    service = _service_with(None)
+
+    service.stop_dictation()  # must not raise, must not construct
+
+    assert service._audio_service is None
+```
+
+Append to `Tests/Chat/test_console_voice_input.py`:
+
+```python
+def test_stop_releases_capture_even_if_the_service_forgets(monkeypatch):
+    """The Console does not trust the dependency to release the microphone.
+
+    LazyLiveDictationService.stop_dictation() historically returned without
+    stopping capture, so the controller verifies it independently.
+    """
+    released = []
+
+    class ForgetfulService:
+        def __init__(self, **kwargs):
+            self._audio_service = type(
+                "R", (), {"stop_recording": lambda s: released.append("stopped")}
+            )()
+
+        def start_dictation(self, **callbacks):
+            return True
+
+        def stop_dictation(self):
+            return None  # deliberately does NOT release capture
+
+    controller, events, _ = _controller(monkeypatch, service=ForgetfulService())
+    controller.start()
+    controller.stop()
+
+    assert released == ["stopped"]
+    assert controller.state == cvi.STATE_IDLE
+
+
+def test_mid_session_error_releases_capture(monkeypatch):
+    """An error while listening must not leave a live recorder behind idle.
+
+    Without this, a retry claims a second service and orphans the first --
+    two simultaneously live recorders.
+    """
+    released = []
+
+    class ErroringService:
+        def __init__(self, **kwargs):
+            self._audio_service = type(
+                "R", (), {"stop_recording": lambda s: released.append("stopped")}
+            )()
+            self._on_error = None
+
+        def start_dictation(self, **callbacks):
+            self._on_error = callbacks["on_error"]
+            return True
+
+        def stop_dictation(self):
+            return None
+
+    service = ErroringService()
+    controller, events, _ = _controller(monkeypatch, service=service)
+    controller.start()
+    released.clear()
+
+    service._on_error(RuntimeError("transcription model missing"))
+
+    assert released == ["stopped"]
+    assert controller.state == cvi.STATE_IDLE
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run:
+```
+.venv/bin/python -m pytest Tests/Audio/test_dictation_capture_release.py Tests/Chat/test_console_voice_input.py -v
+```
+Expected: `test_stop_dictation_releases_capture` FAILS (`stop_calls == 0`),
+`test_stop_releases_capture_even_if_the_service_forgets` FAILS (`released == []`),
+`test_mid_session_error_releases_capture` FAILS (`released == []`).
+
+- [ ] **Step 3: Write minimal implementation**
+
+In `dictation_service_lazy.py`, inside `stop_dictation()`, before `_cleanup()`:
+
+```python
+        # Release capture explicitly. The non-lazy service does this in its own
+        # stop_dictation; this one never did, so every successful stop left the
+        # microphone live. Use the private attribute, not the `audio_service`
+        # property -- reading the property lazily CONSTRUCTS a recorder, which
+        # would open an audio device during teardown.
+        recorder = self._audio_service
+        if recorder is not None:
+            try:
+                recorder.stop_recording()
+            except Exception:  # noqa: BLE001 - teardown must never raise
+                logger.opt(exception=True).warning("Failed to release audio capture")
+```
+
+In `console_voice_input.py`, in `_run_finish()`, after `stop_dictation()` returns
+successfully, release the claimed service defensively via the existing
+`_release()`. `stop_recording()` early-returns when not recording, so this cannot
+double-stop.
+
+In `console_voice_input.py`, make `_report_service_error()` claim and release the
+service before reporting, so a mid-session error cannot leave a live recorder
+behind an `idle` machine or be orphaned by a retry. Keep the existing
+`_error_reported` latch semantics and the `VoiceFailed`-before-
+`VoiceStateChanged(idle)` ordering exactly as they are.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run:
+```
+.venv/bin/python -m pytest Tests/Audio/test_dictation_capture_release.py Tests/Chat/test_console_voice_input.py Tests/Audio -v
+```
+Expected: the three new tests pass; no previously-passing test regresses.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add tldw_chatbook/Audio/dictation_service_lazy.py tldw_chatbook/Chat/console_voice_input.py \
+        Tests/Audio/test_dictation_capture_release.py Tests/Chat/test_console_voice_input.py
+git commit -m "fix(audio): release the microphone when dictation stops"
+```
+
+---
+
 ### Task 4: Composer chip and mic button
 
 **Files:**
@@ -854,14 +1311,23 @@ def _visible(widget) -> bool:
 
 
 @pytest.mark.asyncio
-async def test_chip_is_hidden_when_idle():
+async def test_idle_collapses_a_chip_that_was_showing():
+    """Show it first: asserting width==0 on a never-shown chip proves nothing.
+
+    The chip starts at width 0 from `compose()`, so a bare idle assertion
+    would pass even if `set_voice_status` were a no-op.
+    """
     app = ComposerApp()
     async with app.run_test():
         composer = app.query_one(ConsoleComposerBar)
-        composer.set_voice_status(STATE_IDLE)
-        await app.workers.wait_for_complete()
+        composer.set_voice_status(STATE_LISTENING, partial="hello", elapsed_seconds=1)
         chip = composer.query_one("#console-voice-status", Static)
+        assert chip.styles.width.value > 0
+
+        composer.set_voice_status(STATE_IDLE)
+
         assert chip.styles.width.value == 0
+        assert str(chip.renderable) == ""
 
 
 @pytest.mark.asyncio
@@ -1190,7 +1656,7 @@ git commit -m "feat(console): insert dictated segments into the composer draft"
 
 **Interfaces:**
 - Consumes: `ConsoleVoiceInputController`, all `Voice*` events, `STATE_*` (Task 3); `set_voice_status` (Task 4); `insert_dictated_text` (Task 5).
-- Produces: nested message classes `ConsoleComposerBar.VoiceStateChanged(state: str)`, `.VoiceFailure(reason: str, remedy: str)`, `.VoiceOverride(configured: str, effective: str)`; methods `toggle_dictation() -> None`, `stop_dictation() -> None`, `abandon_dictation() -> None`, property `dictation_active: bool`.
+- Produces: nested message classes `ConsoleComposerBar.VoiceStateChanged(state: str)`, `.VoiceTick()`, `.VoiceFailure(reason: str, remedy: str)`, `.VoiceOverride(configured: str, effective: str)`; methods `toggle_dictation() -> None`, `stop_dictation() -> None`, `abandon_dictation() -> None`, property `dictation_active: bool`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1289,11 +1755,18 @@ Add the message classes inside `ConsoleComposerBar`, next to the other nested cl
 
 ```python
     class VoiceStateChanged(Message):
-        """Dictation entered a new state. Handled by ChatScreen."""
+        """Dictation entered a NEW state. Also handled by ChatScreen.
+
+        Only posted on a real transition -- ChatScreen's deferred send keys
+        off this message, so a repaint must not masquerade as a transition.
+        """
 
         def __init__(self, state: str) -> None:
             super().__init__()
             self.state = state
+
+    class VoiceTick(Message):
+        """The chip needs repainting; the state did not change."""
 
     class VoiceFailure(Message):
         """Dictation could not start or stop."""
@@ -1368,10 +1841,10 @@ Add the controller plumbing:
 
         if isinstance(event, VoicePartial):
             self._voice_partial = event.text
-            self.post_message(self.VoiceStateChanged(self._voice_state))
+            self.post_message(self.VoiceTick())
         elif isinstance(event, VoiceFinal):
             self._voice_partial = ""
-            self.post_message(self.VoiceStateChanged(self._voice_state))
+            self.post_message(self.VoiceTick())
             # `call_later` is safe from this worker thread: it wraps the
             # callback in an events.Callback and hands it to `post_message`
             # (message_pump.py:504), so ordering with the message above is
@@ -1443,6 +1916,12 @@ Add the controller plumbing:
             "finishing": "Finishing…",
         }
         self._render_voice_chip(messages.get(event.state, ""))
+
+    @on(VoiceTick)
+    def _handle_voice_tick(self, event: "ConsoleComposerBar.VoiceTick") -> None:
+        """Repaint the chip for a new partial without faking a transition."""
+        event.stop()
+        self._render_voice_chip()
 
     @on(VoiceFailure)
     def _handle_voice_failure(self, event: "ConsoleComposerBar.VoiceFailure") -> None:
@@ -2102,7 +2581,8 @@ git commit -m "feat(console): release the microphone on every teardown path"
 
 **Files:**
 - Test: `Tests/Chat/test_console_voice_input.py`
-- Create: three files in `backlog/tasks/`
+- Create: two files in `backlog/tasks/` (the third, the lightning-whisper
+  allowlist bug, was promoted into this branch as Task 2b)
 
 **Interfaces:**
 - Consumes: everything above.
@@ -2182,9 +2662,8 @@ Record the outcome of each in the task's Implementation Notes.
 
 Assign IDs by scanning **all** worktrees with a Python `os.listdir` + regex scan against `origin/dev` — `git ls-tree | uniq` misses em-dash filenames — and re-verify the IDs immediately before writing the files, since IDs collide routinely here. Then create:
 
-1. **Fix the `lightning-whisper` allowlist mismatch** — `dictation_service_lazy.py:341` lists `"lightning-whisper"`, but the real provider id is `"lightning-whisper-mlx"`, so lightning users are silently rewritten to `parakeet-mlx`. AC: the allowlist matches the ids used by `transcription_service`; a test covers a lightning-whisper-mlx user keeping their provider.
-2. **Delete `Widgets/voice_input_button.py`** — zero callers, and it touches widgets from the transcription worker thread (`_on_partial` → `_set_status` → `query_one`). AC: file removed; its macOS permission remedy copy preserved wherever it is still used; no import breaks.
-3. **Composer undo/redo (`ctrl+z` / `ctrl+shift+z`)** — covering typing, paste, file segments, and dictation uniformly. AC: keys registered in `ChatScreen.on_key`'s whitelist next to `ctrl+u`, **not** in `BINDINGS`; undo pops the last dictation insertion.
+1. **Delete `Widgets/voice_input_button.py`** — zero callers, and it touches widgets from the transcription worker thread (`_on_partial` → `_set_status` → `query_one`). AC: file removed; its macOS permission remedy copy preserved wherever it is still used; no import breaks.
+2. **Composer undo/redo (`ctrl+z` / `ctrl+shift+z`)** — covering typing, paste, file segments, and dictation uniformly. AC: keys registered in `ChatScreen.on_key`'s whitelist next to `ctrl+u`, **not** in `BINDINGS`; undo pops the last dictation insertion.
 
 - [ ] **Step 7: Commit**
 

@@ -318,7 +318,12 @@ class TestTabNavigationProvider:
         async for hit in tab_provider.search("tab"):
             hits.append(hit)
 
-        assert len(hits) == len(TabNavigationProvider.command_palette_tab_ids()) == 13
+        # task-423: 13 destination commands plus the labeled Library
+        # sub-route deep links (currently just Skills).
+        expected = len(TabNavigationProvider.command_palette_tab_ids()) + len(
+            TabNavigationProvider.LIBRARY_SUBROUTE_COMMANDS
+        )
+        assert len(hits) == expected == 14
         tab_texts = [hit.text for hit in hits]
         assert any("Console" in text for text in tab_texts)
         assert any("Library" in text for text in tab_texts)
@@ -328,8 +333,10 @@ class TestTabNavigationProvider:
         assert not any("Models" in text for text in tab_texts)
         assert not any("Speech" in text for text in tab_texts)
         assert not any("Coding" in text for text in tab_texts)
-        # Skills is folded into Library; no standalone Skills command.
-        assert not any("Skills" in text for text in tab_texts)
+        # task-423: Skills is folded into Library but gets a labeled
+        # DEEP-LINK command (lands on the Skills rail row) -- still no
+        # standalone Skills destination.
+        assert any("Library — Skills" in text for text in tab_texts)
 
     @pytest.mark.asyncio
     async def test_search_uses_destination_labels_without_duplicates(
@@ -346,7 +353,9 @@ class TestTabNavigationProvider:
             "Console",
             "Library",
             "Artifacts",
-            "Personas",
+            # F-034: one public name everywhere - the palette command uses
+            # the same "Roleplay" label as the nav rail and screen header.
+            "Roleplay",
             "Watchlists",
             "Schedules",
             "Workflows",
@@ -590,6 +599,21 @@ class TestQuickActionsProvider:
         assert message.screen_context == {LIBRARY_NAV_CONTEXT_NOTES_CREATE: True}
         quick_actions_provider.app.notify.assert_called_once()
 
+    def test_execute_search_all_action(self, quick_actions_provider):
+        """Search All Content dispatches through the "search" alias (RAG UX
+        v2 PR-1, Task 1) into Library's Search/RAG canvas, so the toast must
+        say so honestly instead of the retired "Opened Search/RAG" copy.
+        """
+        quick_actions_provider.execute_quick_action("search_all")
+
+        quick_actions_provider.app.post_message.assert_called_once()
+        message = quick_actions_provider.app.post_message.call_args.args[0]
+        assert isinstance(message, NavigateToScreen)
+        assert message.screen_name == TAB_SEARCH
+        quick_actions_provider.app.notify.assert_called_once()
+        call_args = quick_actions_provider.app.notify.call_args[0]
+        assert call_args[0] == "Opened Library Search/RAG"
+
     def test_execute_action_failure(self, quick_actions_provider):
         """Test quick action execution with error handling."""
         quick_actions_provider.app.post_message.side_effect = Exception("Action error")
@@ -602,70 +626,6 @@ class TestQuickActionsProvider:
         assert "Failed to execute quick action" in call_args[0][0]
         assert "Action error" in call_args[0][0]  # The exception message is included
         assert call_args[1]["severity"] == "error"
-
-
-#######################################################################################################################
-#
-# --- LLMProviderProvider Tests ---
-
-
-@requires_imports
-class TestLLMProviderProvider:
-    """Test suite for LLMProviderProvider functionality."""
-
-    @pytest.fixture
-    def llm_provider(self, mock_app):
-        """Create an LLMProviderProvider instance with mock app."""
-        mock_screen = MagicMock()
-        mock_screen.app = mock_app
-        provider = LLMProviderProvider(screen=mock_screen)
-        # Create a mock matcher object
-        mock_matcher = MagicMock()
-        mock_matcher.match = MagicMock(return_value=1.0)
-        mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
-        # Set provider.matcher as a callable that returns the matcher object
-        provider.matcher = MagicMock(return_value=mock_matcher)
-        return provider
-
-    @pytest.mark.asyncio
-    async def test_discover_shows_popular_providers(self, llm_provider):
-        """Test that discover() shows popular LLM providers."""
-        hits = []
-        async for hit in llm_provider.discover():
-            hits.append(hit)
-
-        assert len(hits) == 6  # Show current + 5 popular providers
-        provider_names = [hit.text for hit in hits]
-        assert any("Show Current Provider" in name for name in provider_names)
-        assert any("OpenAI" in name for name in provider_names)
-        assert any("Anthropic" in name for name in provider_names)
-
-    def test_show_current_provider(self, llm_provider):
-        """Test showing current provider reads the live chat provider reactive."""
-        llm_provider.app.chat_api_provider_value = "OpenAI"
-        llm_provider.handle_llm_command(None, "show_current")
-
-        llm_provider.app.notify.assert_called_once()
-        call_args = llm_provider.app.notify.call_args[0]
-        assert "Current LLM provider: OpenAI" in call_args[0]
-
-    def test_provider_switch_sets_chat_provider_reactive(self, llm_provider):
-        """Switch commands set the same reactive the Settings screen drives."""
-        llm_provider.handle_llm_command("Anthropic", "switch_Anthropic")
-
-        assert llm_provider.app.chat_api_provider_value == "Anthropic"
-        llm_provider.app.notify.assert_called_once()
-        call_args = llm_provider.app.notify.call_args[0]
-        assert "Switched LLM provider to Anthropic" in call_args[0]
-
-    @pytest.mark.asyncio
-    async def test_search_excludes_placeholder_test_connection(self, llm_provider):
-        """The notify-only 'Test API Connection' command was removed."""
-        hits = []
-        async for hit in llm_provider.search("test"):
-            hits.append(hit)
-
-        assert not any("Test API Connection" in hit.text for hit in hits)
 
 
 #######################################################################################################################
@@ -791,6 +751,20 @@ class TestMediaProvider:
         assert isinstance(message, NavigateToScreen)
         assert message.screen_name == TAB_MEDIA
 
+    def test_search_transcripts_navigates(self, media_provider):
+        """Search Transcripts dispatches through the "search" alias (RAG UX
+        v2 PR-1, Task 1) into Library's Search/RAG canvas, matching Search
+        All Content's honest toast copy.
+        """
+        media_provider.handle_media_action("search_transcripts")
+
+        message = media_provider.app.post_message.call_args.args[0]
+        assert isinstance(message, NavigateToScreen)
+        assert message.screen_name == TAB_SEARCH
+        media_provider.app.notify.assert_called_once()
+        call_args = media_provider.app.notify.call_args[0]
+        assert call_args[0] == "Opened Library Search/RAG for transcript search"
+
 
 @requires_imports
 class TestLibraryIngestProvider:
@@ -816,7 +790,7 @@ class TestLibraryIngestProvider:
             hits.append(hit)
 
         assert len(hits) == 1
-        assert hits[0].text == "Library: Ingest content…"
+        assert hits[0].text == "Library: Add content…"
         assert "Open Library" in hits[0].help
 
     @pytest.mark.asyncio
@@ -827,7 +801,7 @@ class TestLibraryIngestProvider:
             hits.append(hit)
 
         assert len(hits) == 1
-        assert hits[0].text == "Library: Ingest content…"
+        assert hits[0].text == "Library: Add content…"
 
     @pytest.mark.asyncio
     async def test_search_unmatched_query_returns_no_hits(self, library_ingest_provider):
@@ -992,8 +966,8 @@ class TestCommandPaletteIntegration:
             )
 
     @pytest.mark.asyncio
-    async def test_all_providers_return_hits_from_discover(self, mock_app):
-        """Test that all providers return Hit objects from discover()."""
+    async def test_provider_discovery_matches_textual_contract(self, mock_app):
+        """Providers either return Hits or inherit optional discovery."""
         mock_screen = MagicMock()
         mock_screen.app = mock_app
 
@@ -1011,6 +985,10 @@ class TestCommandPaletteIntegration:
             hits = []
             async for hit in provider.discover():
                 hits.append(hit)
+
+            if type(provider).discover is Provider.discover:
+                assert hits == [NotImplemented]
+                continue
 
             assert len(hits) > 0, (
                 f"{provider.__class__.__name__} should return at least one hit"

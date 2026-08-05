@@ -113,7 +113,9 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
         # body now (LibraryRail.workspaces_body_factory), independent of the
         # selected canvas mode.
         use_button = screen.query_one("#library-use-in-console", Button)
-        assert use_button.disabled is True
+        # TASK-716: blocked-but-pressable so the press explains the block.
+        assert use_button.disabled is False
+        assert use_button.has_class("library-source-action-blocked")
         assert "Copy or link" in str(use_button.tooltip)
 
         await _open_library_details(screen, pilot)
@@ -161,7 +163,10 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
         assert not screen.query("#library-workspace-action-next-step")
         assert not screen.query("#library-workspace-action-ready")
         assert "Study Dashboard actions" not in visible
-        assert screen.query_one("#library-use-in-console", Button).disabled is True
+        blocked_button = screen.query_one("#library-use-in-console", Button)
+        # TASK-716: blocked-but-pressable so the press explains the block.
+        assert blocked_button.disabled is False
+        assert blocked_button.has_class("library-source-action-blocked")
         assert screen.query_one("#library-create-local-workspace", Button)
 
         screen.query_one("#library-row-browse-search", Button).press()
@@ -494,3 +499,81 @@ async def test_library_details_section_renders_grouped_headers_and_drops_policy_
         handoff_text = handoff_row.renderable.plain
         assert "2 eligible" in handoff_text
         assert "2 blocked" in handoff_text
+
+
+@pytest.mark.asyncio
+async def test_library_create_workspace_notification_names_console_retarget() -> None:
+    """TASK-713: the Library create toast must say the new workspace became
+    active and that Console now targets it - the cross-screen side effect was
+    previously unstated."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+        await _open_library_details(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+        screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause(0.3)
+
+        assert any(
+            "made it active" in message and "Console" in message
+            for message in notifications
+        ), f"expected an activation-aware creation toast, got {notifications!r}"
+
+
+@pytest.mark.asyncio
+async def test_blocked_use_in_console_press_explains_inline() -> None:
+    """TASK-716: pressing the blocked action must surface the reason as a
+    warning toast - previously the button was disabled, Pressed never fired,
+    and the only explanation lived in a hover tooltip."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+        await _open_library_details(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-use-in-console")
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+        screen.query_one("#library-use-in-console", Button).press()
+        await pilot.pause(0.3)
+
+        assert notifications, "expected the blocked press to explain itself"
+
+
+@pytest.mark.asyncio
+async def test_create_workspace_preserves_rail_scroll() -> None:
+    """TASK-716: the create-workspace recompose must not reset the rail
+    scroll - the user is acting at the bottom-of-rail Workspace group and
+    loses their place (and the updated Active row) when it snaps to top."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(120, 18)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+        await _open_library_details(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
+        await pilot.pause(0.3)
+
+        rail = screen.query_one("#library-rail")
+        assert rail.max_scroll_y > 0, "harness rail did not overflow; shrink the size"
+        rail.scroll_to(y=rail.max_scroll_y, animate=False, force=True)
+        await pilot.pause(0.2)
+        scrolled_to = float(rail.scroll_y)
+        assert scrolled_to > 0
+
+        screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause(0.6)
+
+        rail = screen.query_one("#library-rail")
+        assert float(rail.scroll_y) > 0, (
+            "rail scroll reset to top after the create-workspace recompose"
+        )

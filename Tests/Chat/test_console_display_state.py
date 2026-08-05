@@ -1,3 +1,7 @@
+import inspect
+
+import pytest
+
 from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     CONSOLE_INSPECTOR_NO_CHATBOOK_ARTIFACT_REASON,
@@ -5,6 +9,8 @@ from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
     CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID,
     CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
+    CONSOLE_SYSTEM_PROMPT_LABEL_SET,
+    CONSOLE_SYSTEM_PROMPT_LABEL_UNSET,
     ConsoleControlState,
     ConsoleInspectorState,
     ConsoleStagedContextState,
@@ -16,7 +22,6 @@ def test_console_control_state_exposes_provider_model_and_context_labels():
     state = ConsoleControlState.from_values(
         provider="OpenAI",
         model="gpt-5.5",
-        persona="Researcher",
         rag_enabled=True,
         staged_source_count=3,
         tool_count=4,
@@ -25,23 +30,22 @@ def test_console_control_state_exposes_provider_model_and_context_labels():
 
     assert state.provider_label == "Provider: OpenAI"
     assert state.model_label == "Model: gpt-5.5"
-    assert state.persona_label == "Persona: Researcher"
+    assert state.assistant_label == "Assistant: General"
     assert state.rag_label == "RAG: on"
     assert state.sources_label == "Sources: 3 staged"
     assert state.tools_label == "Tools: 4 ready"
     assert state.approvals_label == "Approvals: 1 pending"
 
 
-def test_console_control_state_preserves_falsy_labels_and_general_assistant_fallback():
+def test_console_control_state_preserves_falsy_labels_and_generic_assistant_fallback():
     state = ConsoleControlState.from_values(
         provider=0,
         model=False,
-        persona="",
     )
 
     assert state.provider_label == "Provider: 0"
     assert state.model_label == "Model: False"
-    assert state.persona_label == "Assistant: General"
+    assert state.assistant_label == "Assistant: General"
 
 
 def test_console_control_state_counter_activity_flags():
@@ -64,13 +68,57 @@ def test_console_control_state_counter_activity_flags():
 def test_console_control_state_system_prompt_label_defaults_to_unset():
     state = ConsoleControlState.from_values()
 
-    assert state.system_prompt_label == "System Prompt"
+    assert state.system_prompt_label == CONSOLE_SYSTEM_PROMPT_LABEL_UNSET
 
 
 def test_console_control_state_system_prompt_label_reflects_set_prompt():
     state = ConsoleControlState.from_values(system_prompt_set=True)
 
-    assert state.system_prompt_label == "System Prompt: set"
+    assert state.system_prompt_label == CONSOLE_SYSTEM_PROMPT_LABEL_SET
+
+
+def test_console_control_state_tools_chip_includes_mcp_tools():
+    """TASK-350: the header Tools chip must count the tools that can actually run
+    — built-in AND MCP — not just built-in. It read 'Tools: 0 ready' while the
+    inspector showed 'MCP: 10 tools ready'."""
+    state = ConsoleControlState.from_values(tool_count=0, mcp_tool_count=10)
+    assert state.tools_label == "Tools: 10 ready"
+    assert state.tools_active is True
+
+
+def test_console_control_state_tools_chip_sums_builtin_and_mcp():
+    state = ConsoleControlState.from_values(tool_count=2, mcp_tool_count=10)
+    assert state.tools_label == "Tools: 12 ready"
+
+
+def test_console_control_state_tools_chip_without_mcp_seam_counts_builtin_only():
+    # No MCP seam wired (mcp_tool_count default None) — chip is unchanged.
+    state = ConsoleControlState.from_values(tool_count=3)
+    assert state.tools_label == "Tools: 3 ready"
+    assert state.tools_active is True
+
+
+def test_console_control_state_tools_chip_shows_neutral_placeholder_at_zero():
+    """Fleet-UX expert review F7 (task-1234): a zero effective tool count
+    (the default -- the built-in count hook is never actually populated by
+    production code, see `ChatScreen._console_tool_count`) must not read
+    "Tools: 0 ready" -- live UAT read that as "no tools available" even
+    though calculator/get_current_datetime are always registered builtins.
+    `tools_active` (dim/emphasis) is UNCHANGED by this -- still False at
+    zero, exactly as before."""
+    state = ConsoleControlState.from_values()
+    assert state.tools_label == "Tools: not loaded"
+    assert "0 ready" not in state.tools_label
+    assert state.tools_active is False
+
+    # Explicit zero (not just the default) reads identically.
+    explicit_zero = ConsoleControlState.from_values(tool_count=0, mcp_tool_count=None)
+    assert explicit_zero.tools_label == "Tools: not loaded"
+
+    # A real mcp_tool_count of 0 (seam wired, catalog genuinely empty) is
+    # NOT "no MCP seam" (that's `None`) -- still an honest zero, same copy.
+    wired_but_empty = ConsoleControlState.from_values(tool_count=0, mcp_tool_count=0)
+    assert wired_but_empty.tools_label == "Tools: not loaded"
 
 
 def test_console_staged_context_state_preserves_live_work_payload_provenance():
@@ -94,7 +142,10 @@ def test_console_staged_context_state_preserves_live_work_payload_provenance():
 def test_console_staged_context_empty_state_uses_semantic_flag():
     state = ConsoleStagedContextState.empty()
 
-    assert state.summary == "No sources attached."
+    # Task-400: no summary line for the empty state -- the tray widget owns
+    # the "No sources attached. Stage sources from Library." guidance copy,
+    # and a summary here rendered the same copy twice.
+    assert state.summary == ""
     assert state.is_empty is True
 
 
@@ -209,7 +260,10 @@ def test_console_inspector_state_exposes_action_disabled_reasons():
     text = state.to_plain_text()
     actions_by_id = {action.widget_id: action for action in state.actions}
 
-    assert "Tools: 0 ready" in text
+    # TASK-1843: the Inspector row now shares the chip's derivation AND its
+    # honest zero placeholder. "0 ready" read as "no tools available" even
+    # though built-ins like calculator/get_current_datetime always exist.
+    assert "Tools: not loaded" in text
     assert "Sources: missing source" in text
     assert "RAG/source:" not in text
     assert actions_by_id[CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID].enabled is False
@@ -217,11 +271,10 @@ def test_console_inspector_state_exposes_action_disabled_reasons():
         actions_by_id[CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID].disabled_reason
         == CONSOLE_INSPECTOR_NO_APPROVAL_REASON
     )
-    assert actions_by_id[CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID].enabled is False
-    assert (
-        actions_by_id[CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID].disabled_reason
-        == CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON
-    )
+    # TASK-1843: "Review tool call" was removed. It gated on a counter
+    # production never populates, so it was permanently disabled while
+    # permanently claiming a reason -- and its handler was a notify() stub.
+    assert CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID not in actions_by_id
     assert actions_by_id[CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID].enabled is False
     assert (
         actions_by_id[CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID].disabled_reason
@@ -245,7 +298,162 @@ def test_console_inspector_state_enables_pending_approval_tools_and_chatbook_act
     assert state.has_pending_approval is True
     assert state.can_save_chatbook is True
     assert actions_by_id[CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID].enabled is True
-    assert actions_by_id[CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID].enabled is True
+    # TASK-1843: removed -- see the note in the disabled-reasons test above.
+    assert CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID not in actions_by_id
     assert actions_by_id[CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID].enabled is True
     rows_by_label = {row.label: row for row in state.rows}
     assert rows_by_label["Approvals"].status == "blocked"
+
+
+def test_console_inspector_save_chatbook_action_is_blocked_when_ephemeral():
+    """F2 (task-9 review): the run inspector's Save Chatbook action is a
+    third door onto the same write the workbench and composer bar already
+    gate. Must disable with the registry reason -- and still work normally
+    otherwise (the control)."""
+    from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+
+    blocked = ConsoleInspectorState.from_values(
+        artifact_status="Chatbook artifact available",
+        can_save_chatbook=True,
+        ephemeral=True,
+    )
+    blocked_actions = {action.widget_id: action for action in blocked.actions}
+    save_action = blocked_actions[CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID]
+    assert save_action.enabled is False
+    assert save_action.disabled_reason == blocked_reason(
+        "save-chatbook", ephemeral=True
+    )
+
+    normal = ConsoleInspectorState.from_values(
+        artifact_status="Chatbook artifact available",
+        can_save_chatbook=True,
+        ephemeral=False,
+    )
+    normal_actions = {action.widget_id: action for action in normal.actions}
+    assert normal_actions[CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID].enabled is True
+
+
+def test_assistant_label_names_the_active_character():
+    state = ConsoleControlState.from_values(
+        provider="llama_cpp", model="m", character="Seraphina"
+    )
+
+    assert state.assistant_label == "Character: Seraphina"
+
+
+def test_assistant_label_is_generic_without_an_identified_assistant():
+    state = ConsoleControlState.from_values(provider="llama_cpp", model="m")
+
+    assert state.assistant_label == "Assistant: General"
+
+
+def test_assistant_label_uses_existing_persona_name():
+    state = ConsoleControlState.from_values(
+        provider="llama_cpp",
+        model="m",
+        assistant_kind="persona",
+        assistant_name="Guide",
+        assistant_id="persona-7",
+    )
+
+    assert state.assistant_label == "Persona: Guide"
+
+
+def test_assistant_label_uses_existing_persona_id_when_name_is_missing():
+    state = ConsoleControlState.from_values(
+        provider="llama_cpp",
+        model="m",
+        assistant_kind="persona",
+        assistant_id="persona-7",
+    )
+
+    assert state.assistant_label == "Persona: persona-7"
+
+
+def test_assistant_label_normalizes_persona_values_and_keeps_character_precedence():
+    normalized_kind = ConsoleControlState.from_values(
+        assistant_kind=" Persona ",
+        assistant_name=" Guide ",
+    )
+    id_fallback = ConsoleControlState.from_values(
+        assistant_kind="persona",
+        assistant_name=" \t ",
+        assistant_id=" persona-7 ",
+    )
+    character = ConsoleControlState.from_values(
+        character=" Ada ",
+        assistant_kind="persona",
+        assistant_name="Guide",
+    )
+
+    assert normalized_kind.assistant_label == "Persona: Guide"
+    assert id_fallback.assistant_label == "Persona: persona-7"
+    assert character.assistant_label == "Character: Ada"
+
+
+def test_console_control_state_has_one_assistant_presentation_field() -> None:
+    parameters = inspect.signature(ConsoleControlState.from_values).parameters
+
+    assert "persona" not in parameters
+    assert "user_profile_label" not in ConsoleControlState.__dataclass_fields__
+    assert "character_label" not in ConsoleControlState.__dataclass_fields__
+    assert "assistant_label" in ConsoleControlState.__dataclass_fields__
+
+
+@pytest.mark.unit
+def test_chip_and_inspector_report_the_same_tool_count():
+    """TASK-1843: two surfaces in one panel must not contradict each other.
+
+    `console_tool_count` is read in five places and assigned in NONE, so the
+    built-in count is always 0. The chip was fixed to add the MCP count
+    (`effective_tool_count`); the Inspector row was not, so it read
+    "Tools: 0 ready" beside a chip reporting a real number.
+
+    This is the same bug shape already fixed once on the chip and missed on
+    the row -- so the fix belongs at the shared derivation, and this test
+    asserts the two agree rather than asserting either one's literal text.
+    """
+    control = ConsoleControlState.from_values(
+        provider="OpenAI", model="gpt-4o", tool_count=0, mcp_tool_count=12
+    )
+    inspector = ConsoleInspectorState.from_values(
+        tool_count=0, mcp_tool_count=12
+    )
+
+    tools_rows = [r for r in inspector.rows if r.label == "Tools"]
+    assert tools_rows, "inspector has no Tools row"
+    assert "12" in tools_rows[0].value, (
+        f"inspector says {tools_rows[0].value!r} while the chip says "
+        f"{control.tools_label!r} -- same panel, two numbers"
+    )
+    assert "12" in control.tools_label
+
+    # And the zero case must use the same honest placeholder, not "0 ready"
+    # which reads as "no tools available" when built-ins are always present.
+    zero_control = ConsoleControlState.from_values(
+        provider="OpenAI", model="gpt-4o", tool_count=0, mcp_tool_count=None
+    )
+    zero_inspector = ConsoleInspectorState.from_values(tool_count=0)
+    zero_row = [r for r in zero_inspector.rows if r.label == "Tools"][0]
+    assert "not loaded" in zero_control.tools_label
+    assert "not loaded" in zero_row.value, (
+        f"inspector zero-state says {zero_row.value!r}, chip says "
+        f"{zero_control.tools_label!r}"
+    )
+
+
+@pytest.mark.unit
+def test_permanently_dead_review_tool_call_action_is_gone():
+    """TASK-1843: a control that can never enable must not advertise a reason.
+
+    `Review tool call` gated on `console_tool_count`, which production never
+    populates -- so it was permanently disabled while permanently claiming
+    "No tool calls are ready for review", and its handler was a notify()
+    stub. PRODUCT.md requires unavailable states to be honest; a permanently
+    false one is the opposite.
+    """
+    inspector = ConsoleInspectorState.from_values(tool_count=0, mcp_tool_count=12)
+    labels = [a.label for a in inspector.actions]
+    assert not any("Review tool call" in lbl for lbl in labels), (
+        f"the dead action is still advertised: {labels}"
+    )

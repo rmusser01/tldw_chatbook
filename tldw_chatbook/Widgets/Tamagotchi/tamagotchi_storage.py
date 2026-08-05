@@ -13,6 +13,8 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 import logging
 
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
 # Import validators for state recovery
 try:
     from .validators import StateValidator
@@ -320,7 +322,7 @@ class SQLiteStorage(StorageAdapter):
     Provides robust storage with better performance for multiple pets.
     """
 
-    def __init__(self, db_path: str, enable_recovery: bool = True):
+    def __init__(self, db_path: str | Path, enable_recovery: bool = True):
         """
         Initialize SQLite storage.
 
@@ -330,12 +332,29 @@ class SQLiteStorage(StorageAdapter):
         """
         super().__init__(enable_recovery)
         self.db_path = Path(db_path).expanduser()
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._memory_conn: sqlite3.Connection | None = None
         self._init_db()
+
+    def _connect(self) -> sqlite3.Connection:
+        """Open this storage's registered private SQLite target."""
+        if str(self.db_path) == ":memory:":
+            if self._memory_conn is None:
+                self._memory_conn = connect_private_sqlite(
+                    "tamagotchi.sqlite",
+                    self.db_path,
+                )
+            return self._memory_conn
+        return connect_private_sqlite("tamagotchi.sqlite", self.db_path)
+
+    def close(self) -> None:
+        """Close the persistent in-memory connection, when present."""
+        if self._memory_conn is not None:
+            self._memory_conn.close()
+            self._memory_conn = None
 
     def _init_db(self) -> None:
         """Initialize database schema."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS tamagotchis (
                     pet_id TEXT PRIMARY KEY,
@@ -363,7 +382,7 @@ class SQLiteStorage(StorageAdapter):
 
     def load(self, pet_id: str) -> Optional[Dict[str, Any]]:
         """Load pet state from database."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM tamagotchis WHERE pet_id = ?", (pet_id,)
@@ -423,7 +442,7 @@ class SQLiteStorage(StorageAdapter):
             else:
                 db_fields["extra_data"] = None
 
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 # Build query dynamically based on available fields
                 fields = list(db_fields.keys())
                 placeholders = ["?" for _ in fields]
@@ -446,7 +465,7 @@ class SQLiteStorage(StorageAdapter):
     def delete(self, pet_id: str) -> bool:
         """Delete pet from database."""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.execute(
                     "DELETE FROM tamagotchis WHERE pet_id = ?", (pet_id,)
                 )
@@ -458,7 +477,7 @@ class SQLiteStorage(StorageAdapter):
     def list_pets(self) -> list[str]:
         """List all pet IDs in database."""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.execute(
                     "SELECT pet_id FROM tamagotchis ORDER BY updated_at DESC"
                 )
@@ -475,7 +494,7 @@ class SQLiteStorage(StorageAdapter):
             Dictionary with statistics
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 stats = {}
 
                 # Total pets

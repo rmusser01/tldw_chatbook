@@ -558,3 +558,102 @@ def test_import_book_malformed_priority_and_null_order_coerced(wb_manager):
     row = wb_manager.get_world_book_entries(new_id)[0]
     assert row["priority"] == 0
     assert row["insertion_order"] == 0
+
+
+def test_entry_regex_round_trips(wb_manager):
+    book_id = wb_manager.create_world_book("B")
+    eid = wb_manager.create_world_book_entry(book_id, ["w[ao]rden"], "c", regex=True)
+    assert wb_manager.get_world_book_entries(book_id)[0]["regex"] is True
+    wb_manager.update_world_book_entry(eid, regex=False)
+    assert wb_manager.get_world_book_entries(book_id)[0]["regex"] is False
+
+
+def test_entry_regex_defaults_false(wb_manager):
+    book_id = wb_manager.create_world_book("B")
+    wb_manager.create_world_book_entry(book_id, ["k"], "c")
+    assert wb_manager.get_world_book_entries(book_id)[0]["regex"] is False
+
+
+def test_export_import_preserves_regex(wb_manager):
+    book_id = wb_manager.create_world_book("B")
+    wb_manager.create_world_book_entry(book_id, ["w[ao]rden"], "c", regex=True)
+    data = wb_manager.export_world_book(book_id)
+    assert data["entries"][0]["regex"] is True
+    new_id = wb_manager.import_world_book(data, name_override="B copy")
+    assert wb_manager.get_world_book_entries(new_id)[0]["regex"] is True
+
+
+def test_get_conversations_for_world_book_round_trips(wb_manager):
+    db = wb_manager.db
+    db.add_conversation({"id": "conv-1", "title": "First case"})
+    db.add_conversation({"id": "conv-2", "title": None})  # NULL title
+    book_id = wb_manager.create_world_book("B")
+    wb_manager.associate_world_book_with_conversation("conv-1", book_id)
+    wb_manager.associate_world_book_with_conversation("conv-2", book_id)
+    rows = wb_manager.get_conversations_for_world_book(book_id)
+    by_id = {r["conversation_id"]: r["title"] for r in rows}
+    assert by_id == {"conv-1": "First case", "conv-2": "(untitled)"}
+    assert all(isinstance(r["conversation_id"], str) for r in rows)
+
+
+def test_get_conversations_for_world_book_empty_when_unattached(wb_manager):
+    book_id = wb_manager.create_world_book("B")
+    assert wb_manager.get_conversations_for_world_book(book_id) == []
+
+
+def _make_character(db, name="Hero"):
+    return db.add_character_card({"name": name})
+
+
+def test_attach_world_book_to_character_round_trip(wb_manager):
+    db = wb_manager.db
+    char_id = _make_character(db)
+    book_id = wb_manager.create_world_book("Lore")
+    wb_manager.create_world_book_entry(book_id, keys=["dragon"], content="A dragon.")
+
+    res = wb_manager.attach_world_book_to_character(book_id, char_id)
+    assert res["attached"] is True and res["name"] == "Lore"
+
+    got = wb_manager.get_world_books_for_character(char_id)
+    assert [g["name"] for g in got] == ["Lore"]
+    assert got[0]["entry_count"] == 1 and got[0]["enabled"] is True
+
+    # Idempotent by name.
+    assert wb_manager.attach_world_book_to_character(book_id, char_id)["attached"] is False
+    assert len(wb_manager.get_world_books_for_character(char_id)) == 1
+
+    # Detach.
+    assert wb_manager.detach_world_book_from_character(char_id, "Lore")["detached"] is True
+    assert wb_manager.get_world_books_for_character(char_id) == []
+    # Detach again = harmless no-op.
+    assert wb_manager.detach_world_book_from_character(char_id, "Lore")["detached"] is False
+
+
+def test_attach_snapshot_carries_matcher_fields_and_enabled(wb_manager):
+    db = wb_manager.db
+    char_id = _make_character(db, "Mage")
+    book_id = wb_manager.create_world_book("Regexy", enabled=False)
+    wb_manager.create_world_book_entry(
+        book_id, keys=["k"], content="c", regex=True,
+        secondary_keys=["s"], priority=7, selective=True,
+    )
+    wb_manager.attach_world_book_to_character(book_id, char_id)
+    record = db.get_character_card_by_id(char_id)
+    block = record["extensions"]["character_world_books"][0]
+    assert block["enabled"] is False  # augmented from the source book
+    entry = block["entries"][0]
+    assert entry["regex"] is True and entry["secondary_keys"] == ["s"]
+    assert entry["priority"] == 7 and entry["selective"] is True
+
+
+def test_get_world_books_for_character_dedups_hostile_duplicate_names(wb_manager):
+    db = wb_manager.db
+    char_id = _make_character(db, "Rogue")
+    dup = {"name": "Dupe", "entries": [{"keys": ["a"], "content": "x"}], "enabled": True}
+    db.update_character_card(
+        char_id,
+        {"extensions": {"character_world_books": [dup, dup]}},
+        expected_version=db.get_character_card_by_id(char_id)["version"],
+    )
+    rows = wb_manager.get_world_books_for_character(char_id)
+    assert [r["name"] for r in rows] == ["Dupe"]  # deduped, no crash

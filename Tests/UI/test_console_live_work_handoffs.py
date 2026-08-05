@@ -9,10 +9,15 @@ import pytest
 from textual.app import App
 
 from Tests.UI.test_destination_shells import DestinationHarness, _wait_for_selector
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.UI.Screens.schedules_screen import SchedulesScreen
+from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
+    SchedulesWorkbench,
+)
 from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
 
 
@@ -96,6 +101,37 @@ class ConsoleHarness(App):
 
 def _active_console_screen(host: ConsoleHarness):
     return host.screen_stack[-1]
+
+
+async def _wait_for_production_chat_screen(
+    app, pilot, *, timeout: float = 6.0
+) -> ChatScreen:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        screen = app.screen
+        if isinstance(screen, ChatScreen) and screen.region.width > 0:
+            await pilot.pause()
+            return screen
+        await pilot.pause(0.01)
+    raise AssertionError(
+        f"Timed out waiting for production ChatScreen; active={type(app.screen).__name__}"
+    )
+
+
+async def _wait_for_production_artifacts_screen(
+    app, pilot, *, timeout: float = 6.0
+) -> ArtifactsScreen:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        screen = app.screen
+        if isinstance(screen, ArtifactsScreen) and screen.region.width > 0:
+            await pilot.pause()
+            return screen
+        await pilot.pause(0.01)
+    raise AssertionError(
+        f"Timed out waiting for production ArtifactsScreen; "
+        f"active={type(app.screen).__name__}"
+    )
 
 
 def _screen_static_text(screen) -> str:
@@ -184,24 +220,11 @@ class StaticReadingDigestService:
         }
 
 
-class ThreadRecordingReadingDigestService(StaticReadingDigestService):
-    def __init__(self, outputs):
-        super().__init__(outputs)
-        self.call_threads = []
-
-    def list_reading_digest_outputs(self, *, schedule_id=None, limit=50, offset=0):
-        self.call_threads.append(threading.get_ident())
-        return super().list_reading_digest_outputs(
-            schedule_id=schedule_id,
-            limit=limit,
-            offset=offset,
-        )
-
-
 class StaticLocalChatbookService:
     def __init__(self, chatbooks):
         self.chatbooks = tuple(chatbooks)
         self.calls = []
+        self.get_calls = []
 
     async def list_chatbooks(self, *, q=None, limit=100, offset=0, **kwargs):
         self.calls.append(
@@ -213,6 +236,14 @@ class StaticLocalChatbookService:
             }
         )
         return list(self.chatbooks)[int(offset) : int(offset) + int(limit)]
+
+    async def get_chatbook(self, chatbook_id):
+        self.get_calls.append(chatbook_id)
+        for chatbook in self.chatbooks:
+            record_id = chatbook.get("chatbook_id") or chatbook.get("id")
+            if str(record_id) == str(chatbook_id):
+                return dict(chatbook)
+        raise KeyError(chatbook_id)
 
 
 async def _wait_for_destination_recovery_state(
@@ -270,21 +301,6 @@ async def _wait_for_destination_recovery_state(
                 "Owner: ACP runtime.",
             ),
             "Configure an ACP-compatible runtime in ACP before launching an ACP agent.",
-        ),
-        (
-            "schedules",
-            "#schedules-follow-in-console",
-            "#schedules-console-unavailable",
-            "empty-schedules",
-            (
-                "Select an active run",
-                "Unavailable: Console follow for Schedules.",
-                "Why: no active schedule run or reading digest output is available.",
-                "Next: Start or select a schedule run before opening it in Console.",
-                "Recovery: Schedules.",
-                "Owner: local schedule data.",
-            ),
-            "Start or select a schedule run before opening it in Console.",
         ),
         (
             "workflows",
@@ -422,8 +438,10 @@ def test_open_console_for_live_work_routes_to_chat_route():
     )
 
     assert seen == ["chat"]
-    assert isinstance(app.pending_console_launch, ConsoleLiveWorkLaunch)
-    assert app.pending_console_launch.to_pending_payload() == {
+    claim = app.pending_handoffs.claim(HandoffChannel.CONSOLE_LIVE_WORK)
+    assert claim is not None
+    assert isinstance(claim.value, ConsoleLiveWorkLaunch)
+    assert claim.value.to_pending_payload() == {
         "source": "workflows",
         "title": "Daily digest",
         "payload": {"run_id": "run-1"},
@@ -431,6 +449,8 @@ def test_open_console_for_live_work_routes_to_chat_route():
         "recovery": "Workflow is starting.",
         "action_label": "Open workflow run",
     }
+    assert app.pending_handoffs.acknowledge(claim) is True
+    assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
 
 def test_open_console_for_live_work_preserves_minimal_call_defaults():
@@ -440,8 +460,10 @@ def test_open_console_for_live_work_preserves_minimal_call_defaults():
 
     app.open_console_for_live_work(source="workflows", title="Daily digest")
 
-    assert isinstance(app.pending_console_launch, ConsoleLiveWorkLaunch)
-    assert app.pending_console_launch.to_pending_payload() == {
+    claim = app.pending_handoffs.claim(HandoffChannel.CONSOLE_LIVE_WORK)
+    assert claim is not None
+    assert isinstance(claim.value, ConsoleLiveWorkLaunch)
+    assert claim.value.to_pending_payload() == {
         "source": "workflows",
         "title": "Daily digest",
         "payload": {},
@@ -449,6 +471,8 @@ def test_open_console_for_live_work_preserves_minimal_call_defaults():
         "recovery": "Console has staged this live-work request.",
         "action_label": "Open in Console",
     }
+    assert app.pending_handoffs.acknowledge(claim) is True
+    assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
 
 def test_console_live_work_status_card_state_derives_stable_rows_from_launch():
@@ -503,7 +527,7 @@ def test_console_live_work_status_card_state_exposes_wc_primary_action():
     assert card_state.primary_action is not None
     assert card_state.primary_action.widget_id == "console-live-work-primary-action"
     assert card_state.primary_action.label == "Open Watchlists run"
-    assert card_state.primary_action.target_route == "subscriptions"
+    assert card_state.primary_action.target_route == "watchlists_collections"
     assert card_state.primary_action.target_id == "local:watchlist_run:91"
 
 
@@ -657,17 +681,28 @@ def test_app_console_live_work_primary_action_routes_wc_run_details():
     handled = app.open_console_live_work_primary_action(launch)
 
     assert handled is True
-    assert app.pending_subscription_initial_tab == "watchlist-runs"
-    assert app.pending_subscription_watchlist_run_id == "local:watchlist_run:91"
     app.post_message.assert_called_once()
-    assert app.post_message.call_args.args[0].screen_name == "subscriptions"
+    navigation = app.post_message.call_args.args[0]
+    assert navigation.screen_name == "watchlists_collections"
+    assert navigation.screen_context == {
+        "section": "runs",
+        "backend": "local",
+        "run_id": "local:watchlist_run:91",
+    }
+    assert not hasattr(app, "pending_watchlists_section")
+    assert not hasattr(app, "pending_watchlists_run_id")
     app.notify.assert_not_called()
 
 
-def test_schedules_console_follow_uses_home_dashboard_app_inputs():
+@pytest.mark.asyncio
+async def test_schedules_console_follow_uses_home_dashboard_app_inputs():
     app = _build_test_app()
     app.providers_models = {"OpenAI": ["gpt-4.1"]}
-    app._screen_states = {"chat": {"conversation_id": "c1"}}
+    app.screen_state_store.save(
+        "chat",
+        {"conversation_id": "c1"},
+        app._current_runtime_identity(),
+    )
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
         (
             HomeActiveWorkItem(
@@ -680,9 +715,9 @@ def test_schedules_console_follow_uses_home_dashboard_app_inputs():
             ),
         )
     )
-    screen = SchedulesScreen(app)
+    screen = SchedulesWorkbench(app)
 
-    item = screen._latest_console_follow_item()
+    item = await screen._latest_console_follow_item_from_adapter()
 
     assert getattr(item, "item_id", None) == "schedule:run:11"
     assert app.home_active_work_adapter.build_calls == [
@@ -693,39 +728,9 @@ def test_schedules_console_follow_uses_home_dashboard_app_inputs():
     ]
 
 
-@pytest.mark.asyncio
-async def test_schedules_destination_loads_console_follow_item_off_main_thread():
-    main_thread_id = threading.get_ident()
-    app = _build_test_app()
-    app.home_active_work_adapter = ThreadRecordingHomeActiveWorkAdapter(
-        (
-            HomeActiveWorkItem(
-                item_id="schedule:run:11",
-                title="Daily digest schedule",
-                source="Schedules",
-                status="running",
-                detail_route="schedules",
-                console_available=True,
-            ),
-        )
-    )
-    host = DestinationHarness(app, "schedules")
-
-    async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
-
-    assert app.home_active_work_adapter.call_threads
-    assert main_thread_id not in app.home_active_work_adapter.call_threads
-
-
 @pytest.mark.parametrize(
     ("route", "button_id", "expected_copy"),
     [
-        (
-            "schedules",
-            "schedules-follow-in-console",
-            "Unavailable: Console follow for Schedules.",
-        ),
         (
             "workflows",
             "workflows-launch-in-console",
@@ -749,13 +754,17 @@ async def test_skeletal_destination_console_actions_are_disabled_with_recovery_c
     host = DestinationHarness(app, route)
 
     async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
+        deadline = time.monotonic() + 2.0
+        while expected_copy not in _screen_static_text(host.screen):
+            if time.monotonic() >= deadline:
+                raise AssertionError(
+                    f"Timed out waiting for recovery copy: {expected_copy}"
+                )
+            await pilot.pause(0.01)
         button = host.screen.query_one(f"#{button_id}")
         assert button.disabled is True
         assert "unavailable" in str(button.label).lower()
-        assert expected_copy in " ".join(
-            str(widget.renderable) for widget in host.screen.query("Static")
-        )
+        assert expected_copy in _screen_static_text(host.screen)
         await pilot.click(f"#{button_id}")
         await pilot.pause(0.1)
 
@@ -775,13 +784,9 @@ async def test_schedules_destination_keeps_console_follow_disabled_without_activ
         button = screen.query_one("#schedules-follow-in-console")
 
         assert button.disabled is True
-        assert str(button.label) == "Console recovery unavailable"
-        assert "Unavailable: Console follow for Schedules." in _screen_static_text(
-            screen
-        )
-        assert (
-            "Next: Start or select a schedule run before opening it in Console."
-            in _screen_static_text(screen)
+        assert str(button.label) == "Follow in Console"
+        assert str(button.tooltip) == (
+            "Start or select a schedule run to enable Console follow."
         )
 
     app.open_active_home_item_in_console.assert_not_called()
@@ -819,10 +824,9 @@ async def test_schedules_destination_routes_latest_active_run_to_console():
         button = screen.query_one("#schedules-follow-in-console")
 
         assert button.disabled is False
-        assert "Daily digest schedule" in str(button.label)
-        assert "failed" in _screen_static_text(screen)
+        assert str(button.label) == "Follow in Console"
 
-        await pilot.click("#schedules-follow-in-console")
+        button.press()
         await pilot.pause(0.1)
 
     app.open_active_home_item_in_console.assert_called_once_with(
@@ -831,41 +835,14 @@ async def test_schedules_destination_routes_latest_active_run_to_console():
     )
 
 
-@pytest.mark.asyncio
-async def test_schedules_inspector_state_matches_active_run_status():
-    app = _build_test_app()
-    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
-        (
-            HomeActiveWorkItem(
-                item_id="schedule:run:7",
-                title="Daily digest schedule",
-                source="Schedules",
-                status="failed",
-                detail_route="schedules",
-                console_available=True,
-            ),
-        )
-    )
-    host = DestinationHarness(app, "schedules")
-
-    async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
-        screen = _active_console_screen(host)
-        screen_text = _screen_static_text(screen)
-
-        assert (
-            "Console can follow active schedule run: Daily digest schedule (failed)."
-            in screen_text
-        )
-        assert "State: failed" in screen_text
-        assert "State: ready" not in screen_text
-        assert "Retry/backoff: retry available from Schedules" in screen_text
-
-
 def test_workflows_console_launch_uses_home_dashboard_app_inputs():
     app = _build_test_app()
     app.providers_models = {"OpenAI": ["gpt-4.1"]}
-    app._screen_states = {"chat": {"conversation_id": "c1"}}
+    app.screen_state_store.save(
+        "chat",
+        {"conversation_id": "c1"},
+        app._current_runtime_identity(),
+    )
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
         (
             HomeActiveWorkItem(
@@ -1105,13 +1082,13 @@ async def test_watchlists_destination_routes_latest_active_run_to_console():
 async def test_watchlists_destination_logs_adapter_failure_and_disables_follow(
     monkeypatch,
 ):
-    from tldw_chatbook.UI.Screens import watchlists_collections_screen
+    from tldw_chatbook.UI.Watchlists_Modules import watchlists_console_handoff
 
     app = _build_test_app()
     app.home_active_work_adapter = RaisingHomeActiveWorkAdapter()
     app.open_active_home_item_in_console = Mock()
     logger = Mock()
-    monkeypatch.setattr(watchlists_collections_screen, "logger", logger, raising=False)
+    monkeypatch.setattr(watchlists_console_handoff, "logger", logger, raising=False)
     host = DestinationHarness(app, "watchlists_collections")
 
     async with host.run_test(size=(180, 40)) as pilot:
@@ -1128,9 +1105,9 @@ async def test_watchlists_destination_logs_adapter_failure_and_disables_follow(
     # The call site is `logger.opt(exception=True).warning(...)` -- loguru's
     # traceback capture (the stdlib `exc_info=True` kwarg is a silent no-op
     # under loguru) -- so the warning lands on the Mock returned by `.opt()`.
-    # Other sites on this screen also route through `.opt(exception=True)`
-    # (e.g. the snapshot-load debug), so assert on the chained warning mock
-    # rather than pinning an exact `.opt()` call count.
+    # It now lives on the extracted WatchlistsConsoleHandoff object (moved off
+    # the screen), so assert on the chained warning mock rather than pinning
+    # an exact `.opt()` call count.
     assert logger.opt.call_args_list
     assert all(c.kwargs.get("exception") is True for c in logger.opt.call_args_list)
     opt_warning = logger.opt.return_value.warning
@@ -1270,16 +1247,10 @@ async def test_schedules_destination_keeps_console_launch_disabled_without_diges
         button = screen.query_one("#schedules-follow-in-console")
 
         assert button.disabled is True
-        assert str(button.label) == "Console recovery unavailable"
-        assert "Unavailable: Console follow for Schedules." in _screen_static_text(
-            screen
+        assert str(button.label) == "Follow in Console"
+        assert str(button.tooltip) == (
+            "Start or select a schedule run to enable Console follow."
         )
-        assert (
-            "Next: Start or select a schedule run before opening it in Console."
-            in _screen_static_text(screen)
-        )
-        await pilot.click("#schedules-follow-in-console")
-        await pilot.pause(0.1)
 
     assert app.local_media_reading_service.calls == [
         {
@@ -1289,30 +1260,6 @@ async def test_schedules_destination_keeps_console_launch_disabled_without_diges
         }
     ]
     app.open_console_for_live_work.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_schedules_destination_loads_digest_output_off_main_thread():
-    main_thread_id = threading.get_ident()
-    app = _build_test_app()
-    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(())
-    app.local_media_reading_service = ThreadRecordingReadingDigestService(
-        (
-            {
-                "output_id": 91,
-                "schedule_id": "local-digest-12",
-                "title": "Morning Digest Output",
-                "metadata": {"item_count": 2, "schedule_name": "Morning Digest"},
-            },
-        )
-    )
-    host = DestinationHarness(app, "schedules")
-
-    async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
-
-    assert app.local_media_reading_service.call_threads
-    assert main_thread_id not in app.local_media_reading_service.call_threads
 
 
 @pytest.mark.asyncio
@@ -1341,18 +1288,9 @@ async def test_schedules_destination_routes_latest_digest_output_to_console():
         button = screen.query_one("#schedules-follow-in-console")
 
         assert button.disabled is False
-        assert "Morning Digest Output" in str(button.label)
-        text = _screen_static_text(screen)
-        assert "Console launch available" in text
-        assert "Console recovery unavailable" not in text
-        assert (
-            "Console can launch latest reading digest output: Morning Digest Output."
-            in text
-        )
-        assert "State: digest output available" in text
-        assert "State: ready" not in text
+        assert str(button.label) == "Follow in Console"
 
-        await pilot.click("#schedules-follow-in-console")
+        button.press()
         await pilot.pause(0.1)
 
     app.open_console_for_live_work.assert_called_once_with(
@@ -1708,8 +1646,7 @@ async def test_artifacts_destination_uses_numeric_id_tie_break_for_latest_chatbo
 @pytest.mark.asyncio
 async def test_artifacts_destination_consumes_pending_chatbook_target_before_latest_fallback():
     app = _build_test_app()
-    app.pending_artifacts_chatbook_target_id = "local:chatbook:77"
-    app.local_chatbook_service = StaticLocalChatbookService(
+    chatbook_service = StaticLocalChatbookService(
         (
             {
                 "chatbook_id": 77,
@@ -1726,16 +1663,28 @@ async def test_artifacts_destination_consumes_pending_chatbook_target_before_lat
         )
     )
     app.open_console_for_live_work = Mock()
-    host = DestinationHarness(app, "artifacts")
 
-    async with host.run_test(size=(180, 40)) as pilot:
-        screen = _active_console_screen(host)
+    async with app.run_test(size=(180, 40)) as pilot:
+        await _wait_for_production_chat_screen(app, pilot)
+        app.local_chatbook_service = chatbook_service
+        app.pending_handoffs.stage(
+            HandoffChannel.ARTIFACT_CHATBOOK_TARGET,
+            "local:chatbook:77",
+        )
+        app.post_message(NavigateToScreen("artifacts"))
+        screen = await _wait_for_production_artifacts_screen(app, pilot)
         await _wait_for_selector(screen, pilot, "#artifacts-console-available")
 
         text = _screen_static_text(screen)
         assert "Open Console for requested Chatbook artifact: Requested Pack." in text
         assert "Latest Pack" not in text
-        assert getattr(app, "pending_artifacts_chatbook_target_id", None) is None
+        assert not app.pending_handoffs.has_pending(
+            HandoffChannel.ARTIFACT_CHATBOOK_TARGET
+        )
+        assert (
+            app.pending_handoffs.claim(HandoffChannel.ARTIFACT_CHATBOOK_TARGET) is None
+        )
+        assert chatbook_service.get_calls == ["77"]
 
         await pilot.click("#artifacts-use-in-console")
 
@@ -1777,19 +1726,21 @@ async def test_artifacts_destination_distinguishes_chatbook_service_failure_from
 async def test_console_renders_pending_launch_context():
     ConsoleLiveWorkLaunch = _load_console_live_work_contract()
     app = _build_test_app()
-    app.pending_console_launch = {
-        "source": "workflows",
-        "title": "Daily digest",
-        "payload": {"attempt": 2, "run_id": "run-1"},
-        "status": "running",
-        "recovery": "Workflow is starting.",
-        "action_label": "Open workflow run",
-    }
-    host = ConsoleHarness(app)
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "workflows",
+            "title": "Daily digest",
+            "payload": {"attempt": 2, "run_id": "run-1"},
+            "status": "running",
+            "recovery": "Workflow is starting.",
+            "action_label": "Open workflow run",
+        },
+    )
 
-    async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
-        screen = _active_console_screen(host)
+    async with app.run_test(size=(180, 40)) as pilot:
+        screen = await _wait_for_production_chat_screen(app, pilot)
+        await _wait_for_selector(screen, pilot, "#console-pending-launch-card")
 
         assert screen.query_one("#console-pending-launch-card")
         assert len(screen.query("#console-live-work-source-readiness")) == 0
@@ -1830,7 +1781,8 @@ async def test_console_renders_pending_launch_context():
         assert "attempt: 2" in text
         assert "run_id: run-1" in text
         assert isinstance(screen._pending_console_launch_context, ConsoleLiveWorkLaunch)
-        assert app.pending_console_launch is None
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+        assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_LIVE_WORK) is None
 
 
 @pytest.mark.asyncio
@@ -1874,32 +1826,49 @@ async def test_console_renders_source_readiness_summary_without_pending_launch()
 @pytest.mark.asyncio
 async def test_console_wc_live_work_action_button_routes_run_details():
     app = _build_test_app()
-    app.pending_console_launch = {
-        "source": "Watchlists",
-        "title": "Daily security feed",
-        "payload": {"target_id": "local:watchlist_run:91", "run_id": 91},
-        "status": "failed",
-        "recovery": "Review the Watchlists run details or retry from Watchlists.",
-        "action_label": "Open Watchlists run",
-    }
-    app.post_message = Mock()
-    app.notify = Mock()
-    host = ConsoleHarness(app)
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "Watchlists",
+            "title": "Daily security feed",
+            "payload": {"target_id": "local:watchlist_run:91", "run_id": 91},
+            "status": "failed",
+            "recovery": ("Review the Watchlists run details or retry from Watchlists."),
+            "action_label": "Open Watchlists run",
+        },
+    )
 
-    async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
-        screen = _active_console_screen(host)
+    async with app.run_test(size=(180, 40)) as pilot:
+        screen = await _wait_for_production_chat_screen(app, pilot)
+        await _wait_for_selector(screen, pilot, "#console-live-work-primary-action")
+        navigation_messages = []
+        original_post_message = app.post_message
+
+        def record_and_post(message):
+            if getattr(message, "screen_name", None) is not None:
+                navigation_messages.append(message)
+            return original_post_message(message)
+
+        app.post_message = record_and_post
         button = screen.query_one("#console-live-work-primary-action")
         assert str(button.label) == "Open Watchlists run"
 
-        await pilot.click("#console-live-work-primary-action")
-        await pilot.pause(0.1)
+        button.press()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not navigation_messages:
+            await pilot.pause(0.01)
 
-    assert app.pending_subscription_initial_tab == "watchlist-runs"
-    assert app.pending_subscription_watchlist_run_id == "local:watchlist_run:91"
-    app.post_message.assert_called_once()
-    assert app.post_message.call_args.args[0].screen_name == "subscriptions"
-    app.notify.assert_not_called()
+        assert len(navigation_messages) == 1
+        navigation = navigation_messages[0]
+        assert navigation.screen_name == "watchlists_collections"
+        assert navigation.screen_context == {
+            "section": "runs",
+            "backend": "local",
+            "run_id": "local:watchlist_run:91",
+        }
+        assert not hasattr(app, "pending_watchlists_section")
+        assert not hasattr(app, "pending_watchlists_run_id")
+        app.post_message = original_post_message
 
 
 # ---------------------------------------------------------------------------
@@ -1998,6 +1967,60 @@ async def test_stage_console_library_rag_launch_restage_replaces_single_card():
         assert len(screen.query("#console-pending-launch-card")) == 1
         assert (
             screen.query_one("#console-live-work-status").renderable == "Status: staged"
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom():
+    """Task-400: swaps keep the pre-move card slot; the tray stays on top.
+
+    ``_frame_console_region`` styles the tray IN PLACE (adds a class and an
+    inline border, returns the same widget -- no wrapper container), so the
+    tray is a direct child of the inspector rail body, pinned as its FIRST
+    child. Live-work cards keep anchoring after the run-inspector block at
+    the bottom. This drives the real swap seam both directions.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-live-work-source-readiness")
+
+        rail_body = screen.query_one("#console-inspector-rail-body")
+        tray = screen.query_one("#console-staged-context-tray")
+        run_inspector = screen.query_one("#console-run-inspector")
+        # Ancestry evidence: the framed tray is a DIRECT child of the rail
+        # body (no frame wrapper), composed at the very top.
+        assert tray.parent is rail_body
+        assert tray.has_class("console-frame-quiet")
+        assert list(rail_body.children).index(tray) == 0
+
+        # Readiness -> pending-launch swap mounts after the run inspector.
+        screen._stage_console_library_rag_launch(_library_rag_launch("searching"))
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#console-pending-launch-card")
+        card = screen.query_one("#console-pending-launch-card")
+        children = list(rail_body.children)
+        assert card.parent is rail_body
+        assert (
+            children.index(tray) < children.index(run_inspector) < children.index(card)
+        )
+
+        # Pending-launch -> readiness swap (launch resolved) re-anchors too.
+        screen._pending_console_launch_context = None
+        assert screen._sync_console_pending_launch_surfaces() is True
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#console-live-work-source-readiness")
+        assert len(screen.query("#console-pending-launch-card")) == 0
+        readiness = screen.query_one("#console-live-work-source-readiness")
+        children = list(rail_body.children)
+        assert readiness.parent is rail_body
+        assert (
+            children.index(tray)
+            < children.index(run_inspector)
+            < children.index(readiness)
         )
 
 

@@ -1,0 +1,217 @@
+"""Quadrant-mosaic renderer tests (avatar/inline fallback sharpening).
+
+Half-block rendering samples one pixel per column (1x2 subpixels per cell);
+the quadrant mosaic samples 2x2 subpixels per cell using universal Block
+Elements glyphs, doubling horizontal detail with no font risk. These tests
+pin the glyph vocabulary, the resolution gain a half-block renderer cannot
+express (a left/right split inside ONE cell), and box-fit dimensions.
+"""
+
+import pytest
+from rich.console import Console
+
+PILImage = pytest.importorskip("PIL.Image")
+
+from tldw_chatbook.Utils.mosaic_render import QUADRANT_GLYPHS, mosaic_from_image
+
+
+def _render_text(renderable, width: int = 80) -> str:
+    console = Console(width=width, record=True, force_terminal=True)
+    console.print(renderable)
+    return console.export_text(styles=False)
+
+
+def test_left_right_split_resolves_inside_one_cell():
+    """A left/right color split renders inside ONE cell via quadrant glyphs."""
+    image = PILImage.new("RGB", (2, 2))
+    image.putpixel((0, 0), (0, 0, 0))
+    image.putpixel((0, 1), (0, 0, 0))
+    image.putpixel((1, 0), (255, 255, 255))
+    image.putpixel((1, 1), (255, 255, 255))
+
+    rendered = _render_text(mosaic_from_image(image, 1, 1))
+
+    assert "▌" in rendered or "▐" in rendered
+
+
+def test_solid_image_renders_uniform_cells():
+    """A solid-color image bakes to uniform full/space cells only."""
+    image = PILImage.new("RGB", (16, 16), (200, 30, 30))
+
+    rendered = _render_text(mosaic_from_image(image, 4, 2)).rstrip("\n")
+
+    used = {ch for line in rendered.splitlines() for ch in line}
+    assert used <= {" ", "█"}
+
+
+def test_output_fits_requested_cell_box():
+    """Rendered lines and columns never exceed the requested cell box."""
+    image = PILImage.effect_noise((400, 100), 90).convert("RGB")
+
+    rendered = _render_text(mosaic_from_image(image, 10, 5))
+
+    lines = [line for line in rendered.splitlines() if line.strip()]
+    assert 1 <= len(lines) <= 5
+    assert all(len(line.rstrip()) <= 10 for line in lines)
+
+
+def test_glyphs_stay_within_block_elements():
+    """Output glyphs stay within the universal Block Elements set."""
+    image = PILImage.open_from = None  # guard against accidental reuse
+    image = PILImage.effect_noise((32, 32), 64).convert("RGB")
+
+    rendered = _render_text(mosaic_from_image(image, 8, 4))
+
+    allowed = set(QUADRANT_GLYPHS) | {" ", "\n"}
+    assert set(rendered) <= allowed
+
+
+def test_rgba_input_is_composited_over_black():
+    """RGBA input composites over black instead of crashing or blanking."""
+    image = PILImage.new("RGBA", (8, 8), (255, 0, 0, 128))
+
+    console = Console(width=20, record=True, force_terminal=True)
+    console.print(mosaic_from_image(image, 4, 2))
+    styled = console.export_text(styles=True)
+
+    # 50% red over black composites to ~rgb(128,0,0) painted as cell
+    # backgrounds; a crash or blank renderable would carry no color at all.
+    assert "128;0;0" in styled or "127;0;0" in styled
+
+
+def test_square_image_fills_square_cell_box_without_vertical_stretch():
+    """Terminal cells are ~1:2 (w:h), so a 16x8-cell box is physically
+    square. A square image must fill BOTH dimensions of it -- sampling that
+    ignores the half-width of quadrant subpixels renders a square source as
+    a tall ellipse occupying only half the columns."""
+    image = PILImage.effect_noise((100, 100), 80).convert("RGB")
+
+    rendered = _render_text(mosaic_from_image(image, 16, 8))
+
+    lines = [line.rstrip() for line in rendered.splitlines() if line.strip()]
+    assert len(lines) == 8
+    assert max(len(line) for line in lines) == 16
+
+
+def test_cover_fit_fills_entire_box_with_center_crop():
+    """fit="cover" scales to FILL the box (cropping overflow) instead of
+    letterboxing: a very wide image still paints every cell row. Geometry
+    is asserted on the renderable's plain text (painted flat cells are
+    styled SPACES, so console text export would miscount them)."""
+    text = mosaic_from_image(
+        PILImage.new("RGB", (400, 100), (10, 200, 60)), 10, 5, fit="cover"
+    )
+
+    lines = text.plain.split("\n")
+    assert len(lines) == 5
+    assert all(len(line) == 10 for line in lines)
+
+
+def test_contain_stays_default():
+    """Default contain fit letterboxes a wide image below the full box height."""
+    text = mosaic_from_image(PILImage.new("RGB", (400, 100), (10, 200, 60)), 10, 5)
+
+    lines = text.plain.split("\n")
+    assert len(lines) < 5
+
+
+@pytest.mark.unit
+def test_monochrome_mosaic_stays_visible_without_colour():
+    """A colourless terminal must still show the portrait, not a blank box.
+
+    The colour mosaic encodes 100% of its information in BACKGROUND colour:
+    a flat cell is a space glyph with `on rgb(...)`. Strip colour -- Textual
+    does exactly that when NO_COLOR is set (`app.py` -> monochrome filter) --
+    and every cell becomes an ordinary space, so the avatar does not degrade,
+    it vanishes. A Windows user reported precisely that: no character image
+    at all in the Console rail.
+
+    In monochrome mode the glyph itself must carry the luminance, so the
+    portrait survives with no colour at all.
+    """
+    import io
+    import re
+
+    from rich.console import Console
+
+    # Left half dark, right half light -- a shape that must remain readable.
+    img = PILImage.new("RGB", (32, 32), (10, 10, 10))
+    for y in range(32):
+        for x in range(16, 32):
+            img.putpixel((x, y), (245, 245, 245))
+
+    def emitted(renderable, **console_kw):
+        buf = io.StringIO()
+        Console(file=buf, width=20, force_terminal=True, **console_kw).print(renderable)
+        return buf.getvalue()
+
+    # Colour path is unchanged: still carries the image, however it is drawn.
+    colour = emitted(mosaic_from_image(img, 16, 8, fit="contain"),
+                     color_system="truecolor")
+    assert re.findall(r"\x1b\[[0-9;]*m", colour), "colour mosaic lost its colour"
+
+    # Monochrome path: no colour escapes available, so the GLYPHS must carry it.
+    mono = mosaic_from_image(img, 16, 8, fit="contain", monochrome=True)
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", emitted(mono, color_system=None))
+    glyphs = set(plain.replace("\n", "")) - {" "}
+    assert glyphs, (
+        "monochrome mosaic rendered nothing but spaces -- invisible, which is "
+        "the reported bug"
+    )
+    # And it must be a real image, not a solid block: the dark half and the
+    # light half have to use different glyphs.
+    rows = [r for r in plain.splitlines() if r.strip()]
+    assert rows, "no rows rendered"
+    widest = max(rows, key=len)
+    left, right = widest[: len(widest) // 2], widest[len(widest) // 2 :]
+    assert set(left) != set(right), (
+        f"monochrome mosaic is uniform -- shape lost: {widest!r}"
+    )
+
+
+@pytest.mark.unit
+def test_monochrome_mosaic_is_never_blank_for_a_dark_portrait():
+    """A dark image must still render glyphs, not an all-space box.
+
+    Qodo review on PR #1183: the first monochrome ramp began with a literal
+    space, so every cell of a sufficiently dark portrait mapped to the
+    darkest bucket and the mosaic came out invisible -- reproducing the very
+    bug the monochrome path exists to fix. Character-card art on a dark
+    theme is precisely that case, so this was the common path, not an edge.
+
+    The ramp must have no blank bucket: the darkest ink still has to be ink.
+    """
+    import re
+
+    # Charcoal subject on near-black -- a dark character card.
+    img = PILImage.new("RGB", (48, 48), (12, 12, 14))
+    for y in range(14, 34):
+        for x in range(14, 34):
+            img.putpixel((x, y), (40, 38, 44))
+
+    mono = mosaic_from_image(img, 16, 8, fit="contain", monochrome=True)
+    glyphs = set(mono.plain.replace("\n", ""))
+    assert glyphs != {" "}, (
+        "dark portrait rendered as all spaces -- invisible, which is the bug "
+        "the monochrome path exists to prevent"
+    )
+    assert " " not in glyphs, (
+        f"monochrome ramp still has a blank bucket: {sorted(glyphs)}"
+    )
+
+    # Visible is not enough: the SHAPE has to survive. A dark portrait's
+    # whole luminance range can sit inside one ramp bucket, which renders a
+    # uniform block -- technically visible, useless as a portrait. The
+    # subject must be distinguishable from its background.
+    assert len(glyphs) > 1, (
+        f"dark portrait flattened to a single glyph {sorted(glyphs)} -- "
+        "visible but shapeless"
+    )
+
+    # Control: a light image must still differ from a dark one, or a ramp
+    # that mapped everything to one glyph would pass the assertions above.
+    light = PILImage.new("RGB", (48, 48), (230, 230, 230))
+    light_mono = mosaic_from_image(light, 16, 8, fit="contain", monochrome=True)
+    assert set(light_mono.plain.replace("\n", "")) != glyphs, (
+        "light and dark render identically -- the ramp has collapsed"
+    )

@@ -45,9 +45,24 @@ class ConsoleCommandProvider(Provider):
                 "Open a new Console chat tab (Ctrl+T)",
             ),
             (
+                "Console: New temporary chat",
+                screen.action_new_temporary_console_tab,
+                "Open a chat that is never saved locally",
+            ),
+            (
                 "Console: Focus composer",
                 screen.action_focus_console_composer_home,
                 "Return focus to the composer (Esc)",
+            ),
+            (
+                "Console: Switch workspace…",
+                screen.action_open_console_workspace_switcher,
+                "Change the active Console workspace (Alt+W)",
+            ),
+            (
+                "Console: New workspace",
+                screen.action_new_console_workspace,
+                "Create a local workspace and switch Console to it",
             ),
             (
                 "Console: Session settings…",
@@ -63,6 +78,11 @@ class ConsoleCommandProvider(Provider):
                 "Console: Edit system prompt",
                 screen.action_open_console_system_prompt_editor,
                 "Edit this session's system prompt (/system)",
+            ),
+            (
+                "Console: Insert image style…",
+                screen.action_open_console_style_insert,
+                "Browse image styles and insert an @style token (/generate-image)",
             ),
             (
                 "Console: View chat context",

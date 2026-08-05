@@ -2,6 +2,8 @@
 # Description: File contains
 #
 # Imports
+import importlib
+import threading
 from typing import Optional, Dict, Any, List
 
 #
@@ -29,15 +31,95 @@ from tldw_chatbook.TTS.base_backends import TTSBackendBase
 
 # --- Backend Registry ---
 class BackendRegistry:
-    """Registry for TTS backend classes"""
+    """Sealed bridge for the legacy wildcard TTS backend IDs."""
 
     _registry: Dict[str, type[TTSBackendBase]] = {}
+    _builtins_loaded = False
+    _load_lock = threading.Lock()
+    _builtin_ids = frozenset(
+        {
+            "openai_official_*",
+            "local_kokoro_*",
+            "elevenlabs_*",
+            "local_chatterbox_*",
+            "alltalk_*",
+            "local_higgs_*",
+        }
+    )
 
     @classmethod
-    def register(cls, backend_id: str, backend_class: type[TTSBackendBase]):
-        """Register a backend class"""
+    def register(cls, backend_id: str, backend_class: type[TTSBackendBase]) -> None:
+        """Reject runtime extension of the sealed legacy registry."""
+        raise RuntimeError("The sealed legacy registry accepts no new providers")
+
+    @classmethod
+    def _register_builtin(
+        cls, backend_id: str, backend_class: type[TTSBackendBase]
+    ) -> None:
+        if backend_id not in cls._builtin_ids:
+            raise ValueError(f"Unknown legacy backend ID: {backend_id}")
+        existing = cls._registry.get(backend_id)
+        if existing is not None and existing is not backend_class:
+            raise RuntimeError(f"Conflicting legacy backend: {backend_id}")
         cls._registry[backend_id] = backend_class
-        logger.info(f"Registered TTS backend: {backend_id} -> {backend_class.__name__}")
+
+    @classmethod
+    def ensure_builtins(cls) -> tuple[str, ...]:
+        """Load the enumerated legacy bridge once and return its IDs."""
+        if cls._builtins_loaded:
+            return tuple(cls._registry)
+        with cls._load_lock:
+            if not cls._builtins_loaded:
+                cls._load_builtin_classes()
+                cls._builtins_loaded = True
+        return tuple(cls._registry)
+
+    @classmethod
+    def _load_builtin_classes(cls) -> None:
+        builtin_imports = (
+            (
+                "openai_official_*",
+                "tldw_chatbook.TTS.backends.openai",
+                "OpenAITTSBackend",
+            ),
+            (
+                "local_kokoro_*",
+                "tldw_chatbook.TTS.backends.kokoro",
+                "KokoroTTSBackend",
+            ),
+            (
+                "elevenlabs_*",
+                "tldw_chatbook.TTS.backends.elevenlabs",
+                "ElevenLabsTTSBackend",
+            ),
+            (
+                "local_chatterbox_*",
+                "tldw_chatbook.TTS.backends.chatterbox",
+                "ChatterboxTTSBackend",
+            ),
+            (
+                "alltalk_*",
+                "tldw_chatbook.TTS.backends.alltalk",
+                "AllTalkTTSBackend",
+            ),
+            (
+                "local_higgs_*",
+                "tldw_chatbook.TTS.backends.higgs",
+                "HiggsAudioTTSBackend",
+            ),
+        )
+        for backend_id, module_name, class_name in builtin_imports:
+            try:
+                module = importlib.import_module(module_name)
+            except ImportError:
+                logger.warning("Legacy TTS backend is unavailable: {}", backend_id)
+                continue
+            try:
+                backend_class = getattr(module, class_name)
+            except AttributeError:
+                logger.warning("Legacy TTS backend is unavailable: {}", backend_id)
+                continue
+            cls._register_builtin(backend_id, backend_class)
 
     @classmethod
     def get(cls, backend_id: str) -> Optional[type[TTSBackendBase]]:
@@ -66,53 +148,7 @@ class TTSBackendManager:
         self._backends: Dict[str, TTSBackendBase] = {}
         self._initialized_backends: set[str] = set()
 
-        # Register built-in backends
-        self._register_builtin_backends()
-
-    def _register_builtin_backends(self):
-        """Register built-in backend implementations"""
-        # Lazy imports to avoid circular dependencies
-        try:
-            from tldw_chatbook.TTS.backends.openai import OpenAITTSBackend
-
-            BackendRegistry.register("openai_official_*", OpenAITTSBackend)
-        except ImportError:
-            logger.warning("OpenAI TTS backend not available")
-
-        try:
-            from tldw_chatbook.TTS.backends.kokoro import KokoroTTSBackend
-
-            BackendRegistry.register("local_kokoro_*", KokoroTTSBackend)
-        except ImportError:
-            logger.warning("Kokoro TTS backend not available")
-
-        try:
-            from tldw_chatbook.TTS.backends.elevenlabs import ElevenLabsTTSBackend
-
-            BackendRegistry.register("elevenlabs_*", ElevenLabsTTSBackend)
-        except ImportError:
-            logger.warning("ElevenLabs TTS backend not available")
-
-        try:
-            from tldw_chatbook.TTS.backends.chatterbox import ChatterboxTTSBackend
-
-            BackendRegistry.register("local_chatterbox_*", ChatterboxTTSBackend)
-        except ImportError:
-            logger.warning("Chatterbox TTS backend not available")
-
-        try:
-            from tldw_chatbook.TTS.backends.alltalk import AllTalkTTSBackend
-
-            BackendRegistry.register("alltalk_*", AllTalkTTSBackend)
-        except ImportError:
-            logger.warning("AllTalk TTS backend not available")
-
-        try:
-            from tldw_chatbook.TTS.backends.higgs import HiggsAudioTTSBackend
-
-            BackendRegistry.register("local_higgs_*", HiggsAudioTTSBackend)
-        except ImportError:
-            logger.warning("Higgs Audio TTS backend not available")
+        BackendRegistry.ensure_builtins()
 
     async def get_backend(self, backend_id: str) -> Optional[TTSBackendBase]:
         if backend_id not in self._backends:
@@ -179,6 +215,21 @@ class TTSBackendManager:
             if openai_key:
                 config["OPENAI_API_KEY"] = openai_key
 
+        elif backend_id.startswith("elevenlabs"):
+            import os
+
+            elevenlabs_key = os.getenv("ELEVENLABS_API_KEY")
+            if not elevenlabs_key:
+                api_settings = self.app_config.get("API", {})
+                if isinstance(api_settings, dict):
+                    elevenlabs_key = api_settings.get("elevenlabs_api_key")
+            if not elevenlabs_key:
+                normalized_settings = self.app_config.get("elevenlabs_api", {})
+                if isinstance(normalized_settings, dict):
+                    elevenlabs_key = normalized_settings.get("api_key")
+            if elevenlabs_key:
+                config["ELEVENLABS_API_KEY"] = elevenlabs_key
+
         elif backend_id.startswith("local_kokoro"):
             # Get Kokoro-specific paths from environment or config
             import os
@@ -190,24 +241,25 @@ class TTSBackendManager:
                 "KOKORO_USE_ONNX": use_onnx,
                 "KOKORO_MODEL_PATH": os.getenv(
                     "KOKORO_MODEL_PATH",
-                    self.app_config.get(
+                    config.get(
                         "KOKORO_ONNX_MODEL_PATH_DEFAULT", "models/kokoro-v0_19.onnx"
                     )
                     if use_onnx
-                    else self.app_config.get(
+                    else config.get(
                         "KOKORO_PT_MODEL_PATH_DEFAULT", "models/kokoro-v0_19.pth"
                     ),
                 ),
                 "KOKORO_VOICES_JSON_PATH": os.getenv(
                     "KOKORO_VOICES_PATH",
-                    self.app_config.get(
-                        "KOKORO_ONNX_VOICES_JSON_DEFAULT", "models/voices.json"
-                    ),
+                    config.get("KOKORO_ONNX_VOICES_JSON_DEFAULT", "models/voices.json"),
                 ),
-                "KOKORO_DEVICE": self.app_config.get("KOKORO_DEVICE_DEFAULT", "cpu"),
-                "KOKORO_MAX_TOKENS": self.app_config.get("KOKORO_MAX_TOKENS", 500),
-                "KOKORO_ENABLE_VOICE_MIXING": self.app_config.get(
+                "KOKORO_DEVICE": config.get("KOKORO_DEVICE_DEFAULT", "cpu"),
+                "KOKORO_MAX_TOKENS": config.get("KOKORO_MAX_TOKENS", 500),
+                "KOKORO_ENABLE_VOICE_MIXING": config.get(
                     "KOKORO_ENABLE_VOICE_MIXING", False
+                ),
+                "KOKORO_TRACK_PERFORMANCE": config.get(
+                    "KOKORO_TRACK_PERFORMANCE", True
                 ),
             }
             config.update(kokoro_defaults)
@@ -216,53 +268,61 @@ class TTSBackendManager:
             # Get Higgs-specific configuration
             import os
 
+            higgs_settings = self.app_config.get("HiggsSettings", {})
+            if not isinstance(higgs_settings, dict):
+                higgs_settings = {}
+
+            def higgs_setting(key: str, default: Any) -> Any:
+                section_key = key.removeprefix("HIGGS_").lower()
+                return self.app_config.get(
+                    key,
+                    higgs_settings.get(section_key, default),
+                )
+
             higgs_defaults = {
                 "HIGGS_MODEL_PATH": os.getenv(
                     "HIGGS_MODEL_PATH",
-                    self.app_config.get(
-                        "HIGGS_MODEL_PATH", "bosonai/higgs-audio-v2-generation-3B-base"
+                    higgs_setting(
+                        "HIGGS_MODEL_PATH",
+                        "bosonai/higgs-audio-v2-generation-3B-base",
                     ),
                 ),
-                "HIGGS_DEVICE": self.app_config.get(
+                "HIGGS_DEVICE": higgs_setting(
                     "HIGGS_DEVICE", "cuda" if self._check_cuda_available() else "cpu"
                 ),
-                "HIGGS_ENABLE_FLASH_ATTN": self.app_config.get(
+                "HIGGS_ENABLE_FLASH_ATTN": higgs_setting(
                     "HIGGS_ENABLE_FLASH_ATTN", True
                 ),
-                "HIGGS_DTYPE": self.app_config.get("HIGGS_DTYPE", "bfloat16"),
+                "HIGGS_DTYPE": higgs_setting("HIGGS_DTYPE", "bfloat16"),
                 "HIGGS_VOICE_SAMPLES_DIR": os.path.expanduser(
-                    self.app_config.get(
+                    higgs_setting(
                         "HIGGS_VOICE_SAMPLES_DIR", "~/.config/tldw_cli/higgs_voices"
                     )
                 ),
-                "HIGGS_ENABLE_VOICE_CLONING": self.app_config.get(
+                "HIGGS_ENABLE_VOICE_CLONING": higgs_setting(
                     "HIGGS_ENABLE_VOICE_CLONING", True
                 ),
-                "HIGGS_MAX_REFERENCE_DURATION": self.app_config.get(
+                "HIGGS_MAX_REFERENCE_DURATION": higgs_setting(
                     "HIGGS_MAX_REFERENCE_DURATION", 30
                 ),
-                "HIGGS_DEFAULT_LANGUAGE": self.app_config.get(
-                    "HIGGS_DEFAULT_LANGUAGE", "en"
-                ),
-                "HIGGS_ENABLE_BACKGROUND_MUSIC": self.app_config.get(
+                "HIGGS_DEFAULT_LANGUAGE": higgs_setting("HIGGS_DEFAULT_LANGUAGE", "en"),
+                "HIGGS_ENABLE_BACKGROUND_MUSIC": higgs_setting(
                     "HIGGS_ENABLE_BACKGROUND_MUSIC", False
                 ),
-                "HIGGS_ENABLE_MULTI_SPEAKER": self.app_config.get(
+                "HIGGS_ENABLE_MULTI_SPEAKER": higgs_setting(
                     "HIGGS_ENABLE_MULTI_SPEAKER", True
                 ),
-                "HIGGS_SPEAKER_DELIMITER": self.app_config.get(
+                "HIGGS_SPEAKER_DELIMITER": higgs_setting(
                     "HIGGS_SPEAKER_DELIMITER", "|||"
                 ),
-                "HIGGS_MAX_TOKENS": self.app_config.get("HIGGS_MAX_TOKENS", 500),
-                "HIGGS_TRACK_PERFORMANCE": self.app_config.get(
+                "HIGGS_MAX_TOKENS": higgs_setting("HIGGS_MAX_TOKENS", 500),
+                "HIGGS_TRACK_PERFORMANCE": higgs_setting(
                     "HIGGS_TRACK_PERFORMANCE", True
                 ),
-                "HIGGS_MAX_NEW_TOKENS": self.app_config.get(
-                    "HIGGS_MAX_NEW_TOKENS", 4096
-                ),
-                "HIGGS_TEMPERATURE": self.app_config.get("HIGGS_TEMPERATURE", 0.7),
-                "HIGGS_TOP_P": self.app_config.get("HIGGS_TOP_P", 0.9),
-                "HIGGS_REPETITION_PENALTY": self.app_config.get(
+                "HIGGS_MAX_NEW_TOKENS": higgs_setting("HIGGS_MAX_NEW_TOKENS", 4096),
+                "HIGGS_TEMPERATURE": higgs_setting("HIGGS_TEMPERATURE", 0.7),
+                "HIGGS_TOP_P": higgs_setting("HIGGS_TOP_P", 0.9),
+                "HIGGS_REPETITION_PENALTY": higgs_setting(
                     "HIGGS_REPETITION_PENALTY", 1.1
                 ),
             }

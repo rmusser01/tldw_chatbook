@@ -15,7 +15,7 @@ from unittest.mock import Mock, patch, MagicMock
 
 # Import the transcription service and related classes
 from tldw_chatbook.Local_Ingestion.transcription_service import (
-    TranscriptionService,
+    _LegacyTranscriptionBackend as TranscriptionService,
     TranscriptionError,
     LIGHTNING_WHISPER_AVAILABLE,
 )
@@ -591,7 +591,7 @@ class TestMLXWhisperIntegration:
 class TestMLXWhisperPerformance:
     """Performance benchmarking tests for MLX Whisper."""
 
-    @pytest.mark.benchmark
+    @pytest.mark.performance
     @pytest.mark.slow
     def test_transcription_speed(self, real_transcription_service, test_audio_file):
         """Benchmark transcription speed with different configurations."""

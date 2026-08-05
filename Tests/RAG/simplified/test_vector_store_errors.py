@@ -6,7 +6,7 @@ Tests error handling, dimension mismatches, and recovery scenarios.
 
 import pytest
 import numpy as np
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import tempfile
 
 from tldw_chatbook.RAG_Search.simplified.vector_store import (
@@ -95,6 +95,19 @@ class TestVectorStoreDimensionErrors:
 class TestChromaVectorStoreErrors:
     """Test error handling specific to ChromaVectorStore."""
 
+    def test_close_releases_underlying_chroma_client(self, tmp_path):
+        """Test that closing the store releases Chroma's SQLite resources."""
+        store = ChromaVectorStore(persist_directory=str(tmp_path))
+        client = MagicMock()
+        store._client = client
+        store._collection = MagicMock()
+
+        store.close()
+
+        client.close.assert_called_once_with()
+        assert store._client is None
+        assert store._collection is None
+
     def test_chroma_connection_failure(self):
         """Test handling of ChromaDB connection failures."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -127,8 +140,13 @@ class TestChromaVectorStoreErrors:
                 # Should handle permission error gracefully
                 ChromaVectorStore(persist_directory=temp_dir + "/subdir")
                 # Depending on OS, this might fail at different points
-            except (OSError, PermissionError):
-                # Expected behavior
+            except (OSError, PermissionError, ValueError):
+                # Expected behavior. ValueError included because (task-482)
+                # ChromaVectorStore now validates persist_directory up front
+                # via validate_chroma_persist_directory(), whose existence
+                # probe can itself raise PermissionError while stat'ing a
+                # path under a directory it can't traverse -- that gets
+                # wrapped as ValueError by path_validation.validate_path_simple.
                 pass
             finally:
                 # Restore permissions for cleanup

@@ -19,9 +19,9 @@ from tldw_chatbook.Widgets.Console.console_model_popover import (
     CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
     ConsoleModelPopover,
 )
-from tldw_chatbook.Widgets.Console.console_rail_section import (
-    CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
-    ConsoleRailSectionHeader,
+from tldw_chatbook.Widgets.destination_rail import (
+    RAIL_SECTION_TOGGLE_PREFIX,
+    DestinationRailSectionHeader,
 )
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.Console.console_setup_modal import (
@@ -36,12 +36,17 @@ from tldw_chatbook.Widgets.Console.console_workspace_context import (
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
+    ConsoleConversationBrowserInputRow,
+    build_console_conversation_browser_state,
+)
 from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceContextState
 
 
 class _HeaderApp(App):
     def compose(self):
-        yield ConsoleRailSectionHeader(
+        yield DestinationRailSectionHeader(
             "Details",
             section_id="details",
             open=False,
@@ -55,7 +60,7 @@ async def test_rail_section_header_renders_title_and_toggle():
     async with app.run_test(size=(60, 10)):
         title = app.query_one("#console-rail-section-title-details", Static)
         assert str(getattr(title.renderable, "plain", title.renderable)) == "Details"
-        toggle = app.query_one(f"#{CONSOLE_RAIL_SECTION_TOGGLE_PREFIX}details", Button)
+        toggle = app.query_one(f"#{RAIL_SECTION_TOGGLE_PREFIX}details", Button)
         assert str(toggle.label) == "▸"
         assert toggle.tooltip == "Expand Details"
 
@@ -64,15 +69,15 @@ async def test_rail_section_header_renders_title_and_toggle():
 async def test_rail_section_header_sync_open_flips_toggle():
     app = _HeaderApp()
     async with app.run_test(size=(60, 10)):
-        header = app.query_one("#header-under-test", ConsoleRailSectionHeader)
+        header = app.query_one("#header-under-test", DestinationRailSectionHeader)
         header.sync_open(True)
-        toggle = app.query_one(f"#{CONSOLE_RAIL_SECTION_TOGGLE_PREFIX}details", Button)
+        toggle = app.query_one(f"#{RAIL_SECTION_TOGGLE_PREFIX}details", Button)
         assert str(toggle.label) == "▾"
         assert toggle.tooltip == "Collapse Details"
 
 
 def test_section_header_allows_border_height():
-    header = ConsoleRailSectionHeader("Session", section_id="session", open=True)
+    header = DestinationRailSectionHeader("Session", section_id="session", open=True)
     # Inline height constraints should be gone so CSS can set min-height 2.
     assert header.styles.height is None or header.styles.height.value != 1
     assert header.styles.max_height is None
@@ -106,6 +111,10 @@ def test_console_active_row_marker_and_close_glyphs():
 
 
 def _workspace_state() -> ConsoleWorkspaceContextState:
+    # TASK-1190: production always attaches a real (possibly empty) grouped
+    # conversation browser -- the transitional legacy compose path (taken
+    # only when conversation_browser is None) was retired, so this fixture
+    # carries an empty browser to match the one real production shape.
     return ConsoleWorkspaceContextState(
         heading="Convos & Workspaces",
         workspace_label="Workspace: Default",
@@ -114,6 +123,9 @@ def _workspace_state() -> ConsoleWorkspaceContextState:
         runtime_label="Runtime: none, file tools disabled",
         conversation_rows=(),
         conversation_empty_copy="No conversations yet.",
+        conversation_browser=build_console_conversation_browser_state(
+            rows=(), active_workspace_id=None
+        ),
         change_workspace_enabled=False,
         change_workspace_recovery="",
         new_conversation_enabled=False,
@@ -132,11 +144,14 @@ async def test_details_tray_renders_status_and_handoff_rows():
     app = _DetailsApp()
     async with app.run_test(size=(60, 30)):
         assert app.query_one("#console-workspace-authority-label")
-        assert app.query_one("#console-workspace-sync-label")
         assert app.query_one("#console-workspace-runtime-label")
-        assert app.query_one("#console-workspace-server-readiness-label")
         assert app.query_one("#console-workspace-handoff-title")
-        assert app.query_one("#console-workspace-acp-handoff-audit")
+        # TASK-715: sync/server/ACP rows are factory defaults here, so they
+        # collapse into a single plain not-configured line.
+        assert app.query_one("#console-workspace-server-features-collapsed")
+        assert not list(app.query("#console-workspace-sync-label"))
+        assert not list(app.query("#console-workspace-server-readiness-label"))
+        assert not list(app.query("#console-workspace-acp-handoff-audit"))
 
 
 class _ContextTrayApp(App):
@@ -509,11 +524,6 @@ from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (  # no
     ConsoleSessionSwitcherModal,
     ConsoleSwitcherChoice,
 )
-from tldw_chatbook.Workspaces.conversation_browser_state import (  # noqa: E402
-    ConsoleConversationBrowserInputRow,
-)
-
-
 def _switcher_rows() -> tuple[ConsoleConversationBrowserInputRow, ...]:
     def row(key, title, native=None, **kw):
         return ConsoleConversationBrowserInputRow(
@@ -843,3 +853,137 @@ async def test_popover_model_search_inserts_transient_option():
         option_values = [value for _, value in model_select._options]
         assert "anthropic/claude-x" in option_values
         assert model_select.value == "anthropic/claude-x"
+
+
+@pytest.mark.asyncio
+async def test_popover_preserves_prefilled_model_after_mount():
+    """TASK-364: the model Select must still show the session's current model
+    after mount — the provider Select's mount-time Select.Changed must not wipe
+    the prefill to blank (a user cannot confirm/Apply a model they can't see)."""
+    from textual.widgets import Select
+
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.pause()
+        model_select = app.screen.query_one("#console-popover-model", Select)
+        assert model_select.value == "model-a"
+
+
+@pytest.mark.asyncio
+async def test_popover_changing_provider_still_resets_the_model():
+    """TASK-364 guard must not over-fire: a REAL provider change (to one whose
+    models differ) must still clear the stale model selection."""
+    from textual.widgets import Select
+
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.pause()
+        provider_select = app.screen.query_one("#console-popover-provider", Select)
+        provider_select.value = "openai"
+        await pilot.pause()
+        model_select = app.screen.query_one("#console-popover-model", Select)
+        # The stale llama.cpp model must not linger under the new provider.
+        assert model_select.value != "model-a"
+
+
+@pytest.mark.asyncio
+async def test_popover_provider_options_use_display_names():
+    """TASK-364: the provider Select must use the same catalog display names as
+    the full settings modal ('llama.cpp'), not the raw 'llama_cpp' key."""
+    from textual.widgets import Select
+
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        provider_select = app.screen.query_one("#console-popover-provider", Select)
+        labels = {label: value for label, value in provider_select._options}
+        assert "llama.cpp" in labels
+        assert labels["llama.cpp"] == "llama_cpp"
+        assert "llama_cpp" not in labels
+
+
+@pytest.mark.asyncio
+async def test_popover_labels_temperature_input():
+    """TASK-364: the temperature Input needs a visible label — its placeholder
+    disappears once a value is present, leaving a bare cryptic number."""
+    from textual.widgets import Static
+
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        texts = [
+            str(getattr(w.renderable, "plain", w.renderable))
+            for w in app.screen.query(Static)
+        ]
+        assert any("Temperature" in text for text in texts)
+
+
+@pytest.mark.asyncio
+async def test_switcher_result_shows_saved_chat_vocabulary_not_in_progress():
+    """TASK-356 end-to-end: a saved conversation with a membership role
+    renders in the switcher as 'saved chat' (the rail's vocabulary), never
+    the raw 'in-progress', with a recency label derived from updated_sort."""
+
+    class _App(App):
+        async def on_mount(self) -> None:
+            row = ConsoleConversationBrowserInputRow(
+                row_key="conv-9",
+                conversation_id="conv-9",
+                native_session_id=None,
+                title="Websocket reconnect strategy",
+                scope_type="workspace",
+                workspace_id="ws-1",
+                workspace_label="Chats",
+                status="in-progress",
+                updated_sort="2026-07-04T10:00:00+00:00",
+            )
+            await self.push_screen(ConsoleSessionSwitcherModal(rows=(row,)))
+
+    app = _App()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.pause()
+        result = app.screen.query_one("#console-switcher-result-0", Button)
+        label = str(result.label)
+        assert "saved chat" in label
+        assert "in-progress" not in label
+
+
+def _overflow_conversation_browser():
+    rows = tuple(
+        ConsoleConversationBrowserInputRow(
+            row_key=f"c{i}",
+            conversation_id=f"c{i}",
+            native_session_id=None,
+            title=f"Chat {i}",
+            scope_type="global",
+            workspace_id=None,
+            workspace_label="Chats",
+            status="workspace-thread",
+            updated_label="1d",
+        )
+        for i in range(CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3)
+    )
+    return build_console_conversation_browser_state(rows=rows, active_workspace_id="ws-a")
+
+
+class _OverflowTrayApp(App):
+    def compose(self):
+        import dataclasses
+
+        state = dataclasses.replace(
+            _workspace_state(), conversation_browser=_overflow_conversation_browser()
+        )
+        yield ConsoleWorkspaceContextTray(state, id="overflow-tray")
+
+
+@pytest.mark.asyncio
+async def test_rail_discloses_conversations_hidden_by_the_cap_in_no_query_view():
+    """TASK-354: with more conversations than the per-group cap and no search
+    active, the rail must render an explicit overflow disclosure pointing at
+    Ctrl+K, instead of silently dropping the oldest with no affordance."""
+    app = _OverflowTrayApp()
+    async with app.run_test(size=(70, 40)):
+        status = app.query_one(
+            "#console-workspace-conversation-search-status", Static
+        )
+        text = str(getattr(status.renderable, "plain", status.renderable))
+        assert "3 more" in text
+        assert "Ctrl+K" in text

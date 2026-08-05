@@ -40,7 +40,11 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    ConsoleRunState,
+    ConsoleRunStatus,
+)
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS,
 )
@@ -369,3 +373,107 @@ async def test_console_streaming_message_excerpt_is_static_placeholder():
         rows = console._selected_console_message_inspector_rows()
         excerpt_row = next(row for row in rows if row.label == "Excerpt")
         assert excerpt_row.value == "Streaming…"
+
+
+def _pin_workspace_state(console):
+    """Patch the state build to a fixed (distinct-object) value so syncs are
+    a genuine "state unchanged" comparison, and count tray recomposes."""
+    original_build = console._build_console_workspace_context_state
+
+    def pinned_build(*args, **kwargs):
+        return replace(original_build(*args, **kwargs), heading="Pinned heading")
+
+    recompose_calls: list[int] = []
+    original_refresh = ConsoleWorkspaceContextTray.refresh
+
+    def counting_refresh(self, *args, **kwargs):
+        if kwargs.get("recompose"):
+            recompose_calls.append(1)
+        return original_refresh(self, *args, **kwargs)
+
+    return pinned_build, counting_refresh, recompose_calls
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_context_tray_not_recomposed_when_state_unchanged():
+    """TASK-344/349: unchanged run-tick syncs must not recompose the tray."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        pinned_build, counting_refresh, recompose_calls = _pin_workspace_state(console)
+
+        # The skip applies only while a run is genuinely active (semantic
+        # status, not the transcript timer). Set STREAMING deterministically
+        # — no real interval that could fire background syncs mid-measure.
+        controller = console._ensure_console_chat_controller()
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
+        )
+        with (
+            patch.object(
+                console, "_build_console_workspace_context_state", pinned_build
+            ),
+            patch.object(ConsoleWorkspaceContextTray, "refresh", counting_refresh),
+        ):
+            # First sync settles the pinned state onto the tray instance.
+            console._sync_console_workspace_context()
+            await pilot.pause()
+            first = len(recompose_calls)
+            # Subsequent identical ticks (the streaming-run case) must not
+            # recompose the tray again.
+            console._sync_console_workspace_context()
+            await pilot.pause()
+            console._sync_console_workspace_context()
+            await pilot.pause()
+            assert len(recompose_calls) == first, (
+                "unchanged-state ticks must not recompose the workspace "
+                "context tray (rail thrash during runs)"
+            )
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_context_fresh_tray_still_synced_mid_run():
+    """TASK-344/349 (PR #745 Qodo #3): a fresh tray from ANY mid-run
+    full-screen recompose must still get its healing sync_state push even
+    under the unchanged-state run skip — the skip only applies to an
+    already-synced instance whose DOM is known-consistent."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        pinned_build, counting_refresh, recompose_calls = _pin_workspace_state(console)
+
+        controller = console._ensure_console_chat_controller()
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
+        )
+        with (
+            patch.object(
+                console, "_build_console_workspace_context_state", pinned_build
+            ),
+            patch.object(ConsoleWorkspaceContextTray, "refresh", counting_refresh),
+        ):
+            console._sync_console_workspace_context()
+            await pilot.pause()
+            before = len(recompose_calls)
+
+            # Simulate a mid-run full-screen recompose: a FRESH tray instance
+            # with no per-widget synced marker. It must be recomposed once
+            # more despite the unchanged state (its DOM is not yet settled).
+            tray = console.query_one(
+                "#console-workspace-context", ConsoleWorkspaceContextTray
+            )
+            if hasattr(tray, "_console_workspace_context_synced"):
+                del tray._console_workspace_context_synced
+
+            console._sync_console_workspace_context()
+            await pilot.pause()
+            assert len(recompose_calls) == before + 1, (
+                "a fresh (post-recompose) tray must still get one healing "
+                "sync_state push during a run"
+            )

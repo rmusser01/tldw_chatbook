@@ -10,6 +10,7 @@ legacy chat defines those keys but never reads them.
 
 from __future__ import annotations
 
+import re
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -34,6 +35,76 @@ PIXELS_MAX_LINES = 40
 
 _RENDER_MODES: tuple[ConsoleImageViewMode, ...] = ("pixels", "graphics", "hidden")
 _LEGACY_TO_MODE = {"pixels": "pixels", "regular": "graphics"}
+
+
+def fit_image_cell_size(
+    pixel_width: int, pixel_height: int, box_cols: int, box_lines: int
+) -> tuple[int, int]:
+    """Fit a PIL image's pixel size into a cell box, preserving aspect ratio.
+
+    A ``textual_image.widget.Image`` sized with only ``max-width``/``max-height``
+    resolves its render region from the parent container's *settled* layout;
+    mounting at runtime (vs. compose time) can paint one tick before that
+    settles, asking the renderer to scale into a transient 0-width/height region
+    -- which PIL's ``resize()`` raises ``ValueError`` on. Setting BOTH cell
+    dimensions to explicit ints sidesteps that race (a fixed size resolves
+    without waiting on parent layout). Terminal cells are ~2x taller than wide
+    in pixels, so the image aspect is converted to "cell units" (halving the
+    height) before fitting.
+
+    Args:
+        pixel_width: Source image width in pixels.
+        pixel_height: Source image height in pixels.
+        box_cols: Target box width in character columns.
+        box_lines: Target box height in character lines.
+
+    Returns:
+        ``(width_cells, height_cells)``, each an int clamped to
+        ``[1, box_cols]`` / ``[1, box_lines]``. Degenerate input returns the
+        full box.
+    """
+    if pixel_width <= 0 or pixel_height <= 0:
+        return box_cols, box_lines
+    cell_aspect = pixel_width / (pixel_height / 2)
+    box_aspect = box_cols / box_lines
+    if cell_aspect >= box_aspect:
+        # Relatively wider than the box -> fit to width.
+        w_cells = box_cols
+        h_cells = max(1, round(box_cols / cell_aspect))
+    else:
+        # Relatively taller than the box -> fit to height.
+        h_cells = box_lines
+        w_cells = max(1, round(box_lines * cell_aspect))
+    w_cells = max(1, min(box_cols, w_cells))
+    h_cells = max(1, min(box_lines, h_cells))
+    return w_cells, h_cells
+
+
+def scale_image_for_cell_box(
+    image: "PILImage.Image", box_cols: int, box_lines: int
+) -> "PILImage.Image":
+    """Return a copy of ``image`` scaled to fit a character-cell box.
+
+    ``Pixels.from_image`` bakes one cell per source pixel row-pair, so a Pixels
+    renderable built for a *large* box and then placed in a *small* widget is
+    clipped by Rich, not scaled -- the viewer sees the image's top-left corner.
+    Sizing the source to the destination box before building Pixels is what
+    makes the whole image visible.
+
+    Args:
+        image: Source PIL image; never modified.
+        box_cols: Destination box width in character columns.
+        box_lines: Destination box height in character lines.
+
+    Returns:
+        A scaled copy that fits within ``box_cols`` x ``box_lines * 2`` pixels
+        (terminal cells are ~2x taller than wide), preserving aspect ratio.
+    """
+    scaled = image.copy()
+    scaled.thumbnail(
+        (max(1, box_cols), max(1, box_lines) * 2), PILImage.Resampling.LANCZOS
+    )
+    return scaled
 
 
 def next_view_mode(current: ConsoleImageViewMode) -> ConsoleImageViewMode:
@@ -61,6 +132,97 @@ def _chat_images_config(app_config: Mapping[str, Any]) -> Mapping[str, Any]:
     chat = source.get("chat")
     images = chat.get("images") if isinstance(chat, Mapping) else None
     return images if isinstance(images, Mapping) else {}
+
+
+def resolve_show_character_avatar(app_config: Mapping[str, Any]) -> bool:
+    """Whether the Console shows the active character's avatar (default True).
+
+    Reads ``[chat.images].show_character_avatar`` via the same both-shapes
+    accessor as ``resolve_default_mode`` (raw TOML or the live
+    ``COMPREHENSIVE_CONFIG_RAW`` nesting).
+
+    Args:
+        app_config: The application config mapping (``[chat.images]``
+            section is read; missing sections are tolerated).
+
+    Returns:
+        True unless explicitly disabled via ``show_character_avatar = false``.
+    """
+    value = _chat_images_config(app_config).get("show_character_avatar", True)
+    return bool(value)
+
+
+def resolve_render_remote_images(app_config: Mapping[str, Any]) -> bool:
+    """Whether the transcript renders images referenced by LINKS in replies.
+
+    Security-sensitive: fetching a model-suggested URL leaks the reader's
+    IP/user-agent to that host, so this is OFF unless the user explicitly
+    sets ``[chat.images] render_remote_images = true``. The fetch path
+    itself always goes through the egress-hardened image fetcher
+    (per-hop SSRF policy + byte caps) regardless of this setting.
+
+    Args:
+        app_config: The application config mapping (``[chat.images]``
+            section is read; missing sections are tolerated).
+
+    Returns:
+        True only when explicitly enabled.
+    """
+    return bool(_chat_images_config(app_config).get("render_remote_images", False))
+
+
+#: Markdown image links: ![alt](url) -- any http(s) URL.
+_MD_IMAGE_LINK_RE = re.compile(r"!\[[^\]]*\]\((https?://[^\s)]+)\)")
+#: Bare URLs are only treated as images when they end in an image
+#: extension (optionally followed by a query string).
+_BARE_IMAGE_URL_RE = re.compile(
+    r"(?<!\()\bhttps?://[^\s)\"'<>]+?\.(?:png|jpe?g|gif|webp)(?:\?[^\s)\"'<>]*)?",
+    re.IGNORECASE,
+)
+
+
+def extract_image_urls(text: str, *, limit: int = 3) -> list[str]:
+    """Extract renderable image URLs from message text.
+
+    Accepts markdown image links (any http(s) URL) and bare http(s) URLs
+    with an image extension. Order-preserving, deduplicated, capped.
+
+    Args:
+        text: The raw message body.
+        limit: Maximum URLs returned.
+
+    Returns:
+        Up to ``limit`` unique image URLs in first-appearance order.
+    """
+    found: list[str] = []
+    seen: set[str] = set()
+    matches = [
+        (m.start(), m.group(1)) for m in _MD_IMAGE_LINK_RE.finditer(text or "")
+    ] + [(m.start(), m.group(0)) for m in _BARE_IMAGE_URL_RE.finditer(text or "")]
+    for _pos, url in sorted(matches):
+        if url in seen:
+            continue
+        seen.add(url)
+        found.append(url)
+        if len(found) >= limit:
+            break
+    return found
+
+
+def resolve_react_character_expressions(app_config: Mapping[str, Any]) -> bool:
+    """Whether the Console avatar reacts (swaps images) as the character
+    thinks/speaks (default True). Reads ``[chat.images].react_character_expressions``
+    via the same both-shapes accessor as ``resolve_show_character_avatar``.
+
+    Args:
+        app_config: The application config mapping (the ``[chat.images]``
+            section is read; missing sections are tolerated).
+
+    Returns:
+        True unless explicitly disabled via ``react_character_expressions = false``.
+    """
+    value = _chat_images_config(app_config).get("react_character_expressions", True)
+    return bool(value)
 
 
 def resolve_default_mode(

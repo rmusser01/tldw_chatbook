@@ -3,6 +3,7 @@
 
 import dataclasses
 import json
+import time
 
 import pytest
 
@@ -19,9 +20,12 @@ from tldw_chatbook.Agents.agent_models import (
     ToolResult,
     ToolSchema,
 )
+from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_service import (
     SUBAGENT_SYSTEM_PROMPT,
     AgentService,
+    _call_with_timeout,
+    _usage_total_tokens,
 )
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
@@ -326,6 +330,30 @@ def test_spawn_creates_linked_child_with_clean_context(db):
     assert child_call[1] == {"role": "user", "content": "compute 6*7"}
     assert not any("delegate this" in m["content"] for m in child_call)
     assert db.count_subagent_runs("c") == 1
+
+
+def test_run_turn_records_assistant_message_id_on_primary_only(db):
+    """The primary run records the assistant_message_id it is handed; a
+    spawned sub-agent run records None (it produces no transcript reply)."""
+    service, _ = make_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "compute 6*7"}),  # parent turn 1
+            "sub answer: 42",  # CHILD turn 1
+            "The sub-agent says 42.",  # parent turn 2
+        ],
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "delegate this"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+        assistant_message_id="a1",
+    )
+    assert outcome.status == RUN_DONE and outcome.subagents_spawned == 1
+    assert db.get_run(run_id)["assistant_message_id"] == "a1"
+    child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
+    assert child["assistant_message_id"] is None
 
 
 def test_subagent_result_is_capped(db):
@@ -1007,3 +1035,298 @@ def test_native_endpoint_with_no_schemas_omits_tools_kwarg(db):
     )
     assert outcome.status == RUN_DONE
     assert "tools" not in chat.calls[0]
+
+
+def test_usage_total_tokens_reads_total():
+    assert _usage_total_tokens({"usage": {"total_tokens": 150}}) == 150
+
+
+def test_usage_total_tokens_sums_prompt_and_completion():
+    assert _usage_total_tokens(
+        {"usage": {"prompt_tokens": 100, "completion_tokens": 50}}
+    ) == 150
+
+
+def test_usage_total_tokens_none_when_absent_or_malformed():
+    assert _usage_total_tokens({"choices": []}) is None
+    assert _usage_total_tokens("a string") is None
+    assert _usage_total_tokens({"usage": "bad"}) is None
+    assert _usage_total_tokens({"usage": {"prompt_tokens": 10}}) is None
+    # Malformed values must not corrupt spend accounting (Qodo review):
+    assert _usage_total_tokens({"usage": {"total_tokens": True}}) is None  # bool
+    assert _usage_total_tokens({"usage": {"total_tokens": 0}}) is None
+    assert _usage_total_tokens({"usage": {"total_tokens": -7}}) is None
+    assert _usage_total_tokens(
+        {"usage": {"prompt_tokens": -5, "completion_tokens": 10}}
+    ) is None
+    assert _usage_total_tokens(
+        {"usage": {"prompt_tokens": False, "completion_tokens": 5}}
+    ) is None
+    assert _usage_total_tokens(
+        {"usage": {"prompt_tokens": 0, "completion_tokens": 0}}
+    ) is None
+    # Valid non-negative sum still works.
+    assert _usage_total_tokens(
+        {"usage": {"prompt_tokens": 0, "completion_tokens": 5}}
+    ) == 5
+
+
+def _service_with_chat(db, chat_call):
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    return AgentService(db=db, registry=registry, chat_call=chat_call)
+
+
+def test_call_model_uses_real_provider_usage(db):
+    def chat(**kwargs):
+        return {
+            "choices": [{"message": {"content": "hello there"}}],
+            "usage": {"total_tokens": 150},
+        }
+    service = _service_with_chat(db, chat)
+    cfg = AgentConfig(model="gpt-4o", system_prompt="s", native_tools=False)
+    call_model = service._make_call_model(cfg, "openai", [])
+    turn = call_model([{"role": "user", "content": "hi"}], ())
+    assert turn.tokens == 150
+
+
+def test_call_model_estimates_when_no_usage(db):
+    def chat(**kwargs):
+        return {"choices": [{"message": {"content": "hello there world"}}]}
+    service = _service_with_chat(db, chat)
+    cfg = AgentConfig(model="gpt-4o", system_prompt="s", native_tools=False)
+    call_model = service._make_call_model(cfg, "openai", [])
+    turn = call_model([{"role": "user", "content": "count these tokens"}], ())
+    # No provider usage -> estimate of sent payload + response text, always > 0.
+    assert turn.tokens > 0
+
+
+def test_call_model_estimate_strips_provider_prefix(db):
+    # A provider-qualified id (openai/gpt-4o-mini) must be normalized for token
+    # counting so the GPT framing overhead applies -> same estimate as the bare
+    # model. (Qodo review: prefixed models otherwise undercount.)
+    def chat(**kwargs):
+        return {"choices": [{"message": {"content": "hello there world"}}]}
+    service = _service_with_chat(db, chat)
+    msgs = [{"role": "user", "content": "count these tokens please"}]
+    prefixed = service._make_call_model(
+        AgentConfig(model="openai/gpt-4o-mini", system_prompt="s", native_tools=False),
+        "openai", [],
+    )(msgs, ())
+    bare = service._make_call_model(
+        AgentConfig(model="gpt-4o-mini", system_prompt="s", native_tools=False),
+        "openai", [],
+    )(msgs, ())
+    assert prefixed.tokens == bare.tokens
+    assert prefixed.tokens > 0
+
+
+def test_call_model_native_path_reports_provider_tokens(db):
+    """Native tool-call return path (turn.tool_calls set) must also report
+    real provider usage on .tokens -- the non-native tests above only cover
+    the early ``if not native: return ModelTurn(...)`` branch."""
+
+    def chat(**kwargs):
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [native_call("calculator", {"expression": "2+2"})],
+                    }
+                }
+            ],
+            "usage": {"total_tokens": 77},
+        }
+
+    service = _service_with_chat(db, chat)
+    cfg = AgentConfig(model="gpt-4o", system_prompt="s", native_tools=True)
+    call_model = service._make_call_model(cfg, "openai", [])
+    turn = call_model([{"role": "user", "content": "2+2?"}], ())
+    assert turn.tokens == 77
+    assert turn.tool_calls
+
+
+# task-327 (AC#4): per-tool-call timeout, enforced entirely in this impure
+# seam via a module-level helper. `agent_runtime.run_agent_loop` and
+# `LoopDeps.invoke_tool`'s type are unaffected -- the wrapping happens here,
+# around the builtin/custom registry.invoke_by_name path only.
+
+
+def test_call_with_timeout_returns_result_when_fast():
+    out = _call_with_timeout(lambda: ToolResult(ok=True, content="hi"), 5.0, "fast_tool")
+    assert out.ok and out.content == "hi"
+
+
+def test_call_with_timeout_trips_on_slow_call():
+    def slow():
+        time.sleep(2.0)
+        return ToolResult(ok=True, content="late")
+    t0 = time.monotonic()
+    out = _call_with_timeout(slow, 0.2, "slow_tool")
+    # Bounds the wrapper's own wall-clock: a future "cleanup" that added a
+    # blocking worker.join() before returning (defeating the timeout) would
+    # fail this assertion instead of just making the test slow.
+    assert time.monotonic() - t0 < 1.0
+    assert out.ok is False
+    assert "timed out" in out.error and "slow_tool" in out.error
+
+
+def test_call_with_timeout_wraps_exception():
+    def boom():
+        raise ValueError("kaboom")
+    out = _call_with_timeout(boom, 5.0, "bad_tool")
+    assert out.ok is False and "kaboom" in out.error
+
+
+def test_call_with_timeout_wraps_base_exception():
+    """_runner only caught Exception; a BaseException (asyncio.CancelledError,
+    SystemExit -- both reachable in-repo, see BuiltinToolProvider.invoke's
+    asyncio.run() and any tool wrapping argparse) left neither box key set,
+    so `return box["result"]` raised KeyError out of invoke_tool into the
+    pure loop instead of returning a failed ToolResult. Must not regress."""
+    def boom():
+        raise SystemExit("bye")
+    out = _call_with_timeout(boom, 5.0, "exiting_tool")
+    assert out.ok is False and "bye" in out.error
+
+
+def test_call_with_timeout_polls_cancellation_promptly():
+    """A blocking tool call must not wedge Stop for the full timeout ceiling.
+    While a tool is hung, run_agent_loop's own should_cancel() checks at
+    step/tool-call boundaries are unreachable -- this wait is the only place
+    that can observe a Stop until the call finishes or times out, so it must
+    poll should_cancel() itself rather than a single blocking join(seconds).
+    """
+    def slow():
+        time.sleep(2.0)
+        return ToolResult(ok=True, content="too late")
+
+    t0 = time.monotonic()
+    out = _call_with_timeout(slow, 5.0, "slow_tool", should_cancel=lambda: True)
+    elapsed = time.monotonic() - t0
+    assert out.ok is False
+    assert "cancelled" in out.error and "slow_tool" in out.error
+    # Well under the 5.0s timeout ceiling -- proves cancellation actually
+    # short-circuits the wait instead of merely being checked after it.
+    assert elapsed < 1.5
+
+
+def test_make_invoke_tool_wraps_slow_custom_tool_cancellable(db, monkeypatch):
+    """The should_cancel seam threaded through _make_invoke_tool (the
+    production wiring in _run_one) must let a Stop during a hung tool call
+    return promptly instead of waiting out max_tool_call_seconds."""
+    def chat(**kwargs):  # pragma: no cover - unused by this test
+        return {"choices": [{"message": {"content": "unused"}}]}
+
+    service = _service_with_chat(db, chat)
+
+    def slow_invoke_by_name(name, args):
+        time.sleep(2.0)
+        return ToolResult(ok=True, content="too late")
+
+    monkeypatch.setattr(service.registry, "invoke_by_name", slow_invoke_by_name)
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_call_seconds=5.0),
+    )
+    invoke_tool = service._make_invoke_tool(
+        cfg, disclosed_names={"calculator"}, should_cancel=lambda: True
+    )
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    t0 = time.monotonic()
+    result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
+    elapsed = time.monotonic() - t0
+    assert result.ok is False
+    assert "cancelled" in result.error and "calculator" in result.error
+    assert elapsed < 1.5
+
+
+def test_make_invoke_tool_bypasses_wrapper_when_unlimited(db, monkeypatch):
+    """max_tool_call_seconds=0 must skip _call_with_timeout entirely and
+    call straight through to the registry -- a real closure-level test, not
+    just a check of the branch condition. Without the monkeypatch below this
+    test would pass identically whether or not the wrapper is used, since a
+    fast call looks the same either way -- the monkeypatch makes it actually
+    prove the bypass by failing loudly if the wrapper is invoked at all."""
+    def chat(**kwargs):  # pragma: no cover - unused by this test
+        return {"choices": [{"message": {"content": "unused"}}]}
+
+    monkeypatch.setattr(
+        agent_service,
+        "_call_with_timeout",
+        lambda *a, **k: pytest.fail("wrapper used on the 0 path"),
+    )
+    service = _service_with_chat(db, chat)
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_call_seconds=0),
+    )
+    invoke_tool = service._make_invoke_tool(cfg, disclosed_names={"calculator"})
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
+    assert result.ok is True
+    assert json.loads(result.content)["result"] == 4
+
+
+def test_make_invoke_tool_wraps_slow_custom_tool_in_timeout(db, monkeypatch):
+    """A blocking custom tool provider must not wedge the run past
+    max_tool_call_seconds -- the boundary this task exists to add."""
+    def chat(**kwargs):  # pragma: no cover - unused by this test
+        return {"choices": [{"message": {"content": "unused"}}]}
+
+    service = _service_with_chat(db, chat)
+
+    def slow_invoke_by_name(name, args):
+        time.sleep(2.0)
+        return ToolResult(ok=True, content="too late")
+
+    monkeypatch.setattr(service.registry, "invoke_by_name", slow_invoke_by_name)
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_call_seconds=0.2),
+    )
+    invoke_tool = service._make_invoke_tool(cfg, disclosed_names={"calculator"})
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
+    assert result.ok is False
+    assert "timed out" in result.error and "calculator" in result.error
+
+
+def test_registry_timeout_for_reports_a_tools_own_ceiling():
+    from tldw_chatbook.Tools.tool_executor import Tool
+
+    class _Slow(Tool):
+        @property
+        def name(self) -> str:
+            return "slow_thing"
+
+        @property
+        def description(self) -> str:
+            return "d"
+
+        @property
+        def parameters(self) -> dict:
+            return {"type": "object", "properties": {}}
+
+        @property
+        def timeout_seconds(self) -> float:
+            return 42.0
+
+        async def execute(self, **kwargs):
+            return {}
+
+    provider = BuiltinToolProvider()
+    provider._tools["slow_thing"] = _Slow()
+    registry = ToolCatalogRegistry()
+    registry.register_provider(provider)
+
+    assert registry.timeout_for("slow_thing") == 42.0
+    assert registry.timeout_for("calculator") is None
+    assert registry.timeout_for("no_such_tool") is None

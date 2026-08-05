@@ -15,7 +15,7 @@ class _Gateway:
 
         return _R()
 
-    async def stream_chat(self, _resolution, _messages):
+    async def stream_chat(self, _resolution, _messages, **kwargs):
         if False:
             yield ""
 

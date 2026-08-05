@@ -117,6 +117,21 @@ class PermanentIngestError(FileIngestionError):
     """
 
 
+class DirectLocalSTTIngestError(FileIngestionError):
+    """A sanitized direct-local STT failure crossing the spawn boundary."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_detail: dict[str, Any],
+        failed_attempt: dict[str, Any],
+    ) -> None:
+        self.error_detail = error_detail
+        self.stt_failure_provenance = failed_attempt
+        super().__init__(message)
+
+
 _VIDEO_URL_HOSTS = ("youtube.com", "youtu.be", "vimeo.com", "dailymotion.com")
 _VIDEO_EXTS = (
     ".mp4",
@@ -589,8 +604,27 @@ def parse_local_file_for_ingest(
             # Process single audio file
             results = audio_processor.process_audio_files(
                 inputs=[str(file_path)],
-                transcription_model=options.get('transcription_model', chunk_options.get('transcription_model', 'base')),
-                transcription_language=options.get('language', chunk_options.get('transcription_language', 'en')),
+                transcription_provider=options.get(
+                    "transcription_provider", "faster-whisper"
+                ),
+                transcription_model_dir=options.get("transcription_model_dir"),
+                transcription_context=options.get("transcription_context"),
+                transcription_model=options.get(
+                    "transcription_model",
+                    chunk_options.get("transcription_model", "base"),
+                ),
+                transcription_language=options.get(
+                    "language",
+                    chunk_options.get("transcription_language", "en"),
+                ),
+                translation_target_language=options.get("translation_target_language"),
+                transcription_precision=options.get("transcription_precision"),
+                transcription_local_files_only=options.get(
+                    "transcription_local_files_only", False
+                ),
+                transcription_batch_route_resolved=options.get(
+                    "transcription_batch_route_resolved", False
+                ),
                 perform_chunking=True,
                 chunk_method=chunk_options.get('method', 'sentences'),
                 max_chunk_size=chunk_options.get('size', 500),
@@ -615,6 +649,12 @@ def parse_local_file_for_ingest(
             if results["results"]:
                 result_data = results["results"][0]
                 if result_data["status"] == "Error":
+                    if result_data.get("error_detail", {}).get("category") == "stt_failure":
+                        raise DirectLocalSTTIngestError(
+                            result_data.get("error", "Speech-to-text failed."),
+                            error_detail=result_data["error_detail"],
+                            failed_attempt=result_data["stt_failure_provenance"],
+                        )
                     raise FileIngestionError(
                         f"Audio processing failed: {result_data.get('error', 'Unknown error')}"
                     )
@@ -629,6 +669,10 @@ def parse_local_file_for_ingest(
                     "chunks": result_data.get("chunks", []),
                     "analysis": result_data.get("analysis", ""),
                     "metadata": result_data.get("metadata", {}),
+                    "transcription_model": result_data.get("transcription_model"),
+                    "transcription_provenance": result_data.get(
+                        "transcription_provenance"
+                    ),
                 }
             else:
                 raise FileIngestionError("Audio processing returned no results")
@@ -642,8 +686,27 @@ def parse_local_file_for_ingest(
             results = video_processor.process_videos(
                 inputs=[str(file_path)],
                 download_video_flag=False,  # Extract audio only for transcription
-                transcription_model=options.get('transcription_model', chunk_options.get('transcription_model', 'base')),
-                transcription_language=options.get('language', chunk_options.get('transcription_language', 'en')),
+                transcription_provider=options.get(
+                    "transcription_provider", "faster-whisper"
+                ),
+                transcription_model_dir=options.get("transcription_model_dir"),
+                transcription_context=options.get("transcription_context"),
+                transcription_model=options.get(
+                    "transcription_model",
+                    chunk_options.get("transcription_model", "base"),
+                ),
+                transcription_language=options.get(
+                    "language",
+                    chunk_options.get("transcription_language", "en"),
+                ),
+                translation_target_language=options.get("translation_target_language"),
+                transcription_precision=options.get("transcription_precision"),
+                transcription_local_files_only=options.get(
+                    "transcription_local_files_only", False
+                ),
+                transcription_batch_route_resolved=options.get(
+                    "transcription_batch_route_resolved", False
+                ),
                 perform_chunking=True,
                 chunk_method=chunk_options.get('method', 'sentences'),
                 max_chunk_size=chunk_options.get('size', 500),
@@ -668,6 +731,12 @@ def parse_local_file_for_ingest(
             if results["results"]:
                 result_data = results["results"][0]
                 if result_data["status"] == "Error":
+                    if result_data.get("error_detail", {}).get("category") == "stt_failure":
+                        raise DirectLocalSTTIngestError(
+                            result_data.get("error", "Speech-to-text failed."),
+                            error_detail=result_data["error_detail"],
+                            failed_attempt=result_data["stt_failure_provenance"],
+                        )
                     raise FileIngestionError(
                         f"Video processing failed: {result_data.get('error', 'Unknown error')}"
                     )
@@ -682,6 +751,10 @@ def parse_local_file_for_ingest(
                     "chunks": result_data.get("chunks", []),
                     "analysis": result_data.get("analysis", ""),
                     "metadata": result_data.get("metadata", {}),
+                    "transcription_model": result_data.get("transcription_model"),
+                    "transcription_provenance": result_data.get(
+                        "transcription_provenance"
+                    ),
                 }
             else:
                 raise FileIngestionError("Video processing returned no results")
@@ -801,14 +874,65 @@ def parse_local_file_for_ingest(
             'metadata': media_metadata,
             'file_path': raw_source if is_url else str(file_path),
             'warnings': warnings,
+            'transcription_model': result.get('transcription_model'),
+            'transcription_provenance': result.get('transcription_provenance'),
         }
 
+    except DirectLocalSTTIngestError:
+        raise
     except PermanentIngestError:
         # keep the permanent classification intact for classify_parse_failure
         raise
     except Exception as e:
         logger.error(f"Error parsing {file_type} file {file_path}: {e}")
         raise FileIngestionError(f"Failed to ingest {file_type} file: {str(e)}")
+
+
+def _reject_empty_extraction(payload: Dict[str, Any], file_type: str) -> None:
+    """Fail a parse that produced no text, rather than storing an empty row.
+
+    An import that extracts nothing used to be written as a media row with
+    empty content, reported as done in the queue and counted in the library
+    total -- an entry that looks imported but silently returns nothing from
+    search and RAG, with no signal to the user that anything went wrong.
+
+    An empty *source* is reported differently from a failed extraction: the
+    first is the file being what it is, the second means the content is there
+    but this install could not read it (often missing optional tooling).
+
+    Args:
+        payload: The dict returned by ``parse_local_file_for_ingest``.
+        file_type: Detected type, used in the message.
+
+    Raises:
+        FileIngestionError: When the payload carries no usable content.
+    """
+    if (payload.get("content") or "").strip():
+        return
+
+    source = payload.get("file_path") or ""
+    name = Path(source).name or source or "this source"
+
+    # URL sources never touch the filesystem, so only stat real local paths.
+    if source and not is_http_url(source):
+        try:
+            if Path(source).stat().st_size == 0:
+                # (task-2015) A zero-byte file fails identically on every
+                # attempt -- permanent, so the queue row withholds Retry
+                # (the retryable raise below stays retryable: installing
+                # the missing tooling genuinely can fix an extraction miss).
+                raise PermanentIngestError(
+                    f"{name} is empty; there was nothing to ingest."
+                )
+        except OSError:
+            # Unreadable/vanished: treat as an extraction failure below.
+            pass
+
+    raise FileIngestionError(
+        f"No text could be extracted from {name}. The {file_type} content may "
+        "be scanned images, or the tooling for this file type may not be "
+        "installed."
+    )
 
 
 def persist_parsed_media(
@@ -842,6 +966,7 @@ def persist_parsed_media(
             text regardless of which stage failed.
     """
     file_type = payload["file_type"]
+    _reject_empty_extraction(payload, file_type)
     try:
         logger.debug(f"Storing {file_type} content in database...")
         # Note: add_media_with_keywords returns tuple: (media_id, media_uuid, message)
@@ -853,6 +978,8 @@ def persist_parsed_media(
             url=payload["url"],
             analysis_content=payload["analysis_content"],
             author=payload["author"],
+            transcription_model=payload.get("transcription_model"),
+            transcription_provenance=payload.get("transcription_provenance"),
             ingestion_date=datetime.now().strftime("%Y-%m-%d"),
             chunks=payload["chunks"],
             chunk_options=payload["chunk_options"],
@@ -1142,14 +1269,10 @@ def quick_ingest(
     Returns:
         Ingestion result dictionary
     """
-    from ..config import get_cli_setting
+    from ..config import get_media_db_path
 
     if db_path is None:
-        db_config = get_cli_setting("database", {})
-        db_path = db_config.get(
-            "media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
-        )
-        db_path = Path(db_path).expanduser()
+        db_path = get_media_db_path()
 
     # Initialize database
     media_db = MediaDatabase(str(db_path), client_id="quick_ingest")

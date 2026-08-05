@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Mapping
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
 
 
 class ConsoleMessageRole(str, Enum):
@@ -24,11 +28,81 @@ class ConsoleRunStatus(str, Enum):
     IDLE = "idle"
     VALIDATING = "validating"
     STREAMING = "streaming"
+    CHECKING_CITATIONS = "checking_citations"
     COMPLETED = "completed"
     BLOCKED = "blocked"
     STOPPED = "stopped"
     FAILED = "failed"
     RETRYING = "retrying"
+
+
+class ConsoleRunMarker(str, Enum):
+    """Fleet-visible run marker for a session (parallel-agents spec §6).
+
+    Derived (never stored raw) by ``ConsoleChatController.run_marker_for``
+    from a session's live run state, pending-approval flag, and unvisited
+    terminal outcome. ``NONE`` is the steady state; the other four values
+    are what a tab/fleet-summary glyph renders for a session that is not
+    currently being viewed.
+    """
+
+    NONE = "none"
+    RUNNING = "running"
+    NEEDS_APPROVAL = "needs-approval"
+    FINISHED_OK = "finished-ok"
+    FINISHED_FAILED = "finished-failed"
+
+
+#: Glyph shown for each `ConsoleRunMarker` on Console session tabs and
+#: sidebar conversation-browser rows (parallel-agents spec §6, PA-T8). NONE
+#: maps to the empty string so an unmarked tab/row gets no glyph and no
+#: stray leading space -- callers must guard the space themselves, e.g.
+#: ``f"{glyph} {label}" if glyph else label``.
+CONSOLE_RUN_MARKER_GLYPHS: dict[ConsoleRunMarker, str] = {
+    ConsoleRunMarker.NONE: "",
+    ConsoleRunMarker.RUNNING: "●",
+    ConsoleRunMarker.NEEDS_APPROVAL: "◆",
+    ConsoleRunMarker.FINISHED_OK: "✓",
+    ConsoleRunMarker.FINISHED_FAILED: "✗",
+}
+
+
+#: Human-readable meaning for each `ConsoleRunMarker`, for tooltips that
+#: decode the fleet glyph in context rather than leaving a reader to infer
+#: ● / ◆ / ✓ / ✗ from shape alone (fleet-UX expert review F4, task-1233).
+#: `NONE` maps to the empty string -- same "guard with `if meaning:`"
+#: contract `CONSOLE_RUN_MARKER_GLYPHS` already documents for its own NONE
+#: entry, so an unmarked tab/row's tooltip gets no stray suffix.
+#:
+#: TWIN CONSTANT -- see `CONSOLE_FLEET_MARKER_LEGEND` in
+#: `tldw_chatbook/UI/Screens/chat_screen.py` (the F1 Help "Agents" section's
+#: legend line, task-1232). That legend deliberately uses its OWN shorter
+#: per-glyph wording ("running"/"needs approval"/"finished"/"failed") in one
+#: combined scannable line, distinct from this dict's fuller in-context
+#: phrasing ("agent running"/"waiting for approval"/"finished — unseen") --
+#: a deliberate register split (task-1233 review round 1), not drift. If you
+#: change what a glyph MEANS, update both.
+CONSOLE_RUN_MARKER_MEANINGS: dict[ConsoleRunMarker, str] = {
+    ConsoleRunMarker.NONE: "",
+    ConsoleRunMarker.RUNNING: "agent running",
+    ConsoleRunMarker.NEEDS_APPROVAL: "waiting for approval",
+    ConsoleRunMarker.FINISHED_OK: "finished — unseen",
+    ConsoleRunMarker.FINISHED_FAILED: "failed — unseen",
+}
+
+#: Reverse lookup from rendered glyph to its meaning, for callers along the
+#: sidebar conversation-browser pipeline that thread the resolved glyph
+#: *string* rather than the `ConsoleRunMarker` enum itself (the pipeline
+#: deliberately stores glyphs so `Workspaces/conversation_browser_state.py`
+#: stays free of a Chat-layer model import -- see that module's own
+#: `run_marker` docstrings). The empty NONE glyph is excluded so a lookup
+#: miss (no marker) and an explicit `""` marker both fall back the same way
+#: via `.get(glyph, "")`.
+CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH: dict[str, str] = {
+    glyph: CONSOLE_RUN_MARKER_MEANINGS[marker]
+    for marker, glyph in CONSOLE_RUN_MARKER_GLYPHS.items()
+    if glyph
+}
 
 
 ConsoleMessageStatus = Literal["complete", "pending", "streaming", "stopped", "failed"]
@@ -38,6 +112,54 @@ DEFAULT_CONSOLE_SESSION_TITLE = "Chat 1"
 
 CONSOLE_AUTO_TITLE_MAX_LENGTH = 30
 _DEFAULT_CONSOLE_SESSION_TITLE_RE = re.compile(r"^Chat \d+$")
+
+# Parallel-agents spec S4 (task-5): user-adjustable global cap on
+# simultaneous Console runs. Single source of truth for the default --
+# ConsoleChatController.max_parallel_runs reads it as the get_cli_setting
+# fallback, and settings_screen.py's DEFAULT_CONSOLE_MAX_PARALLEL_RUNS
+# aliases it so the settings UI and the controller can never drift apart.
+CONSOLE_DEFAULT_MAX_PARALLEL_RUNS = 3
+# send_refusal_copy names at most this many busy sessions before folding
+# the rest into an "and N more" suffix.
+CONSOLE_CAP_REFUSAL_TITLE_LIMIT = 3
+
+
+class ConsoleCitationPhase(str, Enum):
+    """Approved structural phases for transient citation presentation."""
+
+    CHECKING = "checking"
+    REPAIRING = "repairing"
+    SELECTED = "selected"
+
+
+class ConsoleCitationNoticeCode(str, Enum):
+    """Approved structural citation-result notices."""
+
+    REPAIRED = "repaired"
+    UNAVAILABLE = "unavailable"
+    CANCELED = "canceled"
+
+
+@dataclass(frozen=True)
+class ConsoleCitationPresentation:
+    """Content-free transient citation presentation metadata."""
+
+    phase: ConsoleCitationPhase
+    notice_code: ConsoleCitationNoticeCode | None = None
+    original_attempt_available: bool = False
+
+    def __post_init__(self) -> None:
+        """Reject unbounded or non-structural presentation values."""
+        if not isinstance(self.phase, ConsoleCitationPhase):
+            raise ValueError("phase must be an approved ConsoleCitationPhase")
+        if self.notice_code is not None and not isinstance(
+            self.notice_code, ConsoleCitationNoticeCode
+        ):
+            raise ValueError(
+                "notice_code must be an approved ConsoleCitationNoticeCode"
+            )
+        if type(self.original_attempt_available) is not bool:
+            raise ValueError("original_attempt_available must be a bool")
 
 
 def is_default_console_session_title(title: str) -> bool:
@@ -181,7 +303,10 @@ class ConsoleRunState:
     @property
     def is_stop_allowed(self) -> bool:
         """Return whether Console can stop an active stream from this state."""
-        return self.status is ConsoleRunStatus.STREAMING
+        return self.status in {
+            ConsoleRunStatus.STREAMING,
+            ConsoleRunStatus.CHECKING_CITATIONS,
+        }
 
 
 @dataclass(frozen=True)
@@ -194,6 +319,83 @@ class MessageAttachment:
     position: int
 
 
+@dataclass(frozen=True)
+class GenerationVariantMeta:
+    """Per-variant image-generation metadata (mirrors a ``message_generation_metadata`` row).
+
+    Position is deliberately NOT stored on the instance -- callers track it
+    externally via index alignment with the owning message's attachments:
+    index i of ``ConsoleChatMessage.generation_metadata`` always describes
+    ``attachments[i]`` (attachment position i). ``to_row``/``from_row``
+    convert to/from the DB sidecar row shape, which DOES carry an explicit
+    ``position`` column (``ChaChaNotes_DB.set_message_generation_metadata`` /
+    ``get_generation_metadata_for_messages``).
+    """
+
+    prompt: str
+    negative_prompt: str
+    backend: str
+    model: str | None
+    seed: int | None
+    style: str | None
+    params: dict[str, Any]
+
+    def to_row(self, position: int) -> dict[str, Any]:
+        """Convert to a ``message_generation_metadata`` row dict for ``position``.
+
+        Args:
+            position: The attachment position this variant's metadata
+                belongs to (not carried on the instance itself).
+
+        Returns:
+            A dict shaped for
+            ``CharactersRAGDB.set_message_generation_metadata``/
+            ``ChatPersistenceService.create_message(generation_metadata=...)``.
+        """
+        return {
+            "position": position,
+            "prompt": self.prompt,
+            "negative_prompt": self.negative_prompt,
+            "backend": self.backend,
+            "model": self.model,
+            "seed": self.seed,
+            "style": self.style,
+            "params_json": json.dumps(self.params),
+        }
+
+    @classmethod
+    def from_row(cls, row: Mapping[str, Any]) -> "GenerationVariantMeta":
+        """Build from a DB sidecar row dict (``position``/``created_at`` ignored).
+
+        Args:
+            row: A row dict as returned by
+                ``get_generation_metadata_for_messages`` (or an equivalent
+                mapping built by a test fake).
+
+        Returns:
+            The decoded metadata. An unparseable ``params_json`` degrades to
+            an empty ``params`` dict rather than raising.
+        """
+        raw_params = row.get("params_json") or "{}"
+        try:
+            params = (
+                json.loads(raw_params)
+                if isinstance(raw_params, str)
+                else dict(raw_params)
+            )
+        except (TypeError, ValueError):
+            params = {}
+        return cls(
+            prompt=row["prompt"],
+            negative_prompt=row.get("negative_prompt", ""),
+            backend=row["backend"],
+            model=row.get("model"),
+            seed=row.get("seed"),
+            style=row.get("style"),
+            params=params,
+        )
+
+
 @dataclass
 class ConsoleChatMessage:
     """A native Console transcript message."""
@@ -204,12 +406,43 @@ class ConsoleChatMessage:
     turn_id: str | None = None
     status: ConsoleMessageStatus = "complete"
     persisted_message_id: str | None = None
+    #: Persisted id of this node's PARENT in the conversation tree (None for a
+    #: root / not-yet-known parent). Distinct from ``persisted_message_id``
+    #: (this node's own persisted id). Used to reconstruct the active path.
+    parent_message_id: str | None = None
+    #: Transient (non-persisted) sibling-navigation hints the store fills in on
+    #: active-path snapshots so the renderer can show `<`/`>` + an `n/m` counter
+    #: without reaching into store internals. Default 0/1 = "no siblings".
+    sibling_index: int = 0
+    sibling_count: int = 1
     variants: "ConsoleVariantSet | None" = None
     feedback: ConsoleMessageFeedback | None = None
     image_data: bytes | None = None
     image_mime_type: str | None = None
     attachment_label: str | None = None
     attachments: tuple["MessageAttachment", ...] = ()
+    #: Per-variant image-generation metadata, index-aligned with
+    #: ``attachments`` (index i describes attachment position i). An empty
+    #: tuple (the default) means this is NOT a generation message.
+    generation_metadata: tuple["GenerationVariantMeta", ...] = ()
+    #: Safe current-session citation UI state. Never persisted or restored.
+    citation_presentation: ConsoleCitationPresentation | None = None
+    #: TASK-1860: the FULL, untruncated tool result behind a TOOL marker.
+    #: ``content`` is a preview capped by the Console display setting, so
+    #: without this the whole result was unreachable from the transcript --
+    #: the user could not tell a complete result from its first N characters,
+    #: and a failed call showed only its failure line. None for every message
+    #: that is not a tool marker, and for a marker whose result was short
+    #: enough that ``content`` already shows all of it.
+    tool_output_full: str | None = None
+    #: TASK-1972: set on a change-summary transcript row -- the agent run
+    #: whose diff the row reviews. Session-only, never persisted; resume
+    #: re-derives it from change_snapshots. The `v` action needs to know
+    #: WHICH turn it opens, not guess from row position.
+    change_review_run_id: str | None = None
+    # Normalized token usage for THIS generation (None for user rows, legacy
+    # rows, and providers that reported nothing). Persisted as usage_json.
+    usage: "ProviderUsage | None" = None
 
 
 @dataclass(frozen=True)
@@ -276,3 +509,33 @@ class ConsoleContextSnapshot:
 
     current_messages: list[ConsoleChatMessage]
     next_send_payload: dict[str, Any]
+
+
+def fold_greeting_into_system_prompt(system_prompt: str, greeting: str) -> str:
+    """Return the system content carrying a seeded assistant greeting.
+
+    Strict providers (Anthropic, Gemini) reject an assistant-first message
+    array, so a seeded character greeting cannot ride in the message list
+    (task-427) -- but dropping it entirely makes the model contradict the
+    greeting the user already read in the transcript (task-1531). Folding
+    the greeting into the system row delivers it to every provider while
+    keeping the message array user-first. The configured system prompt is
+    kept verbatim at the start; the greeting block is appended after it.
+
+    Args:
+        system_prompt: The session's configured system prompt ("" for none).
+        greeting: The seeded assistant greeting text ("" for none).
+
+    Returns:
+        The combined system content; "" when both inputs are blank.
+    """
+    greeting_text = (greeting or "").strip()
+    if not greeting_text:
+        return system_prompt
+    opener_block = (
+        "You already opened this conversation with the following message, "
+        f"which the user has seen:\n{greeting_text}"
+    )
+    if not (system_prompt or "").strip():
+        return opener_block
+    return f"{system_prompt}\n\n{opener_block}"

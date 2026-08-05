@@ -587,7 +587,12 @@ class TestEvaluationSystemIntegration:
                         )
 
             runner = ErrorTestRunner(
-                task_config, {"provider": "test", "model_id": "test"}
+                task_config,
+                {
+                    "provider": "test",
+                    "model_id": "test",
+                    "retry_attempts": 0,
+                },
             )
 
             sample = EvalSample(id="1", input_text="Test input")

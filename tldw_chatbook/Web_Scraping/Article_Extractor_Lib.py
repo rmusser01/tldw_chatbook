@@ -164,6 +164,17 @@ from tldw_chatbook.Logging_Config import logging  # noqa: E402
 from tldw_chatbook.DB.Client_Media_DB_v2 import ingest_article_to_db_new  # noqa: E402
 from tldw_chatbook.Utils.input_validation import validate_url  # noqa: E402
 from tldw_chatbook.Utils.secure_temp_files import secure_temp_file, get_temp_manager  # noqa: E402
+from tldw_chatbook.Utils.egress import (  # noqa: E402
+    EgressBlockedError,
+    EgressFetchError,
+    MAX_FETCH_BYTES_PAGE,
+    MAX_FETCH_BYTES_SITEMAP,
+    check_url_or_raise_async,
+    collect_navigation_chain,
+    guarded_fetch_requests,
+    origin_set,
+    validate_navigation_chain_async,
+)
 from tldw_chatbook.Web_Scraping.exceptions import (  # noqa: E402
     InvalidURLError,
     NetworkError,
@@ -275,7 +286,7 @@ async def scrape_urls_batch(urls: List[str], progress_callback=None) -> List[Dic
 # Scraping-related functions:
 
 
-def get_page_title(url: str) -> str:
+def get_page_title(url: str, *, trusted_origins=frozenset()) -> str:
     """
     Extract the title from a web page.
 
@@ -302,7 +313,12 @@ def get_page_title(url: str) -> str:
         return "Untitled (BeautifulSoup not available)"
 
     try:
-        response = requests.get(url, timeout=10)  # Add timeout
+        response = guarded_fetch_requests(
+            url,
+            max_bytes=MAX_FETCH_BYTES_PAGE,
+            trusted_origins=trusted_origins,
+            timeout=10,
+        )
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, "html.parser")
             title_tag = soup.find("title")
@@ -325,6 +341,9 @@ def get_page_title(url: str) -> str:
         else:
             logging.error(f"Failed to fetch {url}, status code: {response.status_code}")
             return "Untitled"
+    except (EgressBlockedError, EgressFetchError) as e:
+        logging.warning(f"Blocked/oversize page-title fetch for {url}: {e}")
+        return "Untitled (Blocked URL)"
     except requests.Timeout:
         logging.error(f"Timeout fetching page title from {url}")
         log_counter(
@@ -346,7 +365,10 @@ def get_page_title(url: str) -> str:
 
 
 async def scrape_article(
-    url: str, custom_cookies: Optional[List[Dict[str, Any]]] = None
+    url: str,
+    custom_cookies: Optional[List[Dict[str, Any]]] = None,
+    *,
+    trusted_origins=frozenset(),
 ) -> Dict[str, Any]:
     """
     Asynchronously scrape an article from a URL using Playwright.
@@ -420,7 +442,7 @@ async def scrape_article(
             "error": "Trafilatura not installed",
         }
 
-    async def fetch_html(url: str) -> str:
+    async def fetch_html(url: str, trusted_origins: frozenset = frozenset()) -> str:
         # Load and log the configuration
         loaded_config = load_and_log_configs()
 
@@ -469,7 +491,10 @@ async def scrape_article(
                         await stealth_async(page)
 
                     # Navigate to the URL
-                    await page.goto(
+                    await check_url_or_raise_async(
+                        url, trusted_origins=trusted_origins
+                    )
+                    nav_response = await page.goto(
                         url, wait_until="domcontentloaded", timeout=timeout_ms
                     )
 
@@ -485,6 +510,11 @@ async def scrape_article(
                     # Capture final HTML
                     content = await page.content()
 
+                    await validate_navigation_chain_async(
+                        collect_navigation_chain(nav_response),
+                        trusted_origins=trusted_origins,
+                    )
+
                     logging.info(f"HTML fetched successfully from {url}")
                     log_counter("html_fetched", labels={"url": url})
 
@@ -497,6 +527,10 @@ async def scrape_article(
                 )
                 error_type = "timeout"
                 last_error = ScrapingTimeoutError(f"Page load timeout for {url}")
+
+            except EgressBlockedError as e:
+                logging.warning(f"Navigation blocked by egress policy: {e}")
+                return ""
 
             except Exception as e:
                 # Categorize the error
@@ -603,7 +637,7 @@ async def scrape_article(
     # Use semaphore to limit concurrent browser instances
     async with scraping_semaphore:
         try:
-            html = await fetch_html(url)
+            html = await fetch_html(url, trusted_origins=trusted_origins)
             article_data = extract_article_data(html, url)
             if article_data["extraction_successful"]:
                 article_data["content"] = convert_html_to_markdown(
@@ -995,8 +1029,14 @@ def scrape_by_url_level(base_url: str, level: int) -> list:
 
 def scrape_from_sitemap(sitemap_url: str) -> list:
     """Scrape articles from a sitemap URL."""
+    origins = origin_set(sitemap_url)
     try:
-        response = requests.get(sitemap_url)
+        response = guarded_fetch_requests(
+            sitemap_url,
+            max_bytes=MAX_FETCH_BYTES_SITEMAP,
+            trusted_origins=origins,
+            timeout=30,
+        )
         response.raise_for_status()
         root = xET.fromstring(response.content)
 
@@ -1005,8 +1045,11 @@ def scrape_from_sitemap(sitemap_url: str) -> list:
             for url in root.findall(
                 ".//{http://www.sitemaps.org/schemas/sitemap/0.9}loc"
             )
-            if (article := scrape_article(url.text))
+            if (article := scrape_article(url.text, trusted_origins=origins))
         ]
+    except (EgressBlockedError, EgressFetchError) as e:
+        logging.error(f"Sitemap fetch blocked or too large: {e}")
+        return []
     except requests.RequestException as e:
         logging.error(f"Error fetching sitemap: {e}")
         return []
@@ -1043,6 +1086,8 @@ def collect_internal_links(base_url: str) -> set:
         )
         return set()
 
+    origins = origin_set(base_url)
+
     visited = set()
     to_visit = {base_url}
 
@@ -1052,7 +1097,12 @@ def collect_internal_links(base_url: str) -> set:
             continue
 
         try:
-            response = requests.get(current_url)
+            response = guarded_fetch_requests(
+                current_url,
+                max_bytes=MAX_FETCH_BYTES_PAGE,
+                trusted_origins=origins,
+                timeout=30,
+            )
             response.raise_for_status()
             soup = BeautifulSoup(response.text, "html.parser")
 
@@ -1065,6 +1115,9 @@ def collect_internal_links(base_url: str) -> set:
                         to_visit.add(full_url)
 
             visited.add(current_url)
+        except (EgressBlockedError, EgressFetchError) as e:
+            logging.warning(f"Skipping blocked/oversize link {current_url}: {e}")
+            continue
         except requests.RequestException as e:
             logging.error(f"Error visiting {current_url}: {e}")
             continue
@@ -1698,6 +1751,8 @@ async def recursive_scrape(
             "installed (pip install tldw_chatbook[websearch])."
         )
 
+    origins = origin_set(base_url)
+
     async def save_progress():
         temp_file = resume_file + ".tmp"
         with open(temp_file, "w") as f:
@@ -1756,7 +1811,9 @@ async def recursive_scrape(
                     try:
                         await asyncio.sleep(random.uniform(delay * 0.8, delay * 1.2))
 
-                        article_data = await scrape_article_async(context, current_url)
+                        article_data = await scrape_article_async(
+                            context, current_url, trusted_origins=origins
+                        )
 
                         if article_data and article_data["extraction_successful"]:
                             scraped_articles.append(article_data)
@@ -1765,8 +1822,16 @@ async def recursive_scrape(
                         # If we haven't reached max depth, add child links to to_visit
                         if current_depth < max_depth:
                             page = await context.new_page()
-                            await page.goto(current_url)
+                            await check_url_or_raise_async(
+                                current_url, trusted_origins=origins
+                            )
+                            nav_response = await page.goto(current_url)
                             await page.wait_for_load_state("networkidle")
+
+                            await validate_navigation_chain_async(
+                                collect_navigation_chain(nav_response),
+                                trusted_origins=origins,
+                            )
 
                             links = await page.eval_on_selector_all(
                                 "a[href]", "(elements) => elements.map(el => el.href)"
@@ -1810,14 +1875,22 @@ async def recursive_scrape(
         return scraped_articles
 
 
-async def scrape_article_async(context, url: str) -> Dict[str, Any]:
+async def scrape_article_async(
+    context, url: str, trusted_origins=frozenset()
+) -> Dict[str, Any]:
     page = await context.new_page()
     try:
-        await page.goto(url)
+        await check_url_or_raise_async(url, trusted_origins=trusted_origins)
+        nav_response = await page.goto(url)
         await page.wait_for_load_state("networkidle")
 
         title = await page.title()
         content = await page.content()
+
+        await validate_navigation_chain_async(
+            collect_navigation_chain(nav_response),
+            trusted_origins=trusted_origins,
+        )
 
         return {
             "url": url,

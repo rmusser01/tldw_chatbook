@@ -52,6 +52,7 @@ MODEL_DISCOVER_BUTTON_ID = "console-settings-model-discover"
 MODEL_DISCOVER_STATUS_ID = "console-settings-model-discover-status"
 MODEL_DISCOVER_BUTTON_LABEL = "Discover models"
 MODEL_DISCOVER_BUTTON_WIDTH = 19
+_NO_CONFIGURED_MODELS_VALUE = "__no_configured_models__"
 MODEL_DISCOVER_MISSING_URL_COPY = "Enter a base URL to discover models."
 MODEL_DISCOVER_INVALID_URL_COPY = (
     "Enter a valid http(s) endpoint URL to discover models."
@@ -183,6 +184,18 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         overflow-x: hidden;
     }}
 
+    /* TASK-363: the validation summary was near-body-text salience ($ds-status
+       -error 10% bg / primary text), so "Save did nothing" read as no feedback
+       in a taller-than-viewport modal. Make it unmistakably an error: bold
+       error-coloured text, a stronger fill, and a heavy error rule down its
+       edge. (Scoped here so it overrides the shared bundle rule.) */
+    ConsoleSettingsModal .console-settings-error {{
+        background: $error 25%;
+        color: $text-error;
+        text-style: bold;
+        border-left: thick $error;
+    }}
+
     ConsoleSettingsModal .console-settings-modal-section {{
         height: auto;
     }}
@@ -241,11 +254,26 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
 
     def compose(self) -> ComposeResult:
         provider_options = self._provider_select_options()
+        provider_values = {value for _, value in provider_options}
+        provider_value = (
+            self._settings.provider
+            if self._settings.provider in provider_values
+            else Select.NULL
+        )
         selected_model = self._model_for_provider(self._settings.provider)
         base_url = self._base_url_for_provider(self._settings.provider)
         uses_base_url = self._provider_uses_base_url(self._settings.provider)
         model_options = self._model_select_options(
             self._settings.provider, selected_model
+        )
+        model_select_options = model_options or [
+            ("No configured models", _NO_CONFIGURED_MODELS_VALUE)
+        ]
+        model_option_values = {value for _, value in model_options}
+        model_select_value = (
+            selected_model
+            if selected_model in model_option_values
+            else Select.NULL
         )
         has_model_options = bool(model_options)
         use_model_select = self._should_use_model_select(
@@ -298,17 +326,17 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         yield self._modal_label("Provider")
                         yield Select(
                             provider_options,
-                            value=self._settings.provider,
-                            allow_blank=False,
+                            value=provider_value,
+                            allow_blank=True,
                             id="console-settings-provider",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
                         yield self._modal_label("Model")
                         model_select = Select(
-                            model_options or [("No configured models", "")],
-                            value=selected_model or "",
-                            allow_blank=False,
+                            model_select_options,
+                            value=model_select_value,
+                            allow_blank=True,
                             id="console-settings-model-select",
                             disabled=not use_model_select,
                             classes="console-settings-control",
@@ -356,6 +384,17 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         model_discover.styles.max_width = MODEL_DISCOVER_BUTTON_WIDTH
                         model_discover.display = supports_discovery
                         yield model_discover
+                    # Directly under the button that produces it. Rendering this
+                    # below the Base URL row put four rows and an unrelated field
+                    # between action and feedback, which read as a dead button.
+                    discover_status = Static(
+                        "",
+                        id=MODEL_DISCOVER_STATUS_ID,
+                        classes="console-settings-modal-row",
+                        markup=False,
+                    )
+                    discover_status.display = False
+                    yield discover_status
                     with Horizontal(classes="console-settings-modal-row"):
                         yield self._modal_label("Base URL")
                         base_url_input = ConsoleSettingsInput(
@@ -366,14 +405,6 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         )
                         base_url_input.display = uses_base_url
                         yield base_url_input
-                    discover_status = Static(
-                        "",
-                        id=MODEL_DISCOVER_STATUS_ID,
-                        classes="console-settings-modal-row",
-                        markup=False,
-                    )
-                    discover_status.display = False
-                    yield discover_status
 
                 with Vertical(classes="console-settings-modal-section"):
                     yield Static("Sampling", classes="destination-section")
@@ -525,18 +556,6 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                     yield Static(
                         f"Current         {self._identity_current_label()}",
                         id="console-settings-identity-current",
-                        classes="console-settings-modal-row",
-                        markup=False,
-                    )
-                    yield Static(
-                        f"Persona         {self._persona_label()} [read-only]",
-                        id="console-settings-persona-readonly",
-                        classes="console-settings-modal-row",
-                        markup=False,
-                    )
-                    yield Static(
-                        f"Character       {self._character_label()} [read-only]",
-                        id="console-settings-character-readonly",
                         classes="console-settings-modal-row",
                         markup=False,
                     )
@@ -705,7 +724,12 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             *validate_console_session_settings(draft, app_config=self._app_config),
         ]
         if errors:
-            self.query_one("#console-settings-error", Static).update("\n".join(errors))
+            # TASK-363: surface the error prominently AND bring it on-screen — in
+            # a taller-than-viewport modal the summary can sit well above the fold
+            # (the review's "Save did nothing" confusion), so scroll it into view.
+            error_banner = self.query_one("#console-settings-error", Static)
+            error_banner.update("\n".join(errors))
+            error_banner.scroll_visible()
             return None
         return draft
 
@@ -715,9 +739,15 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     ) -> dict[str, dict[str, object]]:
         """Build config sections written through by Save as default.
 
-        Provider-scoped values land in ``[api_settings.<provider>]`` (the source
-        ``build_default_console_session_settings`` reads on the next boot);
-        streaming lands on the canonical ``chat_defaults.streaming`` key (the
+        Model and endpoint land in ``[api_settings.<provider>]`` (the sources
+        ``build_default_console_session_settings`` resolves provider/model
+        from). Sampling values land in ``[console.provider_defaults.
+        <provider>]`` — a section that only ever contains Console-saved
+        defaults, so the boot builder can rank it above ``chat_defaults``
+        without letting factory ``api_settings`` template scalars shadow
+        user-tuned globals (TASK-342; writing sampling into api_settings was
+        inert because chat_defaults deliberately outranks it, f14d22dc3).
+        Streaming lands on the canonical ``chat_defaults.streaming`` key (the
         legacy ``enable_streaming`` bridge only applies when the canonical key
         is absent). ``chat_defaults.provider`` is written too — the default
         provider itself resolves ONLY from that key, so omitting it would make
@@ -733,15 +763,29 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         base_url = (draft.base_url or "").strip()
         if base_url and self._provider_uses_base_url(draft.provider):
             provider_values[self._endpoint_persist_key(provider_key)] = base_url
+        saved_defaults: dict[str, object] = {}
         for field_name in PROVIDER_DEFAULT_PERSIST_FIELDS:
             value = getattr(draft, field_name)
             if value is not None:
-                provider_values[field_name] = value
+                saved_defaults[field_name] = value
         if provider_key and provider_values:
             sections[f"api_settings.{provider_key}"] = provider_values
+        if provider_key and saved_defaults:
+            sections[f"console.provider_defaults.{provider_key}"] = saved_defaults
         chat_defaults: dict[str, object] = {"streaming": bool(draft.streaming)}
         if provider_key:
             chat_defaults["provider"] = provider_key
+        if model:
+            # The model must be written here too, not only into
+            # [api_settings.<provider>]. `resolve_effective_provider_model`
+            # reads `chat_defaults.model` and hands it to
+            # `build_default_console_session_settings` as an EXPLICIT override,
+            # where it outranks the api_settings value. Writing only
+            # api_settings therefore left a stale `chat_defaults.model`
+            # winning in every new session -- new tab, character "Start Chat",
+            # and app relaunch all silently reverted to the previously
+            # selected model after the user had corrected it here.
+            chat_defaults["model"] = model
         sections["chat_defaults"] = chat_defaults
         return sections
 
@@ -771,11 +815,30 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 return placeholder
         return ""
 
+    @on(Input.Changed)
+    @on(Select.Changed)
+    def _invalidate_validation_summary_on_edit(self, event) -> None:
+        """Clear a stale validation summary once the user edits any field.
+
+        TASK-363: the summary was only refreshed on the next Save, so it lingered
+        after the offending field was fixed ("Save did nothing" then a stale
+        error). Any edit means the shown errors may no longer apply, so clear
+        them; the next Save re-validates. Runs alongside the field-specific
+        handlers below (it does not stop the event).
+        """
+        self._clear_validation_error_summary()
+
+    def _clear_validation_error_summary(self) -> None:
+        try:
+            self.query_one("#console-settings-error", Static).update("")
+        except (QueryError, NoMatches):
+            pass
+
     @on(Select.Changed, "#console-settings-provider")
     def _provider_changed(self, event: Select.Changed) -> None:
         self._store_current_model_for_provider(self._active_provider)
         self._store_current_base_url_for_provider(self._active_provider)
-        provider = str(event.value or "")
+        provider = self._select_value_text(event.value)
         model = self._model_for_provider(provider)
         base_url = self._base_url_for_provider(provider)
         self._active_provider = provider
@@ -806,7 +869,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     def _model_discover_pressed(self, event: Button.Pressed) -> None:
         """Probe the current base-URL draft for its served model list."""
         event.stop()
-        provider = str(self.query_one("#console-settings-provider", Select).value or "")
+        provider = self._select_value_text(
+            self.query_one("#console-settings-provider", Select).value
+        )
         if not self._provider_supports_model_discovery(provider):
             return
         base_url = self._current_base_url_value(provider) or ""
@@ -876,10 +941,21 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             self._set_model_discover_status(f"No models reported at {display}.")
             return
         self._discovered_model_ids[provider] = tuple(result.model_ids)
-        self._sync_model_controls(provider, self._current_model_value())
         count = len(result.model_ids)
-        noun = "model" if count == 1 else "models"
-        self._set_model_discover_status(f"Found {count} {noun} at {display}.")
+        # With exactly one model there is nothing to choose, so choose it. The
+        # previous behaviour kept whatever was already selected -- which is how
+        # a TTS model stayed active against a chat endpoint after a successful
+        # discovery, with only a status line hinting anything had changed.
+        selected_model = self._current_model_value()
+        if count == 1:
+            selected_model = result.model_ids[0]
+        self._sync_model_controls(provider, selected_model)
+        if count == 1:
+            self._set_model_discover_status(
+                f"Found 1 model at {display} — selected {result.model_ids[0]}."
+            )
+        else:
+            self._set_model_discover_status(f"Found {count} models at {display}.")
         self._sync_readiness_display()
 
     def _set_model_discover_status(self, text: str) -> None:
@@ -918,7 +994,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             section.remove_class("console-settings-primary-section")
 
     def _build_draft(self) -> ConsoleSessionSettings:
-        provider = str(self.query_one("#console-settings-provider", Select).value or "")
+        provider = self._select_value_text(
+            self.query_one("#console-settings-provider", Select).value
+        )
         return ConsoleSessionSettings(
             provider=provider,
             model=self._current_model_value(),
@@ -953,7 +1031,6 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 "console-settings-thinking-budget-tokens"
             ),
             streaming=self._streaming_draft,
-            persona_label=self._settings.persona_label,
             character_label=self._settings.character_label,
         )
 
@@ -986,8 +1063,10 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             return
 
         fallback = current_model or ""
-        model_select.set_options([("No configured models", "")])
-        model_select.value = ""
+        model_select.set_options(
+            [("No configured models", _NO_CONFIGURED_MODELS_VALUE)]
+        )
+        model_select.value = Select.NULL
         model_select.disabled = True
         model_select.display = False
         model_input.value = fallback
@@ -1009,8 +1088,8 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 model_input.focus()
                 self._sync_readiness_display()
                 return
-            provider = str(
-                self.query_one("#console-settings-provider", Select).value or ""
+            provider = self._select_value_text(
+                self.query_one("#console-settings-provider", Select).value
             )
             current_model = normalize_console_model_value(model_input.value)
             self._sync_model_controls(provider, current_model)
@@ -1021,7 +1100,12 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 model_custom.focus()
             return
 
-        model_input.value = normalize_console_model_value(model_select.value) or ""
+        model_input.value = (
+            normalize_console_model_value(
+                self._select_value_text(model_select.value)
+            )
+            or ""
+        )
         model_select.display = False
         model_select.disabled = True
         model_input.display = True
@@ -1060,9 +1144,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                     self._settings.provider,
                 )
             )
-        return options or [
-            (provider_display_name(self._settings.provider), self._settings.provider)
-        ]
+        return options
 
     def _model_select_options(
         self, provider: str, current_model: str | None
@@ -1312,8 +1394,15 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         model_select = self.query_one("#console-settings-model-select", Select)
         model_input = self.query_one("#console-settings-model-input", Input)
         if model_select.display and not model_select.disabled:
-            return normalize_console_model_value(model_select.value)
+            return normalize_console_model_value(
+                self._select_value_text(model_select.value)
+            )
         return normalize_console_model_value(model_input.value)
+
+    @staticmethod
+    def _select_value_text(value: object) -> str:
+        """Normalize Textual's blank-select sentinel without stringifying it."""
+        return "" if value is Select.NULL or value is None else str(value)
 
     def _context_label(self) -> str:
         label = self._context_estimate.label.strip() or "unknown"
@@ -1325,15 +1414,8 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         return "None"
 
     def _identity_current_label(self) -> str:
-        persona = self._persona_label()
         character = self._settings.character_label.strip()
-        return f"{persona} / {character}" if character else persona
-
-    def _persona_label(self) -> str:
-        return self._settings.persona_label.strip() or "General"
-
-    def _character_label(self) -> str:
-        return self._settings.character_label.strip() or "None"
+        return f"Character: {character}" if character else "Assistant: General"
 
     @staticmethod
     def _format_value(value: object) -> str:

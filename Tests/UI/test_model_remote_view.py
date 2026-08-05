@@ -1,0 +1,1072 @@
+"""Focused behavior tests for lazy managed Remote model discovery (TASK-1914).
+
+``RemoteView`` also has a discovery-flow-only concern set: metadata search
+and repository resolution (``_search_remote``/``_resolve_remote``) stay
+owned by this view -- a read-only listing concern, mirroring
+``CuratedView._load_curated``, which TASK-1803 also left in place. Most of
+this file's coverage of that half is unchanged by TASK-1914.
+
+TASK-1914 moved this view's preflight/provision workers to ``LLMScreen``,
+mirroring TASK-1803's move of the equivalent ``CuratedView`` workers.
+Tests that used to drive this view's own ``_preflight_model``/
+``_confirm_install``/``_apply_preflight_result``/``_provision_model``/
+``_apply_provision_result`` directly (the plan-resolution, consent-modal-
+push, activation, and failure-logging coverage) moved to
+``test_llm_screen_lab_adoption.py``, against ``LLMScreen``, which now owns
+that logic; what belongs here instead is ``RemoteView``'s own render-only
+contract: reviewing a candidate posts ``InstallRequested`` and, once told
+the outcome, calls ``cancel_pending_install()``/``finish_install()``/
+``apply_progress()``.
+"""
+
+from __future__ import annotations
+
+import ast
+from collections.abc import Callable
+from threading import Event
+from unittest.mock import MagicMock
+
+import httpx
+import pytest
+from textual import on
+from textual.app import App, ComposeResult
+from textual.css.query import NoMatches
+from textual.widgets import Button, Input, Static
+
+from tldw_chatbook.Model_Artifacts.remote_huggingface import (
+    HuggingFaceRemoteAdapter,
+    RemoteDiscoveryError,
+    RemoteGGUFCandidate,
+    RemoteGGUFFile,
+    RemoteModelSummary,
+    ResolvedRemoteModel,
+    build_remote_catalog,
+)
+
+
+_COMMIT = "a" * 40
+_DIGEST = "b" * 64
+
+
+# ---------------------------------------------------------------------------
+# Shared AST-based module-scope import check (TASK-1914 fix round 1).
+#
+# The original version of this check (see git history) scanned for three
+# literal substrings in the module's source text. That missed the
+# package-then-attribute bypass -- `from tldw_chatbook.Model_Artifacts
+# import acquisition` is a real, eager, module-scope import of the
+# acquisition runtime, but contains none of the three forbidden substrings
+# (no ".acquisition import", no "from .acquisition import", no "import
+# tldw_chatbook.Model_Artifacts.acquisition"). This is the exact class of
+# gap this workstream's own Task 2 no-subclass test caught and fixed with
+# an MRO check instead of a substring scan; the fix here is the same shape
+# of fix, applied to imports instead of subclassing.
+#
+# ``test_model_curated_view.py`` imports this helper rather than
+# duplicating it -- both modules are held to the identical rule, and one
+# AST walker gets to be the single implementation both tests exercise.
+# ---------------------------------------------------------------------------
+
+
+def _is_type_checking_test(test: ast.expr) -> bool:
+    """True for an ``if`` test that is (or ends in) ``TYPE_CHECKING``.
+
+    Covers both ``if TYPE_CHECKING:`` (a bare ``Name``) and
+    ``if typing.TYPE_CHECKING:`` (an ``Attribute``) -- this codebase only
+    ever uses the former, but the check is cheap to make either way.
+    """
+    return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+        isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+    )
+
+
+def _module_dotted_suffix_is(module: str | None, suffix: str) -> bool:
+    """True if ``module`` (an import's dotted path, absolute or relative)
+    ends in ``suffix`` as its own final component -- e.g. both
+    ``"tldw_chatbook.Model_Artifacts.acquisition"`` and
+    ``"Model_Artifacts.acquisition"`` (a relative import's ``module``,
+    which never includes the leading dots ``ast`` strips into ``level``)
+    end in ``"acquisition"``, but ``"acquisition_helpers"`` does not.
+    """
+    if not module:
+        return False
+    return module.rsplit(".", 1)[-1] == suffix
+
+
+def module_scope_forbidden_acquisition_imports(source: str) -> list[str]:
+    """Find real, module-scope imports of ``Model_Artifacts.acquisition``/``.fetch``.
+
+    "Module scope" here means reachable by simply importing the module --
+    NOT nested inside any function/method body (those run lazily, on
+    demand, which is exactly what the "acquisition/fetch only inside
+    functions" rule requires) and NOT inside an ``if TYPE_CHECKING:``
+    guard (``False`` at runtime, so that branch never executes).
+
+    Catches both import forms a violation could take:
+
+    - ``from tldw_chatbook.Model_Artifacts.acquisition import X`` (or the
+      relative ``from ...Model_Artifacts.acquisition import X``) -- the
+      import's own ``module`` ends in ``"acquisition"``/``"fetch"``.
+    - ``from tldw_chatbook.Model_Artifacts import acquisition`` -- the
+      package-then-attribute bypass a plain substring scan on import text
+      misses entirely: ``module`` ends in ``"Model_Artifacts"``, but one
+      of the imported *names* is ``"acquisition"``/``"fetch"``.
+
+    Args:
+        source: The module's full source text (e.g. from
+            ``inspect.getsource``).
+
+    Returns:
+        Human-readable descriptions of every forbidden import found, one
+        per finding; empty when the module is clean.
+    """
+    tree = ast.parse(source)
+    findings: list[str] = []
+
+    def visit(node: ast.AST, in_function: bool, in_type_checking: bool) -> None:
+        for child in ast.iter_child_nodes(node):
+            child_in_function = in_function or isinstance(
+                child, (ast.FunctionDef, ast.AsyncFunctionDef)
+            )
+            child_in_type_checking = in_type_checking or (
+                isinstance(child, ast.If) and _is_type_checking_test(child.test)
+            )
+            if (
+                isinstance(child, (ast.Import, ast.ImportFrom))
+                and not in_function
+                and not in_type_checking
+            ):
+                if isinstance(child, ast.Import):
+                    for alias in child.names:
+                        if _module_dotted_suffix_is(
+                            alias.name, "acquisition"
+                        ) or _module_dotted_suffix_is(alias.name, "fetch"):
+                            findings.append(f"line {child.lineno}: import {alias.name}")
+                else:
+                    module = child.module
+                    if _module_dotted_suffix_is(
+                        module, "acquisition"
+                    ) or _module_dotted_suffix_is(module, "fetch"):
+                        findings.append(
+                            f"line {child.lineno}: from {module!r} import ..."
+                        )
+                    elif _module_dotted_suffix_is(module, "Model_Artifacts"):
+                        for alias in child.names:
+                            if alias.name in {"acquisition", "fetch"}:
+                                findings.append(
+                                    f"line {child.lineno}: from {module!r} "
+                                    f"import {alias.name}"
+                                )
+            visit(child, child_in_function, child_in_type_checking)
+
+    visit(tree, False, False)
+    return findings
+
+
+class _Resolver:
+    def __init__(
+        self, calls: list[str], token: str | None = "configured-token"
+    ) -> None:
+        self.calls = calls
+        self.token = token
+
+    def resolve(self, repository: str) -> str | None:
+        self.calls.append(repository)
+        return self.token
+
+
+class _Adapter:
+    def __init__(
+        self,
+        *,
+        search_result: tuple[RemoteModelSummary, ...] = (),
+        resolved: ResolvedRemoteModel | None = None,
+    ) -> None:
+        self.search_result = search_result
+        self.resolved = resolved or _resolved()
+        self.search_calls: list[tuple[str, str | None]] = []
+        self.resolve_calls: list[tuple[str, str | None]] = []
+
+    async def search(
+        self,
+        query: str,
+        *,
+        token: str | None = None,
+    ) -> tuple[RemoteModelSummary, ...]:
+        self.search_calls.append((query, token))
+        return self.search_result
+
+    async def resolve(
+        self,
+        repository: str,
+        *,
+        token: str | None = None,
+    ) -> ResolvedRemoteModel:
+        self.resolve_calls.append((repository, token))
+        return self.resolved
+
+
+def _summary(repository: str = "owner/repository") -> RemoteModelSummary:
+    return RemoteModelSummary(
+        repository=repository,
+        private=False,
+        gated="none",
+        downloads=12,
+        likes=3,
+        last_modified="2026-08-01T00:00:00Z",
+    )
+
+
+def _candidate(label: str = "owner/repository · model-q4.gguf") -> RemoteGGUFCandidate:
+    return RemoteGGUFCandidate(
+        label=label,
+        files=(RemoteGGUFFile("model-q4.gguf", 1024, _DIGEST),),
+        total_bytes=1024,
+    )
+
+
+def _resolved(
+    repository: str = "owner/repository",
+    *,
+    license_id: str = "apache-2.0",
+    warnings: tuple[str, ...] = (),
+) -> ResolvedRemoteModel:
+    return ResolvedRemoteModel(
+        repository=repository,
+        commit=_COMMIT,
+        license_id=license_id,
+        review_url=f"https://huggingface.co/{repository}/tree/{_COMMIT}",
+        candidates=(_candidate(f"{repository} · model-q4.gguf"),),
+        total_candidate_count=1,
+        warnings=warnings,
+    )
+
+
+def _catalog(*, license_id: str = "apache-2.0"):
+    resolved = _resolved(license_id=license_id)
+    return build_remote_catalog(resolved, resolved.candidates[0])
+
+
+class _RemoteApp(App):
+    def __init__(self, view) -> None:
+        self.view = view
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        yield self.view
+
+
+def _view(
+    *,
+    adapter_factory: Callable[[], object],
+    resolver_factory: Callable[[], object] | None = None,
+    service_factory: Callable[[], object] = MagicMock,
+):
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    kwargs: dict[str, object] = {
+        "adapter_factory": adapter_factory,
+        "service_factory": service_factory,
+    }
+    if resolver_factory is not None:
+        kwargs["credential_resolver_factory"] = resolver_factory
+    return RemoteView(**kwargs)
+
+
+async def _submit(app: _RemoteApp, pilot, query: str) -> None:
+    app.view.query_one("#remote-model-query", Input).value = query
+    await pilot.click("#remote-model-search")
+    await app.workers.wait_for_complete()
+    await pilot.pause()
+
+
+def _text(view) -> str:
+    return "\n".join(str(item.renderable) for item in view.query(Static))
+
+
+@pytest.mark.asyncio
+async def test_compose_and_mount_create_no_remote_dependencies_or_io() -> None:
+    """An eager parent mount cannot instantiate any I/O-bearing dependency."""
+    adapter_factory = MagicMock()
+    resolver_factory = MagicMock()
+    service_factory = MagicMock()
+    view = _view(
+        adapter_factory=adapter_factory,
+        resolver_factory=resolver_factory,
+        service_factory=service_factory,
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+    adapter_factory.assert_not_called()
+    resolver_factory.assert_not_called()
+    service_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_exact_repository_submission_resolves_without_searching() -> None:
+    """Changing exact-ID classification must not add an unnecessary search request."""
+    adapter = _Adapter(resolved=_resolved())
+    resolver_calls: list[str] = []
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver(resolver_calls),
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "owner/repository")
+        rendered = _text(view)
+
+    assert adapter.search_calls == []
+    assert adapter.resolve_calls == [("owner/repository", "configured-token")]
+    assert resolver_calls == ["owner/repository"]
+    assert "owner/repository · model-q4.gguf" in rendered
+
+
+@pytest.mark.asyncio
+async def test_no_user_visible_string_contains_artifact() -> None:
+    """No rendered Static text says "artifact" -- the UI says "model" throughout."""
+    adapter = _Adapter(resolved=_resolved())
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "owner/repository")
+        rendered = _text(view)
+
+    assert "artifact" not in rendered.lower()
+
+
+@pytest.mark.asyncio
+async def test_free_text_search_resolves_only_after_result_selection() -> None:
+    """Free text must remain a search and selection must resolve that exact result."""
+    adapter = _Adapter(search_result=(_summary(),), resolved=_resolved())
+    resolver_calls: list[str] = []
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver(resolver_calls),
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "quantized model")
+        assert adapter.search_calls == [("quantized model", "configured-token")]
+        assert adapter.resolve_calls == []
+        assert "owner/repository" in _text(view)
+
+        await pilot.click(".remote-result")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        rendered = _text(view)
+
+    assert adapter.resolve_calls == [("owner/repository", "configured-token")]
+    assert resolver_calls == ["quantized model", "owner/repository"]
+    assert "Runtime compatibility has not been verified." in rendered
+    assert "Local integrity recorded" in rendered
+
+
+@pytest.mark.asyncio
+async def test_stale_search_and_resolve_completions_cannot_replace_newer_results() -> (
+    None
+):
+    """Removing either generation check must let an older completion overwrite state."""
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+    older_summary = _summary("old/result")
+    newer_summary = _summary("new/result")
+    older_resolved = _resolved("old/result")
+    newer_resolved = _resolved("new/result")
+
+    async with app.run_test() as pilot:
+        query = view.query_one("#remote-model-query", Input)
+        query.value = "new query"
+        view._search_generation = 2
+        view._apply_search_result(1, "old query", (older_summary,), None)
+        view._apply_search_result(2, "new query", (newer_summary,), None)
+        await pilot.pause()
+        assert "new/result" in _text(view)
+        assert "old/result" not in _text(view)
+
+        view._resolve_generation = 4
+        view._apply_resolve_result(
+            3,
+            "old/result",
+            "old query",
+            older_resolved,
+            None,
+        )
+        view._apply_resolve_result(
+            4,
+            "new/result",
+            "new query",
+            newer_resolved,
+            None,
+        )
+        await pilot.pause()
+        rendered = _text(view)
+
+    assert "new/result · model-q4.gguf" in rendered
+    assert "old/result · model-q4.gguf" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_same_generation_resolve_rejects_a_different_repository_response() -> (
+    None
+):
+    """An adapter identity mismatch must never expose an installable candidate."""
+    adapter = _Adapter(resolved=_resolved("other/repository"))
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "owner/repository")
+        rendered = _text(view)
+        candidate_buttons = list(view.query(".remote-candidate").results(Button))
+        search_disabled = view.query_one("#remote-model-search", Button).disabled
+
+    assert "other/repository · model-q4.gguf" not in rendered
+    assert candidate_buttons == []
+    assert view._operation_reference is None
+    assert search_disabled is False
+
+
+@pytest.mark.asyncio
+async def test_same_generation_resolve_rejects_when_repository_input_changes() -> None:
+    """Input drift during one request must not make its completion installable."""
+    started = Event()
+    release = Event()
+
+    class _WaitingAdapter(_Adapter):
+        async def resolve(
+            self,
+            repository: str,
+            *,
+            token: str | None = None,
+        ) -> ResolvedRemoteModel:
+            self.resolve_calls.append((repository, token))
+            started.set()
+            release.wait(timeout=2)
+            return self.resolved
+
+    adapter = _WaitingAdapter(resolved=_resolved("owner/repository"))
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        query = view.query_one("#remote-model-query", Input)
+        query.value = "owner/repository"
+        await pilot.click("#remote-model-search")
+        for _attempt in range(20):
+            if started.is_set():
+                break
+            await pilot.pause()
+        assert started.is_set(), "resolve worker did not reach the adapter"
+
+        query.value = "new/repository"
+        release.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        rendered = _text(view)
+        candidate_buttons = list(view.query(".remote-candidate").results(Button))
+        search_disabled = view.query_one("#remote-model-search", Button).disabled
+
+    assert "owner/repository · model-q4.gguf" not in rendered
+    assert candidate_buttons == []
+    assert view._operation_reference is None
+    assert search_disabled is False
+
+
+@pytest.mark.asyncio
+async def test_resolution_mismatch_removes_stale_rendered_candidate_controls() -> None:
+    """Cleared retained state must also remove previously mounted candidates."""
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+    old_resolved = _resolved("old/repository")
+    new_resolved = _resolved("new/repository")
+
+    async with app.run_test() as pilot:
+        query = view.query_one("#remote-model-query", Input)
+        query.value = "old/repository"
+        view._resolve_generation = 1
+        view._apply_resolve_result(
+            1,
+            "old/repository",
+            "old/repository",
+            old_resolved,
+            None,
+        )
+        await pilot.pause()
+        assert list(view.query(".remote-candidate").results(Button))
+
+        view._resolve_remote = MagicMock()
+        query.value = "new/repository"
+        view._search_submitted()
+        assert "Inspecting repository" in _text(view)
+
+        query.value = "changed/repository"
+        view._apply_resolve_result(
+            2,
+            "new/repository",
+            "new/repository",
+            new_resolved,
+            None,
+        )
+        await pilot.pause()
+
+        stale_controls = list(
+            view.query(".remote-result, .remote-candidate").results(Button)
+        )
+        status = str(view.query_one("#remote-model-status", Static).renderable)
+        search_disabled = view.query_one("#remote-model-search", Button).disabled
+        query_disabled = query.disabled
+
+    assert stale_controls == []
+    assert view._operation_reference is None
+    assert "Inspecting repository" not in status
+    assert "Press Search" in status
+    assert search_disabled is False
+    assert query_disabled is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    (
+        (
+            RemoteDiscoveryError("authentication_required"),
+            "Configure or verify Hugging Face access, then Retry.",
+        ),
+        (RemoteDiscoveryError("rate_limited", retryable=True), "Retry."),
+        (RemoteDiscoveryError("network_error", retryable=True), "Retry."),
+        (
+            RemoteDiscoveryError("response_too_large"),
+            "cannot be safely inspected",
+        ),
+        (
+            RemoteDiscoveryError(
+                "no_eligible_gguf",
+                details=("owner/repository · model missing 00002",),
+            ),
+            "LFS-backed with size and SHA-256 metadata",
+        ),
+    ),
+)
+async def test_discovery_errors_render_sanitized_retry_guidance(
+    error: RemoteDiscoveryError,
+    expected: str,
+) -> None:
+    """Raw upstream details must never displace bounded recovery guidance."""
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        view.query_one("#remote-model-query", Input).value = "owner/repository"
+        view._resolve_generation = 1
+        view._apply_resolve_result(
+            1,
+            "owner/repository",
+            "owner/repository",
+            None,
+            error,
+        )
+        await pilot.pause()
+        rendered = _text(view)
+
+    assert expected in rendered
+    assert repr(error) not in rendered
+
+
+@pytest.mark.asyncio
+async def test_no_eligible_error_renders_bounded_incomplete_shard_details() -> None:
+    """Validated missing-shard recovery details must follow the generic LFS rule."""
+    detail = "owner/repository · model-q4 missing 00002 00004"
+    error = RemoteDiscoveryError("no_eligible_gguf", details=(detail,))
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        view.query_one("#remote-model-query", Input).value = "owner/repository"
+        view._resolve_generation = 1
+        view._apply_resolve_result(
+            1,
+            "owner/repository",
+            "owner/repository",
+            None,
+            error,
+        )
+        await pilot.pause()
+        status = view.query_one("#remote-model-status", Static)
+        rendered = str(status.renderable)
+
+    generic = "Files must be LFS-backed with size and SHA-256 metadata."
+    assert generic in rendered
+    assert detail in rendered
+    assert rendered.index(generic) < rendered.index(detail)
+    assert status._render_markup is False
+
+
+@pytest.mark.asyncio
+async def test_oversized_lfs_size_recovers_without_rendering_a_candidate() -> None:
+    """Hostile declared sizes must be rejected before the Remote view formats them."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "sha": _COMMIT,
+                "siblings": [
+                    {
+                        "rfilename": "huge.gguf",
+                        "lfs": {"size": 2**63, "sha256": _DIGEST},
+                    }
+                ],
+                "cardData": None,
+            },
+        )
+
+    adapter = HuggingFaceRemoteAdapter(
+        client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "owner/repository")
+        rendered = _text(view)
+        candidates = list(view.query(".remote-candidate").results(Button))
+
+    assert "No eligible GGUF files were found" in rendered
+    assert str(2**63) not in rendered
+    assert candidates == []
+
+
+@pytest.mark.asyncio
+async def test_incomplete_shard_warnings_render_bounded_candidate_and_indexes() -> None:
+    """Dropping resolution warnings must hide the actionable missing-shard evidence."""
+    warning = "owner/repository · model-q4 missing 00002 00004"
+    resolved = _resolved(warnings=(warning,))
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        view.query_one("#remote-model-query", Input).value = "owner/repository"
+        view._resolve_generation = 1
+        view._apply_resolve_result(
+            1,
+            "owner/repository",
+            "owner/repository",
+            resolved,
+            None,
+        )
+        await pilot.pause()
+        rendered = _text(view)
+
+    assert warning in rendered
+
+
+@pytest.mark.asyncio
+async def test_candidate_cap_discloses_deterministic_first_hundred() -> None:
+    """A truncated candidate list must disclose its deterministic upstream order."""
+    candidates = tuple(
+        RemoteGGUFCandidate(
+            label=f"owner/repository · {index:03d}.gguf",
+            files=(RemoteGGUFFile(f"{index:03d}.gguf", 1, _DIGEST),),
+            total_bytes=1,
+        )
+        for index in range(100)
+    )
+    resolved = ResolvedRemoteModel(
+        repository="owner/repository",
+        commit=_COMMIT,
+        license_id="apache-2.0",
+        review_url=f"https://huggingface.co/owner/repository/tree/{_COMMIT}",
+        candidates=candidates,
+        total_candidate_count=137,
+        warnings=(),
+    )
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        view._resolved = resolved
+        view._refresh_with_status("Select one GGUF candidate.")
+        await pilot.pause()
+        rendered = _text(view)
+
+    assert "First 100 of 137, sorted by upstream path" in rendered
+
+
+# ---------------------------------------------------------------------------
+# Install-request flow: this view posts the intent and stops (TASK-1914).
+# ---------------------------------------------------------------------------
+
+
+def _capturing_app(view) -> App:
+    """Build an App that captures ``RemoteView.InstallRequested`` events."""
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    class _App(App):
+        def __init__(self) -> None:
+            self.view = view
+            self.requests: list = []
+            super().__init__()
+
+        def compose(self) -> ComposeResult:
+            yield self.view
+
+        @on(RemoteView.InstallRequested)
+        def _capture(self, event: RemoteView.InstallRequested) -> None:
+            self.requests.append(event)
+
+    return _App()
+
+
+@pytest.mark.asyncio
+async def test_candidate_press_posts_install_requested_with_the_resolved_service_and_resolver() -> (
+    None
+):
+    """A real candidate click -- not a direct call to an internal method --
+    posts ``RemoteView.InstallRequested`` carrying the exact catalog,
+    candidate, service, and credential resolver the host screen needs to
+    resolve a plan itself (TASK-1914: this view no longer performs that
+    resolution; ``LLMScreen`` does). See
+    ``test_llm_screen_lab_adoption.py``'s remote-install tests for the
+    end-to-end coverage of what happens once ``LLMScreen`` receives this
+    message.
+    """
+    resolved = _resolved()
+    service = object()
+    # A working `.resolve()` stand-in, not a bare `object()`: this same
+    # factory also backs the metadata search/resolve this test drives
+    # through `_submit` first, so it must behave like a real resolver, not
+    # just be identity-comparable.
+    resolver = _Resolver([])
+    adapter = _Adapter(resolved=resolved)
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: resolver,
+        service_factory=lambda: service,
+    )
+    app = _capturing_app(view)
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "owner/repository")
+
+        button = view.query_one(".remote-candidate", Button)
+        await pilot.click(button)
+        await pilot.pause()
+
+        assert len(app.requests) == 1
+        event = app.requests[0]
+        expected_catalog = build_remote_catalog(resolved, resolved.candidates[0])
+        assert event.catalog == expected_catalog
+        assert event.candidate == resolved.candidates[0]
+        assert event.service is service
+        assert event.credential_resolver is resolver
+
+        # The clicked candidate's own row re-disables immediately (the
+        # long-standing "cannot double-click install" contract, unrelated
+        # to whether LLMScreen has even received the message yet).
+        assert view.query_one(".remote-candidate", Button).disabled is True
+        assert view.query_one("#remote-model-search", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_default_credential_resolver_factory_builds_env_config_resolver_for_the_posted_intent() -> (
+    None
+):
+    """The production path must not silently fall back to no credential resolver at all."""
+    from tldw_chatbook.Model_Artifacts.acquisition import EnvConfigCredentialResolver
+
+    resolved = _resolved()
+    adapter = _Adapter(resolved=resolved)
+    view = _view(adapter_factory=lambda: adapter, service_factory=lambda: object())
+    app = _capturing_app(view)
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "owner/repository")
+        await pilot.click(".remote-candidate")
+        await pilot.pause()
+
+    assert len(app.requests) == 1
+    assert isinstance(app.requests[0].credential_resolver, EnvConfigCredentialResolver)
+
+
+@pytest.mark.asyncio
+async def test_stale_candidate_press_is_rejected_at_the_ui_boundary() -> None:
+    """A queued button event from an old resolution must not post an intent."""
+    old_resolved = _resolved("old/repository")
+    current_resolved = _resolved("current/repository")
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _capturing_app(view)
+
+    async with app.run_test() as pilot:
+        view._resolved = old_resolved
+        view._refresh_with_status("Old resolution")
+        await pilot.pause()
+        stale_button = view.query_one(".remote-candidate", Button)
+
+        view._resolved = current_resolved
+        view._refresh_with_status("Current resolution")
+        await pilot.pause()
+        view._candidate_pressed(Button.Pressed(stale_button))
+        await pilot.pause()
+
+    assert app.requests == []
+    assert view._operation_reference is None
+
+
+@pytest.mark.asyncio
+async def test_candidate_press_notifies_and_does_not_post_when_the_catalog_cannot_be_built() -> (
+    None
+):
+    """A candidate that fails ``build_remote_catalog`` must never reach the host screen."""
+    resolved = _resolved()
+    bad_candidate = RemoteGGUFCandidate(label="bad", files=(), total_bytes=0)
+    tampered = ResolvedRemoteModel(
+        repository=resolved.repository,
+        commit=resolved.commit,
+        license_id=resolved.license_id,
+        review_url=resolved.review_url,
+        candidates=(bad_candidate,),
+        total_candidate_count=1,
+        warnings=(),
+    )
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _capturing_app(view)
+    notifications: list[tuple[str, str]] = []
+
+    async with app.run_test() as pilot:
+        view.notify = lambda message, *, severity: notifications.append(
+            (message, severity)
+        )
+        view._resolved = tampered
+        view._refresh_with_status("Select one GGUF candidate.")
+        await pilot.pause()
+        await pilot.click(".remote-candidate")
+        await pilot.pause()
+
+    assert app.requests == []
+    assert view._operation_reference is None
+    assert notifications and notifications[0][1] == "error"
+
+
+# ---------------------------------------------------------------------------
+# Render-only outcomes: apply_progress() / cancel_pending_install() /
+# finish_install().
+#
+# TASK-1914: the host screen (LLMScreen) is the only caller of any of
+# these -- apply_progress for a live tick, cancel_pending_install after a
+# preflight failure or an explicit consent-modal decline, finish_install
+# once provisioning completes, successfully or not.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_apply_progress_renders_and_retains_the_tick() -> None:
+    """A live tick updates the progress widget and is retained for hydration."""
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.Widgets.ModelArtifacts.install_progress import (
+        ModelInstallProgress,
+    )
+
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+    reference = ArtifactRef("owner-repository", "a" * 40, "q4_k_m")
+    progress = AcquisitionProgress("fetch", reference, "model-q4.gguf", 512, 1024)
+
+    async with app.run_test() as pilot:
+        view.apply_progress(progress)
+        await pilot.pause()
+
+        widget = view.query_one(
+            "#remote-model-install-progress", ModelInstallProgress
+        )
+        assert widget.display is True
+        assert view._progress == progress
+
+
+def test_apply_progress_tolerates_a_recompose_gap() -> None:
+    """A progress event is retained while its widget is temporarily absent."""
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    view = RemoteView(adapter_factory=MagicMock(), service_factory=MagicMock())
+    view.query_one = MagicMock(side_effect=NoMatches)
+    view.refresh = MagicMock()
+    progress = object()
+
+    view.apply_progress(progress)
+
+    assert view._progress is progress
+    view.refresh.assert_called_once_with(recompose=True)
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_install_clears_the_indicator_and_reenables_controls() -> (
+    None
+):
+    """A preflight failure or a decline releases the indicator without reloading."""
+    resolved = _resolved()
+    adapter = _Adapter(resolved=resolved)
+    view = _view(adapter_factory=lambda: adapter, resolver_factory=lambda: _Resolver([]))
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "owner/repository")
+        await pilot.click(".remote-candidate")
+        await pilot.pause()
+        assert view._operation_reference is not None
+        assert view.query_one("#remote-model-search", Button).disabled is True
+
+        view.cancel_pending_install("Sanitized failure.")
+        await pilot.pause()
+
+        assert view._operation_reference is None
+        assert view.query_one("#remote-model-search", Button).disabled is False
+        assert view.query_one(".remote-candidate", Button).disabled is False
+        status = str(view.query_one("#remote-model-status", Static).renderable)
+
+    assert status == "Sanitized failure."
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_install_with_no_message_restores_the_default_status() -> (
+    None
+):
+    """An explicit consent-modal decline restores ordinary status copy."""
+    resolved = _resolved()
+    adapter = _Adapter(resolved=resolved)
+    view = _view(adapter_factory=lambda: adapter, resolver_factory=lambda: _Resolver([]))
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "owner/repository")
+        await pilot.click(".remote-candidate")
+        await pilot.pause()
+
+        view.cancel_pending_install()
+        await pilot.pause()
+        status = str(view.query_one("#remote-model-status", Static).renderable)
+
+    assert "Select one GGUF candidate." in status
+
+
+@pytest.mark.asyncio
+async def test_finish_install_clears_the_indicator_progress_and_shows_the_given_message() -> (
+    None
+):
+    """``finish_install`` always hides progress, even mid-recompose."""
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.Widgets.ModelArtifacts.install_progress import (
+        ModelInstallProgress,
+    )
+
+    resolved = _resolved()
+    adapter = _Adapter(resolved=resolved)
+    view = _view(adapter_factory=lambda: adapter, resolver_factory=lambda: _Resolver([]))
+    app = _RemoteApp(view)
+    reference = ArtifactRef("owner-repository", "a" * 40, "q4_k_m")
+
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "owner/repository")
+        await pilot.click(".remote-candidate")
+        await pilot.pause()
+        view.apply_progress(
+            AcquisitionProgress("fetch", reference, "model-q4.gguf", 512, 1024)
+        )
+        await pilot.pause()
+
+        view.finish_install("Model downloaded and managed.")
+        await pilot.pause()
+
+        assert view._operation_reference is None
+        assert view._progress is None
+        progress_widget = view.query_one(
+            "#remote-model-install-progress", ModelInstallProgress
+        )
+        assert progress_widget.display is False
+        status = str(view.query_one("#remote-model-status", Static).renderable)
+
+    assert status == "Model downloaded and managed."
+
+
+@pytest.mark.asyncio
+async def test_finish_install_tolerates_a_missing_progress_widget() -> None:
+    """Missing progress markup mid-recompose must not skip indicator cleanup
+    or the status update -- only the progress widget lookup is tolerated
+    (mirroring ``apply_progress``'s own tolerance for the same underlying
+    reason: ``ModelInstallProgress`` may not have finished composing its
+    own children yet), not every widget on the view.
+    """
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        view._operation_reference = ArtifactRef("model-a", "a" * 40, "q4_k_m")
+        view._progress = object()
+        original_query_one = view.query_one
+
+        def _flaky_query_one(selector, *args, **kwargs):
+            if selector == "#remote-model-install-progress":
+                raise NoMatches("missing widget")
+            return original_query_one(selector, *args, **kwargs)
+
+        view.query_one = _flaky_query_one
+
+        view.finish_install("Model downloaded and managed.")
+        await pilot.pause()
+
+        assert view._operation_reference is None
+        assert view._progress is None
+        status = str(view.query_one("#remote-model-status", Static).renderable)
+
+    assert status == "Model downloaded and managed."
+
+
+# ---------------------------------------------------------------------------
+# Module-scope import boundary (TASK-1914, AC #3).
+# ---------------------------------------------------------------------------
+
+
+def test_remote_view_does_not_import_acquisition_at_module_scope() -> None:
+    """``RemoteView`` posts intents; only ``LLMScreen``'s worker methods
+    (and this module's own lazily-invoked ``_default_credential_resolver``)
+    import ``Model_Artifacts.acquisition``.
+
+    Uses the AST-based :func:`module_scope_forbidden_acquisition_imports`
+    (TASK-1914 fix round 1) rather than a text/substring scan: a substring
+    scan for ``"from tldw_chatbook.Model_Artifacts.acquisition import"``
+    (etc.) passes right over ``from tldw_chatbook.Model_Artifacts import
+    acquisition`` -- a real, eager, module-scope import of the acquisition
+    runtime via the package-then-attribute form -- because that exact
+    substring never appears in it.
+    """
+    import inspect
+
+    from tldw_chatbook.UI.Screens import model_remote_view as module
+
+    source = inspect.getsource(module)
+    assert "class RemoteView(Widget):" in source
+    findings = module_scope_forbidden_acquisition_imports(source)
+    assert findings == [], (
+        f"model_remote_view.py imports acquisition/fetch at module scope: {findings}"
+    )

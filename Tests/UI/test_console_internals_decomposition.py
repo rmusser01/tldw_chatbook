@@ -1,12 +1,13 @@
 # ruff: noqa: F811
 import time
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from rich.console import Console
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.events import Paste
+from textual.events import Key, Paste
 from textual.widgets import Button, Input, Select, Static
 
 from Tests.UI.test_destination_shells import (
@@ -25,7 +26,12 @@ from Tests.Agents.test_mcp_tool_provider import (
     _tool_dict,
 )
 from tldw_chatbook.Chat.chat_models import ChatSessionData
+from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
+    ACTION_SAVE_CHATBOOK,
+)
 from tldw_chatbook.Chat.console_display_state import (
+    ConsoleControlState,
     ConsoleInspectorState,
     ConsoleStagedContextState,
     build_console_evidence_display_state,
@@ -34,7 +40,9 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_glyphs import GLYPH_CLOSE
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Library import library_local_rag_search_service
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     ChatScreen,
@@ -45,6 +53,9 @@ from tldw_chatbook.Widgets.Console import (
     ConsoleComposerBar,
     ConsoleSetupModal,
     ConsoleStagedContextTray,
+)
+from tldw_chatbook.Widgets.Console.console_rag_settings_modal import (
+    ConsoleRagSettingsModal,
 )
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
@@ -181,6 +192,36 @@ async def _wait_for_console_library_rag_button_state(
     )
 
 
+async def _wait_for_production_chat_screen(
+    app, pilot, *, timeout: float = 4.0
+) -> ChatScreen:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        screen = app.screen
+        if isinstance(screen, ChatScreen) and screen.region.width > 0:
+            await pilot.pause()
+            return screen
+        await pilot.pause(0.01)
+    raise AssertionError(
+        f"Timed out waiting for production ChatScreen; active={type(app.screen).__name__}"
+    )
+
+
+async def _wait_for_enabled_button(
+    screen, pilot, selector: str, *, timeout: float = 4.0
+) -> Button:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        buttons = list(screen.query(selector))
+        if buttons:
+            button = buttons[0]
+            if button.region.width > 0 and not button.disabled:
+                await pilot.pause()
+                return button
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for enabled button {selector}")
+
+
 async def _open_console_inspector(console, pilot) -> None:
     """Open the persistent Inspector rail and wait for measurable layout."""
     right_rail = console.query_one("#console-right-rail")
@@ -286,7 +327,7 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
             "    height: 1fr;\n"
             "    min-height: 0;"
         ) in css
-        assert ("#console-composer-actions {\n    width: 37;") in css
+        assert ("#console-composer-actions {\n    width: 45;") in css
 
 
 @pytest.mark.asyncio
@@ -328,26 +369,39 @@ async def test_console_hidden_workbench_strips_do_not_reserve_rows():
         assert workbench.region.y > command_strip.region.y + command_strip.region.height
 
 
-@pytest.mark.asyncio
-async def test_console_mode_bar_groups_location_mode_and_readiness():
-    app = _build_test_app()
-    host = ConsoleHarness(app)
+def test_console_mode_bar_groups_location_mode_and_readiness():
+    control_state = ConsoleControlState.from_values(
+        provider="OpenAI",
+        model="gpt-4.1",
+    )
 
-    async with host.run_test(size=(212, 64)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-mode-bar")
+    # The mode segment is derived from the assistant identity contract, not
+    # from a human user profile. With no character or assistant selected, the
+    # production fallback is General; the neutral unloaded-tools label reduces
+    # to a dash.
+    assert (
+        ChatScreen._console_mode_summary(control_state)
+        == "Chat/RAG/Follow | Assistant: General | Sources 0 | Tools — | Approvals 0"
+    )
 
-        title = console.query_one("#console-title", Static)
-        mode_bar = console.query_one("#console-mode-bar", Static)
 
-        title_plain = getattr(title.render(), "plain", str(title.render()))
-        mode_plain = getattr(mode_bar.render(), "plain", str(mode_bar.render()))
+def test_console_mode_bar_treats_assistant_label_as_literal_text():
+    control_state = ConsoleControlState(
+        provider_label="Provider: OpenAI",
+        model_label="Model: gpt-5",
+        assistant_label="Persona: [bold]Guide[/bold]",
+        rag_label="RAG: off",
+        sources_label="Sources: 0 staged",
+        tools_label="Tools: not loaded",
+        approvals_label="Approvals: 0 pending",
+    )
+    summary = ChatScreen._console_mode_summary(control_state)
 
-        assert title_plain == "Console"
-        assert (
-            mode_plain
-            == "Chat/RAG/Follow | General | Sources 0 | Tools 0 | Approvals 0"
-        )
+    mode_bar = ChatScreen._hidden_static(summary, id="console-mode-bar")
+    rendered = mode_bar.render()
+
+    assert mode_bar._render_markup is False
+    assert getattr(rendered, "plain", str(rendered)) == summary
 
 
 @pytest.mark.asyncio
@@ -363,7 +417,9 @@ async def test_console_gate15_keeps_existing_chat_send_control_reachable():
         assert "Send" in text
         assert "Stop" in text
         assert "Attach" in text
-        assert "Save" in text
+        # "Save" left the always-visible chrome entirely (user request
+        # 2026-08-01): Save Chatbook's surviving surfaces are the composer's
+        # ☰ menu and the Inspector's Artifacts row, both asserted below.
         send_controls = [
             button
             for button in console.query(Button)
@@ -372,8 +428,11 @@ async def test_console_gate15_keeps_existing_chat_send_control_reachable():
         ]
         assert send_controls
         assert console.query_one("#console-stop-generation", Button)
-        assert console.query_one("#console-attach-context", Button)
-        assert console.query_one("#console-save-chatbook", Button)
+        # Attach and Save Chatbook now live in the composer's ☰ menu,
+        # not this width-bounded row -- see test_console_composer_menu.py.
+        assert console.query_one("#console-composer-menu", Button)
+        assert console.query_one("#console-inspector-save-chatbook", Button)
+        assert not list(console.query("#console-control-save-chatbook"))
 
 
 @pytest.mark.asyncio
@@ -391,8 +450,7 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         send_button = composer.query_one("#console-send-message", Button)
         stop_button = composer.query_one("#console-stop-generation", Button)
-        attach_button = composer.query_one("#console-attach-context", Button)
-        save_button = composer.query_one("#console-save-chatbook", Button)
+        mic_button = composer.query_one("#console-dictation", Button)
         legacy_inputs = [
             widget
             for widget in console.query(".chat-input-area")
@@ -412,7 +470,11 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
         assert composer.draft_text() == "visible composer text"
         assert "visible composer text" in visible_draft.renderable.plain
         assert "visible composer text" in _visible_text(composer)
-        for action_button in (send_button, stop_button, attach_button, save_button):
+        for action_button in (
+            send_button,
+            stop_button,
+            mic_button,
+        ):
             assert action_button.compact is True
             # Stop button is hidden when not running, so it has no valid region
             if action_button is not stop_button:
@@ -423,9 +485,9 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
                 )
         assert str(send_button.label) == "Send"
         assert str(stop_button.label) == "Stop"
-        assert str(attach_button.label) == "Attach"
-        assert str(save_button.label) == "Save"
-        assert save_button.region.width >= len("Save")
+        assert str(mic_button.label) == "Mic"
+        # Attach and Save Chatbook are ☰ menu rows now, not row buttons.
+        assert str(composer.query_one("#console-composer-menu", Button).label) == "☰"
         assert legacy_inputs == []
 
 
@@ -695,19 +757,11 @@ async def test_console_composer_ranks_actions_by_current_availability():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         send_button = composer.query_one("#console-send-message", Button)
         stop_button = composer.query_one("#console-stop-generation", Button)
-        attach_button = composer.query_one("#console-attach-context", Button)
-        save_button = composer.query_one("#console-save-chatbook", Button)
+        mic_button = composer.query_one("#console-dictation", Button)
 
         assert send_button.disabled is False
         assert stop_button.disabled is False
-        assert save_button.disabled is False
-        assert attach_button.disabled is False
-        assert attach_button.has_class("console-action-secondary")
-        assert save_button.has_class("console-action-secondary")
-        assert save_button.has_class("console-save-chatbook-secondary")
-        assert save_button.has_class("console-action-subdued")
-        assert save_button.has_class("console-action-disabled")
-        assert not save_button.has_class("console-action-primary")
+        assert mic_button.disabled is False
 
         composer.sync_action_state(
             has_draft=True,
@@ -717,13 +771,30 @@ async def test_console_composer_ranks_actions_by_current_availability():
         await pilot.pause(0.1)
 
         assert send_button.has_class("console-action-primary")
-        assert save_button.disabled is False
-        assert save_button.has_class("console-action-secondary")
-        assert save_button.has_class("console-save-chatbook-secondary")
-        assert save_button.has_class("console-save-chatbook-ready")
-        assert not save_button.has_class("console-action-disabled")
-        assert not save_button.has_class("console-action-subdued")
-        assert not save_button.has_class("console-action-primary")
+
+
+@pytest.mark.asyncio
+async def test_console_composer_save_chatbook_left_this_row_for_the_menu():
+    """Save Chatbook is no longer a button here; the ☰ menu owns it.
+
+    Its disabled-with-a-reason contract -- including the temporary-chat
+    block that was the point of the earlier version of this test -- did not
+    disappear, it moved with the control and is asserted in
+    `Tests/UI/test_console_composer_menu.py`. What this pins is that the
+    button did not stay BEHIND as well, which would give one action two
+    surfaces that can disagree.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        assert not composer.query("#console-save-chatbook")
+        assert not composer.query("#console-attach-context")
+        assert composer.query_one("#console-composer-menu", Button)
 
 
 @pytest.mark.asyncio
@@ -823,13 +894,16 @@ async def test_console_composer_actions_remain_visible_inside_composer_bounds():
         actions = composer.query_one("#console-composer-actions")
         send_button = composer.query_one("#console-send-message", Button)
         stop_button = composer.query_one("#console-stop-generation", Button)
-        attach_button = composer.query_one("#console-attach-context", Button)
-        save_button = composer.query_one("#console-save-chatbook", Button)
+        mic_button = composer.query_one("#console-dictation", Button)
 
         composer_right = composer.region.x + composer.region.width
         assert actions.region.x > visible_draft.region.x
         assert actions.region.x + actions.region.width <= composer_right
-        for button in (send_button, stop_button, attach_button, save_button):
+        for button in (
+            send_button,
+            stop_button,
+            mic_button,
+        ):
             # Stop button is hidden when not running, others remain visible
             if button is stop_button:
                 assert button.display is False
@@ -837,35 +911,42 @@ async def test_console_composer_actions_remain_visible_inside_composer_bounds():
                 assert button.display is True
                 assert button.region.x + button.region.width <= composer_right
 
-        assert str(save_button.label) == "Save"
-        assert save_button.tooltip == "No Chatbook artifact is available to save yet."
+        # The ☰ button must itself stay inside the composer bounds --
+        # it is now the only way to reach Attach and Save Chatbook.
+        menu_button = composer.query_one("#console-composer-menu", Button)
+        assert menu_button.display is True
+        assert menu_button.region.x + menu_button.region.width <= composer_right
 
 
 @pytest.mark.asyncio
 async def test_console_composer_save_chatbook_routes_available_artifact_action():
     app = _build_test_app()
     handled_launches = []
-    app.pending_console_launch = {
-        "source": "artifacts",
-        "title": "Grounded Answer Chatbook",
-        "status": "ready",
-        "payload": {"target_id": "local:chatbook:77", "chatbook_id": 77},
-        "action_label": "Open Chatbook artifact",
-    }
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "artifacts",
+            "title": "Grounded Answer Chatbook",
+            "status": "ready",
+            "payload": {"target_id": "local:chatbook:77", "chatbook_id": 77},
+            "action_label": "Open Chatbook artifact",
+        },
+    )
     app.open_console_live_work_primary_action = lambda launch: (
         handled_launches.append(launch) or True
     )
-    host = ConsoleHarness(app)
 
-    async with host.run_test(size=(140, 42)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-
-        save_button = console.query_one("#console-save-chatbook", Button)
-
-        assert save_button.disabled is False
-        save_button.press()
-        await pilot.pause(0.1)
+    async with app.run_test(size=(140, 42)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+        # Save Chatbook moved from a composer button into the ☰ menu, so the
+        # route under test is now the menu dispatch. The guarantee is
+        # unchanged and still the point of this test: choosing it must reach
+        # the real Artifacts handoff, not merely close the menu.
+        console._handle_console_composer_menu_choice(ACTION_SAVE_CHATBOOK)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not handled_launches:
+            await pilot.pause(0.01)
 
     assert len(handled_launches) == 1
     assert handled_launches[0].payload["target_id"] == "local:chatbook:77"
@@ -892,6 +973,38 @@ async def test_console_stop_button_hidden_unless_streaming():
         )
         await pilot.pause()
         assert stop.styles.display == "none"
+
+
+@pytest.mark.asyncio
+async def test_console_stop_button_tooltip_scopes_to_this_tab():
+    """Fleet-UX expert review F7 (task-1234): under parallel runs, "Stop"
+    alone doesn't say WHICH run it stops -- the button only ever stops the
+    viewed tab's own run (behavior unchanged by this task), so the tooltip
+    must say so explicitly rather than the old ambiguous "active Console
+    session" phrasing. Both the expanded and collapsed-composer Stop
+    buttons carry the same copy. `ConsoleComposerBar.sync_action_state`
+    overwrites the expanded button's tooltip on every refresh (the
+    construction-time value alone is never what a user hovering an
+    ACTIVE Stop button actually sees), so a run must be active for this
+    assertion to exercise the real, live copy -- mirrors
+    `test_console_stop_button_hidden_unless_streaming`'s own setup."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer")
+        composer.sync_action_state(
+            has_draft=True, run_active=True, can_save_chatbook=False
+        )
+        await pilot.pause()
+
+        stop = console.query_one("#console-stop-generation")
+        assert str(stop.tooltip) == "Stop this tab's run."
+
+        collapsed_stop = console.query_one("#console-collapsed-stop-generation")
+        assert str(collapsed_stop.tooltip) == "Stop this tab's run."
 
 
 @pytest.mark.asyncio
@@ -997,7 +1110,7 @@ def test_console_paste_token_style_span_survives_crlf_before_token():
     )
 
 
-def test_console_literal_segments_merge_during_typing_and_small_pastes():
+def test_console_typing_and_small_paste_render_contiguously_with_explicit_origins():
     composer = ConsoleComposerBar()
 
     composer.insert_text("a")
@@ -1005,8 +1118,15 @@ def test_console_literal_segments_merge_during_typing_and_small_pastes():
     composer.insert_pasted_text("small paste")
 
     assert composer.draft_text() == "absmall paste"
-    assert len(composer._segments) == 1
-    assert composer._segments[0].collapse_state == "literal"
+    assert composer._display_draft_text() == "absmall paste"
+    assert [
+        (segment.text, segment.origin, segment.collapse_state)
+        for segment in composer._segments
+    ] == [
+        ("ab", "literal", "literal"),
+        ("small paste", "paste", "literal"),
+    ]
+    assert composer.has_paste_segments() is True
 
 
 def test_console_composer_empty_placeholder_is_task_oriented():
@@ -1687,9 +1807,11 @@ async def test_console_native_composer_captures_printable_typing_from_non_text_f
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         command_input = composer.query_one("#console-command-input", Input)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
-        save_button = composer.query_one("#console-save-chatbook", Button)
+        # Focus any non-text control in the row; the point is that a
+        # printable key still reaches the draft from non-text focus.
+        menu_button = composer.query_one("#console-composer-menu", Button)
 
-        save_button.focus()
+        menu_button.focus()
         await pilot.pause(0.1)
         await pilot.press("k")
         await pilot.pause(0.1)
@@ -2707,8 +2829,15 @@ async def test_console_inspector_source_readiness_rows_fit_without_tooltip_overl
 
         assert run_rag.disabled is True
         assert str(run_rag.tooltip or "") == ""
-        scope_plain = getattr(scope.render(), "plain", str(scope.render()))
-        assert len(scope_plain) <= scope.region.width
+        # RAG-44: the source line now carries Library's summary grammar
+        # ("Sources: Notes, Media, Conversations (Prompts off)"), which is
+        # wider than this 35-column rail, so it is held to the same
+        # no-clipping rule as the source rows below rather than to a
+        # single-line rule it can no longer meet.
+        scope_lines = _wrapped_plain_lines(scope.render(), scope.region.width)
+        assert scope_lines
+        assert len(scope_lines) <= scope.region.height
+        assert all(len(line) <= scope.region.width for line in scope_lines)
         assert rows
         for row in rows:
             lines = _wrapped_plain_lines(row.render(), row.region.width)
@@ -2729,7 +2858,9 @@ async def test_console_empty_inspector_hides_disabled_actions_until_actionable()
 
         for selector in (
             "#console-inspector-review-approval",
-            "#console-inspector-review-tool-call",
+            # TASK-1843: review-tool-call removed -- it gated on a counter
+            # production never populates, so it was permanently disabled
+            # while permanently claiming a reason.
             "#console-inspector-save-chatbook",
         ):
             button = console.query_one(selector, Button)
@@ -2856,29 +2987,26 @@ async def test_console_left_rail_sections_use_available_space():
         body = console.query_one("#console-left-rail-body")
         header = console.query_one(".console-rail-header")
         session_body = console.query_one("#console-rail-section-body-session")
-        context_body = console.query_one("#console-rail-section-body-context")
-        staged_context = console.query_one("#console-staged-context-tray")
         workspace_context = console.query_one("#console-workspace-context")
 
         assert body.parent is left_rail
         assert header.region.height == 1
         assert body.region.y >= header.region.y + header.region.height
         assert body.region.height <= left_rail.region.height - header.region.height
-        # The trays now live inside their collapsible section bodies: workspace
-        # context in Session (first), staged context in Context (second).
-        assert staged_context.parent is context_body
+        # The workspace tray lives inside its collapsible Session section
+        # body. (Task-400: the staged-context tray moved to the Inspector
+        # rail, so the left rail no longer hosts a Context section.)
         assert workspace_context.parent is session_body
-        assert workspace_context.region.y < staged_context.region.y
-        assert workspace_context.region.height > staged_context.region.height
+        assert not list(left_rail.query("#console-staged-context-tray"))
+        assert not list(console.query("#console-rail-section-body-context"))
 
         # Rail section widths can still be converging on the first render pass
         # (especially under a busy scheduler in a full-suite run), so settle
         # until the measured widths stop changing before asserting equality.
-        previous_widths: tuple[int, int, int] | None = None
+        previous_widths: tuple[int, int] | None = None
         for _ in range(20):
             current_widths = (
                 body.scrollable_content_region.width,
-                staged_context.region.width,
                 workspace_context.region.width,
             )
             if current_widths == previous_widths:
@@ -2888,7 +3016,6 @@ async def test_console_left_rail_sections_use_available_space():
 
         body_content_width = body.scrollable_content_region.width
         assert 0 <= body.region.width - body_content_width <= 2
-        assert staged_context.region.width == body_content_width
         assert workspace_context.region.width == body_content_width
 
 
@@ -2941,22 +3068,25 @@ async def test_console_empty_regions_do_not_stack_nested_terminal_frames():
 @pytest.mark.asyncio
 async def test_console_staged_context_tray_stays_quiet_when_populated():
     app = _build_test_app()
-    app.pending_console_launch = {
-        "source": "Library Search/RAG",
-        "title": "Incident Review",
-        "status": "ready",
-        "recovery": "Review citations before sending.",
-        "payload": {
-            "source_id": "note-42",
-            "chunk_id": "chunk-7",
-            "runtime_backend": "local-fts",
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "Library Search/RAG",
+            "title": "Incident Review",
+            "status": "ready",
+            "recovery": "Review citations before sending.",
+            "payload": {
+                "source_id": "note-42",
+                "chunk_id": "chunk-7",
+                "runtime_backend": "local-fts",
+            },
         },
-    }
-    host = ConsoleHarness(app)
+    )
 
-    async with host.run_test(size=(212, 64)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(212, 64)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-staged-context-row-0")
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
         # Confirm the tray genuinely has content, so the quiet-border
         # assertion below is meaningful for the non-empty state (and not
@@ -3066,6 +3196,10 @@ async def test_console_empty_staged_context_omits_attach_action():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-staged-context-empty")
 
+        # Task-400: the tray lives in the Inspector rail, so its content is
+        # only display-visible once the Inspector is open.
+        await _open_console_inspector(console, pilot)
+
         tray = console.query_one("#console-staged-context-tray")
         assert not list(tray.query("#console-staged-context-attach"))
         assert "Stage sources from Library" in _visible_text(tray)
@@ -3092,22 +3226,25 @@ async def test_console_staged_context_empty_state_renders_summary_when_provided(
 @pytest.mark.asyncio
 async def test_console_non_empty_staged_context_keeps_room_for_source_details():
     app = _build_test_app()
-    app.pending_console_launch = {
-        "source": "Library Search/RAG",
-        "title": "Incident Review",
-        "status": "ready",
-        "recovery": "Review citations before sending.",
-        "payload": {
-            "source_id": "note-42",
-            "chunk_id": "chunk-7",
-            "runtime_backend": "local-fts",
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "Library Search/RAG",
+            "title": "Incident Review",
+            "status": "ready",
+            "recovery": "Review citations before sending.",
+            "payload": {
+                "source_id": "note-42",
+                "chunk_id": "chunk-7",
+                "runtime_backend": "local-fts",
+            },
         },
-    }
-    host = ConsoleHarness(app)
+    )
 
-    async with host.run_test(size=(120, 40)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(120, 40)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-staged-context-row-0")
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
         staged_context = console.query_one("#console-staged-context-tray")
         max_height = getattr(
@@ -3125,10 +3262,9 @@ async def test_console_non_empty_staged_context_keeps_room_for_source_details():
 @pytest.mark.asyncio
 async def test_console_control_bar_renders_readable_summary_line():
     app = _build_test_app()
-    host = ConsoleHarness(app)
 
-    async with host.run_test(size=(140, 42)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(140, 42)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-control-bar")
 
         summary = console.query_one("#console-control-status-line", Static)
@@ -3137,6 +3273,7 @@ async def test_console_control_bar_renders_readable_summary_line():
         assert "Provider:" in plain
         assert " | Model:" in plain
         assert " | Assistant:" in plain
+        assert " | RAG:" in plain
         assert " | Sources:" in plain
 
 
@@ -3175,18 +3312,27 @@ async def test_console_composer_status_renders_session_metadata_as_plain_text():
 @pytest.mark.asyncio
 async def test_console_native_control_bar_and_staged_context_reflect_pending_handoff():
     app = _build_test_app()
-    app.pending_console_launch = {
-        "source": "Library Search/RAG",
-        "title": "Transformer notes",
-        "status": "ready",
-        "recovery": "Review citations before sending.",
-        "payload": {"source_id": "note-1", "citation_count": 2},
-    }
-    host = ConsoleHarness(app)
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "Library Search/RAG",
+            "title": "Transformer notes",
+            "status": "ready",
+            "recovery": "Review citations before sending.",
+            "payload": {"source_id": "note-1", "citation_count": 2},
+        },
+    )
 
-    async with host.run_test(size=(140, 42)) as pilot:
-        console = host.screen_stack[-1]
+    # Task-400: staged context renders in the Inspector rail. The pending
+    # launch auto-open is suppressed while the rail is force-collapsed
+    # (widths under 150 columns OUTSIDE the 118-128 standard-width contract,
+    # which auto-opens a fresh Inspector on its own); 170 columns keeps the
+    # auto-open effective so the staged text is measurable here.
+    async with app.run_test(size=(170, 42)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-control-bar")
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+        await _open_console_inspector(console, pilot)
 
         text = _visible_text(console)
         assert "Provider:" in text
@@ -3364,21 +3510,24 @@ def test_console_provider_selection_normalizes_display_provider_key():
 @pytest.mark.asyncio
 async def test_console_run_inspector_shows_blocked_provider_and_missing_rag_source():
     app = _build_test_app()
-    app.app_config = {"chat_defaults": {}}
+    app.app_config["chat_defaults"] = {}
     app.console_provider_ready = False
-    app.pending_console_launch = {
-        "source": "Library Search/RAG",
-        "title": "Grounded answer",
-        "status": "ready",
-        "recovery": "Attach a source before asking the model.",
-        "payload": {},
-    }
-    host = ConsoleHarness(app)
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "Library Search/RAG",
+            "title": "Grounded answer",
+            "status": "ready",
+            "recovery": "Attach a source before asking the model.",
+            "payload": {},
+        },
+    )
 
-    async with host.run_test(size=(196, 48)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(196, 48)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-provider")
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
         assert "Provider: blocked" in str(
             console.query_one("#console-inspector-provider", Static).renderable
@@ -3390,14 +3539,13 @@ async def test_console_run_inspector_shows_blocked_provider_and_missing_rag_sour
             console.query_one("#console-inspector-sources", Static).renderable
         )
         assert not list(console.query("#console-inspector-rag-source"))
-        assert (
-            console.query_one("#console-inspector-review-tool-call", Button).disabled
-            is True
-        )
-        assert "No tool calls are ready for review." in str(
-            console.query_one(
-                "#console-inspector-review-tool-call-reason", Static
-            ).renderable
+        # TASK-1843: the permanently-disabled review-tool-call action is gone,
+        # and so is the disabled-reason Static that explained it. Both must
+        # disappear together -- a stranded reason line would still advertise a
+        # control the user cannot reach.
+        assert not list(console.query("#console-inspector-review-tool-call"))
+        assert not list(
+            console.query("#console-inspector-review-tool-call-reason")
         )
 
 
@@ -3406,20 +3554,25 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
     app = _build_test_app()
     app.console_pending_approval_count = 1
     app.console_tool_count = 1
-    app.pending_console_launch = {
-        "source": "artifacts",
-        "title": "Grounded Answer Chatbook",
-        "status": "ready",
-        "recovery": "Review this Chatbook artifact in Console or return to Artifacts.",
-        "payload": {"target_id": "local:chatbook:77", "chatbook_id": 77},
-        "action_label": "Open Chatbook artifact",
-    }
-    host = ConsoleHarness(app)
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "artifacts",
+            "title": "Grounded Answer Chatbook",
+            "status": "ready",
+            "recovery": (
+                "Review this Chatbook artifact in Console or return to Artifacts."
+            ),
+            "payload": {"target_id": "local:chatbook:77", "chatbook_id": 77},
+            "action_label": "Open Chatbook artifact",
+        },
+    )
 
-    async with host.run_test(size=(196, 48)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(196, 48)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-review-approval")
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
         assert "Approvals: 1 pending" in str(
             console.query_one("#console-inspector-approvals", Static).renderable
@@ -3431,10 +3584,8 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
             console.query_one("#console-inspector-review-approval", Button).disabled
             is False
         )
-        assert (
-            console.query_one("#console-inspector-review-tool-call", Button).disabled
-            is False
-        )
+        # TASK-1843: removed; see the note above.
+        assert not list(console.query("#console-inspector-review-tool-call"))
         assert (
             console.query_one("#console-inspector-save-chatbook", Button).disabled
             is False
@@ -3446,7 +3597,6 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
         assert (
             console.query_one("#console-inspector-tools-heading").region.y
             < console.query_one("#console-inspector-tools").region.y
-            < console.query_one("#console-inspector-review-tool-call").region.y
             < console.query_one("#console-inspector-approvals-heading").region.y
         )
         assert (
@@ -3542,9 +3692,8 @@ async def test_console_run_inspector_mcp_row_reflects_real_compose_mcp_provider(
             catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
         )
 
-        provider, review_hook = await controller._compose_mcp_provider()
+        provider = await controller._compose_mcp_provider()
         assert provider is not None
-        assert callable(review_hook)
         assert app.console_mcp_tool_count == 1
         assert app.console_mcp_not_connected_count == 0
 
@@ -3580,9 +3729,8 @@ async def test_console_run_inspector_mcp_row_shows_blocked_when_stale_server_has
             ],
         )
 
-        provider, review_hook = await controller._compose_mcp_provider()
+        provider = await controller._compose_mcp_provider()
         assert provider is not None
-        assert callable(review_hook)
         assert app.console_mcp_tool_count == 1
         assert app.console_mcp_not_connected_count == 1
 
@@ -3623,7 +3771,14 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result()
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        assert "Scope: notes, media, conversations" in _visible_text(console)
+        # RAG-44: the readiness card's source line is now Library's
+        # scope-summary grammar under the Console's own "Sources" noun
+        # ("Scope" here already means the retrieval ITEM scope), and it
+        # names what is off -- the default still being today's three.
+        assert (
+            "Sources: Notes, Media, Conversations (Prompts off)"
+            in _visible_text(console)
+        )
         query_input = console.query_one("#console-library-rag-query-input", Input)
         query_input.value = query
         await pilot.pause(0.1)
@@ -3882,8 +4037,22 @@ async def test_console_rag_query_validation_blocks_unsafe_markup():
 
 
 @pytest.mark.asyncio
-async def test_console_rag_action_without_service_stages_recoverable_blocker():
+async def test_console_rag_action_without_service_stages_recoverable_blocker(
+    monkeypatch,
+):
     app = _build_test_app()
+    app.library_rag_search_service = None
+    rag_factory_calls = []
+
+    def record_rag_factory_call():
+        rag_factory_calls.append(True)
+        return None
+
+    monkeypatch.setattr(
+        library_local_rag_search_service,
+        "get_shared_rag_service",
+        record_rag_factory_call,
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(196, 48)) as pilot:
@@ -3894,9 +4063,13 @@ async def test_console_rag_action_without_service_stages_recoverable_blocker():
         console.query_one(
             "#console-library-rag-query-input", Input
         ).value = "What changed?"
-        await pilot.pause(0.1)
+        await _wait_for_console_library_rag_button_state(
+            console,
+            pilot,
+            disabled=False,
+        )
         console.query_one("#console-run-library-rag", Button).press()
-        await _wait_for_selector(console, pilot, "#console-live-work-status")
+        await _wait_for_visible_text(console, pilot, "Status: blocked")
 
         text = _visible_text(console)
         assert "Status: blocked" in text
@@ -3904,6 +4077,168 @@ async def test_console_rag_action_without_service_stages_recoverable_blocker():
         assert "RAG/source:" not in text
         assert "Unavailable: Library Search/RAG retrieval." in text
         assert "Owner: Library retrieval service." in text
+        assert rag_factory_calls == []
+
+
+@pytest.mark.asyncio
+async def test_console_control_bar_run_library_rag_opens_settings_modal_when_blank():
+    """RAG-41/42: the always-visible control-bar action has no place for a
+    query to live -- it toasted "Type a Library RAG query" at an invisible
+    input. With no dedicated query AND no composer draft, it must now open
+    the same RAG settings modal the chip opens, not toast, and it must not
+    run retrieval underneath the modal (the loop-guard proof: Cancel leaves
+    no query stored and the search service uncalled)."""
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService({"results": []})
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-run-library-rag")
+
+        assert console._console_library_rag_query == ""
+        console.app_instance.notify = Mock()
+
+        await pilot.click("#console-control-run-library-rag")
+        await pilot.pause()
+
+        modal = host.screen
+        assert isinstance(modal, ConsoleRagSettingsModal)
+        console.app_instance.notify.assert_not_called()
+        assert service.calls == []
+
+        # Loop-guard: Cancel dismisses with no changes -- no query gets
+        # stored and the modal's own Run callback (which re-enters
+        # `_run_console_library_rag_from_visible_action`) never fires.
+        await pilot.click("#console-rag-settings-cancel")
+        await pilot.pause()
+
+        assert host.screen is console
+        assert console._console_library_rag_query == ""
+        assert service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_console_control_bar_run_library_rag_guards_a_path_shaped_draft():
+    """RAG-43 end to end: the mock-level guard tests in
+    `test_console_rag_settings_modal.py` pin `_console_draft_looks_like_rag_query`
+    against a `Mock()` screen, never a real composer or a real control-bar
+    click -- so a wiring mistake at either call site (e.g. reading the wrong
+    composer, or the control-bar action not routing through the guarded
+    fallback at all) would pass every mock-level test while still leaking a
+    path straight into retrieval live. This drives the real thing: a real
+    `ConsoleComposerBar` holding a path-shaped draft, a real control-bar
+    click, and confirms both halves of the guard hold together -- no query
+    gets stored anywhere AND the settings modal (not a toast, not silent
+    retrieval) is what actually opens, exactly like the blank-draft case
+    above."""
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService({"results": []})
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-run-library-rag")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("/Users/x/notes.md")
+        await pilot.pause()
+
+        assert console._console_library_rag_query == ""
+        console.app_instance.notify = Mock()
+
+        await pilot.click("#console-control-run-library-rag")
+        await pilot.pause()
+
+        modal = host.screen
+        assert isinstance(modal, ConsoleRagSettingsModal)
+        assert modal._query == ""
+        assert console._console_library_rag_query == ""
+        console.app_instance.notify.assert_not_called()
+        assert service.calls == []
+        # The guarded draft is left exactly where the user typed it -- the
+        # guard drops the prefill, it does not touch the composer.
+        assert composer.draft_text() == "/Users/x/notes.md"
+
+
+@pytest.mark.asyncio
+async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request():
+    """RAG-44 end to end: the settings modal's source toggles decide what
+    retrieval actually reads. Switching Media off and running must send a
+    request WITHOUT media to the search service (and leave the Inspector's
+    source line saying so) -- the critique's complaint was that Library
+    offered these toggles while the Console showed a read-only line."""
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService({"results": []})
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-run-library-rag")
+
+        # Queryless control-bar action opens the settings modal (task-2).
+        await pilot.click("#console-control-run-library-rag")
+        await pilot.pause()
+        modal = host.screen
+        assert isinstance(modal, ConsoleRagSettingsModal)
+
+        modal.query_one("#console-rag-settings-query", Input).value = "why did it fail"
+        await pilot.pause()
+        await pilot.click("#console-rag-settings-source-media")
+        await pilot.pause()
+        await pilot.click("#console-rag-settings-run")
+        for _ in range(10):
+            await pilot.pause()
+
+        assert service.calls == [
+            {
+                "query": "why did it fail",
+                "scope": ("notes", "conversations"),
+                "mode": "rag",
+                "top_k": 5,
+                "include_citations": True,
+            }
+        ]
+        assert console._console_library_rag_source_types == ("notes", "conversations")
+        # The staged live-work card reports the same narrowed selection the
+        # request carried, so what ran is visible after the fact too.
+        assert "source_scope: notes, conversations" in _visible_text(console)
+        assert (
+            ChatScreen._console_library_rag_scope_label(console)
+            == "Sources: Notes, Conversations (Media, Prompts off)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_inspector_run_library_rag_gating_unaffected_by_modal_seam():
+    """The Inspector's own Run button stays disabled while its query input
+    is blank -- unaffected by the control-bar action now opening the
+    settings modal instead of toasting (this task changes the empty-query
+    path of the SAME `_run_console_library_rag_from_visible_action` method
+    the control-bar and Inspector button both call, so the two entry
+    points' gating must not cross-contaminate)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-run-library-rag")
+
+        run_rag = console.query_one("#console-run-library-rag", Button)
+        assert run_rag.disabled is True
+
+        await pilot.click("#console-control-run-library-rag")
+        await pilot.pause()
+        assert isinstance(host.screen, ConsoleRagSettingsModal)
+        await pilot.click("#console-rag-settings-cancel")
+        await pilot.pause()
+
+        run_rag = console.query_one("#console-run-library-rag", Button)
+        assert run_rag.disabled is True
 
 
 @pytest.mark.asyncio
@@ -4067,3 +4402,51 @@ async def test_console_session_settings_action_noop_while_setup_modal_blocking()
         await pilot.pause(0.2)
         assert len(host.screen_stack) == before_depth
         assert host.screen_stack[-1].__class__.__name__ != "ConsoleSettingsModal"
+
+
+@pytest.mark.asyncio
+async def test_alt_letter_is_not_captured_as_composer_typing():
+    """TASK-1800: Alt+<letter> must not be swallowed as composer text.
+
+    `ChatScreen.on_key` routes every `is_printable` key into the draft. The
+    real terminal parser yields `Key("alt+m", "m")` (`_xterm_parser.py`
+    renames the key but passes the bare letter as `character`), so the chord
+    was `is_printable`, got captured as typing, and the screen's own
+    `Binding("alt+m", ...)` never ran -- pressing it inserted a literal "m"
+    into the user's draft.
+
+    **This cannot be written with `pilot.press("alt+m")`.** Textual's test
+    pilot builds the event as `char = key if len(key) == 1 else None`
+    (`app.py`), so a pilot alt-chord arrives with `character=None` and
+    `is_printable` False -- the bug is invisible to it. That is why the whole
+    suite passed while a real terminal typed stray letters into the draft.
+    The event below is constructed the way the parser really builds it.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        for chord, letter in (("alt+m", "m"), ("alt+w", "w"), ("alt+t", "t")):
+            event = Key(chord, letter)
+            assert event.is_printable, "precondition: the parser marks these printable"
+            console.on_key(event)
+            await pilot.pause(0.05)
+            assert composer.draft_text() == "", (
+                f"{chord} was typed into the draft: {composer.draft_text()!r}"
+            )
+            assert not event._forwarded, f"{chord} should not be consumed here"
+
+        # Control: the same letters WITHOUT alt must still reach the draft.
+        # A guard that skipped on `character` alone would pass above and
+        # silently break all text entry.
+        for letter in ("m", "w", "t"):
+            console.on_key(Key(letter, letter))
+            await pilot.pause(0.05)
+        assert composer.draft_text() == "mwt", (
+            f"plain typing broke: {composer.draft_text()!r}"
+        )

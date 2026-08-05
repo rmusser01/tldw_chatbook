@@ -73,11 +73,6 @@ PROJECT_ROOT_DIR = LIBS_DIR.parent  # Absolute path to ~/tldw_cli/
 CONFIG_FILENAME = "config.txt"
 CONFIG_FILE_PATH = PROJECT_ROOT_DIR / CONFIG_FILENAME
 
-# --- User Database Path (Fixed Location) ---
-USER_DB_DIR = Path.home() / ".config" / "tldw_cli"
-USER_DB_FILENAME = "tldw_cli_Media.db"
-USER_DB_PATH = USER_DB_DIR / USER_DB_FILENAME
-
 # --- Project-Internal Database Directory (if needed) ---
 PROJECT_DB_DIR_NAME = "Databases"  # Name of the subdir within project root
 PROJECT_DATABASES_DIR = PROJECT_ROOT_DIR / PROJECT_DB_DIR_NAME

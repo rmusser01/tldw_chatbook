@@ -6,7 +6,7 @@ This file provides comprehensive guidance to Claude Code (claude.ai/code) when w
 
 **tldw_chatbook** - TUI application built with Textual for LLM interactions. Features: conversation management, character chat, notes with file sync, media ingestion, RAG capabilities.
 
-**Tech Stack**: Python ≥3.11, Textual ≥3.3.0, SQLite with FTS5, AGPLv3+  
+**Tech Stack**: Python ≥3.11, Textual 8.x (≥8.0.0,<9), SQLite with FTS5, AGPLv3+
 **Key Dependencies**: httpx, loguru, rich, pydantic, toml, keyring, aiofiles, jinja2
 
 ## Quick Commands
@@ -14,7 +14,13 @@ This file provides comprehensive guidance to Claude Code (claude.ai/code) when w
 ```bash
 # Setup
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"  # Or specific: .[embeddings_rag,websearch,local_vllm,ebook,pdf]
+pip install -e ".[dev]"  # Or specific: .[embeddings_rag,websearch,local_vllm,ebook,pdf,image_generation]
+
+# NOTE: the checked-out .venv here is uv-managed (see .venv/pyvenv.cfg) and ships
+# NO pip, so the line above fails with "No module named pip" against it. Use:
+#   VIRTUAL_ENV=.venv uv pip install -e ".[dev]"
+# Dev deps are often absent from a fresh clone's venv -- if `pytest` is missing,
+# install it before assuming the suite is broken.
 
 # Run
 python3 -m tldw_chatbook.app
@@ -37,20 +43,16 @@ pytest --cov=tldw_chatbook  # With coverage
 
 ### UI Layer (`UI/` and `Widgets/`)
 
-**Main Windows** (all extend Screen):
-- `Chat_Window_Enhanced.py` - Streaming chat, images, RAG, tool calling
-- `Conv_Char_Window.py` - Conversation/character CRUD
-- `Notes_Window.py` - Notes with templates and sync
-- `SearchRAGWindow.py` - RAG search interface
-- `Evals_Window_v3.py` - LLM benchmarking
-- `MediaWindow.py` - Media management hub
-- `Coding_Window.py` - Code-focused chat interface
-- `IngestTldwApiWindow.py` - Media ingestion forms
+**Screens** (tab content, registered in `UI/Navigation/screen_registry.py`):
+- `UI/Screens/chat_screen.py` - Chat (embeds `Chat_Window_Enhanced.py`, a Container)
+- `UI/Screens/media_screen.py` / `media_ingest_screen.py` - Media hub + ingestion
+- `UI/Screens/personas_screen.py`, `evals_screen.py`, `library_screen.py`, etc.
+
+Each tab is a `Screen` registered in `UI/Navigation/screen_registry.py`. Note: `Chat_Window_Enhanced.py` is an embedded `Container` widget, not a Screen. Several legacy standalone screens are retired and their route ids alias to a live screen (see `_SCREEN_ALIASES` in `screen_registry.py`): Notes, Skills, Prompts, and Search alias to Library; Coding aliases to Chat (merged into Console).
 
 **Key Widgets**:
 - `chat_message_enhanced.py` - Rich messages with actions
 - `tool_message_widgets.py` - Tool calling UI (ToolCallMessage, ToolResultMessage)
-- `IngestTldwApi*Window.py` - Media-specific ingestion forms
 - `form_components.py` - Standardized form builders
 
 ### Business Logic
@@ -61,15 +63,22 @@ pytest --cov=tldw_chatbook  # With coverage
 - **`RAG_Search/`** - `simplified/` for streamlined implementation, `chunking_service.py`
 - **`Tools/`** - `tool_executor.py`, built-in: DateTimeTool, CalculatorTool
 - **`Evals/`** - `eval_orchestrator.py`, `eval_runner.py`, task-specific runners
-- **`LLM_Calls/`** - Provider integrations, unified `chat_with_provider()` interface
+- **`LLM_Calls/`** - Provider integrations (`chat_with_<provider>()` functions); the unified dispatcher is `chat_api_call()` in `Chat/Chat_Functions.py`
 
 ### Data Layer (`DB/`)
 
-- **`ChaChaNotes_DB.py`** - Main DB (conversations, messages, characters, notes), schema v7
+- **`ChaChaNotes_DB.py`** - Main DB (conversations, messages, characters, notes); the current schema version is the `_CURRENT_SCHEMA_VERSION` constant in this file — bump it and add a migration when changing schema
 - **`Client_Media_DB_v2.py`** - Media storage with chunking
 - **`RAG_Indexing_DB.py`** - Vector storage (when enabled)
-- Other DBs: Evals, Prompts, Subscriptions
+- Other DBs: `Evals_DB.py`, `Prompts_DB.py`, `Subscriptions_DB.py`, `AgentRuns_DB.py`, `Workspace_DB.py`, `Library_Collections_DB.py`, `Library_Ingest_Jobs_DB.py`, `Research_DB.py`, `Writing_DB.py`, `Mindmap_DB.py`, `search_history_db.py`, `Sync_Client.py`
 - Patterns: soft deletion, optimistic locking, FTS5 triggers, parameterized queries only
+
+### Agents Runtime (`Agents/`)
+
+A from-scratch agent framework, distinct from the `Tools/tool_executor.py` tool layer:
+- `agent_models.py`, `agent_runtime.py`, `agent_stream.py` - pure logic (control loop, streaming fence-gate, dataclasses; no I/O)
+- `agent_service.py` - the one impure seam: wires the loop to `chat_api_call`, the permission gate, sub-agent spawning, and run persistence (`AgentRuns_DB.py`); runs on a worker thread
+- `tool_catalog.py` (`ToolProvider` interface), `native_tools.py` (provider-native tool-calls), `mcp_tool_provider.py` (MCP bridge)
 
 ### Event System (`Event_Handlers/`)
 
@@ -107,20 +116,25 @@ def _heavy_task(self):
 ### Adding Features
 
 **New LLM Provider**:
-1. Add to `LLM_Calls/` with `chat_with_provider()` method
-2. Register in main caller
-3. Add config section
+1. Add a `chat_with_<provider>()` function in `LLM_Calls/LLM_API_Calls.py`
+2. Register it in `API_CALL_HANDLERS` / `PROVIDER_PARAM_MAP` (dispatched by `chat_api_call()` in `Chat/Chat_Functions.py`)
+3. Add the provider's config section
 
 **New Tab**:
-1. Create Screen in `UI/`
-2. Add TAB_X constant
-3. Register in app.py compose()
+1. Create a `Screen` subclass in `UI/Screens/`
+2. Add a `TAB_X` constant in `Constants.py`
+3. Register a `ScreenRoute` in `UI/Navigation/screen_registry.py` (module path + class name)
 4. Add event handlers
 
 **New Tool**:
-1. Extend Tool class in `Tools/`
-2. Implement: get_name(), get_description(), get_parameters(), execute()
-3. Register in AVAILABLE_TOOLS
+1. Subclass `Tool` (ABC) in `Tools/tool_executor.py`
+2. Implement the `name`, `description`, `parameters` properties and the async `execute(**kwargs)` method
+3. Add a `GateableTool` row to `_GATEABLE_BUILTINS` in `Agents/tool_catalog.py` (gate key, module, class, tool name)
+4. Pick a `[tools] <name>_enabled` gate key -- it defaults to OFF, and the Settings ▸ Tools screen derives its switches from that same table
+5. Override `risk_tags` if the tool mutates or reads user data; a tagged tool is floored to `ask` and raises an approval card per call
+
+**UI changes:** PRs that change a screen's UI should update the matching
+`Docs/User_Guide/` page (or at least its "Verified against" stamp).
 
 ### Security Requirements
 
@@ -158,10 +172,10 @@ Key sections:
 ## Special Systems
 
 ### Tool Calling
-- Schema v7 adds tool messages
-- `tool_executor.py` handles execution
+- Tool messages are persisted in the ChaChaNotes DB (see `_CURRENT_SCHEMA_VERSION` for the current schema version)
+- `tool_executor.py` holds only the `Tool` ABC and the two always-on tools; execution lives in `Agents/tool_catalog.py` (`BuiltinToolProvider.invoke`), behind the permission gate. `ToolExecutor` was retired in TASK-545 P3.
 - Provider parsing implemented
-- Status: Detection works, execution pending
+- Status: detection AND execution implemented — the tool-calling path is the Agents runtime (`Agents/native_tools.py` + `AgentService`, wired through `Chat/console_chat_controller.py`). The legacy event-handler wiring (`worker_events.py`/`chat_streaming_events.py`) was retired in task-577.
 
 ### Config Encryption
 - AES-256 with PBKDF2
@@ -169,9 +183,9 @@ Key sections:
 - Password dialogs in widgets
 
 ### Splash Screen
-- 20+ animations in `splash_animations.py`
+- Effects live under `Utils/Splash_Screens/` (organized by category: classic/environmental/tech/gaming/psychedelic/custom); `Utils/splash_animations.py` is a compatibility shim
 - Config: `[splash_screen]` section
-- Custom cards in `examples/custom_splash_cards/`
+- Custom cards in `Helper_Scripts/Examples/custom_splash_cards/`
 
 ### Notes Sync
 - Bidirectional file ↔ DB
@@ -179,22 +193,20 @@ Key sections:
 - Background monitoring
 
 ### Pre-commit Hook
-- `auto_review.py` for Claude Code integration
+- `Helper_Scripts/fixed_auto_review.py` for Claude Code integration
 - Reviews diffs with LLM
 - Exit 0 = pass, 2 = fail
 
 ## Project-Specific Gotchas
 
-1. **No localStorage** in artifacts - use React state or JS variables
-2. **Tailwind limitations** - Only core utility classes, no compilation
-3. **Schema migrations** - Always increment version, add to migrations/
-4. **Optional deps** - Check with `optional_deps.py` before importing
-5. **Thread safety** - Use transaction() context manager
-6. **Tab constants** - Must match IDs in compose()
-7. **Streaming** - Always offer non-streaming fallback
-8. **FTS5** - Triggers auto-update on text columns
-9. **Workers** - Mark exclusive=True to prevent duplicates
-10. **Reactive** - recompose=True rebuilds, default just refreshes
+1. **Schema migrations** - Always increment version, add to migrations/
+2. **Optional deps** - Check with `optional_deps.py` before importing
+3. **Thread safety** - Use transaction() context manager
+4. **Tab constants** - Must match IDs in compose()
+5. **Streaming** - Always offer non-streaming fallback
+6. **FTS5** - Triggers auto-update on text columns
+7. **Workers** - Mark exclusive=True to prevent duplicates
+8. **Reactive** - recompose=True rebuilds, default just refreshes
 
 ## File Reference
 
@@ -202,7 +214,7 @@ Critical files for common tasks:
 - Entry: `app.py`, `config.py`, `Constants.py`
 - Chat: `Chat_Functions.py`, `chat_message_enhanced.py`
 - DB: `base_db.py`, `ChaChaNotes_DB.py`
-- LLM: `LLM_API_Calls.py`, `model_capabilities.py`
+- LLM: `LLM_Calls/LLM_API_Calls.py`, `model_capabilities.py` (top-level `tldw_chatbook/model_capabilities.py`, not under `LLM_Calls/`)
 - Security: `path_validation.py`, `input_validation.py`
 - UI: `form_components.py`, reactive patterns in any widget
 
@@ -230,6 +242,13 @@ Critical files for common tasks:
 - Every implementation decision starts with reading the corresponding Markdown task file.
 - Project documentation is in **`backlog/docs/`**.
 - Project decisions are in **`backlog/decisions/`**.
+- Hard-won working knowledge is in **`backlog/docs/lessons-*.md`** -- traps that have
+  actually cost time in this repo, each recorded with the incident that produced it.
+  **Read the one covering your area before starting**; they are short, and they exist
+  because these mistakes recur:
+  - `lessons-testing-evidence.md` -- what actually counts as evidence a change works
+  - `lessons-live-verification.md` -- running the app and talking to a real server
+  - `lessons-backlog-hygiene.md` -- task IDs, CLI quirks, git plumbing
 
 ## 2. Defining Tasks
 
@@ -394,6 +413,12 @@ A task is **Done** only when **ALL** of the following are complete:
 6. **Review**: self review code.
 7. **Task hygiene**: status set to **Done** via CLI (`backlog task edit <id> -s Done`).
 8. **No regressions**: performance, security and licence checks green.
+9. **Lessons learned**: if the task surfaced knowledge that generalises beyond it — a
+   trap, a wrong assumption that cost time, a verification that only worked one way —
+   add or update an entry in `backlog/docs/lessons-*.md`. **State the incident, not
+   just the rule**: a lesson without the evidence that produced it decays into folklore
+   and gets ignored. Most tasks produce nothing here, and that is fine; do not invent
+   one to fill the slot.
 
 ⚠️ **IMPORTANT**: Never mark a task as Done without completing ALL items above.
 
@@ -408,7 +433,7 @@ A task is **Done** only when **ALL** of the following are complete:
 | Create with labels      | `backlog task create "Feature" -l auth,backend`                                                                                                               |
 | Create with priority    | `backlog task create "Feature" --priority high`                                                                                                               |
 | Create with plan        | `backlog task create "Feature" --plan "1. Research\n2. Implement"`                                                                                            |
-| Create with AC          | `backlog task create "Feature" --ac "Must work,Must be tested"`                                                                                               |
+| Create with AC          | `backlog task create "Feature" --ac "Must work" --ac "Must be tested"` (repeat the flag; `--ac "a,b"` does NOT split on commas -- it writes one run-on criterion that cannot be ticked off individually) |
 | Create with notes       | `backlog task create "Feature" --notes "Started initial research"`                                                                                            |
 | Create with deps        | `backlog task create "Feature" --dep task-1,task-2`                                                                                                           |
 | Create sub task         | `backlog task create -p 14 "Add Login with Google"`                                                                                                           |

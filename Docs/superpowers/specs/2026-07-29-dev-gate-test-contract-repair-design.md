@@ -1,0 +1,1468 @@
+# Dev-Gate Test Contract Repair Design
+
+## Goal
+
+Restore the mandatory `dev` pytest gate by reconciling stale or nondeterministic
+tests with the production contracts that already exist, then review and refresh
+the checked diagnostic inventory under ADR-029. It must not restore retired
+Chat infrastructure, change audio-recording behavior, or silently admit unsafe
+persistent diagnostics; a production edit is allowed only when the gate exposes
+a real current-behavior defect and the repair is documented and test-first.
+
+## Evidence
+
+The failures reproduce on an exact `origin/dev` checkout:
+
+- `Tests/Event_Handlers/test_worker_events_contract.py` imports `StreamDone`,
+  although TASK-577 deliberately removed that event and made the retained
+  adapter reject streaming.
+- `Tests/Event_Handlers/test_worker_local_citation_capture.py` exclusively
+  exercises the same retired streaming bridge, removed sentinel/error
+  swallowing, and worker-owned citation-builder stripping. The sole retained
+  caller is explicitly non-streaming and passes no citation builder; native
+  Console now owns the live citation and privacy lifecycle.
+- Latest `dev` independently removed the retired `TabState` fixture from
+  `Tests/UI/test_chat_shell_bar.py` while adding current persona-label coverage.
+  TASK-1333 preserves that upstream repair rather than carrying a competing
+  edit.
+- `Tests/Audio/test_audio_integration.py` starts a recorder thread and then
+  calls the same recording loop repeatedly on the test thread. It also leaves
+  VAD enabled, so the assertion depends on installed optional dependencies and
+  whether synthetic bytes are classified as speech.
+- `Tests/Audio/test_recording_service.py` repeats the same thread-and-direct-loop
+  race with VAD enabled, so synthetic audio may never reach the callback that
+  stops the loop.
+- The adjacent SoundDevice flow fixture also leaves VAD enabled for a
+  four-sample synthetic callback, so no audio reaches its queue assertion.
+- Four `Tests/Chat/test_chat_functions.py` cases monkeypatch deleted
+  module-level `settings` objects. The live Llama.cpp and DeepSeek adapters
+  deliberately resolve `get_runtime_config_snapshot()` at each request
+  boundary under ADR-029.
+- Four `Tests/LLM/test_local_llm_provider_config.py` cases repeat the deleted
+  `settings` pattern for the local-LLM adapter, which also resolves the
+  immutable runtime snapshot at each request boundary.
+- `Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py`
+  patches the snapshot seam but supplies local-LLM configuration at the retired
+  top level instead of `api_settings.local-llm`.
+- Three real-seam Notes fixtures pass a nonexistent `tmp_path/notes_base` to
+  `NotesInteropService`. ADR-029's trusted-directory boundary correctly
+  rejects missing directories instead of creating them implicitly.
+- `Tests/DB/test_rag_indexing_db.py::test_large_batch_operations` combines
+  useful 1,000-item persistence coverage with hard wall-clock limits. The
+  unchanged `origin/dev` test took 24.98 seconds inside a loaded full-suite run
+  but 1.25 seconds in isolation, proving the timing assertion depends on host
+  contention rather than database behavior.
+- `Tests/Event_Handlers/test_eval_db_operations_path.py` retargets
+  `TLDW_CONFIG_PATH` beneath a nonexistent `profile-two` directory. The
+  private-path boundary correctly rejects that missing trusted parent before
+  config or database creation.
+- The Library skill-name collision guard reports that the newer runtime tools
+  `search_run_log`, `run_log_stats`, and `run_log_slice` are absent from
+  `_SHADOWED_BUILTIN_NAMES`, allowing a local skill to collide with a real
+  built-in runtime name.
+- `Tests/Local_Ingestion/test_quick_ingest_db_path.py` expects the retired
+  `tldw_cli_media_v2.db` fallback filename even though `quick_ingest()` now
+  delegates to the canonical profile-aware `get_media_db_path()`, whose default
+  filename is `tldw_chatbook_media_v2.db`.
+- The RAG citation benchmark harness creates its isolated `config/` root but
+  selects `config/tldw_cli/config.toml` without creating the intermediate
+  trusted profile directory, so its host-secret isolation subprocess fails
+  before the benchmark runs.
+- TASK-1091 left-aligned Watchlists tree labels, invalidating TASK-997's
+  documented assumption that a two-space source prefix plus Textual's centered
+  minimum button width would place a child name past its parent. The existing
+  compositor regression now renders `ArXiv` at column 4 and its parent at
+  column 5 at the narrow visual-parity size.
+- The Speech Lab-frame migration moved local dependency recovery out of the
+  bare `STTSWindow`: exact visible taxonomy now belongs to
+  `STTSScreen`'s inspector `#speech-capability-status`, while install guidance
+  belongs to the rail `#speech-capability-summary` tooltip. The generic
+  disabled-action suite still mounts the retired owner and therefore raises
+  `NoMatches` before checking either distinct contract.
+- The never-run Evals bench correctly renders its target as `Not yet checked`,
+  but its screen-wide `.ds-recovery-callout` absence assertion also matches the
+  valid `#evals-primary-action-reason` explaining why Run Bench is deferred.
+  The target-readiness owner `#evals-inspector-bench` contains no recovery
+  callout; the test conflates two unrelated uses of the shared callout style.
+- The duplicate-target Evals regression similarly counts `.ds-status-badge`
+  beneath broad `#evals-inspector-pane`. Its two intended target readiness rows
+  now share that pane and class with the valid sibling
+  `#evals-primary-action-status`, so the count is three even though both
+  duplicate target rows compose correctly with distinct ids.
+- The real Lab route mounts `LocalModelsWidget`, whose parent `on_mount()`
+  immediately queries `#delete-confirm-dialog` before composed children are
+  queryable and raises `NoMatches`. The dialog and delete flow remain live;
+  their initial hidden state and later reactive visibility are coupled to an
+  invalid parent/child lifecycle assumption.
+- The selected and empty Library Collections regressions still expect
+  `#library-use-in-console` to be disabled. TASK-716 deliberately made blocked
+  handoff buttons pressable so their handler can emit the recovery warning,
+  while `library-source-action-blocked` carries the blocked visual/state
+  contract; dedicated tests already cover that press and tooltip behavior.
+- Completing a Library ingest refreshes the local-source snapshot and
+  intentionally recomposes the rail. The different-canvas isolation regression
+  calls `query_one("#library-row-browse-media")` on every poll, so it raises
+  during a legitimate teardown frame before it can observe the remounted
+  `Media (1)` row while Notes remains selected.
+- Four MCP import-file regressions replace
+  `mcp_workbench_module.os.path.expanduser`, but that attribute is the shared
+  process-wide `os.path.expanduser` function. During workbench mount the patch
+  therefore also makes the isolated `TLDW_CONFIG_PATH` resolve to the temporary
+  directory itself, which the private-file guard correctly rejects before the
+  import panel can mount. The workbench already exposes `_mcp_import_home()` as
+  the narrow containment-root seam those fixtures intend to control.
+- The MCP audit-detail fake still emits retired `arguments`, `result_excerpt`,
+  and free-form `error` fields, and three inspector tests still expect selected
+  payload values to render. The live execution log and inspector now expose
+  only ADR-029-safe metadata: registered argument names, unknown-argument
+  count, result type/size, bounded categories, and exception type.
+- Four current Media browsing-shell tests dispatch background searches through
+  `Widget.run_worker()` but use only one `pilot.pause()` before reading rows,
+  resetting the async service mock, or inspecting the next search call. The
+  result-loading and item-selection nodes reproducibly reach those assertions
+  with an empty list. Waiting for workers reveals the deeper fixture defect:
+  `search_media` completes, but `_is_current_media_owner()` correctly rejects
+  presentation because the isolated mock app has no screen stack and the
+  mounted host screen does not name this widget as its `media_window`.
+- The non-obscuring focus module has nine stale failures. Its generic
+  Collapsible hover/focus checks still target Textual's nonexistent
+  `.collapsible--header` class even though TASK-503 intentionally moved global
+  focus to `CollapsibleTitle` and scoped the QA-reviewed decorative hover to
+  `#settings-library-rag-card`. The other seven failures read `_chat_tabs.tcss`
+  or assert preset/resize selectors explicitly retired by TASK-577. A separate
+  passing conversation test also blesses the dead header class for an
+  `-active` state no live Collapsible owns.
+- The Personas generation wiring module passes when collected alone, but its
+  coordinate-based editor-button clicks intermittently miss after later
+  Library/RAG settings imports are collected. The smallest reproducer imports
+  the otherwise-pure RAG fusion module before running the three generation
+  nodes; repeated runs show the import only amplifies the race. The editor
+  posts `TextArea.Changed`, marks the form dirty, and arms a 0.2-second
+  validation timer immediately before several pointer clicks, so geometry and
+  event-loop timing—not the controller or screen handler—decide whether the
+  press arrives. The same nodes retain the real Textual event path when the
+  already-mounted `Button` is pressed directly.
+- The Personas import-failure regression still expects the injected
+  `"Unsupported card format"` exception text in a user notification. Current
+  production deliberately logs only bounded file type and exception category,
+  then shows the fixed recovery message `"Character import failed; verify the
+  file and retry."`; the stale assertion fails alone. Its selection setup also
+  leaves the unused `chat_dictionary_scope_service` as a plain `MagicMock`, so
+  selecting the retained character produces an unrelated non-awaitable-service
+  traceback before the import assertion.
+- The product-maturity Search/RAG-to-Console core-loop regression still waits
+  on the deleted app-root `pending_chat_handoff` field. TASK-645 moved staging
+  and claim settlement to `PendingHandoffStore`; the same test's immediately
+  following visible Console assertions already prove the payload reached the
+  staged-source lane, live-work title, evidence state, and composer.
+- The product-maturity service-unavailable matrix still requires every
+  destination's Console handoff to be disabled. TASK-716 intentionally keeps
+  Library's blocked action pressable so its handler can explain the recovery;
+  only the Library parameter fails, while Watchlists and Skills still satisfy
+  the disabled contract.
+- The completed first-run character-chat UAT task was repeatedly renamed to
+  avoid numeric collisions, ending at filename 672, but its legacy Markdown
+  never received YAML frontmatter and its heading still says task 635. The
+  repository-wide task identity guard correctly rejects the malformed record.
+- The focused Study suites construct screen-owned test apps without the
+  required `PendingHandoffStore`, and scope/section tests still assign retired
+  `pending_study_*` fields. A seven-module inventory runs 82 tests: 64 fail,
+  with all but one failure rooted in the missing store or obsolete staging
+  seam. Once those fixtures use the store, one additional in-scope assertion
+  still expects `StudyScreen.handle_runtime_backend_changed()` to mutate
+  app-root runtime fields that the current method deliberately treats as
+  composition-owner state. The remaining app-level runtime-callback fixture
+  failure is independent.
+- The remaining app-level Study runtime-callback test constructs only two
+  retired writable backend fields and a screen callback. The live
+  `TldwCli.handle_runtime_backend_changed()` contract instead commits through
+  `RuntimePolicyContext`, invalidates `ServerContextProvider` for the resolved
+  server transition, and forwards the committed source to the active screen.
+  The fixture fails before the callback because it provides none of those
+  current owners.
+- The first-time character-chat UAT still polls the deleted
+  `app.pending_chat_handoff` field both to capture the staged payload and to
+  infer consumption. Production now stages a detached value through
+  `PendingHandoffStore` and the Console may claim it before the next Pilot
+  tick, so the old observation always times out even though the real journey
+  creates a character-bound conversation and reaches Chat.
+- Repeating that UAT exposed a separate pre-handoff race: its Personas
+  navigation wait accepts the screen as soon as `app.screen` references a
+  `PersonasScreen`, even when Textual has not mounted it yet. The test then
+  invokes the import continuation directly; production's stale-owner guard
+  correctly preserves the database import but skips selection presentation
+  for an unmounted destination, so `selected_entity_kind` is intermittently
+  still `None`.
+- The app-free Console responsiveness regression invokes
+  `_sync_native_console_chat_ui()` on a deliberately uninitialized
+  `ChatScreen`, but its stub list predates effective-scope warming,
+  world-book/avatar refresh, the native transcript method rename, and the
+  changed rail-visibility seam. It now enters a real helper that reads the
+  missing `_console_chat_store` before reaching the worker-count assertion.
+  The production sync sequence is covered elsewhere; this focused regression
+  owns only responsiveness instrumentation around that sequence.
+- The service-backed destination policy sentinel still allows exactly four
+  Library `@work(thread=True)` decorators. Library now has six: the original
+  export-count, export, search-history, and rail-preference workers, plus the
+  reviewed verified-Parakeet installer and source-ingest preflight scanner.
+  Both additions perform blocking download/file, URL-probe, or directory-scan
+  work and marshal results back to the Textual loop; neither uses
+  `asyncio.run`, and Personas/Skills still have zero thread workers. The
+  count failure masks two weaknesses in the same sentinel: its line-prefix
+  counter can miss valid reordered/multiline decorators, and its
+  `asyncio.run` annotation check reads only the opening line even though one
+  of the three current annotations is correctly attached to the multiline
+  call's closing line.
+- The File Notes Git bulk-unstage summary test starts the real retained action
+  and postflight status refresh, then polls their exact fake-service calls via
+  `_wait_until()`. That helper yields with `pilot.pause()`, which additionally
+  requires the entire Textual screen message queue to become idle. The
+  retained row refresh legitimately continues processing messages, so the
+  Pilot waits 30 seconds and raises `WaitForScreenTimeout` before the bounded
+  predicate can be checked again. Replacing only that yield with
+  `asyncio.sleep()` makes the same exact action/refresh predicate pass in under
+  a second; production behavior and the paired bulk-stage semantics are already
+  correct.
+- The required paired bulk-stage verification reproduces the same
+  `WaitForScreenTimeout` both with the bulk-unstage test and alone. Its
+  `stage_calls == [(1, 2)]` and second status-refresh predicate is already
+  satisfied by the real retained action; only the generic helper's global
+  screen-idle yield prevents the test from observing that completion.
+- The Library source-action style test searches for
+  `.library-source-action` by prefix. The newer
+  `.library-source-action-blocked` rule now appears first, so the helper
+  extracts that modifier's color-only block even though both source and
+  bundled stylesheets still contain the complete exact base rule.
+- The Library footer-ownership regression still expects the `u` handoff hint
+  immediately after mount. The live registration now intentionally advertises
+  that shortcut only when Search/RAG is selected, because every other Library
+  row hard-gates the action. The mounted test starts with no selected row, so
+  its default footer is correct.
+- The pending-skill-script preservation test still seeds and reads
+  `screen.chat_state.task_resume_state`. Native Console task cards, persistence,
+  approvals, and skill confirmations now share the screen-owned
+  `_task_resume_state`, updated through `set_task_resume_state()`; `chat_state`
+  no longer exists.
+- The Parakeet MLX file-loader construction test reports `duration=0.0` from
+  its fake `soundfile.info()`. The accepted empty-audio fast path now returns
+  before model import, so this loader-focused test no longer reaches the seam
+  it intends to assert.
+- The real Parakeet MLX invalid-file regression passes a nonexistent `.wav`
+  through `_ensure_wav_format()` because the suffix shortcut does not validate
+  existence. The provider-specific missing-file guard is accidentally
+  conditional on SoundFile being unavailable, so an installed SoundFile
+  environment reaches model loading and may attempt a managed download before
+  the bad local input fails.
+- Two Model Artifacts regressions monkeypatch `service_module.os.scandir`, which
+  replaces the process-wide standard-library function through the shared
+  module object. The test bodies pass, but pytest teardown calls the spy with
+  an integer directory descriptor and raises `TypeError`.
+- A full-app runtime-policy regression clears startup notifications before
+  invoking the coordinator, but the unrelated asynchronous model-catalog
+  refresh can finish afterward and append an informational notification. The
+  exact coordinator-warning assertion then fails only under full-suite timing.
+- Two provider Settings regressions treat Textual `Select`'s private `#label`
+  child as the readiness boundary before assigning `Select.value`. During
+  category recomposition the label can be absent, or it can exist on a partial
+  Select before the required overlay `OptionList` mounts, producing
+  `NoMatches`.
+- The real STT compatibility-facade regression passes the nonexistent literal
+  `audio.wav` while mocking only the recognizer. The shared missing-file guard
+  correctly rejects that input before provider dispatch, so the regression no
+  longer reaches the forwarding seam it intends to assert.
+- The historical v17-to-current ChaChaNotes migration regression starts from a
+  current database and removes post-v17 schema before rolling its recorded
+  version back. After v28 added `assistant_authority_id`, the fixture still
+  leaves that column behind, so replaying v27-to-v28 fails on a duplicate
+  column instead of reaching its system-prompt assertions.
+- A Console schema-ownership regression still forbids `assistant_kind` and
+  `assistant_id` on `ConsoleChatSession`. ADR-037 now requires native sessions
+  to retain complete durable assistant identity while keeping persona
+  presentation names out of both settings and session schemas.
+- Three more ChaChaNotes regressions synthesize v16, v20, or v21 databases by
+  removing later schema from a freshly created current database. They remove
+  the strict v27 provenance objects but retain v28's
+  `assistant_authority_id`, so all three replay paths fail at v27-to-v28 with
+  the same duplicate-column error.
+- The incremental Chatbook import performance regression passes in isolation
+  but fails under full-suite load when one millisecond-scale import is delayed
+  by the host scheduler. Its maximum-deviation assertion measures any isolated
+  variance rather than the sustained late-import slowdown named by the test.
+- The ChaChaNotes thread-local connection regression stores only `id(conn)` and
+  lets each worker's connection reference die immediately. A worker can finish
+  before the last one starts, allowing both its OS thread id and freed Python
+  object address to be reused; the logs show five connection creations but the
+  stale assertion observes only four distinct integer addresses.
+- Two TTS profile cleanup regressions replace `profile_schema.os.unlink`, which
+  is the process-wide standard-library function on the shared `os` module.
+  Their bodies pass, but under full-suite teardown pytest removes a temporary
+  directory before the monkeypatch fixture restores `unlink`; the one-argument
+  fake rejects shutil's `dir_fd` keyword and turns successful coverage into a
+  teardown error.
+- The Parakeet MLX real-integration fixtures treat package discoverability as
+  runnable-provider capability. The installed package imports during optional
+  dependency initialization but does not expose the `from_pretrained` API
+  production calls, so a normal gate attempts real inference and fails before
+  any model is available.
+- Two faster-whisper integration cases that instantiate the real tiny model
+  lack the `slow` marker used by every neighboring real-inference case. An
+  offline package run therefore attempts to download that model even though
+  the normal gate does not opt into live model execution.
+- Shared-RAG concurrency regressions patch construction but reuse the
+  process-wide construction lock. A background application initializer can
+  still hold that lock on a real embedding-model build, preventing the test's
+  controlled constructor from starting before its timeout.
+- The Evals results-grid selection helper assumes one event-loop pause completes
+  a scheduled screen recompose. Under the full-gate load, the pause can return
+  before `#evals-results-grid` mounts even though the same test passes alone.
+- The ProductionApp file-notes owner lifecycle tests use one-second timeouts as
+  deadlock guards around controlled task signals. Under concurrent repository
+  suites, the same contention stretches application startup to nearly three
+  seconds and can push the subsequent Git preflight beyond the one-second guard
+  even though the controlled operation proceeds correctly.
+- The skeletal Console-action test waits a fixed 0.1 seconds before reading
+  Workflows recovery copy. Workflows loads its Console context in a worker and
+  recomposes, so the disabled loading button can exist before the final recovery
+  `Static` is mounted under full-suite load.
+- `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
+  production-owner drift while the persistent sink topology remains unchanged.
+  ADR-029 requires inspecting the changed calls before regenerating the checked
+  inventory.
+
+TASK-1333 owns these gate repairs and the reviewed generated-inventory refresh.
+
+## Decision
+
+Update the tests to describe current behavior:
+
+1. Keep the non-streaming worker failure regression and delete its obsolete
+   streaming-sentinel case. Delete the fully obsolete worker-local citation
+   capture file rather than recreating retired streaming, sentinel, logging, or
+   builder ownership. The existing
+   `Tests/Event_Handlers/test_retained_worker_adapter.py` already pins the live
+   delegation and streaming-rejection contracts, while native Console tests pin
+   citation lifetime and privacy, so TASK-1333 adds no duplicates.
+2. Preserve the latest `dev` chat-shell test unchanged. It already covers the
+   live session and persona-label contract without `TabState`.
+3. In the stream-error regression, run `_pyaudio_recording_loop()` exactly once
+   with `is_recording = True` and
+   VAD disabled, without calling `start_recording()`. Assert the exact two-chunk
+   callback sequence, `stop_stream()`, `close()`, and final stopped state.
+   Rename the test so it no longer claims automatic recovery that production
+   does not implement.
+4. Apply the same deterministic structure to the PyAudio happy-flow regression:
+   disable VAD, set the callback and recording state directly, invoke one loop,
+   and assert exactly three chunks plus cleanup. Do not start a background
+   recorder.
+5. Keep the SoundDevice flow through its public start/stop contract, but disable
+   VAD for its tiny synthetic callback. Use a bounded event set by the mocked
+   `InputStream` constructor before reading the captured callback, and stop the
+   mocked recorder in `finally` before asserting that audio was queued.
+6. Update the stale Llama.cpp, DeepSeek, and local-LLM request tests to patch
+   `get_runtime_config_snapshot()` with a `RuntimeConfigSnapshot` containing
+   their test configuration under the live `api_settings` shape. Do not restore
+   or emulate mutable module-level settings.
+7. Create each fixture-owned temporary Notes base directory with mode `0700`
+   before constructing `NotesInteropService`, and close all per-user Notes
+   connections before the template DB during fixture teardown. Do not weaken
+   production path verification or make the service create a security-sensitive
+   root implicitly.
+8. Generate the candidate diagnostic inventory, inspect every changed owner and
+   sink-topology entry against ADR-029's metadata-only boundary, and refresh the
+   checked artifact only if the changes are safe. If review finds an unsafe log
+   value, correct that violation under ADR-029 before regenerating; do not bless
+   it as inventory drift.
+9. Keep the large-batch indexing test's 1,000-item write and retrieval
+   assertions, but remove its host-dependent elapsed-time measurements. This
+   default functional gate must prove persistence correctness, not benchmark a
+   contended workstation.
+10. Create the retargeted profile fixture directory with mode `0700` before
+    selecting its config file, and explicitly close the test-owned Evals
+    database connection during teardown. Do not make production config loading
+    create or trust a missing security-sensitive parent.
+11. Add exactly the three registered run-log runtime tool names to the existing
+    fixed Library skill shadow set. Keep the literal collision boundary; do not
+    import the agent runtime registry into the pure display-state module.
+12. Update the one stale Local Ingestion fallback assertion to the canonical
+    media database filename. Preserve configured-path and traversal-rejection
+    coverage; do not change production path resolution.
+13. Create the benchmark harness's isolated `config/tldw_cli` directory as
+    owner-only and idempotently before overriding `TLDW_CONFIG_PATH`. Do not
+    relax private-path verification or expose host environment values.
+14. In the production Console Stop regression, advance the Textual pilot after
+    the Stop control becomes visible and before issuing the pointer click. The
+    test must continue exercising the real visible action and proving provider
+    cancellation plus preservation of the stopped partial response; do not
+    bypass the UI through direct controller calls or weaken production
+    cancellation behavior.
+15. In both production Media lifecycle regressions, wait boundedly through the
+    existing Textual pilot until the outgoing `MediaWindow` is both closed and
+    detached. Keep the fresh replacement-instance assertion, stale-owner
+    exclusion, and durable last-edit-wins behavior unchanged. Do not change
+    production screen teardown or replace lifecycle checks with an arbitrary
+    sleep.
+16. In the production provider-selection ownership regression, wait for the
+    recomposed provider and model controls before using them. Deliver the same
+    `Changed` events to the live Settings handlers after programmatic test
+    assignments, then wait boundedly for the staged mapping and saved app
+    defaults. Preserve the distinction between global defaults, the existing
+    user-owned Console session, and the later explicit handoff. Do not change
+    production Settings or replace state predicates with arbitrary pauses.
+17. Remove the RAG UI integration fixture and test that expect a recognized
+    canonical media candidate to fall back to raw pipeline context when the
+    app cannot establish current prompt authority. Do not restore that
+    fail-open behavior or duplicate its replacement: the dedicated local
+    citation-capture suite already proves authority failure returns no context,
+    current-authority exclusion cannot revive legacy bytes without a builder,
+    and unsupported external results retain the narrow legacy fallback. Update
+    `get_rag_context_capture_for_chat`'s docstring to state that recognized
+    candidates require completed current authority regardless of builder
+    availability and that only unsupported results retain raw legacy context;
+    do not change runtime behavior.
+18. In the lazy RAG-admin app fixture, replace direct assignments to the
+    retired runtime compatibility fields with
+    `_publish_runtime_policy_projection(context.state)`, the same live owner
+    seam used by current mounted-app fixtures. Keep the fake policy state and
+    all lazy service construction, caching, fallback, and wiring assertions
+    unchanged. Do not add a setter or compatibility shim to production.
+19. Replace every retired unscoped `tmp_path/.local/share/tldw_cli/backups`
+    expectation in the profile-backup integration module with the live
+    profile-aware user-data root selected by production. This includes both
+    legacy cleanup regressions, which must accept either a missing backup root
+    or an existing empty root after cancellation or worker failure. Keep the
+    stronger distinct-directory, manifest, partial-failure, no-artifact,
+    no-success-notification, and cleared in-progress-state assertions. Do not
+    change production cleanup or hard-code the current test profile path.
+20. Observe real manifest staging by wrapping the imported
+    `create_private_text` owner seam rather than `Path.open`, which the secure
+    helper no longer uses on guarded platforms. To exercise cleanup precedence,
+    let serialization and secure stage creation complete, then inject the
+    ordinary or control-flow failure at the second worker-cancellation check so
+    a stage actually exists before unlinking. Keep the exclusive-create,
+    worker-thread, control-flow, value-free diagnostic, and cleanup contracts;
+    narrow the replace-failure privacy assertion to the injected private
+    manifest value rather than the entire test root, whose isolated config path
+    is legitimately logged.
+21. In both profile-backup setup helpers, install the temporary ChaChaNotes and
+    Media database resolvers through the window's live `_DB_PATH_RESOLVERS`
+    map, while retaining the existing module-level `get_prompts_db_path` patch
+    because `_backup_worker` calls that symbol directly. Production
+    deliberately ignores `db_config` in `_get_database_path`; do not restore
+    that retired seam or pretend Prompts is routed through the map. Keep the
+    real resolver dispatch, copying, manifest-entry, success, and partial
+    profile-failure coverage.
+22. Remove only `atomic_write_text` from the TTS preference read-purity test's
+    monkeypatch list. That symbol was deleted from `config` when persistence
+    moved to the private atomic owner; keep guards for all four live public
+    settings mutation helpers plus the unchanged input and zero-call
+    assertions. Do not restore the implementation symbol or patch private
+    file-writing internals that the pure preference parser does not own.
+23. In Parakeet MLX result normalization, synthesize an untimed segment only
+    when the model returned non-empty text without sentence timestamps. Empty
+    text plus no sentences must return an empty segment list even when audio
+    duration is known (including `0.0`). Preserve real sentence timestamps,
+    non-empty untimed fallback behavior, response metadata, and the existing
+    empty-audio regression. Update the one contradictory very-short-audio
+    assertion to expect no segment when its mocked model also returns empty
+    text and no sentences. This is a direct correction to the established
+    cross-provider empty-transcription contract, not a new service boundary.
+24. Before loading a Parakeet MLX model, inspect available sound-file metadata.
+    When a valid audio container reports zero frames or exactly zero duration,
+    return the normal provider result with empty text and segments, resolved
+    model/precision/attention metadata, chunk settings, sample rate, duration
+    `0.0`, and a terminal progress update. Do not invoke the model loader or
+    inference. Metadata-probe failures must continue into normal validation and
+    decoding so invalid files still fail clearly; non-empty input behavior is
+    unchanged. The mocked zero-frame test must prove the loader was not called,
+    while the separate 10 ms empty-model test retains post-inference
+    normalization coverage.
+25. In the Parakeet MLX no-SoundFile regression, patch the imported `sf` runtime
+    object to `None` as well as setting `SOUNDFILE_AVAILABLE` false. The runtime
+    module object is the actual branch input; changing only the flag while
+    SoundFile is installed lets the nonexistent `dummy.wav` case proceed to a
+    real Hugging Face model load. Retain the local `TranscriptionError`
+    assertion and do not alter production dependency probing.
+26. In the command-palette provider unit regressions, supply a mounted Console
+    owner whose current-provider method returns the expected value. For switch
+    commands, assert that the provider intent is staged through
+    `pending_handoffs` and consumed by that mounted Console owner. Do not assign
+    or assert `chat_api_provider_value`; that retired app-root reactive is no
+    longer provider authority. Keep production behavior unchanged because the
+    production ownership suite already proves live-session, configured-default,
+    and off-Console queued-handoff behavior.
+27. In the Library ingest option-persistence integration regression, patch the
+    live `save_settings_to_cli_config` batch seam. Capture its single
+    section-to-values mapping and prove the submitted PDF engine plus generic
+    chunk and chunk-size values are present in that same batch. Do not patch
+    `save_setting_to_cli_config`, restore per-key persistence, or change
+    production; submission deliberately batches these settings to avoid
+    repeated config reads, writes, and cache invalidations.
+28. In the structured config-mutation module, replace every reference to the
+    deleted `config.atomic_write_text` seam with the live
+    `config.atomic_private_write_text` owner. Preserve the existing assertions
+    for one replacement, zero writes on overlap, contained pre-replacement
+    failure, lock serialization, batch-save delegation, delete-wrapper
+    delegation, resulting content, and owner-only permissions. In the Phase
+    6.6 packaging/data-safety source-seam regression, replace the obsolete
+    positive assertion for `atomic_write_text(DEFAULT_CONFIG_PATH` with
+    positive assertions scoped to `_write_raw_cli_config_unlocked` for
+    `atomic_private_write_text` and its `application_owned_directory` posture;
+    retain the existing effective-path assertions. Whole-file substring checks
+    are insufficient because unrelated snapshot and bootstrap paths contain
+    the same tokens. These tests intentionally instrument or inspect the
+    private writer because atomic replacement is their subject; do not restore
+    the generic writer, hard-code the default path, or weaken the security
+    assertions.
+29. In the Console command-composer regression constants, append
+    `/generate-image` and `/rewind` in the order returned by the live registry.
+    Preserve exact hint-copy assertions and all first-Enter interception,
+    second-Enter literal-send, edit-disarm, round-trip-edit, and system-message
+    count coverage. Do not derive the expected string by calling the production
+    hint formatter inside the test, and do not remove the two registered
+    commands from production.
+30. In the two Console literal-send regressions, assert that `submit_draft`
+    receives both the exact draft and the active session id captured for
+    dispatch. In every Console prompt-insert regression, stage text through
+    `app.pending_handoffs` on `HandoffChannel.CONSOLE_PROMPT_INSERT` and assert
+    terminal consumption with `has_pending`; retain mount/resume timing,
+    stale-session draft protection, clean insert, append, collapsed paste,
+    blocked notification, and no-op coverage. In the Library prompt editor
+    regressions, claim the staged value to verify its exact text and settle the
+    claim, while dirty and empty cases prove the channel remains empty. Do not
+    restore `pending_console_prompt_insert`, omit the dispatch-time session id,
+    or weaken the existing lifecycle and interaction assertions.
+31. In all UI regressions that still assign or inspect
+    `app.pending_console_launch`, stage the existing launch mapping through
+    `app.pending_handoffs` on `HandoffChannel.CONSOLE_LIVE_WORK`. Helper tests
+    must claim the staged value, assert the normalized
+    `ConsoleLiveWorkLaunch`, and settle the claim. Mounted Console tests must
+    assert the channel is no longer pending after consumption while retaining
+    rendered status, source, artifact, inspector, navigation, primary-action,
+    and staged-context assertions. The Home isolation case must retain its
+    absence-of-controls coverage and explicitly prove the Console-owned
+    channel remains pending.
+    Direct assertions against ChatScreen's private
+    `_pending_console_launch_context` remain valid where the screen's accepted
+    context itself is under test. Do not restore the app-root launch field or
+    change production.
+32. In the Library prompt editor, treat a queued `Input.Changed` or
+    `TextArea.Changed` event as a mount/recompose echo when the live fields
+    still equal the canonical editor state rendered from the current prompt
+    detail, or from the active conflict snapshot while conflict controls are
+    shown. Follow the existing Skills editor equality-guard pattern rather
+    than relying only on `call_after_refresh` ordering. Genuine field changes
+    must still set and retain dirty state; successful save and create-conflict
+    overwrite must clear dirty state and the Unsaved marker. Retain exact
+    clean, empty, and dirty Library-to-Console behavior. Do not clear dirty
+    state from tests or add arbitrary pauses that would mask the user-visible
+    navigation veto.
+33. In the nested Library UI prompt-import harness, route the unrun
+    `app_instance` worker manager through the active `LibraryHarness` worker
+    manager before pressing Import. Keep the existing bounded status wait,
+    button wiring, exact outcome copy, and database assertions; retain the
+    real-app tests' app-node/group ownership and survive-unmount assertions.
+    Production continues to own import work on the real application so durable
+    saves can finish after the initiating screen unmounts. Do not move the
+    production worker back to the screen or merely increase the timeout.
+34. In the bundled-CSS multi-row Console approval geometry regression, let
+    `ChatApprovalCard.on_mount` finish its deferred initial batch-body hide
+    before calling `set_batch`. This matches the already-green single-row
+    geometry fixture and the live application, where approval batches arrive
+    after the mounted Console has settled. Preserve the two-row batch and every
+    nonzero-size, fixed-width, non-overlap, compact-height, container-height,
+    and action-position assertion. Do not change production layout or weaken
+    the CSS contract to accommodate a test-only mount-order inversion.
+35. In Schedules and Workflows recent-work regressions, seed the current
+    `screen_state_store` under the `RuntimeIdentity` projected from the active
+    runtime policy instead of assigning retired `_screen_states`. In the
+    Artifacts requested-target regression, stage
+    `HandoffChannel.ARTIFACT_CHATBOOK_TARGET`, give the local Chatbook fake the
+    existing exact `get_chatbook` service seam, and prove the target is
+    consumed before latest-item fallback. In the Home flashcards regression,
+    claim the staged `HandoffChannel.STUDY_INITIAL_SECTION`, verify
+    `"flashcards"`, acknowledge it, and prove terminal settlement. Preserve
+    positive recent-work, exact target/launch payload, requested-before-latest,
+    row/button, one-hop navigation, and destination-isolation coverage. Do not
+    restore any app-root compatibility field or change production.
+36. In the MCP approval-cancellation execution-log regression, assert the
+    current metadata-only record: denied decision, blocked/failed outcome, and
+    `error_category == "approval_cancelled"`. Retain server/tool identity and
+    durable-record coverage. Do not restore free-form error text to the
+    persistent MCP audit log; ADR-029 requires bounded metadata rather than
+    payload-derived diagnostic strings.
+37. In the curated Console remote-default regression, replace only Anthropic's
+    retired `claude-sonnet-4-20250514` expectation with
+    `claude-sonnet-5`. Retain the independently curated expected mapping and
+    catalog-membership assertion for Anthropic, Cohere, Google, and
+    HuggingFace. Production configuration, the provider catalog, model
+    capabilities, and their dedicated default-model coverage already agree on
+    `claude-sonnet-5`; do not revert them or derive the expected mapping from
+    the values under test.
+38. In the Console runtime-discovery and UI selector merge-cap regressions,
+    call `resolve_provider_model_options` with its current explicit
+    `providers_models` mapping and catalog scope service positional inputs
+    instead of passing an app-shaped object. Retain the same fake data and all
+    runtime-discovery ordering/label/warning, merge-cap boundary,
+    uncapped-picker, transient current-model, and catalog scope-call
+    assertions. The provider-layer resolver suite already pins the explicit
+    boundary; do not restore application introspection to production or add a
+    compatibility overload.
+39. In Console missing-key recovery surfaces, convert the canonical provider
+    key to the shared `provider_display_name` only when composing the
+    user-facing blocker and Settings tooltip. Preserve canonical lowercase
+    provider storage, readiness lookup, routing, recovery target/field, and
+    send-blocking behavior. Unknown provider keys continue to display
+    unchanged through the shared helper's existing fallback. Do not add a new
+    display map or recase endpoint recovery copy outside the observed failure.
+40. In the Console empty-transcript “Choose model” action-routing regression,
+    explicitly seed the existing OpenAI provider with an empty model before
+    mounting the harness. Preserve the rendered live setup action, pointer
+    click, and settings-destination assertion. Do not change the settings modal
+    or retain a fixture whose blank provider conflicts with the test's stated
+    missing-model state.
+41. In the live-config Console journey's fake runtime-policy loader, publish
+    the existing local `RuntimeSourceState` through
+    `TldwCli._publish_runtime_policy_projection` after assigning the fake
+    policy context. Remove the unused `current_runtime_source` assignment and
+    the now-read-only `current_runtime_backend` assignment. Preserve the real
+    config boot, Settings adapter writes, screen navigation, restored session,
+    readiness, and no-restart unblocking assertions. Do not make the production
+    projection writable or replace the journey with a lighter fake.
+42. In the same live-config journey, resolve its owner-only temporary user-data
+    directory and give `get_subscriptions_db_path` a file below that directory
+    rather than including it in the `:memory:` getter loop. Preserve
+    `:memory:` for the unrelated single-thread test databases and preserve the
+    real scheduler worker. This lets `SubscriptionsDB` schema initialized on
+    the construction thread remain visible when `PriorityQueue.load` queries
+    it through `asyncio.to_thread`. Do not disable scheduling, change
+    production connection ownership, or point the fixture at host data.
+43. In the Console resolution-view regression, remove the retired app-root
+    provider/model reactive setup and stage the simulated user provider choice
+    on `ChatScreen._console_control_provider`, the current state written by the
+    mounted compact-provider handler. Preserve the fresh disk-backed
+    llama.cpp-default assertion followed by Anthropic Console-control
+    precedence. Update the test name/comments to describe the current owner.
+    Do not restore app-reactive coupling or add a compatibility path.
+44. In the two skill regressions that wrap
+    `ConsoleChatController.submit_draft`, capture the active Console session id
+    before sending and include it in all three exact spy assertions. Preserve
+    the raw `$code-review` draft text, controller-side skill execution,
+    transcript retention, and picker argument/no-argument cases. Do not weaken
+    to `ANY`, remove exact text checks, or drop the session-routing contract
+    threaded through normal Console sends.
+45. In the bare-slash skill-name regression, add `/generate-image` and
+    `/rewind` to the independently curated expected unknown-command hint in
+    the same registered order used by the already-aligned command-composer
+    regressions. Preserve the non-execution, preserved draft, uncalled submit,
+    and exact second-Enter arming assertions. Do not derive the expected copy
+    from production or change command registration.
+46. In `CONSOLE_PARITY_MATRIX["attachments_images"]`, replace the deleted
+    `Tests/UI/test_chat_image_attachment.py` file reference with the current
+    native Console integration node
+    `Tests/UI/test_console_native_chat_flow.py::test_console_attachment_worker_stages_image_and_inlines_text`.
+    Retain the existing chat-functions image/RAG reference and the matrix's
+    exact file/test existence gate. Confirm no other matrix reference is
+    missing. Do not recreate the retired Chat UI test or weaken validation.
+47. In the active-conversation workspace marker regression, call
+    `_sync_console_workspace_context()` without the obsolete
+    `ChatSessionData` argument and remove that now-unused import. Preserve the
+    preceding `restore_persisted_session` setup and the exact assertion that
+    one selected row contains the restored conversation title. Do not add an
+    ignored compatibility parameter or revive the retired legacy tab session
+    path already described by the test's rationale.
+48. Restore the Watchlists source label's textual indent from two to four
+    spaces so a left-aligned child paints strictly to the right of its parent.
+    Keep the relative rendered-column assertion unchanged, update only its
+    explanatory comment and the source stylesheet explanation, and regenerate
+    the bundled stylesheet rather than adding a second geometry rule.
+49. Retarget the generic Speech dependency-recovery regression to
+    `STTSScreen(_build_test_app())` through its existing screen host. Patch the
+    probes at `lab_speech_status`, keep the shared dependency flags false,
+    assert the complete independent taxonomy against the inspector detail,
+    and assert the exact install tooltip against the rail summary. Do not add
+    a compatibility widget to `STTSWindow` or duplicate another harness.
+50. Scope the never-run Evals absence assertion to
+    `#evals-inspector-bench` before querying `.ds-recovery-callout`. Preserve
+    the positive `Not yet checked` and negative Ready/Blocked/Unavailable
+    assertions, and leave the unrelated screen-level action-deferral callout
+    intact.
+51. Query duplicate-target readiness badges beneath
+    `#evals-inspector-bench` rather than its broader pane. Preserve the exact
+    two-row count, nonzero geometry checks, and all four index-derived editor
+    and inspector ids; leave the sibling primary-action status unchanged.
+52. Make the local-model dialog hidden by its existing component CSS, remove
+    the eager child query from `on_mount()`, and defer reactive show/hide
+    application until after refresh through a helper that tolerates a not-yet
+    composed child. Exercise hidden-first, show, and hide state in the existing
+    real-shell Lab route regression without adding a harness.
+53. In both Library Collections branches, replace only the stale disabled
+    assertion with an enabled/pressable assertion plus the existing blocked
+    class assertion. Preserve selection, copy, item counts, empty guidance,
+    geometry, and the dedicated blocked-press coverage without changing
+    production or duplicating the handler test.
+54. In the different-canvas ingest isolation regression, read the current Media
+    label through a test-local nullable helper and use the existing bounded
+    `_wait_for_condition` until it remounts with count 1. Preserve the final
+    Notes selection and ingest-widget absence assertions; do not change
+    production or add another wait abstraction.
+55. In the four MCP import-file path regressions, patch
+    `mcp_workbench_module._mcp_import_home` instead of the shared
+    `os.path.expanduser` attribute. Preserve each temporary containment root and
+    all picker-loading, unreadable-file, outside-home rejection, and size-cap
+    assertions, and update the affected test rationale to name the seam actually
+    patched; do not change production config or private-path handling.
+56. Update the test-local MCP audit-record factory to the current metadata-only
+    public schema. Seed and parse the rendered inspector detail through the
+    existing async UI tests, preserving identity, decision, duration, and
+    button coverage while asserting argument-name/count and result-type/size
+    metadata. Inject legacy payload fields only in the two privacy regressions
+    and assert their values/excerpts/text never render. Do not extract a new
+    production helper or restore payload display.
+57. In each of the four Media tests that activate a type, publish the isolated
+    host screen through the mock app's `screen_stack` and set that screen's
+    `media_window` to the mounted widget before dispatch. Then await the widget
+    host app's existing worker manager before any action that depends on the
+    initial search. In the search-button and pagination tests, also await the
+    newly dispatched worker before inspecting its call. In the item-selection
+    test, await the separate detail worker scheduled by
+    `handle_media_item_selected()` before reading the viewer. Retain the
+    existing pilot pauses for reactive presentation; do not bypass
+    `_is_current_media_owner()`, add sleeps or a polling helper, or change
+    production.
+58. Retarget the Collapsible hover regression to the existing
+    `#settings-library-rag-card Collapsible > CollapsibleTitle` base/hover rules
+    in source and bundle. Retarget the focus regression to assert the live
+    global expanded/collapsed `CollapsibleTitle:focus` rules and the matching
+    ID-scoped Library/RAG overrides in both source and bundle; the scoped rules
+    must retain the same non-obscuring focus contract because their ID
+    specificity outranks the global rule. Remove the retired chat-tabs path
+    constant and its three test cases, remove the two preset active/hover tests,
+    and drop preset plus resize selectors from the shared sidebar-hover
+    parameters. Remove the dead conversation `Collapsible.-active` assertion
+    and its now unused path constant because no live Collapsible owns that
+    state. Do not restore retired CSS or activate the unscoped dead conversation
+    selectors.
+59. In the Personas generation wiring module, keep the real library-entry
+    pointer click that opens the editor, but dispatch controls owned by the
+    mounted editor through `Button.press()`. After every press that schedules
+    a worker, pause once so Textual dispatches the queued `Button.Pressed`
+    handler before asking the worker manager to wait; then retain the existing
+    post-worker pause and assertions. Preserve every controller argument,
+    preview, failure, regeneration, concept, and non-clobbering assertion.
+    Verify the focused module both alone and while the Library/RAG settings
+    test is collected. Do not add sleeps, change validation timing, or modify
+    production behavior for a coordinate-hit-test race outside this module's
+    wiring purpose.
+60. In the Personas import-failure regression, set the unused dictionary scope
+    service to `None` before mounting, then assert the exact fixed error
+    notification and explicitly prove the injected importer exception text is
+    absent. Retain the real row selection and selected-entity assertion. Do not
+    restore raw exception display, alter production diagnostics, or mock away
+    the import path itself.
+61. In the product-maturity Search/RAG-to-Console core-loop regression, remove
+    only the wait that reads the retired app-root `pending_chat_handoff`
+    attribute. Retain the real `open_chat_with_handoff()` producer, route wait,
+    visible staged-source count, RAG state, live-work title, evidence readiness,
+    and suggested composer draft. Do not restore compatibility state or replace
+    the visible outcome proof with a store-internal assertion.
+62. In the product-maturity service-unavailable matrix, rename the test to
+    describe blocked rather than universally disabled handoffs. For the
+    existing Library route only, assert the action remains enabled and carries
+    `library-source-action-blocked`; retain the disabled assertion for
+    Watchlists and Skills and retain every recovery-copy and tooltip assertion.
+    Do not change production or duplicate the dedicated blocked-press test.
+63. Add standard YAML frontmatter with unique id `TASK-672`, completed status,
+    dates derived from the task's existing history, and bounded metadata to the
+    renumbered first-run character-chat UAT task. Change only its top heading
+    from task 635 to task 672; preserve all completed acceptance criteria,
+    implementation plan, implementation notes, and historical explanation.
+64. Give the shared Study dashboard app-instance builder and the focused
+    quizzes/flashcards test apps an empty `PendingHandoffStore`, matching real
+    application construction. In focused scope and section tests, remove every
+    retired `pending_study_scope_context` / `pending_study_initial_section`
+    assignment and stage the same value through `STUDY_SCOPE` or
+    `STUDY_INITIAL_SECTION`; update direct consumption assertions and method
+    calls to the current store/screen seam. In the lower-level Study screen
+    module, use one small test-local store builder to avoid repeating channel
+    staging while keeping each input explicit. In the screen-level
+    backend-change regression, remove only the stale assertion that the handler
+    mutates `app_instance.current_runtime_backend`; retain its complete
+    scope-state and controller-refresh proof. Preserve all other behavior
+    assertions. Do not teach production or test apps to translate legacy
+    fields, and do not fold the separate runtime-policy callback failure into
+    this migration.
+65. In the remaining app-level Study runtime-callback regression, construct a
+    real in-memory `RuntimePolicyContext` with a recording store, an empty
+    application config, a mocked server-context invalidation seam, and the
+    existing active-screen callback. Invoke the unbound application handler,
+    then assert a successful result, the committed local policy state, the
+    exact invalidation call, and the forwarded local source. Remove the two
+    retired app-root field assertions and rename the test to describe policy
+    commit plus forwarding. Do not instantiate the full application, add a
+    compatibility projection, or change production.
+66. In the first-time character-chat UAT, wrap the real
+    `PendingHandoffStore.stage()` method before pressing Start Chat. Record a
+    detached `ChatHandoffPayload` only for `HandoffChannel.CHAT`, then forward
+    every call to the original method. Assert the existing intent, selected
+    kind, and record-id metadata against that captured payload. Replace the
+    retired consumption predicate with the store's public pending state, the
+    Console's in-progress flag, and the presence of a Console session bound to
+    the selected character id. Update only the related diagnostic output and
+    remove the now-unused `asyncio` import. Retain the real card import,
+    provider-readiness recovery, network seam, reply, and database-persistence
+    assertions. Do not add a store peek API, delay production consumption, or
+    restore app-root compatibility state.
+67. In the same UAT's navigation boundary, make `_wait_for()` return the
+    `PersonasScreen` only when it is both the active `app.screen` and mounted.
+    Bind that returned screen directly for the remaining journey. Retain the
+    direct awaited import continuation and exact selected-character assertions.
+    Do not add another delay, weaken the selection assertion, or change
+    production's stale-owner guard.
+68. In the app-free Console responsiveness regression, keep the lightweight
+    uninitialized screen but stub every current collaborator called by
+    `_sync_native_console_chat_ui()`: effective-scope warming, dictionary,
+    world-book, and avatar refresh, the current native transcript sync, and
+    the current conditional rail-visibility method, in addition to the
+    existing synchronous sync seams. Record that the core-state stub actually
+    ran while the responsiveness monitor reported one active worker, then
+    retain the final zero-worker assertion. Remove retired stub names and
+    unused fake fields. Do not mount a full application, alter production, or
+    replace the method under test with direct monitor calls.
+69. Update the service-backed worker-policy sentinel's Library explanation to
+    name verified model installation and source-ingest preflight alongside
+    export and preference persistence, and raise Library's exact reviewed
+    worker count from four to six. Parse each screen once and count function
+    decorators whose call is `work(...)` with a literal `thread=True`, so
+    formatting or keyword order cannot evade the inventory. For each
+    `asyncio.run` call, search its complete AST source-line span for the
+    required worker-thread-loop annotation rather than only the opening line.
+    Retain exact counts rather than lower bounds, zero defaults for
+    Personas/Skills, the three annotated `asyncio.run` exceptions, and the ban
+    on `_run_maybe_awaitable`. Do not change production decorators or weaken
+    the sentinel into pattern-only acceptance.
+70. In the File Notes Git bulk-unstage summary regression only, replace the
+    generic Pilot-idle polling call after the Unstage All press with a bounded
+    event-loop loop. Check the same exact `unstage_calls == [(1, 2)]` and
+    `status_calls == 2` predicate on every iteration, yield with
+    `asyncio.sleep(0.01)`, and raise the same focused assertion if it does not
+    settle. Retain the complete `_git_last_action` text assertion and the
+    adjacent bulk-stage regression unchanged. Do not increase Textual's global
+    screen timeout, change the shared helper, or alter production scheduling.
+71. After the required paired verification reproduces the identical timeout,
+    apply the same bounded event-loop loop to the bulk-stage summary regression.
+    Check the existing exact `stage_calls == [(1, 2)]` and `status_calls == 2`
+    predicate, retain its complete `_git_last_action` assertion, and leave the
+    shared helper and production unchanged.
+72. Pass the exact `.library-source-action {` selector to the existing CSS
+    block helper for the source and bundled base-rule checks. Retain all style
+    assertions and leave the live stylesheets and shared helper unchanged.
+73. In the Library footer-ownership regression, first retain the default
+    screen-owned footer outside Search/RAG, then set the current selected-row
+    owner to `LIBRARY_ROW_BROWSE_SEARCH` and invoke the live dynamic
+    registration method. Assert the `u` hint reaches only the screen footer and
+    the host app's footer remains default. Do not restore a screen-wide hint or
+    add a UI navigation journey to this focused ownership test.
+74. Seed the direct `ChatScreen` fixture through `set_task_resume_state()` and
+    assert the screen's current `_task_resume_state` before and after
+    `_set_console_pending_skill_script()`. Retain exact summary, last-step,
+    payload, and clear assertions. Do not restore a compatibility wrapper or
+    mount a full app.
+75. Give the loader-construction test realistic non-empty `duration`, `frames`,
+    and `samplerate` metadata. Retain its import sentinel, chained
+    `TranscriptionError`, exact loader call, and stale-debug assertion. Do not
+    weaken the zero-frame production fast path.
+76. At the shared `transcribe()` local-file boundary, reject a path that does
+    not exist before `_ensure_wav_format()` or provider dispatch. Raise the
+    existing `TranscriptionError` with the missing path, retain conversion and
+    provider behavior for existing inputs, and pin the Parakeet regression so
+    model loading cannot run. Retain the private Parakeet helper's existing
+    conditional defense because direct helper coverage depends on it to avoid
+    initializing MLX when SoundFile is unavailable and the path is missing.
+77. In both Model Artifacts regressions that replace
+    `service_module.os.scandir`, use `monkeypatch.context()` around only the
+    `list_installed()` or `disk_usage()` call. Retain the exact no-traversal and
+    directory-identity assertions while restoring the real function before
+    pytest cleanup.
+78. In the full-app runtime-policy startup helper, replace only the unrelated
+    `_refresh_model_catalogs()` coroutine with an async no-op before
+    `run_test()`. Keep exact action-owned notification assertions and all
+    runtime-policy behavior unchanged.
+79. In the two provider Settings regressions with a `#label` wait, wait for the
+    current screen's `#settings-provider-value OptionList` descendant instead,
+    then query the live `Select` before assigning its value. Preserve all
+    provider/model save, placeholder, session, and handoff assertions.
+80. Give the real STT compatibility-facade regression an empty file under
+    `tmp_path`, pass that existing path to the real facade, and retain the exact
+    configured model/source-language forwarding assertions against the mocked
+    recognizer. Do not bypass or weaken the production missing-file guard.
+81. In the v17-to-current ChaChaNotes migration fixture, drop the post-v17
+    `assistant_authority_id` column before dropping `system_prompt` and rolling
+    the recorded version back. Keep the complete migration replay, final
+    version, restored system-prompt column, and sync-trigger assertions
+    unchanged; do not make the v27-to-v28 migration tolerate an invalid partial
+    schema.
+82. Split the Console schema-ownership assertion into identity and
+    presentation sets. Require the ADR-037 identity fields on
+    `ConsoleChatSession`, reject them from `ConsoleSessionSettings`, and reject
+    user/persona labels plus `assistant_name` from both. Keep production
+    session/settings schemas unchanged.
+83. In the remaining current-to-historical ChaChaNotes fixtures, drop
+    `assistant_authority_id` before setting the recorded version to 16, 20, or
+    21. Preserve the local-marks and world-book migration assertions, their
+    later-provenance cleanup, and the strict production v27-to-v28 migration.
+84. Compare the median of the first and last steady-state Chatbook imports,
+    allowing a small absolute jitter floor while retaining a relative
+    degradation bound. Keep all ten real exports/imports and success
+    assertions; do not change production or hide sustained slowdown.
+85. Retain every worker's returned SQLite connection in a test-owned list
+    until all five threads join, then compare their object identities. Keep the
+    existing real threads and thread-local production path; do not add sleeps,
+    retries, or production connection tracking.
+86. Use `monkeypatch.context()` around `validate_profile_candidate()` in both
+    unlink-cleanup regressions, including their paired `tempfile.mkstemp`
+    replacement. Restore the real standard-library functions before assertions
+    and pytest cleanup while retaining exact signal/error precedence.
+87. Classify both real Parakeet MLX integration entry points as slow and use
+    only platform plus installed-package availability for collection-time
+    selection. Do not treat an empty lazy-import cache as API absence; the real
+    slow run must reach production's first-use import and loader validation.
+    Keep all unit/mock tests active in the mandatory gate.
+88. Mark the two remaining faster-whisper cases that instantiate a real model
+    as slow. Keep the invalid-file integration case in the normal gate because
+    it fails before model initialization and requires no artifact.
+89. Give every shared-RAG concurrency regression a fresh construction lock
+    through a class autouse fixture. This confines each race to the threads
+    created by that test without changing production locking.
+90. Make the shared Evals run-group selection helper wait briefly for the
+    results-grid selector instead of treating one event-loop pause as a mount
+    completion guarantee.
+91. Give the file-notes owner lifecycle module one shared, contention-tolerant
+    timeout for its controlled asynchronous settlement guards. This is not a
+    performance threshold and does not delay successful tests.
+92. Make the skeletal Console-action test wait briefly for its exact recovery
+    copy instead of assuming the Workflows worker and recompose finish within a
+    fixed sleep.
+93. Give the File Notes Git hook-cleanup test's released commit cycle a
+    ten-second settlement guard. Keep its one-second controlled-start signal,
+    exact `Path.rmdir` observation, and production implementation unchanged.
+    The wider completion guard is a deadlock bound, not a performance target.
+94. Replace the File Notes Git commit-integration module's one- and two-second
+     `asyncio.wait_for` literals with one ten-second settlement constant. These
+     waits coordinate controlled test events, shutdown, and retained cycles;
+     none is a product performance contract. Keep every wait bounded and leave
+     production Git code unchanged.
+95. Align the hidden-action File Notes Git reopen assertion with the existing
+     focus fallback: after current rows mount, focus may be on the row list or
+     the visible Back control if the bounded row-focus retries completed before
+     the async status render. Continue requiring focus to leave the hidden
+     session entry and leave production focus behavior unchanged.
+96. Replace the native Console chat-flow module's one- and two-second
+     `asyncio.wait_for` literals with one ten-second settlement constant. These
+     waits coordinate controlled fake-gateway and handoff signals; none is a
+     product performance contract. Keep every wait bounded and leave production
+     Console behavior unchanged.
+97. Make the MCP lifecycle-cancellation regression wait for the workbench's
+     initial workers before directly calling its private lifecycle starter.
+     Keep the never-released fake service gate, explicit cancel request, and
+     exact in-flight cleanup assertion unchanged; do not add a production
+     pre-mount compatibility path for a user action that is not yet available.
+98. In both missing-note conflict-resolution regressions, wait for Textual's
+     requested list-view recompose to remove the old Reload or Overwrite
+     control after the editor state resets. Keep the selected-note, detail,
+     autosave, and list-view assertions unchanged; do not add a production
+     delay or synchronous DOM mutation for a refresh that is already correct.
+99. Complete the MCP cancellation regression's established startup boundary
+     with a post-worker `Pilot` pause before its private lifecycle call. Keep
+     the blocked connect gate, direct lifecycle start, cancel request, and
+     in-flight cleanup assertion unchanged; do not add selector polling or a
+     production pre-mount compatibility path.
+100. Make the retained File Notes source-switch journey's final remount wait
+     require its editor descendant before asserting the same editor object.
+     Keep the retained workspace identity, dirty/conflict veto, flush,
+     hidden-file refresh, and replica-lifetime assertions unchanged; do not
+     add production remount guards for a root-before-subtree test race.
+101. Schedule Library export worker dispatch after the requested running-state
+     recompose has refreshed. Keep the same run payload, worker boundary,
+     single-flight/cancellation guards, and targeted completion update so a
+     fast completion cannot update the old canvas before the running canvas
+     mounts; do not add a retry loop or recompose on completion.
+102. Retarget the seven focused Study scope-load tests from the intentionally
+     synchronous `on_mount` hook to `_load_after_mount_inner`, the deferred
+     coroutine that now owns the behavior those tests assert. Keep scope
+     precedence, invalid-workspace handling, local-backend posture, controller
+     reset, initialization ordering, and runtime-backend recomputation
+     assertions unchanged. Dedicated TASK-1320 coverage continues to prove
+     that the real mount schedules this work off the application message pump.
+103. In the two remaining File Notes repository-trust retries that directly
+     press a dialog child, require both the active `SessionGitTrustDialog` and
+     the exact Cancel or Confirm control before the press. Keep decline/retry,
+     identity revalidation, fresh status, and disabled-mutation assertions
+     unchanged; do not add a production mount hook, sleep, or shared helper.
+104. In the MCP profile-form cancellation regression, replace its single-pause
+     assumption with a bounded local wait for `#mcp-form-cancel` to exist and
+     have a nonzero rendered region before the coordinate click. Keep form
+     dismissal, overview restoration, and zero-save assertions unchanged; do
+     not change production recomposition or add a shared test abstraction.
+105. Treat a missing retained File Notes surface during poll-result projection
+     as lifecycle detachment and return before updating retained model or widget
+     state. Keep the reconciled service behavior, retained editor identity, and
+     normal poll outcomes unchanged; do not add sleeps or swallow projection
+     exceptions.
+106. In the two Settings navigation journeys that assert routed provider/model
+     values, wait boundedly for the recomposed Select and Input to expose those
+     exact values. Preserve category selection, provider recovery copy, and
+     absence of a provider draft; do not change production navigation or add
+     fixed pauses.
+107. In the Skill editor scroll regression, wait boundedly for focus-driven
+     scrolling to put the Trust review control inside the canvas viewport.
+     Preserve the real `VerticalScroll`, keyboard page-down, reset, focus, and
+     positive-scroll assertions; do not change production scrolling.
+108. In the responsiveness artifact writer success test, publish its `tmp_path`
+     as the allowed temporary root before writing. Preserve the production
+     allowlist and the separate traversal-rejection coverage; do not add
+     `/private/tmp` or pytest-specific behavior to production.
+109. In the Watchlists end-to-end create-source journey, wait boundedly for the
+     async controller call and form closure after Submit. Preserve the stronger
+     upstream form/focus/Select readiness checks, real button press, pilot
+     typing, tab order, both viewport cases, and geometry; do not assign input
+     values. Return a fresh RuleSet list container from the session-global test
+     CSS cache so one full-app teardown cannot corrupt the next viewport mount.
+
+The only planned production behavior changes outside an ADR-029 diagnostic
+correction are the three-name synchronization of the existing Library
+collision boundary, the canonical-state guard that prevents untouched prompt
+fields from becoming dirty during mount/recompose, and the shared display-name
+rendering for missing-key recovery copy, plus the four-space Watchlists child
+label indent that restores the already-tested visible hierarchy. The RAG
+capture edit is documentation-only and records already-live fail-closed
+behavior. No compatibility shims. No broad deletion of live tests.
+
+## Alternatives
+
+- Restoring `StreamDone` or replacing the upstream `TabState` repair would
+  contradict the accepted retirement architecture and revive dead ownership.
+- Deleting live test files would make collection green but discard useful
+  retained non-streaming, shell-label, and audio-error coverage. The one deleted
+  file contains no live contract after worker ownership moved to native Console.
+- Replacing retired models with local fixtures or duplicating the existing
+  streaming-rejection test would keep dead or redundant coverage alive.
+- Teaching the retained adapter to strip, log, or consume citation builders
+  would revive ownership that moved to native Console.
+- Blindly regenerating the diagnostic inventory would defeat its review gate.
+- Raising the indexing test's timeout would retain a machine-dependent failure
+  with a different arbitrary threshold.
+- Deriving the Library shadow set dynamically from the agent registry would
+  couple a pure display-state module to runtime ownership and replace the
+  intentional fixed collision boundary.
+- Replacing the visible Console click with a direct controller call would no
+  longer prove that the user-facing Stop control is wired. Merely increasing
+  the timeout would not render the control before hit testing.
+- Asserting Media closure immediately after the incoming screen becomes active
+  conflates two asynchronous Textual lifecycle milestones. Removing the
+  closure checks would lose the stale-owner contract; a bounded predicate wait
+  preserves it without assuming those milestones complete atomically.
+- A single `pilot.pause()` after programmatically assigning Settings controls
+  does not guarantee their queued `Changed` messages have staged draft state
+  before save. Directly exercising the live handlers and waiting on their
+  observable staged/persisted results keeps this ownership test deterministic
+  without adding a driver-level form-interaction scenario it does not need.
+- Changing the obsolete RAG assertion to expect `None` would duplicate the
+  focused citation-capture suite while retaining a misleading DB-free fixture.
+  Deleting that fixture and test preserves the authoritative security coverage
+  in its actual owner without restoring raw recognized candidates to prompts.
+- Restoring a setter for `current_runtime_backend` would reintroduce competing
+  runtime authority. Updating the stale fixture to publish its state through
+  the existing owner preserves the architectural boundary and the test's real
+  lazy-wiring purpose.
+- Requiring `backup_root.iterdir()` to succeed after failed-backup cleanup
+  treats the presence of an empty implementation directory as product
+  behavior. Accepting either absence or emptiness proves the actual
+  no-artifact contract without weakening the database, temporary-file,
+  manifest, notification, or worker-state assertions.
+- Continuing to inspect the retired unscoped root would make no-artifact checks
+  pass without observing production and make successful-backup tests fail for
+  the wrong reason. Deriving the root from the live owner keeps the assertions
+  profile-aware without duplicating its path algorithm.
+- Restoring `Path.open` staging or creating a partial disk file during JSON
+  serialization would bypass the secure exclusive-create helper. Wrapping that
+  helper and injecting failures only after it succeeds preserves the intended
+  concurrency and cleanup coverage under the current implementation.
+- Putting temporary paths back into `config_data` cannot drive ChaChaNotes or
+  Media backup resolution because canonical resolvers now own that boundary.
+  Overriding those two entries on the fixture window's resolver map while
+  retaining the direct Prompts patch uses the current seams and keeps host
+  databases out of the test without changing production.
+- Restoring `config.atomic_write_text` or patching the replacement private-file
+  implementation would couple a pure parser regression to deleted or internal
+  persistence details. The public config mutation guards already express the
+  relevant no-write boundary.
+- Treating a known duration as sufficient to create an empty Parakeet segment
+  produces a meaningless addressable record and contradicts faster-whisper and
+  MLX Whisper empty-result behavior. Keying the fallback on non-empty text
+  preserves useful untimed transcripts without manufacturing empty content.
+- Passing a valid zero-frame buffer into Parakeet MLX underflows its internal
+  sequence length and can request an impossible Metal allocation. Recognizing
+  the empty container before model load is deterministic, avoids needless
+  downloads/resources, and returns the same empty transcription contract
+  already expected by callers.
+- Treating the availability flag alone as the dependency seam makes the
+  no-SoundFile test host-dependent. Patching the imported module object too
+  exercises the intended branch and prevents an unrelated network download.
+- Restoring the app-root provider reactive or teaching the command provider to
+  read it would recreate competing provider authority. Retargeting the unit
+  regression to the mounted Console and pending-handoff seams matches the
+  production ownership suite without adding compatibility state.
+- Restoring per-key Library ingest persistence would undo the accepted
+  single-write behavior just to satisfy a stale mock. Observing the batch seam
+  directly preserves both the user-facing persistence contract and the current
+  write-efficiency boundary.
+- Removing config mutation write-count, failure, or lock assertions would lose
+  the behavior those tests exist to prove. Wrapping the live private atomic
+  writer retains that coverage while following the hardened config owner.
+- Building the expected unknown-command hint with the same production method
+  under test would hide copy or registry omissions. Updating the two curated
+  expected constants keeps the assertion independent and preserves the
+  Enter-again safety behavior.
+- Accepting a draft-only `submit_draft` assertion would miss the session-switch
+  routing guarantee, while restoring a mutable prompt field would bypass claim
+  settlement and retry semantics. Following the live session argument and
+  typed handoff store preserves both ownership contracts without production
+  compatibility state.
+- Making the Save/inspector tests assign a screen-private context directly
+  would skip the cross-destination ownership boundary. Staging the typed
+  launch channel exercises the real claim path and keeps Home from becoming a
+  competing consumer.
+- Clearing the Library prompt dirty flag in test helpers or adding more pauses
+  would hide a real mount-event ordering defect that can veto user navigation.
+  Comparing live fields with the canonical rendered state ignores only
+  unchanged mount echoes and preserves genuine edits.
+- Running prompt imports on the Library screen in production would break the
+  accepted durable app-owned worker contract. The failing status assertions
+  come from an inactive nested test app's screen stack, so sharing the active
+  harness worker manager fixes the fixture without changing runtime ownership.
+- Changing approval-card production CSS or removing geometry assertions would
+  hide a fixture-ordering mistake: the test installs a batch before the card's
+  deferred mount-time hide runs. Settling that callback first mirrors the live
+  lifecycle and the existing single-row geometry fixture.
+- Restoring `_screen_states` or destination-specific pending attributes would
+  recreate competing application state owners. Seeding the current
+  `screen_state_store` and typed channels exercises the accepted paths with
+  less fixture-only state.
+- Restoring the approval-cancellation error sentence to the persistent MCP log
+  would violate the metadata-only audit boundary. The bounded
+  `approval_cancelled` category preserves the actionable outcome without
+  durable free-form text.
+- Reverting the configured Anthropic default or deriving the expected Console
+  value from production would either undo the reviewed provider refresh or make
+  the regression tautological. Updating the one curated literal retains an
+  independent drift check against both configuration and catalog membership.
+- Restoring app-shaped input support in the provider-model resolver would
+  reintroduce application-state coupling removed by the current explicit API.
+  Passing the two existing fake values separately preserves every behavior
+  assertion without compatibility code.
+- Lowercasing the missing-key assertion would ratify a user-facing regression
+  caused by canonical provider storage. The shared provider catalog already
+  owns branded display names, so using it only at the two failing copy
+  boundaries avoids a second map and leaves routing untouched.
+- Making the provider Select accept an invalid empty value would broaden
+  production behavior to accommodate a routing test that claims to exercise
+  “Choose model.” Giving that test the same explicit provider-plus-empty-model
+  state used by adjacent missing-model coverage exercises its named contract
+  and leaves modal validation intact.
+- Restoring writable runtime fields for one live-config fixture would recreate
+  retired competing state. Publishing its already-constructed state through
+  the same projection method used by the current app harnesses preserves the
+  full journey while changing only fixture setup.
+- A `:memory:` SQLite database belongs to one connection, while
+  `SubscriptionsDB` uses thread-local connections and the production scheduler
+  loads subscriptions off-thread. A private file-backed fixture is the
+  smallest faithful seam: it shares the initialized schema across those two
+  connections without mocking away scheduler behavior.
+- Teaching `_effective_console_provider_model` to read app-root reactives again
+  would reverse the accepted explicit resolver boundary. Staging the existing
+  screen-owned control field keeps this integration check useful without
+  duplicating event or compatibility machinery.
+- Reverting `submit_draft` to text-only calls would reopen the cross-tab routing
+  race fixed by the dispatch-time session contract. Capturing the already-live
+  active id keeps the skill tests exact without adding a fixture abstraction.
+- Leaving the skill test's copy at four commands makes it disagree with the
+  same live registry already pinned by the composer suite. Updating its one
+  independent literal preserves the regression without a shared tautological
+  helper.
+- Recreating a deleted Chat image test solely to satisfy parity metadata would
+  revive retired UI ownership. The native Console flow already verifies image
+  staging plus text inlining, so pointing the matrix at that exact node keeps
+  the gate meaningful with a one-line repair.
+- Allowing `_sync_console_workspace_context` to accept and ignore legacy
+  `ChatSessionData` would contradict its current owned-state contract. The test
+  already restores the native session that the sync reads, so dropping the
+  dead argument and import completes its earlier migration.
+- Weakening the Watchlists compositor assertion or pinning one absolute column
+  would hide the visible parent-child ordering regression or overfit one
+  viewport. Restoring four spaces at the existing label seam preserves the
+  relative contract without another CSS layout mechanism.
+- Restoring the retired Speech status widget inside `STTSWindow` would create a
+  second recovery owner after the Lab-frame migration. Deleting the generic
+  regression would lose its exact Why/Next/Owner and tooltip assertions, so
+  following the existing inspector/rail split preserves distinct coverage with
+  one test-only migration.
+- Removing the Evals callout assertion or the valid Run Bench deferral would
+  weaken different contracts. Querying the existing recovery class beneath its
+  target-readiness owner proves the original intent without production changes
+  or a broad query-idiom rewrite.
+- Filtering duplicate-target badges by text or weakening the exact count would
+  make the mount-collision regression less precise. Moving only the query root
+  to the existing EvalsInspector owner keeps the shared class and all rendered
+  row/id assertions meaningful.
+- Removing the local-model dialog or suppressing Models construction would
+  discard a live delete flow or hide the real route defect. CSS owning initial
+  visibility and the watcher owning later visibility preserves behavior with
+  one lifecycle-safe seam and no compatibility surface.
+- Re-disabling the Library handoff button would make its recovery handler
+  unreachable, while deleting the assertion would lose blocked-state coverage.
+  Asserting pressable plus the established blocked class preserves both parts
+  of the accepted interaction.
+- Catching `NoMatches` broadly or increasing sleeps would obscure whether the
+  Media row ever returns. Treating only temporary row absence as a false
+  bounded predicate keeps the count and canvas-isolation contracts exact.
+- Relaxing the private-file guard or special-casing a directory-valued config
+  path would hide a fixture leak and weaken production safety. Patching the
+  existing workbench-local import-root seam expresses the test's intended home
+  boundary without changing process-wide path resolution.
+- Restoring redacted-or-allowlisted payload values in the audit inspector would
+  violate the accepted metadata-only persistence and display boundary. A new
+  production payload-projection helper is unnecessary: the existing rendered
+  UI tests can pin the public schema directly with current fake records.
+- Adding more unbounded `pilot.pause()` calls would keep the Media tests
+  scheduler-dependent, while changing `_perform_search()` solely to return a
+  test handle would alter production for fixture convenience. Textual's worker
+  manager already owns the exact browse and detail completion boundaries these
+  tests need.
+- Monkeypatching `_is_current_media_owner()` to return true would skip the
+  route-ownership contract that protects replacement Media windows from stale
+  writes. Wiring the already-mounted screen and mock stack makes the isolated
+  fixture satisfy the real contract without another test abstraction.
+- Recreating `_chat_tabs.tcss`, preset controls, or the resize control solely
+  for static assertions would reverse TASK-577 retirement. Renaming the bare
+  conversation selector to `CollapsibleTitle` would make a formerly inert,
+  globally bundled rule style every Collapsible; removing its ownerless test is
+  safer and more honest than introducing unreviewed app-wide UI behavior.
+- Adding sleeps after programmatic Personas field edits would make the wiring
+  suite slower without giving it a deterministic scheduler boundary, while
+  changing the editor's production validation debounce would alter user
+  behavior for a test-only pointer race. Directly pressing the mounted buttons
+  keeps Textual message bubbling and the screen-owned worker path intact.
+- Restoring the raw Personas importer exception in the notification would
+  reverse the current bounded-diagnostic and stable-recovery-copy contract.
+  Ignoring the unrelated dictionary-service traceback would leave the focused
+  test exercising an invalid fixture; declaring that unused service unavailable
+  follows existing Personas screen-test setup without adding a fake service.
+- Restoring `pending_chat_handoff` would recreate competing app-root handoff
+  ownership, while replacing the dead read with `has_pending()` would inspect a
+  transient store detail that becomes false at claim time, before destination
+  application necessarily completes. The retained visible Console assertions
+  are the stronger end-to-end consumption proof.
+- Re-disabling Library would make its recovery handler unreachable because a
+  disabled Textual button emits no press event. Generalizing the
+  pressable-but-blocked contract to Watchlists or Skills is outside the
+  observed failure; a route-specific assertion preserves their current
+  disabled behavior without another fixture abstraction.
+- Exempting one malformed task from the identity harness would hide the exact
+  filename/frontmatter drift the guard exists to prevent. Renumbering the file
+  again would repeat the earlier mistake; completing its existing `TASK-672`
+  identity is the minimal source-of-truth repair.
+- Adding `getattr(..., "pending_handoffs", ...)` fallback behavior to
+  `StudyScreen` would weaken ADR-033 ownership for test convenience. Updating
+  every individual ordinary quizzes/flashcards fixture would add dozens of
+  identical store arguments; installing one empty store in each test app
+  constructor matches the real composition root, while tests with staged
+  inputs remain explicit through typed channels.
+- Restoring writable `current_runtime_backend` / `runtime_backend` fields for
+  the app-level callback test would recreate competing runtime authority.
+  Mounting the full application would duplicate the dedicated runtime-policy
+  integration suite and add unrelated lifecycle cost. A real policy context
+  plus the handler's two direct collaborators exercises this unit boundary
+  without a new harness abstraction.
+- Reintroducing `pending_chat_handoff` or adding a store peek operation would
+  create a second payload-observation authority solely for tests. Polling only
+  `has_pending()` cannot prove payload metadata and may miss a fast claim;
+  intercepting the existing public staging call while forwarding it unchanged
+  captures the producer contract without changing lifecycle timing. Requiring
+  no pending value alone is also ambiguous before staging, so the bound
+  character session and idle consumer state provide the settlement proof.
+- Removing the selected-character assertion would hide a broken first-run
+  presentation, while increasing the post-import pause would not prevent an
+  import begun before mount. Waiting on the destination's existing
+  `is_mounted` lifecycle signal at navigation is the earliest deterministic
+  boundary and leaves production's stale-screen protection intact.
+- Giving the fake only `_console_chat_store = None` would move the failure to
+  the next unstubbed collaborator and keep the fixture coupled accidentally
+  to whichever sync helper executes first. A full-app test would add startup
+  and timer behavior while duplicating native Console integration coverage.
+  Stubbing the current collaborator list keeps this test focused on the real
+  outer worker-instrumentation wrapper and explicitly proves its core seam ran.
+- Converting the Parakeet installer or source path analyzer to an async
+  worker without removing their blocking I/O would put that work back on the
+  event loop. Allowing `>= 4` or deleting the sentinel would stop detecting
+  unreviewed thread-worker growth. Updating the exact count and explanation
+  preserves the intended review gate for the two already-live exceptions.
+  Updating only the count would expose the multiline-annotation false
+  negative, while keeping line-prefix decorator counting would let harmless
+  formatting changes evade the exact inventory; the existing AST parse can
+  cover both syntax boundaries without a new helper or production change.
+- Increasing `Pilot`'s 30-second screen-idle timeout would make the regression
+  slower without matching its contract, and changing shared `_wait_until()`
+  would alter hundreds of unrelated lifecycle assertions. Waiting directly on
+  the event loop for this retained-worker predicate preserves its two-second
+  bound and exact service evidence while avoiding a one-off helper or
+  production test hook.
+- Leaving the paired bulk-stage test on the global-idle helper would preserve a
+  deterministic 30-second failure discovered by the required 4bn verification.
+  Generalizing the shared helper would widen the scheduler contract for
+  unrelated tests; the same local loop is the smaller correction.
+- Reordering or renaming the blocked production class would change live CSS to
+  accommodate a prefix-based test parser. Rewriting the shared helper is
+  unnecessary when only this base selector has the newly colliding prefix;
+  selecting its already-asserted exact token is the smaller repair.
+- Restoring the `u` hint on every Library row would advertise an action that
+  production rejects outside Search/RAG. Driving a full rail-selection journey
+  would duplicate navigation coverage and introduce unrelated workers; setting
+  the registration owner's row state directly keeps this test focused on
+  footer ownership and dynamic shortcut projection.
+- Reintroducing `chat_state` would create a second task-resume owner solely for
+  a stale fixture. A mounted Console journey would add unrelated lifecycle cost;
+  the current setter already tolerates an unmounted direct screen and exercises
+  the same preservation bridge this test owns.
+- Removing or bypassing the empty-audio fast path would reload a model for
+  zero-frame files and reverse the accepted behavior. Mocking the fast-path
+  predicate itself would couple the test to implementation; truthful non-empty
+  metadata states the loader test's existing premise directly.
+- Fixing only the Parakeet MLX guard would leave other providers free to do
+  setup work before rejecting the same invalid local input. Teaching
+  `_ensure_wav_format()` to validate would mix path validation into a conversion
+  helper and still leave direct provider helpers inconsistent. The public
+  `transcribe()` entry is the smallest shared boundary and already documents a
+  local audio path. Removing the existing private Parakeet defense would make
+  direct helper calls initialize MLX for an input that is already known to be
+  invalid, so it remains as a narrow defense rather than a competing public
+  owner.
+- Teaching the Model Artifacts `os.scandir` spies to accept pytest's integer
+  directory descriptors would make process-global cleanup calls part of each
+  test's observation surface. Scoping the existing monkeypatches to the service
+  invocation restores the real standard-library function before teardown while
+  preserving the exact no-traversal and identity-change assertions.
+- Filtering the runtime-policy notification list by severity would let other
+  unrelated notifications race through the focused assertion. Waiting for the
+  real catalog refresh would add network/cache timing to a runtime-policy test.
+  Disabling that single startup coroutine in the existing test helper preserves
+  the exact assertion and keeps catalog behavior covered by its own suites.
+- Removing every Select readiness boundary would reintroduce the partial-mount
+  race, while importing Textual's private `SelectOverlay` class would couple
+  the tests to another internal name. Its public `OptionList` base is the child
+  that value assignment requires; waiting for it in the current screen DOM and
+  then re-querying the Select handles recomposition without a new helper.
+- Mocking `os.path.exists()` in the real STT facade regression would bypass the
+  public precondition the production path now owns. Creating an empty temporary
+  file is the smallest truthful fixture: it reaches the already-mocked
+  recognizer without decoding audio or changing runtime behavior.
+- Making the v27-to-v28 authority migration ignore a pre-existing column would
+  accept a partial or corrupted schema and weaken its rollback-safe contract.
+  Removing the current-only column from the synthetic v17 fixture accurately
+  states that test's premise while leaving production migration validation and
+  the dedicated authority suite intact.
+- Removing assistant identity from `ConsoleChatSession` would violate ADR-037
+  and break persisted conversation authority. Dropping the stale assertion
+  entirely would lose the presentation boundary. Explicit identity and
+  presentation sets preserve both contracts in one focused schema test.
+- Making the v27-to-v28 migration silently accept an existing authority column
+  would admit partial or corrupted schemas. Updating only the first failing
+  v16 fixture would defer the identical deterministic failures in the two
+  inventory-confirmed world-book fixtures; correcting all three truthful
+  historical fixtures is the smaller complete repair.
+- Raising the maximum-deviation floor would still let one sample decide the
+  gate and would not measure degradation. Removing timing coverage entirely
+  would discard the test's performance purpose. Early-versus-late medians use
+  the existing samples to detect a sustained regression without a benchmark
+  framework or retries.
+- Sleeping or synchronizing all five ChaChaNotes workers would make scheduling
+  part of a test that only needs to prove distinct returned objects. Comparing
+  transient integer ids permits allocator reuse; retaining the objects until
+  the existing join boundary preserves the intended identity assertion with
+  no new coordination mechanism.
+- Teaching the TTS unlink fakes to accept and forward arbitrary pytest cleanup
+  calls would make unrelated filesystem teardown part of these tests'
+  observation surface. Scoping the existing replacements to the one production
+  call they own preserves their exact cleanup assertions and restores the
+  standard library before teardown.
+- Importing Parakeet MLX during skip evaluation risks native initialization,
+  while consulting `optional_deps.MODULES` is vacuous because normal startup is
+  intentionally import-free. Marking the complete real suite slow and using
+  the existing spec-only availability flag keeps collection safe; an explicit
+  slow run then exercises production's actual first-use loader/API boundary.
+- Adding model-cache discovery to faster-whisper test setup would duplicate
+  Hugging Face cache rules. The suite already has an explicit `--run-slow`
+  contract for real inference; consistently marking the two omissions is both
+  clearer and smaller.
+- Making `StudyScreen.on_mount` async again would reverse TASK-1320 and put
+  scoped I/O back on Textual's application message pump. Calling the
+  synchronous hook and then manually starting its worker would couple focused
+  scope-state tests to Textual scheduling. Awaiting the existing deferred load
+  coroutine exercises their current unit boundary directly, while the
+  dedicated off-message-pump suite retains real mount-scheduling coverage.
+- Treating the active `SessionGitTrustDialog` screen object as proof that its
+  composed buttons have mounted repeats Textual's root-before-child race.
+  Adding a production compatibility button or sleeping after every dialog
+  would change or slow unrelated behavior. Extending each existing local wait
+  with the exact control it immediately presses is the smallest truthful
+  boundary and covers the two identical latent sites found in the same module.
+- Adding another unconditional pause after MCP Add server would still assume a
+  host-dependent number of event-loop turns, while changing production form
+  recomposition would alter live behavior for one test race. A bounded local
+  wait for the exact control and rendered geometry required by `Pilot.click`
+  states the cancellation test's real readiness boundary without introducing a
+  module-wide helper for one failing journey.
+- Delaying harness shutdown or widening the poll interval would only reduce the
+  chance of the File Notes race. Textual can detach descendants before the
+  parent receives `on_unmount`, so a completed background poll must recheck its
+  retained root-status and editor surfaces after I/O and before stateful
+  projection.
+- Adding more unconditional pauses to Settings navigation would still encode a
+  host-dependent number of recompose turns. The assertions consume exact
+  provider/model widget values, so boundedly waiting for those values is the
+  smallest truthful readiness boundary.
+- Adding another pause after focusing the Skill Trust control would still assume
+  a host-dependent number of scroll-animation turns. Boundedly waiting for the
+  unchanged viewport-containment geometry directly observes the behavior the
+  regression exists to prove.
+- Broadening the production artifact allowlist to every pytest base directory
+  would weaken a security boundary for a test-runner override. Publishing the
+  success fixture's private temporary directory through the existing temp-root
+  seam keeps the test hermetic and leaves traversal rejection unchanged.
+- Increasing the Watchlists opener's fixed pause would still make focus
+  and child-mount readiness host-dependent. Waiting for the exact Name-input
+  focus and Select option surface that the complete form requires retains real
+  user input and the dedicated focus assertion. Likewise, waiting for the
+  existing controller-call and form-closure outcomes after submit removes the
+  second fixed settlement assumption without changing production behavior.
+- The selected edits remove only obsolete assertions, make the audio contracts
+  deterministic, retain large-batch correctness coverage, and preserve the
+  existing privacy boundary.
+
+## Verification
+
+Run the repaired modules first, then their nearby affected suites, the
+diagnostic-inventory guard, static checks on changed files, and the
+repository-wide suite. TASK-1333 is complete only when these failures are
+absent; unrelated or environment-dependent failures remain recorded rather
+than hidden.
+
+## Architecture Decision Record
+
+ADR required: no
+
+ADR path: backlog/decisions/029-local-private-data-boundary.md
+
+Reason: This reconciles tests with already-accepted production boundaries and
+applies ADR-029's existing metadata-only inventory review requirement. It does
+not introduce a new runtime, storage, security, dependency, or cross-module
+decision.

@@ -15,6 +15,10 @@ from tldw_chatbook.Library.library_notes_state import (
     LibraryNotesListState,
     build_library_note_template_rows,
 )
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
+    LIBRARY_EXPORT_SELECTED_TOOLTIP,
+)
 from tldw_chatbook.Library.library_notes_sync_state import (
     LibraryNotesSyncState,
     auto_sync_label,
@@ -197,6 +201,12 @@ class LibraryNotesCanvas(Vertical):
                     compact=True,
                 )
                 export_selected.disabled = list_state.selected_count == 0
+                # F-018: a disabled action says why.
+                export_selected.tooltip = (
+                    LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
+                    if export_selected.disabled
+                    else LIBRARY_EXPORT_SELECTED_TOOLTIP
+                )
                 yield export_selected
         if list_state.status_copy:
             yield Static(

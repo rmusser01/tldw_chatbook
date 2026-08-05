@@ -25,6 +25,10 @@ from textual.reactive import reactive
 from loguru import logger
 
 from ..Chatbooks.chatbook_importer import ChatbookImporter
+from ..Chatbooks.database_paths import (
+    get_chatbook_database_paths,
+    get_private_chatbooks_dir,
+)
 from ..Chatbooks.chatbook_models import ChatbookManifest
 from ..Chatbooks.server_chatbook_service import (
     get_server_job_records,
@@ -312,7 +316,10 @@ class ChatbookExportManagementWindow(ModalScreen):
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
-        self.chatbooks_dir = Path.home() / "Documents" / "Chatbooks"
+        # Default to the app's private, hardened data directory rather than
+        # the hardcoded ~/Documents/Chatbooks literal (task-984). Pre-existing
+        # exports at the old location are not moved by this change.
+        self.chatbooks_dir = get_private_chatbooks_dir()
         self.chatbook_files: List[Dict[str, Any]] = []
         self.current_manifest: Optional[ChatbookManifest] = None
         self.server_job_records: List[Dict[str, Any]] = []
@@ -953,31 +960,7 @@ class ChatbookExportManagementWindow(ModalScreen):
         # Try to load manifest
         try:
             # Create importer to preview
-            db_config = self.app_instance.config_data.get("database", {})
-            db_paths = {
-                "ChaChaNotes": str(
-                    Path(
-                        db_config.get(
-                            "chachanotes_db_path",
-                            "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                        )
-                    ).expanduser()
-                ),
-                "Prompts": str(
-                    Path(
-                        db_config.get(
-                            "prompts_db_path", "~/.local/share/tldw_cli/tldw_prompts.db"
-                        )
-                    ).expanduser()
-                ),
-                "Media": str(
-                    Path(
-                        db_config.get(
-                            "media_db_path", "~/.local/share/tldw_cli/media_db_v2.db"
-                        )
-                    ).expanduser()
-                ),
-            }
+            db_paths = get_chatbook_database_paths()
 
             importer = ChatbookImporter(db_paths)
             manifest, error = importer.preview_chatbook(chatbook["path"])
@@ -1145,17 +1128,27 @@ class ChatbookExportManagementWindow(ModalScreen):
         chatbook = self.chatbook_files[self.selected_chatbook]
 
         try:
-            import subprocess
+            # Launched, never awaited (TASK-1373) -- same reasoning as the
+            # Chatbook wizard's open-folder button. This runs on Textual's
+            # serialized message pump, and `subprocess.run` waits for the child:
+            # `xdg-open` does not always return until the launched file manager
+            # exits, so a button press could freeze the app indefinitely.
             import platform
+            import subprocess
 
             folder = str(chatbook["path"].parent)
-
-            if platform.system() == "Darwin":  # macOS
-                subprocess.run(["open", folder])
-            elif platform.system() == "Linux":
-                subprocess.run(["xdg-open", folder])
-            elif platform.system() == "Windows":
-                subprocess.run(["explorer", folder])
+            launchers = {
+                "Darwin": ["open", folder],
+                "Linux": ["xdg-open", folder],
+                "Windows": ["explorer", folder],
+            }
+            command = launchers.get(platform.system())
+            if command is not None:
+                subprocess.Popen(
+                    command,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
 
         except Exception as e:
             logger.error(f"Error opening folder: {e}")

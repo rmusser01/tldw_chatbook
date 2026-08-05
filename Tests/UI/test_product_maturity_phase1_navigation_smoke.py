@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Button, Static
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
@@ -141,12 +141,13 @@ async def test_clean_run_top_level_navigation_reaches_every_destination(
 
             nav_bar = app.screen.query_one(MainNavigationBar)
             nav_ids = tuple(
-                button.id.removeprefix("nav-") for button in nav_bar.query(Button)
+                button.id.removeprefix("nav-")
+                for button in nav_bar.query("Button.nav-button")
             )
             assert nav_ids == TOP_LEVEL_DESTINATION_IDS
-            assert "Ctrl+P" in str(
-                app.screen.query_one("#nav-overflow-hint", Static).renderable
-            )
+            overflow_hint = app.screen.query_one("#nav-overflow-hint", Button)
+            assert "More" in str(overflow_hint.label)
+            assert "Ctrl+P" in str(overflow_hint.tooltip)
 
             reached: dict[str, str] = {}
             for destination in SHELL_DESTINATION_ORDER:

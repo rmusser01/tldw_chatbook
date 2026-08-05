@@ -8,37 +8,6 @@ from typing import Optional
 # 3rd-party Libraries
 from ..Third_Party.textual_fspicker import Filters
 
-# --- Prompt Ingest Constants ---
-MAX_PROMPT_PREVIEWS = 10
-PROMPT_FILE_FILTERS = Filters(
-    ("Markdown", lambda p: p.suffix.lower() == ".md"),
-    ("JSON", lambda p: p.suffix.lower() == ".json"),
-    ("YAML", lambda p: p.suffix.lower() in (".yaml", ".yml")),
-    ("Text", lambda p: p.suffix.lower() == ".txt"),
-    (
-        "All Supported",
-        lambda p: p.suffix.lower() in (".md", ".json", ".yaml", ".yml", ".txt"),
-    ),
-    ("All Files", lambda _: True),
-)
-
-# --- Character Ingest Constants ---
-MAX_CHARACTER_PREVIEWS = 5  # Show fewer character previews as they can be larger
-CHARACTER_FILE_FILTERS = Filters(
-    (
-        "Character Cards (JSON, YAML, PNG, WebP, MD)",
-        lambda p: (
-            p.suffix.lower() in (".json", ".yaml", ".yml", ".png", ".webp", ".md")
-        ),
-    ),
-    ("JSON (*.json)", lambda p: p.suffix.lower() == ".json"),
-    ("YAML (*.yaml, *.yml)", lambda p: p.suffix.lower() in (".yaml", ".yml")),
-    ("PNG (*.png)", lambda p: p.suffix.lower() == ".png"),
-    ("WebP (*.webp)", lambda p: p.suffix.lower() == ".webp"),
-    ("Markdown (*.md)", lambda p: p.suffix.lower() == ".md"),
-    ("All Files", lambda _: True),
-)
-
 # --- Notes Ingest Constants ---
 MAX_NOTE_PREVIEWS = 10
 NOTE_FILE_FILTERS = Filters(

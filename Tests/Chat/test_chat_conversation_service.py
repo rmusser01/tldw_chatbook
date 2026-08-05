@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import inspect
+import json
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Chat.citation_legacy_migration import LegacyCitationReadState
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError
 
 
 @dataclass
@@ -39,6 +43,12 @@ class FakeDB:
     updates: list[tuple[str, dict[str, Any], int]] = field(default_factory=list)
     deletes: list[tuple[str, int]] = field(default_factory=list)
     restores: list[tuple[str, int]] = field(default_factory=list)
+    created_conversations: list[dict[str, Any]] = field(default_factory=list)
+
+    def add_conversation(self, conversation_data):
+        self.calls.append(("add_conversation", (conversation_data,), {}))
+        self.created_conversations.append(conversation_data)
+        return "conv-created"
 
     def search_conversations_page(self, query, **kwargs):
         self.calls.append(("search_conversations_page", (query,), kwargs))
@@ -228,6 +238,7 @@ def test_normalize_conversation_and_message_rows_preserve_stable_shape():
             "assistant_kind": "character",
             "character_id": 7,
             "assistant_id": "7",
+            "assistant_authority_id": "local-authority-7",
             "persona_memory_mode": None,
             "title": None,
             "state": "Resolved",
@@ -246,6 +257,7 @@ def test_normalize_conversation_and_message_rows_preserve_stable_shape():
     assert conversation["state"] == "resolved"
     assert conversation["topic_label"] == "billing"
     assert conversation["runtime_backend"] == "local"
+    assert conversation["assistant_authority_id"] == "local-authority-7"
     assert conversation["discovery_owner"] == "general_chat"
     assert conversation["discovery_entity_id"] is None
     assert conversation["keywords"] == []
@@ -308,6 +320,75 @@ def test_legacy_character_conversation_defaults_missing_assistant_id_to_characte
     )
 
     assert conversation["assistant_id"] == "9"
+    assert conversation["assistant_authority_id"] is None
+
+
+def test_create_conversation_exposes_and_threads_assistant_authority_id():
+    assert (
+        "assistant_authority_id"
+        in inspect.signature(ChatConversationService.create_conversation).parameters
+    )
+    db = FakeDB()
+    service = ChatConversationService(db)
+
+    conversation_id = service.create_conversation(
+        assistant_kind="character",
+        assistant_id="server-character-7",
+        assistant_authority_id="server-user-v1:" + ("a" * 64),
+        runtime_backend="server",
+    )
+
+    assert conversation_id == "conv-created"
+    assert db.created_conversations[0]["assistant_authority_id"] == (
+        "server-user-v1:" + ("a" * 64)
+    )
+
+
+def test_create_conversation_documents_public_contract():
+    method = ChatConversationService.create_conversation
+    doc = inspect.getdoc(method)
+
+    assert doc is not None
+    assert "Args:" in doc
+    for name in inspect.signature(method).parameters:
+        if name != "self":
+            assert f"{name}:" in doc
+    assert "Omitting" in doc
+    assert "``None`` explicitly" in doc
+    assert "conversation_title or title" in doc
+    assert "Raw truthy" in doc
+    assert "Returns:" in doc
+    assert "Raises:" in doc
+
+
+def test_create_conversation_preserves_omitted_and_explicit_null_authority(
+    tmp_path,
+):
+    db = CharactersRAGDB(tmp_path / "conversation-authority.sqlite", "test-client")
+    try:
+        character_id = db.add_character_card({"name": "Authority Character"})
+        service = ChatConversationService(db)
+
+        inferred_conversation_id = service.create_conversation(
+            character_id=character_id,
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            runtime_backend="local",
+        )
+        unproven_conversation_id = service.create_conversation(
+            character_id=character_id,
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            assistant_authority_id=None,
+            runtime_backend="local",
+        )
+
+        inferred = db.get_conversation_by_id(inferred_conversation_id)
+        unproven = db.get_conversation_by_id(unproven_conversation_id)
+        assert inferred["assistant_authority_id"] == db.get_local_authority_id()
+        assert unproven["assistant_authority_id"] is None
+    finally:
+        db.close_connection()
 
 
 def test_list_conversations_normalizes_pagination_and_enforces_global_defaults():
@@ -503,12 +584,14 @@ def test_mixed_case_assistant_kind_normalizes_on_read_and_write():
 
 
 def test_get_and_update_conversation_metadata_routes_normalized_fields():
+    authority_id = "11111111-1111-4111-8111-111111111111"
     db = FakeDB(
         conversations_by_id={
             "conv-1": {
                 "id": "conv-1",
                 "assistant_kind": "character",
                 "assistant_id": "17",
+                "assistant_authority_id": authority_id,
                 "character_id": 17,
                 "persona_memory_mode": None,
                 "scope_type": "global",
@@ -534,12 +617,21 @@ def test_get_and_update_conversation_metadata_routes_normalized_fields():
     assert metadata["title"] == "Chat with Character 17"
     assert metadata["keywords"] == ["ops", "urgent"]
     assert metadata["topic_label"] == "ops"
+    assert metadata["assistant_authority_id"] == authority_id
+
+    authority_result = service.update_conversation_metadata(
+        "conv-1",
+        {"assistant_authority_id": f"  {authority_id}  "},
+        expected_version=9,
+    )
+    assert authority_result is True
 
     result = service.update_conversation_metadata(
         "conv-1",
         {
             "assistant_kind": None,
             "assistant_id": None,
+            "assistant_authority_id": None,
             "character_id": None,
             "persona_memory_mode": None,
             "scope_type": "workspace",
@@ -557,9 +649,15 @@ def test_get_and_update_conversation_metadata_routes_normalized_fields():
     assert db.updates == [
         (
             "conv-1",
+            {"assistant_authority_id": f"  {authority_id}  "},
+            9,
+        ),
+        (
+            "conv-1",
             {
                 "assistant_kind": None,
                 "assistant_id": None,
+                "assistant_authority_id": None,
                 "character_id": None,
                 "persona_memory_mode": None,
                 "scope_type": "workspace",
@@ -573,6 +671,61 @@ def test_get_and_update_conversation_metadata_routes_normalized_fields():
             9,
         )
     ]
+
+
+def test_update_conversation_authority_leaves_validation_to_database(tmp_path):
+    db = CharactersRAGDB(tmp_path / "authority-update.sqlite", "test-client")
+    try:
+        character_id = db.add_character_card({"name": "Authority Character"})
+        conversation_id = db.add_conversation(
+            {
+                "character_id": character_id,
+                "assistant_kind": "character",
+                "assistant_id": str(character_id),
+                "runtime_backend": "local",
+            }
+        )
+        authority_id = db.get_local_authority_id()
+        service = ChatConversationService(db)
+
+        created = db.get_conversation_by_id(conversation_id)
+        assert service.update_conversation_metadata(
+            conversation_id,
+            {"assistant_authority_id": f"  {authority_id}  "},
+            expected_version=created["version"],
+        )
+        canonical = db.get_conversation_by_id(conversation_id)
+        assert canonical["assistant_authority_id"] == authority_id
+
+        assert service.update_conversation_metadata(
+            conversation_id,
+            {"assistant_authority_id": None},
+            expected_version=canonical["version"],
+        )
+        unproven = db.get_conversation_by_id(conversation_id)
+        assert unproven["assistant_authority_id"] is None
+
+        with pytest.raises(InputError, match="non-empty"):
+            service.update_conversation_metadata(
+                conversation_id,
+                {"assistant_authority_id": "   "},
+                expected_version=unproven["version"],
+            )
+        after_blank = db.get_conversation_by_id(conversation_id)
+        assert after_blank["version"] == unproven["version"]
+
+        with pytest.raises(InputError, match="must be text"):
+            service.update_conversation_metadata(
+                conversation_id,
+                {"assistant_authority_id": 123},
+                expected_version=after_blank["version"],
+            )
+        assert (
+            db.get_conversation_by_id(conversation_id)["version"]
+            == after_blank["version"]
+        )
+    finally:
+        db.close_connection()
 
 
 def test_update_conversation_metadata_merges_scope_from_current_state_before_validation():
@@ -805,6 +958,57 @@ def test_get_conversation_tree_carries_system_prompt_through_real_db(tmp_path):
         db.close_connection()
 
 
+def test_get_conversation_tree_carries_metadata_through_real_db(tmp_path):
+    """Full production path: real DB row -> get_conversation_tree()["conversation"].
+
+    Console's pinned-response-prefill feature stores
+    ``{"pinned_response_prefill": "..."}`` in the ``conversations.metadata``
+    JSON column and reads it back via
+    ``ChatScreen._console_session_settings_for_resume`` ->
+    ``pinned_prefill_from_conversation_metadata(conversation.get("metadata"))``.
+    A whitelist projection in ``normalize_conversation_row`` that omits
+    ``metadata`` would silently break resume, so this exercises the real
+    ``CharactersRAGDB`` + ``ChatConversationService`` stack end to end and
+    asserts the raw JSON string round-trips unchanged.
+    """
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test-client")
+    try:
+        conversation_id = db.add_conversation({"title": "Saved chat"})
+        record = db.get_conversation_by_id(conversation_id)
+        metadata_json = json.dumps({"pinned_response_prefill": "Understood:"})
+        db.update_conversation(
+            conversation_id,
+            {"metadata": metadata_json},
+            expected_version=record["version"],
+        )
+        service = ChatConversationService(db)
+
+        tree = service.get_conversation_tree(conversation_id)
+
+        assert tree["conversation"]["metadata"] == metadata_json
+    finally:
+        db.close_connection()
+
+
+def test_get_conversation_tree_metadata_is_none_for_new_conversation(tmp_path):
+    """A conversation with no metadata written yields an explicit ``None``.
+
+    Consumers use ``.get("metadata")``, but the key must still be present on
+    the normalized dict so the contract is explicit rather than accidental.
+    """
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test-client")
+    try:
+        conversation_id = db.add_conversation({"title": "Fresh chat"})
+        service = ChatConversationService(db)
+
+        tree = service.get_conversation_tree(conversation_id)
+
+        assert "metadata" in tree["conversation"]
+        assert tree["conversation"]["metadata"] is None
+    finally:
+        db.close_connection()
+
+
 def test_local_rag_context_adjuncts_are_persisted_and_reloaded(tmp_path):
     message = {
         "id": "msg-1",
@@ -875,3 +1079,71 @@ def test_local_rag_context_rejects_message_conversation_mismatches(tmp_path):
         service.record_message_rag_context(
             "conv-1", "msg-1", rag_context={"search_query": "alpha"}
         )
+
+
+def test_canonical_mode_rejects_deprecated_sidecar_writes(tmp_path):
+    migration = SimpleNamespace(writes_enabled=True)
+    service = ChatConversationService(
+        FakeDB(),
+        rag_context_store_path=tmp_path / "chat_rag_context.json",
+        citation_legacy_migration=migration,
+    )
+
+    with pytest.raises(RuntimeError, match="legacy_rag_context_writes_disabled"):
+        service.record_message_rag_context(
+            "conv-1",
+            "msg-1",
+            citations=[{"evidence_id": "1", "source_id": "note-1"}],
+        )
+    assert not service.rag_context_store_path.exists()
+
+
+def test_canonical_reader_never_merges_changed_legacy_records(tmp_path):
+    message = {
+        "id": "msg-1",
+        "conversation_id": "conv-1",
+        "sender": "assistant",
+        "content": "Answer [1].",
+        "version": 1,
+    }
+    db = FakeDB(
+        messages_by_conversation={("conv-1", 10, 0, "ASC"): [message]},
+    )
+
+    class Migration:
+        writes_enabled = True
+
+        @staticmethod
+        def read_conversation(conversation_id, *, verify_canonical):
+            assert conversation_id == "conv-1"
+            assert verify_canonical is True
+            return SimpleNamespace(
+                state=LegacyCitationReadState.DIVERGED,
+                records={},
+            )
+
+    service = ChatConversationService(
+        db,
+        rag_context_store_path=tmp_path / "chat_rag_context.json",
+        citation_legacy_migration=Migration(),
+    )
+    service.rag_context_store_path.write_text(
+        json.dumps(
+            {
+                "conversations": {
+                    "conv-1": {
+                        "msg-1": {"citations": [{"evidence_id": "stale-sidecar"}]}
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    messages = service.get_messages_with_context("conv-1", limit=10)
+    citations = service.get_citations("conv-1")
+
+    assert messages[0]["citation_provenance_state"] == "diverged"
+    assert messages[0]["citations"] == []
+    assert citations["state"] == "diverged"
+    assert citations["citations"] == []

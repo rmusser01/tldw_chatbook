@@ -56,11 +56,24 @@ class ServerSyncService:
         provider: Any,
         *,
         policy_enforcer: Any | None = None,
+        state_repository: Any | None = None,
     ) -> "ServerSyncService":
+        """Build a lazy Sync service over an application server provider.
+
+        Args:
+            provider: Runtime provider used to resolve the current server client.
+            policy_enforcer: Optional policy boundary for Sync operations.
+            state_repository: Optional repository for Sync v2 profile and cursor state.
+
+        Returns:
+            A Sync service that retains the provider and repository without building
+            or caching a client locally.
+        """
         return cls(
             client=None,
             client_provider=provider,
             policy_enforcer=policy_enforcer,
+            state_repository=state_repository,
         )
 
     def _require_client(self) -> TLDWAPIClient:

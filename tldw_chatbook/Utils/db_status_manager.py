@@ -1,8 +1,9 @@
 """
-Database Status Manager - Centralized management for database size status updates.
+Database Status Manager - Centralized management for database size telemetry.
 
-This module provides unified handling of database size calculations and
-status display updates for the application footer.
+Computes the local database file sizes on a timer and caches them on the
+app (``db_sizes_status``) for the Library Details disclosure, plus logs
+them. Token-count footer updates route through here as well.
 """
 
 from typing import Optional, TYPE_CHECKING
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
 
 
 class DBStatusManager:
-    """Manages database size status updates for the application."""
+    """Manages database size telemetry and footer token-count updates."""
 
     def __init__(self, app: "App"):
         """
@@ -28,20 +29,16 @@ class DBStatusManager:
 
     async def update_db_sizes(self) -> None:
         """
-        Update the database size information in the AppFooterStatus widget.
+        Compute the local database sizes for telemetry consumers.
 
-        This method calculates the sizes of all tracked databases and updates
-        the footer status display.
+        F-014: the sizes no longer render in the app footer (a fresh
+        install's "Prompts: N/A | Chats/Notes: N/A | Media: N/A" triplet
+        read as "broken" in user chrome). They are cached on the app as
+        ``db_sizes_status`` -- the Library rail's Details disclosure
+        renders them from there -- and logged (the Logs destination is
+        the other telemetry home).
         """
-        logger.debug("Attempting to update DB sizes in AppFooterStatus.")
-
-        # Get the footer status widget
-        db_status_widget = self._get_db_status_widget()
-        if not db_status_widget:
-            logger.warning(
-                "_db_size_status_widget (AppFooterStatus) is None, cannot update DB sizes."
-            )
-            return
+        logger.debug("Computing DB sizes for the db_sizes_status cache.")
 
         try:
             # Import here to avoid circular imports
@@ -63,28 +60,18 @@ class DBStatusManager:
                 "media": self._get_db_size(get_media_db_path, get_formatted_file_size),
             }
 
-            # Format status string with real database names (was cryptic
-            # "P: / C/N: / M:" abbreviations from the UX critique, UX-006).
-            status_string = (
-                f"Prompts {db_sizes['prompts']} · Notes {db_sizes['chachanotes']} "
-                f"· Media {db_sizes['media']}"
-            )
-            logger.debug(
-                f"DB size status string to display in AppFooterStatus: '{status_string}'"
-            )
-
-            # Update the display
-            db_status_widget.update_db_sizes_display(status_string)
+            self.app.db_sizes_status = db_sizes
+            # task-1714: spell the labels -- single letters decoded only by a
+            # hover tooltip fail keyboard-first/low-vision users (critique r4).
             logger.info(
-                f"Successfully updated DB sizes in AppFooterStatus: {status_string}"
+                "DB sizes: "
+                f"Prompts: {db_sizes['prompts']} | "
+                f"Chats/Notes: {db_sizes['chachanotes']} | "
+                f"Media: {db_sizes['media']}"
             )
 
         except Exception as e:
-            logger.opt(exception=True).error(
-                f"Error updating DB sizes in AppFooterStatus: {e}"
-            )
-            if db_status_widget:  # Check again in case it became None somehow
-                db_status_widget.update_db_sizes_display("Error loading DB sizes")
+            logger.opt(exception=True).error(f"Error computing DB sizes: {e}")
 
     async def update_token_count_display(self) -> None:
         """

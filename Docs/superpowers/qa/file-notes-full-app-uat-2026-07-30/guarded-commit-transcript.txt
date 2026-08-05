@@ -1,0 +1,25 @@
+Full-app PTY transcript excerpts
+
+Review promise:
+
+    2 session notes will be committed; unrelated changes untouched.
+
+Success:
+
+    Committed 2 session notes; unrelated changes untouched.
+
+    Committed 2 session notes as 540f5e02da48; unrelated changes untouched.
+
+Unrelated staged-content block:
+
+    The complete staged state does not exactly match this session.
+
+After the block:
+
+    HEAD: 540f5e02da489216a3b9bc1bd87c538b03d67c21
+    M  notes/one.md
+    M  unrelated.txt
+
+Result: PASS. The successful commit contained only the two session notes, and
+the later unsafe complete-index state was rejected without moving HEAD or
+altering the staged set.

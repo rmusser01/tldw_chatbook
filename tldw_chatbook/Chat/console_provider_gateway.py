@@ -5,14 +5,18 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 import threading
+import weakref
 from collections.abc import Iterator, Mapping
+from contextvars import copy_context
 from dataclasses import dataclass, field, replace
-from types import GeneratorType
-from typing import Any, AsyncIterator, Callable
+from types import GeneratorType, MappingProxyType
+from typing import Any, AsyncIterator, Callable, Literal, cast
 from urllib.parse import urlparse, urlunparse
 
 import httpx
+from loguru import logger
 
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
@@ -23,6 +27,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_endpoints import (
+    effective_provider_endpoint,
     generic_endpoint_differs,
     provider_uses_endpoint,
     unsaved_endpoint_copy,
@@ -35,6 +40,10 @@ from tldw_chatbook.Chat.provider_readiness import (
     provider_config_key,
 )
 from tldw_chatbook.Utils.input_validation import validate_url
+from tldw_chatbook.Utils.sensitive_llm_logging import (
+    is_sensitive_llm_request,
+    sensitive_llm_request,
+)
 
 
 DEFAULT_LLAMACPP_BASE_URL = "http://127.0.0.1:9099"
@@ -56,6 +65,87 @@ UNSUPPORTED_PROVIDER_RESPONSE_COPY = "Provider returned an unsupported response 
 NO_PROVIDER_CONTENT_COPY = "Provider returned no assistant content."
 _UNSUPPORTED_RESPONSE = object()
 _EMPTY_RESPONSE = object()
+MAX_AUXILIARY_OUTPUT_TOKENS = 16_384
+"""Application hard ceiling for one auxiliary completion's output allowance."""
+
+
+@dataclass(slots=True)
+class ConsoleProviderStreamSignals:
+    """Expose thread-safe provenance signals for one provider stream.
+
+    The gateway marks these signals while normalizing provider output so the
+    controller can distinguish provider content from locally synthesized
+    fallback copy.
+    """
+
+    _synthetic_fallback: threading.Event = field(
+        default_factory=threading.Event,
+        init=False,
+        repr=False,
+    )
+    # Usage for the provider call currently in flight. Key-merged, because a
+    # single Anthropic call splits its usage across two SSE chunks
+    # (message_start carries the input/cache buckets, message_delta the
+    # output tokens). NEVER merged across CALLS -- see close_usage_call.
+    usage_payload: dict[str, Any] | None = field(default=None, repr=False)
+    # One entry per provider call that has already finished. An agent turn
+    # makes N calls through the SAME signals object; key-merging those
+    # together silently corrupts the bill (call 2's prompt_tokens landing
+    # next to call 1's stale prompt_tokens_details.cached_tokens yields
+    # uncached_input=0 plus a phantom cache read). Consumers normalize each
+    # entry on its own and SUM the disjoint buckets instead.
+    completed_usage_payloads: list[dict[str, Any]] = field(
+        default_factory=list,
+        repr=False,
+    )
+    _usage_lock: threading.Lock = field(
+        default_factory=threading.Lock,
+        init=False,
+        repr=False,
+    )
+
+    @property
+    def synthetic_fallback_emitted(self) -> bool:
+        """Return whether the stream emitted locally synthesized fallback copy."""
+        return self._synthetic_fallback.is_set()
+
+    def mark_synthetic_fallback(self) -> None:
+        """Record that locally synthesized fallback copy was emitted."""
+        self._synthetic_fallback.set()
+
+    def record_usage_payload(self, payload: Mapping[str, Any]) -> None:
+        """Merge a usage payload into the IN-FLIGHT provider call's payload."""
+        with self._usage_lock:
+            merged = dict(self.usage_payload or {})
+            merged.update(payload)
+            self.usage_payload = merged
+
+    def close_usage_call(self) -> None:
+        """Close the in-flight provider call out at its own call boundary.
+
+        Called by the gateway when a ``stream_chat`` invocation ends -- the
+        one place that knows where one provider call stops and the next
+        begins. MOVES (never copies) the in-flight payload into
+        ``completed_usage_payloads``, so a consumer that already billed the
+        in-flight payload of an aborted stream can never bill it twice.
+        """
+        with self._usage_lock:
+            if self.usage_payload is None:
+                return
+            self.completed_usage_payloads.append(self.usage_payload)
+            self.usage_payload = None
+
+    def usage_payloads(self) -> list[dict[str, Any]]:
+        """Return every payload to bill: completed calls + any in flight.
+
+        The in-flight tail is included for aborted streams, whose generator
+        may never reach its own close-out before the controller persists.
+        """
+        with self._usage_lock:
+            payloads = [dict(payload) for payload in self.completed_usage_payloads]
+            if self.usage_payload is not None:
+                payloads.append(dict(self.usage_payload))
+            return payloads
 
 
 def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
@@ -191,6 +281,10 @@ class ConsoleProviderResolution:
         top_k: Optional top-k sampling value.
         max_tokens: Optional response token limit.
         streaming: Whether streaming responses are requested.
+        prompt_caching: Opt-in for the Anthropic per-turn ``cache_control``
+            breakpoint. Set only for Anthropic resolutions (and only when
+            ``[caching] anthropic_enabled`` is on); ``None`` everywhere else,
+            which drops the kwarg entirely in ``_chat_api_kwargs``.
     """
 
     provider: str
@@ -216,6 +310,109 @@ class ConsoleProviderResolution:
     thinking_effort: str | None = None
     thinking_budget_tokens: int | None = None
     streaming: bool = True
+    prompt_caching: bool | None = None
+
+
+def _freeze_auxiliary_value(value: Any) -> Any:
+    """Copy a JSON-safe request value into an immutable representation."""
+
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise TypeError("Auxiliary mapping keys must be strings.")
+        return MappingProxyType(
+            {key: _freeze_auxiliary_value(item) for key, item in value.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_auxiliary_value(item) for item in value)
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("Auxiliary numeric values must be finite.")
+        return value
+    raise TypeError("Auxiliary values must be JSON-safe scalars, mappings, or sequences.")
+
+
+def _thaw_auxiliary_value(value: Any) -> Any:
+    """Return provider-compatible mutable containers from frozen request data."""
+
+    if isinstance(value, Mapping):
+        return {str(key): _thaw_auxiliary_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_auxiliary_value(item) for item in value]
+    return value
+
+
+@dataclass(frozen=True)
+class AuxiliaryCompletionRequest:
+    """Immutable, content-sensitive input to one auxiliary provider call."""
+
+    resolution: ConsoleProviderResolution = field(repr=False)
+    messages: tuple[Mapping[str, Any], ...] = field(repr=False)
+    response_format: Mapping[str, Any] | None = field(repr=False)
+    max_output_tokens: int
+    sensitive: Literal[True] = True
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.resolution, ConsoleProviderResolution):
+            raise TypeError("resolution must be a ConsoleProviderResolution")
+        if not self.resolution.ready:
+            raise ValueError("Pinned provider resolution is not ready.")
+        if (
+            not isinstance(self.resolution.model, str)
+            or not self.resolution.model.strip()
+        ):
+            raise ValueError("Pinned provider model is required.")
+        if not isinstance(self.messages, tuple) or not self.messages:
+            raise TypeError("messages must be a non-empty tuple")
+
+        frozen_messages: list[Mapping[str, Any]] = []
+        for message in self.messages:
+            if not isinstance(message, Mapping):
+                raise TypeError("Each auxiliary message must be a mapping.")
+            if set(message) != {"role", "content"}:
+                raise ValueError("Auxiliary messages contain only role and content.")
+            role = message.get("role")
+            content = message.get("content")
+            if not isinstance(role, str) or not role.strip():
+                raise ValueError("Auxiliary message role is required.")
+            if not isinstance(content, str):
+                raise TypeError("Auxiliary message content must be text.")
+            frozen_messages.append(
+                cast(Mapping[str, Any], _freeze_auxiliary_value(message))
+            )
+
+        if self.response_format is not None and not isinstance(
+            self.response_format, Mapping
+        ):
+            raise TypeError("response_format must be a mapping or None")
+        if isinstance(self.max_output_tokens, bool) or not isinstance(
+            self.max_output_tokens, int
+        ):
+            raise TypeError("max_output_tokens must be an integer")
+        if not 0 < self.max_output_tokens <= MAX_AUXILIARY_OUTPUT_TOKENS:
+            raise ValueError(
+                f"max_output_tokens must be between 1 and {MAX_AUXILIARY_OUTPUT_TOKENS}"
+            )
+        if self.sensitive is not True:
+            raise ValueError("Auxiliary completions must be sensitive.")
+
+        object.__setattr__(self, "messages", tuple(frozen_messages))
+        if self.response_format is not None:
+            object.__setattr__(
+                self,
+                "response_format",
+                cast(Mapping[str, Any], _freeze_auxiliary_value(self.response_format)),
+            )
+
+
+@dataclass(frozen=True)
+class AuxiliaryCompletionResult:
+    """Exact text and pinned provider identity returned by an auxiliary call."""
+
+    provider: str
+    model: str
+    text: str = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -387,6 +584,9 @@ def build_llamacpp_chat_payload(
     min_p: float | None = None,
     top_k: int | None = None,
     max_tokens: int | None = None,
+    seed: int | None = None,
+    presence_penalty: float | None = None,
+    frequency_penalty: float | None = None,
 ) -> dict[str, Any]:
     """Build the OpenAI-compatible llama.cpp chat completion payload.
 
@@ -399,9 +599,27 @@ def build_llamacpp_chat_payload(
         min_p: Optional min-p sampling value.
         top_k: Optional top-k sampling value.
         max_tokens: Optional response token limit.
+        seed: Optional deterministic generation seed.
+        presence_penalty: Optional presence penalty value.
+        frequency_penalty: Optional frequency penalty value.
 
     Returns:
         Request payload for the llama.cpp chat completions endpoint.
+
+    A trailing ``assistant`` message in ``messages`` is a response prefill:
+    the Console's response-prefill send path (a one-shot ``/prefill`` or a
+    pinned prefill applied to submit/retry/regenerate) appends the pending
+    prefill text as the last message so llama.cpp continues generating from
+    it. This is distinct from "continue from here", which never sends a
+    trailing-assistant message -- it instead appends a synthetic user
+    instruction asking the model to continue its prior reply. llama.cpp
+    rejects prefilled requests when the chat template's thinking mode is
+    enabled (``Assistant response prefill is incompatible with
+    enable_thinking``), and forcing the response's opening text is
+    incoherent with a thinking-first template regardless. Prefilled
+    requests therefore disable thinking mode via ``chat_template_kwargs``,
+    which templates that lack the kwarg -- and older servers that drop
+    unknown fields -- simply ignore.
     """
     payload: dict[str, Any] = {
         "model": model,
@@ -418,6 +636,14 @@ def build_llamacpp_chat_payload(
         payload["top_k"] = top_k
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
+    if seed is not None:
+        payload["seed"] = seed
+    if presence_penalty is not None:
+        payload["presence_penalty"] = presence_penalty
+    if frequency_penalty is not None:
+        payload["frequency_penalty"] = frequency_penalty
+    if messages and messages[-1].get("role") == "assistant":
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
     return payload
 
 
@@ -447,28 +673,113 @@ class ConsoleProviderGateway:
     ) -> None:
         self._owns_http_client = http_client is None
         self.http_client = http_client or self._new_owned_http_client()
+        # Mirrors whichever entry in `_loop_clients` was most recently
+        # resolved by `_active_http_client` -- kept for the "unclaimed
+        # client" escape hatch below and for callers/tests that read
+        # `http_client`/`_client_loop` directly before any loop has touched
+        # the gateway.
         self._client_loop: asyncio.AbstractEventLoop | None = None
-        # Guards the check-and-swap in `_active_http_client` as a single
-        # atomic critical section (PR #629 Fix 1(a)): concurrent callers on
-        # different loops/threads -- e.g. the app loop's readiness probe
-        # racing the agent worker thread's per-turn loop -- must never
-        # interleave the read-then-write, which could otherwise desync
-        # `http_client` from `_client_loop` (a client bound to one loop
-        # while the recorded loop is a different one).
+        # Whether the client built above (or injected) has ever been
+        # resolved through `_active_http_client`/`aclose`'s "unclaimed
+        # client" escape hatches. `_client_loop is None` is NOT a safe proxy
+        # for "never claimed": `aclose()` resets it to `None` on every
+        # teardown, including after a real loop already claimed and
+        # released a client, so re-deriving "unclaimed" from it would let a
+        # SECOND loop adopt a client a FIRST loop already bound internally
+        # (httpx/httpcore lazily bind connection-pool locks to whichever
+        # loop first touches them) -- silently reintroducing the very
+        # cross-loop binding failure this per-loop cache exists to
+        # eliminate. This flag is set exactly once, on the first-ever
+        # resolution, and `aclose()` never restores it.
+        self._client_ever_claimed = False
+        # Guards every read-check-create of `_loop_clients` (and the mirror
+        # fields above) as a single atomic critical section (PR #629 Fix
+        # 1(a), preserved across the move to a per-loop cache below):
+        # concurrent callers on different loops/threads -- e.g. the app
+        # loop's readiness probe racing the agent worker thread's per-turn
+        # loop -- must never interleave a read with another caller's write,
+        # which could otherwise desync `http_client`/`_client_loop` from
+        # `_loop_clients`, or race two callers into each building their own
+        # client for what should be the same cache slot.
         self._client_lock = threading.Lock()
+        # Per-loop client cache (TASK-1064 item 1, same shape as the fix
+        # applied to `GitHubAPIClient` under TASK-981 / PR #1009): every
+        # event loop that is *currently alive* and has touched
+        # `_active_http_client()` gets its own owned `httpx.AsyncClient`, so
+        # two loops alive at the same time -- the app's own event loop
+        # awaiting a readiness probe while an agent-runtime generation call
+        # is bridged in from a worker thread's fresh per-turn
+        # ``asyncio.run()`` -- never fight over, or close, each other's
+        # client. A single-slot cache (the previous design) discarded and
+        # scheduled `aclose()` of whatever the *other*, still-live loop was
+        # using on every cross-loop touch -- closing a client mid-flight.
+        # Keyed by the loop object itself via a `WeakKeyDictionary` so an
+        # entry can be reclaimed as soon as nothing else references that
+        # loop; pruned proactively in `_prune_closed_loops` so a long-running
+        # process that bridges many short-lived per-turn loops over time
+        # doesn't accumulate dead entries waiting on GC alone.
+        self._loop_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]" = (
+            weakref.WeakKeyDictionary()
+        )
         self._config_provider = config_provider or (lambda: {})
         self._environ = environ
         self._chat_api_call_fn = chat_api_call_fn
         self._safe_error_copy = safe_error_copy or safe_provider_error_copy
 
     async def aclose(self) -> None:
-        """Close the owned HTTP client.
+        """Close the HTTP client(s) owned by this instance.
+
+        The client bound to the caller's current running loop (if any) is
+        closed directly -- safe, since we are already running on that loop.
+        Every other cached per-loop client -- e.g. one built earlier by the
+        app's long-lived loop, still alive while a shorter-lived per-turn
+        loop is the one calling ``aclose()`` -- is closed best-effort via
+        ``_schedule_stale_client_close`` on its own loop; this never awaits,
+        and never closes, a client bound to a loop it is not currently
+        running on.
 
         Returns:
             ``None``. Injected HTTP clients are left open for their owner.
         """
-        if self._owns_http_client:
-            await self.http_client.aclose()
+        if not self._owns_http_client:
+            return
+        try:
+            loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        with self._client_lock:
+            self._prune_closed_loops()
+            current_client: httpx.AsyncClient | None = None
+            if loop is not None:
+                current_client = self._loop_clients.pop(loop, None)
+                if current_client is None and not self._client_ever_claimed:
+                    # Never claimed by any loop yet -- e.g. `aclose()` is
+                    # called right after construction, before
+                    # `_active_http_client()` was ever touched. Treat the
+                    # client built in `__init__` as belonging to the loop
+                    # calling `aclose()` now (mirrors the escape hatch in
+                    # `_active_http_client`). `_client_ever_claimed` -- not
+                    # `_client_loop is None` -- is the correct test here: it
+                    # is set exactly once, on first-ever resolution, and is
+                    # never restored by a prior teardown, so a client a
+                    # loop already bound and released can never be
+                    # re-treated as "unclaimed" by this branch.
+                    current_client = self.http_client
+                    self._client_ever_claimed = True
+            others = [
+                (other_loop, other_client)
+                for other_loop, other_client in self._loop_clients.items()
+                if other_client is not current_client
+            ]
+            self._loop_clients.clear()
+            self._client_loop = None
+
+        for other_loop, other_client in others:
+            self._schedule_stale_client_close(other_client, other_loop)
+
+        if current_client is not None:
+            await current_client.aclose()
 
     @staticmethod
     def _new_owned_http_client() -> httpx.AsyncClient:
@@ -480,6 +791,23 @@ class ConsoleProviderGateway:
                 pool=GENERATION_READ_TIMEOUT_SECONDS,
             )
         )
+
+    def _prune_closed_loops(self) -> None:
+        """Drop ``_loop_clients`` entries whose owning loop has closed.
+
+        Must be called with ``_client_lock`` held. A ``WeakKeyDictionary``
+        alone would eventually reclaim these once the loop object itself is
+        garbage collected, but asyncio loops can take a while to be
+        collected (reference cycles via internal callbacks), and there is
+        nothing left to gracefully close on an already-closed loop -- its
+        client's own finalizer releases the underlying sockets. Pruning
+        proactively on every cache access bounds ``_loop_clients``'s size
+        even under many short-lived per-turn loops (see
+        ``console_agent_bridge``, which builds a fresh ``asyncio.run()``
+        loop per agent turn).
+        """
+        for stale_loop in [lp for lp in self._loop_clients if lp.is_closed()]:
+            del self._loop_clients[stale_loop]
 
     def _active_http_client(self) -> httpx.AsyncClient:
         """Return an HTTP client bound to the CURRENTLY running event loop.
@@ -495,22 +823,22 @@ class ConsoleProviderGateway:
         the first loop has since closed, ``RuntimeError: Event loop is
         closed``) on every request -- observed live as every agent send
         failing with "Agent run failed: ... is bound to a different event
-        loop." Recreate the owned client whenever the running loop changes
-        so each loop gets its own client; injected clients (tests) are
-        trusted to manage their own loop lifecycle and are left untouched.
+        loop." Give each running loop its own owned client via a per-loop
+        cache (``_loop_clients``) so no live loop ever has its client
+        replaced -- let alone closed -- by another loop's touch; injected
+        clients (tests) are trusted to manage their own loop lifecycle and
+        are left untouched.
 
-        The read-check-swap below is guarded by ``_client_lock`` (PR #629
-        Fix 1(a)): without it, two concurrent callers on different
+        The whole check-and-maybe-create below is guarded by
+        ``_client_lock`` (PR #629 Fix 1(a), preserved from the single-slot
+        design): without it, two concurrent callers on different
         loops/threads (the app loop's readiness probe racing the agent
-        worker thread's per-turn loop) can each read the same stale
-        ``(http_client, _client_loop)`` pair before either writes, then
-        both swap -- whichever writer's ``self.http_client`` assignment
-        loses the race ends up paired with the *other* writer's
-        ``self._client_loop`` assignment, leaving the recorded loop and the
-        actual client bound to different loops. The very next probe on the
-        recorded loop then reuses a client bound elsewhere and crashes.
-        Holding the lock across the whole check, creation, and both
-        assignments makes the swap a single atomic step.
+        worker thread's per-turn loop) could race each other while building
+        a client for the SAME not-yet-cached loop, or interleave with
+        ``aclose()``'s cache teardown. Holding the lock across the prune,
+        lookup, and any creation makes the whole operation a single atomic
+        step; unlike the old single-slot swap, nothing here ever discards or
+        schedules a close of another loop's still-cached client.
         """
         if not self._owns_http_client:
             return self.http_client
@@ -519,40 +847,79 @@ class ConsoleProviderGateway:
         except RuntimeError:
             return self.http_client
         with self._client_lock:
-            if self._client_loop is loop:
+            self._prune_closed_loops()
+            cached = self._loop_clients.get(loop)
+            if cached is not None:
+                self.http_client, self._client_loop = cached, loop
+                return cached
+            if (
+                not self._client_ever_claimed
+                and self.http_client is not None
+                and not self.http_client.is_closed
+            ):
+                # Unclaimed-client escape hatch: the client built in
+                # `__init__` hasn't been adopted by ANY loop yet -- claim it
+                # for the loop touching it now instead of discarding +
+                # scheduling a close of a client nothing has even used,
+                # exactly mirroring `GitHubAPIClient.client`'s unknown-loop
+                # escape hatch. Gated on `_client_ever_claimed`, not
+                # `self._client_loop is None`: `aclose()` resets
+                # `_client_loop` to `None` on every teardown, including
+                # after a real loop already claimed and released a client,
+                # so re-deriving "unclaimed" from it would let a later loop
+                # adopt a client a prior loop already bound -- httpx/httpcore
+                # lazily bind connection-pool locks to whichever loop first
+                # touches them, so reusing that client from a second loop
+                # reintroduces the cross-loop binding failure this per-loop
+                # cache exists to eliminate. `_client_ever_claimed` is set
+                # exactly once, on the first-ever resolution, and is never
+                # restored by a subsequent `aclose()`.
+                self._loop_clients[loop] = self.http_client
+                self._client_loop = loop
+                self._client_ever_claimed = True
                 return self.http_client
-            stale_client, stale_loop = self.http_client, self._client_loop
-            self.http_client = self._new_owned_http_client()
-            self._client_loop = loop
-            active_client = self.http_client
-        # Best-effort close of whatever this swap replaced -- including the
-        # very first swap, where `stale_loop` is still `None` (there is no
-        # previous loop to close it on). A dropped owned client must never
-        # simply leak (PR #629 Fix 1(b)): fall back to closing it on the
-        # loop that just replaced it, which is safe since we are executing
-        # inside that running loop right now. Scheduling the close outside
-        # the lock keeps the critical section itself minimal.
-        self._schedule_stale_client_close(
-            stale_client, stale_loop if stale_loop is not None else loop
-        )
-        return active_client
+            new_client = self._new_owned_http_client()
+            self._loop_clients[loop] = new_client
+            self.http_client, self._client_loop = new_client, loop
+            self._client_ever_claimed = True
+            return new_client
 
     @staticmethod
     def _schedule_stale_client_close(
         client: httpx.AsyncClient, loop: asyncio.AbstractEventLoop
     ) -> None:
-        """Best-effort close of a client left behind by a loop swap.
+        """Best-effort close of a client left behind on another loop.
 
-        The previous loop may already be closed (a completed per-turn
-        ``asyncio.run()``) or may still be running elsewhere (the app's
-        main loop) -- either way this must never raise into the caller
-        that triggered the swap.
+        Used by ``aclose()`` to hand off a still-cached OTHER loop's client
+        for closing on its own loop, never on the caller's. That loop may
+        already be closed (a completed per-turn ``asyncio.run()``) or may
+        still be running elsewhere (the app's main loop) -- either way this
+        must never raise into the caller. The returned ``Future`` is
+        retained with a done-callback so a failed close on another loop is
+        logged rather than silently swallowed.
         """
+        if loop.is_closed():
+            return
         try:
             future = asyncio.run_coroutine_threadsafe(client.aclose(), loop)
         except RuntimeError:
             return
-        future.add_done_callback(lambda f: f.exception())
+
+        def _log_close_failure(fut: "asyncio.Future") -> None:
+            try:
+                exc = fut.exception()
+            except Exception:
+                # Cancelled, or otherwise unable to retrieve the exception --
+                # nothing more we can do here.
+                return
+            if exc is not None:
+                logger.opt(exception=exc).warning(
+                    "Failed to close a stale Console provider HTTP client on "
+                    "its owning loop: {}",
+                    exc,
+                )
+
+        future.add_done_callback(_log_close_failure)
 
     async def resolve_llamacpp(
         self, config: LlamaCppProviderConfig
@@ -747,15 +1114,44 @@ class ConsoleProviderGateway:
                 api_key_source=readiness.api_key_source,
             )
 
+        # Console sends are multi-turn by construction, so they -- and ONLY
+        # they -- opt into the Anthropic per-turn cache_control breakpoint.
+        # A one-shot caller of `chat_with_anthropic` (summarization, evals,
+        # websearch) would pay the 1.25x cache-write premium on its whole
+        # prefix and never read it back, so the flag is stamped here rather
+        # than defaulted on inside the provider.
+        #
+        # NOTE: this flag does not gate the kill-switch end-to-end by
+        # itself -- `chat_with_anthropic` ANDs it with
+        # `_anthropic_caching_enabled()`, which reads `[caching]
+        # anthropic_enabled` directly via `get_cli_setting()` and already
+        # disables every cache_control breakpoint (system, tool, AND this
+        # per-turn one) when the switch is off, regardless of what this
+        # resolution carries. This value only needs to be *truthful* for
+        # whatever inspects `ConsoleProviderResolution.prompt_caching`
+        # (introspection/tests/telemetry), which is why the config-shape
+        # bug below mattered even though sends were never at risk.
+        prompt_caching: bool | None = None
+        if identity.execution_key == "anthropic":
+            prompt_caching = bool(
+                _caching_config_value(app_config).get("anthropic_enabled", True)
+            )
+
         return ConsoleProviderResolution(
             provider=selection.provider,
-            base_url=selection.base_url or "",
+            base_url=effective_provider_endpoint(
+                identity.readiness_key,
+                selection.base_url,
+                provider_settings,
+            )
+            or "",
             model=model,
             ready=True,
             readiness_key=identity.readiness_key,
             execution_key=identity.execution_key,
             api_key=readiness.api_key,
             api_key_source=readiness.api_key_source,
+            prompt_caching=prompt_caching,
             temperature=selection.temperature,
             top_p=selection.top_p,
             min_p=selection.min_p,
@@ -862,6 +1258,10 @@ class ConsoleProviderGateway:
         min_p: float | None = None,
         top_k: int | None = None,
         max_tokens: int | None = None,
+        seed: int | None = None,
+        presence_penalty: float | None = None,
+        frequency_penalty: float | None = None,
+        strict_response: bool = False,
     ) -> str:
         """Request a non-streaming OpenAI-compatible chat completion.
 
@@ -874,6 +1274,11 @@ class ConsoleProviderGateway:
             min_p: Optional min-p sampling value.
             top_k: Optional top-k sampling value.
             max_tokens: Optional response token limit.
+            seed: Optional deterministic generation seed.
+            presence_penalty: Optional presence penalty value.
+            frequency_penalty: Optional frequency penalty value.
+            strict_response: Raise when the provider response has no supported
+                assistant-content shape instead of treating it as empty.
 
         Returns:
             Assistant-visible completion text.
@@ -882,27 +1287,216 @@ class ConsoleProviderGateway:
         if not validate_url(normalized_base_url):
             raise ValueError("invalid llama.cpp base URL")
 
-        response = await self._active_http_client().post(
-            f"{normalized_base_url.rstrip('/')}/v1/chat/completions",
-            json=build_llamacpp_chat_payload(
-                model=model,
-                messages=messages,
-                stream=False,
-                temperature=temperature,
-                top_p=top_p,
-                min_p=min_p,
-                top_k=top_k,
-                max_tokens=max_tokens,
-            ),
+        request_url = f"{normalized_base_url.rstrip('/')}/v1/chat/completions"
+        payload = build_llamacpp_chat_payload(
+            model=model,
+            messages=messages,
+            stream=False,
+            temperature=temperature,
+            top_p=top_p,
+            min_p=min_p,
+            top_k=top_k,
+            max_tokens=max_tokens,
+            seed=seed,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+        )
+        client = self._active_http_client()
+        response = (
+            await self._post_without_high_level_http_log(
+                client,
+                request_url,
+                json_payload=payload,
+            )
+            if is_sensitive_llm_request()
+            else await client.post(request_url, json=payload)
         )
         response.raise_for_status()
-        return self._content_from_completion_response(response) or ""
+        content = self._content_from_completion_response(response)
+        if content is None and strict_response:
+            raise ChatProviderError(
+                "Provider returned an unsupported auxiliary response.",
+                provider="llama_cpp",
+            )
+        return content or ""
+
+    @staticmethod
+    async def _post_without_high_level_http_log(
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        json_payload: Mapping[str, Any],
+    ) -> httpx.Response:
+        """POST through this client's transport without HTTPX's URL-bearing INFO log."""
+
+        request = client.build_request("POST", url, json=json_payload)
+        transport = client._transport_for_url(request.url)
+        response = await transport.handle_async_request(request)
+        response.request = request
+        try:
+            await response.aread()
+        finally:
+            await response.aclose()
+        return response
+
+    async def complete_auxiliary(
+        self,
+        request: AuxiliaryCompletionRequest,
+    ) -> AuxiliaryCompletionResult:
+        """Run exactly one sensitive, non-streaming completion.
+
+        The captured resolution is the sole provider authority. This path
+        deliberately bypasses normal Console history, tools, streaming
+        normalization, fallback copy, and persistence.
+        """
+
+        if not isinstance(request, AuxiliaryCompletionRequest):
+            raise TypeError("request must be an AuxiliaryCompletionRequest")
+        resolution = replace(
+            request.resolution,
+            streaming=False,
+            max_tokens=request.max_output_tokens,
+        )
+        provider = resolution.provider
+        model = cast(str, resolution.model)
+        messages = cast(
+            list[Mapping[str, Any]], _thaw_auxiliary_value(request.messages)
+        )
+        response: Any = _UNSUPPORTED_RESPONSE
+        try:
+            with sensitive_llm_request():
+                if resolution.provider in {"llama_cpp", "local_llamacpp"}:
+                    # llama.cpp's OpenAI-compatible chat endpoint accepts these
+                    # standard samplers and penalties. Provider-specific
+                    # reasoning/thinking/verbosity controls and response_format
+                    # are deliberately omitted because this direct endpoint does
+                    # not define them consistently.
+                    text = await self.complete_llamacpp_chat(
+                        base_url=resolution.base_url,
+                        model=model,
+                        messages=messages,
+                        temperature=resolution.temperature,
+                        top_p=resolution.top_p,
+                        min_p=resolution.min_p,
+                        top_k=resolution.top_k,
+                        max_tokens=request.max_output_tokens,
+                        seed=resolution.seed,
+                        presence_penalty=resolution.presence_penalty,
+                        frequency_penalty=resolution.frequency_penalty,
+                        strict_response=True,
+                    )
+                else:
+                    kwargs = self._auxiliary_chat_api_kwargs(request, resolution)
+                    context = copy_context()
+                    response = await asyncio.to_thread(
+                        context.run,
+                        self._complete_sensitive_sync,
+                        kwargs,
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            status_code = getattr(exc, "status_code", 502)
+            raise ChatProviderError(
+                safe_provider_error_copy(provider, exc),
+                provider=provider,
+                status_code=status_code if isinstance(status_code, int) else 502,
+            ) from None
+
+        if response is not _UNSUPPORTED_RESPONSE:
+            text = self._auxiliary_response_text(response)
+
+        if not isinstance(text, str):
+            raise ChatProviderError(
+                "Provider returned an unsupported auxiliary response.",
+                provider=provider,
+            )
+        return AuxiliaryCompletionResult(provider=provider, model=model, text=text)
+
+    def _complete_sensitive_sync(self, kwargs: Mapping[str, Any]) -> Any:
+        """Invoke the final synchronous adapter under the sensitive policy."""
+
+        with sensitive_llm_request():
+            return self._chat_api_call(**dict(kwargs))
+
+    @staticmethod
+    def _auxiliary_response_text(response: Any) -> str:
+        """Extract exact assistant text from supported non-streaming shapes."""
+
+        if isinstance(response, str):
+            return response
+        if not isinstance(response, Mapping):
+            raise ChatProviderError(
+                "Provider returned an unsupported auxiliary response."
+            )
+        choices = response.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise ChatProviderError(
+                "Provider returned an unsupported auxiliary response."
+            )
+        first = choices[0]
+        if not isinstance(first, Mapping):
+            raise ChatProviderError(
+                "Provider returned an unsupported auxiliary response."
+            )
+        message = first.get("message")
+        if not isinstance(message, Mapping) or not isinstance(
+            message.get("content"), str
+        ):
+            raise ChatProviderError(
+                "Provider returned an unsupported auxiliary response."
+            )
+        return cast(str, message["content"])
+
+    @staticmethod
+    def _auxiliary_chat_api_kwargs(
+        request: AuxiliaryCompletionRequest,
+        resolution: ConsoleProviderResolution,
+    ) -> dict[str, Any]:
+        """Build the isolated, tool-free kwargs for one auxiliary adapter."""
+
+        payload = cast(list[dict[str, Any]], _thaw_auxiliary_value(request.messages))
+        system_parts: list[str] = []
+        while payload and payload[0].get("role") == "system":
+            content = cast(str, payload.pop(0).get("content"))
+            if content:
+                system_parts.append(content)
+        kwargs: dict[str, Any] = {
+            "api_endpoint": resolution.execution_key,
+            "api_base_url": resolution.base_url or None,
+            "system_message": "\n\n".join(system_parts) or None,
+            "messages_payload": payload,
+            "api_key": resolution.api_key,
+            "model": resolution.model,
+            "streaming": False,
+            "temp": resolution.temperature,
+            "topp": resolution.top_p,
+            "maxp": resolution.top_p,
+            "topk": resolution.top_k,
+            "minp": resolution.min_p,
+            "max_tokens": request.max_output_tokens,
+            "seed": resolution.seed,
+            "presence_penalty": resolution.presence_penalty,
+            "frequency_penalty": resolution.frequency_penalty,
+            "reasoning_effort": resolution.reasoning_effort,
+            "reasoning_summary": resolution.reasoning_summary,
+            "verbosity": resolution.verbosity,
+            "thinking_effort": resolution.thinking_effort,
+            "thinking_budget_tokens": resolution.thinking_budget_tokens,
+            "response_format": (
+                _thaw_auxiliary_value(request.response_format)
+                if request.response_format is not None
+                else None
+            ),
+        }
+        return {key: value for key, value in kwargs.items() if value is not None}
 
     async def stream_chat(
         self,
         resolution: ConsoleProviderResolution,
         messages: list[Mapping[str, Any]],
         tools: list | None = None,
+        signals: ConsoleProviderStreamSignals | None = None,
     ) -> AsyncIterator[str | ProviderToolCalls]:
         """Dispatch streaming for a resolved Console provider.
 
@@ -914,17 +1508,37 @@ class ConsoleProviderGateway:
                 provided, yields str chunks as before; if the provider
                 returned native tool-calls, the final item is a
                 ``ProviderToolCalls`` instead of a str.
+            signals: Optional out-of-band stream provenance signals.
 
         Yields:
             Assistant-visible content chunks, and -- only when ``tools`` was
             passed and the provider returned native tool-calls -- a final
             ``ProviderToolCalls``.
         """
-        if not resolution.ready or not resolution.model:
-            return
-        if resolution.provider in {"llama_cpp", "local_llamacpp"}:
-            if not resolution.streaming:
-                completion = await self.complete_llamacpp_chat(
+        # ONE invocation of this method == ONE provider call. A turn (agent
+        # runs especially) makes N of them through the SAME signals object,
+        # so the in-flight usage payload is closed out here, at the only
+        # seam that knows where a call ends -- never in the consumer, which
+        # cannot see the boundary at all.
+        try:
+            if not resolution.ready or not resolution.model:
+                return
+            if resolution.provider in {"llama_cpp", "local_llamacpp"}:
+                if not resolution.streaming:
+                    completion = await self.complete_llamacpp_chat(
+                        base_url=resolution.base_url,
+                        model=resolution.model,
+                        messages=messages,
+                        temperature=resolution.temperature,
+                        top_p=resolution.top_p,
+                        min_p=resolution.min_p,
+                        top_k=resolution.top_k,
+                        max_tokens=resolution.max_tokens,
+                    )
+                    if completion:
+                        yield completion
+                    return
+                async for chunk in self.stream_llamacpp_chat(
                     base_url=resolution.base_url,
                     model=resolution.model,
                     messages=messages,
@@ -933,34 +1547,25 @@ class ConsoleProviderGateway:
                     min_p=resolution.min_p,
                     top_k=resolution.top_k,
                     max_tokens=resolution.max_tokens,
-                )
-                if completion:
-                    yield completion
+                ):
+                    yield chunk
                 return
-            async for chunk in self.stream_llamacpp_chat(
-                base_url=resolution.base_url,
-                model=resolution.model,
-                messages=messages,
-                temperature=resolution.temperature,
-                top_p=resolution.top_p,
-                min_p=resolution.min_p,
-                top_k=resolution.top_k,
-                max_tokens=resolution.max_tokens,
-            ):
-                yield chunk
-            return
-        if resolution.execution_key:
-            async for chunk in self._stream_generic_chat(
-                resolution, messages, tools=tools
-            ):
-                yield chunk
-            return
+            if resolution.execution_key:
+                async for chunk in self._stream_generic_chat(
+                    resolution, messages, tools=tools, signals=signals
+                ):
+                    yield chunk
+                return
+        finally:
+            if signals is not None:
+                signals.close_usage_call()
 
     async def _stream_generic_chat(
         self,
         resolution: ConsoleProviderResolution,
         messages: list[Mapping[str, Any]],
         tools: list | None = None,
+        signals: ConsoleProviderStreamSignals | None = None,
     ) -> AsyncIterator[str | ProviderToolCalls]:
         """Bridge synchronous chat_api_call responses into async Console chunks."""
         loop = asyncio.get_running_loop()
@@ -986,7 +1591,9 @@ class ConsoleProviderGateway:
                 # by string equality — review minor m4: a real answer that
                 # happens to equal the copy text now flows through).
                 for text in self.normalize_provider_response(
-                    response, suppress_fallback_copy=accumulator is not None
+                    response,
+                    suppress_fallback_copy=accumulator is not None,
+                    signals=signals,
                 ):
                     if stop_event.is_set():
                         break
@@ -1053,6 +1660,7 @@ class ConsoleProviderGateway:
     def normalize_provider_response(
         response: Any,
         suppress_fallback_copy: bool = False,
+        signals: ConsoleProviderStreamSignals | None = None,
     ) -> Iterator[str]:
         """Yield safe assistant-visible chunks from generic provider output.
 
@@ -1063,23 +1671,26 @@ class ConsoleProviderGateway:
                 GENERATED instead of being string-filtered downstream — so a
                 real model answer that happens to equal the copy text flows
                 through untouched (review minor m4, PR #648 line).
+            signals: Optional out-of-band stream provenance signals.
 
         Yields:
             Assistant-visible text chunks (and, unless suppressed,
             normalized fallback copy).
         """
-        content = _content_from_provider_item(response)
+        content = _content_from_provider_item(response, signals=signals)
         if isinstance(content, str):
             if content:
                 yield content
             elif not suppress_fallback_copy:
+                if signals is not None:
+                    signals.mark_synthetic_fallback()
                 yield NO_PROVIDER_CONTENT_COPY
             return
         if content is _UNSUPPORTED_RESPONSE:
             if _is_iterable_response(response):
                 emitted = False
                 for item in response:
-                    item_content = _content_from_provider_item(item)
+                    item_content = _content_from_provider_item(item, signals=signals)
                     if isinstance(item_content, str):
                         if item_content:
                             emitted = True
@@ -1089,14 +1700,22 @@ class ConsoleProviderGateway:
                         continue
                     emitted = True
                     if not suppress_fallback_copy:
+                        if signals is not None:
+                            signals.mark_synthetic_fallback()
                         yield UNSUPPORTED_PROVIDER_RESPONSE_COPY
                 if not emitted and not suppress_fallback_copy:
+                    if signals is not None:
+                        signals.mark_synthetic_fallback()
                     yield NO_PROVIDER_CONTENT_COPY
                 return
             if not suppress_fallback_copy:
+                if signals is not None:
+                    signals.mark_synthetic_fallback()
                 yield UNSUPPORTED_PROVIDER_RESPONSE_COPY
             return
         if not suppress_fallback_copy:
+            if signals is not None:
+                signals.mark_synthetic_fallback()
             yield NO_PROVIDER_CONTENT_COPY
 
     def _chat_api_call(self, **kwargs: Any) -> Any:
@@ -1112,9 +1731,35 @@ class ConsoleProviderGateway:
         messages: list[Mapping[str, Any]],
         tools: list | None = None,
     ) -> dict[str, Any]:
+        # Extract the contiguous LEADING system rows into chat_api_call's
+        # `system_message` parameter (PR #1112 Qodo finding 3): Anthropic and
+        # Gemini adapters accept system content only via their dedicated
+        # parameter and do not honor `role="system"` rows in the message
+        # array, so a payload-only system prompt (and the task-1531 folded
+        # greeting riding it) would never reach those providers. The
+        # OpenAI-compatible adapters prepend `system_message` as a system row
+        # themselves when the payload has none, so the extraction is
+        # provider-neutral. Mid-array system rows never occur on this path
+        # (`_provider_message_payloads` emits user/assistant only).
+        #
+        # The join deliberately normalizes: each row is `.strip()`ed and the
+        # rows are joined with "\n\n". The result is therefore NOT byte-verbatim
+        # with respect to the source rows -- but it IS a pure function of them,
+        # so the same rows always produce the same bytes. That determinism is
+        # what Anthropic prefix caching needs (a stable system block across
+        # consecutive turns); see the cache-stability test in
+        # Tests/Chat/test_console_provider_gateway.py.
+        payload = list(messages)
+        system_parts: list[str] = []
+        while payload and payload[0].get("role") == "system":
+            content = str(payload[0].get("content") or "").strip()
+            if content:
+                system_parts.append(content)
+            payload = payload[1:]
         kwargs = {
             "api_endpoint": resolution.execution_key,
-            "messages_payload": list(messages),
+            "system_message": "\n\n".join(system_parts) or None,
+            "messages_payload": payload,
             "api_key": resolution.api_key,
             "model": resolution.model,
             "streaming": resolution.streaming,
@@ -1133,7 +1778,27 @@ class ConsoleProviderGateway:
             "thinking_effort": resolution.thinking_effort,
             "thinking_budget_tokens": resolution.thinking_budget_tokens,
             "tools": tools,
+            # None for every non-Anthropic resolution, so the strip below
+            # removes the key entirely and other providers' kwargs are byte
+            # for byte what they were before prompt caching existed.
+            "prompt_caching": resolution.prompt_caching,
         }
+        if resolution.execution_key == "anthropic":
+            # task-2114: `resolve_for_send` already resolves the effective
+            # endpoint (configured `[api_settings.anthropic].api_base_url`,
+            # or the built-in default when unset -- see
+            # `effective_provider_endpoint`) into `resolution.base_url`, but
+            # this dict never forwarded it, so a configured proxy/relay was
+            # silently a no-op on the main Console send: only the
+            # auxiliary/one-shot path's `_auxiliary_chat_api_kwargs` passed
+            # `api_base_url` through. Scoped to Anthropic only, matching
+            # this task's fix -- other adapters sharing the same gap are
+            # tracked separately (see the task's Implementation Notes).
+            # When unset, `resolution.base_url` is already the SAME
+            # built-in default `chat_with_anthropic` would fall back to on
+            # its own, so this is a byte-identical no-op for the common
+            # case, never a behavior change.
+            kwargs["api_base_url"] = resolution.base_url or None
         return {key: value for key, value in kwargs.items() if value is not None}
 
     @staticmethod
@@ -1293,28 +1958,68 @@ def _mapping_value(source: Mapping[str, object], key: str) -> Mapping[str, objec
     return value if isinstance(value, Mapping) else {}
 
 
+def _caching_config_value(app_config: Mapping[str, object]) -> Mapping[str, object]:
+    """Return the ``[caching]`` section from either config shape.
+
+    Boot-time/live Console config (``load_settings()``) never projects
+    ``[caching]`` to the top level the way it does ``api_settings`` or
+    ``chat_defaults`` -- it only survives nested under
+    ``COMPREHENSIVE_CONFIG_RAW`` (see ``config.py``'s ``load_settings``).
+    A plain ``app_config.get("caching")`` therefore always misses on the
+    live Console config and silently reads the kill-switch as always-on
+    (Qodo finding, PR #1239). Prefer a top-level ``caching`` key when a
+    caller supplies one directly (e.g. tests), and fall back to the
+    nested raw-TOML shape otherwise.
+    """
+    top_level = _mapping_value(app_config, "caching")
+    if top_level:
+        return top_level
+    raw = _mapping_value(app_config, "COMPREHENSIVE_CONFIG_RAW")
+    return _mapping_value(raw, "caching")
+
+
 def _is_iterable_response(response: Any) -> bool:
     return isinstance(response, (Iterator, GeneratorType)) and not isinstance(
         response, (str, bytes, Mapping, list, tuple)
     )
 
 
-def _content_from_provider_item(item: Any) -> str | object:
+def _maybe_record_usage(
+    payload: Mapping[str, Any],
+    signals: "ConsoleProviderStreamSignals | None",
+) -> None:
+    if signals is None:
+        return
+    usage = payload.get("usage")
+    if isinstance(usage, Mapping) and usage:
+        signals.record_usage_payload(usage)
+
+
+def _content_from_provider_item(
+    item: Any,
+    *,
+    signals: "ConsoleProviderStreamSignals | None" = None,
+) -> str | object:
     if isinstance(item, str):
         if item.startswith("data:"):
-            return _content_from_sse_data(item)
+            return _content_from_sse_data(item, signals=signals)
         return item
     if isinstance(item, bytes):
         decoded = item.decode("utf-8", errors="replace")
         if decoded.startswith("data:"):
-            return _content_from_sse_data(decoded)
+            return _content_from_sse_data(decoded, signals=signals)
         return decoded
     if isinstance(item, Mapping):
+        _maybe_record_usage(item, signals)
         return _content_from_provider_mapping(item)
     return _UNSUPPORTED_RESPONSE
 
 
-def _content_from_sse_data(line: str) -> str | object:
+def _content_from_sse_data(
+    line: str,
+    *,
+    signals: "ConsoleProviderStreamSignals | None" = None,
+) -> str | object:
     ConsoleProviderGateway._raise_for_sse_error(line)
     data = line.removeprefix("data:").strip()
     if not data or data == "[DONE]":
@@ -1325,6 +2030,7 @@ def _content_from_sse_data(line: str) -> str | object:
         return _EMPTY_RESPONSE
     if not isinstance(payload, Mapping):
         return _EMPTY_RESPONSE
+    _maybe_record_usage(payload, signals)
     content = _content_from_provider_mapping(payload)
     return _EMPTY_RESPONSE if content is _UNSUPPORTED_RESPONSE else content
 

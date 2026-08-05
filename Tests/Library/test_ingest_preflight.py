@@ -108,34 +108,36 @@ class TestProbeUrl:
         mock_response.__exit__ = MagicMock(return_value=False)
 
         with patch("tldw_chatbook.Library.ingest_preflight.urlopen", return_value=mock_response):
-            assert _probe_url("https://example.com/doc.pdf") is None
+            probe = _probe_url("https://example.com/doc.pdf")
+        assert probe.error is None
+        assert probe.note is None
 
     def test_returns_error_on_url_error(self) -> None:
         with patch(
             "tldw_chatbook.Library.ingest_preflight.urlopen",
             side_effect=URLError("connection refused"),
         ):
-            result = _probe_url("https://example.com/doc.pdf")
-        assert result is not None
-        assert "unreachable" in result.lower()
+            probe = _probe_url("https://example.com/doc.pdf")
+        assert probe.error is not None
+        assert "unreachable" in probe.error.lower()
 
     def test_returns_error_on_timeout(self) -> None:
         with patch(
             "tldw_chatbook.Library.ingest_preflight.urlopen",
             side_effect=TimeoutError(),
         ):
-            result = _probe_url("https://example.com/doc.pdf")
-        assert result is not None
-        assert "timed out" in result.lower()
+            probe = _probe_url("https://example.com/doc.pdf")
+        assert probe.error is not None
+        assert "timed out" in probe.error.lower()
 
     def test_returns_error_on_unexpected_exception(self) -> None:
         with patch(
             "tldw_chatbook.Library.ingest_preflight.urlopen",
             side_effect=ValueError("boom"),
         ):
-            result = _probe_url("https://example.com/doc.pdf")
-        assert result is not None
-        assert "failed" in result.lower()
+            probe = _probe_url("https://example.com/doc.pdf")
+        assert probe.error is not None
+        assert "failed" in probe.error.lower()
 
     def test_returns_error_on_http_404(self) -> None:
         error = HTTPError("https://example.com/doc.pdf", 404, "Not Found", {}, None)
@@ -143,9 +145,37 @@ class TestProbeUrl:
             "tldw_chatbook.Library.ingest_preflight.urlopen",
             side_effect=error,
         ):
-            result = _probe_url("https://example.com/doc.pdf")
-        assert result is not None
-        assert "unreachable" in result.lower()
+            probe = _probe_url("https://example.com/doc.pdf")
+        assert probe.error is not None
+        assert "unreachable" in probe.error.lower()
+
+    @pytest.mark.parametrize("status", [401, 403, 405, 429, 500])
+    def test_a_status_the_probe_cannot_interpret_does_not_veto(self, status: int) -> None:
+        """The probe may report doubt; it may not refuse the source.
+
+        Any HTTP status proves the host resolved and answered. Sites routinely
+        refuse HEAD (405) or unrecognised clients (403) while serving the page
+        perfectly well to whoever actually fetches it -- verified on a Wikipedia
+        article that answers 403 to our client even with a browser User-Agent,
+        and that a tldw server clipped at 200 (task-697).
+        """
+        error = HTTPError("https://example.com/page", status, "Nope", {}, None)
+        with patch(
+            "tldw_chatbook.Library.ingest_preflight.urlopen", side_effect=error
+        ):
+            probe = _probe_url("https://example.com/page")
+
+        assert probe.error is None, f"{status} must not block the source"
+        assert probe.note is not None and str(status) in probe.note
+
+    def test_a_gone_resource_is_still_refused(self) -> None:
+        """410 is the host stating the resource is not there, like 404."""
+        error = HTTPError("https://example.com/page", 410, "Gone", {}, None)
+        with patch(
+            "tldw_chatbook.Library.ingest_preflight.urlopen", side_effect=error
+        ):
+            probe = _probe_url("https://example.com/page")
+        assert probe.error is not None
 
 
 class TestAnalyzePath:
@@ -213,6 +243,65 @@ class TestAnalyzePath:
         result = analyze_path(str(tmp_path))
         assert result.warnings == [{"feature": "test", "group": "pdf"}]
 
+    def test_single_unsupported_file_is_grouped_not_raised(self, tmp_path: Path) -> None:
+        """An unsupported file belongs in its own group, not in an exception.
+
+        ``get_type_group`` returns ``"unsupported"`` by design so the summary
+        can surface those files separately, but the capability lookup has no
+        such group, so asking it for tooling warnings raised ``KeyError`` and
+        replaced the entire pre-flight summary with a raw error string
+        (task-674).
+        """
+        (tmp_path / "notes.xyz").write_text("nope")
+
+        result = analyze_path(str(tmp_path / "notes.xyz"))
+
+        assert result.errors == []
+        assert result.type_groups.get("unsupported") == [str(tmp_path / "notes.xyz")]
+        assert result.total_files == 1
+
+    def test_directory_with_one_unsupported_file_still_summarises(
+        self, tmp_path: Path
+    ) -> None:
+        """One unsupported file must not destroy the summary for the rest.
+
+        Any real folder is likely to hold a ``.json``, ``.jpg`` or ``.srt``
+        alongside the content, and a single one of them used to abort the
+        whole analysis -- losing the file count, the size, the type breakdown
+        and, critically, the tooling warnings that feed the guardrail.
+        """
+        (tmp_path / "a.pdf").write_bytes(b"%PDF")
+        (tmp_path / "b.txt").write_text("plain")
+        (tmp_path / "cover.jpg").write_bytes(b"jpg")
+
+        result = analyze_path(str(tmp_path))
+
+        assert result.errors == []
+        assert result.total_files == 3
+        assert len(result.type_groups["pdf"]) == 1
+        assert len(result.type_groups["generic"]) == 1
+        assert result.type_groups["unsupported"] == [str(tmp_path / "cover.jpg")]
+
+    def test_unsupported_file_in_directory_does_not_block_tooling_warnings(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Supported groups still report their tooling warnings."""
+        (tmp_path / "a.pdf").write_bytes(b"%PDF")
+        (tmp_path / "cover.jpg").write_bytes(b"jpg")
+
+        def fake_warnings(group: str) -> list[dict]:
+            return [{"feature": "test", "group": group}]
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Library.ingest_preflight.get_tooling_warnings",
+            fake_warnings,
+        )
+
+        result = analyze_path(str(tmp_path))
+
+        assert {"feature": "test", "group": "pdf"} in result.warnings
+        assert not any(w["group"] == "unsupported" for w in result.warnings)
+
     def test_reachable_url(self) -> None:
         mock_response = MagicMock()
         mock_response.__enter__ = MagicMock(return_value=mock_response)
@@ -268,3 +357,73 @@ class TestPublicApi:
         # importing a private name from local_file_ingestion.
         assert is_http_url("https://example.com") is True
         assert is_http_url("/local/path") is False
+
+
+class TestPathErrorsAreMarked:
+    """A path that cannot be found is not something to retry (task-666)."""
+
+    def test_missing_path_is_flagged_as_a_path_problem(self, tmp_path: Path) -> None:
+        result = analyze_path(str(tmp_path / "nope.txt"))
+        assert result.errors
+        assert result.path_invalid is True
+
+    def test_successful_analysis_is_not_flagged(self, tmp_path: Path) -> None:
+        (tmp_path / "a.txt").write_text("hello")
+        result = analyze_path(str(tmp_path / "a.txt"))
+        assert result.errors == []
+        assert result.path_invalid is False
+
+    def test_unreachable_url_is_not_a_path_problem(self) -> None:
+        """A URL that failed to respond is worth retrying; a typo'd path isn't."""
+        with patch(
+            "tldw_chatbook.Library.ingest_preflight.urlopen",
+            side_effect=URLError("connection refused"),
+        ):
+            result = analyze_path("https://example.com/document.pdf")
+        assert result.errors
+        assert result.path_invalid is False
+
+
+def test_zero_byte_files_classified_as_empty_not_importable(tmp_path):
+    """(task-2160) A 0-byte file leaves its type group at analysis time
+    and lands in ``empty_files`` -- the forecast used to promise it would
+    import and the pipeline then failed it post-commit."""
+    empty = tmp_path / "empty.txt"
+    empty.write_text("")
+    real = tmp_path / "real.txt"
+    real.write_text("content")
+
+    solo = analyze_path(str(empty))
+    assert solo.empty_files == (str(empty),)
+    assert not solo.type_groups
+    assert solo.total_files == 1
+
+    folder = analyze_path(str(tmp_path))
+    assert folder.empty_files == (str(empty),)
+    assert sorted(
+        path for files in folder.type_groups.values() for path in files
+    ) == [str(real)]
+    assert folder.total_files == 2
+
+
+def test_unstatable_files_are_not_mislabeled_empty(tmp_path, monkeypatch):
+    """(task-2160 Qodo round) A file whose stat raises must stay in its
+    type group -- the error fallback of 0 bytes used to classify it as
+    "empty" and forecast "is 0 B" for a file nobody measured."""
+    import tldw_chatbook.Library.ingest_preflight as preflight_mod
+
+    victim = tmp_path / "unreadable.txt"
+    victim.write_text("content")
+    real_probe = preflight_mod._statted_size
+
+    def failing_probe(path):
+        if path.name == "unreadable.txt":
+            return None  # what a raising stat resolves to
+        return real_probe(path)
+
+    monkeypatch.setattr(preflight_mod, "_statted_size", failing_probe)
+    result = analyze_path(str(victim))
+    assert result.empty_files == ()
+    assert [
+        path for files in result.type_groups.values() for path in files
+    ] == [str(victim)]

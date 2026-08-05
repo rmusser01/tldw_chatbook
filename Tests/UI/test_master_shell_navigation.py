@@ -47,16 +47,16 @@ async def test_master_shell_navigation_order_and_labels():
         ]
 
     assert actual == [
-        ("nav-home", "^1 Home"),
-        ("nav-console", "^2 Console"),
-        ("nav-library", "^3 Library"),
-        ("nav-artifacts", "^4 Artifacts"),
-        ("nav-personas", "^5 Personas"),
-        ("nav-watchlists_collections", "^6 Watchlists"),
-        ("nav-schedules", "^7 Schedules"),
-        ("nav-workflows", "^8 Workflows"),
-        ("nav-mcp", "^9 MCP"),
-        ("nav-acp", "^0 ACP"),
+        ("nav-home", "\u23031 Home"),
+        ("nav-console", "\u23032 Console"),
+        ("nav-library", "\u23033 Library"),
+        ("nav-artifacts", "\u23034 Artifacts"),
+        ("nav-personas", "\u23035 Roleplay"),
+        ("nav-watchlists_collections", "\u23036 Watchlists"),
+        ("nav-schedules", "\u23037 Schedules"),
+        ("nav-workflows", "\u23038 Workflows"),
+        ("nav-mcp", "\u23039 MCP"),
+        ("nav-acp", "\u23030 ACP"),
         ("nav-lab", "F7 Lab"),
         ("nav-logs", "F8 Logs"),
         ("nav-settings", "F9 Settings"),
@@ -66,11 +66,14 @@ async def test_master_shell_navigation_order_and_labels():
 def test_nav_button_label_numbering_scheme():
     from tldw_chatbook.UI.Navigation.main_navigation import nav_button_label
 
-    # ctrl+1..ctrl+9 cover the first nine destinations, ctrl+0 the tenth;
-    # the remaining destinations (Lab, Logs, Settings) stay unnumbered.
+    # F-002: the labels used to read "1 Home" -- implying a bare-digit key
+    # -- while the actual binding is ctrl+digit. The label now carries the
+    # control glyph so the affordance matches the keybinding at zero extra
+    # width per tab. ctrl+1..ctrl+9 cover the first nine destinations,
+    # ctrl+0 the tenth; Lab, Logs, Settings carry their F7/F8/F9 routes.
     digits = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
     for index, digit in enumerate(digits):
-        assert nav_button_label(index, "Label") == f"^{digit} Label"
+        assert nav_button_label(index, "Label") == f"\u2303{digit} Label"
     assert nav_button_label(10, "Lab") == "F7 Lab"
     assert nav_button_label(11, "Logs") == "F8 Logs"
     assert nav_button_label(12, "Settings") == "F9 Settings"
@@ -185,8 +188,8 @@ async def test_home_and_console_remain_first_primary_destinations():
         buttons = list(app.query(".nav-button"))
 
     assert [(button.id, str(button.label).strip()) for button in buttons[:2]] == [
-        ("nav-home", "^1 Home"),
-        ("nav-console", "^2 Console"),
+        ("nav-home", "⌃1 Home"),
+        ("nav-console", "⌃2 Console"),
     ]
 
 
@@ -256,7 +259,7 @@ async def test_active_destination_primary_route_still_noops():
 
 @pytest.mark.asyncio
 async def test_every_visible_master_shell_nav_destination_resolves():
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
     app = _build_test_app()
@@ -387,3 +390,96 @@ def test_action_shell_destination_posts_primary_route():
     TldwCli.action_shell_destination(fake_app, -1)
     TldwCli.action_shell_destination(fake_app, "not-a-number")
     assert posted == []
+
+
+@pytest.mark.asyncio
+async def test_nav_overflow_hint_pages_to_hidden_destinations_at_100_cols():
+    """F-001: at 100 columns the strip clips mid-button (the review's
+    "8 Workflows" -> "8" artifact) and later destinations have no click
+    path. The "More ›" affordance pages the strip right until every
+    destination has been reachable, then wraps to the start."""
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="home")
+
+    app = TestApp()
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.1)
+
+        strip = app.query_one("#nav-destination-strip")
+        hint = app.query_one("#nav-overflow-hint")
+
+        # Overflowing: the affordance is on duty.
+        assert strip.max_scroll_x > 0
+        assert hint.display is True
+
+        def visible(button):
+            return (
+                button.region.x >= strip.region.x
+                and button.region.right <= strip.region.right
+                and button.region.width > 0
+            )
+
+        settings = app.query_one("#nav-settings", Button)
+        assert not visible(settings), "test premise: Settings starts off-screen"
+
+        # Page right (at most a handful of presses) until Settings fits.
+        for _ in range(6):
+            if visible(settings):
+                break
+            hint.press()
+            await pilot.pause(0.1)
+        else:
+            raise AssertionError("Settings never became reachable via More ›")
+
+        # Pressing past the far end wraps back to the first destinations.
+        for _ in range(6):
+            hint.press()
+            await pilot.pause(0.1)
+            if strip.scroll_offset.x == 0:
+                break
+        else:
+            raise AssertionError("More › never wrapped back to the start")
+        assert visible(app.query_one("#nav-home", Button))
+
+
+@pytest.mark.asyncio
+async def test_more_hint_pages_by_visible_width_and_never_overscrolls():
+    """PR #1322 review: the pager's increment must be the strip's VISIBLE
+    viewport width, not the full scrollable content width, and a press
+    must never land past the end (clamped to max_scroll_x)."""
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="home")
+
+    app = TestApp()
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.1)
+
+        strip = app.query_one("#nav-destination-strip")
+        hint = app.query_one("#nav-overflow-hint", Button)
+
+        # The property the pager reads is the VIEWPORT (region minus
+        # gutter/scrollbar), not the virtual content: the content
+        # overflows it by max_scroll_x.
+        visible_width = strip.scrollable_content_region.width
+        assert visible_width == strip.region.width
+        assert strip.virtual_size.width == visible_width + strip.max_scroll_x
+        assert strip.max_scroll_x > 0
+
+        # One press advances by exactly min(visible width, remaining) --
+        # never past the end.
+        hint.press()
+        await pilot.pause(0.1)
+        expected = min(visible_width, strip.max_scroll_x)
+        assert strip.scroll_offset.x == expected
+        assert strip.scroll_offset.x <= strip.max_scroll_x
+
+        # From the end, the wrap (not another page) fires.
+        hint.press()
+        await pilot.pause(0.1)
+        assert strip.scroll_offset.x == 0

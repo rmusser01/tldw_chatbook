@@ -58,6 +58,19 @@ SOURCE = "mcp"
 # canvas both key off these exact decision/error shapes, so they must not
 # drift from what is logged via `record_tool_decision`.
 DENY_REFUSAL = "blocked by MCP permissions (set to Off)"
+
+#: TASK-294: an EXPLICIT user "Deny" on the approval card. Distinct from
+#: `DENY_REFUSAL`, which correctly describes the permanent permissions-Off
+#: state -- blaming a user's per-call "no" on configuration is misleading
+#: provenance (a model reading it retries never; a user reading the
+#: transcript goes hunting for a setting they never flipped). Wording
+#: matches the builtin gate's and the review hook's user-denial copy.
+USER_DENY_REFUSAL = "tool call denied by the user"
+
+#: TASK-294: a verdict that is MISSING or unrecognized after the approval
+#: round trip. Fails closed like a deny, but blames nobody: the user never
+#: decided, and the permissions were not Off.
+UNRESOLVED_REFUSAL = "tool call not approved (no decision recorded)"
 TIMEOUT_REFUSAL = "user did not approve within the time limit; do not retry"
 KILL_SWITCH_REFUSAL = "blocked — MCP tools are switched off"
 NON_TEXT_PLACEHOLDER = "[image result — not yet supported]"
@@ -85,6 +98,24 @@ class MCPPendingCall:
     server_label: str
     arguments: dict
     reason: str  # ask|config_changed|risk_floored
+    options: tuple[str, ...] = ()
+    #: Per-call verdict key. The provider's tool-call id when the model gave
+    #: one (native tool-calling), else "" -- the fence path builds ToolCalls
+    #: with no id. The runtime looks up `call_id` FIRST and falls back to
+    #: `llm_name`, so an empty value here simply keeps the old shared-verdict
+    #: behavior for that call rather than breaking it.
+    call_id: str = ""
+    #: TASK-1231/F3 AC2: True when this is a builtin file tool
+    #: (read_file/list_directory/write_file) whose path argument will be
+    #: rejected by `allowed_file_roots`/`validate_path_multi` regardless of
+    #: the user's decision -- computed at card-build time by
+    #: `console_chat_controller.build_tool_review_hook` via
+    #: `Tools.file_operation_tools.path_precheck_failed`. This is a WARNING
+    #: only: the user can still approve (and the call will then fail with
+    #: the same recovery-route error `validate_path_multi` raises at
+    #: dispatch) -- it must never be used to auto-deny. Always `False` for
+    #: MCP rows and every non-file builtin tool.
+    path_precheck_failed: bool = False
 
 
 def _has_non_text_content(value: Any) -> bool:
@@ -376,7 +407,9 @@ class MCPToolProvider:
 
     # -- gate resolution for the batch-review hook (worker thread) --------
 
-    def pending_gate_for(self, llm_name: str, args: dict) -> MCPPendingCall | None:
+    def pending_gate_for(
+        self, llm_name: str, args: dict, call_id: str = ""
+    ) -> MCPPendingCall | None:
         """Resolve one call's gate; return a pending descriptor iff it needs asking.
 
         Direct (not main-loop-submitted) call to `gate_tool_test` -- see the
@@ -397,6 +430,12 @@ class MCPToolProvider:
                 the incoming `ToolCall.name`.
             args: The tool call's raw arguments, copied verbatim into the
                 returned `MCPPendingCall.arguments` (never mutated).
+            call_id: The provider's per-call id, carried onto the row so the
+                approval card can offer one decision per TARGET rather than
+                one per tool name. Empty when the model's payload had no id
+                (`ensure_tool_call_ids` fills those in for the native path);
+                an empty id makes the row collapse by name, which shares one
+                verdict across every same-name call in the batch.
 
         Returns:
             An `MCPPendingCall` describing what needs asking, or `None`
@@ -425,6 +464,10 @@ class MCPToolProvider:
             tool_name=tool.name,
             server_label=tool.server_label,
             arguments=dict(args or {}),
+            # TASK-1861: carry the per-call key through, or the card collapses
+            # every same-name MCP call into one `xN` row with one verdict --
+            # the defect the per-call re-key fixed for built-in tools.
+            call_id=call_id,
             reason=_pending_reason(state),
         )
 
@@ -515,7 +558,12 @@ class MCPToolProvider:
             decisions = self._approval_callback([pending])
         except Exception as exc:  # noqa: BLE001 -- invoke() must never raise
             return ToolResult(ok=False, error=str(exc)[:_MAX_ERROR_CHARS])
-        verdict = (decisions or {}).get(tool_id, "deny")
+        # TASK-294: default to a DISTINCT sentinel, not "deny" -- a missing
+        # verdict means nobody decided, and collapsing it into "deny" here
+        # is what used to blame the user (or the permissions) for a refusal
+        # no one made. `_apply_verdict`'s fall-through maps it to
+        # `UNRESOLVED_REFUSAL`; the fail-closed posture is unchanged.
+        verdict = (decisions or {}).get(tool_id, "unresolved")
         return self._apply_verdict(verdict, tool, call_args)
 
     # -- internals ----------------------------------------------------------
@@ -591,9 +639,20 @@ class MCPToolProvider:
         if verdict == "timeout":
             self._record_decision_safe(tool, decision="denied-timeout")
             return ToolResult(ok=False, error=TIMEOUT_REFUSAL)
-        # "deny" and any unrecognized verdict fail closed the same way.
-        self._record_decision_safe(tool, decision="denied")
-        return ToolResult(ok=False, error=DENY_REFUSAL)
+        if verdict == "deny":
+            # TASK-294: an explicit card "Deny" gets USER provenance -- a
+            # person said no to this call; the permissions were not Off.
+            self._record_decision_safe(tool, decision="denied")
+            return ToolResult(ok=False, error=USER_DENY_REFUSAL)
+        # An unrecognized or MISSING verdict fails closed -- but blaming the
+        # user here would be the same provenance lie in the other direction:
+        # nobody decided anything. Neutral copy, still a refusal -- and the
+        # AUDIT record agrees with the transcript (review finding: the first
+        # version recorded plain "denied" here, so Decision-filtered audit
+        # views reported an explicit denial nobody made). Mirrors the
+        # existing "denied-timeout" vocabulary.
+        self._record_decision_safe(tool, decision="denied-unresolved")
+        return ToolResult(ok=False, error=UNRESOLVED_REFUSAL)
 
     def _safe_side_effect(
         self, fn: Callable[[], None], tool: HubTool, *, what: str
@@ -648,20 +707,27 @@ class MCPToolProvider:
             on any failure. Never raises.
         """
         future: concurrent.futures.Future | None = None
+        execution_coroutine = None
         try:
             timeout = self._service._tool_call_timeout() + _RESULT_WAIT_SLACK_SECONDS
+            execution_coroutine = self._service.execute_hub_tool(
+                tool.server_key,
+                tool.name,
+                args,
+                initiator="agent",
+                decision=decision,
+            )
             future = asyncio.run_coroutine_threadsafe(
-                self._service.execute_hub_tool(
-                    tool.server_key,
-                    tool.name,
-                    args,
-                    initiator="agent",
-                    decision=decision,
-                ),
+                execution_coroutine,
                 self._main_loop,
             )
             raw_result = future.result(timeout=timeout)
         except Exception as exc:  # noqa: BLE001 -- the never-raise/never-hang contract
+            if future is None and execution_coroutine is not None:
+                try:
+                    execution_coroutine.close()
+                except Exception:
+                    pass
             # Finding F3: `future` may still be unbound here if
             # `run_coroutine_threadsafe` itself raised (e.g. a dead/closed
             # loop) -- guard before cancelling rather than assuming the

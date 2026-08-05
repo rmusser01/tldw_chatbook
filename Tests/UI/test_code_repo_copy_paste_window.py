@@ -7,6 +7,7 @@ from textual.app import App
 from textual.widgets import Input, Select, Static, TextArea
 
 from tldw_chatbook.UI.CodeRepoCopyPasteWindow import CodeRepoCopyPasteWindow
+from tldw_chatbook.Widgets.Coding_Widgets.repo_tree_widgets import TreeView
 
 
 async def _active_window(pilot) -> CodeRepoCopyPasteWindow:
@@ -269,6 +270,76 @@ class TestCodeRepoCopyPasteWindow:
             window.notify.assert_called_with(
                 "Reset selection and compilation", severity="info"
             )
+
+    @pytest.mark.asyncio
+    async def test_load_node_children_expands_tree_on_success(
+        self, app_pilot, mock_app, mock_api_client
+    ):
+        """load_node_children runs on a real thread worker (as production does via
+        handle_node_expanded -> run_worker) and must reach its success path: the
+        tree actually expands and no error is surfaced to the user.
+
+        This guards against `await self.app.call_from_thread(...)`: call_from_thread
+        already invokes tree_view.expand_node synchronously and returns its result
+        (None) before any `await` would run, so "expand_node was called" alone does
+        NOT distinguish the bug from the fix -- the bug still calls expand_node, then
+        raises TypeError on `await None`, which the except block swallows into an
+        error notification. The real signal is that no error notification fires.
+        """
+        mock_api_client.get_directory_contents = AsyncMock(
+            return_value=[
+                {"path": "src/utils.py", "name": "utils.py", "type": "blob", "size": 512},
+                {"path": "src/lib", "name": "lib", "type": "tree"},
+            ]
+        )
+
+        class TestApp(App):
+            def on_mount(self) -> None:
+                self.push_screen(CodeRepoCopyPasteWindow(mock_app))
+
+        async with await app_pilot(TestApp) as pilot:
+            window = await _active_window(pilot)
+            window.notify = Mock()
+            window.current_repo = {"owner": "test-owner", "repo": "test-repo"}
+            window.is_local_repo = False
+
+            tree_view = window.query_one("#repo-tree", TreeView)
+            # Real TreeView.expand_node returns None, same as production; keep
+            # that here so a reinstated `await` reproduces the exact same
+            # TypeError ("object NoneType can't be used in 'await' expression")
+            # that the production bug raises, not an artifact of the mock type.
+            tree_view.expand_node = AsyncMock(return_value=None)
+            branch = window.query_one("#branch-selector", Select).value
+
+            worker = window.load_node_children("src")
+            await worker.wait()
+
+            mock_api_client.get_directory_contents.assert_called_once_with(
+                "test-owner", "test-repo", "src", branch
+            )
+
+            expected_child_nodes = [
+                {
+                    "path": "src/utils.py",
+                    "name": "utils.py",
+                    "type": "blob",
+                    "size": 512,
+                    "children": None,
+                },
+                {
+                    "path": "src/lib",
+                    "name": "lib",
+                    "type": "tree",
+                    "size": 0,
+                    "children": [],
+                },
+            ]
+            tree_view.expand_node.assert_called_once_with("src", expected_child_nodes)
+
+            # The success path never calls notify. If the TypeError from an
+            # awaited call_from_thread slipped through, the except block would
+            # have called notify(..., severity="error") instead.
+            window.notify.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_loading_overlay_visibility(

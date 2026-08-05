@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from pathlib import PurePath
 from typing import Any
 
 from rich.markup import escape as escape_markup
@@ -16,10 +18,446 @@ from tldw_chatbook.Library.ingest_capabilities import (
     _is_installed,
     get_capabilities,
 )
-from tldw_chatbook.Library.library_ingest_state import (
-    QUEUE_EMPTY_COPY,
-    LibraryIngestCanvasState,
+from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    format_console_relative_age,
 )
+from tldw_chatbook.Library.library_ingest_state import (
+    validate_ingest_option_value,
+    LibraryIngestCanvasState,
+    build_intro_lines,
+)
+
+
+class LibraryIngestPreflightSummary(Vertical):
+    """Render-from-state pre-flight summary block (task-2042).
+
+    Its own widget so the screen can recompose JUST these lines when a
+    pre-flight result lands: recomposing the whole canvas remounted the
+    Start/Browse buttons between a mouse-down and its mouse-up, silently
+    swallowing the first click after typing.
+    """
+
+    def __init__(self, state: LibraryIngestCanvasState, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.state = state
+        self.styles.width = "1fr"
+        self.styles.height = "auto"
+
+    def compose(self) -> ComposeResult:
+        state = self.state
+        if state.preflight_checking:
+            yield Static(
+                "Checking…",
+                id="ingest-preflight-status",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
+            return
+        if state.errors:
+            for index, error in enumerate(state.errors):
+                yield Static(
+                    escape_markup(error),
+                    id=f"ingest-preflight-error-{index}",
+                    classes="library-ingest-quiet-line",
+                )
+            if state.errors_are_path_problem:
+                # Re-running the same analysis on the same bad path fails
+                # identically; the useful action is picking a real one.
+                yield Button(
+                    "Choose a file…",
+                    id="ingest-preflight-choose",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+            else:
+                yield Button(
+                    "Retry",
+                    id="ingest-preflight-retry",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+        if state.warning_lines:
+            for index, warning in enumerate(state.warning_lines):
+                yield Static(
+                    f"⚠ {escape_markup(warning)}",
+                    id=f"ingest-preflight-warning-{index}",
+                    classes="library-ingest-quiet-line",
+                )
+        if state.type_breakdown_line:
+            yield Static(
+                state.type_breakdown_line,
+                id="ingest-type-breakdown",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
+        if state.estimate_line:
+            yield Static(
+                state.estimate_line,
+                id="ingest-estimate",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
+        if state.unsupported_line:
+            yield Static(
+                state.unsupported_line,
+                id="ingest-unsupported-summary",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
+        if state.empty_line:
+            yield Static(
+                state.empty_line,
+                id="ingest-empty-summary",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
+        if state.duplicate_line:
+            yield Static(
+                state.duplicate_line,
+                id="ingest-duplicate-summary",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
+
+
+class LibraryIngestQueuePanel(Vertical):
+    """Render-from-state queue block: counts, rows, actions, clear, recent.
+
+    Its own widget so registry job ticks recompose ONLY the queue (task-2042):
+    the whole-canvas recompose they used to trigger remounted the form
+    widgets (swallowing in-flight clicks) and snapped the canvas scroll.
+    """
+
+    def __init__(self, state: LibraryIngestCanvasState, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.state = state
+        self.styles.width = "1fr"
+        self.styles.height = "auto"
+
+    def compose(self) -> ComposeResult:
+        state = self.state
+        # (task-2221 owner ruling) The tally leads with the LATEST batch;
+        # the lifetime line stays secondary below it.
+        if state.latest_batch_line:
+            yield Static(
+                state.latest_batch_line,
+                id="library-ingest-latest-batch",
+                markup=False,
+            )
+        if state.queue_counts_line:
+            yield Static(
+                state.queue_counts_line,
+                id="library-ingest-queue-counts",
+                markup=False,
+            )
+        if not state.queue_rows and state.queue_empty_line:
+            yield Static(
+                state.queue_empty_line,
+                id="library-ingest-queue-empty",
+                markup=False,
+            )
+        # (task-2221) Per-submission group headers: rendered before the
+        # first row of each headed group. Rows keep their flat order and
+        # identity semantics -- the header is an extra Static, not a
+        # container, so the in-place update paths are untouched.
+        headers_before: dict[str, str] = {}
+        for group in state.queue_groups:
+            if group.header_line and group.job_ids:
+                headers_before[group.job_ids[0]] = group.header_line
+        for index, row in enumerate(state.queue_rows):
+            header_line = headers_before.get(row.job_id, "")
+            if header_line:
+                yield Static(
+                    header_line,
+                    classes="library-ingest-batch-header",
+                    markup=False,
+                )
+            # A source filename can contain Rich markup syntax (e.g. a
+            # literal "[/bracket]" in the name) -- escape_markup here is
+            # what keeps a hostile filename from raising MarkupError at
+            # mount time (the L3a lesson; mirrors
+            # ``library_rag_history_children``'s escaped Button labels).
+            row_classes = "library-ingest-row"
+            # (task-2230 a11y) Severity gets a colour IN ADDITION to the
+            # glyph+word it already carries -- failed and done rows were
+            # byte-identical in colour, so scanning a tall queue for the
+            # one failure was a linear read.
+            if row.state == IngestJobState.FAILED:
+                row_classes += " library-ingest-row-failed"
+            elif row.state == IngestJobState.SKIPPED:
+                row_classes += " library-ingest-row-skipped"
+            stt_actions = _stt_recovery_actions(row.error_detail)
+            has_actions = (
+                row.can_open
+                or row.can_open_on_server
+                or row.can_retry
+                or row.can_dismiss
+                or row.can_cancel
+                or bool(row.error_detail)
+                or bool(stt_actions)
+            )
+            if has_actions:
+                # A row with action buttons below it gets its own
+                # bottom-margin trimmed to 0 (A3) -- the actions row's own
+                # ``.library-ingest-row-actions`` margin supplies the "tight
+                # gap above, blank line below" spacing instead, so the
+                # button(s) read as belonging to THIS row rather than the
+                # one below it. Plain rows (queued/running, or a done row
+                # with no action) keep their own margin for row-to-row
+                # spacing.
+                row_classes += " library-ingest-row-with-actions"
+            yield Static(
+                escape_markup(row.line),
+                id=f"library-ingest-row-{index}",
+                classes=row_classes,
+            )
+            if row.progress:
+                progress_line = row.progress.get("message") if row.progress else ""
+                # (task-2016) The row line above already carries the terminal
+                # state ("✓ done · …"); repeating it here read as stuttering.
+                # Active states keep the prefix -- their progress message is
+                # stage detail, not an outcome.
+                terminal = row.state in (
+                    IngestJobState.DONE,
+                    IngestJobState.FAILED,
+                    IngestJobState.CANCELLED,
+                )
+                yield Static(
+                    progress_line
+                    if terminal
+                    else f"{row.state.value} {progress_line}",
+                    id=f"library-ingest-progress-{row.job_id}",
+                    classes="library-ingest-progress",
+                    markup=False,
+                )
+            if row.details_expanded and row.detail_lines:
+                for line_index, detail_line in enumerate(row.detail_lines):
+                    yield Static(
+                        detail_line,
+                        id=(
+                            f"library-ingest-detail-{row.job_id}-{line_index}"
+                        ),
+                        classes="library-ingest-detail-line",
+                        markup=False,
+                    )
+            # Row-action buttons are keyed by the job's registry-assigned
+            # ``job_id`` -- these ARE click targets and the registry mutates
+            # asynchronously between a render and a click; an index-keyed id
+            # can silently point at a different job by the time it's pressed
+            # (PR #591 review, F1). One Horizontal per row so a failed row's
+            # actions sit on one line (L5, F1b).
+            if has_actions:
+                with Horizontal(classes="library-ingest-row-actions"):
+                    if row.can_open:
+                        yield Button(
+                            "Open in Library",
+                            id=f"library-ingest-open-{row.job_id}",
+                            classes=(
+                                "library-canvas-action library-ingest-open "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
+                    if row.can_open_on_server:
+                        # Its own action rather than a reworded "Open in
+                        # Library": that one resolves a LOCAL media row, and a
+                        # server ingest has none. The label says where the
+                        # content actually is. The id prefix must not collide
+                        # with ``library-ingest-open-`` (that handler strips
+                        # the prefix to recover a job id).
+                        yield Button(
+                            "View on server",
+                            id=f"library-ingest-view-server-{row.job_id}",
+                            classes=(
+                                "library-canvas-action "
+                                "library-ingest-view-server "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
+                    if row.error_detail:
+                        yield Button(
+                            "Hide details"
+                            if row.details_expanded
+                            else "Show details",
+                            id=f"library-ingest-details-{row.job_id}",
+                            classes=(
+                                "library-canvas-action library-ingest-details "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
+                    if "choose_another_gguf" in stt_actions:
+                        yield Button(
+                            "Choose another GGUF…",
+                            id=f"library-ingest-choose-gguf-{row.job_id}",
+                            classes=(
+                                "library-canvas-action library-ingest-choose-gguf "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
+                    if "retry_faster_whisper" in stt_actions:
+                        yield Button(
+                            "Retry with faster-whisper",
+                            id=(
+                                "library-ingest-retry-faster-whisper-"
+                                f"{row.job_id}"
+                            ),
+                            classes=(
+                                "library-canvas-action "
+                                "library-ingest-retry-faster-whisper "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
+                    if row.can_retry and not stt_actions:
+                        yield Button(
+                            "Retry",
+                            id=f"library-ingest-retry-{row.job_id}",
+                            classes=(
+                                "library-canvas-action library-ingest-retry "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
+                    if row.can_cancel:
+                        yield Button(
+                            "Cancel",
+                            id=f"library-ingest-cancel-{row.job_id}",
+                            classes=(
+                                "library-canvas-action library-ingest-cancel "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
+                    if row.can_dismiss:
+                        yield Button(
+                            "Dismiss",
+                            id=f"library-ingest-dismiss-{row.job_id}",
+                            classes=(
+                                "library-canvas-action library-ingest-dismiss "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
+        if state.queue_show_clear_finished:
+            yield Button(
+                state.queue_clear_finished_label,
+                id="library-ingest-clear-finished",
+                classes="library-canvas-action",
+                compact=True,
+            )
+        # (task-2100) Hidden when empty: after a clear it expanded to an
+        # unlabeled empty shell (round-3 critique; deliberately flips the
+        # earlier always-visible contract on that evidence).
+        if state.recent_jobs:
+            with Collapsible(
+                title="Recent ingests",
+                collapsed=True,
+                id="library-ingest-recent",
+            ):
+                for job in state.recent_jobs:
+                    dismissed_suffix = (
+                        " (dismissed)"
+                        if getattr(job, "dismissed", False)
+                        else ""
+                    )
+                    # (task-2223) Basename + relative time first -- a list
+                    # of ~130-char absolute paths was unscannable. The full
+                    # path keeps a muted second line.
+                    name = PurePath(str(job.source_path)).name
+                    age = (
+                        format_console_relative_age(
+                            job.finished_at_wall,
+                            now=datetime.now(timezone.utc),
+                        )
+                        if getattr(job, "finished_at_wall", "")
+                        else ""
+                    )
+                    age_suffix = f" · {age}" if age else ""
+                    yield Static(
+                        f"{escape_markup(name)} — "
+                        f"{job.state.value}{dismissed_suffix}{age_suffix}",
+                        classes="library-ingest-recent-item",
+                        markup=False,
+                    )
+                    yield Static(
+                        escape_markup(str(job.source_path)),
+                        classes="library-ingest-recent-path",
+                        markup=False,
+                    )
+
+_STT_RECOVERY_ACTIONS = frozenset(
+    {"choose_another_gguf", "retry_faster_whisper"}
+)
+
+
+def _stt_recovery_actions(error_detail: dict[str, Any] | None) -> frozenset[str]:
+    """Return only the bounded STT recovery actions implemented here."""
+    if not error_detail or error_detail.get("category") != "stt_failure":
+        return frozenset()
+    actions = error_detail.get("actions")
+    if not isinstance(actions, list):
+        return frozenset()
+    return frozenset(
+        action
+        for action in actions
+        if isinstance(action, str) and action in _STT_RECOVERY_ACTIONS
+    )
+
+
+def _summarise_option(field: Any, value: Any) -> str:
+    """Describe one option for the collapsed panel title, in plain language.
+
+    The title used to be a dump of internal field names and repr'd values
+    (``analyze=False, chunk=False, chunk_size=500, chunk_overlap=100``), which
+    told a first-time user nothing about what any of it does.
+    """
+    if field.type == "checkbox":
+        return f"{field.label}: {'on' if value else 'off'}"
+    return f"{field.label}: {value}"
+
+
+def ingest_scope_label(cap: TypeGroupCapabilities, has_files: bool) -> str:
+    """Scope-line copy for one options panel.
+
+    Shared by ``_compose_type_group`` and the screen's in-place dynamic
+    update (task-2042 review): per-group file counts change without the
+    group SET changing, so the label must be updatable without a panel
+    recompose -- one source keeps the two paths from drifting.
+
+    Args:
+        cap: The group's capability schema (supplies the display label).
+        has_files: Whether the current pre-flight staged files for it.
+
+    Returns:
+        The scope sentence for the panel.
+    """
+    return (
+        f"Applies to all {cap.label} in this import."
+        if has_files
+        else f"Applies to {cap.label} if this import contains any."
+    )
+
+
+class StateGlyphCheckbox(Checkbox):
+    """Checkbox whose glyph carries on/off without color (task-2043).
+
+    Stock ``ToggleButton`` renders ``BUTTON_INNER = "X"`` for BOTH states --
+    on/off is a color change only, invisible in monochrome. The renderer
+    reads ``self.BUTTON_INNER``, so a per-instance shadow tracked in
+    ``watch_value`` gives a glyph-level state: ``✓`` checked, blank not.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.BUTTON_INNER = "✓" if self.value else " "
+
+    def watch_value(self) -> None:
+        self.BUTTON_INNER = "✓" if self.value else " "
+        super().watch_value()
 
 
 def _toggle_label(*, enabled: bool, text: str) -> str:
@@ -55,11 +493,22 @@ class LibraryIngestCanvas(VerticalScroll):
             self.group = group
             self.expanded = expanded
 
+    class ParakeetInstallRequested(Message):
+        """The user requested the curated Parakeet v2 installer."""
+
+    class TranscribeCppGGUFRequested(Message):
+        """The user requested a local transcribe.cpp GGUF picker."""
+
     def __init__(self, state: LibraryIngestCanvasState, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.state = state
         self.styles.width = "1fr"
         self.styles.min_width = 40
+        # Value each option widget was last rendered/reported with, keyed by
+        # ``(group, field name)``. Seeded by ``_compose_type_group`` so that a
+        # widget announcing the value we just gave it is recognised as mount
+        # noise rather than a user edit -- see ``_handle_option_value_changed``.
+        self._reported_option_values: dict[tuple[str, str], Any] = {}
 
     def _compose_type_group(
         self,
@@ -67,21 +516,43 @@ class LibraryIngestCanvas(VerticalScroll):
         cap: TypeGroupCapabilities,
         values: dict[str, Any],
         expanded: bool,
+        has_files: bool = True,
     ) -> Collapsible:
         """Build a collapsible options panel for one detected type group."""
-        scope_label = f"These options apply to all {cap.label} files in this selection."
+        # (task-2016) The generic panel is always rendered so global options
+        # stay reachable -- but claiming "Applies to all X in this import."
+        # with zero such files staged was a false statement.
+        scope_label = ingest_scope_label(cap, has_files)
         children: list[Any] = [Static(scope_label, classes="type-group-scope")]
         summary_parts: list[str] = []
+        cap_fields_by_name = {f.name: f for f in cap.fields}
 
         for field in cap.fields:
             value = values.get(field.name, field.default)
-            summary_parts.append(f"{field.name}={value}")
-            disabled = field.depends_on is not None and not _is_installed(field.depends_on)
+            summary_parts.append(_summarise_option(field, value))
+            # Two independent reasons a field can be uneditable: its tooling
+            # is not installed, or the sibling field that gates it is off.
+            disabled = field.depends_on is not None and not _is_installed(
+                field.depends_on
+            )
+            if not disabled and field.enabled_when is not None:
+                gate = cap_fields_by_name.get(field.enabled_when)
+                gate_value = values.get(
+                    field.enabled_when,
+                    gate.default if gate is not None else False,
+                )
+                if field.enabled_when_values:
+                    # A select gate: every non-empty choice is truthy, so the
+                    # field must name the choices that actually enable it.
+                    disabled = gate_value not in field.enabled_when_values
+                else:
+                    disabled = not bool(gate_value)
             widget_id = f"opt-{group}-{field.name}"
 
             if field.type == "checkbox":
+                self._reported_option_values[(group, field.name)] = bool(value)
                 children.append(
-                    Checkbox(
+                    StateGlyphCheckbox(
                         field.label,
                         value=bool(value),
                         id=widget_id,
@@ -93,6 +564,16 @@ class LibraryIngestCanvas(VerticalScroll):
                 select_value = value if value in field.options else field.default
                 if select_value not in field.options and field.options:
                     select_value = field.options[0]
+                self._reported_option_values[(group, field.name)] = select_value
+                # (task-2043) Selects missed task-2012's labeling pass: a
+                # bare "pymupdf4llm" carries no meaning on its own.
+                children.append(
+                    Static(
+                        field.label,
+                        classes="type-group-field-label",
+                        markup=False,
+                    )
+                )
                 children.append(
                     Select(
                         select_options,
@@ -103,12 +584,84 @@ class LibraryIngestCanvas(VerticalScroll):
                     )
                 )
             else:
+                self._reported_option_values[(group, field.name)] = str(value)
+                # A populated Input never shows its placeholder, so
+                # placeholder-as-label left values like "1000" with no
+                # visible meaning (task-2012). The label gets its own line,
+                # carrying the unit/range hint up front (task-2223).
+                label_text = (
+                    f"{field.label} ({field.hint})"
+                    if getattr(field, "hint", "")
+                    else field.label
+                )
+                children.append(
+                    Static(
+                        label_text,
+                        classes="type-group-field-label",
+                        markup=False,
+                    )
+                )
                 children.append(
                     Input(
                         value=str(value),
                         placeholder=field.label,
                         id=widget_id,
                         disabled=disabled,
+                    )
+                )
+                # (task-2130) Inline validation message -- a text line, not a
+                # color-only border. Display-managed so typing updates it in
+                # place without recomposing the panel.
+                # A disabled field no longer gates Start (Qodo round) --
+                # its error line hides with it, so message and gate agree.
+                error_message = (
+                    "" if disabled else validate_ingest_option_value(field, value)
+                )
+                if error_message:
+                    # (task-2230 a11y) Persistent marker: the stock invalid
+                    # border only paints while focused.
+                    children[-1].add_class("-ingest-option-invalid")
+                error_line = Static(
+                    error_message,
+                    id=f"{widget_id}-error",
+                    classes="type-group-field-error",
+                    markup=False,
+                )
+                error_line.display = bool(error_message)
+                children.append(error_line)
+
+        if group == "audio_video":
+            provider = cap_fields_by_name["transcription_provider"]
+            provider_value = values.get(
+                "transcription_provider", provider.default
+            )
+            children.append(
+                Button(
+                    "Install verified Parakeet v2 INT8 (630.6 MiB)…",
+                    id="opt-audio_video-install-parakeet-v2",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=provider_value != "parakeet-onnx",
+                )
+            )
+            if provider_value == "transcribe-cpp":
+                configured = self.state.transcribe_cpp_configured
+                children.append(
+                    Static(
+                        "Local GGUF configured."
+                        if configured
+                        else "No local GGUF configured.",
+                        id="opt-audio_video-transcribe-cpp-status",
+                        classes="type-group-scope",
+                        markup=False,
+                    )
+                )
+                children.append(
+                    Button(
+                        "Choose another GGUF…" if configured else "Choose GGUF…",
+                        id="opt-audio_video-choose-transcribe-cpp-gguf",
+                        classes="library-canvas-action",
+                        compact=True,
                     )
                 )
 
@@ -138,12 +691,27 @@ class LibraryIngestCanvas(VerticalScroll):
             classes="destination-section",
             markup=False,
         )
+        # State before action: "Imports run on this machine." then the button
+        # that changes it. Rendering the button first read as a contradiction
+        # top-to-bottom -- "Import on the server / Imports run on this machine"
+        # (spotted on screen, not in a test).
         if state.server_quiet_line:
             yield Static(
                 state.server_quiet_line,
                 id="library-ingest-server-line",
                 classes="library-ingest-quiet-line",
                 markup=False,
+            )
+        if state.show_backend_switch:
+            # Only offered when a server is actually configured; otherwise there
+            # is no choice to make and a dead toggle would be worse than none.
+            yield Button(
+                "Import on this machine"
+                if state.ingest_backend == "server"
+                else "Import on the server",
+                id="library-ingest-backend-switch",
+                classes="library-canvas-action",
+                compact=True,
             )
         if state.unavailable_line:
             yield Static(
@@ -158,86 +726,75 @@ class LibraryIngestCanvas(VerticalScroll):
             id="library-ingest-path",
             classes="library-ingest-field",
         )
-        yield Button(
-            "Browse…",
-            id="library-ingest-browse",
-            classes="library-canvas-action",
-            compact=True,
-        )
-        # Pre-flight summary replaces the old always-visible supported-types
-        # line. All copy is taken straight from ``state``; this widget stays
-        # render-only and does not compute pre-flight results itself.
-        if state.preflight_checking:
-            yield Static(
-                "Checking…",
-                id="ingest-preflight-status",
-                classes="library-ingest-quiet-line",
+        with Horizontal(classes="library-ingest-path-actions"):
+            yield Button(
+                "Browse…",
+                id="library-ingest-browse",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            # (task-2042) Always mounted, shown/hidden via ``display`` so a
+            # path appearing/disappearing never changes the canvas's widget
+            # STRUCTURE -- structural changes force a full recompose, and a
+            # full recompose in the type-then-click window swallows the
+            # click in flight.
+            clear_button = Button(
+                "Clear",
+                id="library-ingest-clear-path",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            clear_button.display = state.show_clear_path
+            yield clear_button
+        # (task-2016/2042) Intro lines: always mounted, ``display``-managed
+        # (the screen's typing handler toggles them live; keeping them in
+        # the tree keeps intro transitions non-structural).
+        for index, line in enumerate(build_intro_lines()):
+            intro = Static(
+                line,
+                id=f"library-ingest-intro-{index}",
+                classes="library-ingest-quiet-line library-ingest-intro",
                 markup=False,
             )
-        else:
-            if state.errors:
-                for index, error in enumerate(state.errors):
-                    yield Static(
-                        escape_markup(error),
-                        id=f"ingest-preflight-error-{index}",
-                        classes="library-ingest-quiet-line",
-                    )
+            intro.display = bool(state.intro_lines)
+            yield intro
+        # Pre-flight summary lines live in their own render-from-state child
+        # so a result landing recomposes ONLY them (task-2042).
+        yield LibraryIngestPreflightSummary(
+            state, id="library-ingest-preflight-summary"
+        )
+        # (task-2016) Bulk expand/collapse over exactly one panel is
+        # noise -- the generic panel is always appended, so a single
+        # entry means there is nothing to expand "all" of. Panels render
+        # regardless of ``preflight_checking`` (a re-analysis lasts well
+        # under a second; hiding them made the checking flag structural,
+        # forcing exactly the full recompose task-2042 removes).
+        if len(state.type_groups) > 1:
+            with Horizontal(classes="library-ingest-options-bulk"):
                 yield Button(
-                    "Retry",
-                    id="ingest-preflight-retry",
+                    "Expand all",
+                    id="ingest-expand-all",
                     classes="library-canvas-action",
                     compact=True,
                 )
-            if state.warning_lines:
-                for index, warning in enumerate(state.warning_lines):
-                    yield Static(
-                        f"⚠ {escape_markup(warning)}",
-                        id=f"ingest-preflight-warning-{index}",
-                        classes="library-ingest-quiet-line",
-                    )
-            if state.type_breakdown_line:
-                yield Static(
-                    state.type_breakdown_line,
-                    id="ingest-type-breakdown",
-                    classes="library-ingest-quiet-line",
-                    markup=False,
+                yield Button(
+                    "Collapse all",
+                    id="ingest-collapse-all",
+                    classes="library-canvas-action",
+                    compact=True,
                 )
-            if state.estimate_line:
-                yield Static(
-                    state.estimate_line,
-                    id="ingest-estimate",
-                    classes="library-ingest-quiet-line",
-                    markup=False,
+        if state.type_groups:
+            for group in state.type_groups:
+                cap = get_capabilities(group)
+                values = state.form.type_options.get(group, {})
+                expanded = group in state.expanded_type_groups
+                yield self._compose_type_group(
+                    group,
+                    cap,
+                    values,
+                    expanded,
+                    has_files=bool(state.type_group_file_counts.get(group)),
                 )
-            if state.unsupported_files:
-                count = len(state.unsupported_files)
-                file_noun = "file" if count == 1 else "files"
-                failure_noun = "failure" if count == 1 else "failures"
-                yield Static(
-                    f"{count} unsupported {file_noun} will be recorded as a {failure_noun}.",
-                    id="ingest-unsupported-summary",
-                    classes="library-ingest-quiet-line",
-                    markup=False,
-                )
-            if state.type_groups:
-                with Horizontal(classes="library-ingest-options-bulk"):
-                    yield Button(
-                        "Expand all",
-                        id="ingest-expand-all",
-                        classes="library-canvas-action",
-                        compact=True,
-                    )
-                    yield Button(
-                        "Collapse all",
-                        id="ingest-collapse-all",
-                        classes="library-canvas-action",
-                        compact=True,
-                    )
-                for group in state.type_groups:
-                    cap = get_capabilities(group)
-                    values = state.form.type_options.get(group, {})
-                    expanded = group in state.expanded_type_groups
-                    yield self._compose_type_group(group, cap, values, expanded)
         yield Input(
             value=state.form.title,
             placeholder="Title (optional)",
@@ -263,6 +820,21 @@ class LibraryIngestCanvas(VerticalScroll):
         # line's row when the text is empty (an auto-height empty Static
         # would collapse to 0); the screen's path-changed handler updates
         # the text in place instead of mounting/removing the widget.
+        # (task-2140) Always mounted, display-managed: the conditional
+        # compose reintroduced the round-3 empty-Recent bug class -- a
+        # text-only pre-flight applies via the NON-structural in-place
+        # path, which never mounts a conditionally-composed canvas-level
+        # element (PDF selections rendered the line, plain text never),
+        # and after Clear the stale line survived. The in-place updater
+        # owns its content and visibility.
+        commit_summary = Static(
+            state.commit_summary_line,
+            id="library-ingest-commit-summary",
+            classes="library-ingest-quiet-line",
+            markup=False,
+        )
+        commit_summary.display = bool(state.commit_summary_line)
+        yield commit_summary
         start_quiet_line = Static(
             state.start_quiet_line,
             id="library-ingest-start-quiet-line",
@@ -284,133 +856,10 @@ class LibraryIngestCanvas(VerticalScroll):
             classes="destination-section",
             markup=False,
         )
-        if state.queue_counts_line:
-            yield Static(
-                state.queue_counts_line,
-                id="library-ingest-queue-counts",
-                markup=False,
-            )
-        if not state.queue_rows:
-            yield Static(
-                QUEUE_EMPTY_COPY,
-                id="library-ingest-queue-empty",
-                markup=False,
-            )
-        for index, row in enumerate(state.queue_rows):
-            # A source filename can contain Rich markup syntax (e.g. a
-            # literal "[/bracket]" in the name) -- escape_markup here is
-            # what keeps a hostile filename from raising MarkupError at
-            # mount time (the L3a lesson; mirrors
-            # ``library_rag_history_children``'s escaped Button labels).
-            row_classes = "library-ingest-row"
-            has_actions = (
-                row.can_open
-                or row.can_retry
-                or row.can_dismiss
-                or bool(row.error_detail)
-            )
-            if has_actions:
-                # A row with action buttons below it gets its own
-                # bottom-margin trimmed to 0 (A3) -- the actions row's own
-                # ``.library-ingest-row-actions`` margin supplies the "tight
-                # gap above, blank line below" spacing instead, so the
-                # button(s) read as belonging to THIS row rather than the
-                # one below it. Plain rows (queued/running, or a done row
-                # with no action) keep their own margin for row-to-row
-                # spacing.
-                row_classes += " library-ingest-row-with-actions"
-            yield Static(
-                escape_markup(row.line),
-                id=f"library-ingest-row-{index}",
-                classes=row_classes,
-            )
-            if row.progress:
-                progress_line = row.progress.get("message") if row.progress else ""
-                yield Static(
-                    f"{row.state.value} {progress_line}",
-                    id=f"library-ingest-progress-{row.job_id}",
-                    classes="library-ingest-progress",
-                    markup=False,
-                )
-            # Row-action buttons are keyed by the job's registry-assigned
-            # ``job_id`` (e.g. ``"library-ingest-open-ingest-job-3"``), NOT
-            # by ``index`` -- unlike the row Static above, these ARE click
-            # targets, and the registry mutates asynchronously (runner
-            # completions, retry-supersede, new submissions) between a
-            # render and a click. An index-keyed id can silently point at a
-            # different job by the time it's pressed; a job_id-keyed one
-            # can't, because the screen's handlers resolve the job by id
-            # from the live registry rather than by re-indexing a rebuilt
-            # snapshot (see the PR #591 review's F1 finding).
-            #
-            # (L5, fix batch F1b) A row's action buttons (Open in Library /
-            # Retry / Dismiss -- never more than one of "Open in Library"
-            # or the Retry+Dismiss pair applies to the same row, since
-            # can_open is DONE-only and can_retry/can_dismiss are
-            # FAILED-only) are wrapped in one ``Horizontal`` so a failed
-            # row's Retry and Dismiss sit on one line instead of stacking
-            # vertically. Both children here are fixed-width compact
-            # Buttons -- never a 1fr sibling mixed with a fixed-width one,
-            # the known non-rendering failure mode for this canvas family
-            # (see the class docstring).
-            if has_actions:
-                with Horizontal(classes="library-ingest-row-actions"):
-                    if row.can_open:
-                        yield Button(
-                            "Open in Library",
-                            id=f"library-ingest-open-{row.job_id}",
-                            classes=(
-                                "library-canvas-action library-ingest-open "
-                                "library-ingest-row-action"
-                            ),
-                            compact=True,
-                        )
-                    if row.error_detail:
-                        yield Button(
-                            "Show details",
-                            id=f"library-ingest-details-{row.job_id}",
-                            classes=(
-                                "library-canvas-action library-ingest-details "
-                                "library-ingest-row-action"
-                            ),
-                            compact=True,
-                        )
-                    if row.can_retry:
-                        yield Button(
-                            "Retry",
-                            id=f"library-ingest-retry-{row.job_id}",
-                            classes=(
-                                "library-canvas-action library-ingest-retry "
-                                "library-ingest-row-action"
-                            ),
-                            compact=True,
-                        )
-                    if row.can_dismiss:
-                        yield Button(
-                            "Dismiss",
-                            id=f"library-ingest-dismiss-{row.job_id}",
-                            classes=(
-                                "library-canvas-action library-ingest-dismiss "
-                                "library-ingest-row-action"
-                            ),
-                            compact=True,
-                        )
-        if state.queue_show_clear_finished:
-            yield Button(
-                "Clear finished",
-                id="library-ingest-clear-finished",
-                classes="library-canvas-action",
-                compact=True,
-            )
-        with Collapsible(
-            title="Recent ingests", collapsed=True, id="library-ingest-recent"
-        ):
-            for job in state.recent_jobs:
-                yield Static(
-                    f"{escape_markup(job.source_path)} — {job.state.value}",
-                    classes="library-ingest-recent-item",
-                    markup=False,
-                )
+        # Queue block lives in its own render-from-state child so registry
+        # job ticks recompose ONLY it (task-2042).
+        yield LibraryIngestQueuePanel(state, id="library-ingest-queue-panel")
+
 
     @on(Checkbox.Changed)
     @on(Select.Changed)
@@ -419,7 +868,19 @@ class LibraryIngestCanvas(VerticalScroll):
         self,
         event: Checkbox.Changed | Select.Changed | Input.Changed,
     ) -> None:
-        """Parse an option widget id and bubble the change up as a message."""
+        """Bubble a genuine option edit up as a message.
+
+        Textual posts ``Changed`` when a ``Select`` mounts, and when an
+        ``Input`` mounts with a non-empty ``value=``. Those announce the value
+        this canvas just handed the widget, not a user edit, so they are
+        dropped here: forwarding them made the screen recompose, which
+        remounted the widgets, which posted again -- an unbounded recompose
+        cycle that pinned the UI at 100% CPU for every pdf/audio/ebook
+        pre-flight (task-673). Comparing against the last value we rendered
+        *or* forwarded (rather than a "still mounting" flag) keeps this free
+        of event-ordering assumptions, and still lets a user return a field
+        to its original value: the previous edit updated the record.
+        """
         widget = getattr(
             event,
             "checkbox",
@@ -437,6 +898,12 @@ class LibraryIngestCanvas(VerticalScroll):
         name = "-".join(parts[2:])
         if name == "reset":
             return
+        key = (group, name)
+        if key in self._reported_option_values and (
+            self._reported_option_values[key] == event.value
+        ):
+            return
+        self._reported_option_values[key] = event.value
         self.post_message(self.OptionValueChanged(group, name, event.value))
 
     @on(Collapsible.Expanded)
@@ -454,3 +921,15 @@ class LibraryIngestCanvas(VerticalScroll):
         self.post_message(
             self.OptionPanelToggled(group, expanded=isinstance(event, Collapsible.Expanded))
         )
+
+    @on(Button.Pressed, "#opt-audio_video-install-parakeet-v2")
+    def _request_parakeet_v2_install(self, event: Button.Pressed) -> None:
+        """Request explicit install confirmation from the owning screen."""
+        event.stop()
+        self.post_message(self.ParakeetInstallRequested())
+
+    @on(Button.Pressed, "#opt-audio_video-choose-transcribe-cpp-gguf")
+    def _request_transcribe_cpp_gguf(self, event: Button.Pressed) -> None:
+        """Request the shared local-GGUF picker from the owning screen."""
+        event.stop()
+        self.post_message(self.TranscribeCppGGUFRequested())

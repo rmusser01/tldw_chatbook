@@ -18,7 +18,12 @@ from tldw_chatbook.UI.CCP_Modules import (
     ViewChangeMessage,
 )
 from tldw_chatbook.UI.CCP_Modules.ccp_character_handler import fetch_all_characters
-from tldw_chatbook.tldw_api import PersonaProfileCreate, PersonaProfileUpdate
+from tldw_chatbook.tldw_api.character_persona_schemas import (
+    LocalPersonaProfileCreate,
+    LocalPersonaProfileUpdate,
+    PersonaProfileCreate,
+    PersonaProfileUpdate,
+)
 
 
 @pytest.fixture
@@ -231,6 +236,34 @@ class TestCCPCharacterHandler:
         )
         assert payload["current_selection"] == 0
 
+    @pytest.mark.asyncio
+    async def test_handle_import_character_cards_filter_accepts_webp_not_md(
+        self, mock_window
+    ):
+        """Legacy CCP import route (task-431 AC#1): stay in sync with the
+        destination-native Personas import filter - accept .webp cards, and
+        never treat .md as a "Character Cards" match here either (this route
+        never included .md, so this pins the no-regression side)."""
+        from pathlib import Path
+
+        mock_window.app.push_screen = AsyncMock(return_value=None)
+        handler = CCPCharacterHandler(mock_window)
+
+        await handler.handle_import()
+
+        mock_window.app.push_screen.assert_awaited_once()
+        picker = mock_window.app.push_screen.call_args[0][0]
+        filter_by_name = {
+            name: picker.filters[filter_id]
+            for name, filter_id in picker.filters.selections
+        }
+        character_cards = filter_by_name["Character Cards"]
+
+        assert character_cards(Path("x.webp")) is True
+        assert character_cards(Path("x.png")) is True
+        assert character_cards(Path("x.json")) is True
+        assert character_cards(Path("README.md")) is False
+
 
 class TestCCPPersonaHandler:
     """Persona handler coverage."""
@@ -311,7 +344,7 @@ class TestCCPPersonaHandler:
 
         create_call = mock_window.app_instance.character_persona_scope_service.create_persona_profile.await_args
         request_data = create_call.args[0]
-        assert isinstance(request_data, PersonaProfileCreate)
+        assert isinstance(request_data, LocalPersonaProfileCreate)
         assert request_data.name == "Created Persona"
         assert request_data.system_prompt == "Be concise."
         assert create_call.kwargs["mode"] == "local"
@@ -335,10 +368,58 @@ class TestCCPPersonaHandler:
         update_call = mock_window.app_instance.character_persona_scope_service.update_persona_profile.await_args
         assert update_call.args[0] == "persona.local.alice"
         request_data = update_call.args[1]
-        assert isinstance(request_data, PersonaProfileUpdate)
+        assert isinstance(request_data, LocalPersonaProfileUpdate)
         assert request_data.mode == "persistent_scoped"
         assert update_call.kwargs["expected_version"] == 3
         assert update_call.kwargs["mode"] == "local"
+
+    @pytest.mark.asyncio
+    async def test_save_persona_uses_exact_server_create_contract(self, mock_window):
+        mock_window.state.runtime_backend = "server"
+        handler = CCPPersonaHandler(mock_window)
+
+        await handler.save_persona(
+            {
+                "name": "Server Persona",
+                "description": "Local only",
+                "personality_traits": "local only",
+                "system_prompt": "Be concise.",
+            }
+        )
+
+        create_call = mock_window.app_instance.character_persona_scope_service.create_persona_profile.await_args
+        request_data = create_call.args[0]
+        assert isinstance(request_data, PersonaProfileCreate)
+        assert set(type(request_data).model_fields).isdisjoint(
+            {"description", "personality_traits"}
+        )
+        assert create_call.kwargs["mode"] == "server"
+
+    @pytest.mark.asyncio
+    async def test_save_persona_uses_exact_server_update_contract(self, mock_window):
+        mock_window.state.runtime_backend = "server"
+        handler = CCPPersonaHandler(mock_window)
+        handler.current_persona_id = "persona.server.alice"
+
+        await handler.save_persona(
+            {
+                "name": "Server Persona Updated",
+                "description": "Local only",
+                "personality_traits": "local only",
+                "system_prompt": None,
+                "version": 3,
+            }
+        )
+
+        update_call = mock_window.app_instance.character_persona_scope_service.update_persona_profile.await_args
+        request_data = update_call.args[1]
+        assert isinstance(request_data, PersonaProfileUpdate)
+        assert "system_prompt" in request_data.model_fields_set
+        assert request_data.system_prompt is None
+        assert set(type(request_data).model_fields).isdisjoint(
+            {"description", "personality_traits"}
+        )
+        assert update_call.kwargs["mode"] == "server"
 
     @pytest.mark.asyncio
     async def test_list_chat_presets_routes_via_scope_service(self, mock_window):
@@ -374,17 +455,18 @@ class TestCCPPersonaHandler:
 class TestCCPMessageManager:
     """Message manager coverage for string session IDs."""
 
-    @pytest.mark.asyncio
-    async def test_load_conversation_messages_accepts_string_identifier(
-        self, mock_window
-    ):
+    def test_load_conversation_messages_accepts_string_identifier(self, mock_window):
+        # load_conversation_messages is a plain `def` (TASK-981: it never
+        # awaits anything, so `@work(thread=True)` on `async def` was
+        # buying nothing but an extra event loop per call) -- call the
+        # unwrapped function synchronously, no `await`.
         manager = CCPMessageManager(mock_window)
 
         with patch(
             "tldw_chatbook.UI.CCP_Modules.ccp_message_manager.fetch_messages_for_conversation",
             return_value=[{"id": "msg-1", "role": "user", "content": "hello"}],
         ) as mock_fetch:
-            await CCPMessageManager.load_conversation_messages.__wrapped__(
+            CCPMessageManager.load_conversation_messages.__wrapped__(
                 manager, "conv-1"
             )
 

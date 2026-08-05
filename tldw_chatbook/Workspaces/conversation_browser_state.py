@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import total_ordering
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, Protocol
 
 from .models import DEFAULT_WORKSPACE_ID
 
@@ -25,6 +25,50 @@ def _parse_browser_timestamp(value: str) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+# TASK-356: ONE state vocabulary for persisted-but-not-archived chats across
+# the rail AND the Ctrl+K switcher. Rows reach here with a workspace-
+# membership role ("workspace-thread"/"workspace") or the "in-progress"
+# state normalize_conversation_row assigns — all meaning "a chat saved
+# locally, not open in a tab". The switcher used the raw status
+# ("in-progress"), contradicting the rail's "saved chat"; both now call this.
+_CONSOLE_CONVERSATION_STATUS_DETAIL = {
+    "workspace-thread": "saved chat",
+    "workspace": "saved chat",
+    "in-progress": "saved chat",
+    "active": "active session",
+    "open": "open session",
+}
+
+#: The default state a persisted-but-not-open conversation reports. Rows in this
+#: state are the common case, so the rail suppresses it from the per-row subtitle
+#: (TASK-374) -- only a non-default state ("active session"/"open session") is a
+#: differentiator worth the vertical space.
+CONSOLE_DEFAULT_CONVERSATION_DETAIL = "saved chat"
+
+
+def console_conversation_status_detail(status: str) -> str:
+    """Return the shared friendly state label for a conversation row status.
+
+    The one vocabulary used by both the rail conversation browser and the
+    Ctrl+K switcher (TASK-356) so the two surfaces never contradict each other:
+    ``saved chat`` / ``active session`` / ``open session``.
+
+    Args:
+        status: Raw persisted/internal status (e.g. ``in-progress``,
+            ``workspace-thread``, ``active``); ``None`` is tolerated.
+
+    Returns:
+        The friendly label, an empty string for a blank status, or the status
+        with dashes spaced out when it is not a known state.
+    """
+    normalized = str(status or "").strip().lower()
+    if not normalized:
+        return ""
+    return _CONSOLE_CONVERSATION_STATUS_DETAIL.get(
+        normalized, normalized.replace("-", " ")
+    )
 
 
 def format_console_relative_age(value: str, *, now: datetime) -> str:
@@ -58,6 +102,33 @@ def format_console_relative_age(value: str, *, now: datetime) -> str:
     if days < 365:
         return f"{weeks}w"
     return f"{days // 365}y"
+
+
+def console_persisted_row_updated_sort(item: Mapping[str, object]) -> str:
+    """Return the recency timestamp for a persisted conversation browser row.
+
+    The rail orders conversations recency-first and derives their age labels
+    from this value, so it must reflect last *activity*. TASK-355: the persisted
+    payload comes from ``normalize_conversation_row``, which exposes
+    ``last_modified``/``created_at`` but NO ``updated_at`` key — so reading only
+    ``updated_at`` silently degraded every persisted row to its creation time
+    (a just-used conversation looked stale and sorted wrong). ``last_modified``
+    (bumped to now on every conversation write) is the recency field; it is
+    preferred over ``created_at`` while an explicit ``updated_at`` still wins for
+    any caller that does provide one.
+
+    Args:
+        item: Normalized conversation row mapping.
+
+    Returns:
+        The best available recency timestamp as a string, or ``""`` when none is
+        present. ``None`` values in any field are skipped, never stringified.
+    """
+    for key in ("updated_at", "last_modified", "created_at", "last_updated"):
+        value = item.get(key)
+        if value:
+            return str(value)
+    return ""
 
 
 @dataclass(frozen=True)
@@ -97,6 +168,16 @@ class ConsoleConversationBrowserInputRow:
     source_kind: str = "persisted"
     starred_sort: str = ""
     updated_sort: str = ""
+    #: TASK-717: False when a prior open attempt proved the conversation
+    #: record is missing; the row renders visibly broken and inert.
+    openable: bool = True
+    #: Parallel-agents spec PA-T8: the resolved fleet run-marker glyph for a
+    #: live native session (empty for every other row -- membership/persisted
+    #: rows have no live session to mark). Already resolved via
+    #: ``CONSOLE_RUN_MARKER_GLYPHS[controller.run_marker_for(session_id)]`` by
+    #: the caller building this row, so the display layer needs no enum/model
+    #: import to render it.
+    run_marker: str = ""
 
 
 @dataclass(frozen=True)
@@ -135,6 +216,10 @@ class ConsoleConversationBrowserRow:
     star_enabled: bool = True
     source_kind: str = "persisted"
     subagent_count: int = 0
+    #: TASK-717: False when the conversation record is known to be missing.
+    openable: bool = True
+    #: Parallel-agents spec PA-T8: resolved fleet run-marker glyph, or "".
+    run_marker: str = ""
 
 
 @dataclass(frozen=True)
@@ -160,6 +245,23 @@ class ConsoleConversationBrowserGroup:
     hidden_count: int = 0
     preference_collapsed: bool = False
     empty_copy: str = ""
+    #: PA-T8 review fix round 1 (IMPORTANT 2): the single most-urgent
+    #: `run_marker` glyph among ALL of this group's rows (not just the
+    #: post-collapse-cap `rows` above, which are empty while collapsed) --
+    #: computed from the full row set before collapsing hides it. Empty
+    #: when no row in the group carries a marker. The tray widget only
+    #: renders this on the group HEADER when `collapsed` is True; an
+    #: expanded group already shows every row's own marker.
+    run_marker: str = ""
+    #: TASK-912 AC#2: the single most-urgent `run_marker` glyph among the
+    #: rows beyond `CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT` (i.e. the
+    #: rows a non-collapsed group's cap still hides). An expanded group with
+    #: more rows than the cap shows no header marker today, so a marked row
+    #: pushed past the cap was invisible -- unlike `run_marker` above (the
+    #: full-group aggregate borrowed onto a COLLAPSED header), this is
+    #: scoped to only the hidden overflow: a visible marked row already
+    #: shows its own glyph and must not also echo on the header.
+    capped_run_marker: str = ""
 
 
 @dataclass(frozen=True)
@@ -175,6 +277,25 @@ class ConsoleConversationBrowserSection:
         count: Total row count represented by the section.
         hidden_count: Rows hidden by collapse or row capping.
         empty_copy: Empty-state copy for the section.
+        run_marker: Most-urgent `run_marker` glyph among ALL of this
+            section's contents (its own rows plus every workspace group's
+            full pre-cap rows), regardless of collapse state. Same
+            "computed unconditionally, rendered only when collapsed" split
+            as `ConsoleConversationBrowserGroup.run_marker` (TASK-912 AC#1):
+            collapsing a whole section hides every marker beneath it, so
+            the header borrows the single most-urgent one.
+        capped_run_marker: Most-urgent `run_marker` glyph among only this
+            section's OWN rows beyond the row cap (empty for the
+            `"workspaces"` section, whose rows live in `groups` instead --
+            each group already carries its own `capped_run_marker`).
+            TASK-912 review fix round 1: the identical cap bug the group
+            fix addressed also applies to flat row-based sections (Starred/
+            Chats) -- `_build_row_section` caps `rows` with the same
+            `CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT`, so an expanded
+            Chats section (the common case once it has rows) could push a
+            marked row past the cap with no marker surfaced anywhere. Same
+            "rendered only when expanded and non-empty" split as
+            `ConsoleConversationBrowserGroup.capped_run_marker`.
     """
 
     section_id: str
@@ -185,6 +306,8 @@ class ConsoleConversationBrowserSection:
     count: int = 0
     hidden_count: int = 0
     empty_copy: str = ""
+    run_marker: str = ""
+    capped_run_marker: str = ""
 
 
 @dataclass(frozen=True)
@@ -327,6 +450,11 @@ def build_console_conversation_browser_state(
             else sum(group.hidden_count for group in workspace_groups)
         ),
         empty_copy="No workspace conversations.",
+        # TASK-912 AC#1: `_most_urgent_run_marker` duck-types on `.run_marker`,
+        # so passing the groups themselves (each already the most-urgent glyph
+        # among ITS full pre-cap rows) yields the most-urgent glyph across the
+        # whole section without re-walking every row.
+        run_marker=_most_urgent_run_marker(workspace_groups),
     )
     chat_input_rows = _sort_normal_rows(_dedupe_rows(chat_rows))
     chat_preference_collapsed = _resolve_collapsed(
@@ -355,6 +483,7 @@ def build_console_conversation_browser_state(
         query_active=query_active,
         total_count=effective_total_count,
         displayed_count=_displayed_row_count(sections),
+        capped_hidden_count=_capped_hidden_count(sections),
     )
 
     return ConsoleConversationBrowserState(
@@ -397,6 +526,8 @@ def _normalize_input_row(
         source_kind=source_kind,
         starred_sort=str(row.starred_sort or ""),
         updated_sort=str(row.updated_sort or ""),
+        openable=bool(row.openable),
+        run_marker=str(row.run_marker or ""),
     )
 
 
@@ -420,6 +551,8 @@ def _to_browser_row(
         star_enabled=row.star_enabled,
         source_kind=row.source_kind,
         subagent_count=subagent_count,
+        openable=bool(row.openable),
+        run_marker=str(row.run_marker or ""),
     )
 
 
@@ -444,7 +577,78 @@ def _build_row_section(
         count=len(rows),
         hidden_count=hidden_count,
         empty_copy=empty_copy,
+        # TASK-912 AC#1: computed from `rows` -- the full pre-cap set --
+        # so a marker on a row hidden by collapse or capping is never lost.
+        run_marker=_most_urgent_run_marker(rows),
+        # TASK-912 review fix round 1: mirrors the group fix exactly -- same
+        # helper, same `rows[group_row_limit:]` slice source `_visible_rows`
+        # uses, computed unconditionally regardless of collapse state.
+        capped_run_marker=_capped_run_marker(rows, group_row_limit),
     )
+
+
+# PA-T8 review fix round 1 (IMPORTANT 2): urgency order for the single
+# glyph a collapsed workspace group's header borrows from its hidden rows.
+# A kept-as-glyph-strings table (not `ConsoleRunMarker`) so this module
+# stays free of a Chat-layer model import -- `run_marker` is threaded as an
+# already-resolved string end to end (see `ConsoleConversationBrowserRow.
+# run_marker`'s docstring), so the glyph strings are the only vocabulary
+# this layer needs.
+_RUN_MARKER_URGENCY = {"◆": 0, "●": 1, "✗": 2, "✓": 3}
+
+
+class RunMarkerBearer(Protocol):
+    """Structural type for anything exposing a resolved ``run_marker`` glyph.
+
+    TASK-912 review fix round 1 (MINOR): `_most_urgent_run_marker` is called
+    both over input/browser rows AND over `ConsoleConversationBrowserGroup`
+    (the section-level aggregate borrows each group's already-computed
+    `run_marker` instead of re-walking every row) -- a `rows: Iterable[
+    ConsoleConversationBrowserInputRow]` hint stopped matching the second
+    call site. This Protocol names the actual constraint (a plain
+    `.run_marker: str` attribute) instead of an artificial union of the
+    two-or-more concrete types that happen to satisfy it today.
+
+    Rider (Qodo finding 1, TASK-1050): renamed from ``_RunMarkerBearer`` --
+    a leading underscore on a class name is not PascalCase.
+    """
+
+    run_marker: str
+
+
+def _most_urgent_run_marker(rows: Iterable[RunMarkerBearer]) -> str:
+    """Return the single most-urgent non-empty ``run_marker`` glyph among ``rows``.
+
+    Urgency (most to least): NEEDS_APPROVAL ("◆") > RUNNING ("●") >
+    FINISHED_FAILED ("✗") > FINISHED_OK ("✓") -- a human decision blocked on
+    approval outranks "still working", which outranks a finished outcome,
+    and a failure outranks a plain success. Returns ``""`` when nothing in
+    ``rows`` carries a marker. ``rows`` may be input rows, browser rows, or
+    `ConsoleConversationBrowserGroup`s -- anything with a `.run_marker: str`.
+    """
+    markers = {str(row.run_marker or "").strip() for row in rows}
+    markers.discard("")
+    if not markers:
+        return ""
+    return min(markers, key=lambda glyph: _RUN_MARKER_URGENCY.get(glyph, 99))
+
+
+def _capped_run_marker(
+    rows: tuple[ConsoleConversationBrowserInputRow, ...], group_row_limit: int
+) -> str:
+    """Return the most-urgent ``run_marker`` among rows beyond the row cap.
+
+    TASK-912 AC#2: unlike `_most_urgent_run_marker` applied to a full row
+    set (the aggregate an already-collapsed header borrows), this looks only
+    at the rows an EXPANDED group/section's cap still hides -- a visible
+    marked row already shows its own glyph and must not also echo on the
+    header. ``rows[group_row_limit:]`` is the same slice source
+    `_visible_rows` uses to decide what is hidden, so the two can never
+    disagree about which rows are "capped out". Same urgency table via the
+    shared `_most_urgent_run_marker`, so ordering can never disagree
+    between the two call sites either.
+    """
+    return _most_urgent_run_marker(rows[group_row_limit:])
 
 
 def _build_workspace_groups(
@@ -492,6 +696,17 @@ def _build_workspace_groups(
                 hidden_count=hidden_count,
                 preference_collapsed=preference_collapsed,
                 empty_copy="No workspace conversations.",
+                # IMPORTANT 2: computed from `group_rows` -- the FULL row
+                # set, before `_visible_rows` empties it out for a
+                # collapsed group -- so a marker on a hidden row is never
+                # lost.
+                run_marker=_most_urgent_run_marker(group_rows),
+                # TASK-912 AC#2: computed from the same FULL `group_rows`
+                # regardless of collapse state -- cheap, and it is the
+                # rendering layer's job to pick which of `run_marker` /
+                # `capped_run_marker` applies (collapsed vs expanded-and-
+                # capped), same split as `run_marker` itself.
+                capped_run_marker=_capped_run_marker(group_rows, group_row_limit),
             )
         )
     return tuple(browser_groups)
@@ -619,20 +834,45 @@ def _selected_summary(rows: tuple[ConsoleConversationBrowserInputRow, ...]) -> s
     return selected.title or selected.workspace_label
 
 
+def _capped_hidden_count(
+    sections: tuple[ConsoleConversationBrowserSection, ...],
+) -> int:
+    """Return the rows hidden by the per-group cap in the current render.
+
+    TASK-354: excludes collapsed sections — their rows are hidden by an explicit
+    user collapse (reversible by expanding the section, which the toggle in the
+    section header invites), not by the silent cap, so they are not "silently"
+    lost and must not inflate the disclosure. A non-collapsed section's
+    ``hidden_count`` is pure cap overflow (``_visible_rows`` reports 0 for
+    collapsed groups), so summing it across expanded sections yields exactly the
+    silently-dropped total.
+    """
+    return sum(
+        section.hidden_count for section in sections if not section.collapsed
+    )
+
+
 def _build_status_copy(
     *,
     query_active: bool,
     total_count: int,
     displayed_count: int,
+    capped_hidden_count: int = 0,
 ) -> str:
-    if not query_active:
-        return ""
-    match_label = "match" if total_count == 1 else "matches"
-    status = f"{total_count} {match_label}"
-    shown_count = min(total_count, displayed_count)
-    if total_count > shown_count:
-        status = f"{status}. Showing {shown_count} of {total_count}"
-    return status
+    if query_active:
+        match_label = "match" if total_count == 1 else "matches"
+        status = f"{total_count} {match_label}"
+        shown_count = min(total_count, displayed_count)
+        if total_count > shown_count:
+            status = f"{status}. Showing {shown_count} of {total_count}"
+        return status
+    # TASK-354: with no search active the per-group cap can silently drop the
+    # oldest conversations, so they read as deleted. Disclose the count and point
+    # at the search that reaches them (Ctrl+K fuzzy-finds capped rows).
+    if capped_hidden_count > 0:
+        row_label = "conversation" if capped_hidden_count == 1 else "conversations"
+        return f"{capped_hidden_count} more {row_label} — search with Ctrl+K"
+    return ""
 
 
 def _displayed_row_count(

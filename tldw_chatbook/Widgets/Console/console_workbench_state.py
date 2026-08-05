@@ -20,8 +20,9 @@ def build_console_workbench_state(
     provider_action_label: str = "Open Settings",
     can_send: bool = False,
     can_stop: bool = False,
-    can_save_chatbook: bool = False,
     density: str = "normal",
+    run_active: bool = False,
+    ephemeral: bool = False,
 ) -> WorkbenchState:
     """Return a shared Workbench state snapshot for Console.
 
@@ -38,8 +39,12 @@ def build_console_workbench_state(
             call sites do not need to change.
         can_send: Whether the visible composer draft can be sent.
         can_stop: Whether an active generation can be stopped.
-        can_save_chatbook: Whether the current session can be saved as a Chatbook.
         density: Requested Workbench density, currently ``normal`` or ``compact``.
+        ephemeral: Whether the active session is temporary. Retained for
+            callers even though no top action reads it today: Save Chatbook
+            (the last consumer) left this strip for the ☰ composer menu and
+            the Inspector's Artifacts row, which carry their own
+            temporary-chat block.
 
     Returns:
         Immutable shared Workbench state used by Console widgets.
@@ -49,6 +54,11 @@ def build_console_workbench_state(
     provider_status = "blocked" if blocker else "ready"
     send_available = can_send and not blocker
 
+    # Save Chatbook is deliberately absent here: as a top-strip button it
+    # was disabled at rest for most sessions (no artifact yet), spending a
+    # always-visible slot on an almost-always-inert control. The action
+    # stays reachable from the ☰ composer menu and the Inspector's
+    # Artifacts row, both of which carry availability copy.
     actions = (
         WorkbenchAction(
             id="new-tab",
@@ -69,12 +79,6 @@ def build_console_workbench_state(
             id="run-library-rag",
             label="Run Library RAG",
             tooltip="Search Library evidence before sending",
-        ),
-        WorkbenchAction(
-            id="save-chatbook",
-            label="Save Chatbook",
-            tooltip="Save this run as a Chatbook",
-            disabled=not can_save_chatbook,
         ),
         WorkbenchAction(
             id="send",
@@ -107,7 +111,7 @@ def build_console_workbench_state(
             label=control_state.model_label,
             status=provider_status,
         ),
-        WorkbenchMode(id="persona", label=control_state.persona_label),
+        WorkbenchMode(id="assistant", label=control_state.assistant_label),
         WorkbenchMode(id="rag", label=control_state.rag_label),
         WorkbenchMode(id="sources", label=control_state.sources_label),
         WorkbenchMode(id="tools", label=control_state.tools_label),
@@ -124,8 +128,10 @@ def build_console_workbench_state(
         density=workbench_density,
         header=WorkbenchHeaderState(
             title="Console",
-            subtitle="Chat, source handoffs, live runs, and control actions.",
-            status="blocked" if blocker else "ready",
+            subtitle="— Chat, source handoffs, live runs, and control actions.",
+            # TASK-347: a live generation must not read "Ready". A run only
+            # runs once past the blocker gate, so running takes precedence.
+            status="running" if run_active else ("blocked" if blocker else "ready"),
             density=workbench_density,
         ),
         modes=modes,

@@ -85,6 +85,39 @@ async def test_guardrail_modal_cancel(sample_warnings, sample_counts):
 
 
 @pytest.mark.asyncio
+async def test_guardrail_modal_escape_dismisses(sample_warnings, sample_counts):
+    """TASK-596 Task 7: BINDINGS used ``dismiss(false)`` (lowercase) --
+
+    ``textual.actions.parse`` runs ``ast.literal_eval`` on the action's
+    argument text, and lowercase ``false`` is not a Python literal, so
+    pressing Escape raised ``ActionError: unable to parse 'false' in
+    action 'dismiss(false)'`` instead of ever dismissing the modal.
+    Confirmed directly against ``textual.actions.parse`` before fixing it
+    to ``dismiss(False)``. This test exercises the real key binding
+    through ``pilot.press`` -- not the mapped Python callable directly --
+    so it would have caught the bug: before the fix, this raises instead
+    of reaching the ``assert``.
+
+    Args:
+        sample_warnings: Fixture; two representative guardrail warnings
+            (PDF processing, OCR extraction) the modal renders.
+        sample_counts: Fixture; per-feature affected-file counts shown
+            alongside each warning.
+    """
+    app = GuardrailApp()
+    async with app.run_test() as pilot:
+        captured: list[bool] = []
+        modal = IngestGuardrailModal(sample_warnings, sample_counts)
+        await app.push_screen(modal, lambda result: captured.append(result))
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert captured == [False]
+
+
+@pytest.mark.asyncio
 async def test_guardrail_modal_copy_command(sample_warnings, sample_counts):
     app = GuardrailApp()
     async with app.run_test() as pilot:
@@ -148,6 +181,10 @@ def _minimal_library_screen() -> LibraryScreen:
     """Return a LibraryScreen instance without mounting the full UI."""
     screen = object.__new__(LibraryScreen)
     screen._library_ingest_form = LibraryIngestFormState()
+    # Set by ``__init__``, which this shortcut bypasses; submit cancels any
+    # in-flight pre-flight so a late result cannot repopulate the summary it
+    # just cleared.
+    screen._library_ingest_preflight_worker = None
     screen._notify_library_ingest_warning = MagicMock()
     screen.refresh = MagicMock()
     screen.app_instance = MagicMock()
@@ -239,3 +276,32 @@ def test_submit_without_warnings_calls_submit(tmp_path: Path):
     screen.app_instance.submit_library_ingest_job.assert_called_once()
     call_kwargs = screen.app_instance.submit_library_ingest_job.call_args.kwargs
     assert call_kwargs["source_path"] == str(txt)
+
+
+def test_submit_clears_the_stale_preflight_summary(tmp_path: Path):
+    """Submitting must not leave the previous file's summary on screen.
+
+    The path and title clear on submit, but the pre-flight result did not, so
+    the form simultaneously said "Enter a file path to start." and "1 plain
+    text file - 333 B" for the file already submitted, which reads as though
+    a file is still staged (task-665).
+    """
+    txt = tmp_path / "file.txt"
+    txt.write_text("hello")
+
+    screen = _minimal_library_screen()
+    form = screen._library_ingest_form
+    form.path = str(txt)
+    form.title = "Some title"
+    form.preflight = _empty_preflight(
+        type_groups={"generic": [str(txt)]}, total_files=1
+    )
+
+    mock_app = MagicMock()
+    with patch.object(LibraryScreen, "app", new_callable=lambda: property(lambda self: mock_app)):
+        screen._submit_library_ingest_form()
+
+    assert form.path == ""
+    assert form.title == ""
+    assert form.preflight is None, "stale pre-flight summary survived the submit"
+    assert form.preflight_checking is False

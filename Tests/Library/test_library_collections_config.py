@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,7 @@ def test_library_collections_custom_db_path_is_validated(
         lambda section, key, default=None: str(safe_path),
     )
 
-    assert config.get_library_collections_db_path() == safe_path.resolve()
+    assert config.get_library_collections_db_path() == Path(os.path.abspath(safe_path))
 
 
 def test_library_collections_custom_db_path_rejects_dangerous_input(

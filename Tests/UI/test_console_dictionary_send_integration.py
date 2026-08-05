@@ -52,7 +52,7 @@ class _CapturingGateway:
 
         return _R()
 
-    async def stream_chat(self, _resolution, provider_messages):
+    async def stream_chat(self, _resolution, provider_messages, **kwargs):
         self.captured = [dict(m) for m in provider_messages]
         yield "ok"
 
@@ -156,16 +156,22 @@ async def test_native_send_applies_conversation_dictionary_agent_branch(dictiona
             session_system_prompt,
             agent_messages,
             should_cancel,
+            provider_stream_signals=None,
             supersede_previous=False,
             mcp_provider=None,
+            builtin_gate=None,
             review_tool_calls=None,
+            turn_skill_bindings=(),
+            turn_bundle_block="",
+            request_skill_install_confirm=None,
+            request_skill_script_confirm=None,
         ):
             captured["agent_messages"] = [dict(m) for m in agent_messages]
             from tldw_chatbook.Agents.agent_models import RunOutcome, RUN_DONE
 
             store = screen._ensure_console_chat_store()
             store.append_stream_chunk(assistant_message_id, "ok")
-            return RunOutcome(status=RUN_DONE, steps=[])
+            return "run-test", RunOutcome(status=RUN_DONE, steps=[])
 
         class _Bridge:
             run_reply = staticmethod(_fake_run_reply)

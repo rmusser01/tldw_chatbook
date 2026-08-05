@@ -34,6 +34,7 @@ from textual.reactive import reactive
 from loguru import logger
 
 from .BaseWizard import WizardContainer, WizardStep, WizardStepConfig, WizardScreen
+from ...Chatbooks.database_paths import get_chatbook_database_paths
 from ...Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
 from ...Chatbooks.chatbook_models import ChatbookManifest, ContentType
 from ...Chatbooks.conflict_resolver import ConflictResolution
@@ -207,31 +208,7 @@ class PreviewValidationStep(WizardStep):
 
         try:
             # Create importer
-            db_config = self.wizard.app_instance.config_data.get("database", {})
-            db_paths = {
-                "ChaChaNotes": str(
-                    Path(
-                        db_config.get(
-                            "chachanotes_db_path",
-                            "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                        )
-                    ).expanduser()
-                ),
-                "Prompts": str(
-                    Path(
-                        db_config.get(
-                            "prompts_db_path", "~/.local/share/tldw_cli/tldw_prompts.db"
-                        )
-                    ).expanduser()
-                ),
-                "Media": str(
-                    Path(
-                        db_config.get(
-                            "media_db_path", "~/.local/share/tldw_cli/media_db_v2.db"
-                        )
-                    ).expanduser()
-                ),
-            }
+            db_paths = get_chatbook_database_paths()
 
             importer = ChatbookImporter(db_paths)
 
@@ -308,6 +285,33 @@ class PreviewValidationStep(WizardStep):
         if type_counts.get(ContentType.PROMPT):
             root.add(f"💡 Prompts ({type_counts[ContentType.PROMPT]})")
 
+        if type_counts.get(ContentType.KEPT_BRIEFING):
+            root.add(
+                f"📰 Kept Briefings ({type_counts[ContentType.KEPT_BRIEFING]})"
+            )
+
+    @staticmethod
+    def _expected_content_total(manifest: ChatbookManifest) -> int:
+        """Sum of the manifest's per-type statistics.
+
+        Compared against `len(manifest.content_items)` in `_run_validation`
+        to flag a stats/content-items mismatch. Every content type the
+        manifest tracks a total for must be included here -- a chatbook
+        containing only kept briefings (task-1870's own happy path) used
+        to sum to 0 while `content_items` held 1, producing a false
+        "Statistics mismatch" warning (task-1870 fix-wave F2). Pulled out
+        as its own method so this arithmetic can be tested without
+        mounting the wizard step.
+        """
+        return (
+            manifest.total_conversations
+            + manifest.total_notes
+            + manifest.total_characters
+            + manifest.total_media_items
+            + manifest.total_prompts
+            + manifest.total_kept_briefings
+        )
+
     def _run_validation(self) -> None:
         """Run validation checks."""
         validation_list = self.query_one("#validation-list", Container)
@@ -341,12 +345,7 @@ class PreviewValidationStep(WizardStep):
             warnings.append("⚠️ No content items found in chatbook")
 
         # Check statistics match
-        expected_total = (
-            self.manifest.total_conversations
-            + self.manifest.total_notes
-            + self.manifest.total_characters
-            + self.manifest.total_media_items
-        )
+        expected_total = self._expected_content_total(self.manifest)
         actual_total = len(self.manifest.content_items)
 
         if expected_total == actual_total:
@@ -885,31 +884,7 @@ class ImportProgressStep(WizardStep):
                     await close_server_chatbook_service_lease(lease)
 
             # Create importer
-            db_config = self.wizard.app_instance.config_data.get("database", {})
-            db_paths = {
-                "ChaChaNotes": str(
-                    Path(
-                        db_config.get(
-                            "chachanotes_db_path",
-                            "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                        )
-                    ).expanduser()
-                ),
-                "Prompts": str(
-                    Path(
-                        db_config.get(
-                            "prompts_db_path", "~/.local/share/tldw_cli/tldw_prompts.db"
-                        )
-                    ).expanduser()
-                ),
-                "Media": str(
-                    Path(
-                        db_config.get(
-                            "media_db_path", "~/.local/share/tldw_cli/media_db_v2.db"
-                        )
-                    ).expanduser()
-                ),
-            }
+            db_paths = get_chatbook_database_paths()
 
             importer = ChatbookImporter(db_paths)
 

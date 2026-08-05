@@ -11,12 +11,14 @@ from textual import on
 from textual.app import ComposeResult
 from textual.color import Color
 from textual.containers import Horizontal, Vertical
+from textual.css.query import QueryError
 from textual.events import Click, DescendantFocus
 from textual.message import Message
 from textual.reactive import reactive
 from textual.theme import Theme
 from textual.widgets import Button, Input, Static, Switch, Tree
 
+from .settings_splash_screen_viewer import switch_state_label
 from ..css.Themes.themes import ALL_THEMES, create_theme_from_dict
 from ..Utils.path_validation import validate_filename
 
@@ -34,7 +36,12 @@ class SettingsThemeEditor(Vertical):
     current_theme_name = reactive("textual-dark")
     current_theme_data: reactive[dict[str, str]] = reactive({}, layout=False)
     is_dark_theme = reactive(True)
-    is_modified = reactive(False)
+    # init=False: the init-time watch call would post ThemeModifiedStatus(False)
+    # on every mount, and SettingsScreen recomposes on that reactive -- paired
+    # with the load-time True post below, each recompose mounted an editor
+    # whose posts forced the next recompose (an event-loop-starving storm
+    # that froze the whole app while Theme was open).
+    is_modified = reactive(False, init=False)
 
     BASE_COLORS = [
         "primary",
@@ -62,7 +69,9 @@ class SettingsThemeEditor(Vertical):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.custom_themes_path = Path.home() / ".config" / "tldw_cli" / "themes"
+        from ..config import _get_effective_config_path
+
+        self.custom_themes_path = _get_effective_config_path().parent / "themes"
         self.custom_themes_path.mkdir(parents=True, exist_ok=True)
         self.color_inputs: dict[str, Input] = {}
         self.color_swatches: dict[str, Static] = {}
@@ -94,12 +103,27 @@ class SettingsThemeEditor(Vertical):
         with Horizontal(classes="settings-input-row"):
             yield Static("Dark theme", classes="settings-input-label")
             yield Switch(value=True, id="settings-theme-dark-mode")
+            # task-1582: the bare Switch was an empty rectangle with no
+            # text state -- mirror the Splash Screen switch-word pattern.
+            yield Static(
+                switch_state_label(True),
+                id="settings-theme-dark-mode-state",
+                classes="settings-input-label",
+            )
         with Horizontal(classes="settings-action-row"):
             yield Button("New", id="settings-theme-new", variant="primary")
             yield Button("Clone", id="settings-theme-clone")
             yield Button("Delete", id="settings-theme-delete", variant="error")
             yield Button("Export", id="settings-theme-export")
         yield Tree("Themes", id="settings-theme-tree")
+        # task-1585: the collapsed tree left a large blank region with no
+        # explanation of what fills it.
+        yield Static(
+            "Expand Themes to browse built-in and saved themes; "
+            "New starts a theme from the current palette.",
+            id="settings-theme-tree-hint",
+            classes="settings-detail-row",
+        )
 
     def _compose_palette_section(self) -> ComposeResult:
         yield Static("Color Palette", classes="destination-section")
@@ -149,16 +173,31 @@ class SettingsThemeEditor(Vertical):
                 yield Static("Boost", classes="preview-boost-demo")
 
     def on_mount(self) -> None:
-        """Initialize the theme editor."""
-        for color_name in self.BASE_COLORS:
-            self.color_inputs[color_name] = self.query_one(
-                f"#settings-theme-color-{color_name}", Input
-            )
-            self.color_swatches[color_name] = self.query_one(
-                f"#settings-theme-swatch-{color_name}", Static
-            )
+        """Initialize after composed descendants are mounted."""
+        self.call_after_refresh(self._initialize_editor)
 
-        self.load_theme(self.app.theme)
+    def _initialize_editor(self) -> None:
+        """Bind composed controls and load the active theme."""
+        try:
+            color_inputs = {
+                color_name: self.query_one(f"#settings-theme-color-{color_name}", Input)
+                for color_name in self.BASE_COLORS
+            }
+            color_swatches = {
+                color_name: self.query_one(
+                    f"#settings-theme-swatch-{color_name}", Static
+                )
+                for color_name in self.BASE_COLORS
+            }
+            self.color_inputs = color_inputs
+            self.color_swatches = color_swatches
+            self.load_theme(self.app.theme)
+        except QueryError:
+            # Settings can recompose while this callback is queued. A stale,
+            # detached editor must not fail the replacement screen.
+            self.color_inputs.clear()
+            self.color_swatches.clear()
+            return
 
         if "primary" in self.color_inputs:
             self.color_inputs["primary"].add_class("selected")
@@ -344,9 +383,23 @@ class SettingsThemeEditor(Vertical):
                 self._update_color_swatch(color_name, color_value)
 
     def _update_dark_mode_switch(self) -> None:
-        """Update the dark mode switch."""
+        """Update the dark mode switch and its text-state word."""
         switch = self.query_one("#settings-theme-dark-mode", Switch)
         switch.value = self.is_dark_theme
+        self._update_dark_mode_state_word(self.is_dark_theme)
+
+    def _update_dark_mode_state_word(self, value: bool) -> None:
+        """Sync the On/Off word beside the dark-mode switch.
+
+        Args:
+            value: The switch state the word should describe.
+        """
+        try:
+            self.query_one("#settings-theme-dark-mode-state", Static).update(
+                switch_state_label(value)
+            )
+        except QueryError:
+            pass
 
     def _update_color_swatch(self, color_name: str, color_value: str) -> None:
         """Update a color swatch preview."""
@@ -392,7 +445,13 @@ class SettingsThemeEditor(Vertical):
 
     @on(Input.Changed)
     def on_color_input_changed(self, event: Input.Changed) -> None:
-        """Handle color input changes."""
+        """Handle color input changes.
+
+        Args:
+            event: The Input.Changed event from a color field; events whose
+                value matches the stored theme data are programmatic reloads
+                and do not mark the editor modified.
+        """
         if event.input.id and event.input.id.startswith("settings-theme-color-"):
             color_name = event.input.id[len("settings-theme-color-") :]
             color_value = event.value.strip()
@@ -400,8 +459,13 @@ class SettingsThemeEditor(Vertical):
             if color_value:
                 if self._validate_color_input(color_value):
                     self._update_color_swatch(color_name, color_value)
-                    self.current_theme_data[color_name] = color_value
-                    self.is_modified = True
+                    # load_theme sets current_theme_data before writing the
+                    # Input values, so the Changed events it queues arrive
+                    # carrying values equal to the stored ones: a programmatic
+                    # reload, not a user edit.
+                    if self.current_theme_data.get(color_name) != color_value:
+                        self.current_theme_data[color_name] = color_value
+                        self.is_modified = True
                     event.input.remove_class("invalid-color")
                 else:
                     event.input.add_class("invalid-color")
@@ -409,7 +473,18 @@ class SettingsThemeEditor(Vertical):
 
     @on(Switch.Changed, "#settings-theme-dark-mode")
     def on_dark_mode_changed(self, event: Switch.Changed) -> None:
-        """Handle dark mode switch changes."""
+        """Handle dark mode switch changes.
+
+        Args:
+            event: The Switch.Changed event; an event whose value already
+                matches the loaded theme's dark flag is a programmatic sync
+                and does not mark the editor modified.
+        """
+        self._update_dark_mode_state_word(event.value)
+        if event.value == self.is_dark_theme:
+            # _update_dark_mode_switch syncing the widget to the loaded
+            # theme -- not a user edit.
+            return
         self.is_dark_theme = event.value
         self.is_modified = True
 
@@ -644,20 +719,24 @@ class SettingsThemeEditor(Vertical):
 
     def _generate_theme_from_primary(self, primary: Color) -> dict[str, str]:
         """Generate a complete theme based on a primary color."""
-        h, s, l = primary.hsl
+        hue, saturation, lightness = primary.hsl
 
         return {
             "primary": primary.hex,
-            "secondary": self._adjust_color(h, s * 0.8, l * 0.8),
-            "accent": self._adjust_color((h + 180) % 360, s, l),
+            "secondary": self._adjust_color(
+                hue, saturation * 0.8, lightness * 0.8
+            ),
+            "accent": self._adjust_color(
+                (hue + 180) % 360, saturation, lightness
+            ),
             "background": self._adjust_color(
-                h, s * 0.1, 0.08 if self.is_dark_theme else 0.95
+                hue, saturation * 0.1, 0.08 if self.is_dark_theme else 0.95
             ),
             "surface": self._adjust_color(
-                h, s * 0.1, 0.12 if self.is_dark_theme else 0.92
+                hue, saturation * 0.1, 0.12 if self.is_dark_theme else 0.92
             ),
             "panel": self._adjust_color(
-                h, s * 0.1, 0.10 if self.is_dark_theme else 0.94
+                hue, saturation * 0.1, 0.10 if self.is_dark_theme else 0.94
             ),
             "foreground": "#FFFFFF" if self.is_dark_theme else "#000000",
             "success": self._adjust_color(120, 0.7, 0.4),
@@ -665,26 +744,28 @@ class SettingsThemeEditor(Vertical):
             "error": self._adjust_color(0, 0.8, 0.5),
         }
 
-    def _adjust_color(self, h: float, s: float, l: float) -> str:
+    def _adjust_color(
+        self, hue: float, saturation: float, lightness: float
+    ) -> str:
         """Create a color from HSL values."""
         try:
-            h = h % 360
-            s = max(0, min(1, s))
-            l = max(0, min(1, l))
+            hue = hue % 360
+            saturation = max(0, min(1, saturation))
+            lightness = max(0, min(1, lightness))
 
-            c = (1 - abs(2 * l - 1)) * s
-            x = c * (1 - abs((h / 60) % 2 - 1))
-            m = l - c / 2
+            c = (1 - abs(2 * lightness - 1)) * saturation
+            x = c * (1 - abs((hue / 60) % 2 - 1))
+            m = lightness - c / 2
 
-            if h < 60:
+            if hue < 60:
                 r, g, b = c, x, 0
-            elif h < 120:
+            elif hue < 120:
                 r, g, b = x, c, 0
-            elif h < 180:
+            elif hue < 180:
                 r, g, b = 0, c, x
-            elif h < 240:
+            elif hue < 240:
                 r, g, b = 0, x, c
-            elif h < 300:
+            elif hue < 300:
                 r, g, b = x, 0, c
             else:
                 r, g, b = c, 0, x

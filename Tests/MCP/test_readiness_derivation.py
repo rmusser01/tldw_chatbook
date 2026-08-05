@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from tldw_chatbook.MCP.readiness import (
     BUILTIN_SERVER_KEY,
+    STATE_GLYPHS,
     HubAction,
     ReadinessSnapshot,
     ReadinessState,
@@ -77,7 +78,7 @@ def test_local_profile_connected_with_snapshot_is_ready():
     snap = local_profile_readiness(record, environ={})
     assert snap.state is ReadinessState.READY
     assert snap.reasons == ()
-    assert snap.auth_display == "none"
+    assert snap.auth_display == "—"
 
 
 class _Target:
@@ -129,6 +130,44 @@ def test_server_external_record_passthrough_and_fallback():
     bare = server_external_record_readiness({"name": "Mystery"}, server_id="main")
     assert bare.primary_reason is ReasonCode.DISCOVERY_NOT_RUN
     assert "not reported" in bare.message.lower()
+
+
+def test_server_external_record_resource_prompt_counts_follow_tool_count_rules():
+    """Task 5 (MCP Hub Phase 6): resource_count/prompt_count are derived the
+    same way as tool_count -- reported count wins, else the length of a raw
+    list, else None (unreported, rendered as "—" by the servers-mode detail
+    body -- never a fake zero)."""
+    reported = server_external_record_readiness(
+        {"server_id": "s1", "name": "S1", "resource_count": 3, "prompt_count": 0},
+        server_id="main",
+    )
+    assert reported.resource_count == 3
+    assert reported.prompt_count == 0
+
+    derived = server_external_record_readiness(
+        {
+            "server_id": "s2",
+            "name": "S2",
+            "resources": [{"uri": "a"}, {"uri": "b"}],
+            "prompts": [{"name": "p"}],
+        },
+        server_id="main",
+    )
+    assert derived.resource_count == 2
+    assert derived.prompt_count == 1
+
+    unreported = server_external_record_readiness(
+        {"server_id": "s3", "name": "S3"}, server_id="main"
+    )
+    assert unreported.resource_count is None
+    assert unreported.prompt_count is None
+
+    malformed = server_external_record_readiness(
+        {"server_id": "s4", "name": "S4", "resource_count": "many", "prompt_count": 2.5},
+        server_id="main",
+    )
+    assert malformed.resource_count is None
+    assert malformed.prompt_count is None
 
 
 def test_server_external_record_display_state_without_reason_codes_is_trusted():
@@ -207,9 +246,29 @@ def test_builtin_readiness():
     assert on.server_key == BUILTIN_SERVER_KEY
     assert on.state is ReadinessState.READY
     assert on.transport == "stdio"
+    # F-059: one empty-cell placeholder everywhere -- "—", not "none".
+    assert on.auth_display == "—"
     off = builtin_readiness(enabled=False)
-    assert off.state is ReadinessState.NEEDS_SETUP
+    # task-2239: off-by-choice is its own muted display state, not the
+    # NEEDS_SETUP alarm vocabulary -- the reason tuple is unchanged so the
+    # is_off_opt_in() fallback and allowed-action derivation still work.
+    assert off.state is ReadinessState.OFF_OPT_IN
     assert off.primary_reason is ReasonCode.NOT_CONFIGURED
+
+
+def test_builtin_disabled_message_is_plain_and_keeps_technical_detail():
+    """F-050: the disabled built-in's one-line message is short, plain
+    language -- no config-file syntax -- so the Servers-mode callout
+    ("{glyph} {label}: {message}") renders fully at 100 cols. The
+    config-syntax detail stays available under `detail["technical_detail"]`
+    for the callout's tooltip."""
+    off = builtin_readiness(enabled=False)
+    assert "[mcp]" not in off.message
+    assert "=" not in off.message
+    assert off.message == "Turned off — open to enable."
+    callout_line = f"{STATE_GLYPHS[off.state]} {off.label}: {off.message}"
+    assert len(callout_line) <= 98
+    assert "[mcp].enabled = false" in str(off.detail.get("technical_detail"))
 
 
 def test_runtime_error_drives_needs_attention_with_stored_message():
@@ -267,9 +326,12 @@ def test_local_profile_auth_display_plural_for_multiple_env_vars():
     assert snap.auth_display == "2 env vars"
 
 
-def test_local_profile_auth_display_none_for_no_env_vars():
+def test_local_profile_auth_display_dash_for_no_env_vars():
+    """F-059: the empty Auth cell uses the same calm "—" placeholder the
+    Tools/Scope columns and `_count_display` already use -- not a second
+    "none" spelling for the same nothing."""
     snap = local_profile_readiness(_local_record(), environ={})
-    assert snap.auth_display == "none"
+    assert snap.auth_display == "—"
 
 
 # -- Task 11: worst_state() for the aggregate status badge -------------------
@@ -299,3 +361,19 @@ def test_worst_state_prioritizes_needs_attention_over_everything_else():
 def test_worst_state_checking_outranks_ready_only():
     snaps = [_raw_snap(ReadinessState.READY), _raw_snap(ReadinessState.CHECKING)]
     assert worst_state(snaps) is ReadinessState.CHECKING
+
+
+def test_worst_state_ignores_off_builtin_opt_in():
+    """F-051: the disabled built-in is an OFF/opt-in state, not a defect --
+    it must not pull the aggregate badge into a warning color on a pristine
+    install. Genuine problems still set the worst state.
+
+    task-2239: the pristine all-off aggregate resolves to the muted
+    OFF_OPT_IN display state rather than READY -- a ready ● glyph in front
+    of the "Built-in server is off …" sentence read as a contradiction."""
+    assert worst_state([builtin_readiness(enabled=False)]) is ReadinessState.OFF_OPT_IN
+    snaps = [builtin_readiness(enabled=False), _raw_snap(ReadinessState.NEEDS_SETUP)]
+    assert worst_state(snaps) is ReadinessState.NEEDS_SETUP
+    # A ready server alongside the off built-in still reads ready overall.
+    ready_mix = [builtin_readiness(enabled=False), _raw_snap(ReadinessState.READY)]
+    assert worst_state(ready_mix) is ReadinessState.READY

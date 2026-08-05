@@ -5,13 +5,15 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Select
+from textual.widgets import Button, Select, Static
 
 import tldw_chatbook
 from tldw_chatbook.MCP.readiness import (
     STATE_CSS_CLASSES,
+    STATE_GLYPHS,
     ReadinessSnapshot,
     ReadinessState,
+    builtin_readiness,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import (
     _MAX_ROW_LABEL,
@@ -169,6 +171,112 @@ async def test_rail_clamps_scope_ref_value_not_in_options_to_no_selection():
         assert ref_select.value is Select.NULL
 
 
+class EmptyRailApp(App):
+    """Zero configured servers (F-060: the rail needs an empty state)."""
+
+    def compose(self) -> ComposeResult:
+        yield MCPRail(
+            source="local",
+            snapshots=[],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+            id="mcp-rail",
+        )
+
+
+class FreshInstallRailApp(App):
+    """task-2243: the fresh-install rail -- exactly one row, the off/opt-in
+    built-in (task-2239's OFF_OPT_IN display state)."""
+
+    def compose(self) -> ComposeResult:
+        yield MCPRail(
+            source="local",
+            snapshots=[builtin_readiness(enabled=False)],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+            id="mcp-rail",
+        )
+
+
+@pytest.mark.asyncio
+async def test_rail_shows_empty_state_at_zero_servers():
+    """F-060: at zero servers the rail says so in plain language and points
+    at the Add-server action instead of rendering a bare 'All servers' row."""
+    app = EmptyRailApp()
+    async with app.run_test():
+        rows = list(app.query("Button.mcp-rail-row"))
+        assert len(rows) == 1  # just "All servers"
+        empty = app.query_one("#mcp-rail-empty", Static)
+        assert "No servers yet" in str(empty.renderable)
+        assert "Add server" in str(empty.renderable)
+
+
+@pytest.mark.asyncio
+async def test_rail_state_legend_decodes_present_states_under_heading():
+    """task-2243: rail rows show glyph+name only, and decoding them used to
+    require the dim bottom-of-canvas Servers-mode legend (which wraps at
+    ~100 cols). A compact legend now sits directly under the "Servers"
+    heading whenever rows exist, listing ONLY the states present among the
+    current rows (derived from STATE_GLYPHS/STATE_LABELS, so it can't
+    drift) plus the ⌂ built-in marker."""
+    app = RailApp()  # builtin (READY) + docs (NEEDS_SETUP)
+    async with app.run_test():
+        legend = app.query_one("#mcp-rail-state-legend", Static)
+        text = str(legend.renderable)
+        assert f"{STATE_GLYPHS[ReadinessState.READY]} ready" in text
+        assert f"{STATE_GLYPHS[ReadinessState.NEEDS_SETUP]} needs setup" in text
+        assert "⌂ built-in" in text
+        # Absent states are not listed -- the line stays short.
+        assert "needs attention" not in text
+        assert "stale" not in text
+        assert "no tools" not in text
+        # ...and it sits under the "Servers" heading, before the rows.
+        ids = [child.id for child in app.query_one(MCPRail).children]
+        assert ids.index("mcp-rail-state-legend") < ids.index(
+            f"{MCP_RAIL_ROW_PREFIX}0"
+        )
+
+
+@pytest.mark.asyncio
+async def test_rail_state_legend_fresh_install_decodes_off_opt_in():
+    """task-2243: the fresh-install rail (one off/opt-in built-in row)
+    decodes its muted ◦ glyph right under the heading -- no bottom-of-
+    canvas legend lookup needed."""
+    app = FreshInstallRailApp()
+    async with app.run_test():
+        legend = app.query_one("#mcp-rail-state-legend", Static)
+        assert str(legend.renderable) == (
+            f"{STATE_GLYPHS[ReadinessState.OFF_OPT_IN]} off (opt-in) · ⌂ built-in"
+        )
+
+
+@pytest.mark.asyncio
+async def test_rail_state_legend_hidden_at_zero_servers():
+    """task-2243: no rows, nothing to decode -- the F-060 empty state
+    stands alone (no legend line)."""
+    app = EmptyRailApp()
+    async with app.run_test():
+        assert not list(app.query("#mcp-rail-state-legend"))
+
+
+@pytest.mark.asyncio
+async def test_disabled_scope_ref_select_explains_why():
+    """F-060: the disabled 'No scope entities' Select carries a tooltip
+    explaining why there is nothing to pick."""
+    app = RailScopeMismatchApp()
+    async with app.run_test():
+        ref_select = app.query_one("#mcp-rail-scope-ref", Select)
+        assert ref_select.disabled
+        assert ref_select.tooltip
+        assert "no scope entities" in ref_select.tooltip.lower()
+
+
 class RailAppWithBundledCSS(App):
     """Mounts MCPRail under `#mcp-hub-rail` (the id the real MCP screen uses) and
     loads the actual bundled stylesheet, so `#mcp-hub-rail Button.mcp-rail-row.is-active`
@@ -311,6 +419,29 @@ async def test_rail_row_carries_state_css_class_and_swaps_on_resync():
         docs_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}2", Button)
         assert STATE_CSS_CLASSES[ReadinessState.NEEDS_ATTENTION] in docs_row.classes
         assert STATE_CSS_CLASSES[ReadinessState.NEEDS_SETUP] not in docs_row.classes
+
+
+# -- Task 1 (MCP Hub Phase 6): semantic state colors ------------------------
+
+
+@pytest.mark.asyncio
+async def test_rail_row_state_class_covers_the_ready_state_too():
+    """Task 1's brief for the rail ("state glyph+word") is already satisfied
+    by Task 11's `STATE_CSS_CLASSES` class on the row Button ITSELF -- a
+    Button is a real widget (unlike a DataTable cell), so it can carry a CSS
+    class that colors its whole rendered label (glyph AND word together),
+    same mechanism `mcp_inspector.py`'s readiness Static uses. This pins
+    down that READY (not just the two "problem" states the pre-existing
+    `test_rail_row_carries_state_css_class_and_swaps_on_resync` covers) also
+    gets its own class -- `STATE_CSS_CLASSES` maps every `ReadinessState`,
+    with no bare/unclassed case.
+    """
+    app = RailApp()
+    async with app.run_test() as pilot:
+        # First snapshot in RailApp's fixture (`builtin:tldw_chatbook`)
+        # defaults to READY -- row index 1 (row 0 is the "All servers" row).
+        ready_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}1", Button)
+        assert STATE_CSS_CLASSES[ReadinessState.READY] in ready_row.classes
 
 
 class AdaptiveCountRailApp(App):
@@ -517,6 +648,137 @@ async def test_source_a_b_a_round_trip_still_dispatches_after_echo_consumed():
         await pilot.pause()
         changed = [e.source for e in app.events if isinstance(e, MCPRail.SourceChanged)]
         assert changed == ["server", "local"]
+
+
+# -- task-637: mouse-capture guard for widget-level (non-screen) recompose --
+# MCPRail.sync_state() drives `self.refresh(recompose=True)` (mcp_rail.py);
+# a capture landing in the deferred-teardown window used to leak exactly
+# like BaseAppScreen's own pre-task-627 bug, one level down: the rail is a
+# plain `Vertical`, not a `BaseAppScreen`, so it never inherited that
+# screen-level guard.
+
+
+@pytest.mark.asyncio
+async def test_sync_state_recompose_releases_a_capture_that_lands_in_the_deferred_teardown_window():
+    """A capture that lands after ``sync_state()`` schedules the rail's
+    recompose (``self.refresh(recompose=True)``) but before the deferred
+    teardown actually runs must not survive it.
+
+    ``Widget.refresh(recompose=True)`` only *schedules* the real teardown via
+    ``self.call_next(self._check_recompose)`` -- it runs on a LATER
+    message-loop iteration, not synchronously. This simulates a MouseDown
+    capturing a rail descendant (the source ``Select``) landing in that same
+    window, the same way a real one arriving over a laggy transport would.
+    Without ``RecomposeCaptureGuard`` (task-637), ``App.mouse_captured`` is
+    left referencing the removed ``Select`` forever, and every mouse click
+    anywhere in the app -- not just inside the rail -- is silently swallowed
+    from then on (``Screen._forward_event``/``_handle_mouse_move`` both
+    special-case ``if self.app.mouse_captured: ...``).
+    """
+    app = RailApp()
+    async with app.run_test() as pilot:
+        rail = app.query_one(MCPRail)
+        victim = app.query_one("#mcp-rail-source", Select)
+
+        rail.sync_state(
+            source="server",
+            snapshots=[_snap("server:main", "Main Server")],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+        )
+        # Same synchronous stack, no `await` yet: simulate a MouseDown
+        # capturing a widget the just-scheduled (but not yet run) recompose
+        # is about to tear down.
+        pilot.app.capture_mouse(victim)
+        assert pilot.app.mouse_captured is victim, (
+            "test setup didn't actually capture the victim widget"
+        )
+
+        # Let the deferred recompose (and everything else queued) run.
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pilot.app.mouse_captured is None, (
+            "mouse_captured is still referencing a widget MCPRail's "
+            "deferred recompose already tore down -- every mouse click "
+            "anywhere in the app is now silently swallowed (task-637)"
+        )
+
+        # A real click elsewhere in the rail must still be delivered.
+        rail.sync_state(
+            source="server",
+            snapshots=[_snap("server:main", "Main Server")],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+        )
+        await pilot.pause()
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}0")
+        await pilot.pause()
+        selected = [e for e in app.events if isinstance(e, MCPRail.ServerSelected)]
+        assert selected, "rail row click produced no event -- clicks are still swallowed"
+
+
+class RailWithSiblingApp(App):
+    """MCPRail alongside a genuine sibling widget outside its subtree --
+    mirrors the real MCP workbench layout, where the rail is only one part
+    of a larger screen (see ``mcp_workbench.py``)."""
+
+    def compose(self) -> ComposeResult:
+        yield MCPRail(
+            source="local",
+            snapshots=[],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+            id="mcp-rail",
+        )
+        from textual.widgets import Static
+
+        yield Static("sibling content", id="sibling")
+
+
+@pytest.mark.asyncio
+async def test_recompose_does_not_release_a_legitimate_capture_outside_the_rail():
+    """AC3: a still-attached capture that belongs to a widget OUTSIDE the
+    rail's own subtree must survive the rail's recompose untouched.
+
+    A non-screen widget is typically only one part of a larger, otherwise-
+    untouched screen -- unlike ``BaseAppScreen``, whose recompose tears down
+    its ENTIRE content (so any current capture must belong to what's about
+    to be removed), a sibling widget's capture has nothing to do with this
+    rail recomposing and must not be dropped.
+    """
+    app = RailWithSiblingApp()
+    async with app.run_test() as pilot:
+        rail = app.query_one(MCPRail)
+        bystander = app.query_one("#sibling")
+        pilot.app.capture_mouse(bystander)
+        assert pilot.app.mouse_captured is bystander
+
+        rail.sync_state(
+            source="server",
+            snapshots=[_snap("server:main", "Main Server")],
+            selected_server_key=None,
+            scope_options=[("Personal", "personal")],
+            scope_value="personal",
+            scope_ref_options=[],
+            scope_ref_value=None,
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pilot.app.mouse_captured is bystander, (
+            "the rail's own recompose released an unrelated, still-attached "
+            "capture that belongs to a sibling widget (task-637 AC3)"
+        )
 
 
 @pytest.mark.asyncio

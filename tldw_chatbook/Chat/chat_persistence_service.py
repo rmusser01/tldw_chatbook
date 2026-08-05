@@ -1,17 +1,67 @@
 import base64
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+import json
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
 from loguru import logger as _logger
 
+from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
+from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
+from tldw_chatbook.Chat.citation_trace_repository import (
+    CitationPersistenceUnavailable,
+    CitationTraceRepository,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 logger = _logger.bind(module="ChatPersistenceService")
+_ASSISTANT_AUTHORITY_UNSET = cast(Optional[str], object())
 
 
 class ChatPersistenceService:
-    def __init__(self, db: CharactersRAGDB, workspace_registry: Any | None = None):
+    def __init__(
+        self,
+        db: CharactersRAGDB,
+        workspace_registry: Any | None = None,
+        citation_repository: CitationTraceRepository | None = None,
+    ):
         self.db = db
         self.workspace_registry = workspace_registry
+        self.citation_repository = citation_repository
+
+    @property
+    def canonical_citation_writes_ready(self) -> bool:
+        """Return whether this service can persist canonical local citations.
+
+        Returns:
+            True when the configured citation repository shares this service's
+            database and is ready for local canonical writes.
+        """
+
+        repository = self.citation_repository
+        return bool(
+            repository is not None
+            and repository.db is self.db
+            and repository.local_citation_writes_ready
+        )
+
+    def get_message_version(self, message_id: str) -> int | None:
+        """Return the current positive version for one non-deleted message.
+
+        Args:
+            message_id: Persisted Chat message identifier.
+
+        Returns:
+            The exact positive integer row version, or ``None`` when the row
+            is missing, deleted, or carries an untrustworthy version value.
+        """
+        if type(message_id) is not str or not message_id:
+            return None
+        message = self.db.get_message_by_id(message_id)
+        if message is None or message.get("deleted"):
+            return None
+        version = message.get("version")
+        if type(version) is not int or version < 1:
+            return None
+        return version
 
     @staticmethod
     def derive_conversation_title(
@@ -46,6 +96,7 @@ class ChatPersistenceService:
         character_name: Optional[str] = None,
         assistant_kind: Optional[str] = None,
         assistant_id: Optional[str] = None,
+        assistant_authority_id: Optional[str] = _ASSISTANT_AUTHORITY_UNSET,
         persona_memory_mode: Optional[str] = None,
         runtime_backend: Optional[str] = None,
         discovery_owner: Optional[str] = None,
@@ -55,6 +106,42 @@ class ChatPersistenceService:
         conversation_title: Optional[str] = None,
         system_prompt: Optional[str] = None,
     ) -> str:
+        """Create a conversation and link it to a workspace when requested.
+
+        Args:
+            character_id: Local character identifier associated with the conversation.
+            character_name: Display name used to derive a title when no explicit
+                title is supplied.
+            assistant_kind: Kind of assistant that owns the conversation.
+            assistant_id: Stable assistant identifier used for title derivation.
+            assistant_authority_id: Provenance authority identifier. Omitting it
+                leaves the field absent so eligible DB-owned local inference may
+                apply; passing ``None`` explicitly preserves unproven authority.
+            persona_memory_mode: Memory behavior for a persona conversation.
+            runtime_backend: Backend selected to run the assistant.
+            discovery_owner: Owner of the assistant discovery record.
+            discovery_entity_id: Discovery record identifier for the assistant.
+            scope_type: Conversation scope. Only an explicit normalized
+                ``scope_type="workspace"`` validates and links workspace
+                membership here.
+            workspace_id: Candidate workspace identifier forwarded to the
+                database and resolved for an explicit workspace scope.
+                Non-workspace/global persistence is normalized by the database
+                and may clear it; omitting scope does not create a link.
+            conversation_title: Explicit title, which takes precedence when
+                truthy; otherwise the character or assistant-derived title is used.
+            system_prompt: Initial system prompt persisted with the conversation.
+
+        Returns:
+            Persisted conversation ID.
+
+        Raises:
+            ValueError: If workspace scope is invalid or its workspace cannot be
+                resolved.
+            Exception: If workspace membership linkage fails after creation. A
+                best-effort soft-delete is attempted; a false result can leave
+                the row, and a cleanup exception may replace the link error.
+        """
         safe_workspace_id = self._require_workspace_scope(
             scope_type=scope_type,
             workspace_id=workspace_id,
@@ -65,24 +152,25 @@ class ChatPersistenceService:
             assistant_id=assistant_id,
             explicit_title=conversation_title,
         )
-        conversation_id = self.db.add_conversation(
-            {
-                "character_id": character_id,
-                "assistant_kind": assistant_kind,
-                "assistant_id": assistant_id,
-                "persona_memory_mode": persona_memory_mode,
-                "runtime_backend": runtime_backend,
-                "discovery_owner": discovery_owner,
-                "discovery_entity_id": discovery_entity_id,
-                "scope_type": scope_type,
-                "workspace_id": safe_workspace_id
-                if safe_workspace_id is not None
-                else workspace_id,
-                "title": title,
-                "system_prompt": system_prompt,
-                "client_id": self.db.client_id,
-            }
-        )
+        conversation_data = {
+            "character_id": character_id,
+            "assistant_kind": assistant_kind,
+            "assistant_id": assistant_id,
+            "persona_memory_mode": persona_memory_mode,
+            "runtime_backend": runtime_backend,
+            "discovery_owner": discovery_owner,
+            "discovery_entity_id": discovery_entity_id,
+            "scope_type": scope_type,
+            "workspace_id": safe_workspace_id
+            if safe_workspace_id is not None
+            else workspace_id,
+            "title": title,
+            "system_prompt": system_prompt,
+            "client_id": self.db.client_id,
+        }
+        if assistant_authority_id is not _ASSISTANT_AUTHORITY_UNSET:
+            conversation_data["assistant_authority_id"] = assistant_authority_id
+        conversation_id = self.db.add_conversation(conversation_data)
         if safe_workspace_id is not None:
             try:
                 self._link_workspace_conversation(
@@ -220,6 +308,73 @@ class ChatPersistenceService:
             )
         )
 
+    def update_conversation_pinned_prefill(
+        self,
+        *,
+        conversation_id: str,
+        pinned_prefill: str | None,
+    ) -> bool:
+        """Set or clear the pinned response prefill in conversation metadata.
+
+        Merge-safe: re-parses the current ``metadata`` JSON and rewrites only
+        its own key, preserving siblings such as ``active_dictionaries``
+        (mirrors ``LocalChatDictionaryService._write_active_dictionaries``).
+        Optimistic-lock conflicts (``ConflictError``) propagate to the caller.
+
+        Returns:
+            True when the write happened; False when the conversation does
+            not exist.
+        """
+        record = self.db.get_conversation_by_id(str(conversation_id))
+        if record is None:
+            return False
+        try:
+            meta = json.loads(record.get("metadata") or "{}")
+        except (TypeError, ValueError):
+            meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
+        if pinned_prefill:
+            meta[PINNED_PREFILL_METADATA_KEY] = pinned_prefill
+        else:
+            meta.pop(PINNED_PREFILL_METADATA_KEY, None)
+        self.db.update_conversation(
+            str(conversation_id),
+            {"metadata": json.dumps(meta)},
+            expected_version=record["version"],
+        )
+        return True
+
+    def update_conversation_title(
+        self,
+        *,
+        conversation_id: str,
+        title: str,
+    ) -> bool:
+        """Update the persisted title for an existing conversation.
+
+        Args:
+            conversation_id: UUID of the conversation to update.
+            title: New conversation title (already validated non-blank).
+
+        Returns:
+            True if the update was applied.
+
+        Raises:
+            ValueError: If the conversation cannot be found.
+        """
+        current_conversation = self.db.get_conversation_by_id(conversation_id)
+        if not current_conversation:
+            raise ValueError(f"Conversation {conversation_id} not found")
+
+        return bool(
+            self.db.update_conversation(
+                conversation_id,
+                {"title": title},
+                expected_version=current_conversation["version"],
+            )
+        )
+
     def update_message_content(
         self,
         *,
@@ -232,6 +387,7 @@ class ChatPersistenceService:
         update_parent: bool = False,
         update_feedback: bool = False,
         attachments: Optional[Sequence[Mapping[str, Any]]] = None,
+        usage_json: Optional[str] = None,
     ) -> bool:
         """Update a message's content, optionally its parent/feedback, and its images.
 
@@ -281,6 +437,11 @@ class ChatPersistenceService:
                 ``message_attachments`` table (positions >= 1). ``None``
                 leaves all attachments/images untouched by this call except
                 via the legacy ``image_data``/``image_mime_type`` kwargs.
+            usage_json: Optional normalized provider-usage JSON (Console
+                cost ticker). Only included in the row update when not
+                ``None``, so a content-only update (no usage known yet,
+                e.g. a mid-stream edit) never overwrites an already-persisted
+                value with NULL.
 
         Returns:
             True if the row update was applied; False if the underlying
@@ -326,6 +487,20 @@ class ChatPersistenceService:
             update_data["parent_message_id"] = parent_message_id
         if update_feedback:
             update_data["feedback"] = feedback
+        # Only include usage_json when the caller actually has a value to
+        # write -- shared by all three ``self.db.update_message`` call sites
+        # below via this single ``update_data`` dict. Omitting the key (not
+        # writing ``None``) leaves an already-persisted usage value
+        # untouched on a content-only update (e.g. a mid-stream edit before
+        # usage is known).
+        if usage_json is not None:
+            update_data["usage_json"] = usage_json
+
+        citation_repository = self.citation_repository
+        if citation_repository is not None and citation_repository.db is not self.db:
+            raise CitationPersistenceUnavailable(
+                "citation_repository_database_mismatch"
+            )
 
         if attachments is not None:
             extra_rows = [
@@ -338,6 +513,31 @@ class ChatPersistenceService:
                 for row in attachments
                 if int(row["position"]) >= 1
             ]
+        else:
+            extra_rows = []
+
+        if citation_repository is not None:
+            with self.db.transaction() as cursor:
+                result = bool(
+                    self.db.update_message(
+                        message_id,
+                        update_data,
+                        expected_version=current_message["version"],
+                    )
+                )
+                if result and attachments is not None:
+                    self.db.set_message_attachments(message_id, extra_rows)
+                if result:
+                    citation_repository.transition_owner_for_message_update(
+                        cursor,
+                        message_id=message_id,
+                        previous_revision=current_message["version"],
+                        new_revision=current_message["version"] + 1,
+                        new_body=content,
+                    )
+            return result
+
+        if attachments is not None:
             # One atomic unit: inside this outer transaction the nested
             # update_message/set_message_attachments transactions are no-ops,
             # so a failed table write rolls back the row update (content and
@@ -367,6 +567,38 @@ class ChatPersistenceService:
             )
         )
 
+    def update_message_usage(self, *, message_id: str, usage_json: str) -> bool:
+        """Persist a message's normalized usage WITHOUT touching sync metadata.
+
+        Routes to :meth:`CharactersRAGDB.update_message_usage_local`, a
+        direct, version-neutral column write, rather than
+        ``update_message_content``/``self.db.update_message``. The Console
+        cost ticker's ``usage_json`` column is local-only (derived from this
+        device's own provider responses, never part of the sync payload), so
+        going through the general-purpose row updater -- which always bumps
+        ``version``/``last_modified`` -- would trip the ``messages_sync_update``
+        trigger's ``WHEN`` clause on those two columns alone and enqueue a
+        ``sync_log`` row whose payload can never carry the ``usage_json``
+        that actually changed: pure cross-device churn (and a spurious
+        optimistic-lock version bump) for a write with no syncable content.
+
+        Callers should use this ONLY for a usage-only write (e.g. the Console
+        store's stop-path terminal flush, attaching usage after the message's
+        content/version have already been persisted). A normal write where
+        usage rides alongside changed content still belongs on
+        ``update_message_content``, since content changing a version IS a
+        legitimate, syncable change.
+
+        Args:
+            message_id: UUID of the message to update.
+            usage_json: Normalized ``ProviderUsage.to_json()`` payload.
+
+        Returns:
+            True if a non-deleted message with this id was found and
+            updated; False otherwise.
+        """
+        return self.db.update_message_usage_local(message_id, usage_json)
+
     def create_message(
         self,
         *,
@@ -379,6 +611,9 @@ class ChatPersistenceService:
         parent_message_id: Optional[str] = None,
         feedback: Optional[str] = None,
         attachments: Optional[Sequence[Mapping[str, Any]]] = None,
+        generation_metadata: Optional[Sequence[Mapping[str, Any]]] = None,
+        citation_write: SealedCitationWrite | None = None,
+        usage_json: Optional[str] = None,
     ) -> str:
         """Create a new message, optionally with a legacy image or a full attachment list.
 
@@ -422,14 +657,51 @@ class ChatPersistenceService:
                 supplied, this is the sole, authoritative source for both
                 the legacy image columns (position 0) and the
                 ``message_attachments`` table (positions >= 1).
+            generation_metadata: Optional full list of
+                ``message_generation_metadata`` rows (each a mapping with
+                ``position``, ``prompt``, ``negative_prompt``, ``backend``,
+                ``model``, ``seed``, ``style``, ``params_json``) to persist
+                alongside the message. Written via
+                ``CharactersRAGDB.set_message_generation_metadata`` inside
+                the same transaction as the row insert and the attachments
+                write, so a sidecar-write failure rolls back everything
+                (including the message row and any attachments already
+                written this call).
+            citation_write: Optional complete sealed citation aggregate.
+                When present, it is preflighted before the transaction and
+                committed atomically with the message, attachments,
+                generation metadata, and feedback.
+            usage_json: Optional normalized provider-usage JSON (Console
+                cost ticker), written into the row's local-only
+                ``usage_json`` column via ``CharactersRAGDB.add_message``.
 
         Returns:
             The newly created message's id.
 
         Raises:
+            CitationPersistenceUnavailable: If citation persistence is
+                disabled, misconfigured, invalid, or bound to another DB.
             CharactersRAGDBError: For database integrity errors during the
-                insert or the attachment-table write.
+                row insert -- ``CharactersRAGDB.add_message`` wraps
+                ``sqlite3.IntegrityError`` into this explicitly. The
+                attachment-table and generation-metadata sidecar writes
+                (``set_message_attachments``/``set_message_generation_metadata``)
+                run through the plain transaction cursor with no
+                independent wrap, matching ``update_message_content``'s
+                sibling contract for the identical ``set_message_attachments``
+                call -- a raw ``sqlite3.Error`` can propagate from those two
+                writes instead.
         """
+        prepared_citation = None
+        if citation_write is not None:
+            if self.citation_repository is None:
+                raise CitationPersistenceUnavailable("citation_repository_unavailable")
+            if self.citation_repository.db is not self.db:
+                raise CitationPersistenceUnavailable(
+                    "citation_repository_database_mismatch"
+                )
+            prepared_citation = self.citation_repository.prepare_write(citation_write)
+
         # Split addressing: when ``attachments`` is supplied it covers ALL
         # positions (0..N-1) and is authoritative -- position 0 overrides the
         # scalar ``image_data``/``image_mime_type`` kwargs (even overriding
@@ -470,16 +742,63 @@ class ChatPersistenceService:
             "image_data": effective_image_data,
             "image_mime_type": effective_image_mime_type,
             "client_id": self.db.client_id,
+            "usage_json": usage_json,
         }
-        if attachments is not None:
+        if prepared_citation is not None:
+            with self.db.transaction() as cursor:
+                existing_message = (
+                    self.db.get_message_by_id(message_id)
+                    if message_id is not None
+                    else None
+                )
+                if existing_message is not None:
+                    self._verify_citation_message_retry(
+                        existing_message=existing_message,
+                        message_payload=message_payload,
+                        feedback=feedback,
+                        extra_rows=extra_rows,
+                        generation_metadata=generation_metadata,
+                    )
+                    created_message_id = existing_message["id"]
+                else:
+                    created_message_id = self.db.add_message(message_payload)
+                    if attachments is not None:
+                        self.db.set_message_attachments(created_message_id, extra_rows)
+                    if generation_metadata is not None:
+                        self.db.set_message_generation_metadata(
+                            created_message_id, list(generation_metadata)
+                        )
+                    if feedback is not None:
+                        created_message = self.db.get_message_by_id(created_message_id)
+                        self.db.update_message(
+                            created_message_id,
+                            {"feedback": feedback},
+                            expected_version=created_message["version"],
+                        )
+                created_message = self.db.get_message_by_id(created_message_id)
+                self.citation_repository.write_prepared(
+                    cursor,
+                    prepared_citation,
+                    message_id=created_message_id,
+                    message_revision=created_message["version"],
+                    message_body=content,
+                )
+            return created_message_id
+        if attachments is not None or generation_metadata is not None:
             # One atomic unit: inside this outer transaction the nested
-            # add_message/set_message_attachments transactions are no-ops, so
-            # a failed table write rolls the message row back too. The table
-            # write always runs -- an empty list still clears any stale rows
-            # a prior attempt at this same message_id may have left behind.
+            # add_message/set_message_attachments/set_message_generation_metadata
+            # transactions are no-ops, so a failed table write rolls the
+            # message row (and any earlier write in this call) back too. The
+            # attachments write always runs when this branch is taken -- an
+            # empty list still clears any stale rows a prior attempt at this
+            # same message_id may have left behind.
             with self.db.transaction():
                 created_message_id = self.db.add_message(message_payload)
                 self.db.set_message_attachments(created_message_id, extra_rows)
+                if generation_metadata is not None:
+                    self.db.set_message_generation_metadata(
+                        created_message_id, list(generation_metadata)
+                    )
         else:
             created_message_id = self.db.add_message(message_payload)
         if feedback is not None:
@@ -490,6 +809,132 @@ class ChatPersistenceService:
                 expected_version=created_message["version"],
             )
         return created_message_id
+
+    def _verify_citation_message_retry(
+        self,
+        *,
+        existing_message: Mapping[str, Any],
+        message_payload: Mapping[str, Any],
+        feedback: str | None,
+        extra_rows: Sequence[Mapping[str, Any]],
+        generation_metadata: Sequence[Mapping[str, Any]] | None,
+    ) -> None:
+        """Fail closed unless an uncertain retry targets the exact message."""
+
+        expected_fields = {
+            "id": message_payload["id"],
+            "conversation_id": message_payload["conversation_id"],
+            "parent_message_id": message_payload["parent_message_id"],
+            "sender": message_payload["sender"],
+            "content": message_payload["content"],
+            "image_data": message_payload["image_data"],
+            "image_mime_type": message_payload["image_mime_type"],
+            "client_id": message_payload["client_id"],
+            "feedback": feedback,
+        }
+        if any(
+            existing_message.get(field) != expected
+            for field, expected in expected_fields.items()
+        ):
+            raise CitationPersistenceUnavailable("message_identity_conflict")
+        existing_rows = self.db.get_attachments_for_messages(
+            [existing_message["id"]]
+        ).get(existing_message["id"], [])
+
+        def attachment_identity(row: Mapping[str, Any]) -> tuple[Any, ...]:
+            return (
+                int(row["position"]),
+                row["data"],
+                row["mime_type"],
+                row.get("display_name", ""),
+            )
+
+        if tuple(map(attachment_identity, existing_rows)) != tuple(
+            map(attachment_identity, extra_rows)
+        ):
+            raise CitationPersistenceUnavailable("message_identity_conflict")
+
+        existing_generation_metadata = (
+            self.db.get_generation_metadata_for_messages([existing_message["id"]]).get(
+                existing_message["id"], []
+            )
+        )
+
+        def generation_identity(row: Mapping[str, Any]) -> tuple[Any, ...]:
+            return (
+                int(row["position"]),
+                row["prompt"],
+                row.get("negative_prompt", ""),
+                row["backend"],
+                row.get("model"),
+                row.get("seed"),
+                row.get("style"),
+                row.get("params_json", "{}"),
+            )
+
+        if tuple(map(generation_identity, existing_generation_metadata)) != tuple(
+            map(generation_identity, generation_metadata or ())
+        ):
+            raise CitationPersistenceUnavailable("message_identity_conflict")
+
+    def append_message_attachment(
+        self,
+        message_id: str,
+        *,
+        data: bytes,
+        mime_type: str,
+        display_name: str = "",
+        generation_metadata: Optional[Mapping[str, Any]] = None,
+    ) -> int:
+        """Append one new image variant to a message, in place.
+
+        Thin passthrough to
+        ``CharactersRAGDB.append_message_attachment_with_metadata`` -- the
+        narrow, additive counterpart to the full-list
+        ``update_message_content(attachments=...)`` rewrite. Use this when a
+        new variant (e.g. a regenerated image) should be added without
+        risking any existing attachment's bytes.
+
+        Args:
+            message_id: Target message id; must already have a position-0
+                image.
+            data: The new variant's image bytes.
+            mime_type: The new variant's MIME type.
+            display_name: Optional label for the new variant.
+            generation_metadata: Optional generation-metadata fields for the
+                new position.
+
+        Returns:
+            The position assigned to the new variant (>= 1).
+
+        Raises:
+            ValueError: If the message does not exist or has no position-0
+                image.
+        """
+        return self.db.append_message_attachment_with_metadata(
+            message_id,
+            data=data,
+            mime_type=mime_type,
+            display_name=display_name,
+            generation_metadata=generation_metadata,
+        )
+
+    def keep_message_attachment(self, message_id: str, position: int) -> None:
+        """Promote a stored variant to be the message's canonical image.
+
+        Thin passthrough to
+        ``CharactersRAGDB.swap_message_attachment_with_scalar``. Swaps the
+        variant at ``position`` with the message's current position-0 image,
+        byte-identical, touching only those two variants.
+
+        Args:
+            message_id: Target message id.
+            position: The attachment position (>= 1) to promote.
+
+        Raises:
+            ValueError: If ``position < 1`` or no attachment exists there.
+        """
+        self.db.swap_message_attachment_with_scalar(message_id, position)
 
     def get_attachments_for_messages(
         self, message_ids: Sequence[str]
@@ -510,6 +955,25 @@ class ChatPersistenceService:
             extra (position >= 1) attachments are omitted from the result.
         """
         return self.db.get_attachments_for_messages(message_ids)
+
+    def get_generation_metadata_for_messages(
+        self, message_ids: Sequence[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Batch-fetch generation-metadata sidecar rows for messages.
+
+        Passthrough to ``CharactersRAGDB.get_generation_metadata_for_messages``
+        -- feeds ``ConsoleChatStore.hydrate_generation_metadata`` at
+        conversation load (P2a).
+
+        Args:
+            message_ids: Message ids to fetch generation-metadata rows for.
+
+        Returns:
+            A mapping of message id to its position-ordered
+            generation-metadata row dicts; message ids with no sidecar rows
+            are omitted.
+        """
+        return self.db.get_generation_metadata_for_messages(message_ids)
 
     def save_history(
         self,

@@ -11,14 +11,13 @@ This module isolates vLLM-specific logic from the main llm_management_events.py.
 from __future__ import annotations
 
 #
+import functools
 from loguru import logger as _loguru_fallback_logger
 import re
 import shlex
 import subprocess
-import sys
-import time
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List
 
 #
 # Third-party Libraries
@@ -26,6 +25,7 @@ from textual.widgets import Input, RichLog, TextArea, Button
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 #
 # Local Imports
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events import (
@@ -33,6 +33,13 @@ from tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events im
 )
 from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
+from .server_lifecycle import (
+    ServerLaunchClaim,
+    release_server_claim,
+    reserve_server_launch,
+    run_server_subprocess,
+    stop_server_process,
+)
 #
 #
 ########################################################################################################################
@@ -161,7 +168,7 @@ __all__ = [
 
 
 async def handle_vllm_browse_python_button_pressed(
-    app: "TldwCli", event: Button.Pressed
+    window: "LLMManagementWindow", app: "TldwCli", event: Button.Pressed
 ) -> None:
     """Let the user pick the Python interpreter used for vLLM (venv, etc.)."""
 
@@ -174,12 +181,12 @@ async def handle_vllm_browse_python_button_pressed(
             ),
             context="vllm_models",
         ),
-        callback=_make_path_update_callback(app, "vllm-python-path"),
+        callback=_make_path_update_callback(window, app, "vllm-python-path"),
     )
 
 
 async def handle_vllm_browse_model_button_pressed(
-    app: "TldwCli", event: Button.Pressed
+    window: "LLMManagementWindow", app: "TldwCli", event: Button.Pressed
 ) -> None:
     await app.push_screen(
         FileOpen(
@@ -188,7 +195,7 @@ async def handle_vllm_browse_model_button_pressed(
             filters=Filters(("All files", lambda p: True)),
             context="vllm_models",
         ),
-        callback=_make_path_update_callback(app, "vllm-model-path"),
+        callback=_make_path_update_callback(window, app, "vllm-model-path"),
     )
 
 
@@ -198,177 +205,33 @@ async def handle_vllm_browse_model_button_pressed(
 
 
 # Helper to set/clear the process on the app instance from the worker thread
-def _set_vllm_process_on_app(
-    app_instance: "TldwCli", process: Optional[subprocess.Popen]
-):
-    app_instance.vllm_server_process = process
-    if process and hasattr(process, "pid") and process.pid is not None:
-        app_instance.loguru_logger.info(
-            f"Stored vLLM process PID {process.pid} on app instance."
-        )
-    else:
-        app_instance.loguru_logger.info(
-            "Cleared vLLM process from app instance (or process was None)."
-        )
-
-
-async def run_vllm_server_worker(app_instance: "TldwCli", command: List[str]) -> str:
-    logger = getattr(app_instance, "loguru_logger", _loguru_fallback_logger)
-    quoted_command = " ".join(shlex.quote(c) for c in command)
-    logger.info(
-        f"vLLM WORKER (persistent stream) starting with command: {quoted_command}"
+def run_vllm_server_worker(
+    app_instance: "TldwCli",
+    command: List[str],
+    claim: ServerLaunchClaim,
+) -> str:
+    return run_server_subprocess(
+        app_instance,
+        "vllm",
+        command,
+        claim,
+        subprocess,
     )
-
-    process: Optional[subprocess.Popen] = None
-    final_status_message = f"vLLM WORKER: Default status for {quoted_command}"
-    pid_str = "N/A"
-
-    try:
-        logger.debug("vLLM WORKER: Attempting to start subprocess...")
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            universal_newlines=True,
-            bufsize=1,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
-        )
-        pid_str = str(process.pid) if process and process.pid else "UnknownPID"
-        logger.info(f"vLLM WORKER: Subprocess launched, PID: {pid_str}")
-
-        app_instance.call_from_thread(_set_vllm_process_on_app, app_instance, process)
-        app_instance.call_from_thread(
-            app_instance._update_vllm_log, f"[PID:{pid_str}] vLLM server starting...\n"
-        )  # Assumes _update_vllm_log exists
-
-        while True:
-            output_received_in_iteration = False
-            if process.poll() is not None:
-                logger.info(
-                    f"vLLM WORKER (PID:{pid_str}): Process terminated. Exit code: {process.returncode}"
-                )
-                break
-
-            if process.stdout:
-                try:
-                    line = process.stdout.readline()
-                    if line:
-                        line = line.strip()
-                        if line:
-                            logger.info(f"vLLM WORKER STDOUT (PID:{pid_str}): {line}")
-                            app_instance.call_from_thread(
-                                app_instance._update_vllm_log, f"{line}\n"
-                            )
-                            output_received_in_iteration = True
-                    elif process.poll() is not None:
-                        break
-                except Exception as e_stdout:
-                    logger.error(
-                        f"vLLM WORKER (PID:{pid_str}): Exception reading stdout: {e_stdout}"
-                    )
-                    break
-
-            if process.stderr:
-                try:
-                    line = process.stderr.readline()
-                    if line:
-                        line = line.strip()
-                        if line:
-                            logger.error(f"vLLM WORKER STDERR (PID:{pid_str}): {line}")
-                            app_instance.call_from_thread(
-                                app_instance._update_vllm_log,
-                                f"[STDERR] [bold red]{line}[/]\n",
-                            )
-                            output_received_in_iteration = True
-                    elif process.poll() is not None:
-                        break
-                except Exception as e_stderr:
-                    logger.error(
-                        f"vLLM WORKER (PID:{pid_str}): Exception reading stderr: {e_stderr}"
-                    )
-                    break
-
-            if not output_received_in_iteration and process.poll() is None:
-                time.sleep(0.1)
-
-        if process.stdout:
-            process.stdout.close()
-        if process.stderr:
-            process.stderr.close()
-
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            logger.warning(f"vLLM WORKER (PID:{pid_str}): Timeout on final wait.")
-
-        exit_code = process.returncode if process.returncode is not None else -1
-        logger.info(
-            f"vLLM WORKER (PID:{pid_str}): Subprocess finally exited with code: {exit_code}"
-        )
-
-        if exit_code != 0:
-            final_status_message = (
-                f"vLLM server (PID:{pid_str}) exited with non-zero code: {exit_code}."
-            )
-        else:
-            final_status_message = (
-                f"vLLM server (PID:{pid_str}) exited successfully (code: {exit_code})."
-            )
-
-        app_instance.call_from_thread(
-            app_instance._update_vllm_log, f"{final_status_message}\n"
-        )
-        return final_status_message
-
-    except FileNotFoundError:
-        msg = f"ERROR: vLLM python or entrypoint not found (command[0]): {command[0]}"
-        logger.error(msg)
-        app_instance.call_from_thread(
-            app_instance._update_vllm_log, f"[bold red]{msg}[/]\n"
-        )
-        raise
-    except Exception as err:
-        msg = f"CRITICAL ERROR in vLLM worker: {err} (Command: {quoted_command})"
-        logger.opt(exception=True).error(msg)
-        app_instance.call_from_thread(
-            app_instance._update_vllm_log, f"[bold red]{msg}[/]\n"
-        )
-        raise
-    finally:
-        logger.info(
-            f"vLLM WORKER: Worker function for command '{quoted_command}' finishing."
-        )
-        app_instance.call_from_thread(_set_vllm_process_on_app, app_instance, None)
-        if process and process.poll() is None:
-            logger.warning(
-                f"vLLM WORKER (PID:{pid_str}): Process still running in finally. Terminating."
-            )
-            process.terminate()
-            try:
-                process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                process.kill()
-
-
-###############################################################################
-# ─── vLLM – start/stop handlers ──────────────────────────────────────────────
-###############################################################################
 
 
 async def handle_start_vllm_server_button_pressed(
-    app: "TldwCli", event: Button.Pressed
+    window: "LLMManagementWindow", app: "TldwCli", event: Button.Pressed
 ) -> None:
     logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("User requested to start vLLM server.")
 
     try:
-        python_path_input = app.query_one("#vllm-python-path", Input)
-        model_path_input = app.query_one("#vllm-model-path", Input)
-        host_input = app.query_one("#vllm-host", Input)
-        port_input = app.query_one("#vllm-port", Input)
-        additional_args_input = app.query_one("#vllm-additional-args", TextArea)
-        log_output_widget = app.query_one("#vllm-log-output", RichLog)
+        python_path_input = window.query_one("#vllm-python-path", Input)
+        model_path_input = window.query_one("#vllm-model-path", Input)
+        host_input = window.query_one("#vllm-host", Input)
+        port_input = window.query_one("#vllm-port", Input)
+        additional_args_input = window.query_one("#vllm-additional-args", TextArea)
+        log_output_widget = window.query_one("#vllm-log-output", RichLog)
 
         python_path = python_path_input.value.strip() or "python"
         model_path = (
@@ -385,7 +248,7 @@ async def handle_start_vllm_server_button_pressed(
         # Validate all inputs to prevent command injection
         if not validate_python_path(python_path):
             app.notify(
-                f"Invalid Python path: {python_path}. Only safe Python executable names/paths are allowed.",
+                "Invalid Python executable path.",
                 severity="error",
             )
             python_path_input.focus()
@@ -393,7 +256,7 @@ async def handle_start_vllm_server_button_pressed(
 
         if not validate_model_path(model_path):
             app.notify(
-                f"Invalid model path: {model_path}. Path contains unsafe characters.",
+                "Invalid model path.",
                 severity="error",
             )
             model_path_input.focus()
@@ -401,7 +264,7 @@ async def handle_start_vllm_server_button_pressed(
 
         if not validate_host(host):
             app.notify(
-                f"Invalid host: {host}. Only valid IP addresses and hostnames are allowed.",
+                "Invalid vLLM host.",
                 severity="error",
             )
             host_input.focus()
@@ -409,7 +272,7 @@ async def handle_start_vllm_server_button_pressed(
 
         if not validate_port(port):
             app.notify(
-                f"Invalid port: {port}. Port must be a number between 1 and 65535.",
+                "Invalid vLLM port.",
                 severity="error",
             )
             port_input.focus()
@@ -422,13 +285,6 @@ async def handle_start_vllm_server_button_pressed(
             )
             additional_args_input.focus()
             return
-
-        # vLLM model can be a HuggingFace repo ID, so Path(model_path).exists() is not always appropriate.
-        # We'll let vLLM handle model path validation.
-        # if model_path and not Path(model_path).exists() and not "/" in model_path: # Basic check for local path
-        #     app.notify(f"Local model path not found: {model_path}", severity="error")
-        #     model_path_input.focus()
-        #     return
 
         command = [
             python_path,
@@ -452,70 +308,45 @@ async def handle_start_vllm_server_button_pressed(
         if additional_args_str:
             command.extend(shlex.split(additional_args_str))
 
+        claim = reserve_server_launch(app, "vllm")
+        if claim is None:
+            window._sync_process_controls("vllm")
+            app.notify(
+                "vLLM server is already starting or running.", severity="warning"
+            )
+            return
         log_output_widget.clear()
-        log_output_widget.write(
-            f"Executing: {' '.join(shlex.quote(c) for c in command)}\n"
-        )  # Quote for safety
+        log_output_widget.write("Starting vLLM server.\n")
 
+        worker_callable = functools.partial(
+            run_vllm_server_worker,
+            app,
+            command,
+            claim,
+        )
         app.run_worker(
-            run_vllm_server_worker(app, command),
+            worker_callable,
             group="vllm_server",
             description="Running vLLM API server",
             exclusive=True,
             thread=True,
         )
+        window._sync_process_controls("vllm")
         app.notify("vLLM server starting…")
     except Exception as err:  # pragma: no cover
-        logger.opt(exception=True).error(f"Error preparing to start vLLM server: {err}")
+        if "claim" in locals():
+            release_server_claim(app, "vllm", claim)
+        window._sync_process_controls("vllm")
+        logger.error("vLLM start failed (category={}).", type(err).__name__)
         app.notify("Error setting up vLLM server start.", severity="error")
 
 
 async def handle_stop_vllm_server_button_pressed(
-    app: "TldwCli", event: Button.Pressed
+    window: "LLMManagementWindow", app: "TldwCli", event: Button.Pressed
 ) -> None:
     """Stops the vLLM server process if it's running."""
-    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
-    logger.info("User requested to stop vLLM server.")
-
-    log_output_widget = app.query_one("#vllm-log-output", RichLog)
-
-    if hasattr(app, "vllm_server_process") and app.vllm_server_process:
-        process = app.vllm_server_process
-        if process.poll() is None:  # Process is running
-            logger.info(f"Stopping vLLM server process (PID: {process.pid}).")
-            log_output_widget.write(f"Stopping vLLM server (PID: {process.pid})...\n")
-            process.terminate()  # or process.kill()
-            try:
-                process.wait(timeout=10)  # Wait for up to 10 seconds
-                logger.info("vLLM server process terminated.")
-                log_output_widget.write("vLLM server stopped.\n")
-                app.notify("vLLM server stopped.")
-            except subprocess.TimeoutExpired:
-                logger.warning("Timeout waiting for vLLM server to terminate. Killing.")
-                log_output_widget.write(
-                    "vLLM server did not stop gracefully, killing...\n"
-                )
-                process.kill()
-                process.wait()  # Ensure it's killed
-                log_output_widget.write("vLLM server killed.\n")
-                app.notify("vLLM server killed after timeout.", severity="warning")
-            except Exception as e:  # pylint: disable=broad-except
-                logger.opt(exception=True).error(
-                    f"Error during vLLM server termination: {e}"
-                )
-                log_output_widget.write(f"Error stopping vLLM server: {e}\n")
-                app.notify(f"Error stopping vLLM server: {e}", severity="error")
-            finally:
-                app.vllm_server_process = None
-        else:
-            logger.info("vLLM server process was found but is not running.")
-            log_output_widget.write("vLLM server is not currently running.\n")
-            app.notify("vLLM server is not running.", severity="warning")
-            app.vllm_server_process = None  # Clear the stale process reference
-    else:
-        logger.info("No vLLM server process found to stop.")
-        log_output_widget.write("vLLM server is not currently running.\n")
-        app.notify("vLLM server is not running.", severity="warning")
+    await stop_server_process(app, "vllm", "vLLM server")
+    return
 
 
 # --- Button Handler Map ---

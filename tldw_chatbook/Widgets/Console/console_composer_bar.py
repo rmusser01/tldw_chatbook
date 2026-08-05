@@ -1,22 +1,57 @@
-"""Console-native composer action row."""
+"""Console-native composer action row.
+
+Undo/redo (TASK-1281): history is recorded as flat (draft text, cursor
+index) snapshots, never a copy of the live `_DraftSegment` objects. This
+keeps the history model simple, and it means undo/redo restores plain
+text -- a snapshot never carries a segment's `label` or its `expanded`/
+`confirm` display state, so a restored segment is always either an
+ordinary literal or a generic collapsed paste token (`_apply_history_
+snapshot` re-collapses any restored text over `UNDO_RECOLLAPSE_CHAR_
+THRESHOLD`, review NEW-2/W-1/W-2 -- a large, performance-driven threshold
+deliberately distinct from the small, cosmetic `paste_collapse_threshold`
+a real paste uses), never the exact original presentation (a labeled
+file/attachment segment, or one the user had manually unfurled, comes
+back as a plain "Pasted Text: N Characters" token if it's still over the
+recollapse threshold, or as ordinary literal text otherwise). What
+undo/redo does NOT do anymore is repaint a large restored segment as one
+giant literal: that used to run the composer's O(n^2) wrap/render path
+against the full text on every undo/redo (measured up to 283s frozen for
+a 2.4 MB snapshot), which is why the re-collapse exists -- gated on a
+threshold sized from the measured render cost, not on the paste-cosmetics
+threshold or preference, so it can never itself turn an ordinary
+human-typed draft into an opaque token (review W-1) or be disabled by a
+user's paste-collapse preference (review W-2).
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-import textwrap
+from dataclasses import dataclass, replace
+import hashlib
+import hmac
+import json
+import re
+import secrets
 from typing import Any, Literal
 
+from rich.cells import cell_len
 from rich.markup import escape
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal
+from textual.content import Content
 from textual.css.query import NoMatches
 from textual.events import Click, DescendantBlur, DescendantFocus, MouseUp
 from textual.geometry import Region
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
+from ...Chat.console_voice_input import (
+    STATE_FINISHING,
+    STATE_IDLE,
+    STATE_LISTENING,
+    STATE_PREPARING,
+)
 from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
@@ -27,7 +62,115 @@ from ...config import (
 
 
 _CollapseState = Literal["literal", "collapsed", "confirm", "expanded"]
+_DictationState = Literal["idle", "starting", "recording", "transcribing"]
 _DraftStyleRange = tuple[int, int, str]
+DraftSegmentOrigin = Literal["literal", "paste", "inline_file"]
+DraftSelection = tuple[int, int] | Literal["all"] | None
+
+_VALID_COLLAPSE_STATES = frozenset({"literal", "collapsed", "confirm", "expanded"})
+_VALID_DRAFT_ORIGINS = frozenset({"literal", "paste", "inline_file"})
+_SNAPSHOT_FINGERPRINT_DOMAIN = b"tldw.console.composer.snapshot.v1\0"
+_PROJECTION_FINGERPRINT_DOMAIN = b"tldw.console.composer.projection.v1\0"
+_PLACEHOLDER_MAC_DOMAIN = b"tldw.console.composer.placeholder.v1\0"
+_PLACEHOLDER_PREFIX = "[[TLDW_PROTECTED:"
+_PLACEHOLDER_PATTERN = re.compile(
+    r"\[\[TLDW_PROTECTED:([0-9a-f]{20}):(\d+):([0-9a-f]{24})\]\]"
+)
+_PLACEHOLDER_CANDIDATE_PATTERN = re.compile(r"\[\[TLDW_PROTECTED:[^\]]*\]\]")
+
+#: Chunk boundary regex mirroring `textwrap.TextWrapper.wordsep_simple_re`
+#: (the pattern used whenever `break_on_hyphens=False`, which every wrap call
+#: in this module passes). `_cell_wrap_line` needs the identical chunking so
+#: its greedy fill only differs from `textwrap.wrap` in how it *measures* a
+#: chunk (terminal cells instead of characters), not in where it is willing
+#: to break.
+_DRAFT_WORD_SPLIT_RE = re.compile(r"([\t\n\x0b\x0c\r ]+)")
+
+
+class ComposerTransactionValidationError(ValueError):
+    """Raised when a composer improvement transaction fails closed."""
+
+
+@dataclass(frozen=True)
+class ComposerDraftSegmentSnapshot:
+    """Deeply immutable public representation of one composer segment."""
+
+    text: str
+    origin: DraftSegmentOrigin
+    collapse_state: _CollapseState
+    label: str | None
+
+
+@dataclass(frozen=True)
+class ComposerDraftSnapshot:
+    """Exact immutable composer state captured for one improvement request."""
+
+    segments: tuple[ComposerDraftSegmentSnapshot, ...]
+    cursor_index: int
+    selection: DraftSelection
+    edit_serial: int
+    generation: int
+    fingerprint: str
+
+
+@dataclass(frozen=True)
+class ComposerModelProjection:
+    """Provider-safe text plus opaque inline-file placeholder metadata."""
+
+    text: str
+    placeholder_nonce: str
+    placeholder_ids: tuple[str, ...]
+    fingerprint: str
+
+
+def _snapshot_fingerprint(
+    *,
+    segments: tuple[ComposerDraftSegmentSnapshot, ...],
+    cursor_index: int,
+    selection: DraftSelection,
+    edit_serial: int,
+    generation: int,
+) -> str:
+    """Return a deterministic, domain-separated digest of exact draft state."""
+    payload = {
+        "cursor_index": cursor_index,
+        "edit_serial": edit_serial,
+        "generation": generation,
+        "segments": [
+            {
+                "collapse_state": segment.collapse_state,
+                "label": segment.label,
+                "origin": segment.origin,
+                "text": segment.text,
+            }
+            for segment in segments
+        ],
+        "selection": list(selection) if isinstance(selection, tuple) else selection,
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(_SNAPSHOT_FINGERPRINT_DOMAIN + encoded).hexdigest()
+
+
+def _projection_fingerprint(
+    text: str, placeholder_nonce: str, placeholder_ids: tuple[str, ...]
+) -> str:
+    """Return a deterministic, domain-separated digest of a model projection."""
+    payload = json.dumps(
+        {
+            "placeholder_ids": list(placeholder_ids),
+            "placeholder_nonce": placeholder_nonce,
+            "text": text,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(_PROJECTION_FINGERPRINT_DOMAIN + payload).hexdigest()
 
 
 @dataclass
@@ -35,8 +178,54 @@ class _DraftSegment:
     """Private composer segment with canonical payload and display state."""
 
     text: str
+    origin: DraftSegmentOrigin = "literal"
     collapse_state: _CollapseState = "literal"
     label: str | None = None
+
+
+@dataclass
+class ConsoleDraftStash:
+    """A draft captured synchronously at the send keypress (TASK-340).
+
+    Holds the composer's real segment objects so paste provenance and
+    collapse state survive a restore, plus the canonical text the send
+    path uses as its payload.
+    """
+
+    segments: list[_DraftSegment]
+    text: str
+    has_paste: bool
+
+
+@dataclass(frozen=True)
+class _DraftHistorySnapshot:
+    """Undo/redo entry (TASK-1281): the canonical draft text plus caret offset.
+
+    Deliberately flat text+cursor rather than a copy of `_segments` -- the
+    architecture this task specified trades away exact display-state
+    fidelity across an undo/redo (`_apply_history_snapshot` reconstructs a
+    single segment from `text` alone, re-collapsing it into a generic
+    paste token when it's over `UNDO_RECOLLAPSE_CHAR_THRESHOLD` -- review
+    NEW-2/W-1/W-2, a performance-sized threshold, deliberately NOT the
+    cosmetic `paste_collapse_threshold` -- but never recovering the
+    ORIGINAL segment's `label` or `expanded`/`confirm` state) for a much
+    simpler history model. `restore_stashed_draft`/`ConsoleDraftStash`
+    already own the "preserve real segment objects" contract for the send
+    flow; this is a separate, narrower one.
+    """
+
+    text: str
+    cursor_index: int
+
+
+#: Public alias for the (undo stack, redo stack) pair `export_undo_history`
+#: returns and `restore_undo_history` accepts (TASK-1281 N2) -- lets a
+#: caller like `ChatScreen` type its own per-session history map without
+#: reaching for the private `_DraftHistorySnapshot` name or falling back to
+#: `Any`.
+ConsoleComposerUndoHistory = tuple[
+    list[_DraftHistorySnapshot], list[_DraftHistorySnapshot]
+]
 
 
 @dataclass(frozen=True)
@@ -58,6 +247,23 @@ class _DraftLineSlice:
     synthetic_prefix_columns: int = 0
 
 
+#: Cells of empty space between Send and Mic. The two were adjacent, so a
+#: press aimed at one could land on the other; the buffer makes that
+#: near-miss hit nothing.
+MIC_SEND_GAP = 2
+
+#: Fixed cell width of the composer action row at rest: Send(8) + gap(2) +
+#: Mic(8) + Stop(8). Stop is display-toggled rather than removed, so it is
+#: budgeted even while hidden. The ☰ menu button (4) moved out of this row
+#: to sit left of the draft, beside Composer ▾; Attach(10) and Save(8) live
+#: behind ☰ because this row is width-bounded and every always-present
+#: button is space the draft never gets back.
+BASE_ACTIONS_WIDTH = 8 + MIC_SEND_GAP + 8 + 8
+
+#: Width while an attachment is staged, adding the ✕ clear control (4).
+ATTACHMENT_ACTIONS_WIDTH = BASE_ACTIONS_WIDTH + 4
+
+
 class ConsoleComposerBar(Horizontal):
     """Expose Console-owned composer actions while reusing active chat sessions."""
 
@@ -68,11 +274,66 @@ class ConsoleComposerBar(Horizontal):
     MIN_DRAFT_ROWS = 1
     MAX_DRAFT_ROWS = 4
     COMPOSER_CHROME_ROWS = 4
+    VOICE_CHIP_MIN_WIDTH = 24
+    VOICE_CHIP_MAX_WIDTH = 42
+    #: Shown in the chip both for the terminal "stop and transcribe" phase
+    #: (`sync_dictation_state`'s "transcribing" branch) and for a per-segment
+    #: transcription in flight while still `recording`
+    #: (`set_voice_segment_transcribing`) -- same word for "the model is
+    #: working on your audio right now" in both places, so there is only one
+    #: phrase to recognize rather than two.
+    VOICE_CHIP_TRANSCRIBING_LABEL = "◌ Transcribing…"
     FALLBACK_DRAFT_WIDTH = 80
     PASTE_TOKEN_STYLE = "bold cyan"
     PASTE_CONFIRM_STYLE = "bold black on yellow"
     CURSOR_GLYPH = "▌"  # LEFT HALF BLOCK, terminal-style caret
     CURSOR_BLINK_INTERVAL = 0.53
+    #: TASK-1281: max entries kept per undo/redo stack; the oldest entry is
+    #: dropped once a push would exceed this.
+    UNDO_HISTORY_DEPTH_CAP = 100
+    #: TASK-1281 review F6 (comment corrected per review NEW-3): max total
+    #: characters retained PER STACK -- `_evict_to_char_budget` is applied
+    #: to the undo stack and the redo stack independently, so the real
+    #: combined ceiling across both is up to ~2x this constant (plus the
+    #: never-evict-the-last-entry allowance on each), not this constant
+    #: itself. Evicts the oldest entries of a stack first once a push would
+    #: put that stack over budget. Entry count alone doesn't bound memory:
+    #: every snapshot holds a FULL copy of the draft text, so a single
+    #: large inlined attachment (`insert_file_segment`, up to
+    #: `MAX_ATTACHMENT_BYTES`) multiplies across every entry recorded after
+    #: it. Measured during review: one 1 MB `insert_file_segment` followed
+    #: by 20 ordinary pastes retained >20,000,000 characters across just
+    #: 21 entries -- nowhere near the 100-entry depth cap.
+    UNDO_HISTORY_CHAR_BUDGET = 2_000_000
+    #: TASK-1281 review W-1 (HIGH): the perf-guard re-collapse in
+    #: `_apply_history_snapshot` must NOT reuse `paste_collapse_threshold`
+    #: -- that constant is a cosmetic PASTE-display preference (shipped
+    #: default 50 characters) and, applied to undo/redo, converted ORDINARY
+    #: TYPED draft text into an opaque "Pasted Text: N Characters" token on
+    #: every restore over 50 characters, including the AC's own flagship
+    #: Ctrl+U -> Ctrl+Z recovery path (one Backspace then destroyed the
+    #: whole recovered draft in a single step, since a collapsed token
+    #: deletes as one unit). This constant is chosen from the reviewer's
+    #: own measured `_refresh_visible_draft` repaint cost -- 0.01s @ 10K
+    #: chars, 0.05s @ 25K, 0.19s @ 50K -- and keeps an undo/redo repaint
+    #: comfortably under ~50ms while leaving every ordinary human-typed
+    #: draft as plain literal text. Checked UNCONDITIONALLY of
+    #: `collapse_large_pastes_enabled` (review W-2): that preference
+    #: governs collapse-ON-PASTE cosmetics, not whether the UI thread
+    #: freezes repainting a large restored draft -- a performance guard
+    #: must not hang off a display preference a user can turn off.
+    UNDO_RECOLLAPSE_CHAR_THRESHOLD = 20_000
+    #: Shared with the mic button's initial `compose()` tooltip and
+    #: `sync_dictation_state`'s idle tooltip, and used as the fallback in
+    #: `set_dictation_availability` -- an `Availability(ok=False)` with no
+    #: `remedy` text must not blank the tooltip entirely.
+    #: Deliberately names no provider, model or language: dictation now streams
+    #: through whichever speech-to-text provider `console_voice_input.resolve()`
+    #: picks, in `transcription.default_language`. Any static claim about
+    #: "English" or "Parakeet v2" here is false on most machines.
+    DICTATION_IDLE_TOOLTIP = (
+        "Dictate into the draft with the configured speech-to-text provider."
+    )
 
     def __init__(
         self,
@@ -102,13 +363,81 @@ class ConsoleComposerBar(Horizontal):
         # every mutation. Collapsed/confirm paste tokens are single units for
         # caret movement and deletion.
         self._cursor_index = 0
+        # TASK-339: bumped by every user-edit entry point (typing/deletes);
+        # programmatic load/clear/restore leave it untouched so callers can
+        # detect "the user typed since X".
+        self._user_edit_serial = 0
+        # Monotonic scope/version guard for changes that can retain identical
+        # bytes and edit serials (notably a same-text session/load swap).
+        # Improvement snapshots carry this value so an old request can never
+        # become current again merely because the visible text happens to
+        # match. Exact improvement Undo restores user-visible/editor state but
+        # deliberately advances this generation rather than rewinding it.
+        # Start from an opaque per-instance epoch so a snapshot captured from
+        # a replaced composer owner cannot match a fresh composer's generation
+        # even when its text/edit serial are byte-identical. The value remains
+        # monotonic for this owner as scope replacements advance it.
+        self._draft_generation = secrets.randbits(63)
+        # Per-composer authentication key for opaque protected placeholders.
+        # Tokens reveal neither inline-file metadata nor this key, so edited or
+        # user-authored lookalikes cannot be accepted as protected segments.
+        self._placeholder_secret = secrets.token_bytes(32)
+        self._improvement_undo: ComposerDraftSnapshot | None = None
+        # TASK-1281: undo/redo history. `_undo_stack`/`_redo_stack` hold
+        # `_DraftHistorySnapshot`s; `_coalescing_active` is True only while
+        # the top of `_undo_stack` is still open to absorbing more
+        # consecutive single-character printable inserts (see
+        # `_record_undo_snapshot`). Session-scoped export/import lives in
+        # `export_undo_history`/`restore_undo_history`.
+        self._undo_stack: list[_DraftHistorySnapshot] = []
+        self._redo_stack: list[_DraftHistorySnapshot] = []
+        self._coalescing_active = False
         self._run_active = False
         self._send_blocked = False
         self._setup_blocked_reason = ""
         self._can_save_chatbook = False
+        self._ephemeral = False
+        self._dictation_state: _DictationState = "idle"
+        #: Whether the last availability probe found both a capture backend
+        #: and a transcription provider installed. Only consulted while
+        #: `_dictation_state` is "idle" -- once a capture is underway, the
+        #: probe already ran (inside `ConsoleVoiceInputController.start()`)
+        #: and this flag stays out of the way of the busy-state tooltips.
+        self._dictation_available = True
+        #: Reason + remedy shown in the mic tooltip while unavailable. Empty
+        #: whenever `_dictation_available` is True.
+        self._dictation_unavailable_tooltip = ""
+        #: Chip-only display state for the active capture. Reset on every
+        #: fresh entry into "recording" (`sync_dictation_state`) and updated
+        #: live by `set_voice_partial()` / `tick_voice_elapsed()`; preserved
+        #: across a redundant `sync_dictation_state("recording")` call (the
+        #: 0.2s Console UI-sync tick calls this unconditionally) so that tick
+        #: cannot stomp the chip back to "0:00" mid-capture.
+        self._voice_partial: str = ""
+        self._voice_elapsed_seconds: int = 0
+        #: Latest model-preparation status for the chip, held for the same
+        #: reason `_voice_partial` is: `sync_dictation_state` is called
+        #: unconditionally by every control-bar refresh (changing a provider,
+        #: collapsing a rail), and without holding this a single keystroke
+        #: elsewhere would rewrite a multi-minute "Preparing speech model…" back
+        #: to "Preparing microphone…" -- which by then is also false, because
+        #: nothing is preparing a microphone. Cleared only on a genuine
+        #: transition into "starting", and on recording/idle.
+        self._voice_preparing_message: str = ""
+        #: True while a per-segment transcription is in flight (the silence
+        #: gate closed a segment and the recognizer is working on it, a call
+        #: that can take seconds -- see `VoiceSegmentTranscribing`). Reset
+        #: the same way `_voice_partial` is: on every fresh entry into
+        #: "recording", cleared by `set_voice_partial()` (the next final or
+        #: command lands), and on any OTHER lifecycle state change; preserved
+        #: across a redundant `sync_dictation_state("recording")` resync so
+        #: an unrelated UI refresh cannot blank an indicator that is still
+        #: legitimately showing.
+        self._voice_segment_transcribing: bool = False
         self._pending_attachment_label: str | None = None
         self._suppress_next_draft_click = False
         self._draft_selection_all = False
+        self._draft_selection_range: tuple[int, int] | None = None
         self._cursor_visible = True
         self._cursor_blink_timer: Any | None = None
 
@@ -132,6 +461,23 @@ class ConsoleComposerBar(Horizontal):
         button.styles.min_height = 1
         return button
 
+    @staticmethod
+    def _set_actions_row_width(actions: Horizontal, width: int) -> None:
+        """Pin the action row to an exact cell width.
+
+        The row is deliberately fixed rather than ``auto``: every cell it
+        claims is a cell the draft does not get, so the budget is stated
+        once here and in the two module constants rather than being an
+        emergent property of whichever buttons happen to be visible.
+
+        Args:
+            actions: The ``#console-composer-actions`` row.
+            width: Exact width in cells.
+        """
+        actions.styles.width = width
+        actions.styles.min_width = width
+        actions.styles.max_width = width
+
     def draft_text(self) -> str:
         """Return the canonical native Console draft payload.
 
@@ -149,6 +495,475 @@ class ConsoleComposerBar(Horizontal):
     def _canonical_draft_text(self) -> str:
         """Return the full payload represented by composer segments."""
         return "".join(segment.text for segment in self._segments)
+
+    def _snapshot_selection(self) -> DraftSelection:
+        """Return the exact selection representation owned by the composer."""
+        if self._draft_selection_all:
+            return "all"
+        return self._draft_selection_range
+
+    def _clear_draft_selection(self) -> None:
+        """Collapse every supported selection representation."""
+        self._draft_selection_all = False
+        self._draft_selection_range = None
+
+    def _mark_manual_draft_edit(self) -> None:
+        """Advance the manual-edit guard and expire temporary improvement Undo."""
+        self._user_edit_serial += 1
+        self.invalidate_improvement_undo()
+
+    def _advance_draft_generation(self) -> None:
+        """Invalidate stale same-text transactions after a scope replacement."""
+        self._draft_generation += 1
+        self.invalidate_improvement_undo()
+
+    @property
+    def improvement_undo_available(self) -> bool:
+        """Return whether one exact pre-improvement snapshot is available."""
+        return self._improvement_undo is not None
+
+    def invalidate_improvement_undo(self) -> None:
+        """Expire the one-shot improvement Undo without touching native history."""
+        self._improvement_undo = None
+
+    def take_improvement_undo_snapshot(self) -> ComposerDraftSnapshot | None:
+        """Consume and return the current exact improvement Undo snapshot."""
+        snapshot = self._improvement_undo
+        self._improvement_undo = None
+        return snapshot
+
+    def undo_improvement(self) -> bool:
+        """Restore and consume the latest exact improvement transaction."""
+        snapshot = self.take_improvement_undo_snapshot()
+        if snapshot is None:
+            return False
+        self.restore_snapshot(snapshot)
+        return True
+
+    @staticmethod
+    def _validate_snapshot_shape(snapshot: ComposerDraftSnapshot) -> None:
+        """Validate a public snapshot and its deterministic fingerprint."""
+        if not isinstance(snapshot, ComposerDraftSnapshot):
+            raise ComposerTransactionValidationError(
+                "Composer snapshot has an unsupported shape."
+            )
+        if type(snapshot.segments) is not tuple:
+            raise ComposerTransactionValidationError(
+                "Composer snapshot segments must be an immutable tuple."
+            )
+        for segment in snapshot.segments:
+            if not isinstance(segment, ComposerDraftSegmentSnapshot):
+                raise ComposerTransactionValidationError(
+                    "Composer snapshot contains an unsupported segment."
+                )
+            if not isinstance(segment.text, str) or not segment.text:
+                raise ComposerTransactionValidationError(
+                    "Composer snapshot segment text must be a non-empty string."
+                )
+            if (
+                not isinstance(segment.origin, str)
+                or segment.origin not in _VALID_DRAFT_ORIGINS
+            ):
+                raise ComposerTransactionValidationError(
+                    "Composer snapshot segment origin is invalid."
+                )
+            if (
+                not isinstance(segment.collapse_state, str)
+                or segment.collapse_state not in _VALID_COLLAPSE_STATES
+            ):
+                raise ComposerTransactionValidationError(
+                    "Composer snapshot collapse state is invalid."
+                )
+            if segment.label is not None and not isinstance(segment.label, str):
+                raise ComposerTransactionValidationError(
+                    "Composer snapshot segment label is invalid."
+                )
+
+        draft_length = sum(len(segment.text) for segment in snapshot.segments)
+        if (
+            type(snapshot.cursor_index) is not int
+            or snapshot.cursor_index < 0
+            or snapshot.cursor_index > draft_length
+        ):
+            raise ComposerTransactionValidationError(
+                "Composer snapshot cursor is outside the draft."
+            )
+        selection = snapshot.selection
+        if selection == "all":
+            if draft_length == 0:
+                raise ComposerTransactionValidationError(
+                    "An empty composer snapshot cannot have a full selection."
+                )
+        elif selection is not None:
+            if type(selection) is not tuple or len(selection) != 2:
+                raise ComposerTransactionValidationError(
+                    "Composer snapshot selection is invalid."
+                )
+            start, end = selection
+            if (
+                type(start) is not int
+                or type(end) is not int
+                or start < 0
+                or start > end
+                or end > draft_length
+            ):
+                raise ComposerTransactionValidationError(
+                    "Composer snapshot selection is outside the draft."
+                )
+        if type(snapshot.edit_serial) is not int or snapshot.edit_serial < 0:
+            raise ComposerTransactionValidationError(
+                "Composer snapshot edit serial is invalid."
+            )
+        if type(snapshot.generation) is not int or snapshot.generation < 0:
+            raise ComposerTransactionValidationError(
+                "Composer snapshot generation is invalid."
+            )
+        if not isinstance(snapshot.fingerprint, str):
+            raise ComposerTransactionValidationError(
+                "Composer snapshot fingerprint is invalid."
+            )
+        expected = _snapshot_fingerprint(
+            segments=snapshot.segments,
+            cursor_index=snapshot.cursor_index,
+            selection=snapshot.selection,
+            edit_serial=snapshot.edit_serial,
+            generation=snapshot.generation,
+        )
+        if not hmac.compare_digest(snapshot.fingerprint, expected):
+            raise ComposerTransactionValidationError(
+                "Composer snapshot fingerprint does not match its state."
+            )
+
+    @staticmethod
+    def _private_segments_from_snapshot(
+        snapshot: ComposerDraftSnapshot,
+    ) -> list[_DraftSegment]:
+        """Build detached mutable segments from a validated public snapshot."""
+        return [
+            _DraftSegment(
+                text=segment.text,
+                origin=segment.origin,
+                collapse_state=segment.collapse_state,
+                label=segment.label,
+            )
+            for segment in snapshot.segments
+        ]
+
+    def capture_draft_snapshot(self) -> ComposerDraftSnapshot:
+        """Capture the exact immutable Console draft transaction state."""
+        self._ensure_editable_segments()
+        segments = tuple(
+            ComposerDraftSegmentSnapshot(
+                text=segment.text,
+                origin=segment.origin,
+                collapse_state=segment.collapse_state,
+                label=segment.label,
+            )
+            for segment in self._segments
+        )
+        selection = self._snapshot_selection()
+        fingerprint = _snapshot_fingerprint(
+            segments=segments,
+            cursor_index=self._cursor_index,
+            selection=selection,
+            edit_serial=self._user_edit_serial,
+            generation=self._draft_generation,
+        )
+        return ComposerDraftSnapshot(
+            segments=segments,
+            cursor_index=self._cursor_index,
+            selection=selection,
+            edit_serial=self._user_edit_serial,
+            generation=self._draft_generation,
+            fingerprint=fingerprint,
+        )
+
+    @staticmethod
+    def _validate_request_nonce(request_nonce: str) -> None:
+        """Reject empty, control-bearing, whitespace, or oversized nonces."""
+        if (
+            not isinstance(request_nonce, str)
+            or not request_nonce
+            or len(request_nonce) > 128
+            or not request_nonce.isprintable()
+            or any(character.isspace() for character in request_nonce)
+        ):
+            raise ComposerTransactionValidationError(
+                "Projection request nonce is invalid."
+            )
+
+    @staticmethod
+    def _placeholder_nonce_id(request_nonce: str) -> str:
+        """Return an opaque request identifier without exposing the raw nonce."""
+        return hashlib.sha256(request_nonce.encode("utf-8")).hexdigest()[:20]
+
+    def _placeholder_token(
+        self,
+        snapshot: ComposerDraftSnapshot,
+        *,
+        nonce_id: str,
+        ordinal: int,
+    ) -> str:
+        """Build an authenticated opaque placeholder for one protected segment."""
+        message = (
+            _PLACEHOLDER_MAC_DOMAIN
+            + snapshot.fingerprint.encode("ascii")
+            + b"\0"
+            + nonce_id.encode("ascii")
+            + b"\0"
+            + str(ordinal).encode("ascii")
+        )
+        mac = hmac.new(self._placeholder_secret, message, hashlib.sha256).hexdigest()[
+            :24
+        ]
+        return f"{_PLACEHOLDER_PREFIX}{nonce_id}:{ordinal}:{mac}]]"
+
+    def project_snapshot_for_model(
+        self,
+        snapshot: ComposerDraftSnapshot,
+        *,
+        request_nonce: str,
+    ) -> ComposerModelProjection:
+        """Project improvable text while replacing inline files with opaque tokens."""
+        self._validate_snapshot_shape(snapshot)
+        self._validate_request_nonce(request_nonce)
+        improvable_text = "".join(
+            segment.text
+            for segment in snapshot.segments
+            if segment.origin != "inline_file"
+        )
+        if _PLACEHOLDER_PREFIX in improvable_text:
+            raise ComposerTransactionValidationError(
+                "Improvable composer text contains reserved placeholder syntax."
+            )
+        if request_nonce in improvable_text:
+            raise ComposerTransactionValidationError(
+                "Projection request nonce collision with user-authored text."
+            )
+
+        nonce_id = self._placeholder_nonce_id(request_nonce)
+        placeholder_ids: list[str] = []
+        projected_parts: list[str] = []
+        protected_ordinal = 0
+        for segment in snapshot.segments:
+            if segment.origin != "inline_file":
+                projected_parts.append(segment.text)
+                continue
+            token = self._placeholder_token(
+                snapshot,
+                nonce_id=nonce_id,
+                ordinal=protected_ordinal,
+            )
+            protected_ordinal += 1
+            if token in improvable_text:
+                raise ComposerTransactionValidationError(
+                    "Protected placeholder collides with user-authored text."
+                )
+            placeholder_ids.append(token)
+            projected_parts.append(token)
+
+        text = "".join(projected_parts)
+        ids = tuple(placeholder_ids)
+        return ComposerModelProjection(
+            text=text,
+            placeholder_nonce=request_nonce,
+            placeholder_ids=ids,
+            fingerprint=_projection_fingerprint(text, request_nonce, ids),
+        )
+
+    def _validated_apply_parts(
+        self,
+        snapshot: ComposerDraftSnapshot,
+        rewritten_model_text: str,
+    ) -> tuple[list[_DraftSegment], str]:
+        """Validate protected tokens and construct the detached apply result."""
+        if not isinstance(rewritten_model_text, str):
+            raise ComposerTransactionValidationError(
+                "Improved composer text must be a string."
+            )
+        protected = [
+            segment for segment in snapshot.segments if segment.origin == "inline_file"
+        ]
+        candidates = _PLACEHOLDER_CANDIDATE_PATTERN.findall(rewritten_model_text)
+        prefix_count = rewritten_model_text.count(_PLACEHOLDER_PREFIX)
+        if not protected:
+            if prefix_count or candidates:
+                raise ComposerTransactionValidationError(
+                    "Improved text contains an unexpected protected placeholder."
+                )
+            return (
+                [
+                    _DraftSegment(
+                        rewritten_model_text,
+                        origin="literal",
+                        collapse_state="literal",
+                    )
+                ]
+                if rewritten_model_text
+                else [],
+                "".join(segment.text for segment in snapshot.segments),
+            )
+
+        if prefix_count != len(protected) or len(candidates) != len(protected):
+            raise ComposerTransactionValidationError(
+                "Every protected placeholder must appear exactly once."
+            )
+        parsed = [_PLACEHOLDER_PATTERN.fullmatch(candidate) for candidate in candidates]
+        if any(match is None for match in parsed):
+            raise ComposerTransactionValidationError(
+                "A protected placeholder was edited or malformed."
+            )
+        matches = [match for match in parsed if match is not None]
+        nonce_ids = {match.group(1) for match in matches}
+        if len(nonce_ids) != 1:
+            raise ComposerTransactionValidationError(
+                "Protected placeholders do not share one request identity."
+            )
+        nonce_id = next(iter(nonce_ids))
+        expected = tuple(
+            self._placeholder_token(snapshot, nonce_id=nonce_id, ordinal=index)
+            for index in range(len(protected))
+        )
+        if tuple(candidates) != expected:
+            raise ComposerTransactionValidationError(
+                "Protected placeholders were edited, duplicated, or reordered."
+            )
+
+        remaining = rewritten_model_text
+        rebuilt: list[_DraftSegment] = []
+        for token, protected_segment in zip(expected, protected):
+            leading, separator, remaining = remaining.partition(token)
+            if not separator:
+                raise ComposerTransactionValidationError(
+                    "A protected placeholder is missing from improved text."
+                )
+            if leading:
+                rebuilt.append(
+                    _DraftSegment(
+                        leading,
+                        origin="literal",
+                        collapse_state="literal",
+                    )
+                )
+            rebuilt.append(
+                _DraftSegment(
+                    protected_segment.text,
+                    origin=protected_segment.origin,
+                    collapse_state=protected_segment.collapse_state,
+                    label=protected_segment.label,
+                )
+            )
+        if remaining:
+            rebuilt.append(
+                _DraftSegment(
+                    remaining,
+                    origin="literal",
+                    collapse_state="literal",
+                )
+            )
+        source_parts: list[str] = []
+        protected_index = 0
+        for segment in snapshot.segments:
+            if segment.origin == "inline_file":
+                source_parts.append(expected[protected_index])
+                protected_index += 1
+            else:
+                source_parts.append(segment.text)
+        return rebuilt, "".join(source_parts)
+
+    def apply_improvement(
+        self,
+        snapshot: ComposerDraftSnapshot,
+        rewritten_model_text: str,
+    ) -> ComposerDraftSnapshot | None:
+        """Atomically replace improvable spans after exact stale/token checks."""
+        self._validate_snapshot_shape(snapshot)
+        live = self.capture_draft_snapshot()
+        if (
+            snapshot.edit_serial != live.edit_serial
+            or snapshot.generation != live.generation
+            or not hmac.compare_digest(snapshot.fingerprint, live.fingerprint)
+        ):
+            raise ComposerTransactionValidationError(
+                "Composer snapshot is stale and cannot be applied."
+            )
+        rebuilt, source_projection = self._validated_apply_parts(
+            snapshot, rewritten_model_text
+        )
+        if rewritten_model_text == source_projection:
+            return None
+
+        # All parsing and validation above used detached immutable/local values.
+        # This is the single live segment swap for the complete transaction.
+        self._segments = rebuilt
+        self._segments_initialized = True
+        self._cursor_index = len(self._canonical_draft_text())
+        self._clear_draft_selection()
+        self._mark_manual_draft_edit()
+        self._draft_generation += 1
+        self._undo_stack = []
+        self._redo_stack = []
+        self._coalescing_active = False
+        self._improvement_undo = snapshot
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
+        return snapshot
+
+    def validate_improvement(
+        self,
+        snapshot: ComposerDraftSnapshot,
+        rewritten_model_text: str,
+    ) -> None:
+        """Validate a proposed improvement against live state without mutation."""
+        self._validate_snapshot_shape(snapshot)
+        live = self.capture_draft_snapshot()
+        if (
+            snapshot.edit_serial != live.edit_serial
+            or snapshot.generation != live.generation
+            or not hmac.compare_digest(snapshot.fingerprint, live.fingerprint)
+        ):
+            raise ComposerTransactionValidationError(
+                "Composer snapshot is stale and cannot be applied."
+            )
+        self._validated_apply_parts(snapshot, rewritten_model_text)
+
+    def restore_snapshot(self, snapshot: ComposerDraftSnapshot) -> None:
+        """Atomically restore exact draft state without calling ``load_draft``."""
+        self._validate_snapshot_shape(snapshot)
+        rebuilt = self._private_segments_from_snapshot(snapshot)
+
+        # A restore is a new live scope generation even though user-visible
+        # bytes/state and edit serial are restored exactly. This prevents an
+        # older in-flight result from becoming valid again after Undo.
+        next_generation = self._draft_generation + 1
+        self._segments = rebuilt
+        self._segments_initialized = True
+        self._cursor_index = snapshot.cursor_index
+        self._draft_selection_all = snapshot.selection == "all"
+        self._draft_selection_range = (
+            snapshot.selection if isinstance(snapshot.selection, tuple) else None
+        )
+        self._user_edit_serial = snapshot.edit_serial
+        self._draft_generation = next_generation
+        self._undo_stack = []
+        self._redo_stack = []
+        self._coalescing_active = False
+        self.invalidate_improvement_undo()
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
+
+    def _has_any_draft_content(self) -> bool:
+        """Return whether the canonical draft contains at least one character."""
+        if self._segments_initialized:
+            return any(segment.text for segment in self._segments)
+        try:
+            return bool(self.query_one("#console-command-input", Input).value)
+        except NoMatches:
+            return False
 
     @property
     def cursor_index(self) -> int:
@@ -299,13 +1114,11 @@ class ConsoleComposerBar(Horizontal):
 
     def _sync_interaction_classes(self) -> None:
         """Mirror focus-within and draft presence onto stable CSS state classes."""
-        has_draft = (
-            any(segment.text for segment in self._segments)
-            if self._segments_initialized
-            else bool(self.draft_text())
-        )
         self.set_class(self.has_focus_within, "console-composer-focused")
-        self.set_class(has_draft, "console-composer-has-draft")
+        self.set_class(
+            self._has_any_draft_content(),
+            "console-composer-has-draft",
+        )
 
     def _sync_current_action_state(self) -> None:
         """Refresh action buttons from the current draft and cached run/save state."""
@@ -315,6 +1128,7 @@ class ConsoleComposerBar(Horizontal):
             can_save_chatbook=self._can_save_chatbook,
             send_blocked=self._send_blocked,
             setup_blocked_reason=self._setup_blocked_reason,
+            ephemeral=self._ephemeral,
         )
 
     def sync_action_state(
@@ -325,6 +1139,7 @@ class ConsoleComposerBar(Horizontal):
         can_save_chatbook: bool,
         send_blocked: bool = False,
         setup_blocked_reason: str = "",
+        ephemeral: bool = False,
     ) -> None:
         """Refresh composer action priority and disabled state.
 
@@ -334,24 +1149,27 @@ class ConsoleComposerBar(Horizontal):
             can_save_chatbook: Whether a Chatbook artifact is available to save.
             send_blocked: Whether the current run state blocks new sends.
             setup_blocked_reason: Provider/model setup copy when setup blocks Send.
+            ephemeral: Whether the active session is temporary, which blocks
+                Save Chatbook (a second door onto the same write the
+                workbench's Save Chatbook action already gates).
         """
         has_draft = bool(has_draft)
         run_active = bool(run_active)
         can_save_chatbook = bool(can_save_chatbook)
         send_blocked = bool(send_blocked)
         setup_blocked_reason = setup_blocked_reason.strip()
+        ephemeral = bool(ephemeral)
         setup_reason_changed = self._setup_blocked_reason != setup_blocked_reason
         self._run_active = run_active
         self._send_blocked = send_blocked
         self._setup_blocked_reason = setup_blocked_reason
         self._can_save_chatbook = can_save_chatbook
+        self._ephemeral = ephemeral
         self._sync_collapsed_presentation()
 
         try:
             send_button = self.query_one("#console-send-message", Button)
             stop_button = self.query_one("#console-stop-generation", Button)
-            attach_button = self.query_one("#console-attach-context", Button)
-            save_button = self.query_one("#console-save-chatbook", Button)
         except NoMatches:
             return
 
@@ -382,40 +1200,403 @@ class ConsoleComposerBar(Horizontal):
 
         stop_button.disabled = False
         stop_button.variant = "warning" if run_active else "default"
+        # Fleet-UX expert review F7 (task-1234): this LIVE sync overrides
+        # the button's construction-time tooltip on every action-state
+        # refresh, so the compose-time copy alone (see `compose()` above)
+        # was never actually what a user hovering an active Stop button
+        # saw -- fixed here too, matching the collapsed Stop button (which
+        # has no such override).
         stop_button.tooltip = (
-            "Stop generation in the active Console session."
+            "Stop this tab's run."
             if run_active
-            else "No active Console run to stop."
+            else "No active run to stop in this tab."
         )
         stop_button.set_class(run_active, "console-stop-active")
         stop_button.set_class(not run_active, "console-stop-idle")
         stop_button.set_class(not run_active, "console-action-disabled")
         stop_button.styles.display = "block" if run_active else "none"
 
-        attach_button.disabled = False
-        attach_button.variant = "default"
-        attach_button.tooltip = (
-            "Attach files or context through the active Console session."
-        )
-        attach_button.set_class(True, "console-action-secondary")
-        attach_button.set_class(False, "console-action-disabled")
-        attach_button.set_class(False, "console-action-subdued")
-
-        save_button.disabled = False
-        save_button.variant = "default"
-        save_button.tooltip = (
-            "Open the available Chatbook artifact in Artifacts."
-            if can_save_chatbook
-            else "No Chatbook artifact is available to save yet."
-        )
-        save_button.set_class(True, "console-action-secondary")
-        save_button.set_class(True, "console-save-chatbook-secondary")
-        save_button.set_class(can_save_chatbook, "console-save-chatbook-ready")
-        save_button.set_class(not can_save_chatbook, "console-action-subdued")
-        save_button.set_class(not can_save_chatbook, "console-action-disabled")
+        # Attach and Save Chatbook no longer live in this row -- their
+        # enabled/disabled presentation (including the temporary-chat block
+        # on Save) is now decided in `build_composer_menu_entries`, which
+        # reads the same `can_save_chatbook` and `ephemeral` inputs stashed
+        # on this widget above and consults the same `blocked_reason`
+        # registry. One contract, one place, rendered as a menu row instead
+        # of a button.
 
         if setup_reason_changed and not self.draft_text().strip():
             self._refresh_visible_draft()
+
+    def sync_dictation_state(self, state: _DictationState) -> None:
+        """Refresh the microphone action for the current one-shot lifecycle.
+
+        Args:
+            state: Current one-shot dictation lifecycle state.
+        """
+        entering_recording = state == "recording" and self._dictation_state != "recording"
+        entering_starting = state == "starting" and self._dictation_state != "starting"
+        state_changed = state != self._dictation_state
+        self._dictation_state = state
+        if state_changed:
+            # Any genuine lifecycle transition -- including "recording" ->
+            # "transcribing" via the mic button, which never routes through
+            # `set_voice_partial()` -- ends a live per-segment transcribing
+            # indication. A redundant resync that leaves the state unchanged
+            # (the 0.2s Console UI-sync tick) must NOT reset it: see
+            # `_voice_segment_transcribing`'s docstring.
+            self._voice_segment_transcribing = False
+        try:
+            button = self.query_one("#console-dictation", Button)
+        except NoMatches:
+            return
+        labels = {
+            "idle": "Mic",
+            "starting": "Mic…",
+            "recording": "Rec ●",
+            "transcribing": "STT…",
+        }
+        tooltips = {
+            "idle": self.DICTATION_IDLE_TOOLTIP,
+            # A first-run model download is minutes long, so this phase needs a
+            # way out. The button stays clickable here (unlike "transcribing",
+            # where there is nothing left to cancel) and a press cancels.
+            "starting": "Preparing the speech model — press to cancel.",
+            "recording": "Stop microphone recording and transcribe.",
+            # No provider name here either: the transcribing phase runs on the
+            # same resolved provider the idle tooltip declines to name.
+            "transcribing": "Transcribing…",
+        }
+        # Unavailability is cosmetic-only, and only shown at idle: the button
+        # stays real-clickable (never Textual `disabled`) so a press can
+        # still reach the screen's activation handler, which re-probes and
+        # is what actually recovers the button without a remount once, say,
+        # the missing extra gets installed mid-run. Real Textual `disabled`
+        # would block the Click event from ever being delivered at all --
+        # including on a later retry -- which is exactly the dead-end this
+        # exists to avoid.
+        unavailable = state == "idle" and not self._dictation_available
+        button.label = labels[state]
+        button.tooltip = (
+            self._dictation_unavailable_tooltip if unavailable else tooltips[state]
+        )
+        # "starting" stays enabled on purpose: it now covers a model load that
+        # can run for minutes on a first run, and a disabled button would leave
+        # the user with no in-app way out of it.
+        button.disabled = state == "transcribing"
+        button.variant = "warning" if state == "recording" else "default"
+        button.set_class(state == "recording", "console-dictation-recording")
+        button.set_class(unavailable, "console-dictation-unavailable")
+
+        # Mirror the lifecycle into the inline voice chip. The chip has its
+        # own vocabulary (STATE_* from console_voice_input), so map the
+        # button's states explicitly rather than passing the string through.
+        if state == "idle":
+            self._voice_partial = ""
+            self._voice_elapsed_seconds = 0
+            self._voice_preparing_message = ""
+            self.set_voice_status(STATE_IDLE)
+        elif state == "starting":
+            if entering_starting:
+                self._voice_partial = ""
+                self._voice_elapsed_seconds = 0
+                self._voice_preparing_message = ""
+            # Re-applied, not recomputed: a redundant resync (any control-bar
+            # refresh calls this) must not overwrite a live model-preparation
+            # message with the generic microphone one.
+            self.set_voice_status(
+                STATE_PREPARING,
+                message=self._voice_preparing_message or "◌ Preparing microphone…",
+            )
+        elif state == "recording":
+            if entering_recording:
+                self._voice_partial = ""
+                self._voice_elapsed_seconds = 0
+                self._voice_preparing_message = ""
+            self.set_voice_status(
+                STATE_LISTENING,
+                partial=self._voice_partial,
+                elapsed_seconds=self._voice_elapsed_seconds,
+                # Re-applied, not recomputed -- same reasoning as "starting"'s
+                # `_voice_preparing_message` above: a redundant resync must
+                # not blank a live segment-transcribing indication.
+                segment_transcribing=self._voice_segment_transcribing,
+            )
+        elif state == "transcribing":
+            self.set_voice_status(
+                STATE_FINISHING, message=self.VOICE_CHIP_TRANSCRIBING_LABEL
+            )
+
+    def set_dictation_availability(
+        self, *, available: bool, tooltip: str = ""
+    ) -> None:
+        """Record the last dictation availability probe and refresh the mic button.
+
+        Args:
+            available: Whether a probe found both a capture backend and a
+                transcription provider installed.
+            tooltip: Reason and remedy to show in the mic tooltip while
+                unavailable (e.g. naming the missing extra to install).
+                Ignored when ``available`` is True. An empty string falls
+                back to the ordinary idle tooltip rather than blanking it --
+                `Availability(ok=False)` defaults both `reason` and `remedy`
+                to `""`, and a blank tooltip would be worse than the generic
+                one it replaced.
+        """
+        self._dictation_available = bool(available)
+        self._dictation_unavailable_tooltip = (
+            "" if available else (tooltip or self.DICTATION_IDLE_TOOLTIP)
+        )
+        self.sync_dictation_state(self._dictation_state)
+
+    def set_voice_preparing_message(self, text: str) -> None:
+        """Show model-preparation progress in the chip, and keep showing it.
+
+        Held in `_voice_preparing_message` rather than written straight to the
+        chip: `sync_dictation_state("starting")` fires from every control-bar
+        refresh, and a one-shot write would be erased by the next unrelated UI
+        change -- during exactly the multi-minute window this message exists
+        for, and replaced by a "Preparing microphone…" that is not even true.
+
+        Args:
+            text: Chip-sized status text (the "◌ " prefix included). Ignored
+                outside the `starting` lifecycle state, so a notice that drains
+                late cannot repaint a chip that has moved on.
+        """
+        if self._dictation_state != "starting":
+            return
+        self._voice_preparing_message = text
+        self.set_voice_status(STATE_PREPARING, message=text)
+
+    def set_voice_partial(self, text: str) -> None:
+        """Render live recognizer text into the chip while recording.
+
+        Args:
+            text: In-flight partial transcript from the recognizer. Ignored
+                (a no-op) outside the `recording` lifecycle state, so a
+                partial that drains after the capture already ended cannot
+                resurrect the chip.
+        """
+        if self._dictation_state != "recording":
+            return
+        self._voice_partial = text
+        # A partial lands exactly when a segment's transcription has
+        # finished (see `VoiceSegmentTranscribing`'s docstring: under the
+        # segment-at-silence architecture there is no partial *during* the
+        # transcription, only once it completes) -- and this same method
+        # renders the ack for `VoiceCommand`/clears the chip for `VoiceFinal`
+        # too, both of which equally supersede an in-flight indication.
+        self._voice_segment_transcribing = False
+        self.set_voice_status(
+            STATE_LISTENING,
+            partial=self._voice_partial,
+            elapsed_seconds=self._voice_elapsed_seconds,
+        )
+
+    def set_voice_segment_transcribing(self, transcribing: bool) -> None:
+        """Show or hide a per-segment transcribing indicator in the chip.
+
+        Fills the gap `VoiceSegmentTranscribing` exists for: the silence gate
+        can close a segment and then say nothing at all for seconds while it
+        transcribes (no live partial text under the segment-at-silence
+        architecture), which otherwise looks identical to a dead capture.
+
+        Args:
+            transcribing: True right when that gap starts. Reverted to False
+                by `set_voice_partial()` (the next final or command landing)
+                or by any `sync_dictation_state()` lifecycle transition --
+                never called with False directly by a caller. Ignored (a
+                no-op) outside the `recording` lifecycle state, the same
+                guard `set_voice_partial` uses.
+        """
+        if self._dictation_state != "recording":
+            return
+        self._voice_segment_transcribing = transcribing
+        self.set_voice_status(
+            STATE_LISTENING,
+            partial=self._voice_partial,
+            elapsed_seconds=self._voice_elapsed_seconds,
+            segment_transcribing=self._voice_segment_transcribing,
+        )
+
+    def tick_voice_elapsed(self) -> None:
+        """Advance the chip's elapsed-time counter by one second.
+
+        A no-op outside `recording` so a stray tick that fires just after the
+        capture ends (the owning timer is stopped on every exit path, but a
+        tick already queued for this frame can still land) cannot repaint a
+        chip that has already collapsed.
+        """
+        if self._dictation_state != "recording":
+            return
+        self._voice_elapsed_seconds += 1
+        self.set_voice_status(
+            STATE_LISTENING,
+            partial=self._voice_partial,
+            elapsed_seconds=self._voice_elapsed_seconds,
+            # Without this, the 1s elapsed-counter tick would blank a live
+            # segment-transcribing indication every second (`set_voice_status`
+            # defaults the parameter to False) -- the indicator can easily
+            # outlast one tick, since the transcription behind it takes
+            # seconds.
+            segment_transcribing=self._voice_segment_transcribing,
+        )
+
+    @staticmethod
+    def _extend_fitting_cells(prefix: str, text: str, width: int) -> str:
+        """Return the longest prefix of ``text`` that keeps ``prefix + <it>`` within ``width``.
+
+        Measures the actual **joined** candidate (``prefix + text[:k]``)
+        directly with `cell_len` at every step -- never a pre-computed
+        numeric budget (``width - cell_len(prefix)``) checked against
+        `cell_len` of the candidate piece *alone*. Cell width is not
+        additive across a join in every case, and not only in the way
+        `_cell_wrap_line`'s own docstring already covers (a boundary
+        crossing a narrow_to_wide upgrade): `cell_len` has a still sharper
+        edge where a **trailing** ZWJ silently absorbs the character that
+        would have followed it in a longer string (confirmed:
+        ``cell_len("#ZXY b9\\u200d ")`` -- 9 characters, ending right after
+        a ZWJ then a space -- is 7, as if the trailing space were never
+        there; append even one more character and the space *and* a
+        narrow-to-wide upgrade both reappear in the total). A numeric budget
+        derived from `cell_len(prefix)` in isolation cannot see that the
+        join itself changes what the tail of `prefix` measures as; measuring
+        the literal joined string every time sidesteps needing to know why.
+
+        Also why this doesn't delegate to `rich.cells.chop_cells`/
+        `split_graphemes`: those compute cell width via Unicode grapheme
+        segmentation, which itself disagrees with `cell_len`'s own
+        character-scan algorithm on ZWJ-bearing text (confirmed:
+        ``cell_len("\\u200d\\u200dbcb3Z33")`` is 7, but `split_graphemes`
+        -- what `chop_cells` trusts -- reports 6 for the identical string).
+        Recomputing directly with `cell_len` keeps this self-consistent with
+        every other width check in the file, all of which measure that way.
+
+        Returns ``""`` when even a single character of ``text`` doesn't fit
+        -- an honest "nothing fits" answer, not a forced minimum.
+        `_cell_wrap_line` is responsible for its own forward-progress
+        guarantee on an empty result; folding a forced minimum in here
+        caused it to fire on ordinary partial-budget rows too (an
+        already-full row plus a next chunk that simply has no room left is
+        not the same situation as a wholly empty row that cannot fit
+        *anything*, and conflating them broke the single-width parity
+        guarantee -- caught by 100k-trial differential fuzzing against
+        `textwrap.wrap` during development).
+
+        Args:
+            prefix: Text already committed to the row being built.
+            text: Candidate string to take a fitting extension from.
+            width: Total cell width the joined row must fit within.
+
+        Returns:
+            The longest fitting extension; ``""`` if nothing fits (including
+            an empty ``text``).
+        """
+        if not text:
+            return text
+        end = 0
+        while end < len(text) and cell_len(prefix + text[: end + 1]) <= width:
+            end += 1
+        return text[:end]
+
+    @classmethod
+    def _cell_wrap_line(cls, line: str, width: int) -> list[str]:
+        """Greedy word-wrap ``line`` by terminal cell width, not character count.
+
+        Mirrors ``textwrap.wrap(line, width=width, break_long_words=True,
+        break_on_hyphens=False, drop_whitespace=False, replace_whitespace=False)``
+        chunk-for-chunk -- same tab expansion, same whitespace-run chunking,
+        same greedy fill and long-word hard-break -- except every length
+        check measures ``rich.cells.cell_len`` (terminal columns) instead of
+        ``len()`` (Python characters). For single-width-only text the two
+        measures are identical, so this produces byte-identical output to
+        the ``textwrap`` call it replaces (confirmed with 100k-trial
+        differential fuzzing against the exact `textwrap.wrap` call above);
+        the difference only surfaces on double-width text (CJK, emoji),
+        where a character-counted wrap can under-count how many terminal
+        columns a row actually occupies and let it silently overflow the
+        wrap width at paint time.
+
+        Both the greedy fill and the long-word hard-break measure the
+        *actual joined candidate row* directly with `cell_len` -- never a
+        running sum or a pre-computed numeric budget checked against a
+        piece's own isolated `cell_len` (see `_extend_fitting_cells`'s
+        docstring for why cell width is not reliably additive across a
+        join). The hard-break takes one fitting bite per call via
+        `_extend_fitting_cells`, matching `TextWrapper._handle_long_word`'s
+        one-bite-per-line contract, so a chunk that needs several lines to
+        exhaust naturally gets the rest on subsequent passes of the outer
+        loop below.
+
+        Args:
+            line: A single logical line (no newlines) to wrap.
+            width: Wrap width in terminal cells.
+
+        Returns:
+            Wrapped rows for ``line``; always at least one entry (matching
+            ``textwrap.wrap(...) or [""]`` at every call site).
+        """
+        width = max(1, width)
+        # `textwrap.wrap` always expands tabs before splitting into chunks
+        # (`expand_tabs` defaults to True and is never overridden by any
+        # caller in this module) regardless of `replace_whitespace`, which
+        # only controls whether *other* whitespace becomes plain spaces.
+        chunks = [
+            chunk
+            for chunk in _DRAFT_WORD_SPLIT_RE.split(line.expandtabs(8))
+            if chunk
+        ]
+        chunks.reverse()
+        lines: list[str] = []
+        while chunks:
+            current_text = ""
+            while chunks:
+                candidate = current_text + chunks[-1]
+                if cell_len(candidate) > width:
+                    break
+                current_text = candidate
+                chunks.pop()
+
+            if chunks and cell_len(chunks[-1]) > width:
+                chunk = chunks[-1]
+                piece = cls._extend_fitting_cells(current_text, chunk, width)
+                if not piece and not current_text:
+                    # A wholly fresh row and even the FULL `width` budget
+                    # can't fit this chunk's first character (only possible
+                    # at width < 2 with double-width leading content --
+                    # unreachable in production, where every call site
+                    # floors width at 8, but no caller here relies on that,
+                    # so this stays correct if one ever passes a smaller
+                    # width). Force exactly one character so the outer loop
+                    # is guaranteed to make progress; the CSS
+                    # `text_overflow: clip` guard crops the resulting
+                    # overflow at paint time.
+                    piece = chunk[:1]
+                if piece:
+                    current_text += piece
+                    chunks[-1] = chunk[len(piece) :]
+                    if not chunks[-1]:
+                        chunks.pop()
+                # else: this row already holds prior content and has no
+                # room left for even one more character of the next
+                # (individually too-wide) chunk -- leave it untouched for a
+                # fresh, full-budget row on the next pass of the outer loop,
+                # exactly mirroring `TextWrapper._handle_long_word`'s own
+                # `space_left == 0` behavior. Forcing a character onto an
+                # already-full row here would silently make that row wider
+                # than `width` for perfectly ordinary text, not just the
+                # width-1 double-width case above (caught by fuzzing during
+                # development).
+
+            # `current_text` is always non-empty here: either the greedy
+            # fill above consumed at least one chunk, or the hard-break
+            # branch's forced-progress fallback fired (guaranteed whenever
+            # `current_text` started this iteration empty and nothing else
+            # fit, per the note above). The only way to reach here with an
+            # unconsumed too-wide `chunks[-1]` and an empty `current_text`
+            # would require that fallback to not fire on an empty row, which
+            # cannot happen.
+            lines.append(current_text)
+        return lines or [""]
 
     @classmethod
     def _wrap_draft_lines(cls, text: str, width: int) -> list[str]:
@@ -427,17 +1608,7 @@ class ConsoleComposerBar(Horizontal):
             if not line:
                 wrapped_lines.append("")
                 continue
-            wrapped_lines.extend(
-                textwrap.wrap(
-                    line,
-                    width=width,
-                    break_long_words=True,
-                    break_on_hyphens=False,
-                    drop_whitespace=False,
-                    replace_whitespace=False,
-                )
-                or [""]
-            )
+            wrapped_lines.extend(cls._cell_wrap_line(line, width))
         return wrapped_lines or [""]
 
     @classmethod
@@ -464,14 +1635,7 @@ class ConsoleComposerBar(Horizontal):
                 continue
 
             line_offset = 0
-            wrapped_segments = textwrap.wrap(
-                line,
-                width=width,
-                break_long_words=True,
-                break_on_hyphens=False,
-                drop_whitespace=False,
-                replace_whitespace=False,
-            ) or [""]
+            wrapped_segments = cls._cell_wrap_line(line, width)
             for wrapped_segment in wrapped_segments:
                 start = source_offset + line_offset
                 end = start + len(wrapped_segment)
@@ -494,7 +1658,26 @@ class ConsoleComposerBar(Horizontal):
         line_slices: list[_DraftLineSlice],
         source_offset: int,
     ) -> int:
-        """Return the wrapped row containing a source-text offset."""
+        """Return the wrapped row containing a source-text offset.
+
+        For SPLICED offsets only -- callers that pass `line_slices` wrapped
+        from a caret-glyph- or placeholder-spliced `render_text`, together
+        with the matching spliced offset into it (the two current
+        production callers, both via `_visible_draft_line_slices(...,
+        cursor_index=...)`: `_draft_renderable`'s glyph splice and
+        `_display_index_at`'s space splice). A real character always
+        occupies the exact offset being looked up under that contract, so
+        the "no row contains this offset" fallback below (unconditionally
+        the LAST row) is never actually reachable there.
+
+        That fallback is WRONG for a genuinely unspliced offset -- e.g. an
+        offset sitting exactly in the gap between two explicit-newline-
+        separated rows, which is common and expected, not an edge case.
+        Canonical/unspliced-offset callers (the vertical caret-movement
+        path) must use `_row_index_for_canonical_offset` instead, which
+        resolves that gap to the row immediately preceding it rather than
+        unconditionally the draft's last row.
+        """
         for row_index, line_slice in enumerate(line_slices):
             if line_slice.start <= source_offset < line_slice.end:
                 return row_index
@@ -529,15 +1712,54 @@ class ConsoleComposerBar(Horizontal):
         visible_slices = list(
             line_slices[first_visible : first_visible + cls.MAX_DRAFT_ROWS]
         )
+        if first_visible == 0:
+            # Nothing is scrolled off above this window -- row 0 IS the
+            # draft's true first row, not a continuation. Prefixing/trimming
+            # it here would delete real leading content (and the caret
+            # glyph, when the caret is on this row -- reachable by ordinary
+            # Home/click-at-start on any draft over MAX_DRAFT_ROWS) to make
+            # room for an ellipsis that has nothing above it to elide.
+            return visible_slices
+        effective_width = max(8, width)
         first_slice = visible_slices[0]
         first_line_stripped = first_slice.text.lstrip()
         if first_line_stripped:
-            trimmed_columns = len(first_slice.text) - len(first_line_stripped)
+            prefix = "... "
+            lstripped_columns = len(first_slice.text) - len(first_line_stripped)
+            # The ellipsis must CONSUME leading content, not extend the row:
+            # a whitespace-flush row that already fills `width` would
+            # otherwise grow to `width + len(prefix)` once prefixed, and an
+            # unbudgeted row that long gets rewrapped at paint time by
+            # anything that isn't `no_wrap` -- silently pushing the true
+            # last row out of the fixed-height window (the bug this guards
+            # against). The candidate REMAINDER is measured directly with
+            # `cell_len` on each trimmed slice, not via a running per-
+            # character subtraction: a decrement seeded from the whole
+            # string's grapheme-aware `cell_len` but applied one character
+            # at a time over-subtracts across any grapheme cluster whose
+            # per-character sum exceeds the cluster's own width (ZWJ
+            # sequences), exiting the trim loop early and leaving the row
+            # still over budget -- confirmed via fuzzing during development
+            # (`"K‍TCCOtR"` at width 8: cluster-cells=6, per-char-sum=7).
+            budget_cells = max(0, effective_width - cell_len(prefix))
+            overflow_columns = 0
+            while (
+                overflow_columns < len(first_line_stripped)
+                and cell_len(first_line_stripped[overflow_columns:]) > budget_cells
+            ):
+                overflow_columns += 1
+            visible_text = first_line_stripped[overflow_columns:]
+            # Advance the source-offset start past every trimmed character:
+            # the whitespace `lstrip()` already dropped, plus the additional
+            # leading characters just trimmed to make room for the prefix.
+            # Keeps `_row_index_for_source_offset`, style-span remapping, and
+            # click-to-position mapping consistent with what is now painted.
+            trimmed_columns = lstripped_columns + overflow_columns
             visible_slices[0] = _DraftLineSlice(
-                f"... {first_line_stripped}",
+                f"{prefix}{visible_text}",
                 first_slice.start + trimmed_columns,
                 first_slice.end,
-                synthetic_prefix_columns=4,
+                synthetic_prefix_columns=len(prefix),
             )
         else:
             visible_slices[0] = _DraftLineSlice(
@@ -619,7 +1841,36 @@ class ConsoleComposerBar(Horizontal):
                 width,
                 cursor_index=caret_position,
             )
-            rendered = Text("\n".join(line.text for line in line_slices))
+            # `no_wrap`/`overflow="crop"`: defense-in-depth, not the fix for
+            # any known bug reachable through this file's own call sites.
+            # Each joined row is already budgeted to fit `width` by
+            # `_visible_draft_line_slices` -- verified with 500k-trial fuzzing
+            # (ASCII, CJK, ZWJ/emoji grapheme clusters) at every width >= 8,
+            # the floor both `_wrap_draft_lines` and `_wrap_draft_line_slices`
+            # enforce, with zero violations. Below that floor (unreachable in
+            # production, but not something `_cell_wrap_line` itself assumes)
+            # a genuinely-empty row that can't fit even one character of a
+            # double-width chunk is allowed a single bounded overflow rather
+            # than hang -- this guard is what actually crops that case. This
+            # only otherwise changes what happens if a *future* budgeting bug
+            # lets a row overflow again -- cropping the one offending row in
+            # place instead of silently rewrapping it into an extra physical
+            # row, which would push the fixed 4-row window's true last row out
+            # of view without any visible sign something was wrong.
+            # Belt-and-suspenders only:
+            # Textual's `Static` converts a `rich.Text` to `Content` via
+            # `Content.from_rich_text`, which carries over the plain text and
+            # spans but *not* `no_wrap`/`overflow` -- the enforcement that
+            # actually reaches the screen is the `text_wrap`/`text_overflow`
+            # widget styles set on `#console-command-visible-text` in
+            # `compose()`. Kept here too for any renderer that (unlike
+            # `Static`) does respect `Text`'s own flags, and so this stays
+            # correct if a future Textual version stops dropping them.
+            rendered = Text(
+                "\n".join(line.text for line in line_slices),
+                no_wrap=True,
+                overflow="crop",
+            )
             if style_ranges:
                 output_offset = 0
                 for line_index, line_slice in enumerate(line_slices):
@@ -697,6 +1948,14 @@ class ConsoleComposerBar(Horizontal):
             visible_draft.styles.height = row_count
             visible_draft.styles.min_height = row_count
             visible_draft.styles.max_height = self.MAX_DRAFT_ROWS
+            # The stylesheet pins `#console-composer-expanded` to height 1
+            # (the collapsed sibling genuinely wants that). Left at 1, the
+            # row CROPS the grown draft to a single painted line, vertically
+            # centered in the taller bar -- the live-gate "text hidden past
+            # the cutoff" report. Grow the row with the draft it contains.
+            expanded = self.query_one("#console-composer-expanded", Horizontal)
+            expanded.styles.height = row_count
+            expanded.styles.min_height = row_count
         except NoMatches:
             pass
         self.styles.height = composer_height
@@ -716,7 +1975,7 @@ class ConsoleComposerBar(Horizontal):
         parts = ["Composer hidden"]
         if self._run_active:
             parts.append("Generating")
-        if bool(self.draft_text()):
+        if self._has_any_draft_content():
             parts.append("Draft retained")
         if self._pending_attachment_label is not None:
             parts.append("Attachment retained")
@@ -738,7 +1997,11 @@ class ConsoleComposerBar(Horizontal):
         self.set_class(self._collapsed, "console-composer-collapsed")
 
     def set_collapsed(self, collapsed: bool) -> None:
-        """Switch presentation without remounting or clearing editor state."""
+        """Switch presentation without remounting or clearing editor state.
+
+        Args:
+            collapsed: Whether to show the one-row restore presentation.
+        """
         self._collapsed = bool(collapsed)
         self.can_focus = not self._collapsed
         self._sync_collapsed_presentation()
@@ -760,16 +2023,20 @@ class ConsoleComposerBar(Horizontal):
             return
         segment_index, offset = self._locate_canonical(self._cursor_index)
         segment = self._segments[segment_index]
-        if segment.collapse_state in {"literal", "expanded"}:
+        if segment.origin == "literal" and segment.collapse_state in {
+            "literal",
+            "expanded",
+        }:
             segment.text = segment.text[:offset] + text + segment.text[offset:]
             self._cursor_index += len(text)
             return
         if offset == len(segment.text):
-            # Caret just past a paste token: prepend to the right literal
-            # neighbour when possible, else start a new literal segment.
+            # Caret just past a protected/non-literal segment: prepend to the
+            # right literal neighbour when possible, else start a new literal.
             right_index = segment_index + 1
             if (
                 right_index < len(self._segments)
+                and self._segments[right_index].origin == "literal"
                 and self._segments[right_index].collapse_state == "literal"
             ):
                 self._segments[right_index].text = (
@@ -779,12 +2046,32 @@ class ConsoleComposerBar(Horizontal):
                 self._segments.insert(right_index, _DraftSegment(text))
             self._cursor_index += len(text)
             return
-        # Caret just before a leading paste token (offset == 0).
-        left_index = segment_index - 1
-        if left_index >= 0 and self._segments[left_index].collapse_state == "literal":
-            self._segments[left_index].text += text
-        else:
-            self._segments.insert(segment_index, _DraftSegment(text))
+        if offset == 0:
+            # Caret just before a protected/non-literal segment.
+            left_index = segment_index - 1
+            if (
+                left_index >= 0
+                and self._segments[left_index].origin == "literal"
+                and self._segments[left_index].collapse_state == "literal"
+            ):
+                self._segments[left_index].text += text
+            else:
+                self._segments.insert(segment_index, _DraftSegment(text))
+            self._cursor_index += len(text)
+            return
+
+        # An expanded paste/inline file can expose interior caret positions,
+        # but typing there must not silently change the original segment's
+        # provenance. Split the surviving source around a new literal segment.
+        left_text = segment.text[:offset]
+        right_text = segment.text[offset:]
+        replacement: list[_DraftSegment] = []
+        if left_text:
+            replacement.append(replace(segment, text=left_text))
+        replacement.append(_DraftSegment(text))
+        if right_text:
+            replacement.append(replace(segment, text=right_text))
+        self._segments[segment_index : segment_index + 1] = replacement
         self._cursor_index += len(text)
 
     def _insert_segment_at_cursor(self, segment: _DraftSegment) -> None:
@@ -803,22 +2090,10 @@ class ConsoleComposerBar(Horizontal):
             right_text = target.text[offset:]
             replacement: list[_DraftSegment] = []
             if left_text:
-                replacement.append(
-                    _DraftSegment(
-                        left_text,
-                        collapse_state=target.collapse_state,
-                        label=target.label,
-                    )
-                )
+                replacement.append(replace(target, text=left_text))
             replacement.append(segment)
             if right_text:
-                replacement.append(
-                    _DraftSegment(
-                        right_text,
-                        collapse_state=target.collapse_state,
-                        label=target.label,
-                    )
-                )
+                replacement.append(replace(target, text=right_text))
             self._segments[segment_index : segment_index + 1] = replacement
         self._cursor_index += len(segment.text)
 
@@ -846,13 +2121,7 @@ class ConsoleComposerBar(Horizontal):
                 + segment.text[max(0, end - segment_start) :]
             )
             if kept_text:
-                kept_segments.append(
-                    _DraftSegment(
-                        kept_text,
-                        collapse_state=segment.collapse_state,
-                        label=segment.label,
-                    )
-                )
+                kept_segments.append(replace(segment, text=kept_text))
         self._segments = kept_segments
         self._cursor_index = start
         self._clamp_cursor()
@@ -964,28 +2233,347 @@ class ConsoleComposerBar(Horizontal):
 
         The caret lands at the end of the restored draft.
 
+        TASK-1281 review F3/F4: this is always a SCOPE change (a session
+        switch, or a launch-context prefill), never a recorded edit, so it
+        unconditionally wipes any existing undo/redo history rather than
+        leaving the previous scope's stale entries reachable -- a caller
+        that wants to carry history across the call (the session-switch
+        path in `ChatScreen._sync_console_session_draft`) must explicitly
+        call `restore_undo_history` afterward, which it already does.
+        Resetting `_coalescing_active` matters independently of wiping the
+        stacks: left `True`, it would silently swallow the very first
+        keystroke recorded against the new scope (nothing to merge into,
+        but `_record_undo_snapshot` would still no-op).
+
         Args:
             text: Draft payload to show and send literally.
         """
-        self._draft_selection_all = False
+        self._advance_draft_generation()
+        self._clear_draft_selection()
         self._segments = [_DraftSegment(text)] if text else []
         self._segments_initialized = True
         self._cursor_index = len(text)
+        self._undo_stack = []
+        self._redo_stack = []
+        self._coalescing_active = False
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
         self._sync_current_action_state()
 
-    def clear_draft(self) -> None:
-        """Clear the native Console draft without falling back to stale input."""
-        self._draft_selection_all = False
-        self._segments = []
-        self._segments_initialized = True
-        self._cursor_index = 0
+    def stash_draft_for_send(self) -> ConsoleDraftStash | None:
+        """Capture and clear the draft synchronously at the send keypress.
+
+        Keystrokes processed after this call land in a fresh, empty draft —
+        they can never fold into the captured send payload (TASK-340). A
+        rejected send hands the stash back via ``restore_stashed_draft``.
+
+        Returns:
+            The captured stash, or ``None`` when the draft is empty (an
+            image-only send has nothing to capture or restore).
+        """
+        # A send keypress is a draft-scope barrier even when there is no text
+        # to stash (for example, an attachment-only send).
+        self.invalidate_improvement_undo()
+        text = self.draft_text()
+        if not text:
+            return None
+        if not self._segments_initialized:
+            self._segments = [_DraftSegment(text)]
+            self._segments_initialized = True
+        stash = ConsoleDraftStash(
+            # Copies, not the live objects: segments are mutable, and a
+            # restored draft keeps being edited — the stash must stay a
+            # faithful snapshot of the keypress moment.
+            segments=[replace(segment) for segment in self._segments],
+            text=text,
+            has_paste=self.has_paste_segments(),
+        )
+        self.clear_draft()
+        return stash
+
+    def restore_stashed_draft(self, stash: ConsoleDraftStash | None) -> None:
+        """Put a stashed draft back, ahead of anything typed since the stash.
+
+        The stashed segments are prepended so a rejected send reads exactly
+        as before the keypress, with later keystrokes appended after it;
+        paste provenance and collapse state come back untouched.
+
+        Args:
+            stash: The capture returned by ``stash_draft_for_send``, or
+                ``None`` (image-only send — nothing to restore).
+        """
+        if stash is None or not stash.segments:
+            return
+        self._advance_draft_generation()
+        self._clear_draft_selection()
+        if not self._segments_initialized:
+            existing = self.draft_text()
+            self._segments = [_DraftSegment(existing)] if existing else []
+            self._segments_initialized = True
+        self._segments = [
+            replace(segment) for segment in stash.segments
+        ] + self._segments
+        self._cursor_index = len(self._canonical_draft_text())
+        # TASK-1281 review F3: this replaces the draft wholesale without
+        # recording (a rejected send putting the user's own text back is
+        # not itself an edit), but it must still close any run left open
+        # from before the send -- otherwise the first keystroke typed after
+        # the restore silently coalesces into (and is swallowed by) an
+        # unrelated pre-send entry instead of getting its own.
+        self._coalescing_active = False
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
         self._sync_current_action_state()
+
+    @property
+    def edit_serial(self) -> int:
+        """Monotonic count of user-originated draft edits (TASK-339)."""
+        return self._user_edit_serial
+
+    def clear_draft(self, *, record_history: bool = False) -> None:
+        """Clear the native Console draft without falling back to stale input.
+
+        Args:
+            record_history: Whether this clear is user-intent and should be
+                undoable (TASK-1281). Defaults to False -- most callers use
+                this to swap draft scope programmatically (session switches,
+                the post-send clear, restore-then-replace flows), and none
+                of those should be revertable with Ctrl+Z. The one caller
+                that must pass ``True`` is the Ctrl+U "clear draft" key
+                handler in `ChatScreen.on_key` -- an accidental full clear is
+                exactly what undo exists for.
+        """
+        if record_history and self._has_any_draft_content():
+            self._record_undo_snapshot(coalesce=False)
+        self._advance_draft_generation()
+        self._clear_draft_selection()
+        self._segments = []
+        self._segments_initialized = True
+        self._cursor_index = 0
+        # TASK-1281 review F3: even the non-recording branch replaces the
+        # draft, so it must close any coalescing run left open from before
+        # the clear -- otherwise the next typed character merges into (and
+        # is swallowed by) a stale pre-clear entry instead of recording its
+        # own. The recording branch above already resets this as a
+        # side effect of `_record_undo_snapshot`, but the non-recording
+        # (default) branch never calls it, so this cannot be conditional.
+        self._coalescing_active = False
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
+
+    def clear_history(self) -> None:
+        """Empty both undo/redo stacks (TASK-1281 review F2: send is a history barrier).
+
+        Called once a draft has been irrevocably consumed by an accepted
+        send that will never be restored. Clearing just the draft
+        (`clear_draft()`, always non-recording for a send) is not enough on
+        its own -- the mutations that produced the sent text stay reachable
+        on the undo stack, and Ctrl+Z would resurrect already-sent content
+        back into the composer (and, via the screen's undo/redo
+        re-persist, right back into the store as the "live" draft).
+        """
+        self._undo_stack = []
+        self._redo_stack = []
+        self._coalescing_active = False
+
+    # -- Undo/redo history (TASK-1281) ------------------------------------
+    #
+    # Coalescing rule: consecutive single-character *printable* inserts
+    # (ordinary typing) merge into one undo entry, so one Ctrl+Z reverts a
+    # whole typed run. Every other mutation kind (paste, a file/attachment
+    # segment, a delete, a full clear) always opens a fresh entry, and a
+    # cursor reposition between keystrokes also closes the run -- both are
+    # implemented by having every mutation/reposition entry point call
+    # either `_record_undo_snapshot` (mutations) or set
+    # `_coalescing_active = False` directly (repositions).
+
+    def _record_undo_snapshot(self, *, coalesce: bool) -> None:
+        """Push the pre-mutation draft state onto the undo stack.
+
+        Must be called with the *current* (pre-mutation) segments/cursor
+        still in place -- every call site here calls it after any lazy
+        segment initialization but before the mutation itself splices
+        anything.
+
+        Args:
+            coalesce: Whether this mutation is a candidate to merge into an
+                already-open typed run. When True and the immediately
+                previous recorded mutation was also coalescable and still
+                open, this call is a no-op -- the run's original snapshot
+                stays on top so a single undo reverts the whole run.
+        """
+        if coalesce and self._coalescing_active:
+            return
+        self._undo_stack.append(
+            _DraftHistorySnapshot(text=self.draft_text(), cursor_index=self._cursor_index)
+        )
+        if len(self._undo_stack) > self.UNDO_HISTORY_DEPTH_CAP:
+            del self._undo_stack[0]
+        self._evict_to_char_budget(self._undo_stack)
+        self._redo_stack.clear()
+        self._coalescing_active = coalesce
+
+    @classmethod
+    def _evict_to_char_budget(cls, stack: list[_DraftHistorySnapshot]) -> None:
+        """Drop the oldest entries of ``stack`` while it exceeds the char budget.
+
+        TASK-1281 review F6. Never evicts the single most recent entry, even
+        if it alone exceeds the budget -- a best-effort bound on total
+        retained memory, not a hard guarantee, since a single oversized
+        snapshot (a large inlined attachment) must still be revertible.
+        """
+        total = sum(len(entry.text) for entry in stack)
+        while total > cls.UNDO_HISTORY_CHAR_BUDGET and len(stack) > 1:
+            removed = stack.pop(0)
+            total -= len(removed.text)
+
+    def _apply_history_snapshot(self, snapshot: _DraftHistorySnapshot) -> None:
+        """Replace the live draft with a recorded undo/redo snapshot.
+
+        TASK-1281 review NEW-2 (fix shape corrected by review W-1/W-2): a
+        restored segment over `UNDO_RECOLLAPSE_CHAR_THRESHOLD` is created
+        COLLAPSED -- the same paste-token mechanics `insert_pasted_text`
+        already uses for a real paste over `paste_collapse_threshold` --
+        rather than as one giant literal segment. Restoring it as a flat
+        literal used to run `_refresh_visible_draft`'s O(n^2) wrap/render
+        path against the FULL text on every undo/redo: measured up to 283s
+        frozen on the main thread for a 2.4 MB restored draft. F6's
+        char-budget eviction deliberately keeps such large snapshots
+        revertible, which is exactly what made this reachable by an
+        ordinary Ctrl+Z rather than only a contrived one.
+
+        The gate is `UNDO_RECOLLAPSE_CHAR_THRESHOLD` (20,000 chars),
+        deliberately NOT `paste_collapse_threshold` (a cosmetic
+        paste-display preference, shipped default 50) and NOT gated on
+        `collapse_large_pastes_enabled` -- an earlier version of this fix
+        used both, which converted ordinary typed draft text into an
+        opaque token on every undo/redo over 50 characters (review W-1,
+        HIGH) and let a user disabling the display preference bring the
+        freeze back in full (review W-2, LOW). See the constant's own
+        docstring for the measurements behind the threshold value.
+
+        A redo landing back on a snapshot taken while a large paste was
+        still collapsed correctly shows the collapsed token again, not the
+        fully expanded literal text -- see the module docstring for the
+        (narrower) limitation that remains: the restored token is always a
+        generic "Pasted Text: N Characters" collapse, never the original
+        segment's label (a labeled file/attachment segment, or one already
+        `expanded`/mid-`confirm`, is not carried through the flat snapshot
+        -- only the raw text and whether it crosses the threshold are).
+
+        Collapsed tokens are atomic for the caret everywhere else in this
+        widget (no other code path leaves it mid-token), so when the
+        restored segment collapses, `snapshot.cursor_index` -- recorded
+        against whatever the segment structure was AT SNAPSHOT time, which
+        may not have been collapsed at all -- is snapped to whichever
+        token edge (0 or the full text length) it was nearer to, rather
+        than restored verbatim into what is now the middle of a token.
+        """
+        self._clear_draft_selection()
+        text_length = len(snapshot.text)
+        raw_cursor = max(0, min(snapshot.cursor_index, text_length))
+        if not snapshot.text:
+            self._segments = []
+            self._cursor_index = 0
+        elif text_length > self.UNDO_RECOLLAPSE_CHAR_THRESHOLD:
+            self._segments = [
+                _DraftSegment(
+                    snapshot.text,
+                    origin="literal",
+                    collapse_state="collapsed",
+                )
+            ]
+            self._cursor_index = 0 if raw_cursor * 2 < text_length else text_length
+        else:
+            self._segments = [_DraftSegment(snapshot.text)]
+            self._cursor_index = raw_cursor
+        self._segments_initialized = True
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
+
+    def undo(self) -> bool:
+        """Revert the most recent recorded composer draft mutation.
+
+        A silent no-op when there is nothing to undo -- callers should not
+        toast or bell on an empty stack.
+
+        Returns:
+            True when a snapshot was applied (the caller is then
+            responsible for re-persisting `draft_text()`, mirroring
+            dictation insertion).
+        """
+        if not self._undo_stack:
+            return False
+        self._mark_manual_draft_edit()
+        current = _DraftHistorySnapshot(text=self.draft_text(), cursor_index=self._cursor_index)
+        self._redo_stack.append(current)
+        if len(self._redo_stack) > self.UNDO_HISTORY_DEPTH_CAP:
+            del self._redo_stack[0]
+        self._evict_to_char_budget(self._redo_stack)
+        snapshot = self._undo_stack.pop()
+        self._apply_history_snapshot(snapshot)
+        self._coalescing_active = False
+        return True
+
+    def redo(self) -> bool:
+        """Reapply a composer draft mutation that was just undone.
+
+        A silent no-op when there is nothing to redo.
+
+        Returns:
+            True when a snapshot was applied.
+        """
+        if not self._redo_stack:
+            return False
+        self._mark_manual_draft_edit()
+        current = _DraftHistorySnapshot(text=self.draft_text(), cursor_index=self._cursor_index)
+        self._undo_stack.append(current)
+        if len(self._undo_stack) > self.UNDO_HISTORY_DEPTH_CAP:
+            del self._undo_stack[0]
+        self._evict_to_char_budget(self._undo_stack)
+        snapshot = self._redo_stack.pop()
+        self._apply_history_snapshot(snapshot)
+        self._coalescing_active = False
+        return True
+
+    def export_undo_history(self) -> ConsoleComposerUndoHistory:
+        """Return a copy of this composer's undo/redo stacks.
+
+        Used by `ChatScreen` to scope history per Console session (TASK-1281
+        AC4): exported on switch-away, restored after `load_draft` on
+        switch-in. The returned lists are copies -- safe for the caller to
+        hold in a dict keyed by session id without aliasing this composer's
+        live stacks.
+        """
+        return (list(self._undo_stack), list(self._redo_stack))
+
+    def restore_undo_history(
+        self, history: ConsoleComposerUndoHistory | None
+    ) -> None:
+        """Replace the undo/redo stacks wholesale (TASK-1281 session scoping).
+
+        Args:
+            history: A prior `export_undo_history()` result, or None for an
+                empty history (a session that has never had a recorded
+                edit -- freshly created, or never visited before).
+        """
+        undo_entries, redo_entries = history if history is not None else ([], [])
+        self._undo_stack = list(undo_entries)
+        self._redo_stack = list(redo_entries)
+        # TASK-1281 review F6: a caller-supplied history (banked across a
+        # session switch, potentially from before this composer instance's
+        # own char-budget enforcement existed, or simply handed in from
+        # elsewhere) is re-enforced here too rather than trusted as already
+        # within budget.
+        self._evict_to_char_budget(self._undo_stack)
+        self._evict_to_char_budget(self._redo_stack)
+        self._coalescing_active = False
 
     def select_all_draft(self) -> bool:
         """Mark the full visible Console draft as selected without mutating it.
@@ -994,7 +2582,7 @@ class ConsoleComposerBar(Horizontal):
             True when there is draft text to select, otherwise False.
         """
         if not self.draft_text():
-            self._draft_selection_all = False
+            self._clear_draft_selection()
             self._refresh_visible_draft()
             return False
         if not self._segments_initialized:
@@ -1002,7 +2590,11 @@ class ConsoleComposerBar(Horizontal):
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
         self._draft_selection_all = True
+        self._draft_selection_range = None
         self._cursor_index = len(self._canonical_draft_text())
+        # TASK-1281: a select-all is a cursor reposition (to the tail) for
+        # undo-coalescing purposes -- it closes any open typed run.
+        self._coalescing_active = False
         self._refresh_visible_draft()
         return True
 
@@ -1020,6 +2612,7 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Typed text to insert without paste-collapse transformation.
         """
+        self._mark_manual_draft_edit()
         if not text:
             self._sync_interaction_classes()
             self._sync_current_action_state()
@@ -1029,9 +2622,14 @@ class ConsoleComposerBar(Horizontal):
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
             self._cursor_index = len(existing)
+        # TASK-1281: a single printable character (ordinary typing) coalesces
+        # into an already-open typed run; anything else (a multi-character
+        # insert -- e.g. dictation -- or a non-printable one, like the
+        # Shift+Enter newline) always opens a fresh undo entry.
+        self._record_undo_snapshot(coalesce=len(text) == 1 and text.isprintable())
         if self._draft_selection_all:
             self._segments = []
-            self._draft_selection_all = False
+            self._clear_draft_selection()
             self._cursor_index = 0
         self._reset_pending_unfurl_state()
         self._clamp_cursor()
@@ -1047,6 +2645,7 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Raw text inserted through a paste event.
         """
+        self._mark_manual_draft_edit()
         if not text:
             self._sync_interaction_classes()
             self._sync_current_action_state()
@@ -1056,9 +2655,13 @@ class ConsoleComposerBar(Horizontal):
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
             self._cursor_index = len(existing)
+        # TASK-1281: a paste is always its own undo entry, even a
+        # single-character one -- it is a different mutation kind from
+        # typing and must never silently merge into an open typed run.
+        self._record_undo_snapshot(coalesce=False)
         if self._draft_selection_all:
             self._segments = []
-            self._draft_selection_all = False
+            self._clear_draft_selection()
             self._cursor_index = 0
         self._reset_pending_unfurl_state()
         self._clamp_cursor()
@@ -1068,10 +2671,20 @@ class ConsoleComposerBar(Horizontal):
         )
         if should_collapse:
             self._insert_segment_at_cursor(
-                _DraftSegment(text, collapse_state="collapsed")
+                _DraftSegment(
+                    text,
+                    origin="paste",
+                    collapse_state="collapsed",
+                )
             )
         else:
-            self._insert_literal_at_cursor(text)
+            self._insert_segment_at_cursor(
+                _DraftSegment(
+                    text,
+                    origin="paste",
+                    collapse_state="literal",
+                )
+            )
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
@@ -1100,6 +2713,7 @@ class ConsoleComposerBar(Horizontal):
             label: Display-only token shown in place of the text (e.g.
                 ``"📄 notes.md · 4 KB"``).
         """
+        self._mark_manual_draft_edit()
         if not text:
             self._sync_interaction_classes()
             self._sync_current_action_state()
@@ -1109,14 +2723,21 @@ class ConsoleComposerBar(Horizontal):
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
             self._cursor_index = len(existing)
+        # TASK-1281: an attachment/file segment is always its own undo entry.
+        self._record_undo_snapshot(coalesce=False)
         if self._draft_selection_all:
             self._segments = []
-            self._draft_selection_all = False
+            self._clear_draft_selection()
             self._cursor_index = 0
         self._reset_pending_unfurl_state()
         self._clamp_cursor()
         self._insert_segment_at_cursor(
-            _DraftSegment(text, collapse_state="collapsed", label=label)
+            _DraftSegment(
+                text,
+                origin="inline_file",
+                collapse_state="collapsed",
+                label=label,
+            )
         )
         self._sync_hidden_input()
         self._refresh_visible_draft()
@@ -1133,18 +2754,33 @@ class ConsoleComposerBar(Horizontal):
 
     def delete_left(self) -> None:
         """Delete the character (or paste token) immediately left of the caret."""
+        self._mark_manual_draft_edit()
         if self._draft_selection_all:
+            # TASK-1281: record before dispatching to `clear_draft` -- its
+            # own `record_history` default is False (most callers are
+            # programmatic), so a Backspace-over-a-full-selection must record
+            # its own entry here rather than rely on the callee.
+            self._record_undo_snapshot(coalesce=False)
             self.clear_draft()
             return
-        if not self._segments_initialized:
-            self.load_draft(self.draft_text()[:-1])
-            return
+        # TASK-1281 review NEW-1: previously this branch shortcut through
+        # `self.load_draft(self.draft_text()[:-1])` -- but `load_draft` now
+        # unconditionally wipes both undo/redo stacks (F4), which silently
+        # discarded the snapshot just recorded a line above it, making this
+        # deletion the one path in the whole widget that was NOT undoable.
+        # `_ensure_editable_segments()` is the same lazy-init helper every
+        # other mutator here already uses (`delete_right`/`delete_word_left`
+        # included); it initializes segments from the legacy draft without
+        # touching history, so the ordinary deletion logic below can record
+        # and splice exactly as it does once the composer is initialized.
+        self._ensure_editable_segments()
         self._clamp_cursor()
         if not self._segments or self._cursor_index == 0:
             self._sync_interaction_classes()
             self._sync_current_action_state()
             return
 
+        self._record_undo_snapshot(coalesce=False)
         segment_index, offset = self._locate_canonical(self._cursor_index)
         segment = self._segments[segment_index]
         if segment.collapse_state in {"collapsed", "confirm"}:
@@ -1164,7 +2800,9 @@ class ConsoleComposerBar(Horizontal):
 
     def delete_right(self) -> None:
         """Delete the character (or paste token) immediately right of the caret."""
+        self._mark_manual_draft_edit()
         if self._draft_selection_all:
+            self._record_undo_snapshot(coalesce=False)
             self.clear_draft()
             return
         self._ensure_editable_segments()
@@ -1176,6 +2814,7 @@ class ConsoleComposerBar(Horizontal):
             self._sync_current_action_state()
             return
 
+        self._record_undo_snapshot(coalesce=False)
         segment_index, offset = self._locate_canonical(self._cursor_index)
         segment = self._segments[segment_index]
         if offset == len(segment.text):
@@ -1208,7 +2847,9 @@ class ConsoleComposerBar(Horizontal):
         Returns:
             True when text (or a full-draft selection) was deleted.
         """
+        self._mark_manual_draft_edit()
         if self._draft_selection_all:
+            self._record_undo_snapshot(coalesce=False)
             self.clear_draft()
             return True
         self._ensure_editable_segments()
@@ -1251,6 +2892,7 @@ class ConsoleComposerBar(Horizontal):
                 start -= 1
         if start == cursor:
             return False
+        self._record_undo_snapshot(coalesce=False)
         self._delete_canonical_range(start, cursor)
         self._sync_hidden_input()
         self._refresh_visible_draft()
@@ -1260,7 +2902,10 @@ class ConsoleComposerBar(Horizontal):
 
     def _move_cursor_to(self, index: int) -> bool:
         """Move the caret to a canonical offset, collapsing any selection."""
-        self._draft_selection_all = False
+        # TASK-1281: every caller of this helper (arrow keys, Home/End) is a
+        # cursor reposition, which always closes an open typed run.
+        self._coalescing_active = False
+        self._clear_draft_selection()
         if not self._segments_initialized:
             self._refresh_visible_draft()
             return False
@@ -1311,6 +2956,214 @@ class ConsoleComposerBar(Horizontal):
             step = 1
         return self._move_cursor_to(self._cursor_index + step)
 
+    def move_cursor_up(self) -> bool:
+        """Move the caret up one visual (wrapped) row, at the same column.
+
+        "Same column" is measured in CHARACTERS within the row's DISPLAY
+        text -- the same unit `move_cursor_left`/`move_cursor_right` already
+        step through -- and is clamped to the target row's own length when
+        it is shorter. There is no goal-column memory across calls: every
+        move recomputes its starting column from the caret's row at the
+        moment it is called, so a run of consecutive Up presses through rows
+        of varying length can drift the apparent column over time, exactly
+        as repeated left/right stepping already has no memory of a
+        "preferred" position either. On a row containing double-width
+        (CJK/emoji) content, "same column" in characters is not "same
+        column" in terminal cells -- this can visually drift the caret
+        sideways on such a row, though it never lands outside the target
+        row's own bounds (the clamp is character-count, applied after the
+        drift) or corrupts the draft.
+
+        Returns:
+            True when the caret's canonical offset actually changed. False
+            covers every case where nothing moved: the caret is already on
+            the topmost visual row, the composer has no draft segments
+            initialized yet, or (rare -- e.g. snapping to a collapsed paste
+            token's edge) the mapped target happens to equal the caret's
+            current offset. Even on False, this still routes through the
+            same `_move_cursor_to` reposition chokepoint every other move
+            method uses: any full-draft selection is collapsed and
+            undo-coalescing is broken, exactly as `move_cursor_left`
+            already does when called at index 0.
+        """
+        return self._move_cursor_vertically(-1)
+
+    def move_cursor_down(self) -> bool:
+        """Move the caret down one visual (wrapped) row, at the same column.
+
+        See `move_cursor_up` for the full column/clamping/no-goal-column-
+        memory/double-width-drift contract -- identical here, mirrored
+        downward.
+
+        Returns:
+            True when the caret's canonical offset actually changed. False
+            covers every case where nothing moved -- see `move_cursor_up`;
+            here the boundary case is the bottommost visual row instead of
+            the topmost. Even on False this still collapses any full-draft
+            selection and breaks undo-coalescing, exactly like every other
+            move method's own boundary case.
+        """
+        return self._move_cursor_vertically(1)
+
+    @staticmethod
+    def _row_index_for_canonical_offset(
+        line_slices: list[_DraftLineSlice], offset: int
+    ) -> int:
+        """Return the row an UNSPLICED source offset visually belongs to.
+
+        The row with the greatest `start <= offset`. `line_slices` is always
+        in non-decreasing `start` order and rows never overlap, so this
+        single rule covers three cases at once:
+
+        - strictly inside a row (`start <= offset < end`) -> that row: no
+          later row's `start` can also be `<= offset`, since the next row's
+          `start` is always `>= end`;
+        - a CONTIGUOUS soft-wrap boundary (row N's `end` == row N+1's
+          `start`, no separator between them) -> row N+1 -- matching
+          `_row_index_for_source_offset`'s own existing convention for the
+          same boundary shape, and how a real caret glyph actually paints
+          there (`_draft_renderable`'s own wrap pushes it onto the
+          following row, attached to that row's next word);
+        - a GAP between two explicit-newline-separated rows (row N's `end`
+          is the newline character's own offset, strictly less than row
+          N+1's `start`) -> row N, i.e. "the end of that row", which is
+          where a caret sitting there visually belongs. This is the case
+          `_row_index_for_source_offset` gets wrong for this caller: its
+          fallback (`len(line_slices) - 1`, unconditionally the LAST row)
+          is only ever exercised by ITS OWN production callers against
+          caret-SPLICED text, where a real character always occupies the
+          exact offset being looked up and a gap is therefore never
+          actually reachable. Called against genuinely unspliced text (this
+          method's whole point), a gap offset is an expected, common input
+          -- not an edge case -- so it needs its own correct handling
+          rather than reuse of a fallback tuned for a different caller.
+        """
+        row_index = 0
+        for index, line_slice in enumerate(line_slices):
+            if line_slice.start > offset:
+                break
+            row_index = index
+        return row_index
+
+    def _move_cursor_vertically(self, row_delta: int) -> bool:
+        """Shared row-stepping logic behind `move_cursor_up`/`move_cursor_down`.
+
+        Maps the caret to (visual row, column) and back entirely in
+        UNSPLICED coordinates -- no caret-glyph/placeholder splice, no
+        post-hoc correction constant. An earlier version spliced a
+        placeholder character in at the caret before wrapping (mirroring
+        `_draft_renderable`'s "reserved caret cell" painting technique) to
+        disambiguate the newline-gap case below, then shifted the mapped
+        target back by one character to undo the splice's effect. That
+        splice only leaves rows AT OR BEFORE the caret's own row unchanged;
+        every row AT OR AFTER it shifts by the placeholder's one character
+        once the text re-wraps around it. A single trailing `-1` correction
+        cannot undo that for a downward move, whose whole target lives in
+        the shifted region -- confirmed by a live/differential review
+        finding a systematic one-column-left drift on `move_cursor_down`
+        across soft-wrapped rows (114/150 sampled positions wrong on one
+        fixture), including a degenerate case where Down from column 0
+        didn't change rows at all. The same splice also disagreed with
+        `_draft_renderable`'s own painted caret at whitespace wrap
+        boundaries: a space (this method's old placeholder) extends a
+        trailing whitespace run and stays on the earlier row, while
+        `CURSOR_GLYPH` (what actually paints) attaches to the following
+        word and wraps onto the next one. Operating in unspliced
+        coordinates throughout removes both mismatches at the root instead
+        of patching the correction: there is no splice to leave stale rows
+        behind, and an unspliced offset lands on whichever row it would
+        visually belong to once a real character (the eventual typed input,
+        or the painted glyph) actually occupied it -- see
+        `_row_index_for_canonical_offset` for exactly which row that is,
+        including the newline-gap case the naive unspliced lookup
+        (`_row_index_for_source_offset`, tuned for spliced callers) still
+        gets wrong on its own.
+
+        Row boundaries come from the FULL, unwindowed wrap of the display
+        draft (`_wrap_draft_line_slices`) -- not the windowed/prefixed
+        `_visible_draft_line_slices` the bounded 4-row composer actually
+        paints. This sidesteps the windowed view's synthetic "... " prefix
+        on its top visible row entirely: that prefix trims leading DISPLAY
+        characters for paint only, and mapping against it would otherwise
+        drift column math by the prefix's own width whenever the caret's
+        target row happens to be a windowed top row. The caret's actual
+        on-screen row is left to resolve on the very next
+        `_refresh_visible_draft()` (run by `_move_cursor_to` below), which
+        already re-centers the caret-following window -- not reimplemented
+        here.
+
+        Column offsets are computed in DISPLAY space (`_display_draft_text`/
+        `_cursor_display_index`), then mapped back to a canonical draft
+        offset via `_canonical_index_at_display` -- the same display<->
+        canonical translation the click-to-position path already performs,
+        so a caret landing "inside" a collapsed paste token snaps to the
+        token's nearest edge exactly as a click would.
+
+        The column clamp ceiling is the target row's own length -- EXCEPT
+        when the target row is soft-wrap-CONTIGUOUS with its own successor
+        (no separator between them, i.e. `target_slice.end ==
+        line_slices[target_row + 1].start`). Landing exactly at that row's
+        full length would place the offset AT that shared join point, which
+        `_row_index_for_canonical_offset` (correctly, per its own
+        contiguous-boundary convention -- and matching how the painted
+        caret glyph resolves the identical join) resolves to the
+        SUCCESSOR row, not the intended target: a caret "Up" from a late
+        column would silently fail to change rows at all (reading as a
+        no-op that still consumes the key), and "Down" from the same shape
+        would skip an entire row. The clamp ceiling is one character short
+        of the full length in that case instead, keeping the landing
+        offset strictly inside the target row. A row that ends in a real
+        newline (or is the draft's own last row) keeps the full-length
+        clamp unchanged: landing one past its last character is a
+        distinct, legitimate caret position there (the separator gives
+        "end of row" its own unambiguous offset), with no successor row's
+        start to collide with.
+
+        Args:
+            row_delta: -1 to move up one row, +1 to move down one row.
+
+        Returns:
+            True when a target row exists in that direction AND the mapped
+            canonical offset differs from the caret's current one. False
+            otherwise -- routed through `_move_cursor_to(self._cursor_index)`
+            when there is no target row at all, so a boundary press still
+            collapses any full-draft selection and breaks undo-coalescing
+            exactly like every other move method's own boundary case.
+        """
+        self._clamp_cursor()
+        if not self._segments_initialized:
+            return self._move_cursor_to(self._cursor_index)
+        display_text = self._display_draft_text()
+        line_slices = self._wrap_draft_line_slices(
+            display_text, self._draft_render_width()
+        )
+        caret_display_index = max(
+            0, min(self._cursor_display_index(), len(display_text))
+        )
+        current_row = self._row_index_for_canonical_offset(
+            line_slices, caret_display_index
+        )
+        target_row = current_row + row_delta
+        if target_row < 0 or target_row >= len(line_slices):
+            return self._move_cursor_to(self._cursor_index)
+        current_slice = line_slices[current_row]
+        target_slice = line_slices[target_row]
+        column = caret_display_index - current_slice.start
+        target_row_length = len(target_slice.text)
+        target_contiguous_with_successor = (
+            target_row + 1 < len(line_slices)
+            and target_slice.end == line_slices[target_row + 1].start
+        )
+        clamp_ceiling = (
+            target_row_length - 1
+            if target_contiguous_with_successor and target_row_length > 0
+            else target_row_length
+        )
+        clamped_column = min(column, clamp_ceiling)
+        target_display_index = target_slice.start + clamped_column
+        canonical_index = self._canonical_index_at_display(target_display_index)
+        return self._move_cursor_to(canonical_index)
+
     def move_cursor_home(self) -> bool:
         """Move the caret to the start of the draft.
 
@@ -1340,7 +3193,9 @@ class ConsoleComposerBar(Horizontal):
             True when the caret was positioned.
         """
         self._ensure_editable_segments()
-        self._draft_selection_all = False
+        # TASK-1281: click-to-position is a cursor reposition too.
+        self._coalescing_active = False
+        self._clear_draft_selection()
         self._cursor_index = self._canonical_index_at_display(display_index)
         self._clamp_cursor()
         self._refresh_visible_draft()
@@ -1376,19 +3231,18 @@ class ConsoleComposerBar(Horizontal):
         return any(segment.collapse_state == "confirm" for segment in self._segments)
 
     def has_paste_segments(self) -> bool:
-        """Return whether the draft contains any paste-originated segment.
+        """Return whether the draft contains non-literal inserted content.
 
-        A segment keeps its paste provenance (``"collapsed"``, ``"confirm"``,
-        or ``"expanded"``) for as long as it exists, even once fully unfurled
-        -- an "expanded" segment renders identically to typed literal text, so
-        display-string inspection cannot distinguish the two. Callers that
-        must not treat pasted content as command input (for example, Console
-        slash-command parsing) should gate on this real segment state instead.
+        Explicit ``origin`` distinguishes ordinary paste and inline files even
+        when their display state is literal/expanded. Callers that must not
+        treat inserted content as command input should gate on this provenance
+        rather than display state or the presence of a label.
 
         Returns:
-            True when at least one segment originated from a paste event.
+            True when at least one segment originated from paste or an inline
+            file insertion.
         """
-        return any(segment.collapse_state != "literal" for segment in self._segments)
+        return any(segment.origin != "literal" for segment in self._segments)
 
     def suppress_next_draft_click(self) -> None:
         """Suppress the synthesized Click that may follow terminal mouse events."""
@@ -1779,13 +3633,23 @@ class ConsoleComposerBar(Horizontal):
         except NoMatches:
             return
 
-    def set_pending_attachment_label(self, label: str | None) -> None:
+    def set_pending_attachment_label(
+        self,
+        label: str | None,
+        *,
+        count: int = 0,
+        total: int = 0,
+    ) -> None:
         """Show or clear the composer's pending-attachment indicator.
 
         Args:
             label: User-facing attachment label (e.g. ``"photo.png · 184 B"``)
                 to display next to the actions, or None to hide the indicator,
                 the clear button, and restore the Attach button label.
+            count: Number of files currently staged; drives the count-accurate
+                Attach/Clear tooltips (TASK-380). ``0`` falls back to generic copy.
+            total: The per-message attachment cap, for the ``count of total``
+                tooltip; ``0`` omits the cap.
         """
         normalized = label.strip() if label else None
         self._pending_attachment_label = normalized
@@ -1793,35 +3657,149 @@ class ConsoleComposerBar(Horizontal):
         try:
             indicator = self.query_one("#console-attachment-indicator", Static)
             clear_button = self.query_one("#console-clear-attachment", Button)
-            attach_button = self.query_one("#console-attach-context", Button)
             actions = self.query_one("#console-composer-actions", Horizontal)
         except NoMatches:
             return
+        # The Attach button moved into the ☰ menu, so the count-aware
+        # "Attach +" relabel it used to carry moved with it -- the staged
+        # count now reads off the indicator beside this row, which is where
+        # a user looks for it anyway. ✕ stays: it is the only control that
+        # is meaningless until something is staged, so it costs nothing at
+        # rest and burying it would hide the way to undo a visible thing.
         if normalized:
             indicator.update(escape(f"📎 {normalized}"))
             indicator.styles.display = "block"
             indicator.styles.width = "auto"
             indicator.styles.max_width = 28
             clear_button.styles.display = "block"
-            actions.styles.width = 42
-            actions.styles.min_width = 42
-            actions.styles.max_width = 42
-            attach_button.label = "📎✓"
-            attach_button.tooltip = f"Attached: {escape(normalized)}. Press to replace."
+            self._set_actions_row_width(actions, ATTACHMENT_ACTIONS_WIDTH)
+            if count > 1:
+                clear_button.tooltip = f"Clear all {count} attachments."
+            else:
+                clear_button.tooltip = "Clear the attachment."
         else:
             indicator.update("")
             indicator.styles.display = "none"
             indicator.styles.width = 0
             clear_button.styles.display = "none"
-            actions.styles.width = 37
-            actions.styles.min_width = 37
-            actions.styles.max_width = 37
-            attach_button.label = "Attach"
-            attach_button.tooltip = (
-                "Attach files or context through the active Console session."
-            )
+            self._set_actions_row_width(actions, BASE_ACTIONS_WIDTH)
+
+    def set_voice_status(
+        self,
+        state: str,
+        *,
+        partial: str = "",
+        elapsed_seconds: int = 0,
+        message: str = "",
+        segment_transcribing: bool = False,
+    ) -> None:
+        """Render the dictation state into the inline voice chip.
+
+        Every write goes through `textual.content.Content`, never a bare string:
+        a `Static` parses strings as Textual markup, and `rich.markup.escape`
+        (which used to guard this) only escapes tags opening with `[a-z#/@]`.
+        Whisper's own tokens are uppercase, so `[BLANK_AUDIO]` and `[Music]`
+        survived escaping untouched and were then *stripped at paint time* --
+        the chip showed "● 0:03    hi" for "● 0:03  [BLANK_AUDIO] [Music] hi".
+        `Content` carries plain text with no markup semantics at all, so it
+        fixes the swallowing and the opposite failure (`[/tmp/x]` raising
+        `MarkupError`) in one move. Nothing in this chip is ever markup: the
+        text is either our own constants or recognizer output.
+
+        Args:
+            state: One of the `STATE_*` constants from `console_voice_input`.
+            partial: In-flight recognizer text. Truncated from the left so the
+                newest words stay visible, and dropped entirely on narrow
+                terminals so the 1fr draft never collapses.
+            elapsed_seconds: Recording duration, rendered as m:ss.
+            message: Status or failure text for non-listening states.
+            segment_transcribing: True while a per-segment transcription is
+                in flight (see `set_voice_segment_transcribing`). Only
+                meaningful for `state == "listening"`; takes precedence over
+                `partial` there when both happen to be set -- which is a real
+                case, not a hypothetical one: an inline command's ack (`¶`,
+                e.g.) is left sitting in `_voice_partial` by
+                `set_voice_partial`, and an inline command does NOT end the
+                capture, so the very next segment's `done=False` can set this
+                flag while that ack text is still stored. The chip correctly
+                shows the transcribing indication over the stale ack in that
+                case; it just means the two are not mutually exclusive the
+                way an earlier version of this docstring claimed.
+        """
+        try:
+            chip = self.query_one("#console-voice-status", Static)
+        except NoMatches:
+            return
+
+        if state in ("idle", "unavailable"):
+            chip.styles.display = "none"
+            chip.styles.width = 0
+            chip.styles.min_width = 0
+            chip.update(Content(""))
+            return
+
+        # `size` is (0, 0) before the first layout; fall back to the ceiling
+        # rather than computing a zero width and rendering an invisible chip.
+        total_width = self.size.width or self.VOICE_CHIP_MAX_WIDTH * 2
+        available = max(0, total_width - self.VOICE_CHIP_MIN_WIDTH)
+        width = min(self.VOICE_CHIP_MAX_WIDTH, available)
+
+        if state == "listening":
+            head = f"● {elapsed_seconds // 60}:{elapsed_seconds % 60:02d}"
+            room = width - len(head) - 3
+            if segment_transcribing and room > 8:
+                # A right-truncating `[-room:]` slice (as used for `partial`
+                # just below, correctly -- the newest recognizer words are
+                # what matters there) is wrong for a fixed constant: it keeps
+                # the TAIL of the label, so at composer widths that land
+                # `room` in 9..14 the chip painted "scribing…" -- the label's
+                # own trailing ellipsis surviving while its meaningful prefix
+                # was cut, reading as garbage rather than a truncated status
+                # word (review finding L3). Keep the START instead, and
+                # replace the cut-off end with an explicit ellipsis of our
+                # own when the label doesn't fit whole -- the label's own
+                # trailing "…" only ever survives when nothing was cut.
+                label = self.VOICE_CHIP_TRANSCRIBING_LABEL
+                if len(label) <= room:
+                    tail = label
+                else:
+                    tail = f"{label[: max(room - 1, 0)]}…"
+                body = f"{head}  {tail}"
+            elif partial and room > 8:
+                tail = partial[-room:]
+                body = f"{head}  {tail}"
+            else:
+                # Below the floor the counter alone still proves the mic is live.
+                body = head
+                width = min(width, len(head) + 2)
+        else:
+            body = message or state
+            width = min(width, len(body) + 2)
+
+        chip.styles.display = "block"
+        chip.styles.width = max(width, 1)
+        chip.styles.min_width = 0
+        chip.styles.height = 1
+        chip.styles.min_height = 1
+        chip.set_class(state == "error", "console-voice-status-error")
+        chip.update(Content(body))
 
     def compose(self) -> ComposeResult:
+        """Build the expanded and collapsed composer presentations.
+
+        The expanded row reads, left to right: the ``Composer ▾`` collapse
+        toggle, the ``☰`` overflow-menu button, the visible draft (with its
+        hidden compatibility/status companions), then the fixed-width action
+        row holding ``Send``, the ``MIC_SEND_GAP`` buffer, ``Mic``, and the
+        display-toggled ``Stop``/``✕`` controls. The collapsed presentation
+        is a one-row status line with ``Stop`` (while a run is active) and
+        ``Expand ▴``. Both presentations are always mounted;
+        ``set_collapsed`` display-toggles between them so editor state
+        survives without remounting.
+
+        Yields:
+            Child widgets for both composer presentations.
+        """
         expanded = Horizontal(
             id="console-composer-expanded",
             classes="console-composer-presentation",
@@ -1835,6 +3813,17 @@ class ConsoleComposerBar(Horizontal):
                 classes="destination-action-button console-composer-toggle",
                 tooltip="Collapse composer for more transcript space.",
             )
+            # The ☰ overflow menu sits LEFT of the draft, beside Composer ▾
+            # (superseding the task-1680 before-Send placement): overflow
+            # actions live on the left button cluster, keeping the row right
+            # of the draft to the Mic → gap → Send flow.
+            yield self._bounded_button(
+                "☰",
+                width=4,
+                id="console-composer-menu",
+                classes="destination-action-button console-composer-menu-button",
+                tooltip="More composer actions (image, caption, impersonate).",
+            )
             visible_draft = Static(
                 self._draft_renderable(""),
                 id="console-command-visible-text",
@@ -1843,6 +3832,18 @@ class ConsoleComposerBar(Horizontal):
             visible_draft.can_focus = False
             visible_draft.styles.width = "1fr"
             visible_draft.styles.min_width = 0
+            # Defense-in-depth (see `_draft_renderable`): each row `"\n"`-joined
+            # into the update is already budgeted to `_draft_render_width()`
+            # -- verified with 500k-trial fuzzing at every width >= 8 (the
+            # floor every call site in this file enforces), zero violations
+            # -- so this is a no-op for every width this composer actually
+            # renders at. If a future budgeting bug lets a row overflow
+            # again, `nowrap`/`clip` truncates that one row in place at paint
+            # time instead of Textual rewrapping it into an extra physical
+            # row -- which, inside this fixed-height 4-row Static, would
+            # silently push the true last row out of view.
+            visible_draft.styles.text_wrap = "nowrap"
+            visible_draft.styles.text_overflow = "clip"
             yield visible_draft
             recovery = Static(
                 "",
@@ -1855,6 +3856,17 @@ class ConsoleComposerBar(Horizontal):
             recovery.styles.height = 0
             recovery.styles.min_height = 0
             yield recovery
+            voice_status = Static(
+                "",
+                id="console-voice-status",
+                classes="console-voice-status",
+            )
+            voice_status.styles.display = "none"
+            voice_status.styles.width = 0
+            voice_status.styles.min_width = 0
+            voice_status.styles.height = 0
+            voice_status.styles.min_height = 0
+            yield voice_status
             attachment_indicator = Static(
                 "",
                 id="console-attachment-indicator",
@@ -1908,13 +3920,15 @@ class ConsoleComposerBar(Horizontal):
             actions = Horizontal(
                 id="console-composer-actions", classes="console-composer-actions"
             )
-            actions.styles.width = 37
-            actions.styles.min_width = 37
-            actions.styles.max_width = 37
+            self._set_actions_row_width(actions, BASE_ACTIONS_WIDTH)
             actions.styles.height = 1
             actions.styles.min_height = 1
             actions.styles.max_height = 1
             with actions:
+                # Send hugs the draft it submits (the row is left-aligned
+                # so Stop's hidden budget never parks between draft and
+                # Send), then Mic follows across the MIC_SEND_GAP buffer so
+                # a press aimed at one cannot land on the other.
                 yield self._bounded_button(
                     "Send",
                     width=8,
@@ -1923,22 +3937,36 @@ class ConsoleComposerBar(Horizontal):
                     variant="primary",
                     tooltip="Send the active Console session draft.",
                 )
+                mic_button = self._bounded_button(
+                    "Mic",
+                    width=8,
+                    id="console-dictation",
+                    classes="destination-action-button console-dictation-button",
+                    tooltip=self.DICTATION_IDLE_TOOLTIP,
+                )
+                mic_button.styles.margin = (0, 0, 0, MIC_SEND_GAP)
+                yield mic_button
                 stop_button = self._bounded_button(
                     "Stop",
                     width=8,
                     id="console-stop-generation",
                     classes="destination-action-button console-stop-button",
-                    tooltip="Stop generation in the active Console session.",
+                    # Fleet-UX expert review F7 (task-1234): under parallel
+                    # runs "Stop generation in the active Console session"
+                    # read as ambiguous scope; the button only ever stops
+                    # THIS tab's own run (behavior unchanged) -- say so.
+                    tooltip="Stop this tab's run.",
                 )
                 stop_button.styles.display = "none"
                 yield stop_button
-                yield self._bounded_button(
-                    "Attach",
-                    width=10,
-                    id="console-attach-context",
-                    classes="destination-action-button console-attach-button",
-                    tooltip="Attach files or context through the active Console session.",
-                )
+                # Attach and Save Chatbook moved into the ☰ menu: this row
+                # is width-bounded, so every always-present button here is
+                # space the draft never gets back. What remains is Send,
+                # Mic, and the two CONDITIONAL controls (Stop while a run
+                # is active, ✕ while an attachment is staged) -- those cost
+                # nothing at rest, are time-critical when shown, and sit
+                # AFTER Mic in Stop's budgeted slot so toggling them never
+                # shifts Send or Mic.
                 clear_attachment = self._bounded_button(
                     "✕",
                     width=4,
@@ -1950,13 +3978,6 @@ class ConsoleComposerBar(Horizontal):
                 )
                 clear_attachment.styles.display = "none"
                 yield clear_attachment
-                yield self._bounded_button(
-                    "Save",
-                    width=8,
-                    id="console-save-chatbook",
-                    classes=("destination-action-button console-save-chatbook-button"),
-                    tooltip="Open the available Chatbook artifact in Artifacts.",
-                )
 
         collapsed = Horizontal(
             id="console-composer-collapsed",
@@ -1974,7 +3995,9 @@ class ConsoleComposerBar(Horizontal):
                 id="console-collapsed-stop-generation",
                 classes="destination-action-button console-stop-button",
                 variant="warning",
-                tooltip="Stop generation in the active Console session.",
+                # Fleet-UX expert review F7 (task-1234): matches the
+                # expanded Stop button's tooltip (console-stop-generation).
+                tooltip="Stop this tab's run.",
             )
             collapsed_stop.styles.display = "block" if self._run_active else "none"
             yield collapsed_stop

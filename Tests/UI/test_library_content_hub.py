@@ -495,7 +495,9 @@ async def test_library_collections_selection_explains_membership_workspace_and_a
         assert screen.query_one("#library-row-browse-collections", Button).has_class(
             "library-rail-row-selected"
         )
-        assert screen.query_one("#library-use-in-console", Button).disabled is True
+        use_in_console = screen.query_one("#library-use-in-console", Button)
+        assert use_in_console.disabled is False
+        assert use_in_console.has_class("library-source-action-blocked")
 
 
 @pytest.mark.asyncio
@@ -547,4 +549,6 @@ async def test_library_collections_empty_state_keeps_global_browse_rule_and_bloc
             < screen.query_one("#library-create-collection", Button).region.y
         )
         assert not screen.query("#library-collections-workbench")
-        assert screen.query_one("#library-use-in-console", Button).disabled is True
+        use_in_console = screen.query_one("#library-use-in-console", Button)
+        assert use_in_console.disabled is False
+        assert use_in_console.has_class("library-source-action-blocked")

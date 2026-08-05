@@ -1,3 +1,6 @@
+import inspect
+import json
+
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
@@ -15,8 +18,8 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
     PersonaExemplarImportRequest,
     PersonaExemplarReviewRequest,
     PersonaExemplarUpdate,
-    PersonaProfileCreate,
-    PersonaProfileUpdate,
+    LocalPersonaProfileCreate,
+    LocalPersonaProfileUpdate,
     PresetCreate,
     PresetUpdate,
 )
@@ -335,7 +338,7 @@ def test_local_character_persona_service_persists_persona_profile_crud(tmp_path)
     service = LocalCharacterPersonaService(db, persona_store_path=store_path)
 
     created = service.create_persona_profile(
-        PersonaProfileCreate(
+        LocalPersonaProfileCreate(
             id="guide",
             name="Guide",
             mode="session_scoped",
@@ -345,7 +348,7 @@ def test_local_character_persona_service_persists_persona_profile_crud(tmp_path)
     listed = service.list_persona_profiles()
     updated = service.update_persona_profile(
         "guide",
-        PersonaProfileUpdate(name="Guide v2", is_active=False),
+        LocalPersonaProfileUpdate(name="Guide v2", is_active=False),
         expected_version=created["version"],
     )
     active_only = service.list_persona_profiles(active_only=True)
@@ -373,11 +376,137 @@ def test_local_character_persona_service_persists_persona_profile_crud(tmp_path)
     assert reloaded.get_persona_profile("guide")["name"] == "Guide v2"
 
 
+def test_local_persona_service_has_only_persona_store_and_private_names(tmp_path):
+    parameters = inspect.signature(LocalCharacterPersonaService).parameters
+    assert "persona_store_path" in parameters
+    assert "_".join(("user", "profile", "store", "path")) not in parameters
+
+    service = LocalCharacterPersonaService(
+        None, persona_store_path=tmp_path / "personas.json"
+    )
+    assert service.persona_store_path.name == "personas.json"
+    assert hasattr(service, "_persona_profiles")
+    assert hasattr(service, "_load_personas")
+    assert hasattr(service, "_persist_personas")
+    assert hasattr(service, "_find_persona_profile")
+    retired_names = (
+        "_" + "_".join(("user", "profiles")),
+        "_" + "_".join(("load", "user", "profiles")),
+        "_" + "_".join(("persist", "user", "profiles")),
+        "_" + "_".join(("find", "user", "profile")),
+    )
+    assert all(not hasattr(service, name) for name in retired_names)
+
+
+def test_local_persona_list_and_get_are_lossless_without_rewriting_store(tmp_path):
+    store_path = tmp_path / "tldw_chatbook_personas.json"
+    record = {
+        "id": "local-persona-1",
+        "name": "Archivist",
+        "description": "Local description",
+        "personality_traits": "patient",
+        "future_extension": {"keep": True},
+        "version": 7,
+    }
+    payload = {
+        "profiles": [record],
+        "exemplars": [],
+        "character_exemplars": [],
+        "chat_settings": {},
+        "chat_greeting_selections": {},
+        "chat_presets": [],
+        "character_memories": [],
+    }
+    store_path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+    original_bytes = store_path.read_bytes()
+
+    service = LocalCharacterPersonaService(None, persona_store_path=store_path)
+    listed = service.list_persona_profiles()
+    fetched = service.get_persona_profile("local-persona-1")
+
+    assert listed[0]["description"] == "Local description"
+    assert listed[0]["personality_traits"] == "patient"
+    assert listed[0]["future_extension"] == {"keep": True}
+    assert fetched["future_extension"] == {"keep": True}
+    assert store_path.read_bytes() == original_bytes
+
+
+def test_local_persona_updates_merge_only_supplied_fields_and_survive_restart(
+    tmp_path,
+):
+    store_path = tmp_path / "tldw_chatbook_personas.json"
+    payload = {
+        "profiles": [
+            {
+                "id": "local-persona-1",
+                "name": "Archivist",
+                "description": "Local description",
+                "character_card_id": 42,
+                "personality_traits": "patient",
+                "system_prompt": "Preserve this prompt.",
+                "future_extension": {"keep": True},
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "last_modified": "2026-01-01T00:00:00+00:00",
+                "version": 7,
+                "deleted": False,
+            }
+        ],
+        "exemplars": [],
+        "character_exemplars": [],
+        "chat_settings": {},
+        "chat_greeting_selections": {},
+        "chat_presets": [],
+        "character_memories": [],
+    }
+    store_path.write_text(json.dumps(payload), encoding="utf-8")
+    service = LocalCharacterPersonaService(None, persona_store_path=store_path)
+
+    renamed = service.update_persona_profile(
+        "local-persona-1",
+        LocalPersonaProfileUpdate(name="Archivist Prime"),
+        expected_version=7,
+    )
+    after_name_update = json.loads(store_path.read_text(encoding="utf-8"))
+    stored_after_name = after_name_update["profiles"][0]
+
+    assert set(after_name_update) == set(payload)
+    assert renamed["name"] == "Archivist Prime"
+    assert renamed["description"] == "Local description"
+    assert renamed["character_card_id"] == 42
+    assert renamed["personality_traits"] == "patient"
+    assert renamed["system_prompt"] == "Preserve this prompt."
+    assert renamed["future_extension"] == {"keep": True}
+    assert stored_after_name["version"] == 8
+
+    cleared = service.update_persona_profile(
+        "local-persona-1",
+        LocalPersonaProfileUpdate(
+            description=None,
+            system_prompt=None,
+            character_card_id=None,
+        ),
+        expected_version=8,
+    )
+    restarted = LocalCharacterPersonaService(None, persona_store_path=store_path)
+    reloaded = restarted.get_persona_profile("local-persona-1")
+
+    assert cleared["description"] is None
+    assert cleared["system_prompt"] is None
+    assert cleared["character_card_id"] is None
+    assert reloaded["description"] is None
+    assert reloaded["system_prompt"] is None
+    assert reloaded["character_card_id"] is None
+    assert reloaded["name"] == "Archivist Prime"
+    assert reloaded["personality_traits"] == "patient"
+    assert reloaded["future_extension"] == {"keep": True}
+    assert reloaded["version"] == 9
+
+
 def test_local_character_persona_service_persists_persona_exemplar_crud(tmp_path):
     db = FakeConversationDB()
     store_path = tmp_path / "personas.json"
     service = LocalCharacterPersonaService(db, persona_store_path=store_path)
-    service.create_persona_profile(PersonaProfileCreate(id="guide", name="Guide"))
+    service.create_persona_profile(LocalPersonaProfileCreate(id="guide", name="Guide"))
 
     created = service.create_persona_exemplar(
         "guide",

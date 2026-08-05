@@ -8,57 +8,190 @@ handoffs keep working while Collections moves under Library.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+import re
+import threading
+from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
 from rich.markup import escape as escape_markup
 from rich.text import Text
-from textual import on, work
+from textual import events, on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.reactive import reactive
-from textual.widgets import Button, Rule, Select, Static
+from textual.widget import Widget
+from textual.widgets import Button, Input, Select, Static, TextArea
 
-from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Constants import (
+    WATCHLISTS_NAV_CONTEXT_BACKEND,
+    WATCHLISTS_NAV_CONTEXT_RUN_ID,
+    WATCHLISTS_NAV_CONTEXT_SECTION,
+    WATCHLISTS_SECTION_RUNS,
+)
+from ...config import get_cli_setting
 from ...runtime_policy.types import PolicyDeniedError
+from ...Subscriptions.briefing_audio import (
+    AudioGenerationError,
+    active_audio_claim_row_ids,
+    fail_interrupted_audio,
+    generate_script_audio,
+    pending_audio_claim_script_ids,
+)
+from ...Subscriptions.briefing_cast import (
+    ScriptCastError,
+    active_cast_claim_row_ids,
+    fail_interrupted_scripts,
+    generate_script,
+    pending_cast_claim_briefing_ids,
+)
+from ...Subscriptions.briefing_export import (
+    BriefingExportError,
+    briefing_markdown_document,
+    default_briefing_filename,
+    export_feed_directory,
+)
+from ...Subscriptions.briefing_keep import KeepRefused, keep_briefing
+from ...Subscriptions.briefing_selection import MODE_AUTO_FEATURED, VALID_MODES
+from ...Subscriptions.briefing_service import (
+    GenerationInFlightError,
+    STATUS_COMPLETE,
+    STATUS_GENERATING,
+    active_briefing_claim_row_ids,
+    extract_citation_ids,
+    fail_interrupted_briefings,
+    generate_briefing,
+    pending_briefing_claim_watchlist_ids,
+)
+from ...Subscriptions.feed_server import (
+    FeedDirectoryServer,
+    FeedServerError,
+    configured_bind_and_port,
+    is_loopback_bind,
+)
+from ...Subscriptions.watchlist_bundle_service import WatchlistBundleService
+from ...Subscriptions.watchlist_normalizers import normalize_watchlist_item
+from ...Third_Party.textual_fspicker import FileSave, SelectDirectory
+from ...TTS.audio_player import play_audio_file
 from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Utils.path_validation import validate_path_simple
+from ...Widgets.confirmation_dialog import ConfirmationDialog
+from ...Widgets.prune_safe_select import PruneSafeSelect
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+from ..Subscription_Modules.notifications_inbox_controller import (
+    NotificationsInboxController,
+)
 from ..Watchlists_Modules.inspector_pane import (
+    BreadcrumbScopeSelected,
     CheckNowRequested,
     DeleteRequested,
     EditRuleRequested,
     IgnoreRequested,
     IngestRequested,
     InspectorPane,
-    MarkReviewedRequested,
+    ResumeSourceRequested,
+    SaveNoiseSelectorsRequested,
     PreviewRequested,
     StageInConsoleRequested,
+    ToggleBriefingQueueRequested,
 )
-from ..Watchlists_Modules.items_pane import ItemSelected, ItemsPane, RefreshItemsRequested
+from ..Watchlists_Modules.artifacts_pane import (
+    ArtifactsPane,
+    BriefingCadenceChanged,
+    BriefingDefaultPresetChanged,
+    BriefingModeChanged,
+    BriefingSelected,
+    CastScriptRequested,
+    CitationActivated,
+    ExportBriefingRequested,
+    ExportFeedRequested,
+    GenerateBriefingRequested,
+    KeepBriefingRequested,
+    KeptBriefingsRequested,
+    ManagePresetsRequested,
+    PlayAudioRequested,
+    RefreshBriefingsRequested,
+    ScriptSelected,
+    ServeFeedRequested,
+    StopAudioRequested,
+    StopFeedServerRequested,
+    SynthesizeAudioRequested,
+    audio_file_path_is_safe,
+    cadence_scope_phrase,
+)
+from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
+from ..Watchlists_Modules.content_pane import (
+    ContentPane,
+    UnreadToggleRequested,
+    ViewSnapshotRequested,
+)
+from ..Watchlists_Modules.items_pane import (
+    ItemSelected,
+    ItemsFilterChanged,
+    ItemsPane,
+    RefreshItemsRequested,
+)
+from ..Watchlists_Modules.kept_briefings_modal import KeptBriefingsModal
+from ..Watchlists_Modules.notifications_pane import (
+    DismissNotificationRequested,
+    MarkNotificationReadRequested,
+    NotificationSelected,
+    NotificationsPane,
+    RefreshNotificationsRequested,
+)
 from ..Watchlists_Modules.opml_dialogs import (
     ConfirmDeleteDialog,
     OpmlExportDialog,
     OpmlImportDialog,
+    WatchlistNameDialog,
+    WatchlistSourcePickerDialog,
 )
 from ..Watchlists_Modules.overview_pane import OverviewPane
+from ..Watchlists_Modules.region_layout import CENTRE_REGIONS, Region, RegionLayout
+from ..Watchlists_Modules.region_layout_store import load_region_layout, save_region_layout
 from ..Watchlists_Modules.rules_pane import (
     RefreshRulesRequested,
+    RuleFormVisibilityChanged,
     RuleSelected,
     RulesPane,
     SaveRuleRequested,
 )
 from ..Watchlists_Modules.runs_pane import CancelRunRequested, RerunRunRequested, RunsPane, RunSelected
+from ..Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
 from ..Watchlists_Modules.sources_pane import (
+    CreateFormDraftChanged,
+    CreateFormVisibilityChanged,
     CreateSourceRequested,
     ExportOpmlRequested,
     ImportOpmlRequested,
     SourceSelected,
     SourcesPane,
 )
+from ..Watchlists_Modules.watchlist_tree import (
+    AddSourceToWatchlistRequested,
+    CreateWatchlistRequested,
+    DeleteWatchlistRequested,
+    RemoveSourceFromWatchlistRequested,
+    RenameWatchlistRequested,
+    TreeExpansionChanged,
+    TreeScope,
+    TreeScopeChanged,
+    TreeTagFilterChanged,
+    WatchlistTree,
+)
 from ..Watchlists_Modules.watchlists_backend_controller import WatchlistsBackendController
-from ..Watchlists_Modules.watchlists_navigator import SectionSelected, WatchlistsNavigator
+from ..Watchlists_Modules.watchlists_console_handoff import WatchlistsConsoleHandoff
+from ..Watchlists_Modules.watchlists_tab_strip import SectionSelected, WatchlistsTabStrip
+from ..Watchlists_Modules.watchlists_workbench import (
+    REGION_TITLES,
+    RegionToggled,
+    WatchlistsWorkbench,
+)
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
 
 
@@ -66,8 +199,176 @@ logger = logger.bind(module="WatchlistsCollectionsScreen")
 WC_LOCAL_PAGE_SIZE = 5
 WC_SERVICE_ERROR_COPY = "Watchlists services unavailable; retry Watchlists later."
 WC_SERVICE_UNAVAILABLE_COPY = "Watchlists services are unavailable in this runtime."
-WC_EMPTY_COPY = "No local Watchlists are available yet."
 WC_SNAPSHOT_TIMEOUT_SECONDS = 1.5
+
+#: Success copy for the Inspector's ignore-rule Save (TASK-1362).
+#:
+#: The third sentence is the whole-branch review's Critical 1. Spec §3 accepts
+#: that a settings edit costs one diff window -- a change the page makes before
+#: the next check is compared against nothing and is never reported -- and it
+#: accepts that cost only if the user is told. The Runs pane now says it after
+#: the fact ("N re-baselined (settings changed)"); this says it at the moment
+#: the user causes it, which is the only point at which they can decide to wait
+#: for a check before saving.
+NOISE_SELECTORS_SAVED_TOAST = (
+    "Ignore rules saved. The next check re-baselines this source. "
+    "A change the page makes before that check will not be reported."
+)
+
+#: Per-item worker-group prefix for the item-status write drainer (TASK-1541,
+#: Qodo redesign). Ingest, Ignore, the unread toggle, and mark-read-on-open
+#: ALL funnel through `_dispatch_item_status`/`_drain_item_status` now, one
+#: drainer per item id -- see those methods' docstrings.
+#:
+#: This replaces two separate `exclusive=True` "supersede" worker groups an
+#: earlier version of this fix used (one shared cross-item group for the
+#: read/unread pair, one per-item group for Ingest/Ignore): a whole-branch
+#: re-review found that "supersede by cancellation" model unsound for a
+#: durable write, two independent ways, once the write got a genuine
+#: `asyncio.to_thread` suspension point (see `_update_item_status_off_loop`):
+#:
+#: 1. `asyncio.to_thread`'s underlying OS thread is not itself cancellable
+#:    once it has started running -- cancelling the AWAITING coroutine does
+#:    not stop the write. So a superseded write's thread and its
+#:    replacement's thread became two independent, un-ordered writes to the
+#:    SAME row, either able to commit last: rapid Ingest-then-Ignore on one
+#:    item could leave the DATABASE on the FIRST action while the UI (and any
+#:    cache patch) showed the second.
+#: 2. The opposite failure mode: `asyncio.to_thread` CAN be cancelled before
+#:    the executor picks the work item up at all (reachable under a
+#:    saturated default executor, no exotic timing needed) -- in which case
+#:    the write never runs. The old `except asyncio.CancelledError` handler
+#:    assumed "cancelled implies the write is durable" and patched the cache
+#:    to the target status regardless, which is simply false in this case:
+#:    the cache would then claim a status the database never reached.
+#:
+#: Desired-status coalescing (`_ItemStatusIntent`) replaces cancellation
+#: entirely rather than patching either hole: each item gets at most one
+#: QUEUED write (the latest dispatch overwrites the dict entry) plus at most
+#: one IN-FLIGHT write, and the drainer always `await`s a write to genuine
+#: completion -- success or a real exception -- before popping the next
+#: entry for that SAME item, so two writes for one item can never race each
+#: other, and nothing is ever cancelled mid-write. Two DIFFERENT items'
+#: drainers still never interact at all (own group each, `exclusive=False`),
+#: which is the one part of the old design worth keeping: a fast `j`/`k` run
+#: or a rapid Ingest/Ignore burst still costs at most one queued write per
+#: item, not one write per keystroke.
+_ITEM_STATUS_DRAIN_GROUP_PREFIX = "wl-item-status-drain:"
+
+#: Item statuses the reader's "Mark unread" button must never overwrite: they
+#: are not read/unread states at all, and `new` would destroy the record.
+#: A frozenset, since `_blocking_status_for` now asks the backend for the
+#: item's one status and only has to decide whether it is in this set.
+_NON_READ_STATE_STATUSES: frozenset[str] = frozenset({"ingested", "ignored", "error"})
+
+
+@dataclass(frozen=True)
+class _ItemStatusIntent:
+    """One desired item-status write, captured at the moment it is dispatched.
+
+    TASK-1541 (Qodo redesign). `_dispatch_item_status` stores exactly one of
+    these per item id in `WatchlistsCollectionsScreen._item_status_desired`
+    -- a second dispatch for the same item before the first has been popped
+    OVERWRITES this dict entry rather than queuing a second one, which is
+    the whole of the "coalescing" scheme: at most one write is ever queued
+    per item, and the drainer (`_drain_item_status`) always acts on
+    whichever intent is current when it next looks.
+
+    Fields mirror exactly what `_update_item_status`'s four callers used to
+    pass directly (Ingest, Ignore, the unread toggle, mark-read-on-open) --
+    nothing new was invented, the dispatch-time context just now has to
+    travel through a dict entry instead of a function call.
+
+    Attributes:
+        status: The target `subscription_items.status` value.
+        notify_toast: Whether a successful (or refused/failed) write should
+            surface a toast. `False` only for the silent mark-read-on-open
+            path, matching `_update_item_status`'s previous default.
+        refresh: Whether a successful write should reload `ItemsPane.items`
+            and refresh the overview counts via `_refresh_overview_data()`.
+            `False` only for mark-read-on-open, which patches `patch_item`
+            in place instead -- see `_mark_item_read_on_open`'s docstring
+            for why a recompose on every item SELECTION was a CRITICAL
+            regression. (TASK-2200 removed the screen-level recompose that
+            made it one; `refresh=False` is kept because reloading every
+            item and re-querying the overview on every arrow key is still
+            work nobody asked for.)
+        patch_item: The live dict object (already held by `ItemsPane.items`/
+            `_selected_content_item`/`ContentPane.item`) to mutate in place
+            on a successful write, or `None` when the caller relies on
+            `refresh` instead. Passed by exactly one caller in the whole
+            app, `_mark_item_read_on_open` -- see `handle_unread_toggle_
+            requested`'s docstring for why that matters.
+        gate: Whether the drainer must re-ask the backend
+            (`_blocking_status_for`) immediately before writing and refuse
+            if the item already holds a terminal status
+            (`_NON_READ_STATE_STATUSES`). `True` for the unread toggle and
+            mark-read-on-open, which can otherwise clobber an Ingest/Ignore
+            that neither of those two dispatch paths would ever see coming
+            (Ingest/Ignore pass no `patch_item=`, so nothing patches the
+            cache those two read from). `False` for Ingest/Ignore
+            themselves -- there is nothing to protect an ingest/ignore FROM.
+    """
+
+    status: str
+    notify_toast: bool = True
+    refresh: bool = True
+    patch_item: dict[str, Any] | None = None
+    gate: bool = False
+
+
+def watchlist_delete_consequence(source_count: int) -> str:
+    """Explain what happens to a watchlist's sources when it is deleted.
+
+    Split out so the wording is testable without driving a modal. The noun was
+    already pluralised; the verb and pronoun were not, so a single-source
+    watchlist read "Its 1 source are not deleted. They stay in..." (TASK-1091).
+    """
+    if source_count == 1:
+        return (
+            "Its 1 source is not deleted. It stays in Watchlists and appears "
+            "under Unassigned unless it also belongs to another watchlist."
+        )
+    return (
+        f"Its {source_count} sources are not deleted. They stay in Watchlists "
+        "and appear under Unassigned unless they also belong to another "
+        "watchlist."
+    )
+
+# task-895. Watchlist bundles and their membership are a LOCAL concept: the
+# server API has no wire path for them at all -- `SourceUpdateRequest`
+# carries no `group_ids`, neither group request carries members, and all of
+# them are `extra="forbid"`, so a request naming one would be rejected
+# rather than silently ignored. So the five write verbs are disabled, not
+# hidden, and they say why.
+#
+# Built through `DestinationRecoveryState` rather than as a bare string so
+# this blocker is described in the same taxonomy every other unavailable
+# action on this screen uses (`policy_denied_recovery_state` supplies
+# `#wc-service-error`'s copy and `#wc-attach-to-console`'s tooltip the same
+# way). `disabled_tooltip` is what the tree renders -- as both the tooltip
+# AND the visible note, so the hover copy and the on-screen copy cannot
+# drift apart; `visible_copy`'s full six-line form does not fit a 26-column
+# rail.
+WC_SERVER_WRITE_RECOVERY = DestinationRecoveryState(
+    status_label="Server backend",
+    unavailable_what=(
+        "Creating, renaming and deleting watchlists, and editing their membership"
+    ),
+    why=(
+        "The server Watchlists API carries no watchlist membership fields, so "
+        "there is no wire path for these edits"
+    ),
+    next_action="Switch the backend to Local to organise watchlists",
+    recovery_action="Backend selector",
+    authority_owner="server Watchlists API",
+    stable_selector="wl-tree-actions-unavailable",
+    disabled_tooltip=(
+        "Server backend: the server Watchlists API carries no watchlist "
+        "membership fields, so there is no wire path for these edits. "
+        "Switch the backend to Local to organise watchlists."
+    ),
+)
 
 
 class WatchlistsCollectionsScreen(BaseAppScreen):
@@ -79,20 +380,88 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ("3", "switch_section('items')", "Items"),
         ("4", "switch_section('runs')", "Runs"),
         ("5", "switch_section('rules')", "Rules"),
+        ("6", "switch_section('notifications')", "Notifications"),
+        ("7", "switch_section('artifacts')", "Artifacts"),
         ("question", "show_help", "Help"),
         ("n", "new_source", "New source"),
-        ("d", "delete_selected", "Delete"),
+        # Round 2, O3: the label names BOTH verbs because the key performs
+        # both. On a source/run/rule it deletes, after a confirmation dialog;
+        # on an ITEM it ignores, unconfirmed, exactly as the Inspector's own
+        # Ignore button does (review wave, Minor 2 -- it used to say "Delete"
+        # in a dialog and then write `ignored`, which was the lie). A Textual
+        # binding description is static, so it states the pair rather than
+        # promising whichever verb the current selection is not.
+        ("d", "delete_selected", "Delete / Ignore"),
         ("c", "check_now_selected", "Check now"),
         ("p", "preview_selected", "Preview"),
+        ("j", "next_item", "Next item"),
+        ("k", "previous_item", "Previous item"),
+        ("z", "toggle_region", "Collapse"),
+        ("Z", "solo_region", "Solo"),
+        ("left_square_bracket", "toggle_left_rail", "Left rail"),
+        ("right_square_bracket", "toggle_right_rail", "Right rail"),
     ]
 
     active_section = reactive("overview")
     runtime_backend = reactive("local")
     selected_source = reactive(None)
     selected_run = reactive(None)
+    selected_notification = reactive(None)
     selected_entity = reactive(None)
     recovery_state = reactive(None)
-    overview_data = reactive({}, recompose=True)
+    # NOT `recompose=True` (TASK-2200). Its only writer is
+    # `_refresh_overview_data`, a background worker fired by mount, every
+    # backend switch and every write verb on this screen -- so a screen-level
+    # recompose here was a third background destroyer alongside
+    # `_load_tree_data`/`_apply_local_wc_snapshot`, and a documented one: it
+    # detached the mounted `ItemsPane`, reset the `DataTable` cursor and
+    # dropped focus on any item-status write whose counts actually changed
+    # (see `_update_item_status`'s `refresh=False` path, which exists solely
+    # to dodge it). `watch_overview_data` pushes the payload into the three
+    # live surfaces that read it instead.
+    overview_data = reactive({})
+    # Through Phase C, CONTENT held only a placeholder stub and started
+    # collapsed to avoid spending screen space on it. Phase D wires a real
+    # reader (`ContentPane`) into CONTENT, so it now starts expanded like
+    # every other region. `on_mount` overlays whatever is actually persisted
+    # (see `region_layout_store.load_region_layout`) on top of this default —
+    # including a one-time migration that drops any CONTENT collapse a user
+    # saved before this change, since that could only be a leftover of the
+    # old stub-era default, never a deliberate choice about the real reader.
+    region_layout = reactive(RegionLayout())
+    focused_region = reactive(Region.FEEDS)
+    # Two scopes, deliberately: they answer different questions and they
+    # diverge (fix round 1, Finding 2).
+    #
+    # `tree_scope` is where the user has NAVIGATED -- the tree node in view.
+    # It drives the Feeds region (`scoped_source_rows`), and only a tree
+    # click or a breadcrumb promotion moves it.
+    #
+    # `selected_scope` is the ancestry the Inspector is entitled to CLAIM
+    # for whatever is currently selected. It follows `tree_scope` on a tree
+    # move, but resets to "all" when a pane row is selected, because a
+    # Sources/Runs/Items/Rules row carries no watchlist/source ancestry --
+    # asserting one would put a breadcrumb over an entity that may not
+    # belong to it (Task 5 fix round 2, Finding 1).
+    #
+    # Task 7 made `selected_scope` drive Feeds as well, which silently
+    # merged the two: clicking a pane row to inspect it then reset the Feeds
+    # region back to "All sources", discarding tree navigation the user had
+    # done in another region. Splitting them keeps both properties -- the
+    # Feeds region follows the tree, and the Inspector still claims no
+    # ancestry it does not know. Clearing `_breadcrumb_labels` alone would
+    # NOT have been enough: `InspectorPane._scope_levels` derives an
+    # ancestor level from `scope` alone and falls back to a `Watchlist {id}`
+    # label, so the crumb would still render, just anonymously.
+    #
+    # Both live on the screen, not on the tree widget, precisely because
+    # `region_layout` is `recompose=True`: any collapse/solo/rail toggle
+    # rebuilds the whole workbench, constructing a brand new `WatchlistTree`
+    # instance. Pane-local state does not survive that (see `selected_run`
+    # and the create-form draft above for the same reasoning already applied
+    # elsewhere on this screen).
+    selected_scope = reactive(TreeScope(kind="all"))
+    tree_scope = reactive(TreeScope(kind="all"))
 
     _SECTION_DETAIL_TITLE = {
         "overview": "Overview",
@@ -100,36 +469,442 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         "items": "Items",
         "runs": "Runs",
         "rules": "Rules",
+        "notifications": "Notifications",
+        "artifacts": "Artifacts",
     }
 
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:
         super().__init__(app_instance, "watchlists_collections", **kwargs)
-        self._latest_console_follow_item_id = None
-        self._latest_console_follow_item_cache = None
-        self._latest_console_follow_loaded = False
-        self._latest_console_follow_error_logged = False
+        self._console_handoff = WatchlistsConsoleHandoff(app_instance)
         self._local_watchlist_records: tuple[Mapping[str, Any], ...] = ()
         self._local_watchlist_count = 0
         self._watchlist_total_known = True
         self._wc_lookup_error: str | None = None
         self._wc_lookup_recovery_state: DestinationRecoveryState | None = None
         self._wc_loaded = False
+        # Whether focus currently sits in the centre header/tab strip
+        # (`#wl-centre-status`), outside every `wl-region-*`/`wl-header-*`
+        # wrapper -- see `on_descendant_focus` and `action_toggle_region`/
+        # `action_solo_region` (task-1344 fix wave, Qodo correctness).
+        self._focus_in_centre_header = False
         self._pending_open_create_form = False
         self._pending_open_import_opml = False
         self._pending_delete_entity: dict[str, Any] | None = None
+        self._pending_navigation_run_id: str | None = None
+        self._pending_navigation_run_backend: str | None = None
+        self._loaded_runs: list[dict[str, Any]] = []
+        self._loaded_notifications: list[dict[str, Any]] = []
+        # Mirrors what's currently loaded for Sources/Items/Rules the same way
+        # `_loaded_runs`/`_loaded_notifications` already do (Finding 2, fix
+        # round 2): `_build_detail_pane` constructs a brand new
+        # SourcesPane/ItemsPane/RulesPane on every workbench rebuild (any
+        # region collapse/solo/rail toggle, not just switching sections), and
+        # a fresh pane's `sources`/`items`/`rules` reactive starts at its
+        # class default (`[]`). Without holding the last-loaded rows here and
+        # re-seeding them below, the table would render empty until the next
+        # unrelated navigation happened to trigger a reload.
+        self._loaded_sources: list[dict[str, Any]] = []
+        self._loaded_items: list[dict[str, Any]] = []
+        # The single debounce timer behind `_request_tree_counts_refresh`
+        # (review wave, Minor 6). Declared here so the attribute always
+        # exists, rather than springing into being on the first item opened.
+        self._tree_counts_refresh_timer: Any = None
+        self._loaded_rules: list[dict[str, Any]] = []
+        # Artifacts (spec #2 phase 1, task 4): the same rebuild-survival
+        # mirror as the four lists above, plus the selection the pane's
+        # detail area renders.
+        self._loaded_briefings: list[dict[str, Any]] = []
+        self._selected_briefing: dict[str, Any] | None = None
+        # Task 4: the current watchlist's stored briefing selection mode and
+        # default preset id, mirrored here for the same rebuild-survival
+        # reason as `_loaded_briefings` above -- `_build_detail_pane` seeds
+        # a freshly built `ArtifactsPane` from this state on every region
+        # rebuild. Defaults match `_selection_mode`'s own NULL/no-scope
+        # fallback (`briefing_service.py`) so a pane that has not yet heard
+        # from `_load_briefings` shows the same mode generation would
+        # actually use.
+        self._briefing_selection_mode: str = MODE_AUTO_FEATURED
+        self._briefing_default_preset_id: int | None = None
+        # Spec #2 phase 4, Task 4: the current watchlist's stored
+        # `briefing_cadence_seconds`, mirrored here for the identical
+        # rebuild-survival reason as the two fields above -- `_build_
+        # detail_pane` seeds a freshly built `ArtifactsPane` from this on
+        # every region rebuild. `None` (never scheduled) matches the
+        # column's own default and `ArtifactsPane.briefing_cadence_
+        # seconds`'s own fallback.
+        self._briefing_cadence_seconds: int | None = None
+        # True only while THIS screen's `wl-briefing` worker is running.
+        # `fail_interrupted_briefings` cannot tell a crashed worker's row
+        # from a live one -- both read `generating` -- so the live case is
+        # answered from memory here and the sweep is only ever asked about
+        # rows this session did not create. See
+        # `handle_generate_briefing_requested`.
+        self._briefing_in_flight = False
+        # Which watchlist `_briefing_in_flight` refers to, or `None`.
+        # `_briefing_in_flight` is deliberately screen-global (one
+        # `wl-briefing` worker at a time, `exclusive=True`), so a refusal
+        # while it is set may belong to a DIFFERENT watchlist than the one
+        # on screen. Set alongside the flag so the refusal toast can name
+        # the watchlist actually generating instead of falsely claiming
+        # "this watchlist" (whole-branch review fix 4).
+        self._briefing_in_flight_watchlist_id: int | None = None
+        # Briefing presets (spec #2 phase 2a, Task 3): reloaded whenever
+        # `BriefingPresetModal` dismisses `True` (see
+        # `_open_briefing_preset_manager`). Task 4 wires this list into the
+        # Artifacts toolbar's default-preset picker; held here now so that
+        # contract -- "the modal dismisses True, the screen reloads its
+        # preset list" -- is real before that picker exists to consume it.
+        self._loaded_briefing_presets: list[dict[str, Any]] = []
+        # Task 5: this same rebuild-survival mirroring, for the SELECTED
+        # briefing's cast scripts. Scoped to one briefing (not the whole
+        # watchlist) because a script belongs to exactly one briefing and
+        # this pane only ever shows one briefing's detail at a time --
+        # loaded and re-resolved alongside `_selected_briefing` inside
+        # `_load_briefings` (see that method).
+        self._loaded_scripts: list[dict[str, Any]] = []
+        self._selected_script: dict[str, Any] | None = None
+        # Review round 1, Minor #4: `{script_id: status}` for every one of
+        # `_loaded_scripts`' ids that has at least one `briefing_audio`
+        # render -- the rebuild-survival mirror of `pane.scripts_with_
+        # audio`, resolved alongside `_loaded_scripts` inside `_load_
+        # briefings` (see that method). Owner decision, task-7 phase 2b
+        # follow-up: upgraded from a bare `frozenset[int]` of "has an
+        # attempt" to carry each script's newest audio status, so the
+        # scripts table can distinguish a failed render from a
+        # successful one instead of painting both identically.
+        self._scripts_with_audio: dict[int, str] = {}
+        # True only while THIS screen's `wl-cast` worker is running -- the
+        # exact sibling of `_briefing_in_flight` above, for the same reason:
+        # `fail_interrupted_scripts` cannot tell a crashed worker's row from
+        # a live one, so the live case is answered from memory here. See
+        # `handle_cast_script_requested`.
+        self._cast_in_flight = False
+        # Which briefing `_cast_in_flight` refers to, or `None` -- the
+        # `_briefing_in_flight_watchlist_id` sibling, so a refusal can name
+        # the briefing actually being cast.
+        self._cast_in_flight_briefing_id: int | None = None
+        # Task 6: the SELECTED briefing's citations -- the rebuild-survival
+        # mirror of `pane.citations`, resolved alongside `_selected_briefing`
+        # inside `_load_briefings` (see that method). `_citation_item_lookup`
+        # is the OTHER half of that same resolution: normalized item dicts
+        # (shaped exactly like `ItemsPane.items`' own entries -- see
+        # `normalize_watchlist_item`) for every citation that still resolves
+        # to a live row, keyed by the raw id `[item N]` names. A citation
+        # NOT in this dict is the pruned signal `handle_citation_activated`
+        # acts on -- there is no separate "available" flag to fall out of
+        # sync with it.
+        self._loaded_citations: list[dict[str, Any]] = []
+        self._citation_item_lookup: dict[int, dict[str, Any]] = {}
+        # Task 7: the SELECTED script's newest `briefing_audio` render, or
+        # `None` when it has never been synthesized -- the rebuild-survival
+        # mirror of `pane.script_audio`, resolved alongside `_selected_
+        # script` inside `_load_briefings` (see that method).
+        self._loaded_script_audio: dict[str, Any] | None = None
+        # True only while THIS screen's `wl-audio` worker is running -- the
+        # exact sibling of `_cast_in_flight` above, for the same reason:
+        # `fail_interrupted_audio` cannot tell a crashed worker's row from a
+        # live one, so the live case is answered from memory here. See
+        # `handle_synthesize_audio_requested`.
+        self._audio_in_flight = False
+        # Which script `_audio_in_flight` refers to, or `None` -- the
+        # `_cast_in_flight_briefing_id` sibling, so a refusal can name the
+        # script actually being synthesized.
+        self._audio_in_flight_script_id: int | None = None
+        # Task 1 (phase 3): True from the moment Export is pressed until
+        # the `FileSave` dialog it pushed actually resolves -- via a real
+        # path, a cancel, or a rejected path -- not merely until the dialog
+        # is MOUNTED. Review round 1 (Important #1): a live repro (two
+        # rapid presses) produced `['FileSave', 'FileSave']` on the screen
+        # stack -- Textual stacks a second `push_screen`, it does not
+        # refuse one -- so without this flag a second press before the
+        # first dialog resolves opens a phantom second dialog, and
+        # completing both silently has the second write clobber the
+        # first's file. Claimed in `handle_export_briefing_requested`
+        # BEFORE `run_worker` (the same reason `_briefing_in_flight` is
+        # claimed before its own `run_worker`: a check made after
+        # scheduling leaves a window two presses can both pass). Cleared
+        # in `_write_briefing_export_file`'s `finally` -- not in `_push_
+        # export_briefing_dialog`, whose own `await self.app.push_screen`
+        # returns once the dialog is MOUNTED, long before the user has
+        # picked a path or cancelled -- so every resolution (success,
+        # cancel, rejected path, write failure) re-arms Export, and a
+        # failure to even OPEN the dialog clears it too (see that
+        # method's own `except`).
+        self._briefing_export_in_flight = False
+        # Task 5 (phase 3): the identical guard, for exporting a
+        # watchlist's audio as a podcast feed directory. Claimed in
+        # `handle_export_feed_requested` BEFORE `run_worker`, cleared in
+        # `_export_feed_directory`'s `finally` -- not in `_push_export_
+        # feed_dialog`, whose own `await self.app.push_screen` returns
+        # once the `SelectDirectory` dialog is MOUNTED, long before the
+        # user has picked a directory or cancelled. See `handle_export_
+        # feed_requested`'s own docstring for why this mirrors `_briefing_
+        # export_in_flight` rather than reusing it: a briefing export and
+        # a feed export are two independent actions a user could plausibly
+        # run at the same time (different destinations, different files).
+        self._feed_export_in_flight = False
+        # task-1780, Task 5: True from the moment Keep is pressed until
+        # `keep_briefing` (Task 2) returns or raises. Same claimed-before-
+        # `run_worker` discipline as every other in-flight guard on this
+        # screen (`_briefing_export_in_flight` immediately above is the
+        # closest sibling: keeping, like exporting, is a one-shot action on
+        # the selected briefing with no target-naming refusal needed --
+        # this screen only ever runs one Keep at a time, full stop).
+        self._keep_in_flight = False
+        # Whether THIS watchlist has at least one export-ready audio
+        # episode -- mirrored onto `ArtifactsPane.has_audio_episodes` by
+        # `_load_briefings`. Read (never written) by `handle_export_feed_
+        # requested`'s own re-check, for the identical reason `handle_
+        # export_briefing_requested`'s docstring gives for re-checking the
+        # selected briefing's status: the button's disabled state and the
+        # message it posts are two different frames.
+        self._watchlist_has_audio_episodes = False
+        # task-1760: this screen's own feed server, and the directory it
+        # would serve. `FeedDirectoryServer` is not a module singleton --
+        # each screen instance owns exactly one (this instance's `stop()`
+        # is called from `on_unmount`, so a second screen instance never
+        # needs to know about the first's server at all). `_last_feed_
+        # export_directory` is set by `_export_feed_directory` on every
+        # SUCCESSFUL export (full or partial -- both leave a valid,
+        # servable `feed.xml` on disk) and read by `handle_serve_feed_
+        # requested`'s own re-check, mirroring `_watchlist_has_audio_
+        # episodes`'s own "button disabled state and the message it posts
+        # are two different frames" reasoning immediately above.
+        self._feed_server = FeedDirectoryServer()
+        self._last_feed_export_directory: Path | None = None
+        # The item currently open in the CONTENT reader (Task 4). Held here
+        # for the identical reason as `_loaded_items` above: `_build_content_pane`
+        # is a factory the workbench calls on every region rebuild, and a
+        # freshly built `ContentPane`'s `item` reactive would otherwise start
+        # back at `None` on every collapse/solo/rail toggle, clearing the
+        # reader out from under a user who hadn't touched Items at all.
+        self._selected_content_item: dict[str, Any] | None = None
+        # Left-rail tree inputs (Task 4): loaded together by `_load_tree_data`
+        # in exactly two queries (`list_watchlists` + `get_watchlist_item_counts`),
+        # never one per node -- see that method's docstring.
+        self._tree_watchlists: list[dict[str, Any]] = []
+        self._tree_counts: dict[int, dict[str, int]] = {}
+        # Which watchlists are expanded in the rail, and the rail's tag
+        # filter (whole-branch review, Finding 2). Held here, not on
+        # `WatchlistTree`, for exactly the reason the create-form draft and
+        # `tree_scope` already are: `_build_tree_pane` is a factory the
+        # workbench calls on every full recompose, and `watch_active_section`
+        # -- the screen's PRIMARY interaction -- does a full
+        # `refresh(recompose=True)`. A brand new `WatchlistTree` starts both
+        # of its own reactives at their class defaults, so clicking a section
+        # tab used to collapse the rail and drop the tag filter, leaving the
+        # node the centre is scoped to no longer in the DOM. Plain attributes
+        # rather than screen reactives: nothing on the screen needs to watch
+        # them, and `_breadcrumb_labels`/`_source_create_draft` already
+        # establish that shape for screen-mirrored pane state.
+        self._tree_expanded: frozenset[int] = frozenset()
+        self._tree_active_tag: str | None = None
+        # task-895: one tree write (each of which owns a modal dialog) at a
+        # time -- see `_start_tree_write` for why this is a guard rather
+        # than `run_worker(exclusive=True)`.
+        self._tree_write_active = False
+        # Breadcrumb display names for `selected_scope` (Task 5 fix round 1):
+        # resolved once in `_on_tree_scope_changed`, not on every Inspector
+        # render, and held here for the same reason `selected_scope` itself
+        # is screen-held -- `_build_inspector_pane` re-seeds a brand new
+        # `InspectorPane` on every workbench rebuild, and a fresh pane's own
+        # reactive would otherwise start back at its class default.
+        self._breadcrumb_labels: list[str] = []
+        self._applying_navigation_context = False
+        # Mirrors SourcesPane's create-form state (Finding 1, fix round 1):
+        # `region_layout` is `recompose=True`, so any collapse/solo/rail
+        # toggle rebuilds the whole workbench, constructing a brand new
+        # SourcesPane. Without holding the draft here — the same way
+        # selected_source/selected_run/active_section already survive pane
+        # rebuilds — a half-typed create form would be silently destroyed by
+        # a keybinding that has nothing to do with Sources.
+        self._source_create_form_open = False
+        self._source_create_draft: dict[str, str] = {"name": "", "url": "", "tags": ""}
+        # The create form's noise-selector text, mirrored for the same reason
+        # as the three fields above (TASK-1362). Held separately, and `None`
+        # rather than `""` when untouched, because its empty state is not its
+        # default: `SourcesPane` prefills it with the shipped selector set, and
+        # `""` is a user deliberately clearing it. Seeding `""` back over a
+        # fresh pane would silently turn "watch everything" into the default,
+        # and seeding the default over a cleared field would be the reverse.
+        self._source_create_draft_selectors: str | None = None
+        # Mirrors RulesPane's edit-form state (Finding 4, fix round 2): the
+        # same rebuild-destroys-pane-local-state failure mode as the Sources
+        # create form above, but for an in-progress rule EDIT rather than a
+        # create. `_rule_form_editing` holds the rule being edited, or `None`
+        # when the open form is for a brand new rule.
+        self._rule_form_open = False
+        self._rule_form_editing: dict[str, Any] | None = None
+        # Mirrors ItemsPane's filter/search state, for exactly the reason
+        # above (whole-branch review, Important). Any workbench rebuild
+        # constructs a brand new `ItemsPane` via `_build_detail_pane`, and
+        # without these the user's status filter reset to "all", their search
+        # box emptied and their selection cleared -- from a `z`/`[`/`]`
+        # keypress or a chevron click that had nothing to do with Items, or
+        # from the `overview_data` recompose an item-status refresh
+        # ("Mark unread", Ingest, Ignore) triggers whenever the overview
+        # counts actually change value.
+        self._items_status_filter = "all"
+        self._items_search_query = ""
+        # Layout-persistence bookkeeping (PR #926 review, Bug 2): avoids
+        # writing to config on every `_apply_layout` call — `on_mount`'s
+        # initial push-back of the just-loaded layout, and every no-op
+        # toggle, would otherwise trigger `save_setting_to_cli_config`'s
+        # synchronous whole-file read-modify-write on the UI thread. See
+        # `_schedule_layout_persist`/`_persist_layout_worker` below.
+        self._last_persisted_collapsed: frozenset[Region] | None = None
+        self._pending_persist_layout: RegionLayout | None = None
+        self._layout_persist_lock = threading.Lock()
+        # Desired-status coalescing for the four item-status write paths
+        # (Ingest, Ignore, the unread toggle, mark-read-on-open) -- TASK-1541,
+        # Qodo redesign. See `_ItemStatusIntent`'s docstring for the full
+        # unsoundness `_ITEM_STATUS_DRAIN_GROUP_PREFIX`'s comment names, and
+        # `_dispatch_item_status`/`_drain_item_status` for the mechanism these
+        # two dicts drive. Event-loop-only state, exactly like every other
+        # in-flight flag on this screen (`_briefing_in_flight` et al. above):
+        # read and written only from the loop thread, never from inside the
+        # `asyncio.to_thread` write itself.
+        #
+        # `_item_status_desired` holds at most one queued write per item id --
+        # a second dispatch for the same item overwrites the entry rather
+        # than adding a second one, which is the whole of the coalescing
+        # scheme. `_item_status_draining` names which items currently have a
+        # drainer worker running, so a dispatch that lands while one is
+        # already draining does not start a second one (and NEVER cancels the
+        # running one) -- it just relies on the running drainer to notice the
+        # new entry on its own next loop.
+        self._item_status_desired: dict[Any, "_ItemStatusIntent"] = {}
+        self._item_status_draining: set[Any] = set()
+        # TASK-2200. Which workbench surfaces still need rebuilding in place,
+        # and whether the drainer that rebuilds them is already running. See
+        # `_request_surface_refresh` for why this is a record-intent/drain
+        # queue rather than `run_worker(exclusive=True)` per surface.
+        self._pending_surface_refresh: set[str] = set()
+        self._surface_refresh_draining = False
+        # The Console-follow adapter's latest answer, mirrored here so the
+        # RIGHT_RAIL factory reads an attribute instead of polling from
+        # `compose()` (TASK-2200 review wave, M4). Refreshed by
+        # `compose_content` and by `_resolve_console_follow_drift`.
+        self._console_follow_item: Any = None
         self._controller = WatchlistsBackendController(
             app_instance=app_instance,
             scope_service=getattr(app_instance, "watchlist_scope_service", None),
             server_service=getattr(app_instance, "server_watchlists_service", None),
         )
+        self._notifications_controller = NotificationsInboxController(
+            app_instance=app_instance,
+            store=getattr(app_instance, "client_notifications_db", None),
+        )
+
+    @property
+    def _dom_is_live(self) -> bool:
+        """Whether this screen's widgets are in the DOM and can be patched.
+
+        **Not `self.is_mounted`** (TASK-2200 live-verification wave), and the
+        difference is a real, shipped defect rather than a nicety.
+        `Widget.is_mounted` returns `_is_mounted`, which
+        `MessagePump._pre_process` sets in its `finally` -- *after* it has
+        dispatched `Compose` **and** `Mount`. So for the whole of `on_mount`,
+        and for anything `on_mount` starts that completes before that
+        `finally` runs, `is_mounted` is `False` while the entire subtree is
+        already registered and queryable.
+
+        This screen's loaders complete inside exactly that window on a cold
+        local database. Instrumented on a real terminal:
+
+        ```
+        OVERVIEW watcher is_mounted=False keys=[]  pane=0 inspector=0
+        ON_MOUNT         is_mounted=False wb=1 centre=1 status=1
+        SNAPSHOT applied is_mounted=False loaded=True wb=1 centre=1 status=1
+        OVERVIEW watcher is_mounted=False keys=[...] pane=1 inspector=1
+        ```
+
+        -- the workbench, `#wl-centre`, the status header, the Overview pane
+        and the Inspector are all present, and `is_mounted` is `False` for
+        every one of those lines. An `is_mounted` guard therefore dropped
+        every in-place update on the floor, and nothing re-requested them:
+        the screen sat on "Loading local Watchlists snapshot..." /
+        "Loading watchlist activity..." / "State: unavailable" indefinitely
+        until an unrelated tab switch recomposed it.
+
+        The full-screen `refresh(recompose=True)` this task replaced did not
+        have that problem, because the `overview_data` reactive calls
+        `Widget.refresh` itself, with no `is_mounted` guard anywhere in the
+        path. Reproducing that reach is what this property is for.
+
+        `is_attached` asks the question that actually matters -- "is there a
+        path from me up to the DOM root" (`MessagePump.is_attached`) -- which
+        is `True` from `App._register` onwards and `False` once unmounted or
+        once the app is exiting. Every caller still degrades per-widget via
+        `except NoMatches`, so this is a cheap outer gate, not the only
+        protection.
+        """
+        return self.is_attached
+
+    def _watchlist_bundle_service(self) -> WatchlistBundleService | None:
+        """The live watchlist bundle service, or ``None`` if unavailable.
+
+        Mirrors how the screen reaches ``watchlist_scope_service``: via
+        ``getattr(..., None)`` on the app instance, so the tree and other
+        callers degrade rather than crash when the service has not been
+        wired (e.g. a bare app stub in tests).
+        """
+        return getattr(self.app_instance, "watchlist_bundle_service", None)
 
     def on_mount(self) -> None:
         super().on_mount()
+        # Push the persisted layout into the already-mounted workbench, not just
+        # this screen's own reactive: `compose_content` already ran by the time
+        # `on_mount` fires (compose always precedes the Mount event), so the
+        # WatchlistsWorkbench child was built with whatever `region_layout` held
+        # at THAT moment. Without also reaching into the mounted workbench via
+        # `_apply_layout`, a persisted collapse would silently not render until
+        # some unrelated later recompose happened to pick it up.
+        loaded_layout = load_region_layout()
+        # Prime the "last persisted" marker with what we just read (PR #926
+        # review, Bug 2) BEFORE calling `_apply_layout`: this value is by
+        # definition already on disk, so pushing it back into the workbench
+        # here must not itself trigger a redundant write.
+        self._last_persisted_collapsed = loaded_layout.collapsed_for_persistence()
+        self._apply_layout(loaded_layout)
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
+        self._load_active_section_data()
+        self._load_tree_data()
         self.set_timer(
             WC_SNAPSHOT_TIMEOUT_SECONDS, self._apply_snapshot_timeout_if_still_loading
         )
+
+    def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
+        """Apply a validated section/run deep link from shell navigation."""
+        section = str(context.get(WATCHLISTS_NAV_CONTEXT_SECTION) or "").strip()
+        if section not in self._SECTION_DETAIL_TITLE:
+            return
+
+        requested_backend = str(
+            context.get(WATCHLISTS_NAV_CONTEXT_BACKEND) or self.runtime_backend
+        ).strip()
+        if requested_backend not in {"local", "server"}:
+            requested_backend = self.runtime_backend
+
+        self._applying_navigation_context = True
+        try:
+            self.runtime_backend = requested_backend
+            self.active_section = section
+        finally:
+            self._applying_navigation_context = False
+
+        run_id = context.get(WATCHLISTS_NAV_CONTEXT_RUN_ID)
+        self._pending_navigation_run_id = (
+            str(run_id).strip()
+            if section == WATCHLISTS_SECTION_RUNS and run_id not in (None, "")
+            else None
+        )
+        self._pending_navigation_run_backend = (
+            requested_backend if self._pending_navigation_run_id else None
+        )
+        if self.is_mounted:
+            self._load_active_section_data()
 
     def _apply_snapshot_timeout_if_still_loading(self) -> None:
         if self._wc_loaded:
@@ -179,6 +954,243 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 "active_alert_rules": 0,
             }
 
+    def watch_overview_data(self) -> None:
+        """Push new overview counts into the live panes, never recompose.
+
+        TASK-2200 — see the note on the reactive itself. Three surfaces read
+        `overview_data`, and each is updated at the narrowest granularity
+        that actually re-renders it:
+
+        * `OverviewPane.data` — the pane's own `recompose=True` reactive, so
+          this is a PANE-scoped rebuild. It has to be: the pane swaps between
+          three whole layouts (loading line / first-run copy / seven cards
+          plus a failed-runs table) depending on `profile_state`, so there is
+          no set of cells to patch.
+        * `InspectorPane.profile_state` — likewise pane-scoped, and likewise
+          layout-changing.
+        * The Inspector's two count `Static`s — one `update()` each, since
+          only their text changes.
+
+        Every lookup degrades: the Overview pane exists only on its own tab,
+        and the Inspector is unmounted whenever the right rail is collapsed.
+        """
+        if not self._dom_is_live:
+            return
+        try:
+            overview = self.query_one("#watchlists-overview-pane", OverviewPane)
+        except NoMatches:
+            pass
+        else:
+            overview.data = self.overview_data
+        try:
+            inspector = self.query_one("#watchlists-entity-inspector", InspectorPane)
+        except NoMatches:
+            pass
+        else:
+            inspector.profile_state = self._watchlists_profile_state()
+        # Built exactly as `_build_inspector_pane` builds them, so a rebuild
+        # and a patch cannot render differently.
+        for widget_id, text in (
+            (
+                "#watchlists-alerts-summary",
+                f"Alert rules active: {self.overview_data.get('active_alert_rules', 0)}",
+            ),
+            (
+                "#watchlists-latest-run-summary",
+                f"Latest run status: {self.overview_data.get('latest_run_status', 'unavailable')}",
+            ),
+        ):
+            try:
+                self.query_one(widget_id, Static).update(text)
+            except NoMatches:
+                continue
+        # An overview refresh follows every write verb on this screen, so this
+        # is one of the points where the recompose this reactive no longer
+        # triggers used to re-enter the Console-follow adapter. What that
+        # actually recovers is an adapter that FAILED on the first compose --
+        # not a run that has since started, which the handoff caches away
+        # permanently after one success. See `_resolve_console_follow_drift`,
+        # which states both halves of that cache's behaviour.
+        self._request_surface_refresh(self._SURFACE_INSPECTOR)
+
+    @work(exclusive=True, group="wc_tree")
+    async def _load_tree_data(self) -> None:
+        """Load the left-rail tree's two inputs: watchlists and counts.
+
+        Exactly two queries total, never one per node: `list_watchlists()`
+        for the watchlist rows themselves, and `get_watchlist_item_counts()`
+        for every bucket's total/unread counts in a single statement. Both
+        are reached through `WatchlistBundleService` (Task 1) rather than a
+        second accessor onto `SubscriptionsDB` directly.
+
+        Notifies on failure (task-876), matching every sibling loader on
+        this screen (`_load_sources`, `_load_runs`, `_load_notifications`,
+        ...): without this, a real database failure rendered identically to
+        "you have zero watchlists" -- two empty roots and no message, since
+        the tree is its own only error surface.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        try:
+            service = self._watchlist_bundle_service()
+            self._tree_watchlists = service.list_watchlists()
+            self._tree_counts = service.get_watchlist_item_counts()
+        except Exception:
+            logger.opt(exception=True).debug("Failed to load watchlists tree data.")
+            self._tree_watchlists, self._tree_counts = [], {}
+            if callable(notify):
+                notify("Failed to load watchlists.", severity="error")
+        # Re-resolve the Inspector's breadcrumb against what was just loaded
+        # (task-895). `_resolve_breadcrumb_labels` reads `_tree_watchlists`,
+        # and until this task nothing could change that list while a scope
+        # was in view, so resolving once in `_apply_tree_scope` was enough.
+        # The write verbs break that: creating a watchlist scopes to an id
+        # that is not in the list yet (the crumb would read "Watchlist 3"),
+        # and renaming one leaves the crumb on the old name until the user
+        # navigates away and back. `_apply_tree_data_to_live_surfaces` below
+        # pushes the resolved labels into the mounted Inspector.
+        self._breadcrumb_labels = self._resolve_breadcrumb_labels(self.selected_scope)
+        self._apply_tree_data_to_live_surfaces()
+
+    def _apply_tree_data_to_live_surfaces(self) -> None:
+        """Publish freshly loaded tree data without recomposing the screen.
+
+        TASK-2200. `_load_tree_data` used to end in `refresh(recompose=True)`,
+        which tore down and rebuilt every region — including ITEMS, whose
+        pane may be mid-recompose of its own (a `SourcesPane` closing its
+        create form, a `RulesPane` closing an edit form). That is the
+        confirmed destroyer behind TASK-1960's crash class: a widget caught
+        by the resulting prune mounts nothing, silently, while still
+        reporting `is_mounted=True`.
+
+        Everything on this screen that reads what this loader writes, and
+        nothing else:
+
+        * The rail itself (`_tree_watchlists`/`_tree_counts`) — rebuilt from
+          `_build_tree_pane`, which re-seeds the expansion, tag filter and
+          scope the user had, exactly as the full recompose did.
+        * FEEDS and the centre header, whose scope heading resolves a
+          watchlist's display name out of `_tree_watchlists` (a rename would
+          otherwise sit stale) and whose source rows are re-queried.
+        * The Inspector's breadcrumb labels, and — in the ITEMS region — the
+          Overview's watchlist count and the Artifacts pane's scope label,
+          all pushed into the live panes the way `watch_selected_scope` and
+          `_load_sources` already push theirs.
+
+        The two ITEMS-region pushes are not an exception to "background loads
+        leave ITEMS alone"; they are the reason that rule is stated as "no
+        pane is REBUILT" rather than "no pane is touched". Both are single
+        reactive assignments onto whichever pane happens to be mounted, so a
+        `SourcesPane` create form or a `RulesPane` edit form -- neither of
+        which reads tree data -- is not even queried, let alone torn down.
+
+        `ArtifactsPane.scope_label` was missed on the first pass and found by
+        the whole-branch review (I1): it resolves a watchlist DISPLAY NAME via
+        `_briefing_scope_label` -> `_watchlist_display_name` -> the same
+        `_tree_watchlists` list, so renaming the scoped watchlist while the
+        Artifacts tab was open repainted the rail, the FEEDS heading and the
+        breadcrumb but left `#artifacts-scope-note` naming the old one — two
+        surfaces on one screen disagreeing about the same watchlist.
+
+        CONTENT is untouched: `ContentPane` reads nothing this loader writes.
+        """
+        if not self._dom_is_live:
+            return
+        self._request_surface_refresh(
+            self._SURFACE_RAIL,
+            self._SURFACE_FEEDS,
+            self._SURFACE_HEADER,
+            self._SURFACE_INSPECTOR,
+        )
+        try:
+            inspector = self.query_one("#watchlists-entity-inspector", InspectorPane)
+        except NoMatches:
+            pass
+        else:
+            inspector.breadcrumb_labels = self._breadcrumb_labels
+        try:
+            overview = self.query_one("#watchlists-overview-pane", OverviewPane)
+        except NoMatches:
+            pass
+        else:
+            # TASK-998: the first-run panel distinguishes "no watchlists at
+            # all" from "a watchlist with no sources", and only this loader
+            # knows the answer. `_build_detail_pane` seeds the same value on
+            # a rebuild.
+            overview.watchlist_count = len(self._tree_watchlists)
+        try:
+            artifacts = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            pass
+        else:
+            # Review wave, I1. `_briefing_scope_label` resolves the scoped
+            # watchlist's display NAME out of `_tree_watchlists`, so a rename
+            # left `#artifacts-scope-note` on the old one. Same seed
+            # `_build_detail_pane` applies on a rebuild.
+            artifacts.scope_label = self._briefing_scope_label()
+        # TASK-2304 AC#2, found in live verification, not by the suite. Which
+        # sources the current scope covers is WATCHLIST MEMBERSHIP, and this
+        # loader runs after every write that changes it (`Add source`,
+        # `Remove`, watchlist delete). The scope itself does not move on those
+        # writes, so `watch_tree_scope` never fires, and nothing re-queries
+        # the source list either -- so scoping the table (this task's own
+        # change) left `Add source` assigning a source into a watchlist whose
+        # table stayed empty while the header one line above it had already
+        # updated to "(1 source)". The same disagreement this task exists to
+        # remove, in the opposite direction.
+        #
+        # A third ITEMS-region push, and the same kind as the other two: a
+        # single reactive assignment onto whichever pane happens to be
+        # mounted, never a rebuild -- an open create form is not even queried.
+        self._push_scoped_sources_to_pane()
+
+    def _resolve_breadcrumb_labels(self, scope: TreeScope) -> list[str]:
+        """Display names for `scope`'s ancestor chain, for the Inspector.
+
+        Called once from `_apply_tree_scope` -- itself invoked from a real
+        tree click (`_on_tree_scope_changed`) and a breadcrumb promotion
+        (`handle_breadcrumb_scope_selected`), both discrete, user-driven
+        events -- never from a render path, so this is not a query-per-render:
+        the watchlist name costs nothing (`_tree_watchlists` is already
+        loaded by `_load_tree_data`), and a source name costs exactly the one
+        `list_source_rows` JOIN the tree itself already uses to expand a
+        watchlist, only when the scope actually names a source.
+        """
+        if scope.kind not in ("watchlist", "source") or scope.watchlist_id is None:
+            return []
+
+        labels = [
+            next(
+                (
+                    str(watchlist.get("name"))
+                    for watchlist in self._tree_watchlists
+                    if int(watchlist.get("id", -1)) == int(scope.watchlist_id)
+                ),
+                f"Watchlist {scope.watchlist_id}",
+            )
+        ]
+
+        if scope.kind == "source" and scope.source_id is not None:
+            source_label = f"Source {scope.source_id}"
+            service = self._watchlist_bundle_service()
+            if service is not None:
+                try:
+                    rows = service.list_source_rows(scope.watchlist_id)
+                    source_label = next(
+                        (
+                            str(row.get("name"))
+                            for row in rows
+                            if int(row.get("id", -1)) == int(scope.source_id)
+                        ),
+                        source_label,
+                    )
+                except Exception:
+                    logger.opt(exception=True).debug(
+                        "Failed to resolve breadcrumb source name."
+                    )
+            labels.append(source_label)
+
+        return labels
+
     def _apply_local_wc_snapshot(
         self,
         watchlists: tuple[Mapping[str, Any], ...],
@@ -189,12 +1201,60 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> None:
         self._local_watchlist_records = watchlists
         self._local_watchlist_count = watchlist_count
+        # Recorded but no longer rendered (fix round 1, Finding 1): the
+        # "(showing up to N)" qualifier belonged to the per-record listing
+        # the staging block used to draw. Kept on the screen -- and in this
+        # signature, which the parity guards call positionally -- because it
+        # is still the honest answer to "was that count a total or a page?"
+        # for anything that needs it next.
         self._watchlist_total_known = watchlist_total_known
         self._wc_lookup_error = lookup_error
         self._wc_lookup_recovery_state = recovery_state
         self._wc_loaded = True
-        if self.is_mounted:
-            self.refresh(recompose=True)
+        self._apply_snapshot_to_live_surfaces()
+
+    def _apply_snapshot_to_live_surfaces(self) -> None:
+        """Publish a freshly applied local snapshot without recomposing.
+
+        TASK-2200, the twin of `_apply_tree_data_to_live_surfaces` — see that
+        method for why the full-screen `refresh(recompose=True)` this
+        replaces was the destroyer behind TASK-1960.
+
+        The snapshot's loading/error/empty/summary marker
+        (`_watchlists_status_marker_widgets`) is rendered in exactly two
+        places, and this rebuilds both: inline in FEEDS on the Read tab, and
+        in the centre header on every other tab. Each call is a no-op where
+        that surface is not mounted, so no tab test is needed here.
+
+        The Inspector's two snapshot-derived widgets are patched rather than
+        rebuilt, following `_repaint_item_status_cell`'s discipline: the
+        `State:` line is one `Static.update`, and the Console attach control
+        is one `disabled`/`tooltip` pair straight off `_wc_attach_state()` —
+        the same tuple `compose_content` hands `_build_inspector_pane`.
+        """
+        if not self._dom_is_live:
+            return
+        self._request_surface_refresh(
+            self._SURFACE_FEEDS, self._SURFACE_HEADER, self._SURFACE_INSPECTOR
+        )
+        try:
+            summary = self.query_one("#watchlists-state-summary", Static)
+        except NoMatches:
+            pass
+        else:
+            summary.update(
+                "State: ready"
+                if self._wc_loaded and not self._wc_lookup_error
+                else "State: unavailable"
+            )
+        attach_disabled, attach_tooltip = self._wc_attach_state()
+        try:
+            attach = self.query_one("#wc-attach-to-console", Button)
+        except NoMatches:
+            pass
+        else:
+            attach.disabled = attach_disabled
+            attach.tooltip = attach_tooltip
 
     @staticmethod
     def _safe_text(value: Any, fallback: str = "", *, max_length: int = 500) -> str:
@@ -295,88 +1355,926 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
 
     def _has_local_wc_context(self) -> bool:
-        return self._local_watchlist_count > 0
+        """Whether there is anything for Console staging to send.
 
-    def _count_label(self, label: str, count: int, total_known: bool) -> str:
-        if total_known:
-            return f"{label}: {count}"
-        return f"{label} (showing up to {WC_LOCAL_PAGE_SIZE}): {count}"
+        Asks the tree scope as well as the async snapshot (fix round 1,
+        Finding 1). Staging now sends `scoped_source_rows()`, so a gate that
+        only consulted the snapshot could disable the Stage button -- and
+        render "No sources yet." -- directly underneath a Feeds list that
+        was showing rows. That split is not hypothetical: the two paths
+        resolve their `SubscriptionsDB` independently, and in the UI
+        harnesses they land on different temp files entirely.
+
+        The snapshot stays the *health* probe (`_wc_loaded` /
+        `_wc_lookup_error` in `_wc_attach_state` and `_build_list_pane` are
+        untouched): it is the only caller that can distinguish "the service
+        is unavailable" or "policy denied" from "there are no rows", which a
+        synchronous local query cannot report.
+        """
+        if self._local_watchlist_count > 0:
+            return True
+        return bool(self.scoped_source_rows())
+
+    def _staging_summary_line(self, rows: Sequence[Mapping[str, Any]]) -> Text:
+        """The one line the Console-staging block collapses to.
+
+        Fix round 1, Finding 1: the block used to enumerate
+        `_local_watchlist_records`, which reaches `get_all_subscriptions`
+        through `WatchlistScopeService.list_watch_items` -- the *same* table
+        `scoped_source_rows()` reads. FEEDS therefore printed every source
+        twice in one box (once scoped, once not), in identical typography.
+        Staging now follows the tree scope instead, so the block only has to
+        say what pressing the button would send.
+
+        Args:
+            rows: The current scope's rows, as returned by
+                `scoped_source_rows()`.
+
+        Returns:
+            A single-line ``Text``, escaped -- the scope label can be a
+            remote feed's own title.
+        """
+        label = escape_markup(self._tree_scope_label(rows))
+        noun = "source" if len(rows) == 1 else "sources"
+        return Text.from_markup(
+            f"Local Watchlists snapshot: {label} ({len(rows)} {noun})"
+        )
 
     def _snapshot_body(self) -> str:
-        lines = ["Local Watchlists snapshot staged for Console:", ""]
-        lines.append(
-            self._count_label(
-                "Watchlists", self._local_watchlist_count, self._watchlist_total_known
-            )
-        )
-        for index, record in enumerate(self._local_watchlist_records, start=1):
-            lines.append(f"  {index}. {self._record_title(record)}")
+        """The Console handoff body: the sources the tree scope covers.
+
+        Reads the same `scoped_source_rows()` the Feeds region renders (fix
+        round 1, Finding 1), so selecting "Morning AI Brief" and then
+        staging stages Morning AI Brief -- not, as before, every local
+        source regardless of where the user had navigated.
+
+        Names still go through `_record_title` (and therefore `_safe_text`'s
+        sanitise + validate pass), unchanged: a source name can come
+        straight from a remote feed, and this string is handed to a chat
+        prompt.
+        """
+        rows = self.scoped_source_rows()
+        label = self._safe_text(self._tree_scope_label(rows), "the current scope")
+        lines = [f"Local Watchlists snapshot staged for Console: {label}", ""]
+        lines.append(f"Sources: {len(rows)}")
+        for index, row in enumerate(rows[:WC_LOCAL_PAGE_SIZE], start=1):
+            lines.append(f"  {index}. {self._record_title(row)}")
+        remainder = len(rows) - WC_LOCAL_PAGE_SIZE
+        if remainder > 0:
+            lines.append(f"  ... and {remainder} more")
         return "\n".join(lines).strip()
 
     def _snapshot_metadata(self) -> dict[str, Any]:
+        """Structured companion to `_snapshot_body`.
+
+        `watchlist_count`/`watchlist_sample_count`/`watchlist_titles` keep
+        describing the local snapshot exactly as before -- they are the
+        service-reported inventory, and Console consumers already read them.
+        The `scope_*`/`source_*` keys are what the press actually staged.
+        """
+        rows = self.scoped_source_rows()
+        scope = self.tree_scope
         return {
             "watchlist_count": self._local_watchlist_count,
             "watchlist_sample_count": len(self._local_watchlist_records),
             "watchlist_titles": [
                 self._record_title(record) for record in self._local_watchlist_records
             ],
+            "scope_kind": scope.kind,
+            "scope_label": self._safe_text(
+                self._tree_scope_label(rows), "the current scope"
+            ),
+            "scope_watchlist_id": scope.watchlist_id,
+            "scope_source_id": scope.source_id,
+            "source_count": len(rows),
+            "source_titles": [self._record_title(row) for row in rows],
             "backend": "local",
         }
 
-    def _latest_console_follow_item(self):
-        if self._latest_console_follow_loaded:
-            return self._latest_console_follow_item_cache
-        adapter = getattr(self.app_instance, "home_active_work_adapter", None)
-        build_dashboard_input = getattr(adapter, "build_dashboard_input", None)
-        if not callable(build_dashboard_input):
-            self._latest_console_follow_item_cache = None
-            self._latest_console_follow_loaded = True
-            self._latest_console_follow_error_logged = False
-            return None
-        try:
-            dashboard_input = build_dashboard_input(
-                providers_models={},
-                has_recent_work=False,
+    def _wc_attach_state(self) -> tuple[bool, str]:
+        """Whether "Stage Watchlists Context in Console" should be enabled,
+        and its tooltip — the same loading/error/empty/populated branching
+        `_build_list_pane` uses, split out so `compose_content` can get it
+        without constructing (and discarding) a pane widget just to read it.
+        """
+        if not self._wc_loaded:
+            return True, "Stage local Watchlists context after the local snapshot loads."
+        if self._wc_lookup_error:
+            recovery_state = self._wc_lookup_recovery_state
+            tooltip = (
+                recovery_state.disabled_tooltip
+                if recovery_state is not None
+                else "Watchlists services are unavailable; retry Watchlists before staging Console context."
             )
+            return True, tooltip
+        if not self._has_local_wc_context():
+            return True, "Stage local Watchlists context once local sources exist."
+        return False, "Stage local Watchlists context in Console."
+
+    def _build_tree_pane(self) -> WatchlistTree:
+        """Build the LEFT_RAIL-region content: the watchlist tree.
+
+        A factory, not an instance: `region_layout` is `recompose=True`, so
+        any collapse/solo/rail toggle rebuilds every region, and a widget
+        instance can only be mounted once (see the factory note on
+        `WatchlistsWorkbench.__init__`).
+
+        Seeds `expanded`/`active_tag` from screen state (whole-branch review,
+        Finding 2) the same way `_build_detail_pane` seeds the panes' rows
+        and `_build_inspector_pane` seeds scope and breadcrumbs -- otherwise
+        the rail collapses on every section switch. Seeds `active_scope`
+        from `tree_scope` for the same reason (task-876): a section switch
+        or rail toggle rebuilds a brand new `WatchlistTree`, and without
+        this the selection highlight would reset to nothing every time,
+        even though the scope itself survived on the screen.
+        """
+        return WatchlistTree(
+            watchlists=self._tree_watchlists,
+            counts=self._tree_counts,
+            source_rows_loader=self._load_source_rows_for_tree,
+            expanded=self._tree_expanded,
+            active_tag=self._tree_active_tag,
+            active_scope=self.tree_scope,
+            write_disabled_reason=self._tree_write_disabled_reason(),
+            id="wl-tree",
+        )
+
+    def _tree_write_disabled_reason(self) -> str | None:
+        """Why the tree's five write verbs cannot run, or `None` (task-895).
+
+        Two blockers, in the order the user can act on them:
+
+        * The **server** backend. Not a cosmetic hide -- there is no request
+          shape that can carry a watchlist membership edit (see
+          `WC_SERVER_WRITE_RECOVERY`), so the actions are disabled and say
+          so, with the backend selector named as the way out.
+        * **No bundle service.** The same degrade-don't-crash contract every
+          other caller of `_watchlist_bundle_service()` follows; the copy is
+          the screen's existing `WC_SERVICE_UNAVAILABLE_COPY` rather than a
+          second phrasing of the same condition.
+
+        Returns:
+            The reason string, used verbatim as both the disabled buttons'
+            tooltip and the visible note beneath them, or `None` when writes
+            are available.
+        """
+        if self.runtime_backend == "server":
+            return WC_SERVER_WRITE_RECOVERY.disabled_tooltip
+        if self._watchlist_bundle_service() is None:
+            return WC_SERVICE_UNAVAILABLE_COPY
+        return None
+
+    def _load_source_rows_for_tree(self, watchlist_id: int) -> list[dict[str, Any]]:
+        """Fetch one watchlist's source rows for the tree, synchronously.
+
+        Safe on the UI thread: the tree calls this during `compose()` when a
+        watchlist is expanded, and `list_source_rows` is one JOIN (Task 1),
+        not a fan-out of per-source queries.
+        """
+        try:
+            return self._watchlist_bundle_service().list_source_rows(watchlist_id)
         except Exception:
-            if not self._latest_console_follow_error_logged:
-                logger.opt(exception=True).warning(
-                    "Failed to load Watchlists Console follow item from Home active-work adapter.",
+            logger.opt(exception=True).debug("Failed to load tree source rows.")
+            return []
+
+    def scoped_source_rows(self) -> list[dict[str, Any]]:
+        """Source rows the current tree scope covers.
+
+        The Feeds region renders these, so selecting a node in the tree
+        actually narrows what the centre shows rather than only recording a
+        selection (Task 7). Kept on the screen (not the pane) because the
+        workbench recomposes and pane-local state does not survive it -- the
+        same reasoning already applied to `tree_scope` itself.
+
+        Reads `tree_scope`, not `selected_scope`: only tree navigation
+        changes what Feeds covers. See the note on those two reactives for
+        why they are not the same value.
+
+        Each branch costs exactly one query (`list_source_rows`,
+        `list_all_source_rows`, or `list_unassigned_source_rows`); the
+        `source` scope reuses whichever of those already names the right
+        table rather than adding a second query just to filter down to one
+        row.
+
+        Returns:
+            One dict per source with ``id``, ``name`` and ``type``, or an
+            empty list if the bundle service is unavailable or lookup fails.
+        """
+        service = self._watchlist_bundle_service()
+        if service is None:
+            return []
+        scope = self.tree_scope
+        try:
+            if scope.kind == "watchlist" and scope.watchlist_id is not None:
+                return service.list_source_rows(scope.watchlist_id)
+            if scope.kind == "source" and scope.source_id is not None:
+                rows = (
+                    service.list_source_rows(scope.watchlist_id)
+                    if scope.watchlist_id is not None
+                    else service.list_all_source_rows()
                 )
-                self._latest_console_follow_error_logged = True
-            self._latest_console_follow_item_cache = None
-            return None
-        selected_item = None
-        for item in tuple(getattr(dashboard_input, "active_work_items", ()) or ()):
-            if (
-                str(getattr(item, "source", None) or "").strip().lower()
-                in {"watchlists", "w+c", "watchlists+collections"}
-                and bool(getattr(item, "console_available", False))
-                and getattr(item, "item_id", None)
-            ):
-                selected_item = item
-                break
-        self._latest_console_follow_item_cache = selected_item
-        self._latest_console_follow_loaded = True
-        self._latest_console_follow_error_logged = False
-        return selected_item
+                return [r for r in rows if int(r["id"]) == int(scope.source_id)]
+            if scope.kind == "unassigned":
+                return service.list_unassigned_source_rows()
+            return service.list_all_source_rows()
+        except Exception:
+            logger.opt(exception=True).debug("Failed to resolve scoped source rows.")
+            return []
+
+    def _tree_scope_label(self, rows: Sequence[Mapping[str, Any]]) -> str:
+        """A human name for `tree_scope` -- "All sources", "Unassigned", a
+        watchlist's name, or a single source's name.
+
+        Resolved from data already in memory (`_tree_watchlists`, and `rows`
+        itself for a source's own name) rather than by issuing another query
+        -- `rows` is the same list `scoped_source_rows()` just resolved, so
+        this is display formatting, not a second lookup.
+
+        The returned string is RAW (a watchlist name is user-authored and a
+        source name can come straight from a remote feed's own title), so
+        every caller must escape it before it reaches a rendered label.
+
+        Args:
+            rows: The current scope's rows, as returned by
+                `scoped_source_rows()`.
+
+        Returns:
+            The scope's display name, unescaped.
+        """
+        scope = self.tree_scope
+        if scope.kind == "unassigned":
+            return "Unassigned"
+        if scope.kind == "watchlist" and scope.watchlist_id is not None:
+            return next(
+                (
+                    str(watchlist.get("name"))
+                    for watchlist in self._tree_watchlists
+                    if int(watchlist.get("id", -1)) == int(scope.watchlist_id)
+                ),
+                f"Watchlist {scope.watchlist_id}",
+            )
+        if scope.kind == "source":
+            if rows:
+                return str(rows[0].get("name"))
+            if scope.source_id is not None:
+                return f"Source {scope.source_id}"
+        return "All sources"
+
+    def _scoped_feeds_heading(self, rows: Sequence[Mapping[str, Any]]) -> Text:
+        """The scope-named Feeds heading, e.g. ``Feeds in Morning AI Brief (3)``.
+
+        Replaces the previous hardcoded "Sources" title (Task 7): with the
+        Sources tab active, that hardcoded word duplicated ITEMS's own
+        `_SECTION_DETAIL_TITLE["sources"]` heading in the adjacent box. This
+        also makes the heading say what Feeds is actually showing, since a
+        tree click now changes that.
+
+        Args:
+            rows: The current scope's rows, as returned by
+                `scoped_source_rows()` -- passed in rather than re-resolved
+                so the caller (which needs the rows anyway, to render them)
+                does not pay for the query twice.
+
+        Returns:
+            A single-line ``Text``, pre-parsed via `Text.from_markup` over
+            an escaped label -- the same "escape untrusted content, then
+            build a `Text` rather than hand a raw f-string to `Static`"
+            convention `_build_inspector_pane`'s follow-in-Console line
+            already uses, since the label may come straight from a remote
+            feed's own title.
+        """
+        label = escape_markup(self._tree_scope_label(rows))
+        return Text.from_markup(f"Feeds in {label} ({len(rows)})")
+
+    def _watchlists_status_marker_widgets(
+        self, scoped_rows: Sequence[Mapping[str, Any]]
+    ) -> list[Widget]:
+        """The snapshot's own loading/error/empty/summary marker.
+
+        Extracted (TASK-1344) so the SAME service-state readout can appear
+        in two places: inline in `_build_list_pane`'s FEEDS body on the Read
+        tab (unchanged from before this task -- Read-tab geometry and every
+        test pinned to it stays byte-identical), and in
+        `_build_centre_status_header` on every OTHER tab, now that FEEDS
+        itself is hidden there (`_hidden_centre_regions`). Before this task
+        FEEDS was unconditionally mounted, so this state was already visible
+        on every tab; keeping it that way through the new header avoids a
+        real regression (Sources/Runs/... silently losing all visibility
+        into "snapshot still loading" / "service unavailable" / "no sources
+        yet", not merely a cosmetic gap) rather than introducing new
+        behaviour.
+
+        Keyed on the async snapshot, NOT on `scoped_source_rows()`: the
+        snapshot is the only service-health probe on this screen -- it is
+        what distinguishes "the Watchlists service is unavailable" and
+        "policy denied" (whose recovery state supplies `#wc-service-error`'s
+        copy) from "there are no rows". `scoped_source_rows()` is a
+        synchronous local query that returns `[]` for every one of those
+        cases, and `#wc-loading-state` has no meaning for it at all. In
+        production the two agree anyway: both read `subscriptions`.
+
+        Called fresh on every region/header rebuild, so it must stay
+        side-effect-free (same discipline as every other content factory
+        here -- see `WatchlistsWorkbench.__init__`'s docstring on why
+        `content` holds factories, not instances).
+
+        Args:
+            scoped_rows: The current tree scope's source rows
+                (`scoped_source_rows()`), used only by the summary-line
+                branch. Passed in rather than re-resolved so a caller that
+                already has it (both callers do) does not query twice.
+
+        Returns:
+            One widget (the loading/error/empty-state text, or the
+            one-line staging summary) in every case except the empty-state,
+            which also appends the Create-source/Import-OPML action row.
+        """
+        if not self._wc_loaded:
+            return [
+                Static(
+                    "Loading local Watchlists snapshot...",
+                    id="wc-loading-state",
+                )
+            ]
+        if self._wc_lookup_error:
+            recovery_state = self._wc_lookup_recovery_state
+            return [
+                Static(
+                    self._wc_lookup_error,
+                    id=(
+                        recovery_state.stable_selector
+                        if recovery_state is not None
+                        else "wc-service-error"
+                    ),
+                )
+            ]
+        if not self._has_local_wc_context():
+            return [
+                Static(
+                    "No sources yet.",
+                    id="wc-empty-state",
+                ),
+                Horizontal(
+                    Button(
+                        "Create source",
+                        id="wc-empty-create-source",
+                        variant="primary",
+                        tooltip="Add a new Watchlists source.",
+                    ),
+                    Button(
+                        "Import OPML",
+                        id="wc-empty-import-opml",
+                        tooltip="Import sources from an OPML file.",
+                    ),
+                    id="wc-empty-actions",
+                    classes="destination-filter-strip",
+                ),
+            ]
+        # One line, not a second source list (fix round 1, Finding 1).
+        # `#wc-watchlists-summary` keeps its id -- it is the "snapshot
+        # finished loading" terminal selector the guard suites wait on --
+        # and says what pressing Stage would send, which is the scope
+        # `_build_list_pane`/`_build_centre_status_header` names just above
+        # it. `#wc-snapshot-title` is folded into this same line rather than
+        # kept as a separate heading; no test referenced it, and a one-line
+        # block does not need a title row.
+        return [
+            Static(
+                self._staging_summary_line(scoped_rows),
+                id="wc-watchlists-summary",
+                classes="destination-section",
+            )
+        ]
+
+    def _build_centre_status_header(self) -> Vertical:
+        """Build the ALWAYS-rendered centre header: the section tab strip
+        plus the snapshot's own loading/error/empty/summary marker.
+
+        TASK-1344 AC#1 hides FEEDS on every tab except Read
+        (`_hidden_centre_regions`), but the tab strip and the snapshot
+        markers are cross-cutting chrome, not FEEDS-specific "feed content"
+        — before this task FEEDS was unconditionally mounted, so both were
+        already visible on every tab. This is what carries that forward:
+        `WatchlistsWorkbench`'s `header=` factory, wired only when
+        `active_section != "items"` (`compose_content`) so it never
+        coexists with `_build_list_pane`'s own, identical-looking inline
+        copy on the Read tab — mounting both would duplicate `#wl-tabs`.
+
+        Called fresh on every workbench rebuild, so it must stay
+        side-effect-free, like every other factory here.
+
+        Returns:
+            A `Vertical` holding the tab strip and whichever status marker
+            `_watchlists_status_marker_widgets` returns for the current
+            snapshot state.
+        """
+        scoped_rows = self.scoped_source_rows()
+        children: list[Widget] = [
+            WatchlistsTabStrip(active_section=self.active_section, id="wl-tabs"),
+        ]
+        children.extend(self._watchlists_status_marker_widgets(scoped_rows))
+        return Vertical(
+            *children,
+            id="wl-centre-status",
+            classes="watchlists-centre-status",
+        )
+
+    def _build_list_pane(self) -> Vertical:
+        """Build the FEEDS-region content: the section tab strip, a heading
+        naming the current tree scope, that scope's source rows, and the
+        snapshot's own loading/error/empty/summary marker.
+
+        Read-tab-only (`_hidden_centre_regions` hides FEEDS everywhere
+        else), and unchanged in shape from before TASK-1344 widened FEEDS's
+        gating: every Read-tab geometry test pinned to this pane's exact
+        row counts (`_watchlists.tcss`'s `.watchlists-region-feeds` cap
+        derivation) still applies untouched.
+
+        The source list appears ONCE (fix round 1, Finding 1). Task 7 added
+        the scoped rows above a block that already enumerated
+        `_local_watchlist_records` -- which resolve, via
+        `WatchlistScopeService.list_watch_items` ->
+        `local_watchlists_service.list_sources` -> `get_all_subscriptions`,
+        to the same `subscriptions` table the scope resolvers read. Every
+        source therefore printed twice in one box, in identical typography.
+        Staging now follows the tree scope (see `_snapshot_body`), so that
+        block collapses to a single line.
+
+        The tab strip is unchanged -- `Tests/UI/test_destination_shells.py`
+        and `Tests/UI/test_destination_visual_parity_correction.py` both
+        drive its stable selectors.
+
+        Byte-identical logic to the pre-rehost inline composition for the
+        snapshot itself; only the `yield` calls became list appends and a
+        `Vertical(...)` return so the result can be handed to
+        `WatchlistsWorkbench` as a content factory instead of being mounted
+        directly by `compose_content`. The tab strip is prepended here
+        (rather than left unwired) so section-switching by click is not lost
+        now that the navigator is retired — `Region.LEFT_RAIL` hosts the
+        watchlist tree (`_build_tree_pane`), and this is the strip's
+        permanent home per the design (a one-row strip at the top of the
+        centre). `_build_centre_status_header` is FEEDS's twin for every
+        OTHER tab, where this factory is never called at all.
+
+        This is called fresh on every region rebuild (see
+        `WatchlistsWorkbench.__init__`'s docstring on why `content` holds
+        factories, not instances), so it must stay side-effect-free.
+        """
+        scoped_rows = self.scoped_source_rows()
+        children: list[Widget] = [
+            WatchlistsTabStrip(active_section=self.active_section, id="wl-tabs"),
+            Static(
+                self._scoped_feeds_heading(scoped_rows),
+                classes="destination-section watchlists-column-title",
+                id="wl-feeds-scope-heading",
+            ),
+        ]
+        for row in scoped_rows:
+            # Source names are untrusted (imported OPML, a remote feed's own
+            # title, ...), so they must be escaped before reaching a
+            # rendered label -- this repo has shipped that bug before.
+            name = escape_markup(str(row.get("name") or ""))
+            source_type = escape_markup(str(row.get("type") or ""))
+            children.append(
+                Static(
+                    Text.from_markup(f"{name}  ({source_type})"),
+                    id=f"wl-feeds-source-{row.get('id')}",
+                    classes="watchlist-feed-source-row",
+                )
+            )
+        children.extend(self._watchlists_status_marker_widgets(scoped_rows))
+        return Vertical(
+            *children,
+            id="watchlists-list-pane",
+            classes="destination-workbench-pane",
+        )
+
+    def _build_detail_pane(self) -> Vertical:
+        """Build the ITEMS-region content: the active-section-routed pane.
+
+        Called fresh on every region rebuild — see the factory note on
+        `WatchlistsWorkbench.__init__`.
+        """
+        detail_title = self._SECTION_DETAIL_TITLE.get(self.active_section, "Detail")
+        children: list[Widget] = [
+            Static(
+                detail_title,
+                classes="destination-section watchlists-column-title",
+                id="watchlists-detail-title",
+            )
+        ]
+        if self.active_section == "overview":
+            overview = OverviewPane(id="watchlists-overview-pane")
+            overview.data = self.overview_data
+            # TASK-998: lets the first-run panel distinguish "no watchlists at
+            # all" from "a watchlist with no sources in it" -- `overview_data`
+            # counts sources, items and runs, never watchlists.
+            overview.watchlist_count = len(self._tree_watchlists)
+            children.append(overview)
+        elif self.active_section == "sources":
+            sources_pane = SourcesPane(id="watchlists-sources-pane")
+            # Seed the last-loaded rows and selection (Finding 2, fix round
+            # 2) the same way RunsPane/NotificationsPane already do below —
+            # without this the table renders empty until the next unrelated
+            # navigation happens to trigger `_load_sources` again.
+            # Scoped (TASK-2304 AC#2): a rebuild must not quietly re-widen
+            # the table back to every source while the header still names one
+            # watchlist.
+            sources_pane.sources = self.scoped_loaded_sources()
+            sources_pane.selected_source = self.selected_source
+            # Seed the create-form draft so it survives this pane being
+            # reconstructed (see the note on `_source_create_draft` in
+            # __init__ and CreateFormDraftChanged/CreateFormVisibilityChanged
+            # in sources_pane.py).
+            sources_pane.show_create_form = self._source_create_form_open
+            sources_pane.create_draft_name = self._source_create_draft["name"]
+            sources_pane.create_draft_url = self._source_create_draft["url"]
+            sources_pane.create_draft_tags = self._source_create_draft["tags"]
+            if self._source_create_draft_selectors is not None:
+                sources_pane.create_draft_ignore_selectors = (
+                    self._source_create_draft_selectors
+                )
+            children.append(sources_pane)
+        elif self.active_section == "runs":
+            runs_pane = RunsPane(id="watchlists-runs-pane")
+            runs_pane.runs = self._loaded_runs
+            runs_pane.selected_run = self.selected_run
+            children.append(runs_pane)
+        elif self.active_section == "items":
+            # Seed the last-loaded rows (Finding 2, fix round 2) — see the
+            # note on `sources_pane.sources` above; same rebuild, same gap.
+            items_pane = ItemsPane(id="watchlists-items-pane")
+            items_pane.items = self._loaded_items
+            # Seed the filter, the search box and the selection too
+            # (whole-branch review, Important) -- the sibling Sources/Runs/
+            # Notifications panes above and below already re-seed their
+            # selection, and this one seeded only `.items`, so every rebuild
+            # silently reset the user's filtered view to "all items, nothing
+            # selected". See `_items_status_filter` in `__init__`.
+            items_pane.status_filter = self._items_status_filter
+            items_pane.search_query = self._items_search_query
+            items_pane.selected_item = self._selected_content_item
+            children.append(items_pane)
+        elif self.active_section == "rules":
+            # Seed the last-loaded rows (Finding 2, fix round 2) — see the
+            # note on `sources_pane.sources` above; same rebuild, same gap.
+            rules_pane = RulesPane(id="watchlists-rules-pane")
+            rules_pane.rules = self._loaded_rules
+            # Seed the edit-form state so an in-progress rule edit survives
+            # this pane being reconstructed (Finding 4, fix round 2) — the
+            # same treatment the Sources create-form draft already gets
+            # above; see `_rule_form_open`/`_rule_form_editing` in __init__
+            # and RuleFormVisibilityChanged in rules_pane.py.
+            if self._rule_form_open:
+                if self._rule_form_editing is not None:
+                    rules_pane.edit_rule(self._rule_form_editing)
+                else:
+                    rules_pane.show_rule_form = True
+            children.append(rules_pane)
+        elif self.active_section == "notifications":
+            notifications_pane = NotificationsPane(id="watchlists-notifications-pane")
+            notifications_pane.notifications = self._loaded_notifications
+            notifications_pane.selected_notification = self.selected_notification
+            children.append(notifications_pane)
+        elif self.active_section == "artifacts":
+            # Seeded from screen state for the same reason every sibling
+            # above is -- this is a factory the workbench calls on every
+            # region rebuild, so a fresh pane's reactives start at their
+            # class defaults.
+            artifacts_pane = ArtifactsPane(id="watchlists-artifacts-pane")
+            artifacts_pane.briefings = self._loaded_briefings
+            artifacts_pane.selected_briefing = self._selected_briefing
+            artifacts_pane.scope_label = self._briefing_scope_label()
+            artifacts_pane.can_generate = self._can_generate_briefing()
+            artifacts_pane.selection_mode = self._briefing_selection_mode
+            artifacts_pane.presets = self._loaded_briefing_presets
+            artifacts_pane.default_preset_id = self._briefing_default_preset_id
+            artifacts_pane.briefing_cadence_seconds = self._briefing_cadence_seconds
+            artifacts_pane.briefing_schedules_enabled = (
+                self._briefing_schedules_enabled()
+            )
+            artifacts_pane.scripts = self._loaded_scripts
+            artifacts_pane.selected_script = self._selected_script
+            artifacts_pane.script_audio = self._loaded_script_audio
+            artifacts_pane.scripts_with_audio = self._scripts_with_audio
+            artifacts_pane.citations = self._loaded_citations
+            artifacts_pane.has_audio_episodes = self._watchlist_has_audio_episodes
+            artifacts_pane.chachanotes_available = self._chachanotes_db() is not None
+            artifacts_pane.can_serve_feed = self._last_feed_export_directory is not None
+            artifacts_pane.feed_server_running = self._feed_server.is_running
+            artifacts_pane.feed_server_url = self._feed_server.url
+            children.append(artifacts_pane)
+        return Vertical(
+            *children,
+            id="watchlists-detail-pane",
+            classes="destination-workbench-pane",
+        )
+
+    def _build_content_pane(self) -> ContentPane:
+        """Build the CONTENT-region content: the reader for the last
+        selected item (Task 4).
+
+        Called fresh on every region rebuild, like every other region
+        builder here -- see the factory note on `WatchlistsWorkbench.__init__`.
+        Seeded from `_selected_content_item` (Finding pattern established by
+        `_build_inspector_pane`'s `selected_entity` seeding above): without
+        this, a collapse/solo/rail toggle would construct a brand new
+        `ContentPane` whose `item` reactive starts back at its class default
+        of `None`, silently clearing the reader.
+
+        Deliberately not gated on `active_section`: unlike `_build_detail_pane`,
+        which swaps in a different pane per tab, the reader is a persistent
+        cross-cutting surface for whatever item was last opened, regardless
+        of which section the user is currently viewing.
+
+        `ContentPane` does not draw its own heading (see `SELF_HEADED_REGIONS`
+        in `watchlists_workbench.py`), so `WatchlistsWorkbench` prepends the
+        generic "Content" title above whatever this returns.
+        """
+        pane = ContentPane(id="watchlists-content-pane")
+        pane.item = self._selected_content_item
+        return pane
+
+    def _watchlists_are_empty(self) -> bool:
+        """Whether this profile has nothing in Watchlists yet (TASK-998).
+
+        Delegates to `OverviewPane.profile_is_empty`, which is the one
+        definition of this question (Qodo #3 on PR #1017). It used to be
+        copied here, and two copies deciding what the Overview region and the
+        Inspector each say is a drift waiting to happen -- the two disagreeing
+        is precisely the confusing first-run state TASK-998 removed.
+
+        Returns:
+            True only once `overview_data` has loaded and reports nothing.
+        """
+        return OverviewPane.profile_is_empty(self.overview_data)
+
+    def _watchlists_profile_state(self) -> str:
+        """Loading, empty or populated (TASK-1020).
+
+        The same call the Overview region makes, so the Inspector's own
+        first-run text can never contradict it.
+
+        Returns:
+            One of `OverviewPane.LOADING`/`EMPTY`/`POPULATED`.
+        """
+        return OverviewPane.profile_state(self.overview_data)
 
     @staticmethod
-    def _column_divider(divider_id: str) -> Rule:
-        return Rule(
-            line_style="heavy",
-            orientation="vertical",
-            id=divider_id,
-            classes="destination-pane-divider",
+    def _console_follow_copy(
+        latest_console_item: Any,
+    ) -> tuple[str, Any, Any, bool, str]:
+        """Everything the Inspector's Console-follow row renders, as data.
+
+        Extracted (TASK-2200) so the same derivation serves two callers: the
+        builder below, and `_resolve_console_follow_drift`, which compares it
+        against what is actually on screen. The Console-follow state comes
+        from an app-level adapter that is only ever *polled* at render time --
+        until this task, "render time" meant every full-screen recompose, so
+        an adapter that failed once was picked up by whichever background
+        loader recomposed next. With those recomposes gone, that recovery has
+        to be detected deliberately.
+
+        Args:
+            latest_console_item: The adapter's answer, or `None`.
+
+        Returns:
+            `(status_widget_id, status_copy, button_label, button_disabled,
+            button_tooltip)` -- byte-identical to what this section rendered
+            before the extraction, including the two DIFFERENT status ids
+            (they are the section's own available/unavailable signal).
+        """
+        if latest_console_item is None:
+            return (
+                "watchlists-console-unavailable",
+                "No active Watchlists run is available for Console follow.",
+                "Console follow unavailable",
+                True,
+                "Unavailable until Watchlists has an active run with Console context.",
+            )
+        title = str(getattr(latest_console_item, "title", None) or "Untitled")
+        status = str(getattr(latest_console_item, "status", None) or "unknown")
+        return (
+            "watchlists-console-available",
+            Text.from_markup(
+                "Console can follow latest Watchlists run: "
+                f"{escape_markup(title)} ({escape_markup(status)})."
+            ),
+            Text.from_markup(f"Follow {escape_markup(title)} in Console"),
+            False,
+            "Open the latest active Watchlists run in Console.",
         )
 
-    def compose_content(self) -> ComposeResult:
-        latest_console_item = self._latest_console_follow_item()
-        self._latest_console_follow_item_id = (
-            getattr(latest_console_item, "item_id", None)
-            if latest_console_item is not None
-            else None
+    def _resolve_console_follow_drift(self) -> bool:
+        """Re-poll the Console-follow adapter and say whether the rail is stale.
+
+        **What this can and cannot detect** (review wave, M3 -- verified
+        against `WatchlistsConsoleHandoff._latest_console_follow_item`,
+        `watchlists_console_handoff.py:39-75`, not assumed):
+
+        * A **successful** poll sets `_latest_console_follow_loaded = True`,
+          and nothing ever resets it -- so after one success the adapter's
+          answer is frozen for the life of this screen, and this method can
+          only return `False`. That is not a regression: the full-screen
+          recompose this replaces hit the identical cache. A live re-poll on
+          every background load would be NEW behaviour -- and expensive, since
+          the adapter fans out over watchlist-run, chatbook-artifact,
+          ingest-job and notification queries plus a server-event fetch -- so
+          it is deliberately not built here.
+        * A **failed** poll does NOT set that flag, so failure is retried. That
+          is the one real case this exists for, and it is the case the old
+          recompose covered: an adapter that fails during the first compose
+          renders `#watchlists-console-unavailable`, and the next background
+          loader picks up the recovered answer. Pinned by
+          `test_watchlists_destination_retries_console_follow_after_initial_adapter_failure`.
+
+        Not a pure predicate despite the boolean return, which is why it is
+        named for the action: it refreshes the handoff's cached item id (a
+        deliberate side effect, "ahead of a render pass" -- see
+        `resolve_latest_follow_item`) and mirrors the answer onto
+        `_console_follow_item` for `_build_inspector_region` to render.
+
+        Compares against the DOM rather than a remembered key, so there is no
+        second copy of "what is currently rendered" to drift: the rendered
+        answer IS the state. Because the only reachable transition is
+        failure -> success, which changes the status widget's *id*, the
+        `if not status_widgets` branch below is what actually fires; the two
+        text comparisons after it are belt-and-braces for a future handoff
+        whose cache does expire.
+
+        Returns:
+            True when the Inspector is mounted and its Console-follow row no
+            longer matches the adapter, so the right rail should be rebuilt.
+        """
+        self._console_follow_item = self._console_handoff.resolve_latest_follow_item()
+        status_id, status_copy, button_label, _disabled, _tooltip = (
+            self._console_follow_copy(self._console_follow_item)
         )
+        try:
+            button = self.query_one("#watchlists-follow-in-console", Button)
+        except NoMatches:
+            # Nothing rendered (right rail collapsed, or mid-rebuild): the
+            # next build resolves it from scratch anyway.
+            return False
+        status_widgets = list(self.query(f"#{status_id}"))
+        if not status_widgets:
+            return True
+        if str(status_widgets[0].renderable) != str(status_copy):
+            return True
+        return str(button.label) != str(button_label)
+
+    def _build_inspector_region(self) -> Vertical:
+        """The RIGHT_RAIL content factory.
+
+        Reads `_console_follow_item` -- a plain attribute -- rather than
+        polling the adapter (review wave, M4). The workbench calls this
+        factory again on every region rebuild, and `region_layout` is
+        `recompose=True`, so a `z`/`Z`/`[`/`]`/chevron toggle would otherwise
+        re-run the adapter's multi-query fan-out from inside `compose()`. The
+        handoff's cache makes that free once a poll has SUCCEEDED, but on the
+        failure path it is retried every time -- exactly the shape this file
+        insists its content factories must not have.
+
+        The attribute is refreshed in the two places a fresh answer is
+        actually wanted: once per compose pass (`compose_content`, restoring
+        the pre-TASK-2200 call site) and by `_resolve_console_follow_drift`
+        immediately before it asks for this rebuild -- so the targeted rail
+        rebuild still repaints the staleness it was asked to fix.
+        """
+        attach_disabled, attach_tooltip = self._wc_attach_state()
+        return self._build_inspector_pane(
+            self._console_follow_item,
+            attach_disabled,
+            attach_tooltip,
+        )
+
+    def _build_inspector_pane(
+        self,
+        latest_console_item: Any,
+        attach_disabled: bool,
+        attach_tooltip: str,
+    ) -> Vertical:
+        """Build the RIGHT_RAIL-region content: state summaries, Console
+        actions, and the entity Inspector.
+
+        `latest_console_item`/`attach_disabled`/`attach_tooltip` are captured
+        once per `compose_content` call and passed in rather than
+        recomputed, since a factory wrapping this method (see
+        `compose_content`) is called on every region rebuild.
+        """
+        children: list[Widget] = [
+            Static(
+                "Inspector",
+                classes="destination-section watchlists-column-title",
+            ),
+            Static(
+                "State: ready"
+                if self._wc_loaded and not self._wc_lookup_error
+                else "State: unavailable",
+                id="watchlists-state-summary",
+            ),
+            Static(
+                f"Alert rules active: {self.overview_data.get('active_alert_rules', 0)}",
+                id="watchlists-alerts-summary",
+            ),
+            Static(
+                f"Latest run status: {self.overview_data.get('latest_run_status', 'unavailable')}",
+                id="watchlists-latest-run-summary",
+            ),
+            Static("Console actions", classes="destination-section"),
+            Button(
+                "Stage Watchlists Context in Console",
+                id="wc-attach-to-console",
+                disabled=attach_disabled,
+                tooltip=attach_tooltip,
+            ),
+            Button(
+                "Open current Watchlists",
+                id="wc-open-watchlists",
+                tooltip="Open the current watchlist/subscription surface.",
+            ),
+        ]
+        status_id, status_copy, button_label, button_disabled, button_tooltip = (
+            self._console_follow_copy(latest_console_item)
+        )
+        children.append(Static(status_copy, id=status_id))
+        children.append(
+            Button(
+                button_label,
+                id="watchlists-follow-in-console",
+                disabled=button_disabled,
+                tooltip=button_tooltip,
+            )
+        )
+        # Seed from screen state (Finding 3, fix round 2): `region_layout` is
+        # `recompose=True`, so any collapse/solo/rail toggle constructs a
+        # brand new InspectorPane. Without this, the screen keeps
+        # `selected_entity` but the freshly-built Inspector starts at its
+        # class default (`None`) until the NEXT explicit selection change —
+        # `watch_selected_entity` only pushes on change, so a rebuild alone
+        # never re-syncs it. That left `d`/`c`/`p` silently operating on a
+        # selection the user could no longer see.
+        #
+        # `scope`/`breadcrumb_labels` get the identical treatment (Task 5 fix
+        # round 1) and for the identical reason: a `[`/`]`/`z`/`Z` toggle
+        # rebuilds this factory from scratch, and `watch_selected_scope`
+        # alone would leave a freshly-built Inspector's breadcrumb blank
+        # until the next tree click.
+        inspector = InspectorPane(id="watchlists-entity-inspector")
+        inspector.selected_entity = self.selected_entity
+        inspector.scope = self.selected_scope
+        inspector.breadcrumb_labels = self._breadcrumb_labels
+        # TASK-998, widened by TASK-1020: same seeding rationale as the three
+        # lines above -- and the Inspector cannot work this out for itself,
+        # since it is handed a selection rather than the data behind it. The
+        # value is the same one the Overview region keys off, so the rail's
+        # first-run text and the region's can never disagree.
+        inspector.profile_state = self._watchlists_profile_state()
+        children.append(inspector)
+        return Vertical(
+            *children,
+            id="watchlists-inspector-pane",
+            classes="destination-workbench-pane ds-inspector",
+        )
+
+    #: Sections whose data has no server half at all, and the two pieces of
+    #: header copy that have to say so. The Backend selector is disabled on
+    #: these, because offering a choice that changes nothing is a lie about
+    #: where the rows come from. Notifications established the pattern;
+    #: Artifacts joins it -- briefings are written to, and read from, this
+    #: device's `SubscriptionsDB` whatever the selector says.
+    _LOCAL_ONLY_SECTIONS: dict[str, dict[str, str]] = {
+        "notifications": {
+            "label": "Inbox: local",
+            "tooltip": "The notifications inbox is local to this device.",
+        },
+        "artifacts": {
+            "label": "Artifacts: local",
+            "tooltip": (
+                "Briefings are written to and read from this device's "
+                "watchlist store."
+            ),
+        },
+    }
+
+    def _local_only_section(self) -> dict[str, str] | None:
+        """Header copy for the active section if it has no server half."""
+        return self._LOCAL_ONLY_SECTIONS.get(self.active_section)
+
+    def _backend_label_text(self) -> str:
+        """What the header bar says about where this section's rows live."""
+        local_only = self._local_only_section()
+        if local_only is not None:
+            return local_only["label"]
+        return f"Backend: {self.runtime_backend}"
+
+    def compose_content(self) -> ComposeResult:
+        # Resolved once per compose pass, as it was before TASK-2200 -- but
+        # mirrored onto the screen instead of captured in the RIGHT_RAIL
+        # factory's closure, so a region rebuild reads an attribute rather
+        # than re-running the adapter (review wave, M4). See
+        # `_build_inspector_region`.
+        self._console_follow_item = self._console_handoff.resolve_latest_follow_item()
         with Vertical(id="watchlists-collections-shell"):
             yield Static(
                 "Watchlists | Monitored sources, runs, alerts, recovery | Mixed | Local/Server",
@@ -384,182 +2282,1221 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 classes="ds-destination-header",
             )
             with Horizontal(id="watchlists-header-bar", classes="destination-filter-strip"):
-                yield Select(
+                # TASK-995: `compact=True` for the same reason as the
+                # Sources/Items toolbars -- `.destination-filter-strip` is
+                # `height: 1` and a bordered Select is three rows, so this
+                # backend picker was painting its top border and nothing
+                # else. See `sources_pane.compose()`.
+                yield PruneSafeSelect(
                     [("Local", "local"), ("Server", "server")],
-                    value="local",
+                    value=self.runtime_backend,
                     id="watchlists-backend-select",
                     allow_blank=False,
+                    compact=True,
+                    disabled=self._local_only_section() is not None,
+                    tooltip=(
+                        self._local_only_section() or {}
+                    ).get("tooltip")
+                    or "Choose the Watchlists data backend.",
                 )
                 yield Static(
-                    f"Backend: {self.runtime_backend}",
+                    self._backend_label_text(),
                     id="watchlists-backend-label",
                 )
-            with Horizontal(id="watchlists-workbench", classes="ds-panel destination-workbench"):
-                yield WatchlistsNavigator(id="watchlists-navigator")
-                yield self._column_divider("watchlists-nav-list-divider")
-                with Vertical(id="watchlists-list-pane", classes="destination-workbench-pane"):
-                    yield Static("Sources", classes="destination-section watchlists-column-title")
-                    if not self._wc_loaded:
-                        yield Static(
-                            "Loading local Watchlists snapshot...",
-                            id="wc-loading-state",
-                        )
-                        attach_disabled = True
-                        attach_tooltip = "Stage local Watchlists context after the local snapshot loads."
-                    elif self._wc_lookup_error:
-                        recovery_state = self._wc_lookup_recovery_state
-                        yield Static(
-                            self._wc_lookup_error,
-                            id=(
-                                recovery_state.stable_selector
-                                if recovery_state is not None
-                                else "wc-service-error"
-                            ),
-                        )
-                        attach_disabled = True
-                        attach_tooltip = (
-                            recovery_state.disabled_tooltip
-                            if recovery_state is not None
-                            else "Watchlists services are unavailable; retry Watchlists before staging Console context."
-                        )
-                    elif not self._has_local_wc_context():
-                        yield Static(
-                            "No sources yet.",
-                            id="wc-empty-state",
-                        )
-                        with Horizontal(id="wc-empty-actions", classes="destination-filter-strip"):
-                            yield Button(
-                                "Create source",
-                                id="wc-empty-create-source",
-                                variant="primary",
-                                tooltip="Add a new Watchlists source.",
-                            )
-                            yield Button(
-                                "Import OPML",
-                                id="wc-empty-import-opml",
-                                tooltip="Import sources from an OPML file.",
-                            )
-                        attach_disabled = True
-                        attach_tooltip = "Stage local Watchlists context once local sources exist."
-                    else:
-                        yield Static(
-                            "Local Watchlists snapshot",
-                            id="wc-snapshot-title",
-                            classes="destination-section",
-                        )
-                        yield Static(
-                            self._count_label(
-                                "Watchlists",
-                                self._local_watchlist_count,
-                                self._watchlist_total_known,
-                            ),
-                            id="wc-watchlists-summary",
-                        )
-                        for index, record in enumerate(self._local_watchlist_records):
-                            yield Static(
-                                Text.from_markup(
-                                    escape_markup(self._record_title(record))
-                                ),
-                                id=f"wc-watchlist-item-{index}",
-                            )
-                        attach_disabled = False
-                        attach_tooltip = "Stage local Watchlists context in Console."
-                yield self._column_divider("watchlists-list-detail-divider")
-                with Vertical(id="watchlists-detail-pane", classes="destination-workbench-pane"):
-                    detail_title = self._SECTION_DETAIL_TITLE.get(
-                        self.active_section, "Detail"
+            yield WatchlistsWorkbench(
+                self._rendered_region_layout(),
+                content={
+                    # Factories, not instances: `region_layout` is
+                    # `recompose=True`, so any collapse/solo/rail toggle
+                    # rebuilds every region, not just the one that changed.
+                    # A pre-built container's constructor-supplied children
+                    # only mount on its FIRST mount; the same instance
+                    # remounted a second time comes back childless (verified
+                    # empirically — see `WatchlistsWorkbench.__init__`).
+                    Region.LEFT_RAIL: self._build_tree_pane,
+                    Region.FEEDS: self._build_list_pane,
+                    Region.ITEMS: self._build_detail_pane,
+                    Region.CONTENT: self._build_content_pane,
+                    Region.RIGHT_RAIL: self._build_inspector_region,
+                },
+                hidden=self._hidden_centre_regions(),
+                # `None` on the Read tab: `_build_list_pane` (FEEDS's own
+                # factory, above) already supplies the tab strip and the
+                # snapshot markers inline there, exactly as it always has.
+                # Off Read, FEEDS is hidden, so this is what carries both
+                # forward -- see `_build_centre_status_header`.
+                header=(
+                    None
+                    if self.active_section == "items"
+                    else self._build_centre_status_header
+                ),
+                id="wl-workbench",
+            )
+
+    def _hidden_centre_regions(self) -> frozenset[Region]:
+        """Centre regions the workbench must not mount at all on this tab.
+
+        Per the approved design spec (`### Tabs`): "Only Read uses the
+        three-pane split. Sources, Runs, Rules, and Artifacts take the full
+        centre width — they have no collection→feed→item relationship."
+        `active_section == "items"` is this implementation's Read tab (the
+        spec's five sections don't literally match today's six — Overview
+        and Notifications aren't in the spec's list either — but Items is
+        unambiguously the one with an items-to-read relationship). FEEDS
+        (the scoped source list) and CONTENT (the reader) are both
+        meaningless outside that relationship, so both are hidden on every
+        other tab (TASK-1344 AC#1 generalises the CONTENT-only gating Task 4
+        introduced to cover FEEDS too, which had the identical violation
+        from Phase C and was never fixed alongside it).
+
+        TASK-1344 AC#4: hidden means UNMOUNTED, not collapsed to a one-row
+        header — see `_rendered_region_layout`'s docstring for why a header
+        was rejected. `WatchlistsWorkbench.compose()` skips anything in the
+        returned set entirely; nothing here touches `self.region_layout`
+        (the real, persisted preference), so a CONTENT/FEEDS collapse or
+        solo the user set on Read is untouched by which OTHER tab they
+        happen to be looking at.
+
+        Returns:
+            `{Region.FEEDS, Region.CONTENT}` on every section except Read,
+            otherwise the empty set.
+        """
+        if self.active_section == "items":
+            return frozenset()
+        return frozenset({Region.FEEDS, Region.CONTENT})
+
+    def _rendered_region_layout(self) -> RegionLayout:
+        """`self.region_layout`, adjusted for what this tab can actually show.
+
+        FEEDS and CONTENT no longer need adjusting here at all (TASK-1344):
+        `_hidden_centre_regions` unmounts them outright on every non-Read
+        tab, regardless of their real collapsed/solo state, so the old
+        "force CONTENT into `collapsed`, rebased onto the pre-solo baseline
+        when CONTENT itself is soloed" derivation this method used to need
+        (Task 4's fix round 1) is gone -- unmounting is orthogonal to
+        `RegionLayout.collapsed` instead of reusing it, so there is nothing
+        left to rebase.
+
+        ITEMS is the one region that still needs a derived view. Off the
+        Read tab, ITEMS is not "the middle third of a three-pane split" at
+        all -- it is the section's own full-width pane (`SourcesPane`,
+        `RunsPane`, ...), unconditionally shown, with no chevron that can
+        reach it on that tab. `z`/`Z` CAN still reach it, though --
+        `on_descendant_focus` sets `focused_region = ITEMS` for anything
+        inside `#wl-region-items`, so merely interacting with the section
+        pane off Read points a keybinding at it. That is exactly why
+        `_refuse_region_gesture_off_read_tab` refuses every centre region
+        off Read, not just the ones `_hidden_centre_regions` unmounts
+        (task-1344 whole-branch review, B1): before that fix, a `z` here
+        toggled and PERSISTED a real ITEMS collapse with no visible
+        feedback on the current tab (this method already forced it back
+        out of the render), so the damage stayed invisible until the user
+        returned to Read and found the centre empty. With the gate
+        covering ITEMS too, that mutation can no longer happen -- but
+        `region_layout.collapsed` can still legitimately contain ITEMS from
+        a real Read-tab action: a `z` on ITEMS while soloing CONTENT there
+        (`solo(CONTENT)` collapses the OTHER two centre regions, ITEMS
+        included) leaves `collapsed` containing ITEMS even after the user
+        switches away, and that is a genuine user preference this method
+        must still honor on Read without rendering it as a dead end
+        elsewhere. Rendering that verbatim would collapse e.g. the
+        Sources tab down to a focusable "▸ Items" header over an otherwise
+        empty centre -- the exact dead-end AC#3 exists to rule out, just
+        reached from CONTENT's solo bookkeeping rather than FEEDS's. Forcing
+        ITEMS out of `collapsed` on every non-Read tab closes that: the
+        section's pane is always what actually renders there, and
+        `self.region_layout` itself is untouched, so Read still shows
+        whatever ITEMS state the user really left behind.
+
+        Returns:
+            `self.region_layout` verbatim on the Read tab; otherwise a copy
+            with `Region.ITEMS` removed from `collapsed`.
+        """
+        if self.active_section == "items":
+            return self.region_layout
+        return replace(
+            self.region_layout,
+            collapsed=frozenset(self.region_layout.collapsed - {Region.ITEMS}),
+        )
+
+    def _apply_layout(self, layout: RegionLayout) -> None:
+        """Set the layout, push it to the workbench, and persist any change.
+
+        Args:
+            layout: The layout to apply. Persistence (see
+                `_schedule_layout_persist`) is skipped entirely when it
+                does not actually change what is on disk — e.g. `on_mount`
+                re-applying the layout it just loaded, or a keypress that
+                happens to leave the persisted collapsed set unchanged.
+        """
+        self.region_layout = layout
+        try:
+            # The workbench reactive is `region_layout`, NOT `layout` —
+            # `Widget.layout` is an existing read-only Textual property the
+            # compositor calls `.arrange()` on every render, so shadowing it
+            # breaks rendering outright. Verified empirically in Task 3.
+            #
+            # Pushes the RENDERED (tab-adjusted) layout, not the raw `layout`
+            # argument -- see `_rendered_region_layout`. Persistence just
+            # below still persists the real, un-derived `layout`. `hidden`/
+            # `header` are constructor-only on the already-mounted workbench
+            # and are not re-pushed here: neither can have changed, since
+            # only `active_section` changing invalidates them and this
+            # method is never called from an `active_section` watcher.
+            self.query_one(WatchlistsWorkbench).region_layout = self._rendered_region_layout()
+        except Exception:
+            logger.debug("Workbench not mounted yet; layout applies on compose.")
+        self._schedule_layout_persist(layout)
+
+    def _schedule_layout_persist(self, layout: RegionLayout) -> None:
+        """Persist ``layout`` off the UI thread, skipping genuine no-ops.
+
+        `save_setting_to_cli_config` is a synchronous whole-file
+        read-modify-write plus a full config-cache reload; calling it
+        directly from `_apply_layout` would block the UI event loop on
+        every single `z`/`Z`/`[`/`]` keypress, including calls (like
+        `on_mount`'s initial push) where nothing has actually changed. This
+        repo has already paid for that class of bug once — see the
+        Console's 0.2s tick doing unconditional sqlite work on the event
+        loop (task-280).
+
+        Args:
+            layout: The layout whose solo-resolved collapsed set (see
+                `RegionLayout.collapsed_for_persistence`) should be written
+                to config if it differs from what is already persisted.
+        """
+        collapsed = layout.collapsed_for_persistence()
+        if collapsed == self._last_persisted_collapsed:
+            return
+        self._last_persisted_collapsed = collapsed
+        self._pending_persist_layout = layout
+        self.run_worker(
+            self._persist_layout_worker,
+            exclusive=True,
+            group="wl-layout-persist",
+            thread=True,
+        )
+
+    def _persist_layout_worker(self) -> None:
+        """Write the most recently requested layout to config.
+
+        Runs off the UI thread via `run_worker(thread=True)`. Reads
+        `_pending_persist_layout` fresh, under `_layout_persist_lock`, at
+        the moment this worker actually executes rather than capturing it
+        as an argument at schedule time: Textual's `exclusive=True` cancels
+        a worker still queued in the `"wl-layout-persist"` group, but
+        cannot force an already-running thread-pool call to stop before a
+        newer one starts, so a rapid burst of toggles could otherwise still
+        interleave writes out of order. Reading the shared "latest
+        requested" value inside the lock guarantees that whichever
+        invocation is the last to actually acquire it — necessarily after
+        every `_schedule_layout_persist` call the burst has made so far —
+        writes the true final layout, so the last write always wins.
+        """
+        with self._layout_persist_lock:
+            layout = self._pending_persist_layout
+            if layout is None:
+                return
+            save_region_layout(layout)
+
+    def _region_hidden_on_active_section(self, region: Region) -> bool:
+        """Whether ``region`` is not rendered at all on the active tab.
+
+        Pure query, no side effects. Distinct from "is this gesture
+        refused" (`_refuse_region_gesture_off_read_tab`, below, refuses
+        every centre region off Read, not only hidden ones -- task-1344
+        review B1): this predicate answers the narrower "is `region`
+        actually unmounted here", which that refusal consults only to pick
+        which notify copy is truthful. The only thing that ever answers
+        `True`: a rail (LEFT_RAIL/RIGHT_RAIL) is never tab-dependent, and
+        ITEMS is always the section's own full-width pane on every tab
+        (visible, just no longer collapsible off Read), so this reduces to
+        "is `region` in `_hidden_centre_regions()`".
+
+        Args:
+            region: The region a gesture (chevron click, `z`, `Z`) targets.
+
+        Returns:
+            `True` when `region` is FEEDS or CONTENT and the active section
+            is not Read (`"items"`), `False` otherwise.
+        """
+        return region in self._hidden_centre_regions()
+
+    def _refuse_region_gesture_off_read_tab(self, region: Region) -> bool:
+        """Refuse a layout change aimed at a centre region off the Read tab.
+
+        Generalized from `_refuse_content_toggle_off_read_tab` (TASK-1344
+        AC#2): that name special-cased `Region.CONTENT`, which was the only
+        gated region when it was written. FEEDS is now gated identically
+        (`_hidden_centre_regions`), so a stray `focused_region` left over
+        from the Read tab (e.g. the user last touched FEEDS there, then
+        switched to Sources without moving focus) must be refused the same
+        way CONTENT already was — this is the ONE place both `action_toggle_
+        region`/`action_solo_region`/`_on_region_toggled` consult, per the
+        prompt's "one source of truth for is region R visible on section S".
+
+        Named as an ACTION, not a predicate (it was `_content_toggle_is_blocked`
+        before TASK-1349), because it is NOT pure: when it refuses it calls
+        `self.notify(...)`. A side-effecting predicate is safe only until
+        someone wires it into a render path -- this codebase already shipped
+        `provider_is_configured()` writing an `eval_models` row from
+        `compose()`, so opening the Evals screen mutated the DB on every fresh
+        install. The verb in the name is the warning that innocent name never
+        gave; keep it a verb if the notify stays here.
+
+        Whole-branch review (Important, Task 4): off the Read (Items) tab, a
+        hidden region used to still render a real, focusable `▸ <Region>`
+        header button (the AC#4-era design). Clicking it -- or pressing `z`
+        with it focused -- ran the toggle against the REAL `region_layout`,
+        not the derived view the user was actually looking at. So the click
+        did nothing visible, silently flipped the user's genuine preference
+        to collapsed, and `_schedule_layout_persist` wrote it to disk, honored
+        forever. TASK-1344 AC#4 now unmounts hidden regions outright rather
+        than rendering that header (see `_hidden_centre_regions`), which
+        removes the click/chevron route entirely -- but `focused_region` is a
+        screen-level reactive that outlives the widget that last set it
+        (`on_descendant_focus`), so `z`/`Z` can still be invoked with it
+        pointed at a region that is not currently mounted at all. This
+        refusal is what stops that stale reference from mutating the real
+        layout blind.
+
+        Also gates SOLO (PR #1091 review, F2 / TASK-1344 AC#2). `Z` on a
+        stale `focused_region` would otherwise collapse the OTHER centre
+        regions around one the user cannot see on this tab, the same class
+        of harm as the chevron, through the one route that was still open.
+
+        Whole-branch review round 2 (task-1344 review, B1): the check used
+        to be `region in _hidden_centre_regions()`, so ITEMS -- never
+        hidden, always the section's own full-width pane off Read (see
+        `_rendered_region_layout`) -- was never refused. But
+        `_rendered_region_layout` only forces ITEMS out of `collapsed` for
+        the RENDER; the gesture handlers above still call `_apply_layout`
+        against the real, persisted layout. So an off-Read `z`/`Z` with
+        `focused_region == ITEMS` (reachable any time focus lands inside the
+        section pane -- `on_descendant_focus` sets exactly that while using
+        Sources/Runs/...) toggled and PERSISTED a real ITEMS collapse with
+        zero visible feedback on the current tab, and -- combined with
+        FEEDS+CONTENT already collapsed on Read -- returning to Read
+        rendered three headers over an empty centre: the exact dead-end
+        AC#3 exists to rule out, written to disk, surviving a restart.
+        Region-layout gestures (collapse/solo of the three-pane centre)
+        simply do not apply to ANY centre region off Read, not just the
+        ones that happen to be unmounted there, so the gate now refuses
+        every `region in CENTRE_REGIONS` off Read unconditionally. The
+        notify copy forks on whether the region is actually hidden here:
+        FEEDS/CONTENT keep the "only shown on the Read tab" copy (true for
+        them), while ITEMS -- visible, just not collapsible from this tab
+        -- gets copy that says so honestly instead of claiming it is not
+        shown at all.
+
+        Args:
+            region: The region the user's gesture targets.
+
+        Returns:
+            `True` when the gesture must be refused (and the user has been
+            told why), `False` when it may proceed.
+        """
+        if self.active_section == "items" or region not in CENTRE_REGIONS:
+            return False
+        if self._region_hidden_on_active_section(region):
+            self.notify(
+                f"{REGION_TITLES[region]} is only shown on the Read tab. "
+                "Switch to Read to change its layout.",
+                markup=False,
+            )
+        else:
+            self.notify(
+                "The pane layout can only be changed on the Read tab.",
+                markup=False,
+            )
+        return True
+
+    def action_toggle_region(self) -> None:
+        """Collapse or expand whichever region currently has focus.
+
+        Silently refused while focus sits in the centre header/tab strip
+        (`_focus_in_centre_header`, task-1344 fix wave, Qodo correctness):
+        `focused_region` there names wherever the user last actually
+        visited, not where they are now, and a rail (LEFT_RAIL/RIGHT_RAIL)
+        is never gated by `_refuse_region_gesture_off_read_tab` below (it
+        only covers `CENTRE_REGIONS`), so without this check a stale
+        `focused_region` pointing at a rail would still collapse -- and
+        persist -- it from a keypress that has no visible relationship to
+        either the rail or the tab strip the user is actually looking at.
+        """
+        if self._focus_in_centre_header:
+            return
+        region = self.focused_region
+        if self._refuse_region_gesture_off_read_tab(region):
+            return
+        self._apply_layout(self.region_layout.toggle(region))
+
+    def action_solo_region(self) -> None:
+        """Isolate the focused centre pane; press again to restore.
+
+        Refused for any centre region off the Read tab, exactly as the
+        chevron and `z` already are -- see
+        `_refuse_region_gesture_off_read_tab`. Also silently refused while
+        focus sits in the centre header/tab strip
+        (`_focus_in_centre_header`, task-1344 fix wave, Qodo correctness),
+        for the same reason `action_toggle_region` checks it just above --
+        `focused_region` is stale there. Checked after the `CENTRE_REGIONS`
+        guard, not before: solo never applies to a rail regardless of
+        focus, so that refusal (and its notify) stays exactly as it was;
+        this only silences the CENTRE-region case, which -- off the Read
+        tab, where the header exists at all -- `_refuse_region_gesture_
+        off_read_tab` below would otherwise refuse anyway, just with a
+        notify keyed to a region the user is not looking at.
+        """
+        if self.focused_region not in CENTRE_REGIONS:
+            self.notify("Solo applies to the Feeds, Items, or Content panes.")
+            return
+        if self._focus_in_centre_header:
+            return
+        if self._refuse_region_gesture_off_read_tab(self.focused_region):
+            return
+        self._apply_layout(self.region_layout.solo(self.focused_region))
+
+    def action_toggle_left_rail(self) -> None:
+        self._apply_layout(self.region_layout.toggle(Region.LEFT_RAIL))
+
+    def action_toggle_right_rail(self) -> None:
+        self._apply_layout(self.region_layout.toggle(Region.RIGHT_RAIL))
+
+    @on(RegionToggled)
+    def _on_region_toggled(self, event: RegionToggled) -> None:
+        event.stop()
+        if self._refuse_region_gesture_off_read_tab(event.region):
+            return
+        self._apply_layout(self.region_layout.toggle(event.region))
+
+    def _apply_tree_scope(self, scope: TreeScope) -> None:
+        """The single reconciliation point for "the tree scope is now `scope`".
+
+        Used by both a real tree click (`_on_tree_scope_changed`) and a
+        breadcrumb promotion (`handle_breadcrumb_scope_selected`) -- Task 5
+        fix round 2, Finding 3 -- since promoting a breadcrumb means exactly
+        the same thing a tree click at that node would.
+
+        Clears `selected_entity` (Finding 1): the entity, if any, was
+        selected from a pane row under whatever scope was previously in
+        view. Leaving it in place here is exactly the reproduced bug --
+        select an item under Watchlist 1, switch the tree to Watchlist 2,
+        and the breadcrumb names Watchlist 2 while the actions still act on
+        the Watchlist-1 item, with no indication of the mismatch. Navigating
+        the tree means navigating away from that entity, full stop; there is
+        no "keep both in sync" reading of `_resolve_levels` appending
+        `selected_entity` as deepest that survives this.
+
+        Also clears `selected_source`/`selected_run`/`selected_notification`
+        (Task 5 fix round 3, Finding 1's remaining gap): these three are not
+        independent state -- they are persisted shadows of the same
+        selection `selected_entity` represents, one per pane, kept around so
+        a highlighted row survives that pane's own reactive-recompose. If a
+        tree click clears `selected_entity` but leaves its shadow standing,
+        a later re-derive (`_load_notifications` re-deriving `selected_entity`
+        from `self.selected_notification` is the one measured; a pane
+        re-selecting its own surviving `selected_source`/`selected_run` on
+        rebuild is the visual half of the same gap) resurrects the entity, or
+        the pane's highlighted row, under a scope the tree has since moved
+        away from. Clearing all three here, alongside the entity itself,
+        keeps "navigating the tree means navigating away from the
+        selection" true for its persisted form as well as its live one.
+
+        Sets BOTH scopes (fix round 1, Finding 2): a tree click is the one
+        event where "where the user is" and "what ancestry the Inspector may
+        claim" genuinely agree. They part company again in `_select_entity`.
+        """
+        self._breadcrumb_labels = self._resolve_breadcrumb_labels(scope)
+        self.selected_entity = None
+        self.selected_source = None
+        self.selected_run = None
+        self.selected_notification = None
+        self._clear_pane_selections()
+        self.selected_scope = scope
+        self.tree_scope = scope
+
+    def _clear_pane_selections(self) -> None:
+        """Clear the mounted panes' OWN selection copies, not just the
+        screen's mirrors of them (whole-branch review, Finding 1).
+
+        The three mirrors `_apply_tree_scope` clears above live on the
+        screen; each pane keeps a second copy of the same selection so a
+        highlighted row survives that pane's own reactive-recompose. Clearing
+        only the screen half leaves the pane half live, and a pane's live
+        selection is not inert:
+
+        * `RunsPane.run_poll` re-posts `RunSelected(self.selected_run)` once a
+          second for sixty ticks while that run's status is `running`. A tick
+          landing after a tree move re-selects the pre-move run, which routes
+          through `_select_entity` and snaps `selected_scope` back to "all"
+          with an empty breadcrumb -- with no user action, and again every
+          second, so the user cannot hold the new scope at all.
+        * `SourcesPane`'s Preview/Check-now and `RunsPane`'s Cancel/Re-run
+          stay armed against the pre-move row and post messages naming a
+          selection the screen believes is gone.
+
+        Setting each pane's reactive to `None` fixes both: the poll's own
+        `current is None` guard returns on its next tick, and each pane's
+        watcher disarms its own buttons.
+
+        Degrades quietly when a pane is absent -- only the active section's
+        pane is mounted at all, the workbench recomposes, and regions
+        collapse -- matching how the rest of this screen reaches its panes.
+        """
+        for selector, pane_type, attribute in (
+            ("#watchlists-sources-pane", SourcesPane, "selected_source"),
+            ("#watchlists-runs-pane", RunsPane, "selected_run"),
+            (
+                "#watchlists-notifications-pane",
+                NotificationsPane,
+                "selected_notification",
+            ),
+        ):
+            try:
+                setattr(self.query_one(selector, pane_type), attribute, None)
+            except Exception:
+                continue
+
+    @on(TreeExpansionChanged)
+    def handle_tree_expansion_changed(self, event: TreeExpansionChanged) -> None:
+        """Mirror the rail's expansion onto the screen (Finding 2).
+
+        See `_tree_expanded` in `__init__` for why this cannot live on the
+        tree widget, and `_build_tree_pane` for where it is seeded back.
+        """
+        event.stop()
+        self._tree_expanded = event.expanded
+
+    @on(TreeTagFilterChanged)
+    def handle_tree_tag_filter_changed(self, event: TreeTagFilterChanged) -> None:
+        """Mirror the rail's tag filter onto the screen (Finding 2)."""
+        event.stop()
+        self._tree_active_tag = event.tag
+
+    @on(TreeScopeChanged)
+    def _on_tree_scope_changed(self, event: TreeScopeChanged) -> None:
+        """Store the tree's selection on the screen, not the tree.
+
+        `selected_scope` lives here for the same reason `selected_run` and
+        the create-form draft do: the workbench's `region_layout` is
+        `recompose=True`, so a bare rail toggle rebuilds a brand new
+        `WatchlistTree` that would otherwise lose the selection.
+        """
+        event.stop()
+        self._apply_tree_scope(event.scope)
+
+    @on(BreadcrumbScopeSelected)
+    def handle_breadcrumb_scope_selected(self, event: BreadcrumbScopeSelected) -> None:
+        """Promote a collapsed breadcrumb level (Task 5 fix round 2, Finding 3).
+
+        `InspectorPane` posts this when a shallower breadcrumb is clicked;
+        until this handler existed, the click -- the literal interaction the
+        spec describes -- did nothing. Delegates to the same reconciliation
+        a real tree click uses, since promoting a breadcrumb IS navigating
+        the tree to that node.
+        """
+        event.stop()
+        self._apply_tree_scope(event.scope)
+
+    # --- task-895: the tree's write verbs -------------------------------
+    #
+    # Five `WatchlistBundleService` methods (`create`, `rename`, `delete`,
+    # `add_source`, `remove_source`) had no production caller: Phase C
+    # shipped the tree's read half only, so watchlists could be browsed but
+    # not made. Each verb follows the same three-step shape the rest of this
+    # screen already uses for a user-initiated write -- a handler that only
+    # starts a worker, a worker that owns the dialog + service call, and a
+    # `_load_tree_data()` reload so the rail shows the result without the
+    # user refreshing anything.
+    #
+    # The dialogs are awaited (`push_screen_wait`) rather than driven by
+    # `push_screen(..., callback=...)`: an add-source flow needs the picked
+    # id *before* it can call the service, and the sequential form keeps
+    # "prompt, then write, then reload" readable as one function. That is
+    # only legal inside a worker, which is why every handler defers.
+
+    def _notify_watchlists(
+        self, message: str, severity: str = "information", *, markup: bool = True
+    ) -> None:
+        """Notify through the app instance, degrading when it has none.
+
+        Matches the `getattr(self.app_instance, "notify", None)` idiom every
+        other action on this screen uses -- the app instance is a stub in
+        several harnesses.
+
+        Args:
+            message: The toast body.
+            severity: Textual severity level.
+            markup: Textual renders toast bodies as Rich markup by default.
+                Callers whose message can contain content this app did not
+                author -- a watchlist name, a provider's error text -- pass
+                `False` so a bracket-shaped fragment paints instead of being
+                interpreted (or swallowed as an unclosed tag).
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity=severity, markup=markup)
+
+    def _watchlist_display_name(self, watchlist_id: int) -> str:
+        """A watchlist's name from data already loaded, RAW (unescaped).
+
+        Resolved from `_tree_watchlists` for the same reason
+        `_tree_scope_label` does: `_load_tree_data` has already paid for that
+        list, and a display name is not worth a second query. The result is
+        user-authored free text, so every caller must escape it before it
+        reaches a rendered label or a notification (Textual renders toast
+        messages as markup).
+        """
+        return next(
+            (
+                str(watchlist.get("name"))
+                for watchlist in self._tree_watchlists
+                if int(watchlist.get("id", -1)) == int(watchlist_id)
+            ),
+            f"Watchlist {watchlist_id}",
+        )
+
+    def _start_tree_write(self, flow_factory: Any) -> None:
+        """Run one tree write at a time, in a worker.
+
+        Args:
+            flow_factory: Zero-argument callable returning the flow
+                coroutine. A callable rather than a coroutine so the
+                already-in-flight branch does not have to discard an
+                un-awaited coroutine.
+
+        A plain guard rather than `run_worker(exclusive=True)`: exclusive
+        cancels the *previous* worker, and these workers own a modal dialog
+        -- cancelling one mid-prompt would leave its dialog on the screen
+        stack with nothing left to dismiss it.
+        """
+        if self._tree_write_active:
+            return
+        # Build and schedule BEFORE arming the guard. `_run_tree_write`'s
+        # `finally` is the only thing that lowers this flag, and it never runs
+        # if `flow_factory()` or `run_worker` raises synchronously -- which
+        # would leave the flag stuck True and silently swallow every later
+        # create/rename/delete for the life of the screen.
+        try:
+            worker_coro = self._run_tree_write(flow_factory())
+        except Exception:
+            logger.opt(exception=True).warning("Watchlist tree write could not start.")
+            self._notify_watchlists(
+                "That watchlist action could not be started.", severity="error"
+            )
+            return
+        # Arm before scheduling, and disarm if scheduling fails. Arming
+        # afterwards would be its own race: the worker's `finally` could
+        # already have lowered the flag by the time we raised it, leaving it
+        # stuck True with nothing running.
+        self._tree_write_active = True
+        try:
+            self.run_worker(worker_coro, group="wl-tree-write")
+        except Exception:
+            self._tree_write_active = False
+            worker_coro.close()
+            logger.opt(exception=True).warning("Watchlist tree write could not start.")
+            self._notify_watchlists(
+                "That watchlist action could not be started.", severity="error"
+            )
+
+    async def _run_tree_write(self, flow: Any) -> None:
+        """Await one write flow, reporting rather than raising.
+
+        The flows call the service directly, so a `sqlite3` error, a
+        `KeyError` from a watchlist deleted underneath the user, or a
+        `ValueError` from a name that slipped past the dialog all surface
+        here. Every other worker on this screen reports failures the same
+        way; a raising worker would be swallowed into a log line the user
+        never sees.
+        """
+        try:
+            await flow
+        except Exception:
+            logger.opt(exception=True).warning("Watchlist tree write failed.")
+            self._notify_watchlists(
+                "That watchlist action could not be completed.", severity="error"
+            )
+        finally:
+            self._tree_write_active = False
+
+    async def _prompt_watchlist_name(
+        self,
+        *,
+        dialog_title: str,
+        submit_label: str,
+        initial_name: str = "",
+        exclude_id: int | None = None,
+    ) -> str | None:
+        """Ask for a watchlist name, or `None` when the user cancels.
+
+        The dialog itself refuses an empty or duplicate name with a visible
+        reason and stays open, so a non-`None` return is always a name the
+        service will store as typed.
+
+        Args:
+            dialog_title: Heading for the dialog.
+            submit_label: Label for the confirming button.
+            initial_name: Value the input starts with.
+            exclude_id: Watchlist to leave out of the duplicate check --
+                the one being renamed, so re-submitting its own current
+                name is a no-op rather than a reported collision, matching
+                `WatchlistBundleService.rename`'s own `exclude_id`.
+        """
+        taken = [
+            str(watchlist.get("name") or "")
+            for watchlist in self._tree_watchlists
+            if exclude_id is None or int(watchlist.get("id", -1)) != int(exclude_id)
+        ]
+        return await self.app.push_screen_wait(
+            WatchlistNameDialog(
+                dialog_title=dialog_title,
+                submit_label=submit_label,
+                initial_name=initial_name,
+                taken_names=taken,
+            )
+        )
+
+    @on(CreateWatchlistRequested)
+    def handle_create_watchlist_requested(
+        self, event: CreateWatchlistRequested
+    ) -> None:
+        event.stop()
+        self._start_tree_write(self._create_watchlist_flow)
+
+    async def _create_watchlist_flow(self) -> None:
+        service = self._watchlist_bundle_service()
+        if service is None:
+            self._notify_watchlists(WC_SERVICE_UNAVAILABLE_COPY, severity="error")
+            return
+        name = await self._prompt_watchlist_name(
+            dialog_title="New watchlist", submit_label="Create"
+        )
+        if name is None:
+            return
+        created = service.create(name)
+        # Scope the tree to what was just made, so the rail's Rename/Delete/
+        # Add-source verbs are armed on it immediately rather than requiring
+        # a second click to select the thing the user just created.
+        self._apply_tree_scope(
+            TreeScope(kind="watchlist", watchlist_id=int(created["id"]))
+        )
+        self._notify_watchlists(
+            f"Watchlist \"{escape_markup(str(created['name']))}\" created."
+        )
+        self._load_tree_data()
+
+    @on(RenameWatchlistRequested)
+    def handle_rename_watchlist_requested(
+        self, event: RenameWatchlistRequested
+    ) -> None:
+        event.stop()
+        watchlist_id = event.watchlist_id
+        self._start_tree_write(lambda: self._rename_watchlist_flow(watchlist_id))
+
+    async def _rename_watchlist_flow(self, watchlist_id: int) -> None:
+        service = self._watchlist_bundle_service()
+        if service is None:
+            self._notify_watchlists(WC_SERVICE_UNAVAILABLE_COPY, severity="error")
+            return
+        current = self._watchlist_display_name(watchlist_id)
+        name = await self._prompt_watchlist_name(
+            dialog_title="Rename watchlist",
+            submit_label="Rename",
+            initial_name=current,
+            exclude_id=watchlist_id,
+        )
+        if name is None:
+            return
+        updated = service.rename(watchlist_id, name)
+        self._notify_watchlists(
+            f"Watchlist renamed to \"{escape_markup(str(updated['name']))}\"."
+        )
+        self._load_tree_data()
+
+    @on(DeleteWatchlistRequested)
+    def handle_delete_watchlist_requested(
+        self, event: DeleteWatchlistRequested
+    ) -> None:
+        event.stop()
+        watchlist_id = event.watchlist_id
+        self._start_tree_write(lambda: self._delete_watchlist_flow(watchlist_id))
+
+    async def _delete_watchlist_flow(self, watchlist_id: int) -> None:
+        """Delete a watchlist after saying, up front, what happens to its
+        sources -- and then show the user where they went.
+
+        Deleting a watchlist cascades only the membership rows; the sources
+        themselves survive and become unassigned. That is invisible unless
+        someone says so, which is exactly the "orphaned into invisibility"
+        failure the tree's permanent Unassigned root exists to prevent, so
+        the confirmation states the count and the destination before the
+        user commits, and the scope moves to Unassigned afterwards rather
+        than sitting on an id that no longer resolves.
+        """
+        service = self._watchlist_bundle_service()
+        if service is None:
+            self._notify_watchlists(WC_SERVICE_UNAVAILABLE_COPY, severity="error")
+            return
+        name = self._watchlist_display_name(watchlist_id)
+        source_count = len(service.list_source_rows(watchlist_id))
+        # Still needed by the post-delete notification below, which reads
+        # correctly either way ("Its 1 source moved", "Its 2 sources moved").
+        noun = "source" if source_count == 1 else "sources"
+        confirmed = await self.app.push_screen_wait(
+            ConfirmationDialog(
+                title="Delete watchlist",
+                message=(
+                    f'Delete the watchlist "{escape_markup(name)}"?\n\n'
+                    + watchlist_delete_consequence(source_count)
+                ),
+                confirm_label="Delete watchlist",
+                cancel_label="Keep it",
+            )
+        )
+        if not confirmed:
+            return
+        service.delete(watchlist_id)
+        self._apply_tree_scope(TreeScope(kind="unassigned"))
+        self._notify_watchlists(
+            f'Watchlist "{escape_markup(name)}" deleted. Its {source_count} '
+            f"{noun} moved to Unassigned."
+        )
+        self._load_tree_data()
+
+    @on(AddSourceToWatchlistRequested)
+    def handle_add_source_to_watchlist_requested(
+        self, event: AddSourceToWatchlistRequested
+    ) -> None:
+        event.stop()
+        watchlist_id = event.watchlist_id
+        self._start_tree_write(lambda: self._add_source_to_watchlist_flow(watchlist_id))
+
+    async def _add_source_to_watchlist_flow(self, watchlist_id: int) -> None:
+        service = self._watchlist_bundle_service()
+        if service is None:
+            self._notify_watchlists(WC_SERVICE_UNAVAILABLE_COPY, severity="error")
+            return
+        # `list_sources` (ids only) is the right query here rather than
+        # `list_source_rows`: the members are needed as a membership test,
+        # not for display, and the candidate rows already come from
+        # `list_all_source_rows`.
+        members = {int(source_id) for source_id in service.list_sources(watchlist_id)}
+        candidates = [
+            row for row in service.list_all_source_rows() if int(row["id"]) not in members
+        ]
+        chosen = await self.app.push_screen_wait(
+            WatchlistSourcePickerDialog(
+                self._watchlist_display_name(watchlist_id), candidates
+            )
+        )
+        if chosen is None:
+            return
+        service.add_source(watchlist_id, int(chosen))
+        source_name = next(
+            (
+                str(row.get("name"))
+                for row in candidates
+                if int(row["id"]) == int(chosen)
+            ),
+            f"Source {chosen}",
+        )
+        self._notify_watchlists(
+            f'Added "{escape_markup(source_name)}" to '
+            f'"{escape_markup(self._watchlist_display_name(watchlist_id))}".'
+        )
+        self._load_tree_data()
+
+    @on(RemoveSourceFromWatchlistRequested)
+    def handle_remove_source_from_watchlist_requested(
+        self, event: RemoveSourceFromWatchlistRequested
+    ) -> None:
+        event.stop()
+        watchlist_id = event.watchlist_id
+        source_id = event.source_id
+        self._start_tree_write(
+            lambda: self._remove_source_from_watchlist_flow(watchlist_id, source_id)
+        )
+
+    async def _remove_source_from_watchlist_flow(
+        self, watchlist_id: int, source_id: int
+    ) -> None:
+        """Drop one membership row. No confirmation: the source itself
+        survives and the action is one Add-source press away from being
+        undone, unlike deleting a watchlist. The notification names both
+        ends so it is clear nothing was destroyed.
+        """
+        service = self._watchlist_bundle_service()
+        if service is None:
+            self._notify_watchlists(WC_SERVICE_UNAVAILABLE_COPY, severity="error")
+            return
+        source_name = next(
+            (
+                str(row.get("name"))
+                for row in service.list_source_rows(watchlist_id)
+                if int(row.get("id", -1)) == int(source_id)
+            ),
+            f"Source {source_id}",
+        )
+        watchlist_name = self._watchlist_display_name(watchlist_id)
+        service.remove_source(watchlist_id, source_id)
+        # The scope named a node that no longer exists; fall back to its
+        # parent watchlist, which does.
+        self._apply_tree_scope(TreeScope(kind="watchlist", watchlist_id=watchlist_id))
+        self._notify_watchlists(
+            f'Removed "{escape_markup(source_name)}" from '
+            f'"{escape_markup(watchlist_name)}". The source itself is kept.'
+        )
+        self._load_tree_data()
+
+    def watch_selected_scope(self) -> None:
+        """Push scope + resolved labels into the live Inspector.
+
+        Mirrors `watch_selected_entity` immediately below it: this only
+        covers the "selection changed without a workbench rebuild" case --
+        `_build_inspector_pane` covers the rebuild case by seeding a
+        freshly-constructed `InspectorPane` from this same screen state.
+
+        Does NOT refresh FEEDS; `watch_tree_scope` owns that (fix round 1,
+        Finding 2). `selected_scope` also moves when a pane row is selected,
+        which is not navigation and must leave the Feeds region alone.
+        """
+        if not self.is_mounted:
+            return
+        try:
+            inspector = self.query_one("#watchlists-entity-inspector", InspectorPane)
+            inspector.scope = self.selected_scope
+            inspector.breadcrumb_labels = self._breadcrumb_labels
+        except Exception:
+            pass
+
+    def watch_tree_scope(self) -> None:
+        """Rebuild FEEDS (or the centre header) in place so it follows the
+        tree selection (Task 7; header half added task-1344 fix wave).
+
+        Deliberately does NOT do what `watch_active_section` does
+        (`self.refresh(recompose=True)`): that rebuilds every region,
+        including the Inspector, and a fresh `InspectorPane` instance is
+        exactly what `watch_selected_scope`'s in-place push exists to avoid
+        -- `test_changing_scope_clears_a_stale_entity_selection` (Task 5)
+        holds a reference to the Inspector from *before* a scope change and
+        asserts against it *after*, which a full recompose would silently
+        break by handing that reference a defunct, unmounted widget.
+        `WatchlistsWorkbench.refresh_region_content` instead rebuilds only
+        FEEDS's own supplied content -- the one region whose display this
+        task makes scope-dependent -- leaving the Tree and Inspector
+        instances untouched.
+
+        Off the Read tab, FEEDS is unmounted (`_hidden_centre_regions`) and
+        `_build_centre_status_header` carries the SAME scoped summary
+        instead (`_watchlists_status_marker_widgets`), so
+        `_refresh_feeds_region_for_scope` alone is a silent no-op there --
+        `WatchlistsWorkbench.refresh_region_content` cannot find
+        `#wl-region-feeds` to replace, since it is not mounted. Before this
+        fix the header was left showing the PREVIOUS scope's summary until
+        some unrelated recompose came along and rebuilt it for a different
+        reason. `_refresh_centre_header_for_scope` is the header's
+        equivalent, called only when the header actually exists
+        (`active_section != "items"`, mirroring `compose_content`'s own
+        `header=` condition).
+
+        Also pushes the new scope into the still-mounted `WatchlistTree`
+        (task-876): since this watcher is the single reconciliation point
+        for BOTH a real tree click and a breadcrumb promotion (the latter
+        never touches the tree widget at all -- see
+        `handle_breadcrumb_scope_selected`), and neither one rebuilds the
+        Tree instance (only FEEDS/the header refresh above), the tree's own
+        `active_scope` would otherwise go stale the moment the scope changes
+        by any path other than a fresh `_build_tree_pane` construction.
+        """
+        if not self.is_mounted:
+            return
+        self._refresh_feeds_region_for_scope()
+        if self.active_section != "items":
+            self._refresh_centre_header_for_scope()
+        # TASK-2304 AC#2. The Sources table follows the same scope the FEEDS
+        # heading and the centre header just took, so the two counts of "how
+        # many sources are in view" cannot disagree. An in-place push on the
+        # pane's own reactive, not a region rebuild -- see
+        # `_push_scoped_sources_to_pane`.
+        self._push_scoped_sources_to_pane()
+        try:
+            self.query_one("#wl-tree", WatchlistTree).active_scope = self.tree_scope
+        except NoMatches:
+            pass
+        if self.active_section == "artifacts":
+            # Artifacts is the one section whose entire subject is the tree
+            # scope: a briefing belongs to exactly one watchlist. Moving the
+            # tree therefore changes what this pane is about, and without
+            # this it would keep showing the previous watchlist's briefings
+            # (and offer Generate against the new one) -- the split-brain
+            # shape, on a surface that spends the user's provider quota.
+            self._selected_briefing = None
+            self.run_worker(
+                self._load_briefings(), exclusive=True, group="wl-briefings-load"
+            )
+
+    def _refresh_feeds_region_for_scope(self) -> None:
+        """Queue a FEEDS rebuild so it follows the tree selection.
+
+        Was its own `@work(exclusive=True, group="wc_feeds_scope_refresh")`
+        worker until TASK-2200. It now records intent on the shared surface
+        queue instead, because it is no longer the only actor that rebuilds
+        FEEDS: `_apply_local_wc_snapshot` and `_load_tree_data` both changed
+        from a full-screen recompose to a FEEDS/header rebuild, and three
+        independent `exclusive=True` workers swapping the SAME region would
+        either interleave two remove/mount pairs over one `#watchlists-list-
+        pane` id or -- with a shared group -- cancel one of them between its
+        `remove()` and its `mount()`, leaving an empty bordered box. See
+        `_request_surface_refresh`.
+        """
+        self._request_surface_refresh(self._SURFACE_FEEDS)
+
+    def _refresh_centre_header_for_scope(self) -> None:
+        """Queue a centre-header rebuild, the header's twin of the above.
+
+        Off the Read tab FEEDS is unmounted and `_build_centre_status_header`
+        carries the same scoped summary, so a FEEDS-only refresh is a silent
+        no-op there (task-1344 fix wave, Qodo correctness).
+        """
+        self._request_surface_refresh(self._SURFACE_HEADER)
+
+    #: The workbench surfaces this screen rebuilds in place, rather than by
+    #: recomposing itself (TASK-2200). Each maps to one call on
+    #: `WatchlistsWorkbench`; ITEMS and CONTENT are deliberately absent --
+    #: their panes are patched through their own reactives (see
+    #: `_load_sources`, `watch_overview_data`) precisely so an in-flight
+    #: create/edit form is never torn down by a background load.
+    #:
+    #: `_SURFACE_INSPECTOR` is the one CONDITIONAL surface: it rebuilds the
+    #: right rail only when `_resolve_console_follow_drift` finds the
+    #: Console-follow row no longer matches the adapter. The rail is where
+    #: the noise-selector editor lives, and rebuilding it unconditionally on
+    #: every background load would destroy a half-typed selector set -- the
+    #: same class of harm this task removes from the Sources create form.
+    _SURFACE_RAIL = "rail"
+    _SURFACE_FEEDS = "feeds"
+    _SURFACE_HEADER = "header"
+    _SURFACE_INSPECTOR = "inspector"
+
+    def _request_surface_refresh(self, *surfaces: str) -> None:
+        """Record that one or more workbench surfaces need rebuilding.
+
+        Record intent, drain serially, never cancel (TASK-1541's lesson,
+        applied here to DOM swaps rather than durable writes). Both
+        `WatchlistsWorkbench.refresh_region_content` and
+        `refresh_header_content` are remove-then-mount pairs with an `await`
+        between the two halves -- Textual's `NodeList._ensure_unique_id`
+        refuses to mount the replacement while the old widget still holds the
+        same id, so there is no atomic single-await swap available. A worker
+        cancelled in that window (which is exactly what `exclusive=True`
+        does to its predecessor) leaves the region with its content removed
+        and nothing put back: a bordered empty box that survives until some
+        unrelated rebuild happens along.
+
+        So callers queue a surface name here and at most one drainer ever
+        runs. Requests that arrive while it is running are picked up by its
+        next loop rather than starting -- or cancelling -- anything.
+
+        Args:
+            surfaces: Any of `_SURFACE_RAIL`, `_SURFACE_FEEDS`,
+                `_SURFACE_HEADER` (each an unconditional rebuild of that
+                surface) or `_SURFACE_INSPECTOR` (conditional -- the right
+                rail is rebuilt only when the Console-follow row no longer
+                matches the adapter; see `_resolve_console_follow_drift`).
+                Unknown names are ignored by the drainer.
+        """
+        if not self._dom_is_live:
+            return
+        self._pending_surface_refresh.update(surfaces)
+        if self._surface_refresh_draining:
+            return
+        # Arm, then disarm if scheduling fails -- `_start_tree_write`'s
+        # discipline, for the identical failure mode (review wave, M1). Only
+        # `_drain_surface_refresh`'s `finally` ever lowers this flag, and it
+        # never runs if `run_worker` raises synchronously; the flag would then
+        # be stuck True for the life of the screen, every later request would
+        # queue and return, and the rail/FEEDS/header would silently stop
+        # following every background loader. Arming *after* scheduling is not
+        # the fix either: the drainer's `finally` could already have lowered
+        # the flag by the time we raised it.
+        #
+        # Its own group, not the default one: several call sites on this
+        # screen run `run_worker(..., exclusive=True)` without a group (e.g.
+        # `_load_active_section_data`), and those would otherwise cancel this
+        # drainer mid-swap -- the very failure this queue exists to prevent.
+        drain = self._drain_surface_refresh()
+        self._surface_refresh_draining = True
+        try:
+            self.run_worker(drain, group="wc_surface_refresh")
+        except Exception:
+            self._surface_refresh_draining = False
+            # Close the un-awaited coroutine explicitly, or it leaks a
+            # `RuntimeWarning` at collection time.
+            drain.close()
+            logger.opt(exception=True).warning(
+                "Watchlists surface refresh could not be scheduled."
+            )
+
+    async def _drain_surface_refresh(self) -> None:
+        """Rebuild every queued surface in place, one at a time.
+
+        Loops until the queue is empty so a request that lands mid-drain is
+        served by this same worker. There is no `await` between the loop's
+        emptiness check and the `finally` that clears the flag, so a request
+        can never slip into the gap and be dropped by a drainer that has
+        already decided to stop.
+        """
+        try:
+            while self._dom_is_live and self._pending_surface_refresh:
+                surfaces = self._pending_surface_refresh
+                self._pending_surface_refresh = set()
+                try:
+                    workbench = self.query_one(WatchlistsWorkbench)
+                except NoMatches:
+                    # Nothing to patch. Whatever removed the workbench (a tab
+                    # switch, a layout push) rebuilds every region from this
+                    # screen's current state on the way back, so the pending
+                    # update is not lost -- it arrives with that rebuild.
+                    break
+                if self._SURFACE_RAIL in surfaces:
+                    await self._rebuild_surface(
+                        workbench.refresh_region_content(Region.LEFT_RAIL),
+                        "the Watchlists rail",
                     )
-                    yield Static(
-                        detail_title,
-                        classes="destination-section watchlists-column-title",
-                        id="watchlists-detail-title",
+                if self._SURFACE_FEEDS in surfaces:
+                    await self._rebuild_surface(
+                        workbench.refresh_region_content(Region.FEEDS),
+                        "the Feeds region",
                     )
-                    if self.active_section == "overview":
-                        overview = OverviewPane(id="watchlists-overview-pane")
-                        overview.data = self.overview_data
-                        yield overview
-                    elif self.active_section == "sources":
-                        yield SourcesPane(id="watchlists-sources-pane")
-                    elif self.active_section == "runs":
-                        yield RunsPane(id="watchlists-runs-pane")
-                    elif self.active_section == "items":
-                        yield ItemsPane(id="watchlists-items-pane")
-                    elif self.active_section == "rules":
-                        yield RulesPane(id="watchlists-rules-pane")
-                yield self._column_divider("watchlists-detail-inspector-divider")
-                with Vertical(
-                    id="watchlists-inspector-pane",
-                    classes="destination-workbench-pane ds-inspector",
-                ):
-                    yield Static(
-                        "Inspector",
-                        classes="destination-section watchlists-column-title",
+                if self._SURFACE_HEADER in surfaces:
+                    await self._rebuild_surface(
+                        workbench.refresh_header_content(),
+                        "the centre header",
                     )
-                    yield Static(
-                        "State: ready"
-                        if self._wc_loaded and not self._wc_lookup_error
-                        else "State: unavailable",
-                        id="watchlists-state-summary",
+                if self._SURFACE_INSPECTOR in surfaces:
+                    await self._rebuild_surface(
+                        self._rebuild_inspector_if_console_follow_drifted(workbench),
+                        "the Inspector rail",
                     )
-                    yield Static(
-                        f"Alert rules active: {self.overview_data.get('active_alert_rules', 0)}",
-                        id="watchlists-alerts-summary",
-                    )
-                    yield Static(
-                        f"Latest run status: {self.overview_data.get('latest_run_status', 'unavailable')}",
-                        id="watchlists-latest-run-summary",
-                    )
-                    yield Static("Console actions", classes="destination-section")
-                    yield Button(
-                        "Stage Watchlists Context in Console",
-                        id="wc-attach-to-console",
-                        disabled=attach_disabled,
-                        tooltip=attach_tooltip,
-                    )
-                    yield Button(
-                        "Open current Watchlists",
-                        id="wc-open-watchlists",
-                        tooltip="Open the current watchlist/subscription surface.",
-                    )
-                    if latest_console_item is not None:
-                        title = str(
-                            getattr(latest_console_item, "title", None) or "Untitled"
-                        )
-                        status = str(
-                            getattr(latest_console_item, "status", None) or "unknown"
-                        )
-                        yield Static(
-                            Text.from_markup(
-                                "Console can follow latest Watchlists run: "
-                                f"{escape_markup(title)} ({escape_markup(status)})."
-                            ),
-                            id="watchlists-console-available",
-                        )
-                        yield Button(
-                            Text.from_markup(
-                                f"Follow {escape_markup(title)} in Console"
-                            ),
-                            id="watchlists-follow-in-console",
-                            tooltip="Open the latest active Watchlists run in Console.",
-                        )
-                    else:
-                        yield Static(
-                            "No active Watchlists run is available for Console follow.",
-                            id="watchlists-console-unavailable",
-                        )
-                        yield Button(
-                            "Console follow unavailable",
-                            id="watchlists-follow-in-console",
-                            disabled=True,
-                            tooltip="Unavailable until Watchlists has an active run with Console context.",
-                        )
-                    yield InspectorPane(id="watchlists-entity-inspector")
+        finally:
+            self._pending_surface_refresh = set()
+            self._surface_refresh_draining = False
+
+    async def _rebuild_inspector_if_console_follow_drifted(
+        self, workbench: WatchlistsWorkbench
+    ) -> None:
+        """Re-poll the Console-follow adapter; rebuild the rail if it moved.
+
+        Wrapped in a coroutine rather than inlined into the drain loop's `if`
+        (review wave, M2) so `_rebuild_surface`'s `except Exception` covers
+        the poll as well as the rebuild. `run_worker` defaults to
+        `exit_on_error=True`, so an exception escaping the drainer reaches
+        `App._handle_exception` and takes the app down -- and every other step
+        in that loop was deliberately made non-fatal.
+
+        Args:
+            workbench: The mounted workbench, resolved once by the drainer.
+        """
+        if not self._resolve_console_follow_drift():
+            return
+        await workbench.refresh_region_content(Region.RIGHT_RAIL)
+
+    @staticmethod
+    async def _rebuild_surface(rebuild: Any, what: str) -> None:
+        """Await one surface rebuild, logging rather than killing the drain.
+
+        A single failing surface must not abandon the ones queued behind it,
+        and it must not leave `_surface_refresh_draining` stuck either (the
+        drainer's own `finally` covers that, but only if this coroutine does
+        not propagate).
+
+        Args:
+            rebuild: The workbench coroutine to await.
+            what: Human-readable surface name, for the debug log only.
+        """
+        try:
+            await rebuild
+        except Exception:
+            logger.opt(exception=True).debug(f"Failed to rebuild {what} in place.")
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        """Keep `focused_region` in step with whatever actually holds focus.
+
+        Without this, `z` always collapses whichever region `focused_region`
+        happened to default to, regardless of where the user actually is.
+        Both id prefixes are checked so that focusing a *collapsed* region's
+        header targets that region rather than expanding some other one.
+
+        Also tracks `_focus_in_centre_header` (task-1344 fix wave, Qodo
+        correctness): the centre header/tab strip (`#wl-centre-status`,
+        mounted directly under `#wl-centre` by `_build_centre_status_header`
+        -- see `compose_content`) sits OUTSIDE every `wl-region-*`/
+        `wl-header-*` wrapper, so neither prefix above ever matches while
+        focus is in it. Without this branch `focused_region` would keep
+        naming whatever region the user last actually visited, silently
+        indistinguishable here from a live selection: a user who tabs into
+        the tab strip and presses `z`/`Z` would act on that stale reference
+        with no visible relationship to where they are.
+        `action_toggle_region`/`action_solo_region` consult
+        `_focus_in_centre_header` to refuse exactly that.
+        """
+        node = event.widget
+        while node is not None:
+            node_id = getattr(node, "id", None) or ""
+            for prefix in ("wl-region-", "wl-header-"):
+                if node_id.startswith(prefix):
+                    try:
+                        self.focused_region = Region(node_id[len(prefix):])
+                    except ValueError:
+                        pass
+                    self._focus_in_centre_header = False
+                    return
+            if node_id == "wl-centre-status":
+                self._focus_in_centre_header = True
+                return
+            node = node.parent
+        # Focus landed in neither zone -- a widget outside both the centre
+        # regions and the status header (e.g. `#watchlists-backend-select`, a
+        # sibling of the workbench). The flag tracks ONLY "focus is in the
+        # status header", so anything else must clear it; leaving a stale
+        # `True` from a prior header focus would wrongly refuse a later
+        # `z`/`Z` (task-1344 fix wave re-review, Qodo-follow-up). `focused_
+        # region` keeps its last real value, as it already did for this case.
+        self._focus_in_centre_header = False
 
     def watch_active_section(self) -> None:
+        # A tab switch always fully recomposes the centre (below): whatever
+        # `_focus_in_centre_header` was tracking about the OLD DOM is moot
+        # the instant that DOM is torn down, and the header itself may not
+        # even exist on the new tab at all (`header=None` on Read). Reset
+        # to "not in the header" rather than leave a stale `True` standing
+        # -- `on_descendant_focus` will set it again the moment a fresh
+        # focus event actually lands there, but nothing guarantees one
+        # fires if the new tab happens to auto-focus nothing trackable, and
+        # a stale `True` would wrongly refuse a legitimate `z`/`Z` on the
+        # new tab (task-1344 fix wave, Qodo correctness).
+        self._focus_in_centre_header = False
         if self.active_section == "overview":
             self.selected_entity = None
+        if self.active_section != WATCHLISTS_SECTION_RUNS:
+            self._pending_navigation_run_id = None
+            self._pending_navigation_run_backend = None
         if self.is_mounted:
             self.refresh(recompose=True)
+            if not self._applying_navigation_context:
+                self._load_active_section_data()
+
+        if self._pending_open_create_form:
+            self._pending_open_create_form = False
+            self.set_timer(0.05, self._open_sources_create_form)
+        if self._pending_open_import_opml:
+            self._pending_open_import_opml = False
+            self.set_timer(0.05, self._open_sources_import_opml)
+
+    def _load_active_section_data(self) -> None:
+        """Start the loader owned by the currently visible section."""
         if self.active_section == "items":
             self.run_worker(self._load_items(), exclusive=True)
         elif self.active_section == "rules":
@@ -568,13 +3505,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.run_worker(self._load_runs(), exclusive=True)
         elif self.active_section == "sources":
             self.run_worker(self._load_sources(), exclusive=True)
-
-        if self._pending_open_create_form:
-            self._pending_open_create_form = False
-            self.set_timer(0.05, self._open_sources_create_form)
-        if self._pending_open_import_opml:
-            self._pending_open_import_opml = False
-            self.set_timer(0.05, self._open_sources_import_opml)
+        elif self.active_section == "notifications":
+            self.run_worker(self._load_notifications(), exclusive=True)
+        elif self.active_section == "artifacts":
+            # Own group (TASK-1362): `exclusive=True` without one cancels
+            # every other worker in the default group, which here would
+            # include an in-flight briefing generation.
+            self.run_worker(
+                self._load_briefings(), exclusive=True, group="wl-briefings-load"
+            )
 
     def _open_sources_create_form(self) -> None:
         if not self.is_mounted:
@@ -591,27 +3530,145 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self.app.push_screen(OpmlImportDialog(), callback=self._on_opml_import_complete)
 
     def watch_runtime_backend(self) -> None:
+        if (
+            self._pending_navigation_run_backend is not None
+            and self._pending_navigation_run_backend != self.runtime_backend
+        ):
+            self._pending_navigation_run_id = None
+            self._pending_navigation_run_backend = None
         if not self.is_mounted:
             return
         try:
             label = self.query_one("#watchlists-backend-label", Static)
-            label.update(f"Backend: {self.runtime_backend}")
+            label.update(self._backend_label_text())
         except Exception:
+            pass
+        # task-895: push the new write-availability into the still-mounted
+        # tree, the same way `watch_tree_scope` pushes `active_scope`. This
+        # is now the ONLY thing that updates it on a backend switch
+        # (TASK-2200): the snapshot refresh below used to recompose the whole
+        # screen, and `_build_tree_pane` re-seeded this on the way through.
+        # It no longer does, so without this the five action buttons would
+        # sit enabled over a backend that cannot service them -- the exact
+        # "disabled button that looks enabled" shape in reverse.
+        try:
+            self.query_one("#wl-tree", WatchlistTree).write_disabled_reason = (
+                self._tree_write_disabled_reason()
+            )
+        except NoMatches:
             pass
         self.selected_source = None
         self.selected_run = None
+        self.selected_notification = None
         self.selected_entity = None
+        self._loaded_runs = []
+        # Same reason as the tree push above (TASK-2200): the four lines
+        # above clear the screen's mirrored state, and until this task the
+        # snapshot refresh's full-screen recompose is what carried that into
+        # whichever detail pane was mounted (`_build_detail_pane` re-seeds
+        # every pane from exactly these attributes). `selected_entity` is
+        # the one that already had its own watcher.
+        self._reseed_live_detail_pane()
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
 
+    def _reseed_live_detail_pane(self) -> None:
+        """Push the screen's mirrored rows/selection into the mounted pane.
+
+        The in-place half of `_build_detail_pane`'s seeding, for callers that
+        change that mirrored state without rebuilding the ITEMS region
+        (TASK-2200). Only the pane for the active section can be mounted, so
+        at most one branch does anything; each is a no-op when its pane is
+        absent (the region collapsed, or a different tab).
+        """
+        if not self._dom_is_live:
+            return
+        for selector, pane_type, values in (
+            (
+                "#watchlists-sources-pane",
+                SourcesPane,
+                {"sources": self._loaded_sources, "selected_source": self.selected_source},
+            ),
+            (
+                "#watchlists-runs-pane",
+                RunsPane,
+                {"runs": self._loaded_runs, "selected_run": self.selected_run},
+            ),
+            (
+                "#watchlists-notifications-pane",
+                NotificationsPane,
+                {
+                    "notifications": self._loaded_notifications,
+                    "selected_notification": self.selected_notification,
+                },
+            ),
+        ):
+            try:
+                pane = self.query_one(selector, pane_type)
+            except NoMatches:
+                continue
+            for attribute, value in values.items():
+                setattr(pane, attribute, value)
+
     def watch_selected_entity(self) -> None:
-        if not self.is_mounted:
+        """Push the current selection into the live Inspector.
+
+        `_dom_is_live`, not `is_mounted` (Qodo, PR #1331): this watcher IS
+        reachable inside the mount window, unlike its `watch_selected_scope`
+        sibling. The Watchlists run deep link arms `_pending_navigation_run_id`
+        on an unmounted screen (`apply_navigation_context`), `on_mount` starts
+        `_load_runs`, and on a cold database that loader resolves the target
+        and calls `_select_entity(requested_run)` before Textual has flipped
+        `_is_mounted`. An `is_mounted` guard dropped that push, and nothing
+        re-seeds it: `_build_inspector_pane` re-seeds only on a REBUILD, and
+        the one right-rail rebuild this screen still schedules is gated on
+        `_resolve_console_follow_drift()`, which is `False` on a normal cold
+        start. The user followed a run link and the Inspector said "Nothing to
+        inspect yet." over a run the screen believed was selected.
+        """
+        if not self._dom_is_live:
             return
         try:
             inspector = self.query_one("#watchlists-entity-inspector", InspectorPane)
             inspector.selected_entity = self.selected_entity
         except Exception:
             pass
+
+    def _select_entity(self, entity: dict[str, Any] | None) -> None:
+        """The single reconciliation point for "the deepest selection is now
+        `entity`" (Task 5 fix round 2, Finding 1) -- the other half of
+        `_apply_tree_scope`.
+
+        Resets `selected_scope` back to the tree's root, rather than leaving
+        whatever a PRIOR tree click set in place: Sources/Runs/Items/Rules
+        list rows independent of the tree's scope in this slice (Task 7
+        gives Feeds/Items real scoping; these tabs still don't carry
+        watchlist/source ancestry), so "all" is the only ancestry actually
+        known here. Asserting a specific watchlist/source the entity may not
+        even belong to would be the identical lie in the other direction --
+        exactly what let a Watchlist-2 breadcrumb sit above Watchlist-1's
+        item actions before this fix.
+
+        Deliberately leaves `tree_scope` ALONE (fix round 1, Finding 2).
+        Inspecting a row is not navigation: the tree has not moved, so the
+        Feeds region must keep showing the watchlist the user opened. Before
+        the two scopes were split, this reset silently rebuilt Feeds back to
+        "All sources" -- an interaction in one region discarding the user's
+        navigation in another, with no tree selection highlight to fall back
+        on. Clearing `_breadcrumb_labels` alone would not have been a
+        substitute: `InspectorPane._scope_levels` derives an ancestor level
+        from `scope` alone and falls back to a `Watchlist {id}` label, so an
+        anonymous crumb would still have rendered above the entity.
+
+        Only reconciles when selecting a real entity; clearing back to
+        `None` (deletion completing, section switching to Overview, etc.)
+        leaves whatever scope is already in view alone; there is nothing
+        to reconcile against.
+        """
+        self.selected_entity = entity
+        if entity is not None:
+            self._breadcrumb_labels = []
+            self.selected_scope = TreeScope(kind="all")
 
     @on(SectionSelected)
     def handle_section_selected(self, event: SectionSelected) -> None:
@@ -630,63 +3687,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(Button.Pressed, "#wc-attach-to-console")
     def attach_to_console(self, event: Button.Pressed) -> None:
         event.stop()
-        if not self._has_local_wc_context():
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(
-                    self._wc_lookup_error or WC_EMPTY_COPY,
-                    severity="warning",
-                )
-            return
-        open_chat_with_handoff = getattr(
-            self.app_instance, "open_chat_with_handoff", None
-        )
-        if not callable(open_chat_with_handoff):
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(
-                    "Console handoff is unavailable for Watchlists in this runtime.",
-                    severity="warning",
-                )
-            return
-        open_chat_with_handoff(
-            ChatHandoffPayload(
-                source="watchlists_collections",
-                item_type="wc-context",
-                title="Local Watchlists snapshot",
-                body=self._snapshot_body(),
-                display_summary="Local Watchlists snapshot staged.",
-                suggested_prompt="Use these monitored sources as context.",
-                runtime_backend="local",
-                source_owner="local",
-                source_selector_state="local",
-                metadata=self._snapshot_metadata(),
-            )
-        )
+        self._console_handoff.attach_to_console(self)
 
     @on(Button.Pressed, "#watchlists-follow-in-console")
     def follow_latest_watchlist_run_in_console(self, event: Button.Pressed) -> None:
         event.stop()
-        target_id = self._latest_console_follow_item_id
-        if not target_id:
-            self.app_instance.notify(
-                "No active Watchlists run is available for Console follow.",
-                severity="warning",
-            )
-            return
-        open_in_console = getattr(
-            self.app_instance, "open_active_home_item_in_console", None
-        )
-        if not callable(open_in_console):
-            self.app_instance.notify(
-                "Console follow is unavailable for Watchlists in this runtime.",
-                severity="warning",
-            )
-            return
-        open_in_console(
-            target_id=target_id,
-            target_route="chat",
-        )
+        self._console_handoff.follow_in_console()
 
     @on(Button.Pressed, "#wc-empty-create-source")
     def handle_empty_create_source(self, event: Button.Pressed) -> None:
@@ -703,17 +3709,49 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def handle_source_selected(self, event: SourceSelected) -> None:
         event.stop()
         self.selected_source = event.source
-        self.selected_entity = event.source
+        self._select_entity(event.source)
+
+    @on(CreateFormDraftChanged)
+    def handle_source_create_draft_changed(self, event: CreateFormDraftChanged) -> None:
+        event.stop()
+        self._source_create_draft = {
+            "name": event.name,
+            "url": event.url,
+            "tags": event.tags,
+        }
+        if event.ignore_selectors is not None:
+            self._source_create_draft_selectors = event.ignore_selectors
+
+    @on(CreateFormVisibilityChanged)
+    def handle_source_create_visibility_changed(
+        self, event: CreateFormVisibilityChanged
+    ) -> None:
+        event.stop()
+        self._source_create_form_open = event.is_open
 
     @on(RunSelected)
     def handle_run_selected(self, event: RunSelected) -> None:
         event.stop()
         self.selected_run = event.run
-        self.selected_entity = event.run
+        self._select_entity(event.run)
 
     @on(CreateSourceRequested)
     def handle_create_source_requested(self, event: CreateSourceRequested) -> None:
         event.stop()
+        # Clear synchronously here, in the same handler, rather than relying
+        # solely on the pane's own CreateFormVisibilityChanged/
+        # CreateFormDraftChanged messages: `_create_source` below can finish
+        # its own snapshot refresh and trigger a full-screen recompose fast
+        # enough to win the race against those two separately-posted
+        # messages still being processed, which would seed the freshly
+        # rebuilt SourcesPane with the stale (pre-submit) draft. Clearing
+        # here guarantees the screen's mirrored state is already correct
+        # before `run_worker` even starts the async chain that can recompose.
+        self._source_create_form_open = False
+        self._source_create_draft = {"name": "", "url": "", "tags": ""}
+        # Back to "untouched", so the next create form is prefilled again
+        # rather than inheriting the selectors of the source just submitted.
+        self._source_create_draft_selectors = None
         self.run_worker(self._create_source(event.payload), exclusive=True)
 
     async def _create_source(self, payload: dict[str, Any]) -> None:
@@ -726,12 +3764,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Source created.", severity="information")
         except Exception:
-            logger.opt(exception=True).debug("Failed to create source.")
+            logger.opt(exception=True).warning("Failed to create source.")
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Failed to create source.", severity="error")
+        # Reload every view derived from the source list, not just the two
+        # that happened to be here (TASK-1040). `_refresh_local_wc_snapshot`
+        # feeds the staging line and `_refresh_overview_data` the cards, but
+        # `#sources-table` and the rail's counts read their own queries — so
+        # without these the table kept the previous list and the rail said
+        # `All sources  0` while the centre said `Feeds in All sources (1)`,
+        # describing the same thing on one screen.
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
+        self.run_worker(self._load_sources(), exclusive=True, group="wc_sources")
+        self._load_tree_data()
 
     @on(CancelRunRequested)
     def handle_cancel_run_requested(self, event: CancelRunRequested) -> None:
@@ -748,7 +3795,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Run cancellation requested.", severity="information")
         except Exception:
-            logger.opt(exception=True).debug("Failed to cancel run.")
+            logger.opt(exception=True).warning("Failed to cancel run.")
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Failed to cancel run.", severity="error")
@@ -769,7 +3816,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Run launched.", severity="information")
         except Exception:
-            logger.opt(exception=True).debug("Failed to launch run.")
+            logger.opt(exception=True).warning("Failed to launch run.")
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Failed to launch run.", severity="error")
@@ -799,7 +3846,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     timeout=10,
                 )
         except Exception:
-            logger.opt(exception=True).debug("Failed to preview source.")
+            logger.opt(exception=True).warning("Failed to preview source.")
             if callable(notify):
                 notify("Failed to preview source.", severity="error")
 
@@ -811,21 +3858,242 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         self.run_worker(self._check_now_source(entity), exclusive=True)
 
+    #: Run statuses that mean the check did not succeed. `execute_run` catches
+    #: the fetch error itself and RETURNS a run in one of these states rather
+    #: than raising, so a screen that only watched for exceptions reported
+    #: success over a feed that had just 404'd (TASK-1090).
+    _FAILED_RUN_STATUSES = frozenset({"failed", "error", "errored"})
+    #: Statuses meaning the run is over. `check_now` on the server backend
+    #: delegates to `launch_run`, which returns `queued`/`running` while the
+    #: fetch is still in flight — so "complete" may only be claimed for these.
+    _TERMINAL_RUN_STATUSES = frozenset({"completed", "complete", "succeeded", "success"})
+
+    @classmethod
+    def _check_failure_message(cls, result: Any) -> str | None:
+        """The reason a completed check failed, or None if it succeeded.
+
+        Args:
+            result: Whatever `check_now` returned.
+
+        Returns:
+            A human-readable reason when the run reports a failed status,
+            otherwise None.
+        """
+        if not isinstance(result, Mapping):
+            return None
+        if str(result.get("status") or "").lower() not in cls._FAILED_RUN_STATUSES:
+            return None
+        stats = result.get("stats")
+        error_msg = result.get("error_msg")
+        if not error_msg and isinstance(stats, Mapping):
+            error_msg = stats.get("error_msg")
+        return str(error_msg or "the source reported a failed run")
+
     async def _check_now_source(self, source: dict[str, Any]) -> None:
+        """Run a check for one source and report what actually happened.
+
+        TASK-1090. This wrapped the whole call in `except Exception`, logged at
+        **debug** and showed a transient toast, which is the swallow that hid
+        TASK-1100: `Check now` raised `ValueError` on every press, the feature
+        was dead, and the only evidence was a debug line and a toast that had
+        gone before anyone looked. Three UAT runs called the screen working.
+
+        Two things changed. An unexpected exception is logged at `warning`
+        with the source it was checking, and its message is put in front of
+        the user instead of a generic "Failed to check source." And a run that
+        *completed* failed is now detected: `execute_run` records the failure
+        and returns normally, so the old code's `try` succeeded and it said
+        "Check now started." over a feed that had just failed to fetch.
+
+        The durable trace lives where it belongs -- `subscriptions.last_error`
+        and a `failed` row in `local_watchlist_runs`, both written by the
+        service (see `LocalWatchlistsService.record_run_failure`) -- and the
+        source list is reloaded here so the Sources table's Status column
+        shows it once the toast is gone.
+        """
         notify = getattr(self.app_instance, "notify", None)
+        source_id = source.get("id")
+        #: Whether this check actually finished and therefore actually produced
+        #: (or failed to produce) items. Review wave, Minor 4 -- see the rail
+        #: refresh at the end of this method.
+        reached_terminal = False
         try:
-            await self._controller.check_now(
+            result = await self._controller.check_now(
                 runtime_backend=self.runtime_backend,
-                source_id=source.get("id"),
+                source_id=source_id,
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Check now failed for watchlist source {source_id!r}: {exc}"
             )
             if callable(notify):
-                notify("Check now started.", severity="information")
-        except Exception:
-            logger.opt(exception=True).debug("Failed to check source.")
-            if callable(notify):
-                notify("Failed to check source.", severity="error")
+                notify(f"Check failed: {exc}", severity="error", timeout=10)
+        else:
+            failure = self._check_failure_message(result)
+            if failure is not None:
+                logger.warning(
+                    f"Check now for watchlist source {source_id!r} finished "
+                    f"failed: {failure}"
+                )
+                if callable(notify):
+                    notify(f"Check failed: {failure}", severity="error", timeout=10)
+            else:
+                # Only claim completion for a terminal status. `check_now` on
+                # the server backend delegates to `launch_run`, which triggers
+                # execution asynchronously and returns `queued`/`running` — so
+                # a fixed "Check complete." would tell the user the fetch had
+                # finished while it was still in flight (Qodo #4 on PR #1047).
+                status = str((result or {}).get("status") or "").lower()
+                reached_terminal = status in self._TERMINAL_RUN_STATUSES
+                if callable(notify):
+                    if reached_terminal:
+                        notify("Check complete.", severity="information")
+                    else:
+                        notify("Check started.", severity="information")
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
+        # Reload the source list so the Status and Last scraped columns carry
+        # the outcome after the toast has gone (AC#2). Same reload
+        # `_delete_source` performs for the same reason.
+        # Preserve the user's selection across the reload. Rebuilding the
+        # table emits a row-0 highlight, which `SourcesPane` treats as a real
+        # selection — so without this the reload silently retargets Preview /
+        # Check now / Delete at the first source (Qodo #3 on PR #1047, and
+        # the defect filed as task-1161).
+        self.run_worker(
+            self._load_sources_preserving_selection(), exclusive=True, group="wc_sources"
+        )
+        # TASK-2304 AC#1. A check is the ONE gesture that manufactures items,
+        # and the rail's numbers are unread item counts -- so this was the
+        # single most visible place they went stale. Measured in the
+        # 2026-08-04 UAT: create a watchlist, assign a source, press Check
+        # now, watch a feed's worth of items arrive in the centre while every
+        # rail count stayed on 0 until the screen was left and re-entered.
+        # `_load_tree_data` publishes through TASK-2200's surface-refresh
+        # drain, so this is a rail rebuild, not a screen recompose.
+        #
+        # Review wave, Minor 4: only once the run has actually FINISHED. The
+        # local backend runs `check_now` to completion and returns
+        # `completed`, so this fires exactly as before there. The server
+        # backend delegates to `launch_run` and returns `queued`/`running`
+        # (the toast three lines up is careful about the same distinction),
+        # so re-reading the counts here would read them before the items it
+        # is meant to be reporting exist -- an authoritative-looking query
+        # against a state the user's own action has not reached yet. A run
+        # that finishes later is picked up by the next refresh, which is the
+        # same guarantee every other server-backend surface on this screen
+        # gives.
+        if reached_terminal:
+            self._load_tree_data()
+
+    async def _load_sources_preserving_selection(self) -> None:
+        """Reload the source list without discarding the current selection."""
+        keep = self.selected_source
+        await self._load_sources()
+        if keep is None or not self.is_mounted:
+            return
+        keep_id = keep.get("id")
+        if keep_id is None:
+            return
+        try:
+            pane = self.query_one("#watchlists-sources-pane", SourcesPane)
+        except Exception:
+            return
+        if any(str(s.get("id")) == str(keep_id) for s in (pane.sources or [])):
+            pane.select_source_by_id(str(keep_id))
+
+    @on(ResumeSourceRequested)
+    def handle_resume_source_requested(self, event: ResumeSourceRequested) -> None:
+        """Dispatch a Resume press to `_resume_source` on a worker (task-2050).
+
+        Refuses any entity that is not a LOCAL `subscription` (task-2050
+        Qodo): `resume_source` takes a raw local db id, so a message carrying
+        some other entity kind that happens to hold a numeric `source_id`
+        (e.g. a server `watchlist_source`) would reset the counters of
+        whatever unrelated LOCAL subscription shares that number. The
+        Inspector's render gate already makes that unreachable today; this
+        guard keeps it unreachable from any future caller too. Type-only log,
+        no toast -- a refused programmatic message is not a user action.
+        """
+        event.stop()
+        entity = event.entity
+        if entity is None:
+            return
+        if (
+            str(entity.get("backend") or "") != "local"
+            or str(entity.get("entity_kind") or "") != "subscription"
+        ):
+            logger.warning(
+                "ResumeSourceRequested for a non-local-subscription entity "
+                f"(backend={entity.get('backend')!r}, "
+                f"kind={entity.get('entity_kind')!r}); refusing."
+            )
+            return
+        self.run_worker(self._resume_source(entity), exclusive=True)
+
+    async def _resume_source(self, source: dict[str, Any]) -> None:
+        """Clear an auto-paused source's pause via the real service (AC#2/#3).
+
+        Local-only, the same reason `_open_snapshot_view`'s `url_snapshots`
+        lookup reaches `_local_watchlists_service()` directly rather than
+        through `self._controller` (`WatchlistsBackendController`): only a
+        local subscription currently carries a pause concept at all (see
+        `normalize_server_watchlist_source`, which always stamps `paused:
+        False`), so the controller -- which exists to route a call to
+        whichever of local/server is active -- has no reason to gain a
+        method for a concept the server backend does not have.
+
+        `source["source_id"]` (the subscription's raw db id) is read rather
+        than `source["id"]` (the namespaced `local:subscription:5` form
+        `self._controller` calls take): there is no routing layer here to
+        parse that namespacing back off, so the raw id
+        `normalize_local_subscription_row` already carries under
+        `source_id` is used directly, matching how `LocalWatchlistsService`
+        itself takes ids everywhere.
+        """
+        service = self._local_watchlists_service()
+        source_id = source.get("source_id")
+        name = (
+            source.get("name")
+            or source.get("source_title")
+            or source.get("title")
+            or "the source"
+        )
+        if service is None or source_id is None:
+            self._notify_watchlists(WC_SERVICE_UNAVAILABLE_COPY, severity="error")
+            return
+        try:
+            await service.resume_source(source_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to resume watchlist source {source_id!r}."
+            )
+            self._notify_watchlists(
+                "Could not resume that source. Check the logs and try again.",
+                severity="error",
+                markup=False,
+            )
+            return
+        # markup=False: the name is user-entered (Create Source's Name
+        # field), same reasoning as every other toast on this screen that
+        # embeds one -- a bracket in a source name must reach the user
+        # verbatim rather than being interpreted (or swallowed) as Rich
+        # markup.
+        self._notify_watchlists(
+            f"Resumed {name}. It will be checked on its normal schedule.",
+            severity="information",
+            markup=False,
+        )
+        self._refresh_local_wc_snapshot()
+        self._refresh_overview_data()
+        # Reload preserving selection, same as `_check_now_source`: the row
+        # stays selected, but the Sources table's Status column -- and the
+        # Inspector's own `paused` flag, which decides whether this very
+        # Resume button renders -- both pick up the cleared pause once the
+        # reload lands.
+        self.run_worker(
+            self._load_sources_preserving_selection(), exclusive=True, group="wc_sources"
+        )
 
     @on(ImportOpmlRequested)
     def handle_import_opml_requested(self, event: ImportOpmlRequested) -> None:
@@ -845,7 +4113,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify(f"Imported {created} source(s) from OPML.", severity="information")
         except Exception:
-            logger.opt(exception=True).debug("Failed to import OPML.")
+            logger.opt(exception=True).warning("Failed to import OPML.")
             if callable(notify):
                 notify("Failed to import OPML.", severity="error")
         self._refresh_local_wc_snapshot()
@@ -864,16 +4132,91 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             self.app.push_screen(OpmlExportDialog(xml_text))
         except Exception:
-            logger.opt(exception=True).debug("Failed to export OPML.")
+            logger.opt(exception=True).warning("Failed to export OPML.")
             if callable(notify):
                 notify("Failed to export OPML.", severity="error")
 
     @on(StageInConsoleRequested)
     def handle_stage_in_console_requested(self, event: StageInConsoleRequested) -> None:
         event.stop()
-        notify = getattr(self.app_instance, "notify", None)
-        if callable(notify):
-            notify("Stage in Console is not implemented yet.", severity="information")
+        self._console_handoff.handle_stage_in_console_requested()
+
+    def scoped_loaded_sources(self) -> list[dict[str, Any]]:
+        """`_loaded_sources`, narrowed to the sources the tree scope covers.
+
+        TASK-2304 AC#2. `_load_sources` lists every source the backend holds,
+        with no scope predicate at all, so the Sources table ignored the tree
+        entirely: the 2026-08-04 UAT selected a watchlist whose own header
+        read "AI Research News (0 sources)" and the table underneath it still
+        listed an Unassigned source. Two counts of the same fact, on one
+        screen, disagreeing -- because only one of them was scoped.
+
+        Resolved through `scoped_source_rows()`, which is the SAME resolver
+        `_staging_summary_line` and `_scoped_feeds_heading` count, so the
+        header and the table cannot drift by construction; making the table
+        agree by re-deriving the scope some other way would just create a
+        third answer. That call costs one query, and the `all` scope short
+        -circuits before paying it -- it is the default, and its answer is
+        "everything" regardless.
+
+        `_loaded_sources` itself stays UNSCOPED. It is the screen's mirror of
+        the backend listing, re-seeded into a freshly built `SourcesPane` on
+        every workbench rebuild, and the Console handoff reads it too;
+        narrowing the mirror would make the scope sticky in places that never
+        asked about it. The scope is applied at each push instead, which is
+        also what lets `watch_tree_scope` re-push without re-querying the
+        backend.
+
+        Review wave, Minor 3: LOCAL backend only, and it says so rather than
+        guessing. `scoped_source_rows()` resolves ids through the local
+        `WatchlistBundleService` (the watchlists/watchlist_sources tables live
+        only in the local database), while a server row's `source_id` is a
+        SERVER id from a different namespace entirely
+        (`normalize_server_watchlist_source`). Intersecting the two yields the
+        empty set for every non-`all` scope, so scoping under the server
+        backend would have emptied the table beneath a header claiming N
+        sources -- the exact defect this method exists to remove, produced by
+        the fix for it. There is no server-side membership query to scope
+        with, so the honest answer is to leave the listing unscoped there; the
+        rail's write verbs are already disabled on that backend for the same
+        underlying reason (`_tree_write_disabled_reason`).
+
+        Returns:
+            The subset of `_loaded_sources` in the current tree scope, in the
+            backend listing's own order. Every loaded source when the scope is
+            `all`, or when the runtime backend is not `local`.
+        """
+        if self.tree_scope.kind == "all" or self.runtime_backend != "local":
+            return list(self._loaded_sources)
+        allowed = {
+            str(row.get("id")) for row in self.scoped_source_rows() if row.get("id") is not None
+        }
+        return [
+            source
+            for source in self._loaded_sources
+            # `source_id` is the bare local row id `normalize_local_
+            # subscription_row` carries alongside the namespaced `id`
+            # ("local:subscription:7"), and it is what the bundle service's
+            # row dicts hold -- comparing against `id` would match nothing.
+            if str(source.get("source_id")) in allowed
+        ]
+
+    def _push_scoped_sources_to_pane(self) -> None:
+        """Push the scoped source rows into the mounted `SourcesPane`.
+
+        In place, on the pane's own reactive -- never a region rebuild. The
+        Sources pane lives in ITEMS, which TASK-2200 deliberately excludes
+        from the surface-refresh drain precisely so an in-flight create form
+        is not torn down by something happening elsewhere on the screen; a
+        scope change must not become the exception to that.
+        """
+        if not self._dom_is_live:
+            return
+        try:
+            sources_pane = self.query_one("#watchlists-sources-pane", SourcesPane)
+        except NoMatches:
+            return
+        sources_pane.sources = self.scoped_loaded_sources()
 
     async def _load_sources(self) -> None:
         notify = getattr(self.app_instance, "notify", None)
@@ -882,10 +4225,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 runtime_backend=self.runtime_backend,
                 limit=100,
             )
-            if self.is_mounted:
+            # Mirror to screen state (Finding 2, fix round 2) so a later
+            # workbench rebuild — any region collapse/solo/rail toggle, not
+            # just a fresh section switch — can re-seed a brand new
+            # SourcesPane instead of leaving its table empty; see
+            # `_build_detail_pane` and `_loaded_sources` in __init__.
+            self._loaded_sources = [dict(source) for source in sources]
+            if self._dom_is_live:
                 try:
                     sources_pane = self.query_one("#watchlists-sources-pane", SourcesPane)
-                    sources_pane.sources = sources
+                    sources_pane.sources = self.scoped_loaded_sources()
                     if self.selected_source is not None:
                         source_id = self.selected_source.get("id")
                         if source_id is not None:
@@ -904,10 +4253,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 runtime_backend=self.runtime_backend,
                 limit=100,
             )
-            if self.is_mounted:
+            self._loaded_runs = [dict(run) for run in runs]
+            requested_run = self._matching_requested_run(self._loaded_runs)
+            had_pending_target = self._pending_navigation_run_id is not None
+            self._pending_navigation_run_id = None
+            self._pending_navigation_run_backend = None
+            if had_pending_target:
+                self.selected_run = requested_run
+                # A deep-linked run is a new selection exactly like a user
+                # picking a row (Task 5 fix round 2, Finding 1) -- route it
+                # through the same reconciliation rather than setting
+                # `selected_entity` directly.
+                self._select_entity(requested_run)
+            if self._dom_is_live:
                 try:
                     runs_pane = self.query_one("#watchlists-runs-pane", RunsPane)
-                    runs_pane.runs = runs
+                    runs_pane.runs = self._loaded_runs
+                    if had_pending_target:
+                        runs_pane.selected_run = requested_run
                 except Exception:
                     pass
         except Exception:
@@ -915,19 +4278,3208 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Failed to load watchlist runs.", severity="error")
 
+    def _matching_requested_run(
+        self, runs: Sequence[Mapping[str, Any]]
+    ) -> dict[str, Any] | None:
+        """Return the loaded record matching the one-shot run deep link."""
+        requested = self._pending_navigation_run_id
+        if not requested:
+            return None
+        marker = ":watchlist_run:"
+        requested_raw = requested.rsplit(marker, 1)[1] if marker in requested else requested
+        requested_backend = self._pending_navigation_run_backend
+
+        for run in runs:
+            record_backend = str(run.get("backend") or "").strip()
+            if record_backend not in {"local", "server"}:
+                record_backend = ""
+            candidate_id = run.get("id")
+            if candidate_id not in (None, ""):
+                candidate_text = str(candidate_id)
+                if marker in candidate_text:
+                    candidate_backend, candidate_raw = candidate_text.split(marker, 1)
+                    if (
+                        requested_backend == self.runtime_backend
+                        and candidate_backend == requested_backend
+                        and candidate_raw == requested_raw
+                    ):
+                        return run if isinstance(run, dict) else dict(run)
+                    continue
+                if (
+                    requested_backend == self.runtime_backend
+                    and record_backend in {"", requested_backend}
+                    and candidate_text == requested_raw
+                ):
+                    return run if isinstance(run, dict) else dict(run)
+
+            candidate_raw = run.get("run_id")
+            if (
+                candidate_raw not in (None, "")
+                and requested_backend == self.runtime_backend
+                and record_backend in {"", requested_backend}
+                and str(candidate_raw) == requested_raw
+            ):
+                return run if isinstance(run, dict) else dict(run)
+        return None
+
+    async def _load_notifications(self) -> None:
+        """Load the client-owned local notification inbox."""
+        notify = getattr(self.app_instance, "notify", None)
+        try:
+            rows = await self._notifications_controller.load_rows()
+        except Exception:
+            logger.opt(exception=True).debug("Failed to load local notifications.")
+            if callable(notify):
+                notify("Failed to load local notifications.", severity="error")
+            return
+
+        self._loaded_notifications = [dict(row) for row in rows]
+        selected_id = (
+            self.selected_notification.get("id")
+            if self.selected_notification
+            else None
+        )
+        self.selected_notification = next(
+            (
+                notification
+                for notification in self._loaded_notifications
+                if notification.get("id") == selected_id
+            ),
+            None,
+        )
+        # Route through `_select_entity` (Task 5 fix round 3) rather than
+        # assigning `self.selected_entity` directly: this re-derive is a new
+        # selection exactly like a pane row click whenever a notification
+        # actually survives the reload, so it must reconcile `selected_scope`
+        # the same way. `_select_entity(None)` is a no-op for scope by
+        # design (fix round 2), so this only matters on that surviving
+        # branch -- but routing it through the one reconciliation point
+        # keeps the invariant true even if a mirror is repopulated by a
+        # future code path that does not go through `_apply_tree_scope`.
+        self._select_entity(
+            {
+                **self.selected_notification,
+                "entity_kind": "client_notification",
+            }
+            if self.selected_notification
+            else None
+        )
+        if not self._dom_is_live:
+            return
+        try:
+            pane = self.query_one("#watchlists-notifications-pane", NotificationsPane)
+        except NoMatches:
+            return
+
+        try:
+            pane.notifications = self._loaded_notifications
+            pane.selected_notification = self.selected_notification
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Failed to update the local notifications pane."
+            )
+
+    @on(NotificationSelected)
+    def handle_notification_selected(self, event: NotificationSelected) -> None:
+        event.stop()
+        self.selected_notification = event.notification
+        # Not one of the four handlers the reviewer named, but the identical
+        # bug shape: a notification is an entity like any other, and was
+        # setting `selected_entity` directly, leaving a stale scope in place.
+        self._select_entity(
+            {**event.notification, "entity_kind": "client_notification"}
+            if event.notification
+            else None
+        )
+
+    @on(RefreshNotificationsRequested)
+    def handle_refresh_notifications_requested(
+        self, event: RefreshNotificationsRequested
+    ) -> None:
+        event.stop()
+        self.run_worker(self._load_notifications(), exclusive=True)
+
+    @on(MarkNotificationReadRequested)
+    def handle_mark_notification_read_requested(
+        self, event: MarkNotificationReadRequested
+    ) -> None:
+        event.stop()
+        self.run_worker(
+            self._mark_notification_read(event.notification_id), exclusive=True
+        )
+
+    async def _mark_notification_read(self, notification_id: int) -> None:
+        updated = await self._notifications_controller.mark_read(
+            notification_id, is_read=True
+        )
+        if updated:
+            await self._load_notifications()
+
+    @on(DismissNotificationRequested)
+    def handle_dismiss_notification_requested(
+        self, event: DismissNotificationRequested
+    ) -> None:
+        event.stop()
+        self.run_worker(
+            self._dismiss_notification(event.notification_id), exclusive=True
+        )
+
+    async def _dismiss_notification(self, notification_id: int) -> None:
+        dismissed = await self._notifications_controller.dismiss(
+            notification_id, is_dismissed=True
+        )
+        if dismissed:
+            await self._load_notifications()
+
+    # --- Artifacts: the briefings a watchlist has produced -----------------
+    #
+    # Spec #2 phase 1, task 4. Briefings are per-watchlist by schema
+    # (`briefings.watchlist_id` is NOT NULL), local by construction (they are
+    # written into this device's `SubscriptionsDB`, whatever the Backend
+    # selector says), and generated only on request.
+
+    def _briefings_db(self) -> Any:
+        """The local `SubscriptionsDB` briefings live in, or `None`.
+
+        Reached through `WatchlistBundleService` rather than a second
+        accessor onto the database, which is the rule `_load_tree_data`
+        already states for this screen; degrades to `None` in harnesses
+        where the service is not wired.
+        """
+        service = self._watchlist_bundle_service()
+        return getattr(service, "db", None) if service is not None else None
+
+    def _briefing_watchlist_id(self) -> int | None:
+        """The watchlist Artifacts is scoped to, or `None`.
+
+        `tree_scope` rather than `selected_scope`: this is a question about
+        what the user is looking at in the rail, which is exactly the split
+        those two reactives exist to keep (see their declarations). A
+        "source" scope deliberately does not answer it -- one source can sit
+        in several watchlists, and briefings belong to exactly one.
+        """
+        scope = self.tree_scope
+        if scope is not None and scope.kind == "watchlist":
+            return scope.watchlist_id
+        return None
+
+    def _can_generate_briefing(self) -> bool:
+        """Whether Generate has both a store and a watchlist to act on."""
+        return self._briefings_db() is not None and (
+            self._briefing_watchlist_id() is not None
+        )
+
+    def _chachanotes_db(self) -> Any:
+        """The live ChaChaNotes handle, or `None` (task-1780, Task 5).
+
+        `getattr(self.app_instance, "chachanotes_db", None)` -- the exact
+        idiom `_load_character_options`/`_cast_load_character` already use
+        on this screen -- pulled out into its own accessor now that a
+        THIRD caller (Keep/`KeptBriefingsModal`'s opener) needs the
+        identical read. Degrades to `None` in harnesses where the app
+        instance carries no such attribute at all.
+        """
+        return getattr(self.app_instance, "chachanotes_db", None)
+
+    def _local_watchlists_service(self) -> Any:
+        """The live `LocalWatchlistsService`, or `None` (TASK-1494).
+
+        `url_snapshots` is local-only storage -- only `URLMonitor.check_url`
+        (the local monitoring engine) ever writes it, and there is no
+        server-backend equivalent to route to -- so the reader's snapshot
+        viewer reaches this service directly, the same `getattr(self.
+        app_instance, ..., None)` idiom `_watchlist_bundle_service`/`_
+        chachanotes_db` above use, rather than through `self._controller`
+        (`WatchlistsBackendController`), which exists to route a call to
+        whichever of local/server is active and has no reason to gain a
+        local-only method just for this one read.
+        """
+        return getattr(self.app_instance, "local_watchlists_service", None)
+
+    def _briefing_schedules_enabled(self) -> bool:
+        """Whether `[scheduling] briefing_schedules_enabled` is on for this
+        run (task-1812, AC #1).
+
+        The identical config read `app.py`'s `_wire_watchlists_and_
+        notifications_services` uses to decide whether to build a
+        `BriefingProjection`/`BriefingJobHandler` pair at all -- read
+        directly via `get_cli_setting` (the "queries config helper"
+        convention several other screens/windows already use, e.g.
+        `Tools_Settings_Window`/`STTS_Window`) rather than through a live
+        handle on `self.app_instance`, even though one now exists:
+        `self.app_instance.scheduling_service.briefing_projection is not
+        None` is `app.py`'s own live reflection of this identical decision
+        (non-`None` iff the flag is truthy), added by task-1810 -- the
+        first commit on this same branch, two commits before this function
+        -- and asserted by `Tests/Scheduling/test_scheduling_service.py::
+        test_app_wiring_briefing_projection_is_live_not_a_frozen_none`. Kept
+        as a direct config read rather than switched to that mirror: today
+        both resolve identically, but a config reload mid-run (or a future
+        UI control this docstring anticipated) could make them diverge, so
+        a caller that cares about liveness rather than configuration should
+        read the mirror instead. Defaults to `True`, matching `app.py`'s own
+        default, so a watchlist with a stored cadence still reads as
+        scheduled unless an operator has explicitly turned the flag off.
+        """
+        return bool(
+            get_cli_setting("scheduling", "briefing_schedules_enabled", True)
+        )
+
+    def _briefing_scope_label(self) -> str:
+        """The pane's one-line statement of what it is showing, and from where."""
+        watchlist_id = self._briefing_watchlist_id()
+        if watchlist_id is None:
+            return (
+                "Select a watchlist in the rail to see or write its briefings — "
+                "a briefing covers one watchlist."
+            )
+        name = self._watchlist_display_name(watchlist_id)
+        # Spec #2 phase 4, Task 4: this used to always say "written on this
+        # device, on request" -- true in phase 1, when nothing could write
+        # `briefing_cadence_seconds`, but a lie the moment Task 2 gave that
+        # column a writer. `cadence_scope_phrase` answers `None` (never
+        # scheduled) with `None`, so "on request" stays the honest default;
+        # anything else names the actual cadence, "while the app is open"
+        # and all -- see that function's own docstring for why the phrase
+        # is worded that way. `schedules_enabled` (task-1812, AC #1) closes
+        # a second honesty gap the same reasoning missed: with the app-level
+        # kill switch off, nothing in this process would ever read a stored
+        # cadence back, so a phrase implying an active schedule would be a
+        # lie of the identical shape.
+        cadence_phrase = cadence_scope_phrase(
+            self._briefing_cadence_seconds,
+            schedules_enabled=self._briefing_schedules_enabled(),
+        )
+        provenance = (
+            f"written on this device — {cadence_phrase}"
+            if cadence_phrase is not None
+            else "written on this device, on request"
+        )
+        # RAW, deliberately: the pane wraps this in a `rich.text.Text`, which
+        # is never markup-parsed, so escaping here would put visible
+        # backslashes in front of every bracket a real name contains. See
+        # `ArtifactsPane.compose` for why that wrapper is load-bearing --
+        # a bare `str` in a `Static` IS parsed as markup.
+        return f"Briefings for {name} · {provenance}"
+
+    async def _load_briefings(
+        self, *, select_briefing_id: int | None = None
+    ) -> None:
+        """Re-read this watchlist's briefings and repaint the pane.
+
+        Repaints the PANE, never the screen: `self.refresh(recompose=True)`
+        would rebuild every region through its factory and hand any live
+        reference a defunct widget (the Phase D lesson `watch_tree_scope`
+        records). Pushing the rows into the mounted `ArtifactsPane` lets the
+        pane's own `recompose=True` reactives rebuild just its children,
+        with the pane instance itself surviving.
+
+        Args:
+            select_briefing_id: Select this row after loading -- used by the
+                generation worker so a finished briefing is the one on
+                screen. Otherwise the current selection is re-resolved
+                against the reloaded rows and dropped if it is gone.
+        """
+        db = self._briefings_db()
+        watchlist_id = self._briefing_watchlist_id()
+        if db is None or watchlist_id is None:
+            self._loaded_briefings = []
+            self._selected_briefing = None
+            self._briefing_selection_mode = MODE_AUTO_FEATURED
+            self._briefing_default_preset_id = None
+            self._briefing_cadence_seconds = None
+            self._loaded_scripts = []
+            self._selected_script = None
+            self._loaded_script_audio = None
+            self._scripts_with_audio = {}
+            self._loaded_citations = []
+            self._citation_item_lookup = {}
+            self._watchlist_has_audio_episodes = False
+        else:
+            try:
+                # Zombie recovery, before the list query, so a row this
+                # sweep just failed shows up as failed/interrupted in THIS
+                # same load rather than requiring a second one (whole-branch
+                # review fix 3). Best-effort: a failure here must not stop
+                # the list query below, and must not exit the app -- this
+                # runs inside the `wl-briefings-load` worker, whose default
+                # `exit_on_error=True` would take the app down with it.
+                await self._fail_interrupted_briefings_if_safe(db, watchlist_id)
+            except Exception as exc:  # noqa: BLE001 - best-effort, not fatal
+                logger.warning(
+                    f"Zombie-briefing sweep failed for watchlist {watchlist_id}: "
+                    f"{type(exc).__name__}"
+                )
+            try:
+                # `asyncio.to_thread`, not a direct call: this coroutine runs
+                # inside the `wl-briefings-load` worker, which `run_worker`
+                # only schedules back onto the SAME event loop -- a
+                # synchronous `list_briefings` call here would still block
+                # the UI thread for the length of the SELECT, same shape as
+                # the write `_toggle_briefing_queue` documents.
+                rows = await asyncio.to_thread(db.list_briefings, watchlist_id)
+                self._loaded_briefings = [dict(row) for row in rows]
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                # Type only, never `logger.opt(exception=True)`: this app's
+                # file sink runs with `diagnose=True`, so a traceback here
+                # would dump the failing frame's locals -- which on this
+                # path are briefing rows, i.e. item-derived content. Same
+                # rule `briefing_service` states for its own failure log.
+                logger.warning(
+                    f"Failed to list briefings for watchlist {watchlist_id}: "
+                    f"{type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Failed to read this watchlist's briefings.",
+                    severity="error",
+                    markup=False,
+                )
+                self._loaded_briefings = []
+            wanted = (
+                select_briefing_id
+                if select_briefing_id is not None
+                else (self._selected_briefing or {}).get("id")
+            )
+            self._selected_briefing = next(
+                (
+                    row
+                    for row in self._loaded_briefings
+                    if wanted is not None and row.get("id") == wanted
+                ),
+                None,
+            )
+            # Task 5: the selected briefing's cast scripts. Scoped to ONE
+            # briefing (the resolved selection above) rather than every
+            # briefing in `self._loaded_briefings` -- a script belongs to
+            # exactly one briefing and this pane only ever renders one
+            # briefing's detail, so there is nothing to gain from fetching
+            # scripts for briefings that are not on screen. This runs
+            # inside the SAME `wl-briefings-load` worker as everything else
+            # in this method (see `handle_briefing_selected`, which
+            # re-dispatches this whole method -- rather than a
+            # scripts-only reload -- exactly so a row click's scripts
+            # arrive through this one worker/to_thread pattern).
+            selected_briefing_id = (self._selected_briefing or {}).get("id")
+            if selected_briefing_id is None:
+                self._loaded_scripts = []
+                self._selected_script = None
+                self._loaded_script_audio = None
+                self._scripts_with_audio = {}
+            else:
+                try:
+                    # Zombie recovery for scripts, mirroring the briefing
+                    # sweep above: a cast worker that crashed mid-cast
+                    # leaves a `generating` row that would otherwise wedge
+                    # a one-cast-at-a-time guard shut forever. Gated on
+                    # `_cast_sweep_is_safe` for the identical reason
+                    # `_fail_interrupted_briefings_if_safe` is gated on
+                    # `_zombie_sweep_is_safe`: a load racing a cast THIS
+                    # screen started must not fail that cast's own row out
+                    # from under it.
+                    await self._fail_interrupted_scripts_if_safe(
+                        db, selected_briefing_id
+                    )
+                except Exception as exc:  # noqa: BLE001 - best-effort, not fatal
+                    logger.warning(
+                        "Zombie-script sweep failed for briefing "
+                        f"{selected_briefing_id}: {type(exc).__name__}"
+                    )
+                try:
+                    rows = await asyncio.to_thread(
+                        db.list_briefing_scripts, selected_briefing_id
+                    )
+                    self._loaded_scripts = [dict(row) for row in rows]
+                except Exception as exc:  # noqa: BLE001 - reported, not raised
+                    logger.warning(
+                        "Failed to list scripts for briefing "
+                        f"{selected_briefing_id}: {type(exc).__name__}"
+                    )
+                    self._notify_watchlists(
+                        "Failed to read this briefing's scripts.",
+                        severity="error",
+                        markup=False,
+                    )
+                    self._loaded_scripts = []
+                # Review round 1, Minor #4: which of THESE scripts have any
+                # audio at all, so the scripts table can show an indicator
+                # for every row -- not just the one currently selected
+                # (`_loaded_script_audio` below only ever answers that one
+                # question for ONE script). One `asyncio.to_thread` hop for
+                # the whole set, same "bundle several small reads into one
+                # thread-pool round trip" idiom `_read_watchlist_briefing_
+                # state` already uses -- `SubscriptionsDB` has no query
+                # batched by many script ids at once, and a briefing's own
+                # script count is small in practice, so N per-script
+                # existence checks inside ONE hop beats N separate hops.
+                try:
+                    script_ids = [
+                        row["id"]
+                        for row in self._loaded_scripts
+                        if row.get("id") is not None
+                    ]
+                    self._scripts_with_audio = await asyncio.to_thread(
+                        self._read_scripts_with_audio, db, script_ids
+                    )
+                except Exception as exc:  # noqa: BLE001 - reported, not raised
+                    logger.warning(
+                        "Failed to read audio presence for briefing "
+                        f"{selected_briefing_id}'s scripts: {type(exc).__name__}"
+                    )
+                    self._scripts_with_audio = {}
+                wanted_script = (
+                    (self._selected_script or {}).get("id")
+                    if self._selected_script
+                    else None
+                )
+                self._selected_script = next(
+                    (
+                        row
+                        for row in self._loaded_scripts
+                        if wanted_script is not None and row.get("id") == wanted_script
+                    ),
+                    None,
+                )
+            # Task 7: the SELECTED script's newest audio render. Scoped to
+            # ONE script (the resolved selection above), the identical
+            # shape `_loaded_scripts` uses for ONE briefing above it --
+            # audio belongs to exactly one script, and this pane only ever
+            # shows one script's detail at a time. Runs inside the SAME
+            # `wl-briefings-load` worker/hop as everything else here (see
+            # `handle_script_selected`, which re-dispatches this whole
+            # method -- rather than an audio-only reload -- exactly so a
+            # script row click's audio arrives through this one pattern).
+            selected_script_id = (
+                (self._selected_script or {}).get("id")
+                if self._selected_script
+                else None
+            )
+            if selected_script_id is None:
+                self._loaded_script_audio = None
+            else:
+                try:
+                    # Zombie recovery for audio, mirroring the script sweep
+                    # above: a synthesis worker that crashed mid-render
+                    # leaves a `generating` row that would otherwise wedge
+                    # a one-synthesis-at-a-time guard shut forever. Gated
+                    # on `_audio_sweep_is_safe` for the identical reason
+                    # `_fail_interrupted_scripts_if_safe` is gated on
+                    # `_cast_sweep_is_safe`: a load racing a synthesis THIS
+                    # screen started must not fail that attempt's own row
+                    # out from under it.
+                    await self._fail_interrupted_audio_if_safe(
+                        db, selected_script_id
+                    )
+                except Exception as exc:  # noqa: BLE001 - best-effort, not fatal
+                    logger.warning(
+                        "Zombie-audio sweep failed for script "
+                        f"{selected_script_id}: {type(exc).__name__}"
+                    )
+                try:
+                    audio_rows = await asyncio.to_thread(
+                        db.list_briefing_audio, selected_script_id, limit=1
+                    )
+                    self._loaded_script_audio = (
+                        dict(audio_rows[0]) if audio_rows else None
+                    )
+                except Exception as exc:  # noqa: BLE001 - reported, not raised
+                    logger.warning(
+                        "Failed to read audio for script "
+                        f"{selected_script_id}: {type(exc).__name__}"
+                    )
+                    self._notify_watchlists(
+                        "Failed to read this script's audio.",
+                        severity="error",
+                        markup=False,
+                    )
+                    self._loaded_script_audio = None
+            # Task 6: which items the SELECTED briefing's body actually
+            # cites. `extract_citation_ids` is pure and cheap (a regex over
+            # a body already held in memory), so it runs inline; only the
+            # DB lookup goes through `asyncio.to_thread`, ONE call per
+            # selection, inside this SAME worker/hop -- never a second
+            # worker group, per the brief. A missing key in the returned
+            # dict IS the pruned signal (`SubscriptionsDB.
+            # get_subscription_items_by_ids`'s own contract): there is no
+            # separate "does this still exist" query.
+            citation_ids = extract_citation_ids(
+                (self._selected_briefing or {}).get("body_markdown") or ""
+            )
+            if not citation_ids:
+                self._loaded_citations = []
+                self._citation_item_lookup = {}
+            else:
+                try:
+                    rows_by_id = await asyncio.to_thread(
+                        db.get_subscription_items_by_ids, citation_ids
+                    )
+                except Exception as exc:  # noqa: BLE001 - reported, not raised
+                    logger.warning(
+                        "Failed to resolve citations for briefing "
+                        f"{selected_briefing_id}: {type(exc).__name__}"
+                    )
+                    rows_by_id = {}
+                citations: list[dict[str, Any]] = []
+                lookup: dict[int, dict[str, Any]] = {}
+                for item_id in citation_ids:
+                    row = rows_by_id.get(item_id)
+                    if row is None:
+                        # The named invariant: an id that does not resolve
+                        # degrades honestly rather than quietly passing as
+                        # available. `available=False` and a label that
+                        # already says so are BOTH set here -- there is no
+                        # follow-up query for `handle_citation_activated`
+                        # to get wrong later; the pruned state is decided
+                        # once, at resolution time.
+                        citations.append(
+                            {
+                                "item_id": item_id,
+                                "label": Text(
+                                    f"item {item_id} — no longer available"
+                                ),
+                                "available": False,
+                            }
+                        )
+                        continue
+                    normalized = normalize_watchlist_item("local", row)
+                    lookup[item_id] = normalized
+                    title = str(normalized.get("title") or "Untitled item")
+                    citations.append(
+                        {
+                            "item_id": item_id,
+                            # A remote-authored title, appended into a
+                            # `Text` rather than an f-string handed to a
+                            # markup-parsing sink -- `Text(...)` never
+                            # re-parses its argument, so this is safe for
+                            # the identical reason `_script_turns_
+                            # renderable` states for a script's own turns.
+                            "label": Text(f"[item {item_id}] {title}"),
+                            "available": True,
+                        }
+                    )
+                self._loaded_citations = citations
+                self._citation_item_lookup = lookup
+            # Task 4: the toolbar's pickers. One combined `to_thread` hop
+            # for both the watchlist's stored settings (the SAME columns
+            # `briefing_service._selection_mode` reads) and the full preset
+            # list, rather than two sequential hops -- `_load_briefings`
+            # already pays for a zombie sweep and a `list_briefings` read
+            # above, and every extra round trip through the thread pool is
+            # latency this section's own toolbar adds on top of that,
+            # measured to matter under a busy full-suite run. A read
+            # failure degrades to the fallback mode, no default preset, and
+            # whatever presets were already loaded, rather than aborting
+            # the whole load -- the briefing list above is real data this
+            # failure must not hide.
+            #
+            # Task 5 (phase 3): `has_audio_episodes` rides in the SAME hop
+            # -- one more cheap read bundled alongside the other two,
+            # rather than a fourth separate `to_thread` round trip just for
+            # a boolean the Export Feed button needs. A read failure
+            # degrades to `False` (button stays disabled) rather than
+            # guessing: an export button that might reach a broken query
+            # is worse than one that stays honestly disabled until the
+            # next successful load.
+            try:
+                settings_row, preset_rows, has_audio_episodes = await asyncio.to_thread(
+                    self._read_watchlist_briefing_state, db, watchlist_id
+                )
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                logger.warning(
+                    "Failed to read briefing settings/presets for watchlist "
+                    f"{watchlist_id}: {type(exc).__name__}"
+                )
+                settings_row, preset_rows, has_audio_episodes = (
+                    {},
+                    self._loaded_briefing_presets,
+                    False,
+                )
+            mode = settings_row.get("briefing_selection_mode")
+            self._briefing_selection_mode = (
+                str(mode) if mode in VALID_MODES else MODE_AUTO_FEATURED
+            )
+            self._briefing_default_preset_id = settings_row.get(
+                "default_briefing_preset_id"
+            )
+            self._briefing_cadence_seconds = settings_row.get(
+                "briefing_cadence_seconds"
+            )
+            self._loaded_briefing_presets = preset_rows
+            self._watchlist_has_audio_episodes = has_audio_episodes
+        if not self._dom_is_live:
+            return
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            return
+        pane.briefings = self._loaded_briefings
+        pane.selected_briefing = self._selected_briefing
+        pane.scope_label = self._briefing_scope_label()
+        pane.can_generate = self._can_generate_briefing()
+        pane.selection_mode = self._briefing_selection_mode
+        pane.presets = self._loaded_briefing_presets
+        pane.default_preset_id = self._briefing_default_preset_id
+        pane.briefing_cadence_seconds = self._briefing_cadence_seconds
+        pane.briefing_schedules_enabled = self._briefing_schedules_enabled()
+        pane.scripts = self._loaded_scripts
+        pane.selected_script = self._selected_script
+        pane.script_audio = self._loaded_script_audio
+        pane.scripts_with_audio = self._scripts_with_audio
+        pane.citations = self._loaded_citations
+        pane.has_audio_episodes = self._watchlist_has_audio_episodes
+        pane.chachanotes_available = self._chachanotes_db() is not None
+
+    @staticmethod
+    def _read_watchlist_briefing_settings(db: Any, watchlist_id: int) -> dict[str, Any]:
+        """The watchlist's stored `briefing_selection_mode`/
+        `default_briefing_preset_id`/`briefing_cadence_seconds`, as a plain
+        dict.
+
+        Matches `briefing_service._selection_mode`'s own read of the same
+        column -- `WatchlistBundleService.list_watchlists`/`_get`
+        deliberately select a narrower column list that predates these two
+        (Task 1), so there is no existing service-layer getter for them to
+        reuse. `briefing_cadence_seconds` (spec #2 phase 4, Task 4) rides
+        in the same read: one more column on an already-narrow `WHERE id =
+        ?` lookup, not a second query. Reads run inside `with
+        db.transaction() as conn:`, not a bare `db.conn.execute` (Qodo
+        rule 1011851: every accessor this stream has shipped goes through
+        `transaction()`, reads included, so rollback-on-exception is
+        consistently wired even for read paths). Always called through
+        `asyncio.to_thread`; never call this directly from the UI thread.
+        """
+        with db.transaction() as conn:
+            row = conn.execute(
+                "SELECT briefing_selection_mode, default_briefing_preset_id, "
+                "briefing_cadence_seconds FROM watchlists WHERE id = ?",
+                (watchlist_id,),
+            ).fetchone()
+        return dict(row) if row is not None else {}
+
+    @staticmethod
+    def _read_watchlist_briefing_state(
+        db: Any, watchlist_id: int
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], bool]:
+        """`_read_watchlist_briefing_settings` plus `list_briefing_presets`
+        plus whether the watchlist has any export-ready audio, as one
+        synchronous unit for `_load_briefings` to dispatch through a
+        SINGLE `asyncio.to_thread` call.
+
+        All three are cheap reads on the same thread-local connection;
+        bundling them here is purely about round trips through the thread
+        pool, not about the SQL itself -- `_load_briefing_presets` still
+        does its own separate `list_briefing_presets` call for its OTHER
+        caller (`_open_briefing_preset_manager`), which has no settings
+        row to read alongside it. Always called through `asyncio.
+        to_thread`; never call this directly from the UI thread.
+
+        Returns:
+            `(settings_row, preset_rows, has_audio_episodes)`.
+        """
+        settings_row = WatchlistsCollectionsScreen._read_watchlist_briefing_settings(
+            db, watchlist_id
+        )
+        preset_rows = [dict(row) for row in db.list_briefing_presets()]
+        # Task 5 (phase 3): a `limit=1` probe -- the Export Feed button
+        # only needs a boolean, not the full episode page `export_feed_
+        # directory` itself re-queries at export time, so this avoids
+        # fetching a page nothing here reads (CLAUDE.md Performance Rules:
+        # paginate DB results).
+        has_audio_episodes = bool(
+            db.list_watchlist_audio_episodes(watchlist_id, limit=1)
+        )
+        return settings_row, preset_rows, has_audio_episodes
+
+    @staticmethod
+    def _read_scripts_with_audio(db: Any, script_ids: list[int]) -> dict[int, str]:
+        """Each of `script_ids` that has at least one `briefing_audio`
+        render, mapped to that render's NEWEST status.
+
+        Review round 1, Minor #4: a single read per script
+        (`list_briefing_audio(script_id, limit=1)`, newest-first --
+        Subscriptions_DB's own `ORDER BY created_at DESC, id DESC`),
+        bundled into one synchronous unit for `_load_briefings` to
+        dispatch through a SINGLE `asyncio.to_thread` call -- the
+        `_read_watchlist_briefing_state` idiom immediately above.
+        `SubscriptionsDB` has no query batched by many script ids at once
+        (`list_briefing_audio` is scoped to exactly one), and a
+        briefing's own cast-script count is small in real use, so N of
+        these small reads inside one thread hop beats N separate hops
+        through the thread pool. Always called through `asyncio.
+        to_thread`; never call this directly from the UI thread.
+
+        Owner decision, task-7 phase 2b follow-up ("if synthesis fails,
+        show the audio glyph with a red x"): this used to return a bare
+        `frozenset[int]` of "has at least one attempt" (review round 1's
+        original ask), which let a failed synthesis paint identically to
+        a successful one in the scripts table. `limit=1` already fetches
+        the newest render -- reusing its `status` costs nothing extra,
+        so `ArtifactsPane._audio_cell` can tell a `STATUS_FAILED` render
+        apart from a `STATUS_COMPLETE`/`STATUS_GENERATING` one without a
+        second query or a second `to_thread` hop.
+
+        Args:
+            db: An open `SubscriptionsDB`.
+            script_ids: `briefing_scripts.id` values to check.
+
+        Returns:
+            `{script_id: status}` for every id in `script_ids` that has
+            at least one `briefing_audio` row, using that row's newest
+            status. A `script_id` with no `briefing_audio` row at all is
+            simply absent from the mapping.
+        """
+        result: dict[int, str] = {}
+        for script_id in script_ids:
+            rows = db.list_briefing_audio(script_id, limit=1)
+            if rows:
+                result[script_id] = str(rows[0].get("status") or "")
+        return result
+
+    @on(BriefingSelected)
+    def handle_briefing_selected(self, event: BriefingSelected) -> None:
+        """Mirror the pane's selection so a region rebuild can re-seed it.
+
+        Deliberately NOT routed through `_select_entity`, unlike every other
+        pane's selection: the Inspector's verbs (Preview, Check now, Ingest,
+        Ignore, Delete) are all things you do to a monitored source or the
+        items it produced. A briefing is an artifact those verbs cannot act
+        on, and handing one to the Inspector would render its fields under
+        actions that do not apply to it.
+        """
+        event.stop()
+        self._selected_briefing = event.briefing
+        # Task 5: a different briefing means different scripts. Clear the
+        # stale selection immediately (synchronously, so nothing renders a
+        # PREVIOUS briefing's script against the NEW one even for the one
+        # frame before the reload below lands), then reload through
+        # `_load_briefings` -- the SAME worker/to_thread batch that method
+        # already uses, rather than standing up a second worker group just
+        # to fetch one briefing's scripts.
+        #
+        # Fix round 1, Minor: clearing `self._selected_script` alone (the
+        # SCREEN's own rebuild-survival mirror) was not enough -- the
+        # mounted pane's OWN `scripts`/`selected_script` reactives are what
+        # actually render the scripts table/detail, and those keep
+        # whatever the PREVIOUS briefing left in them until `_load_
+        # briefings`'s asynchronous reload lands. Without patching the pane
+        # directly here too, the old briefing's scripts stay on screen,
+        # under the NEW briefing's own detail, for every frame between this
+        # click and that reload's completion.
+        self._selected_script = None
+        self._loaded_scripts = []
+        # Task 7: a different briefing means different scripts, which means
+        # different audio -- the identical stale-window hazard fixed for
+        # scripts above, one level down.
+        self._loaded_script_audio = None
+        self._scripts_with_audio = {}
+        # Task 6: a different briefing also means different citations --
+        # the identical stale-window hazard fix round 1 fixed for scripts
+        # above, for the identical reason. Without clearing
+        # `_citation_item_lookup` too, `handle_citation_activated` could
+        # briefly resolve an id against the PREVIOUS briefing's citations
+        # in the one frame before `_load_briefings`'s reload lands.
+        self._loaded_citations = []
+        self._citation_item_lookup = {}
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            pane = None
+        if pane is not None:
+            pane.scripts = []
+            pane.selected_script = None
+            pane.script_audio = None
+            pane.scripts_with_audio = {}
+            pane.citations = []
+        self.run_worker(
+            self._load_briefings(), exclusive=True, group="wl-briefings-load"
+        )
+
+    @on(ScriptSelected)
+    def handle_script_selected(self, event: ScriptSelected) -> None:
+        """Mirror the pane's script selection, for rebuild survival --
+        the `_selected_briefing`/`handle_briefing_selected` sibling.
+
+        Task 7: a REAL selection (`event.script is not None`) also means
+        different audio to fetch -- `_loaded_script_audio` is scoped to
+        ONE script, the same way `_loaded_scripts` is scoped to one
+        briefing, and (unlike a script's own row, already fully loaded as
+        part of `_loaded_scripts`) its audio is not preloaded for every
+        script up front, so a newly selected script's audio still needs a
+        fresh read. Re-dispatches the whole `_load_briefings` (mirroring
+        `handle_briefing_selected`) rather than a narrower audio-only
+        worker, for the same one-worker-pattern reason that method's own
+        docstring gives.
+
+        Deliberately does NOT re-dispatch when `event.script is None`:
+        that case fires either from a genuine deselection or -- far more
+        commonly -- as the reactive echo of `handle_briefing_selected`
+        clearing this pane's `selected_script` to `None` itself, right
+        before dispatching its OWN `_load_briefings()` reload. Re-
+        dispatching here too would only be a second, redundant worker
+        racing the one already started.
+        """
+        event.stop()
+        self._selected_script = event.script
+        if event.script is None:
+            self._loaded_script_audio = None
+            return
+        self._loaded_script_audio = None
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            pane = None
+        if pane is not None:
+            pane.script_audio = None
+        self.run_worker(
+            self._load_briefings(), exclusive=True, group="wl-briefings-load"
+        )
+
+    @on(CitationActivated)
+    def handle_citation_activated(self, event: CitationActivated) -> None:
+        """A citation click is an OPEN (spec #2 phase 2a, Task 6 design
+        ruling -- do not relitigate): resolved exactly like clicking the
+        item's own row in the Items table, mark-read side effect included,
+        so a future "why did my item get marked read" question has THIS
+        path, not just a mouse click on the Items table, to find.
+
+        `event.item_id` was already resolved against the database when this
+        briefing was selected (`_load_briefings`, via `get_subscription_
+        items_by_ids`) -- `_citation_item_lookup` holds the result, keyed by
+        the same id. A missing key IS the pruned signal (the plan's named
+        invariant): the item existed when the briefing was written but does
+        not resolve now, and this refuses to switch sections over it --
+        there would be nothing in the reader to show, and moving the user
+        off whatever section they are on to reveal that would be worse than
+        staying put. `markup=False`: nothing here is app-authored prose the
+        toast needs escaping protection FROM, but the id came from a body an
+        LLM wrote, so the same caution `_load_briefings`'s own failure
+        toasts already take applies.
+
+        For a resolving id, switches to the Items ("Read") section --
+        `ContentPane` is only ever mounted there (`_hidden_centre_regions`)
+        -- and, once that section's `ItemsPane` exists, hands it the
+        resolved item via `ItemsPane.select_and_reveal` (NOT `handle_item_
+        selected` directly: that method's own docstring warns the pane's
+        `selected_item` reactive would go stale against the table's actual
+        cursor/scroll position). This reuses the exact `selected_item` ->
+        `watch_selected_item` -> `ItemSelected` -> `handle_item_selected`
+        path a real click already uses, so the reader update and the
+        mark-read side effect both come along for free. A cited item hidden
+        by the active items filter still opens (design ruling): `select_
+        and_reveal` sets the reactive regardless, and the cursor simply
+        stays put rather than pointing at a row that is not on screen.
+
+        The section switch is not visible to a query until the NEXT
+        recompose (`watch_active_section`'s own `refresh(recompose=True)`
+        is asynchronous, not immediate), so opening the item is deferred by
+        one short timer -- the identical idiom `handle_edit_rule_requested`
+        already uses to act on a freshly-switched section's pane.
+        """
+        event.stop()
+        item = self._citation_item_lookup.get(event.item_id)
+        if item is None:
+            self._notify_watchlists(
+                f"Item {event.item_id} is no longer available.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        self.active_section = "items"
+
+        def _open_citation() -> None:
+            if not self.is_mounted:
+                return
+            try:
+                items_pane = self.query_one("#watchlists-items-pane", ItemsPane)
+            except NoMatches:
+                return
+            items_pane.select_and_reveal(item)
+
+        self.set_timer(0.05, _open_citation)
+
+    @on(RefreshBriefingsRequested)
+    def handle_refresh_briefings_requested(
+        self, event: RefreshBriefingsRequested
+    ) -> None:
+        event.stop()
+        self.run_worker(
+            self._load_briefings(), exclusive=True, group="wl-briefings-load"
+        )
+
+    # --- Exporting a briefing as markdown (spec #2 phase 3, Task 1) --------
+
+    @on(ExportBriefingRequested)
+    def handle_export_briefing_requested(
+        self, event: ExportBriefingRequested
+    ) -> None:
+        """Claim the one-export-at-a-time guard, then dispatch.
+
+        `ArtifactsPane.compose` already disables Export for no-selection
+        and any non-`complete` status, but this handler re-checks both
+        anyway: the button's disabled state and the message it posts are
+        two different frames, and a press already in flight when the
+        selection changes underneath it must not be trusted just because
+        it once passed a disabled check.
+
+        Review round 1 (Important #1): an earlier draft shipped with no
+        guard at all, reasoning that Textual "refuses to stack" a second
+        `FileSave`. A live repro of two rapid presses disproved that --
+        the screen stack ended up `['FileSave', 'FileSave']`, two live
+        dialogs, not one refused. `_briefing_export_in_flight` is claimed
+        HERE, before `run_worker` -- the same reason `_briefing_in_flight`
+        is claimed before ITS `run_worker` in `handle_generate_briefing_
+        requested`: claiming inside the worker body leaves a window where
+        two presses both pass the check before either sets the flag.
+        """
+        event.stop()
+        briefing = self._selected_briefing
+        if briefing is None or str(briefing.get("status") or "").strip().lower() != (
+            STATUS_COMPLETE
+        ):
+            self._notify_watchlists(
+                "Select a completed briefing to export.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if self._briefing_export_in_flight:
+            self._notify_watchlists(
+                "A briefing export is already in progress. Nothing else "
+                "was started.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        watchlist_id = briefing.get("watchlist_id")
+        watchlist_name = (
+            self._watchlist_display_name(watchlist_id)
+            if watchlist_id is not None
+            else "this watchlist"
+        )
+        self._briefing_export_in_flight = True
+        self.run_worker(
+            self._push_export_briefing_dialog(dict(briefing), watchlist_name),
+            group="wl-briefing-export",
+        )
+
+    async def _push_export_briefing_dialog(
+        self, briefing: dict[str, Any], watchlist_name: str
+    ) -> None:
+        """Push `FileSave`, seeded with a sanitized default filename.
+
+        Mirrors `_export_library_note`'s flow (`library_screen.py:6428`):
+        a `FileSave` prompt pre-filled with a sanitized default filename,
+        whose callback writes the export once a path is chosen. Imports
+        the VENDORED picker (`Third_Party.textual_fspicker.FileSave`,
+        keyword `default_file`) -- not the enhanced picker in `Widgets/
+        enhanced_file_picker.py`, a different class whose keyword is
+        `default_filename` and which also takes `context=`; mixing the two
+        raises `TypeError`.
+
+        `briefing["watchlist_name"]` is merged in here, once, rather than
+        threaded through as a separate parameter to every downstream
+        function: `briefing_markdown_document`/`default_briefing_filename`
+        both read it directly off the mapping they are given.
+
+        Does NOT clear `_briefing_export_in_flight` on the ordinary
+        success path: `await self.app.push_screen(...)` returns once the
+        dialog is MOUNTED, not once the user has chosen a path or
+        cancelled -- clearing the guard here would re-open the window a
+        second press could race through while the first dialog is still
+        on screen. `_write_briefing_export_file` (the callback) is what
+        clears it, in its own `finally`, once the dialog actually
+        resolves. The guard IS cleared here on any path that never reaches
+        that callback at all -- a failure to even open the dialog, or the
+        worker being cancelled while awaiting the push.
+
+        Review round 1 named a real (if not currently exploitable) gap
+        here: the original shape cleared the guard inside `except
+        Exception`, which does NOT catch `asyncio.CancelledError` (a
+        `BaseException` since Python 3.8) -- a worker cancelled mid-`await
+        self.app.push_screen(...)` would skip straight past that `except`
+        with the guard still `True`, stranding Export shut for the rest of
+        this screen instance's life. Not reachable today (nothing cancels
+        this worker's `wl-briefing-export` group, and the flag dies with
+        the screen instance regardless), but `_generate_briefing`'s own
+        try/finally shape fixes it for free: `finally` runs for *every*
+        exit path, including a `BaseException`, so the `pushed` sentinel
+        below -- set only once the dialog has actually mounted -- is
+        enough to tell "never reached the callback" apart from "did" --
+        without needing a second `except` clause for cancellation.
+        """
+        pushed = False
+        try:
+            enriched = {**briefing, "watchlist_name": watchlist_name}
+            default_filename = default_briefing_filename(
+                enriched, watchlist_name=watchlist_name
+            )
+            await self.app.push_screen(
+                FileSave(
+                    location=str(Path.home()),
+                    title="Export Briefing as Markdown",
+                    default_file=default_filename,
+                ),
+                callback=lambda path: self._write_briefing_export_file(
+                    path, enriched
+                ),
+            )
+            pushed = True
+        except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
+            logger.warning(f"Failed to open the export dialog: {type(exc).__name__}")
+            self._notify_watchlists(
+                "Could not open the export dialog.",
+                severity="error",
+                markup=False,
+            )
+        finally:
+            if not pushed:
+                self._briefing_export_in_flight = False
+
+    async def _write_briefing_export_file(
+        self, selected_path: Path | None, briefing: Mapping[str, Any]
+    ) -> None:
+        """Validate the chosen path, build the document, and write it.
+
+        Mirrors `_write_library_note_export_file`'s validate -> write ->
+        honest-toasts shape (`library_screen.py:6445`), with three
+        deliberate differences this feature's own rules (and review round
+        1) require: the write itself runs in `asyncio.to_thread` (a
+        `FileSave`-chosen destination can be anywhere, including a slow or
+        network-mounted path, so the write must never block the event
+        loop); exception logging is type-only -- never `logger.opt(
+        exception=True)`, and never the briefing body; and the write's
+        `except` is broad (`Exception`, not just `OSError`) -- review
+        round 1 (Important #2) confirmed a `UnicodeEncodeError` (entirely
+        plausible from model/feed-derived body text) escaped uncaught
+        under the narrower catch, a silent failure with no toast at all.
+        `asyncio.CancelledError` is deliberately re-raised rather than
+        caught by that broad except: a cancelled worker must not be
+        reported as a failed export.
+
+        `_briefing_export_in_flight` is cleared in `finally`, on every
+        exit path -- cancelled, rejected path, export-error, write
+        failure, or success alike -- so a cancel or a refusal never wedges
+        Export shut for the rest of the session (review round 1's own
+        re-arm requirement).
+
+        Args:
+            selected_path: The chosen destination, or `None` if the
+                dialog was cancelled.
+            briefing: The briefing row, with `watchlist_name` merged in by
+                `_push_export_briefing_dialog`.
+        """
+        try:
+            if not selected_path:
+                self._notify_watchlists(
+                    "Briefing export cancelled.", severity="information"
+                )
+                return
+            try:
+                validated_path = validate_path_simple(
+                    selected_path, require_exists=False
+                )
+            except ValueError as exc:
+                logger.warning(
+                    f"Rejected briefing export path: {type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    f"Rejected export path: {exc}",
+                    severity="warning",
+                    markup=False,
+                )
+                return
+            try:
+                document = briefing_markdown_document(briefing)
+            except BriefingExportError as exc:
+                self._notify_watchlists(str(exc), severity="warning", markup=False)
+                return
+            try:
+                await asyncio.to_thread(
+                    validated_path.write_text, document, encoding="utf-8"
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    f"Briefing export write failed: {type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    f"Error exporting briefing: {type(exc).__name__}",
+                    severity="error",
+                    markup=False,
+                )
+                return
+            self._notify_watchlists(
+                f"Briefing exported successfully to {validated_path.name}",
+                severity="information",
+                markup=False,
+            )
+        finally:
+            self._briefing_export_in_flight = False
+
+    # --- Keeping a briefing into ChaChaNotes (task-1780, Task 5) ------------
+    #
+    # `briefing_keep.keep_briefing` (Task 2) is the one writer for
+    # `kept_briefings`/`kept_scripts`; this handler is only "mount/dismiss
+    # wiring" around it, the same division of labour every service on this
+    # screen already gets (`generate_briefing`/`generate_script` and their
+    # own handlers). Additive-idempotent and safe to press again on an
+    # already-kept briefing -- the honest re-keep toast below is what makes
+    # that safe to do BY DESIGN rather than by accident.
+
+    @on(KeepBriefingRequested)
+    def handle_keep_briefing_requested(self, event: KeepBriefingRequested) -> None:
+        """Re-check both requirements, claim the guard, then dispatch.
+
+        `ArtifactsPane.compose` already disables Keep without a complete
+        selection or without a ChaChaNotes handle, but this handler
+        re-checks both anyway -- the button's disabled state and the
+        message it posts are two different frames, exactly the same
+        reasoning `handle_export_briefing_requested`'s own docstring gives
+        for its identical re-check.
+
+        `_keep_in_flight` is claimed HERE, before `run_worker`, for the
+        same reason every other in-flight guard on this screen is: a check
+        made inside the worker body leaves a window where two presses both
+        pass before either sets the flag.
+        """
+        event.stop()
+        briefing = self._selected_briefing
+        subs_db = self._briefings_db()
+        chacha_db = self._chachanotes_db()
+        if (
+            briefing is None
+            or str(briefing.get("status") or "").strip().lower() != STATUS_COMPLETE
+            or subs_db is None
+            or chacha_db is None
+        ):
+            self._notify_watchlists(
+                "Select a completed briefing to keep it.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if self._keep_in_flight:
+            self._notify_watchlists(
+                "A keep is already in progress. Nothing else was started.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        self._keep_in_flight = True
+        self.run_worker(
+            self._keep_briefing(subs_db, chacha_db, briefing["id"]),
+            group="wl-keep",
+        )
+
+    async def _keep_briefing(
+        self, subs_db: Any, chacha_db: Any, briefing_id: int
+    ) -> None:
+        """Worker body: keep, then toast honestly. Sibling of `_generate_
+        briefing`/`_cast_script`: one bare `except` around the DB call
+        turns a database error into a toast instead of taking the whole
+        app down (an exception escaping a Textual worker with the default
+        `exit_on_error=True` does exactly that).
+
+        `KeepRefused` is caught separately, first: `keep_briefing`'s own
+        honest, safe-to-show-verbatim pre-flight refusal (a missing
+        briefing, a non-`complete` status, or an empty body) -- none of
+        these are reachable through this handler's own re-check above in
+        practice (the selection was already re-verified `complete`), but
+        the selected briefing's status could still change between that
+        check and this worker actually running (a concurrent Refresh, or a
+        second window against the same database file), so this stays a
+        real, not merely defensive, branch.
+
+        The success toast reports the two branches `keep_briefing` itself
+        distinguishes (spec, and this task's own AC): `created=True` says
+        how many scripts came along; `created=False` (a re-keep) says the
+        briefing was already kept and reports only what was newly added --
+        the additive-idempotent re-keep, surfaced honestly rather than
+        claiming a fresh keep happened.
+        """
+        try:
+            try:
+                result = await asyncio.to_thread(
+                    keep_briefing, subs_db, chacha_db, briefing_id, origin="manual"
+                )
+            except KeepRefused as exc:
+                self._notify_watchlists(str(exc), severity="warning", markup=False)
+                return
+            except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
+                logger.warning(
+                    f"Keep failed for briefing {briefing_id}: {type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Could not keep this briefing: the database could not "
+                    "be reached. Nothing was recorded.",
+                    severity="error",
+                    markup=False,
+                )
+                return
+            scripts_added = result["scripts_added"]
+            if result["created"]:
+                message = f"Kept with {scripts_added} scripts"
+            else:
+                message = f"Already kept — added {scripts_added} new scripts"
+            self._notify_watchlists(message, severity="information", markup=False)
+        finally:
+            self._keep_in_flight = False
+
+    # --- Kept briefings modal (task-1780, Task 5) ---------------------------
+    #
+    # Deliberately scope-independent -- see `KeptBriefingsRequested`'s own
+    # docstring. Gated on nothing but a live ChaChaNotes handle: unlike
+    # `_open_briefing_preset_manager` (which refuses without `_briefings_db
+    # ()` too, since a preset IS a `SubscriptionsDB` row), this modal's own
+    # content lives entirely in ChaChaNotes, and `subs_db` here is merely an
+    # optional convenience the modal degrades gracefully without (see
+    # `KeptBriefingsModal`'s own module docstring).
+
+    @on(KeptBriefingsRequested)
+    def handle_kept_briefings_requested(self, event: KeptBriefingsRequested) -> None:
+        """Wire the toolbar's "Kept Briefings…" button to the modal opener.
+
+        No `exclusive=True` -- `_open_kept_briefings_modal` owns a modal via
+        `push_screen_wait`, and `_open_briefing_preset_manager`'s own
+        sibling handler states exactly why an exclusive worker is the wrong
+        tool for that: cancelling one mid-view would leave its modal on the
+        screen stack with nothing left to dismiss it.
+        """
+        event.stop()
+        chacha_db = self._chachanotes_db()
+        if chacha_db is None:
+            self._notify_watchlists(
+                "Connect a ChaChaNotes database to browse kept briefings.",
+                severity="error",
+                markup=False,
+            )
+            return
+        self.run_worker(
+            self._open_kept_briefings_modal(chacha_db),
+            group="wl-kept-briefings",
+        )
+
+    async def _open_kept_briefings_modal(self, chacha_db: Any) -> None:
+        """Push `KeptBriefingsModal`, then forget it -- it owns its own
+        reads and writes, and this screen holds no kept-briefing state of
+        its own to refresh afterward (see the modal's own dismiss-protocol
+        docstring).
+
+        `subs_db` may be `None` (the watchlist bundle service itself is
+        unavailable) -- the modal is built to degrade around that, offering
+        only the app-default cast (see its own module docstring). `load_
+        character` reuses `_cast_load_character`, the SAME resolver the
+        screen's own live-cast path (`_cast_script`) already builds for an
+        identical reason: a roster speaker bound to a character card must
+        resolve against the SAME database this screen would use anywhere
+        else, not a second, differently-scoped lookup.
+        """
+        subs_db = self._briefings_db()
+        await self.app.push_screen_wait(
+            KeptBriefingsModal(
+                chacha_db,
+                subs_db=subs_db,
+                load_character=self._cast_load_character,
+            )
+        )
+
+    # --- Exporting a watchlist's podcast feed directory (spec #2 phase -----
+    # 3, Task 5). Sibling of the markdown-export flow immediately above in
+    # every respect that matters: an independent in-flight guard
+    # (`_feed_export_in_flight` -- deliberately its OWN flag, not reused
+    # from `_briefing_export_in_flight`, since a briefing export and a
+    # feed export are two independent actions with two different
+    # destinations a user could plausibly run at the same time), claimed
+    # before `run_worker` for the identical reason
+    # `handle_export_briefing_requested`'s docstring gives, and a picker
+    # pushed via `push_screen(..., callback=...)` rather than `push_
+    # screen_wait` -- NOT `exclusive=True` on the worker either.
+    #
+    # Review round 1: the durable reason, confirmed by the reviewer, is
+    # structural rather than just "the guard already prevents a second
+    # dispatch." `Screen._push_result_callback` wraps the callback in a
+    # `ResultCallback`, and `ResultCallback.__call__` -- what `Screen.
+    # dismiss` invokes -- schedules it via `requester.call_next(...)`,
+    # i.e. onto the REQUESTER's (this screen's) own message pump, never
+    # back inside the `wl-feed-export` worker. `_push_export_feed_dialog`'s
+    # entire life is therefore the single `await self.app.push_screen(...)`
+    # that returns once `SelectDirectory` MOUNTS -- by the time a user
+    # could ever pick a path or cancel, that worker has already finished
+    # and exited; `_export_feed_directory` (where the guard actually
+    # clears) never runs inside it at all. `exclusive=True` cancelling a
+    # "previous" worker in this group is therefore a no-op on every
+    # reachable path: there is nothing long-lived left to cancel, and the
+    # `_start_tree_write`-style zombie-modal failure mode (a live worker
+    # still awaiting a picker's dismissal, cancelled out from under it) is
+    # structurally impossible here -- not merely guarded against. Left
+    # here anyway as belt-and-suspenders should a future refactor route
+    # the guard differently: the boolean check below still makes a second
+    # dispatch impossible while one is in flight, so `exclusive` would
+    # only ever fire on a bug in THAT guard.
+    #
+    # Two differences from the markdown flow, both Task 4's own contract:
+    # the destination must already EXIST (`export_feed_directory`'s own
+    # `validate_path_simple(..., require_exists=True)`, which is exactly
+    # what `SelectDirectory` -- a directory BROWSER, not a name prompt --
+    # ever hands back), and a partial export (some episodes skipped) is a
+    # SUCCESSFUL result, not an error: `FeedExportResult.skipped` exists
+    # precisely so the toast can say "N of M exported" rather than
+    # silently claiming everything landed.
+
+    @on(ExportFeedRequested)
+    def handle_export_feed_requested(self, event: ExportFeedRequested) -> None:
+        """Claim the one-feed-export-at-a-time guard, then dispatch.
+
+        Re-checks `_watchlist_has_audio_episodes` even though `Artifacts
+        Pane.compose` already disables the button for the same reason
+        `handle_export_briefing_requested`'s own docstring gives: the
+        button's disabled state and the message this handler acts on are
+        two different frames, and a press already in flight when the
+        underlying audio changes underneath it must not be trusted just
+        because it once passed a disabled check.
+        """
+        event.stop()
+        db = self._briefings_db()
+        watchlist_id = self._briefing_watchlist_id()
+        if db is None or watchlist_id is None:
+            self._notify_watchlists(
+                "Select a watchlist in the rail to export its feed.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if not self._watchlist_has_audio_episodes:
+            self._notify_watchlists(
+                "This watchlist has no complete audio episodes to export.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if self._feed_export_in_flight:
+            self._notify_watchlists(
+                "A feed export is already in progress. Nothing else was "
+                "started.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        watchlist_name = self._watchlist_display_name(watchlist_id)
+        self._feed_export_in_flight = True
+        # `db`/`watchlist_id`/`watchlist_name` are snapshotted here, on the
+        # UI thread, alongside the rest of this synchronous dispatch --
+        # not re-read from `self` later, so a concurrent scope change on
+        # the rail cannot redirect an export already in flight to a
+        # different watchlist's audio.
+        self.run_worker(
+            self._push_export_feed_dialog(db, watchlist_id, watchlist_name),
+            group="wl-feed-export",
+        )
+
+    async def _push_export_feed_dialog(
+        self, db: Any, watchlist_id: int, watchlist_name: str
+    ) -> None:
+        """Push `SelectDirectory`, starting from the user's home directory.
+
+        Mirrors `_push_export_briefing_dialog` exactly, including its own
+        review-round-1 fix: `pushed` is set only once the dialog has
+        actually mounted, so `finally` clears the guard on any path that
+        never reaches `_export_feed_directory` (the callback) at all -- a
+        failure to even open the dialog, or this worker being cancelled
+        while awaiting the push.
+        """
+        pushed = False
+        try:
+            await self.app.push_screen(
+                SelectDirectory(str(Path.home()), title="Export Podcast Feed"),
+                callback=lambda path: self._export_feed_directory(
+                    db, watchlist_id, watchlist_name, path
+                ),
+            )
+            pushed = True
+        except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
+            logger.warning(
+                f"Failed to open the feed export dialog: {type(exc).__name__}"
+            )
+            self._notify_watchlists(
+                "Could not open the feed export dialog.",
+                severity="error",
+                markup=False,
+            )
+        finally:
+            if not pushed:
+                self._feed_export_in_flight = False
+
+    #: Task 5 (phase 3), review round 1, Minor #2: the ceiling on how many
+    #: of `FeedExportResult.skipped`'s reasons are inlined into the
+    #: partial-export toast. `export_feed_directory` can skip arbitrarily
+    #: many episodes, and a toast quoting every one of them is unreadable
+    #: long before it gets there -- the headline "N of M" count already
+    #: states the honest outcome; these are just the first few reasons,
+    #: for a user who wants to know why.
+    _MAX_INLINE_SKIP_REASONS = 3
+
+    #: Every reason `export_feed_directory` writes is `f"audio {audio_id}:
+    #: ..."` (that module's own docstring, decision 3) -- the id is
+    #: load-bearing for support/debugging (kept in the log line in
+    #: `_export_feed_directory` below) but means nothing to a user reading
+    #: a toast, so it is stripped before any reason reaches one.
+    _SKIP_REASON_ID_PREFIX = re.compile(r"^audio \d+: ")
+
+    @classmethod
+    def _user_facing_skip_reasons(cls, reasons: list[str]) -> str:
+        """The first `_MAX_INLINE_SKIP_REASONS` of `reasons`, id-stripped
+        and joined for a toast.
+
+        Args:
+            reasons: `FeedExportResult.skipped`, verbatim.
+
+        Returns:
+            `"reason one; reason two; reason three; …and 4 more"` -- or
+            just the id-stripped reasons, joined, with no trailer, when
+            `len(reasons) <= _MAX_INLINE_SKIP_REASONS`.
+        """
+        stripped = [cls._SKIP_REASON_ID_PREFIX.sub("", reason, count=1) for reason in reasons]
+        shown = stripped[: cls._MAX_INLINE_SKIP_REASONS]
+        remaining = len(stripped) - len(shown)
+        text = "; ".join(shown)
+        return f"{text}; …and {remaining} more" if remaining > 0 else text
+
+    async def _export_feed_directory(
+        self,
+        db: Any,
+        watchlist_id: int,
+        watchlist_name: str,
+        selected_path: Path | None,
+    ) -> None:
+        """Validate the chosen directory, export the feed, and toast honestly.
+
+        All DB and filesystem work -- `export_feed_directory` itself --
+        runs in ONE `asyncio.to_thread` hop; that function does its own
+        destination validation (`require_exists=True`, matching what
+        `SelectDirectory` ever hands back), the per-episode safety checks
+        and copies, and the atomic `feed.xml` write.
+
+        A partial export (`result.skipped` non-empty) is reported as
+        exactly that -- "N of M episodes exported", plus up to `_MAX_
+        INLINE_SKIP_REASONS` of the reasons `export_feed_directory` wrote
+        (id-stripped -- see `_user_facing_skip_reasons`), with an honest
+        "…and N more" trailer past that cap -- never collapsed into a
+        plain success toast. `_feed_export_in_flight` is cleared in
+        `finally`, on every exit path (cancelled, rejected destination,
+        export-error, or success alike), mirroring `_write_briefing_
+        export_file`'s own re-arm guarantee.
+
+        Args:
+            db: Snapshotted by the handler at dispatch time.
+            watchlist_id: Snapshotted by the handler at dispatch time.
+            watchlist_name: Snapshotted by the handler at dispatch time.
+            selected_path: The chosen destination directory, or `None` if
+                the dialog was cancelled.
+        """
+        try:
+            if not selected_path:
+                self._notify_watchlists(
+                    "Feed export cancelled.", severity="information"
+                )
+                return
+            try:
+                result = await asyncio.to_thread(
+                    export_feed_directory,
+                    db,
+                    watchlist_id,
+                    destination=selected_path,
+                    watchlist_name=watchlist_name,
+                    now=datetime.now(timezone.utc),
+                )
+            except asyncio.CancelledError:
+                raise
+            except ValueError as exc:
+                logger.warning(
+                    f"Rejected feed export destination: {type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    f"Rejected export destination: {exc}",
+                    severity="warning",
+                    markup=False,
+                )
+                return
+            except Exception as exc:
+                logger.warning(f"Feed export failed: {type(exc).__name__}")
+                self._notify_watchlists(
+                    f"Error exporting the feed: {type(exc).__name__}",
+                    severity="error",
+                    markup=False,
+                )
+                return
+            # task-1760: a successful export (partial or full -- either way
+            # `result.directory` holds a real, just-written `feed.xml`) is
+            # now something the Serve button can act on. Recorded here,
+            # not only inside the two toast branches below, so it applies
+            # to both outcomes -- and patched onto the mounted pane
+            # directly (the same "patch it in place" idiom `_sync_feed_
+            # server_pane_state` uses elsewhere), since a fresh export can
+            # arrive while Artifacts is already on screen.
+            self._last_feed_export_directory = result.directory
+            self._sync_feed_server_pane_state()
+            # task-1760 review, L1: a running server keeps serving whatever
+            # directory it was STARTED with -- `FeedDirectoryServer` never
+            # picks up a later export on its own (refuses a second `start()`
+            # instead, `start`'s own docstring). If this export landed
+            # somewhere other than that directory, the running server is
+            # now silently stale: the only prior explanation was the Serve
+            # button's own disabled state, easy to miss. Said only when it
+            # actually differs -- a re-export into the SAME directory is
+            # already reflected live, since the server reads from disk on
+            # every request rather than caching anything.
+            still_serving_stale_export = (
+                self._feed_server.is_running
+                and self._feed_server.directory != result.directory
+            )
+            stale_export_note = (
+                " Still serving the previously-exported folder — Stop "
+                "Serving and Serve again to publish this export."
+                if still_serving_stale_export
+                else ""
+            )
+            total = result.episode_count + len(result.skipped)
+            if result.skipped:
+                # Honest, not a success toast: this is Task 4's own named
+                # invariant (`FeedExportResult.skipped`'s docstring) applied
+                # at the UI boundary -- a user who exported ten episodes and
+                # got eight must be told, in the reasons `export_feed_
+                # directory` already wrote in plain language.
+                #
+                # Review round 1, Minor #2: the FULL list (with each
+                # episode's `audio_id`, useful for support) is logged
+                # here -- these are already-benign, app-generated reason
+                # strings, never model/user content, so this is not the
+                # "type only" rule `logger.warning` calls elsewhere on this
+                # screen apply to an exception. The TOAST gets a separate,
+                # user-facing rendering: capped to `_MAX_INLINE_SKIP_
+                # REASONS` (with an honest "…and N more" trailer) and with
+                # the internal `audio {id}:` prefix stripped, since a raw
+                # database id means nothing to a user.
+                logger.info(
+                    f"Feed export for watchlist {watchlist_id} skipped "
+                    f"{len(result.skipped)} of {total} episode(s): "
+                    f"{'; '.join(result.skipped)}"
+                )
+                reasons = self._user_facing_skip_reasons(result.skipped)
+                self._notify_watchlists(
+                    f"Exported {result.episode_count} of {total} episodes "
+                    f"to {result.directory.name} ({reasons})."
+                    f"{stale_export_note}",
+                    severity="warning",
+                    markup=False,
+                )
+            else:
+                plural = "" if result.episode_count == 1 else "s"
+                self._notify_watchlists(
+                    f"Exported {result.episode_count} episode{plural} to "
+                    f"{result.directory.name}.{stale_export_note}",
+                    severity="information" if not stale_export_note else "warning",
+                    markup=False,
+                )
+        finally:
+            self._feed_export_in_flight = False
+
+    # --- Serving the exported feed directory over localhost (task-1760) -----
+    #
+    # `Subscriptions.feed_server.FeedDirectoryServer` does the actual work
+    # (a `ThreadingHTTPServer` on a daemon thread); this screen only owns
+    # ONE instance of it (`self._feed_server`, constructed in `__init__`)
+    # and decides when to start/stop it. No `run_worker` here, unlike every
+    # other action on this screen: `start()` binds a socket and spawns a
+    # thread with no `await` boundary, and `stop()` -- after the task-1760
+    # review's M2 fix, which starts `serve_forever` at a 50ms poll interval
+    # instead of the stdlib's 0.5s default -- now blocks the UI thread for
+    # roughly a tenth of what it used to (measured ~50ms here vs. a
+    # measured ~501ms before the fix), a bound this screen accepts as
+    # "fast enough not to need a worker" rather than eliminating entirely;
+    # see `FeedDirectoryServer.stop`'s own docstring for the mechanics.
+    # Both handlers re-check state before acting, the same "the button's
+    # disabled state and the message it posts are two different frames"
+    # reasoning `handle_export_feed_requested` already states for its own
+    # re-check.
+
+    def _sync_feed_server_pane_state(self) -> None:
+        """Patch the mounted `ArtifactsPane`'s feed-server reactives from
+        this screen's own state, if the pane is currently mounted.
+
+        Called after every state change (a fresh export, Serve, Stop) --
+        the same "patch it in place, never rebuild via `self.refresh
+        (recompose=True)`" idiom the picker writers use (see
+        `handle_briefing_mode_changed`'s own comment), for the identical
+        reason: a full workbench rebuild is a much bigger hammer than one
+        widget's reactive assignment, and `_build_detail_pane` already
+        seeds a FRESH pane from this same state on every rebuild anyway,
+        so nothing is lost if this screen is not showing Artifacts (or not
+        attached) when this is called.
+        """
+        if not self.is_attached:
+            return
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            return
+        pane.can_serve_feed = self._last_feed_export_directory is not None
+        pane.feed_server_running = self._feed_server.is_running
+        pane.feed_server_url = self._feed_server.url
+
+    @on(ServeFeedRequested)
+    def handle_serve_feed_requested(self, event: ServeFeedRequested) -> None:
+        """Re-check both requirements, then start the server.
+
+        Refuses (names the running URL) rather than restarting when a
+        server is already running -- `FeedDirectoryServer.start`'s own
+        docstring states why refusing was chosen as the simpler of the two
+        options task-1760's plan allowed: a caller that wants to serve a
+        DIFFERENT directory presses Stop first. `ArtifactsPane.compose`
+        already disables the button in both refusal cases, but this
+        re-checks anyway, for the identical reason every other handler on
+        this screen does.
+        """
+        event.stop()
+        if self._last_feed_export_directory is None:
+            self._notify_watchlists(
+                "Export a feed directory first, then serve it.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if self._feed_server.is_running:
+            self._notify_watchlists(
+                f"A feed is already being served at {self._feed_server.url}. "
+                "Stop it before serving a different directory.",
+                severity="warning",
+                markup=False,
+            )
+            return
+
+        bind, port = configured_bind_and_port()
+        try:
+            url = self._feed_server.start(
+                self._last_feed_export_directory, bind=bind, port=port
+            )
+        except (FeedServerError, OSError) as exc:
+            logger.warning(f"Could not start the feed server: {type(exc).__name__}")
+            self._notify_watchlists(
+                "Could not start the feed server. Nothing is being served.",
+                severity="error",
+                markup=False,
+            )
+            return
+        self._sync_feed_server_pane_state()
+        # AC #4's posture, restated at the moment it matters most: every
+        # time serving actually starts, not merely in a docstring or the
+        # user guide. `markup=False` -- this interpolates a URL and (in
+        # the widened-bind branch) a bind address this process itself
+        # built/resolved (never model or remote content), but every toast
+        # on this screen that is not a hand-written literal already takes
+        # this same posture.
+        #
+        # task-1760 review, M4: says "this folder AND its subfolders" --
+        # not just "the feed" -- since serving is recursive and the export
+        # picker can point at any folder the user chooses, up to and
+        # including their home directory.
+        message = (
+            f"Serving the exported feed at {url}. No authentication — "
+            "anyone who can reach this address can read every file in "
+            "this folder and its subfolders while it is serving."
+        )
+        # task-1760 review, M3: the posture above assumes loopback-only.
+        # When the actually-bound address is NOT loopback (a deliberate
+        # widening, or a config value that survived `_normalize_bind`
+        # because it was a real address rather than blank/typo'd), say so
+        # here too -- not just in the one-time `logger.warning` `start()`
+        # already emits -- since this toast is what a user actually sees.
+        served_bind = self._feed_server.bind
+        if served_bind is not None and not is_loopback_bind(served_bind):
+            message += (
+                f" This is bound to {served_bind}, which is reachable "
+                "from beyond this machine, not just localhost."
+            )
+        self._notify_watchlists(message, severity="warning", markup=False)
+
+    @on(StopFeedServerRequested)
+    def handle_stop_feed_server_requested(
+        self, event: StopFeedServerRequested
+    ) -> None:
+        event.stop()
+        if not self._feed_server.is_running:
+            self._notify_watchlists(
+                "Nothing is being served.", severity="warning", markup=False
+            )
+            return
+        self._feed_server.stop()
+        self._sync_feed_server_pane_state()
+        self._notify_watchlists(
+            "Stopped serving the feed.", severity="information", markup=False
+        )
+
+    def on_unmount(self) -> None:
+        """Stop the feed server so a running listening socket never
+        outlives this screen.
+
+        The server's own thread is a daemon (`FeedDirectoryServer.start`),
+        so it would not by itself block the app from exiting -- but
+        leaving it running is still a wedged, forgotten listening socket
+        for as long as the app process stays up otherwise (switching away
+        from Watchlists, or closing this screen, must not silently keep
+        serving). `is_running` guards a redundant `stop()` on a screen that
+        never served anything, exactly like `ArtifactsScreen.on_unmount`'s
+        own guard around its worker cancellation.
+        """
+        if self._feed_server.is_running:
+            self._feed_server.stop()
+        super().on_unmount()
+
+    # --- Briefing selection-mode, default-preset, and cadence pickers -------
+    # (Task 4, phase 2a; cadence added by Task 4, phase 4)
+    #
+    # Same write-first-patch-after shape as `handle_toggle_briefing_queue_
+    # requested` -> `_toggle_briefing_queue`: the handler answers the
+    # no-database case from memory and dispatches a worker; the worker does
+    # the write off the UI thread (`asyncio.to_thread`), then on success
+    # patches `_briefing_selection_mode`/`_briefing_default_preset_id`/
+    # `_briefing_cadence_seconds` and the mounted pane's matching reactive
+    # DIRECTLY -- never `_load_briefings()`, which would re-query the
+    # database for a value this write already knows. No `exclusive=True`:
+    # each picker's own writes target a single row with `UPDATE ... WHERE
+    # id = ?`, so two overlapping presses are safe to interleave (last write
+    # wins), and cancelling one mid-write would leave `_briefing_selection_
+    # mode`/`_briefing_default_preset_id`/`_briefing_cadence_seconds`
+    # disagreeing with what actually landed in the database.
+
+    @on(BriefingModeChanged)
+    def handle_briefing_mode_changed(self, event: BriefingModeChanged) -> None:
+        event.stop()
+        db = self._briefings_db()
+        watchlist_id = self._briefing_watchlist_id()
+        if db is None or watchlist_id is None:
+            self._notify_watchlists(
+                "Could not reach the local database, so nothing was saved.",
+                severity="error",
+            )
+            return
+        self.run_worker(
+            self._write_briefing_selection_mode(db, watchlist_id, event.mode),
+            group="wl-briefing-settings-write",
+        )
+
+    async def _write_briefing_selection_mode(
+        self, db: Any, watchlist_id: int, mode: str
+    ) -> None:
+        try:
+            await asyncio.to_thread(
+                db.set_watchlist_briefing_settings,
+                watchlist_id,
+                selection_mode=mode,
+            )
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            logger.warning(
+                f"Failed to save the selection mode for watchlist "
+                f"{watchlist_id}: {type(exc).__name__}"
+            )
+            if self.is_attached:
+                self._notify_watchlists(
+                    "Could not save the selection mode. Nothing changed.",
+                    severity="error",
+                )
+            return
+        # Whole-branch review fix wave, Important #3: the write above is
+        # correctly keyed to `watchlist_id` captured at dispatch and needs
+        # no change, but this in-memory patch runs on the SCREEN, which is
+        # global, singular state -- if the user switched Artifacts to a
+        # DIFFERENT watchlist while this write was still in flight, `self.
+        # _briefing_selection_mode`/the pane's reactive must not be
+        # clobbered with the watchlist THIS write was about. Only patch
+        # when the screen is still scoped to the same watchlist; the
+        # scope-change path (`watch_tree_scope`) already re-dispatched its
+        # own `_load_briefings()` reload the moment the scope moved, so the
+        # new watchlist's own settings are not lost -- just not overwritten
+        # by this stale completion. This guard has no mutation test of its
+        # own: the claim is carried by
+        # `test_switching_watchlists_mid_write_does_not_let_the_stale_write_clobber_the_new_one`,
+        # which pins the identical guard on the preset writer below.
+        if self._briefing_watchlist_id() != watchlist_id:
+            return
+        self._briefing_selection_mode = mode
+        if not self.is_attached:
+            return
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            return
+        pane.selection_mode = mode
+
+    @on(BriefingDefaultPresetChanged)
+    def handle_briefing_default_preset_changed(
+        self, event: BriefingDefaultPresetChanged
+    ) -> None:
+        event.stop()
+        db = self._briefings_db()
+        watchlist_id = self._briefing_watchlist_id()
+        if db is None or watchlist_id is None:
+            self._notify_watchlists(
+                "Could not reach the local database, so nothing was saved.",
+                severity="error",
+            )
+            return
+        self.run_worker(
+            self._write_briefing_default_preset(db, watchlist_id, event.preset_id),
+            group="wl-briefing-settings-write",
+        )
+
+    async def _write_briefing_default_preset(
+        self, db: Any, watchlist_id: int, preset_id: int | None
+    ) -> None:
+        try:
+            await asyncio.to_thread(
+                db.set_watchlist_briefing_settings,
+                watchlist_id,
+                default_preset_id=preset_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            logger.warning(
+                f"Failed to save the default preset for watchlist "
+                f"{watchlist_id}: {type(exc).__name__}"
+            )
+            if self.is_attached:
+                self._notify_watchlists(
+                    "Could not save the default preset. Nothing changed.",
+                    severity="error",
+                )
+            return
+        # Whole-branch review fix wave, Important #3: see the identical
+        # note in `_write_briefing_selection_mode` -- the DB write above is
+        # correctly keyed to `watchlist_id` and needs no change, but this
+        # patch must not land if Artifacts has since moved to a different
+        # watchlist. `handle_generate_briefing_requested:3880` reads `self.
+        # _briefing_default_preset_id` at ITS OWN dispatch time, so an
+        # unguarded patch here is not merely cosmetic: a Generate press for
+        # a DIFFERENT, newly-scoped watchlist could otherwise pick up a
+        # preset id that belongs to the watchlist this write was about.
+        if self._briefing_watchlist_id() != watchlist_id:
+            return
+        self._briefing_default_preset_id = preset_id
+        if not self.is_attached:
+            return
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            return
+        pane.default_preset_id = preset_id
+
+    @on(BriefingCadenceChanged)
+    def handle_briefing_cadence_changed(self, event: BriefingCadenceChanged) -> None:
+        """Spec #2 phase 4, Task 4: same shape as `handle_briefing_mode_
+        changed`/`handle_briefing_default_preset_changed` above -- the
+        no-database case is answered from memory, the real write dispatches
+        a worker in the same `wl-briefing-settings-write` group (so an
+        overlapping mode/preset/cadence write for the same watchlist is
+        safe to interleave, last write wins, exactly like its two siblings).
+        """
+        event.stop()
+        db = self._briefings_db()
+        watchlist_id = self._briefing_watchlist_id()
+        if db is None or watchlist_id is None:
+            self._notify_watchlists(
+                "Could not reach the local database, so nothing was saved.",
+                severity="error",
+            )
+            return
+        self.run_worker(
+            self._write_briefing_cadence(db, watchlist_id, event.seconds),
+            group="wl-briefing-settings-write",
+        )
+
+    async def _write_briefing_cadence(
+        self, db: Any, watchlist_id: int, seconds: int | None
+    ) -> None:
+        try:
+            await asyncio.to_thread(
+                db.set_watchlist_briefing_settings,
+                watchlist_id,
+                briefing_cadence_seconds=seconds,
+            )
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            logger.warning(
+                f"Failed to save the briefing schedule for watchlist "
+                f"{watchlist_id}: {type(exc).__name__}"
+            )
+            if self.is_attached:
+                self._notify_watchlists(
+                    "Could not save the schedule. Nothing changed.",
+                    severity="error",
+                )
+            return
+        # Whole-branch review fix wave, Important #3: see the identical
+        # note in `_write_briefing_selection_mode`/`_write_briefing_default_
+        # preset` above -- the DB write is correctly keyed to `watchlist_id`
+        # and needs no change, but this patch must not land if Artifacts
+        # has since moved to a different watchlist.
+        if self._briefing_watchlist_id() != watchlist_id:
+            return
+        self._briefing_cadence_seconds = seconds
+        if not self.is_attached:
+            return
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            return
+        pane.briefing_cadence_seconds = seconds
+        # Unlike mode/preset, the scope label's TEXT depends on cadence
+        # (`_briefing_scope_label` -> `cadence_scope_phrase`) -- without
+        # this, the honesty fix this task exists to ship would only take
+        # effect on the NEXT full `_load_briefings()` reload, not the
+        # instant the user picks a cadence, leaving the toolbar Select and
+        # the scope note disagreeing until then.
+        pane.scope_label = self._briefing_scope_label()
+
+    # --- Briefing presets (spec #2 phase 2a, Task 3): manager modal --------
+    #
+    # `BriefingPresetModal` owns its own reads and writes; this screen's job
+    # is only what the brief calls "mount/dismiss wiring" -- build the two
+    # option lists the modal is not entitled to query for itself, push it,
+    # and reload the preset list iff the modal reports a real change. The
+    # toolbar's "Presets..." button (Task 4) calls `_open_briefing_preset_
+    # manager` unchanged, through `handle_manage_presets_requested` below.
+
+    async def _load_character_options(self) -> list[tuple[str, int]]:
+        """Character cards for the preset modal's per-speaker Select.
+
+        Built here rather than inside the modal (brief: "the modal never
+        queries other DBs itself"). Degrades to `[]` -- disabling the field,
+        never the modal -- when `chachanotes_db` is unbound or the lookup
+        fails.
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return []
+        try:
+            cards = await asyncio.to_thread(db.list_character_cards)
+        except Exception as exc:  # noqa: BLE001 - degrade the field, not the modal
+            logger.warning(
+                "Failed to load character cards for briefing presets: "
+                f"{type(exc).__name__}"
+            )
+            return []
+        return [
+            (str(card.get("name") or ""), int(card["id"]))
+            for card in cards
+            if card.get("id") is not None
+        ]
+
+    async def _load_voice_options(self) -> list[tuple[str, str]]:
+        """Voice profiles for the preset modal's per-speaker Select.
+
+        Same degrade-the-field rule as `_load_character_options`.
+        `TTSProfileService.list_profiles` is already async and already
+        offloads its own repository I/O (see `STTSProfileLibrary`'s
+        identical direct-`await` usage) -- no `asyncio.to_thread` wrapper
+        needed around it here.
+        """
+        service = getattr(self.app_instance, "_tts_profile_service", None)
+        if service is None:
+            return []
+        try:
+            page = await service.list_profiles()
+        except Exception as exc:  # noqa: BLE001 - degrade the field, not the modal
+            logger.warning(
+                "Failed to load voice profiles for briefing presets: "
+                f"{type(exc).__name__}"
+            )
+            return []
+        return [
+            (profile.display_name, str(profile.profile_id))
+            for profile in page.profiles
+        ]
+
+    async def _load_briefing_presets(self) -> None:
+        """Re-read every stored `briefing_presets` row, name ASC, and patch
+        the Artifacts toolbar's default-preset picker in place.
+
+        Two callers: `_load_briefings` (an Artifacts-section/scope load,
+        which patches the pane's OTHER reactives itself right after this
+        returns -- setting `pane.presets` here too is a harmless repeat of
+        the same value) and `_open_briefing_preset_manager` (a preset
+        modal's `True` dismiss, which has no other reason to touch the
+        pane). Patched here rather than left to each caller so both stay
+        honest without duplicating the query-and-patch shape.
+        """
+        db = self._briefings_db()
+        if db is None:
+            self._loaded_briefing_presets = []
+        else:
+            try:
+                rows = await asyncio.to_thread(db.list_briefing_presets)
+                self._loaded_briefing_presets = [dict(row) for row in rows]
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                logger.warning(
+                    f"Failed to list briefing presets: {type(exc).__name__}"
+                )
+                self._loaded_briefing_presets = []
+        if not self.is_mounted:
+            return
+        try:
+            pane = self.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        except NoMatches:
+            return
+        pane.presets = self._loaded_briefing_presets
+
+    async def _open_briefing_preset_manager(self) -> None:
+        """Open `BriefingPresetModal`, then reload presets iff it changed.
+
+        A `False`/cancelled dismiss leaves `_loaded_briefing_presets`
+        untouched, matching every other reload-on-change flow already on
+        this screen (`_create_watchlist_flow`, `_rename_watchlist_flow`,
+        `_delete_watchlist_flow`).
+        """
+        db = self._briefings_db()
+        if db is None:
+            self._notify_watchlists(WC_SERVICE_UNAVAILABLE_COPY, severity="error")
+            return
+        character_options = await self._load_character_options()
+        voice_options = await self._load_voice_options()
+        changed = await self.app.push_screen_wait(
+            BriefingPresetModal(
+                db,
+                character_options=character_options,
+                voice_options=voice_options,
+            )
+        )
+        if changed:
+            await self._load_briefing_presets()
+
+    @on(ManagePresetsRequested)
+    def handle_manage_presets_requested(self, event: ManagePresetsRequested) -> None:
+        """Wire the toolbar's "Presets…" button to Task 3's opener.
+
+        No `exclusive=True`: `_open_briefing_preset_manager` owns a modal
+        via `push_screen_wait`, and `_start_tree_write`'s own docstring
+        names exactly why an exclusive worker is the wrong tool for that --
+        cancelling one mid-prompt would leave its dialog on the screen
+        stack with nothing left to dismiss it.
+        """
+        event.stop()
+        self.run_worker(
+            self._open_briefing_preset_manager(), group="wl-briefing-presets"
+        )
+
+    @on(GenerateBriefingRequested)
+    def handle_generate_briefing_requested(
+        self, event: GenerateBriefingRequested
+    ) -> None:
+        """Claim the one-generation-per-watchlist guard, then dispatch.
+
+        This handler runs on the UI thread, so it does exactly two things
+        that thread is entitled to do: answer from memory, and dispatch.
+        Everything that touches the database -- the zombie sweep, the
+        generating-check, the generation itself -- happens in the worker
+        (fix round 1, Finding 1). `fail_interrupted_briefings` is a
+        transactional UPDATE, no busy timeout beyond SQLite's default is
+        configured, and this feature's own design admits a second app
+        instance against the same database file: a contended write here
+        would freeze the interface.
+
+        `_briefing_in_flight` is claimed HERE, before `run_worker`, and not
+        inside the worker body (fix round 1, Finding 2). `run_worker` only
+        schedules; a check made inside the worker leaves a window in which
+        two presses both pass, and `exclusive=True` then cancels the first
+        one *mid-generation* -- leaving behind exactly the `generating` row
+        this guard exists to prevent. The guard would be manufacturing the
+        state it guards against.
+        """
+        event.stop()
+        db = self._briefings_db()
+        watchlist_id = self._briefing_watchlist_id()
+        if db is None or watchlist_id is None:
+            self._notify_watchlists(
+                "Select a watchlist in the rail to brief it.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if self._briefing_in_flight:
+            # `_briefing_in_flight` is screen-global on purpose (one
+            # `wl-briefing` worker at a time -- see the field's own
+            # comment), so the running generation may belong to a
+            # DIFFERENT watchlist than the one on screen right now. Naming
+            # it when that name is cheaply available (whole-branch review
+            # fix 4) keeps the toast truthful instead of always claiming
+            # "this watchlist".
+            running_id = self._briefing_in_flight_watchlist_id
+            if running_id is not None:
+                running_name = self._watchlist_display_name(running_id)
+                message = (
+                    f"A briefing is already being written for {running_name}. "
+                    "Nothing else was started."
+                )
+            else:
+                message = (
+                    "A briefing is already being written. Nothing else was "
+                    "started."
+                )
+            self._notify_watchlists(message, severity="warning", markup=False)
+            return
+        self._briefing_in_flight = True
+        self._briefing_in_flight_watchlist_id = watchlist_id
+        # Task 4: cast the die now, on the UI thread, alongside the rest of
+        # this synchronous snapshot -- not read again later inside the
+        # worker, where a concurrent picker write (a different worker
+        # group, so not excluded by `exclusive=True` above) could otherwise
+        # change `_briefing_default_preset_id` out from under a generation
+        # already in flight for THIS watchlist.
+        preset_id = self._briefing_default_preset_id
+        self.run_worker(
+            self._generate_briefing(db, watchlist_id, preset_id),
+            exclusive=True,
+            group="wl-briefing",
+        )
+
+    @staticmethod
+    def _briefing_row_label(row: Mapping[str, Any]) -> str:
+        """Name one briefing the way a toast has to: which row, and when."""
+        return (
+            f"briefing {row.get('id')} "
+            f"(started {row.get('created_at') or 'at an unknown time'})"
+        )
+
+    def _zombie_sweep_is_safe(self) -> bool:
+        """Whether `fail_interrupted_briefings` may run right now.
+
+        `fail_interrupted_briefings`'s own `exclude` (phase 4) now spares the
+        specific row a LIVE in-process claim is writing -- this screen's
+        own, or a future scheduled run's (task-1812, AC #3: row-scoped, not
+        merely watchlist-scoped, so a genuine crash zombie for the SAME
+        watchlist is not incidentally shielded too) -- so it no longer fails
+        EVERY `generating` row unconditionally the way it did before claims
+        existed. This flag is a narrower, purely local check on top of that:
+        it answers "is THIS screen instance mid-generation", which the
+        Generate path (`_sweep_and_guard`) never needs -- it always runs at
+        the very front of `_generate_briefing`, before that worker's own row
+        is inserted, so there is nothing of "its own" yet to protect. The
+        Artifacts-load path (`_load_briefings`) has no such ordering
+        guarantee -- it can run at any time, including while a generation
+        THIS screen started is still mid-flight -- so it consults this flag
+        too, on top of the claim-aware `exclude`, rather than relying on the
+        claim alone (whole-branch review fix 3).
+        """
+        return not self._briefing_in_flight
+
+    async def _fail_interrupted_briefings_if_safe(
+        self, db: Any, watchlist_id: int
+    ) -> int:
+        """Zombie recovery for the Artifacts-load path, off the UI thread.
+
+        Spec: a `generating` row not backed by a live worker is failed "on
+        the next Generate attempt or Artifacts load" -- only the Generate
+        path was wired (`_sweep_and_guard`). Gated by
+        `_zombie_sweep_is_safe` so a load racing a live generation this
+        screen started cannot clobber that generation's own row.
+
+        `active_briefing_claim_row_ids()` is snapshotted HERE, on the UI
+        thread, before the sweep is dispatched to a worker thread (Locked
+        decision 2): the claim registry is mutated only on the event loop,
+        so a live read of it from the executor thread `asyncio.to_thread`
+        uses would be racy in a way this snapshot never is. Passed through
+        as `exclude` so a genuinely live claim's OWN row -- e.g. a scheduled
+        run once phase 4's scheduler exists -- survives an Artifacts open
+        instead of being falsified as interrupted (survey finding (a)).
+        Row-scoped, not watchlist-scoped (task-1812, AC #3): a crash-zombie
+        row from a prior process for this SAME watchlist must still be
+        swept even while a fresh claim is live, and only naming the live
+        row itself (not its whole watchlist) lets that happen.
+
+        `pending_briefing_claim_watchlist_ids()` is snapshotted here too,
+        same thread, same instant (whole-branch review, `chore/briefings-
+        residuals-1810-1812`, Important 1): it closes the window `exclude`
+        alone cannot -- a claim taken but whose row id has not yet been
+        recorded, still inside `_start_generation`'s own `to_thread` hop.
+        Passed as `exclude_watchlists`, never in place of `exclude`.
+        """
+        if not self._zombie_sweep_is_safe():
+            return 0
+        claims = active_briefing_claim_row_ids()
+        pending = pending_briefing_claim_watchlist_ids()
+        return await asyncio.to_thread(
+            fail_interrupted_briefings,
+            db,
+            watchlist_id,
+            exclude=claims,
+            exclude_watchlists=pending,
+        )
+
+    def _sweep_and_guard(
+        self,
+        db: Any,
+        watchlist_id: int,
+        exclude: Collection[int],
+        exclude_watchlists: Collection[int] = (),
+    ) -> tuple[list[str], list[str]]:
+        """Zombie sweep, then the generating-check. Runs off the UI thread.
+
+        The order is the contract `briefing_service` states: the service
+        neither checks nor recovers -- folding either in would make it both
+        the thing guarded and the guard -- so the caller sweeps FIRST, and
+        only then asks whether anything is still generating. A row orphaned
+        by a crashed worker can therefore never wedge the guard shut.
+
+        `exclude` -- the caller's `active_briefing_claim_row_ids()` snapshot,
+        taken before this whole method was dispatched to a worker thread --
+        is passed straight to `fail_interrupted_briefings`. This screen's
+        own claim for THIS watchlist has not been taken yet at this point
+        (`generate_briefing` takes it, later, inside the same worker), so
+        the only thing `exclude` can protect here is ANOTHER in-process
+        caller's live row on the same watchlist. A row that survives the
+        sweep for that reason is not a crash zombie -- it is a live
+        generation this screen must not duplicate -- and it correctly ends
+        up in `blocking`, triggering the existing refusal toast rather than
+        letting Generate proceed over the top of it (survey finding (b)).
+        Row-scoped (task-1812, AC #3): a crash-zombie row for THIS watchlist
+        left by a prior process is swept here even while that other live
+        row survives, rather than the whole watchlist being spared.
+
+        `exclude_watchlists` -- the caller's `pending_briefing_claim_
+        watchlist_ids()` snapshot, taken at the same instant as `exclude`
+        (whole-branch review, `chore/briefings-residuals-1810-1812`,
+        Important 1) -- closes the same window `exclude` alone cannot for
+        THAT other in-process caller too: if it is still inside `_start_
+        generation`'s own `to_thread` hop, its row exists and reads
+        `generating` but has no id recorded yet, so only naming its
+        watchlist (not yet its row) spares it here.
+
+        Returns:
+            `(recovered, blocking)` -- labels for the rows this sweep failed
+            as interrupted, and labels for any row still `generating`
+            afterwards. Labels rather than counts so the toast can name what
+            it is talking about (fix round 1, Minor a).
+        """
+        stuck = [
+            self._briefing_row_label(row)
+            for row in db.list_briefings(watchlist_id)
+            if str(row.get("status") or "").strip().lower() == STATUS_GENERATING
+        ]
+        fail_interrupted_briefings(
+            db, watchlist_id, exclude=exclude, exclude_watchlists=exclude_watchlists
+        )
+        blocking = [
+            self._briefing_row_label(row)
+            for row in db.list_briefings(watchlist_id)
+            if str(row.get("status") or "").strip().lower() == STATUS_GENERATING
+        ]
+        return stuck, blocking
+
+    async def _generate_briefing(
+        self, db: Any, watchlist_id: int, preset_id: int | None
+    ) -> None:
+        """Worker body: recover, guard, generate, repaint.
+
+        The whole sequence is one worker so the guard cannot come apart from
+        the generation it guards, and every database call inside it is
+        awaited off the UI thread (`asyncio.to_thread`) -- see the handler.
+
+        `preset_id` (Task 4) is the watchlist's stored default preset,
+        snapshotted by the handler at dispatch time -- see its own comment.
+        `None` means "no default preset stored", and `generate_briefing`
+        treats that identically to "no preset given": the app default
+        provider/model, no style notes.
+
+        `generate_briefing` is wrapped in a bare `except` on purpose. It
+        turns *provider* failures into `failed` rows rather than exceptions,
+        but deliberately lets database errors propagate -- a database error
+        is not a briefing outcome. An exception escaping a Textual worker
+        with the default `exit_on_error=True` takes the whole application
+        down, so the escape hatch has to be here.
+
+        The log lines name the exception TYPE only. `logger.opt(exception=True)`
+        would dump the failing frame's locals into a file sink running with
+        `diagnose=True`, and the frames under this call hold the prompt --
+        item titles and excerpts the user never chose to write to disk. Task
+        3's review found exactly that leak in the service; this is the same
+        rule, one layer up.
+        """
+        generated_id: int | None = None
+        try:
+            try:
+                recovered, blocking = await asyncio.to_thread(
+                    self._sweep_and_guard,
+                    db,
+                    watchlist_id,
+                    active_briefing_claim_row_ids(),
+                    pending_briefing_claim_watchlist_ids(),
+                )
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                logger.warning(
+                    f"Briefing guard failed for watchlist {watchlist_id}: "
+                    f"{type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Failed to read this watchlist's briefings. Nothing was "
+                    "started.",
+                    severity="error",
+                    markup=False,
+                )
+                return
+            if blocking:
+                # Survived the sweep, so it was inserted after it: another
+                # live writer against this same database file. Not ours to
+                # cancel, and not ours to duplicate.
+                self._notify_watchlists(
+                    f"{', '.join(blocking)} is already in progress for this "
+                    "watchlist. Nothing was started.",
+                    severity="warning",
+                    markup=False,
+                )
+                return
+            if recovered:
+                # Recovered, and reported rather than silently regenerated:
+                # that row may have belonged to another live instance of
+                # this app, and starting a second generation over the top of
+                # one still running would spend the user's provider quota
+                # twice on the same window.
+                self._notify_watchlists(
+                    f"{', '.join(recovered)} was still marked in progress and "
+                    "has been marked interrupted. Press Generate again to "
+                    "write a new one.",
+                    severity="warning",
+                    markup=False,
+                )
+                return
+            try:
+                row = await generate_briefing(db, watchlist_id, preset_id=preset_id)
+                generated_id = (row or {}).get("id")
+            except GenerationInFlightError as exc:
+                # The race `_sweep_and_guard` cannot close: another
+                # in-process caller claimed this watchlist AFTER the sweep
+                # read the database (finding no `generating` row, so
+                # `blocking` stayed empty) but BEFORE its own row landed --
+                # this attempt then reached `generate_briefing`'s own claim
+                # check instead. `str(exc)` already names the watchlist and
+                # is user-safe (the class's own contract, mirroring
+                # `ScriptCastError`'s) -- the bare `except Exception` below
+                # must not swallow it as a generic database failure.
+                self._notify_watchlists(str(exc), severity="warning", markup=False)
+            except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
+                logger.warning(
+                    f"Briefing generation failed for watchlist {watchlist_id}: "
+                    f"{type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Could not write a briefing: the watchlist database could "
+                    "not be reached. Nothing was recorded.",
+                    severity="error",
+                    markup=False,
+                )
+        finally:
+            self._briefing_in_flight = False
+            self._briefing_in_flight_watchlist_id = None
+            # Repaint on every path: a refusal has just changed a row's
+            # status, and the failure path may leave a `generating` row this
+            # attempt inserted before it broke.
+            await self._load_briefings(select_briefing_id=generated_id)
+
+    # --- Cast a script from the selected briefing (spec #2 phase 2a, ------
+    # Task 5). Sibling of the Generate chain immediately above: own
+    # in-flight flag (`_cast_in_flight`), own worker group (`wl-cast`,
+    # `exclusive=True`), claimed at DISPATCH time for the identical reason
+    # `handle_generate_briefing_requested`'s docstring gives -- a check made
+    # inside the worker body leaves a window where two presses both pass.
+    #
+    # One real difference from Generate remains: `briefing_scripts` has no
+    # one-COMPLETE-row-per-briefing invariant the way `briefings` has one
+    # per watchlist (a briefing can be cast many times, with different
+    # rosters, and `briefing_cast.py`'s own module docstring says so
+    # explicitly) -- recovering a genuine zombie script does not itself
+    # refuse a FRESH cast attempt the way recovering a zombie briefing
+    # refuses a fresh generation. What phase 4 Task 1 adds is narrower: a
+    # `_sweep_and_guard`-style `blocking` check for the one case that IS a
+    # real problem -- a cast for THIS SAME briefing that is already
+    # genuinely in flight (this screen's own, or another in-process
+    # caller's, once phase 4's scheduler exists) must refuse rather than run
+    # a second, concurrent cast over the top of it (survey finding (c):
+    # before this, there was no such refusal at all). The zombie sweep still
+    # runs in the same TWO seams it always has: `_load_briefings` whenever
+    # Artifacts loads (gated on `_cast_sweep_is_safe`), and `_cast_script`
+    # below at the front of every cast -- both now claim-aware via
+    # `active_cast_claim_row_ids()`, exactly like Generate's own sweeps
+    # (task-1890: row-scoped, not merely briefing-scoped, mirroring
+    # task-1812's briefings-side fix).
+
+    def _cast_sweep_is_safe(self) -> bool:
+        """Whether `fail_interrupted_scripts` may run right now.
+
+        Sibling of `_zombie_sweep_is_safe`: a load racing a cast THIS
+        screen started must not fail that cast's own `generating` row out
+        from under it, so the load path only sweeps when nothing this
+        screen started is still in flight.
+        """
+        return not self._cast_in_flight
+
+    async def _fail_interrupted_scripts_if_safe(
+        self, db: Any, briefing_id: int
+    ) -> int:
+        """Zombie recovery for the Artifacts-load path's scripts, off the
+        UI thread. Sibling of `_fail_interrupted_briefings_if_safe`, scoped
+        to one briefing's scripts rather than one watchlist's briefings.
+
+        `active_cast_claim_row_ids()` is snapshotted HERE, on the UI
+        thread, before the sweep is dispatched -- see `_fail_interrupted_
+        briefings_if_safe`'s own docstring for why a snapshot, not a live
+        read, is required, and row-scoped rather than briefing-scoped
+        (task-1890, mirroring task-1812's `active_briefing_claim_row_ids`).
+
+        `pending_cast_claim_briefing_ids()` is snapshotted here too, same
+        thread, same instant, closing the window `exclude` alone cannot: a
+        claim taken but whose row id has not yet been recorded, still
+        inside `_start_script`'s own `to_thread` hop. Passed as `exclude_
+        briefings`, never in place of `exclude`.
+        """
+        if not self._cast_sweep_is_safe():
+            return 0
+        claims = active_cast_claim_row_ids()
+        pending = pending_cast_claim_briefing_ids()
+        return await asyncio.to_thread(
+            fail_interrupted_scripts,
+            db,
+            briefing_id,
+            exclude=claims,
+            exclude_briefings=pending,
+        )
+
+    @staticmethod
+    def _script_row_label(row: Mapping[str, Any]) -> str:
+        """Name one script the way a toast has to: which row, and when.
+
+        Sibling of `_briefing_row_label`, for the identical reason.
+        """
+        return (
+            f"script {row.get('id')} "
+            f"(started {row.get('created_at') or 'at an unknown time'})"
+        )
+
+    def _sweep_and_guard_cast(
+        self,
+        db: Any,
+        briefing_id: int,
+        exclude: Collection[int],
+        exclude_briefings: Collection[int] = (),
+    ) -> tuple[list[str], list[str]]:
+        """Zombie sweep, then the generating-check, for a cast. Runs off the
+        UI thread. Sibling of `_sweep_and_guard` -- see that method's own
+        docstring for the full reasoning; this is the identical shape,
+        scoped to one briefing's scripts instead of one watchlist's
+        briefings (phase 4 Task 1, survey finding (c); row-scoped since
+        task-1890).
+
+        `exclude_briefings` -- the caller's `pending_cast_claim_briefing_
+        ids()` snapshot, taken at the same instant as `exclude` -- closes
+        the same window `exclude` alone cannot for another in-process
+        caller: if it is still inside `_start_script`'s own `to_thread`
+        hop, its row (once inserted) reads `generating` but has no id
+        recorded yet, so only naming its briefing (not yet its row) spares
+        it here.
+
+        Returns:
+            `(recovered, blocking)`, exactly like `_sweep_and_guard`.
+        """
+        stuck = [
+            self._script_row_label(row)
+            for row in db.list_briefing_scripts(briefing_id)
+            if str(row.get("status") or "").strip().lower() == STATUS_GENERATING
+        ]
+        fail_interrupted_scripts(
+            db, briefing_id, exclude=exclude, exclude_briefings=exclude_briefings
+        )
+        blocking = [
+            self._script_row_label(row)
+            for row in db.list_briefing_scripts(briefing_id)
+            if str(row.get("status") or "").strip().lower() == STATUS_GENERATING
+        ]
+        return stuck, blocking
+
+    def _cast_load_character(self, character_id: int) -> dict[str, Any] | None:
+        """`generate_script`'s `load_character` seam: a plain, idempotent
+        character-card lookup, with no caching layer and no session state.
+
+        Task 2 review's carried finding: `_snapshot_roster` tolerates a
+        transient failure here by degrading to `character_name: None`, and
+        `_resolve_character_texts` calls `load_character` AGAIN, later, to
+        resolve the same card strictly. If this held a cache -- or any
+        other state that could answer the two calls differently -- the
+        snapshot and the strict resolution could disagree about the SAME
+        card within one cast. A bare `get_character_card_by_id` call never
+        can: it is one SELECT by id, nothing memoized, so both calls always
+        see the same, current answer.
+
+        Only ever called from `_cast_script`, which already checked
+        `chachanotes_db` is bound before passing this method as
+        `load_character` -- see that worker.
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return None
+        return db.get_character_card_by_id(character_id)
+
+    def _briefing_default_preset_is_dangling(self) -> bool:
+        """Whether the stored default preset id no longer resolves.
+
+        Whole-branch review fix wave, Important #1: `BriefingPresetModal`
+        hard-deletes a preset (Task 3; no FK enforces the pointer), and
+        `_load_briefings`'s combined read (`_read_watchlist_briefing_
+        state`) reloads the preset LIST but re-reads the watchlist's own
+        `default_briefing_preset_id` column verbatim -- so a preset deleted
+        while it was a watchlist's default leaves `_briefing_default_
+        preset_id` pointing at a row that no longer exists among `_loaded_
+        briefing_presets`. `ArtifactsPane._preset_select_options` already
+        assumes exactly this shape (its own synthetic "Preset N (deleted)"
+        option) -- this is that same check, on the screen side, so Cast can
+        refuse before ever reaching `generate_script`'s own raw
+        `ScriptCastError` text for it.
+        """
+        preset_id = self._briefing_default_preset_id
+        if preset_id is None:
+            return False
+        return not any(
+            preset.get("id") == preset_id for preset in self._loaded_briefing_presets
+        )
+
+    @on(CastScriptRequested)
+    def handle_cast_script_requested(self, event: CastScriptRequested) -> None:
+        """Claim the one-cast-at-a-time guard, then dispatch.
+
+        Answers from memory and dispatches, exactly like
+        `handle_generate_briefing_requested`: `_cast_in_flight` is claimed
+        HERE, before `run_worker`, and not inside the worker body, for the
+        identical reason that handler's own docstring gives.
+        """
+        event.stop()
+        db = self._briefings_db()
+        briefing = self._selected_briefing
+        if db is None or briefing is None:
+            self._notify_watchlists(
+                "Select a briefing to cast.", severity="warning", markup=False,
+            )
+            return
+        if self._briefing_default_preset_is_dangling():
+            # Whole-branch review fix wave, Important #1: the stored
+            # default resolved to a real preset once, but that preset was
+            # since hard-deleted (from the toolbar's own picker, which is
+            # already showing "(deleted)" for this same id). Refuse HERE,
+            # before dispatch, with copy that tells the user what to do --
+            # not `generate_script`'s own raw `ScriptCastError` text for
+            # this case ("briefing preset 1 does not exist"), which names
+            # an id but no action.
+            self._notify_watchlists(
+                "The stored default preset no longer exists. Pick another "
+                "in the toolbar, or create one via Presets…, before "
+                "casting.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if self._briefing_default_preset_id is None and self._loaded_briefing_presets:
+            # Task 5 review round 1, ruling 2: the Cast BUTTON stays enabled
+            # here on purpose (`ArtifactsPane.compose`'s own disabled
+            # condition is "no default AND no presets exist at all" --
+            # presets exist here, just none chosen as the default), so a
+            # press in this state must still be refused, but with copy that
+            # tells the user what to do about it -- not the raw
+            # `ScriptCastError` `generate_script` would otherwise produce
+            # (`"briefing preset None does not exist"`, honest but useless
+            # as an instruction).
+            self._notify_watchlists(
+                "Choose a default preset in the toolbar, or create one via "
+                "Presets…, before casting.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if self._cast_in_flight:
+            running_id = self._cast_in_flight_briefing_id
+            message = (
+                f"A script is already being cast for briefing {running_id}. "
+                "Nothing else was started."
+                if running_id is not None
+                else "A script is already being cast. Nothing else was started."
+            )
+            self._notify_watchlists(message, severity="warning", markup=False)
+            return
+        briefing_id = briefing.get("id")
+        self._cast_in_flight = True
+        self._cast_in_flight_briefing_id = briefing_id
+        # Cast the die on the UI thread, alongside the rest of this
+        # synchronous snapshot -- the `_briefing_default_preset_id` read
+        # `handle_generate_briefing_requested` already does the same way,
+        # for the same reason: not read again later inside the worker,
+        # where a concurrent picker write could otherwise change it out
+        # from under a cast already in flight for THIS briefing.
+        preset_id = self._briefing_default_preset_id
+        self.run_worker(
+            self._cast_script(db, briefing_id, preset_id),
+            exclusive=True,
+            group="wl-cast",
+        )
+
+    async def _cast_script(
+        self, db: Any, briefing_id: int, preset_id: int | None
+    ) -> None:
+        """Worker body: sweep, cast, repaint. Sibling of `_generate_briefing`.
+
+        `generate_script`'s own DB calls (`_start_script`, `_finish_script_
+        success`/`_finish_script_failure`) already run through `asyncio.
+        to_thread` internally -- see that function's own docstring -- but a
+        DATABASE error inside any of them still propagates OUT of
+        `generate_script` uncaught: it only wraps the chat-call/parse block
+        in its own try/except, not the whole function. An exception
+        escaping a Textual worker with the default `exit_on_error=True`
+        takes the whole application down, so -- exactly like
+        `_generate_briefing` -- the call is wrapped in a bare `except` that
+        turns any surviving exception into a toast instead of a crash.
+
+        `ScriptCastError` is caught FIRST and separately: it is `generate_
+        script`'s own honest, pre-flight refusal (the briefing is not
+        `complete`, or the preset does not exist) -- a message safe to show
+        verbatim (see that exception's own docstring), not a database
+        failure to hide behind a generic toast.
+
+        Phase 4 Task 1 (survey finding (c)): the sweep is now followed by a
+        `blocking` check, mirroring `_generate_briefing`'s own -- a row that
+        SURVIVES `_sweep_and_guard_cast`'s sweep because it is claimed by a
+        live in-process cast refuses THIS attempt instead of starting a
+        second, concurrent one over the top of it. Deliberately NOT
+        mirroring `_generate_briefing`'s `recovered` branch too: unlike a
+        briefing, `briefing_scripts` has no one-COMPLETE-row-per-briefing
+        invariant (a briefing may be cast many times), so a zombie this
+        sweep actually recovers (i.e. NOT `blocking` -- nothing claims it)
+        must not itself refuse a fresh cast the way a recovered zombie
+        briefing refuses a fresh generation; the same press both recovers
+        the zombie AND casts a real script, exactly as it always has
+        (`test_casting_recovers_a_zombie_script_via_its_own_sweep`).
+        """
+        chachanotes_db = getattr(self.app_instance, "chachanotes_db", None)
+        load_character = (
+            self._cast_load_character if chachanotes_db is not None else None
+        )
+        try:
+            try:
+                _recovered, blocking = await asyncio.to_thread(
+                    self._sweep_and_guard_cast,
+                    db,
+                    briefing_id,
+                    active_cast_claim_row_ids(),
+                    pending_cast_claim_briefing_ids(),
+                )
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                logger.warning(
+                    f"Script guard failed for briefing {briefing_id}: "
+                    f"{type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Failed to check this briefing's scripts. Nothing was "
+                    "started.",
+                    severity="error",
+                    markup=False,
+                )
+                return
+            if blocking:
+                # Survived the sweep because a live in-process claim holds
+                # it -- not ours to duplicate. Mirrors `_generate_briefing`'s
+                # own `blocking` refusal; see this method's own docstring for
+                # why there is no `recovered`-branch sibling here.
+                self._notify_watchlists(
+                    f"{', '.join(blocking)} is already being cast for this "
+                    "briefing. Nothing else was started.",
+                    severity="warning",
+                    markup=False,
+                )
+                return
+            try:
+                row = await generate_script(
+                    db,
+                    briefing_id,
+                    preset_id=preset_id,
+                    load_character=load_character,
+                )
+                # The freshly cast script (whatever its outcome) is the one
+                # on screen, exactly like `_generate_briefing`'s own
+                # `select_briefing_id=generated_id` -- re-resolved against
+                # the reload below.
+                self._selected_script = row
+            except ScriptCastError as exc:
+                self._notify_watchlists(str(exc), severity="warning", markup=False)
+            except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
+                logger.warning(
+                    f"Script cast failed for briefing {briefing_id}: "
+                    f"{type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Could not cast a script: the watchlist database could "
+                    "not be reached. Nothing was recorded.",
+                    severity="error",
+                    markup=False,
+                )
+        finally:
+            self._cast_in_flight = False
+            self._cast_in_flight_briefing_id = None
+            # Repaint on every path: a refusal may have just failed a
+            # zombie row, and a completed cast has a new script to show.
+            if self.is_attached:
+                await self._load_briefings()
+
+    # --- Artifacts: synthesizing and playing a script's audio (spec #2 --
+    # phase 2b, Task 7) --------------------------------------------------
+    #
+    # Sibling of the Cast machinery immediately above in every respect: an
+    # in-flight flag (`_audio_in_flight`), own worker group (`wl-audio`,
+    # `exclusive=True`), claimed at DISPATCH time for the identical reason
+    # `handle_cast_script_requested`'s docstring gives -- a check made
+    # inside the worker body leaves a window where two presses both pass.
+    # Unlike Cast (which has no one-generating-row-per-briefing invariant),
+    # audio's own zombie sweep runs in the SAME two separate seams `_cast_
+    # script`'s own comment names: `_load_briefings` sweeps whenever
+    # Artifacts loads (gated on `_audio_sweep_is_safe`), and `_synthesize_
+    # audio` below sweeps again at its own front, exactly where `_cast_
+    # script` sweeps for Cast. Both are now claim-aware via
+    # `active_audio_claim_row_ids()` (phase 4 Task 1; row-scoped, not
+    # merely script-scoped, since task-1890 -- mirroring task-1812's
+    # briefings-side fix), so a live in-process render -- this screen's
+    # own, or another in-process caller's -- survives either sweep
+    # unconditionally.
+    #
+    # Phase 4 Task 1 investigated whether Synthesize needs the SAME
+    # `blocking` refusal Cast just gained (survey finding (c)'s sibling
+    # question): structurally, yes -- `_synthesize_audio` had no `blocking`
+    # check either, so two presses could in principle start two concurrent
+    # renders for the same script. Phase 4 left it AS-IS, deliberately, as a
+    # natural small follow-up; task-1811 is that follow-up: `_synthesize_
+    # audio` below now runs `_sweep_and_guard_audio`, the identical shape as
+    # `_sweep_and_guard_cast`, and refuses on `blocking` exactly like
+    # `_cast_script` does.
+
+    def _audio_sweep_is_safe(self) -> bool:
+        """Whether `fail_interrupted_audio` may run right now.
+
+        Sibling of `_cast_sweep_is_safe`: a load racing a synthesis THIS
+        screen started must not fail that attempt's own `generating` row
+        out from under it, so the load path only sweeps when nothing this
+        screen started is still in flight.
+        """
+        return not self._audio_in_flight
+
+    async def _fail_interrupted_audio_if_safe(self, db: Any, script_id: int) -> int:
+        """Zombie recovery for the Artifacts-load path's audio, off the UI
+        thread. Sibling of `_fail_interrupted_scripts_if_safe`, scoped to
+        one script's audio renders rather than one briefing's scripts.
+
+        `active_audio_claim_row_ids()` is snapshotted HERE, on the UI
+        thread, before the sweep is dispatched -- see `_fail_interrupted_
+        briefings_if_safe`'s own docstring for why a snapshot, not a live
+        read, is required, and row-scoped rather than script-scoped
+        (task-1890, mirroring task-1812's `active_briefing_claim_row_ids`).
+
+        `pending_audio_claim_script_ids()` is snapshotted here too, same
+        thread, same instant, closing the window `exclude` alone cannot: a
+        claim taken but whose row id has not yet been recorded, still
+        inside `generate_script_audio`'s own `db.create_briefing_audio`
+        `to_thread` call. Passed as `exclude_scripts`, never in place of
+        `exclude`.
+        """
+        if not self._audio_sweep_is_safe():
+            return 0
+        claims = active_audio_claim_row_ids()
+        pending = pending_audio_claim_script_ids()
+        return await asyncio.to_thread(
+            fail_interrupted_audio,
+            db,
+            script_id,
+            exclude=claims,
+            exclude_scripts=pending,
+        )
+
+    @staticmethod
+    def _audio_row_label(row: Mapping[str, Any]) -> str:
+        """Name one audio render the way a toast has to: which row, and
+        when. Sibling of `_script_row_label`, for the identical reason
+        (task-1811).
+        """
+        return (
+            f"audio {row.get('id')} "
+            f"(started {row.get('created_at') or 'at an unknown time'})"
+        )
+
+    def _sweep_and_guard_audio(
+        self,
+        db: Any,
+        script_id: int,
+        exclude: Collection[int],
+        exclude_scripts: Collection[int] = (),
+    ) -> tuple[list[str], list[str]]:
+        """Zombie sweep, then the generating-check, for a synthesis. Runs
+        off the UI thread. Sibling of `_sweep_and_guard_cast` -- see that
+        method's own docstring for the full reasoning; this is the
+        identical shape, scoped to one script's audio renders instead of
+        one briefing's scripts (task-1811, mirroring Cast's own `blocking`
+        refusal from phase 4 Task 1 onto Synthesize; row-scoped `exclude`
+        plus `exclude_scripts` since task-1890 -- see `_sweep_and_guard_
+        cast`'s own docstring for the identical `exclude_briefings`
+        reasoning).
+
+        Returns:
+            `(recovered, blocking)`, exactly like `_sweep_and_guard_cast`.
+        """
+        stuck = [
+            self._audio_row_label(row)
+            for row in db.list_briefing_audio(script_id)
+            if str(row.get("status") or "").strip().lower() == STATUS_GENERATING
+        ]
+        fail_interrupted_audio(
+            db, script_id, exclude=exclude, exclude_scripts=exclude_scripts
+        )
+        blocking = [
+            self._audio_row_label(row)
+            for row in db.list_briefing_audio(script_id)
+            if str(row.get("status") or "").strip().lower() == STATUS_GENERATING
+        ]
+        return stuck, blocking
+
+    @on(SynthesizeAudioRequested)
+    def handle_synthesize_audio_requested(
+        self, event: SynthesizeAudioRequested
+    ) -> None:
+        """Claim the one-synthesis-at-a-time guard, then dispatch.
+
+        Mirrors `handle_cast_script_requested` exactly: `_audio_in_flight`
+        is claimed HERE, before `run_worker`, and not inside the worker
+        body, for the identical reason that handler's own docstring gives.
+        """
+        event.stop()
+        db = self._briefings_db()
+        script = self._selected_script
+        if db is None or script is None:
+            self._notify_watchlists(
+                "Select a script to synthesize its audio.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        if self._audio_in_flight:
+            running_id = self._audio_in_flight_script_id
+            message = (
+                f"Audio is already being synthesized for script {running_id}. "
+                "Nothing else was started."
+                if running_id is not None
+                else "Audio is already being synthesized. Nothing else was "
+                "started."
+            )
+            self._notify_watchlists(message, severity="warning", markup=False)
+            return
+        script_id = script.get("id")
+        self._audio_in_flight = True
+        self._audio_in_flight_script_id = script_id
+        # Snapshotted on the UI thread, alongside the rest of this
+        # synchronous dispatch -- the `preset_id` read
+        # `handle_cast_script_requested` already does the same way, for
+        # the same reason: read once, here, not again later inside the
+        # worker where a concurrent app-level rebind could change it out
+        # from under a synthesis already in flight for THIS script.
+        tts_service = getattr(self.app_instance, "tts_service", None)
+        profile_service = getattr(self.app_instance, "_tts_profile_service", None)
+        self.run_worker(
+            self._synthesize_audio(db, script_id, tts_service, profile_service),
+            exclusive=True,
+            group="wl-audio",
+        )
+
+    async def _synthesize_audio(
+        self, db: Any, script_id: int, tts_service: Any, profile_service: Any
+    ) -> None:
+        """Worker body: sweep, synthesize, repaint. Sibling of `_cast_script`.
+
+        `generate_script_audio`'s own DB calls already run through
+        `asyncio.to_thread` internally (Task 6's own docstring), but a
+        DATABASE error inside any of them still propagates OUT of
+        `generate_script_audio` uncaught -- that is Task 6's deliberate
+        "DB errors propagate" contract, the caller's own worker is where
+        they must be wrapped. An exception escaping a Textual worker with
+        the default `exit_on_error=True` takes the whole application down,
+        so -- exactly like `_cast_script` -- the call is wrapped in a bare
+        `except` that turns any surviving exception into a toast instead
+        of a crash.
+
+        `AudioGenerationError` is caught FIRST and separately: it is
+        `generate_script_audio`'s own honest, pre-flight refusal (the
+        script is not `complete`, or its turns/roster snapshot cannot be
+        parsed) -- a message safe to show verbatim (see that exception's
+        own docstring), not a database failure to hide behind a generic
+        toast.
+
+        The sweep is claim-aware (`active_audio_claim_row_ids()`, row-scoped
+        since task-1890), like every other sweep call site (phase 4 Task
+        1), and is now followed by a `blocking` check, mirroring `_cast_
+        script`'s own (task-1811): a row that SURVIVES `_sweep_and_guard_
+        audio`'s sweep because it is claimed by a live in-process synthesis
+        refuses THIS attempt instead of starting a second, concurrent one
+        over the top of it. Unlike `_cast_script`'s own `recovered` branch,
+        there is no one-COMPLETE-row-per-script invariant here either (a
+        script may be synthesized many times), so a zombie this sweep
+        actually recovers (i.e. NOT `blocking`) does not itself refuse a
+        fresh synthesis -- the same press both recovers the zombie AND
+        synthesizes real audio (`test_synthesizing_recovers_a_zombie_audio_
+        row_via_its_own_sweep`). Row-scoping (task-1890) also means this
+        `blocking` toast no longer names a crash-zombie row shielded by an
+        unrelated live claim on the same script -- the zombie is swept by
+        the same call, before `blocking` is computed -- once that claim's
+        row id is recorded. In the brief window before recording, the
+        pending-claim guard deliberately spares the whole script (zombie
+        included), so the toast can still name one there.
+        """
+        try:
+            try:
+                _recovered, blocking = await asyncio.to_thread(
+                    self._sweep_and_guard_audio,
+                    db,
+                    script_id,
+                    active_audio_claim_row_ids(),
+                    pending_audio_claim_script_ids(),
+                )
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                logger.warning(
+                    f"Audio guard failed for script {script_id}: "
+                    f"{type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Failed to check this script's audio. Nothing was "
+                    "started.",
+                    severity="error",
+                    markup=False,
+                )
+                return
+            if blocking:
+                # Survived the sweep because a live in-process claim holds
+                # it -- not ours to duplicate. Mirrors `_cast_script`'s own
+                # `blocking` refusal; see this method's own docstring for
+                # why there is no `recovered`-branch sibling here.
+                self._notify_watchlists(
+                    f"{', '.join(blocking)} is already being synthesized "
+                    "for this script. Nothing else was started.",
+                    severity="warning",
+                    markup=False,
+                )
+                return
+            try:
+                row = await generate_script_audio(
+                    db,
+                    script_id,
+                    tts_service=tts_service,
+                    profile_service=profile_service,
+                )
+                # The freshly synthesized audio (whatever its outcome) is
+                # the one on screen, re-resolved against the reload below.
+                self._loaded_script_audio = row
+            except AudioGenerationError as exc:
+                self._notify_watchlists(str(exc), severity="warning", markup=False)
+            except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
+                logger.warning(
+                    f"Audio synthesis failed for script {script_id}: "
+                    f"{type(exc).__name__}"
+                )
+                self._notify_watchlists(
+                    "Could not synthesize audio: the watchlist database "
+                    "could not be reached. Nothing was recorded.",
+                    severity="error",
+                    markup=False,
+                )
+        finally:
+            self._audio_in_flight = False
+            self._audio_in_flight_script_id = None
+            # Repaint on every path: a refusal may have just failed a
+            # zombie row, and a completed (or failed) attempt has a new
+            # audio row to show.
+            if self.is_attached:
+                await self._load_briefings()
+
+    @on(PlayAudioRequested)
+    def handle_play_audio_requested(self, event: PlayAudioRequested) -> None:
+        """Play the selected script's audio file, if it still exists.
+
+        Never routed through a worker/`asyncio.to_thread`: `play_audio_
+        file` only spawns a detached subprocess and returns
+        (`SimpleAudioPlayer.play`) -- `TTSEventHandler.handle_tts_
+        playback`'s own "play" branch calls it exactly this way, direct,
+        with no thread hop. Playback state itself is never held here or
+        on the pane: the shared `SimpleAudioPlayer` singleton (`TTS.
+        audio_player.get_audio_player`) is the only source of truth for
+        "what's currently loaded" -- see `ArtifactsPane`'s own module
+        docstring on why (a script selection recomposes every widget this
+        pane renders).
+
+        A missing file is refused with a toast rather than handed to the
+        player: `ArtifactsPane.compose` already disables Play for exactly
+        this case (`_audio_file_is_playable`), so reaching here with no
+        file, or a file since deleted, means the disk state changed
+        between that render and this press -- an honest race, not a bug
+        to silently swallow.
+
+        Qodo review round 1, FIX B: `audio_file_path_is_safe` is checked
+        BEFORE any filesystem access -- a path that resolves outside
+        `briefing_audio_dir()` (a tampered or corrupted row) is treated
+        exactly like the "no file at all" case: a silent return, no
+        `.exists()` probe, no exception. `ArtifactsPane.compose` already
+        disables Play for this case too (`_audio_file_is_playable` uses the
+        same helper), so reaching here with an unsafe path is the same kind
+        of race as the missing-file case above, not a new failure mode.
+        """
+        event.stop()
+        row = self._loaded_script_audio
+        file_path = row.get("file_path") if row else None
+        if not file_path:
+            return
+        if not audio_file_path_is_safe(file_path):
+            return
+        path = Path(str(file_path))
+        if not path.exists():
+            self._notify_watchlists(
+                "This audio file no longer exists on disk.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        play_audio_file(path)
+
+    @on(StopAudioRequested)
+    def handle_stop_audio_requested(self, event: StopAudioRequested) -> None:
+        """Stop playback, but only if THIS script's audio is what the
+        shared player actually has loaded.
+
+        Delegates to `tts_events.stop_audio_playback_if_current` rather
+        than reimplementing its comparison here: that function's own
+        docstring records the task-559 fix rounds (the guard must key off
+        the player's LIVE `get_current_file()`, never a local cache with a
+        TTL -- `SimpleAudioPlayer` is a single-slot, APP-WIDE singleton, so
+        a bare `.stop()` could silence a completely unrelated clip playing
+        elsewhere, e.g. Console TTS). A private copy of that same
+        comparison here would only ever be one edit away from drifting
+        from it -- exactly the failure mode that cost this branch a whole
+        task to reconcile for the two legacy TTS id-builders (Task 2's own
+        carried finding, `TTS/legacy_request_builder.py`'s module
+        docstring). Imported locally rather than at module scope, matching
+        `chat_screen.py`'s own lazy-import convention for this exact
+        module: `Event_Handlers.TTS_Events.tts_events` pulls in the TTS
+        adapter package (`tldw_chatbook.TTS`'s own imports), a cost most
+        Watchlists sessions never need to pay just to stop a clip.
+        """
+        event.stop()
+        row = self._loaded_script_audio
+        file_path = row.get("file_path") if row else None
+        if not file_path:
+            return
+        from ...Event_Handlers.TTS_Events.tts_events import (
+            stop_audio_playback_if_current,
+        )
+
+        stop_audio_playback_if_current(Path(str(file_path)))
+
+    def _items_status_query(self) -> str | None:
+        """The status the item PAGE should be fetched for, or `None` for all.
+
+        Review wave, I2. TASK-2301 made `_load_items` ask for every status,
+        which fixed "triaged items are unreachable" and quietly broke a
+        different guarantee: the query pages at 100 rows and the pane's filter
+        is applied in memory afterwards (`ItemsPane._filtered_items` never
+        re-queries), so the page went from "the newest 100 UNREAD items" to
+        "the newest 100 items of any status". On a source with 300 items whose
+        newest 100 have all been triaged, picking "New" showed ZERO rows while
+        the rail -- which this same branch made accurate -- honestly reported
+        200 unread. Two numbers on one screen disagreeing about the same fact,
+        which is the defect class this batch exists to remove.
+
+        Pushing the active filter into the query makes a page 100 rows OF THE
+        FILTERED STATUS, so "New" can reach unread items however deep they sit.
+        "All statuses" is unchanged: it genuinely wants a mixed page.
+
+        The pane keeps its own in-memory filter as well. That is not redundant
+        -- it is what pins the currently-open item into a view its status no
+        longer matches (see `_filtered_items`), and it is what makes the list
+        correct in the window between a filter change and its reload landing.
+        """
+        status = str(self._items_status_filter or "all")
+        return None if status == "all" else status
+
+    def _with_open_item(
+        self, page: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """`page`, guaranteed to contain the item the reader currently has open.
+
+        Round 2, O2. Pushing the status filter into the query (I2) reopened
+        the CRITICAL that `ItemsPane._filtered_items`'s pin exists to prevent,
+        and its docstring names the scenario exactly: opening an item marks it
+        read, so under a "New" filter it drops out of its own list the instant
+        it is opened, and everything keyed off "where is the open item in the
+        displayed list" fails at once -- `j` walks backwards from a not-found
+        index and `k` is dead for the rest of the session.
+
+        The pin can only retain what the query RETURNED. Pre-I2 the query
+        returned every status, so it always had the open item to keep;
+        afterwards a reload under `status="new"` came back without it and the
+        item the user was reading vanished. Measured: filter New, open the
+        only unread item, any `_load_items()` -> `items == []`.
+
+        Two fixes were on the table. Dropping the status predicate while an
+        item is open was rejected: it un-fixes I2 for the whole time the
+        reader is in use -- which is precisely when a user is triaging, and so
+        precisely when "unread items past the newest 100 are unreachable"
+        bites hardest. Carrying the open item alongside the page keeps both
+        guarantees at once, and costs no query: the dict is the same object
+        the reader, the pane and `_mark_item_read_on_open`'s in-place patch
+        all already share, so its status is current by construction.
+
+        Inserted in `created_at DESC` order rather than at either end, so the
+        page keeps the ordering every other consumer assumes -- `j`/`k` walk
+        this sequence, and an item teleporting to the top of the list when its
+        status changed would be its own small lie.
+
+        Args:
+            page: The rows the backend returned for the current filter.
+
+        Returns:
+            `page` unchanged when no item is open, when the filter is "All
+            statuses" (the page already covers every status), or when the open
+            item is in it already; otherwise `page` plus that one item.
+        """
+        open_item = self._selected_content_item
+        if open_item is None or self._items_status_query() is None:
+            return page
+        open_id = str(open_item.get("id") or "")
+        if not open_id or any(str(row.get("id")) == open_id for row in page):
+            return page
+        carried = dict(open_item)
+        created = str(carried.get("created_at") or "")
+        for index, row in enumerate(page):
+            if str(row.get("created_at") or "") < created:
+                return [*page[:index], carried, *page[index:]]
+        return [*page, carried]
+
     async def _load_items(self) -> None:
         notify = getattr(self.app_instance, "notify", None)
         try:
             items = await self._controller.list_items(
                 runtime_backend=self.runtime_backend,
-                status=None,
+                status=self._items_status_query(),
                 limit=100,
                 offset=0,
             )
-            if self.is_mounted:
+            # Mirror to screen state (Finding 2, fix round 2) — see the note
+            # on `_loaded_sources` in `_load_sources` above; same rebuild,
+            # same gap, same fix.
+            self._loaded_items = self._with_open_item(
+                [dict(item) for item in items]
+            )
+            if self._dom_is_live:
                 try:
                     items_pane = self.query_one("#watchlists-items-pane", ItemsPane)
-                    items_pane.items = items
+                    items_pane.items = self._loaded_items
                 except Exception:
                     pass
         except Exception:
@@ -938,7 +7490,492 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(ItemSelected)
     def handle_item_selected(self, event: ItemSelected) -> None:
         event.stop()
-        self.selected_entity = event.item
+        self._select_entity(event.item)
+        # Route to the reader (Task 4), independent of `_select_entity`'s
+        # generic Inspector reconciliation above: Sources/Runs/Rules also
+        # flow through `_select_entity`, and none of those dicts carry
+        # `content_kind`/`content` -- pushing them into `ContentPane` would
+        # render `render_for`'s article-fallback over the WRONG entity's
+        # fields instead of leaving the reader showing the last real item.
+        # Held on the screen (`_selected_content_item`), not just pushed to
+        # the mounted pane, so `_build_content_pane` can re-seed a rebuilt
+        # `ContentPane` the same way `_build_inspector_pane` re-seeds
+        # `selected_entity` — see that seeding note above.
+        self._selected_content_item = event.item
+        try:
+            self.query_one("#watchlists-content-pane", ContentPane).item = event.item
+        except NoMatches:
+            pass
+        self._mark_item_read_on_open(event.item)
+
+    def _mark_item_read_on_open(self, item: dict[str, Any] | None) -> None:
+        """Opening an item in the reader marks it read (Task 5).
+
+        Only fires the "new" -> "reviewed" transition: an item already at
+        "reviewed"/"ingested"/"ignored"/"error" left the unread bucket
+        through some other deliberate action already, and re-opening it here
+        must not clobber that back down to a bare "reviewed". Silent
+        (`notify_toast=False`) because this fires on every selection, not on
+        a deliberate user request for a status change -- a toast per click
+        would be noise, unlike the explicit unread toggle.
+
+        `refresh=False` + `patch_item=item` (Task 5 fix round 1, CRITICAL):
+        this fires on every single item SELECTION, not just a deliberate
+        button click. A default `refresh` reloads `ItemsPane.items` and
+        calls `_refresh_overview_data()`, which used to set `overview_data`,
+        then a `reactive({}, recompose=True)` -- a SCREEN-level recompose,
+        which rebuilt every region via its factory
+        (`_build_list_pane`/`_build_content_pane`/etc.), replacing the live
+        `ItemsPane`/`DataTable` instances wholesale. Proven live: with the
+        default refresh, one item selection detached the old `ItemsPane`,
+        reset the table cursor to 0, cleared screen focus, and a SECOND
+        arrow-key press did nothing at all. TASK-2200 took the recompose off
+        that reactive (`watch_overview_data` patches the three surfaces that
+        read it), so the crash-shaped half of this is gone; the reload of
+        every item on every arrow key is not, which is why this path still
+        passes `refresh=False`. `patch_item` mutates the same dict object
+        already held by `ItemsPane.items`/`_selected_content_item`/
+        `ContentPane.item` in place instead, so a later status check sees
+        "reviewed" without forcing a rebuild.
+
+        This reuses the exact status column Ingest/Ignore/the unread toggle
+        already write -- `SubscriptionsDB.mark_item_status`, keyed by the
+        item's own row id, not by any (watchlist, item) pair -- so it is
+        global by construction: the same article read from "All sources" is
+        read in every watchlist whose sources include it.
+
+        The "new" check above is a cheap pre-filter against the CACHED dict
+        only, so a plain non-"new" selection dispatches nothing at all -- but
+        the write itself is gated again, against the BACKEND, immediately
+        before it happens inside `_drain_item_status` (`gate=True` below;
+        fix wave, F2b, Important, and TASK-1541's Qodo redesign afterwards).
+        Ingest/Ignore never patch this dict (they pass no `patch_item=`), so
+        if either ran behind this cache's back -- or the dict went stale for
+        any other reason -- the cached "new" check above cannot see it;
+        asking the backend right before the write, mirroring the unread
+        toggle's own `_blocking_status_for` guard, closes that regardless of
+        the cause.
+        """
+        if item is None:
+            return
+        if str(item.get("status") or "").strip().lower() != "new":
+            return
+        item_id = item.get("id")
+        if item_id is None:
+            return
+        self._dispatch_item_status(
+            item_id,
+            _ItemStatusIntent(
+                status="reviewed",
+                notify_toast=False,
+                refresh=False,
+                patch_item=item,
+                gate=True,
+            ),
+        )
+        self._request_tree_counts_refresh()
+
+    #: How long the rail's unread counts may lag behind a run of silent
+    #: mark-read-on-open writes. Long enough that a fast `j`/`j`/`j` walk pays
+    #: for ONE reload rather than one per keystroke; short enough that the
+    #: number is right by the time a reader looks up at it.
+    _TREE_COUNTS_REFRESH_DEBOUNCE_SECONDS = 0.6
+
+    def _request_tree_counts_refresh(self) -> None:
+        """Reload the rail's counts once the user stops opening items.
+
+        Review wave, Minor 6. The rail legend says "Counts: unread items"
+        unconditionally, and opening an item moves it out of the unread bucket
+        -- but `_mark_item_read_on_open` deliberately passes `refresh=False`
+        (it fires on every arrow key, and a reload per keystroke was proven
+        live to detach the mounted `ItemsPane` and drop focus). So the number
+        lagged by however many items had been opened since the last deliberate
+        action, and the honest choices were to weaken the label or to remove
+        the lag.
+
+        This removes the lag, at one query pair per PAUSE rather than per
+        keystroke: each call re-arms a single timer, so a burst of `j`
+        presses collapses into one `_load_tree_data()` after the burst ends.
+        `_load_tree_data` is itself `@work(exclusive=True, group="wc_tree")`
+        and publishes through TASK-2200's surface-refresh drain, so nothing
+        here can stack up rail rebuilds either.
+
+        The timer is stopped before it is replaced -- Textual keeps a live
+        `Timer` running until it is stopped or its node unmounts, and this
+        method can be reached many times a second.
+        """
+        timer = getattr(self, "_tree_counts_refresh_timer", None)
+        if timer is not None:
+            timer.stop()
+        self._tree_counts_refresh_timer = self.set_timer(
+            self._TREE_COUNTS_REFRESH_DEBOUNCE_SECONDS,
+            self._load_tree_data,
+        )
+
+    @on(UnreadToggleRequested)
+    def handle_unread_toggle_requested(self, event: UnreadToggleRequested) -> None:
+        """The explicit way back (Task 5): marking read is otherwise
+        irreversible from the reader, since it drops the item out of the
+        unread list. Reuses the same global status column, just the other
+        direction.
+
+        Refuses to downgrade a status that is not a read/unread state at all
+        (whole-branch review, Minor -- data loss). `_mark_item_read_on_open`
+        already declines to touch anything but `new`, for the same reason:
+        `ingested`, `ignored` and `error` are terminal records of something
+        that happened to the item, and this button would overwrite them with
+        `new`, losing the fact of an ingest and dropping the item out of the
+        Ingested filter that was the only way to find it again.
+
+        The refusal is decided by `_drain_item_status`'s gate
+        (`_item_status_write_allowed`), by asking the backend, NOT from
+        `event.item` (re-review, Important). `event.item` is
+        `ContentPane.item` -- the dict the screen has held since the item was
+        selected -- and `handle_ingest_requested`/`handle_ignore_requested`
+        dispatch with no `patch_item=`, so that dict is never updated when
+        they run. `patch_item=` is passed by exactly one dispatch path in the
+        whole app (`_mark_item_read_on_open`) and by neither of those two.
+        Ingest an open item and the reader's dict still says `reviewed`, so a
+        guard reading `event.item` never fires and the button destroys the
+        ingest anyway -- reproduced end to end.
+        """
+        event.stop()
+        item = event.item
+        if item is None:
+            return
+        item_id = item.get("id")
+        if item_id is None:
+            return
+        self._dispatch_item_status(item_id, _ItemStatusIntent(status="new", gate=True))
+
+    @on(ViewSnapshotRequested)
+    def handle_view_snapshot_requested(self, event: ViewSnapshotRequested) -> None:
+        """The reader's `[full page]`/`[previous snapshot]` affordances (TASK-1494).
+
+        Deferred to a worker for the same reason every other DB-touching
+        handler on this screen is: `_open_snapshot_view` awaits a service
+        call and, on success, `push_screen_wait`, neither legal directly
+        inside a synchronous `@on` handler. No `exclusive=True`: like
+        `handle_kept_briefings_requested`'s sibling note explains, cancelling
+        a modal-owning worker mid-view would leave the modal on the screen
+        stack with nothing left to dismiss it.
+        """
+        event.stop()
+        item = event.item
+        if item is None:
+            return
+        self.run_worker(
+            self._open_snapshot_view(item, event.which),
+            group="wl-view-snapshot",
+        )
+
+    async def _open_snapshot_view(self, item: dict[str, Any], which: str) -> None:
+        """Resolve `which` against `url_snapshots` and show it, or say why not.
+
+        AC#2: an absent snapshot (a `full_page` request against an item
+        whose page was somehow never stored, or a `previous` request when
+        only one snapshot exists yet) degrades to an honest toast, never an
+        empty modal and never a silent no-op -- the two failure modes the
+        acceptance criterion explicitly rules out.
+
+        Args:
+            item: The normalized watchlist item `ViewSnapshotRequested`
+                carried -- `source_id`/`url` key the `url_snapshots` lookup.
+            which: `"full_page"` (the newest snapshot) or `"previous"` (the
+                second-newest).
+        """
+        service = self._local_watchlists_service()
+        source_id = item.get("source_id")
+        url = item.get("url")
+        if service is None or source_id is None or not url:
+            self._notify_watchlists(
+                "Could not look up this page's stored snapshots.",
+                severity="error",
+                markup=False,
+            )
+            return
+        try:
+            snapshots = await service.get_url_snapshots(source_id, url, limit=2)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to load url_snapshots for the reader's snapshot viewer."
+            )
+            self._notify_watchlists(
+                "Could not load this page's stored snapshots.",
+                severity="error",
+                markup=False,
+            )
+            return
+        # Closed vocabulary, refused rather than defaulted (task-1494 Qodo):
+        # an unrecognized `which` silently treated as "previous" would open
+        # the WRONG snapshot after a typo'd/future caller, with a misleading
+        # toast on the absent case. Type-only log; nothing user-derived.
+        _SNAPSHOT_INDEX = {"full_page": 0, "previous": 1}
+        index = _SNAPSHOT_INDEX.get(which)
+        if index is None:
+            logger.warning(
+                f"ViewSnapshotRequested with unknown which={which!r}; refusing."
+            )
+            return
+        if index >= len(snapshots):
+            self._notify_watchlists(
+                "No page snapshot saved yet for this item."
+                if which == "full_page"
+                else "No previous snapshot yet for this page.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        snapshot = snapshots[index]
+        await self.app.push_screen_wait(
+            SnapshotViewModal(
+                url=url,
+                created_at=snapshot.get("created_at"),
+                content=snapshot.get("extracted_content"),
+            )
+        )
+
+    async def _item_status_write_allowed(
+        self, item_id: Any, intent: "_ItemStatusIntent"
+    ) -> bool:
+        """The backend terminal-status gate, re-asked right before the write.
+
+        TASK-1541 (Qodo redesign). Shared by both gated intents (the unread
+        toggle and mark-read-on-open, `_ItemStatusIntent.gate=True`) --
+        previously this check was duplicated between `_mark_item_unread` and
+        `_confirm_new_then_mark_item_read_on_open`, one per caller; both are
+        gone now, folded into this one method plus `_drain_item_status`'s
+        loop.
+
+        Deciding from a live backend query, rather than keeping the screen's
+        cached dicts patched at every status writer (re-review, Important).
+        Both were on the table; this leaves strictly fewer places able to
+        drift:
+
+        * Patching would have to keep the reader's dict in step for every
+          present and future writer of an item status, and it structurally
+          cannot cover a status this screen did not write at all -- a
+          scheduled run marking an item `error`, the server backend, or a
+          second screen.
+        * Asking has exactly one decision point, and it asks the system of
+          record, so it is right no matter who moved the item or when.
+
+        Called from INSIDE `_drain_item_status`, immediately before the
+        write, not once at dispatch time: a desired entry can sit queued for
+        a moment (another item's write draining, or simply the worker not
+        yet scheduled), and only re-asking right before the write catches
+        anything that moved the item to a terminal status during that wait
+        -- including another intent for the SAME item, drained just before
+        this one, that happened to be an Ingest/Ignore.
+
+        `_loaded_items` is NOT the system of record and cannot be used here.
+        Until TASK-2301 it could not even have been read as a hint:
+        `local_watchlists_service.list_items` collapsed `status=None` to
+        `status="new"`, so an ingested item was not merely stale in that
+        cache -- it was absent from it entirely. That collapse is gone and the
+        cache now carries every status, which changes nothing here: it is
+        still a page snapshot taken at load time, of at most `limit` rows,
+        and this gate is deciding whether a write may destroy an ingest. Ask
+        the row.
+
+        Fails CLOSED. If the backend cannot be asked, the write is refused:
+        marking unread/read is a convenience the user can repeat, whereas
+        overwriting an ingest is not recoverable, so an unanswered question
+        must not resolve in favour of the destructive branch.
+
+        Args:
+            item_id: Normalized id of the item to check.
+            intent: The queued write this gate is deciding whether to allow.
+
+        Returns:
+            `True` if the write may proceed, `False` if it was refused (a
+            toast already fired when `intent.notify_toast`).
+        """
+        label = "unread" if intent.status == "new" else intent.status
+        try:
+            blocking = await self._blocking_status_for(item_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not confirm an item's status before marking it {label}; "
+                "leaving it unchanged."
+            )
+            if intent.notify_toast:
+                self.notify(
+                    "Could not confirm this item's current status, so it was "
+                    "left unchanged. Try again.",
+                    severity="warning",
+                )
+            return False
+        if blocking is not None:
+            if intent.notify_toast:
+                self.notify(
+                    f"This item is marked {blocking}; leaving it as it is "
+                    f"rather than overwriting that with {label}.",
+                    severity="warning",
+                )
+            return False
+        return True
+
+    def _dispatch_item_status(self, item_id: Any, intent: "_ItemStatusIntent") -> None:
+        """Queue `intent` as `item_id`'s desired write and ensure a drainer runs.
+
+        TASK-1541 (Qodo redesign). Every one of the four item-status dispatch
+        paths (Ingest, Ignore, the unread toggle, mark-read-on-open) calls
+        this instead of directly starting its own worker -- see
+        `_ItemStatusIntent`'s and `_ITEM_STATUS_DRAIN_GROUP_PREFIX`'s
+        docstrings for why (cancellation-based "supersede" was unsound for a
+        durable write, two independent ways).
+
+        Overwriting `self._item_status_desired[item_id]` unconditionally is
+        the coalescing: a second dispatch for the same item before the first
+        has been drained simply replaces what the drainer will act on next --
+        there is never more than one write queued per item. If a drainer is
+        already running for this item (`item_id in self._item_status_
+        draining`), nothing further happens here: the running drainer is
+        NEVER cancelled and NEVER told to stop early, it just picks the new
+        entry up itself the next time its loop checks the dict (see
+        `_drain_item_status`). Only when no drainer is currently running is
+        one started, in this item's OWN group -- so a burst of dispatches
+        across MANY different items still gets one independent drainer each,
+        never sharing a group and never able to interact.
+        """
+        self._item_status_desired[item_id] = intent
+        if item_id in self._item_status_draining:
+            return
+        self._item_status_draining.add(item_id)
+        self.run_worker(
+            self._drain_item_status(item_id),
+            group=f"{_ITEM_STATUS_DRAIN_GROUP_PREFIX}{item_id}",
+            exclusive=False,
+        )
+
+    async def _drain_item_status(self, item_id: Any) -> None:
+        """Per-item worker: pop the desired write, perform it, repeat.
+
+        TASK-1541 (Qodo redesign). This is the ONLY worker body that ever
+        writes an item's status now -- Ingest, Ignore, the unread toggle, and
+        mark-read-on-open all reach it through `_dispatch_item_status`, one
+        drainer per item id, never shared across items and never cancelled.
+
+        The invariant that replaces cancellation-based "supersede": pop this
+        item's desired entry, `await` `_update_item_status` (which itself
+        `await`s the actual `asyncio.to_thread` write) to GENUINE completion
+        -- success or a real exception, never a cancellation, since nothing
+        here is ever cancelled -- THEN check the dict again before exiting.
+        If a newer desired entry appeared while that write was in flight
+        (another dispatch for this SAME item, which only ever overwrites the
+        dict rather than starting a second drainer), the loop goes around
+        again and writes THAT instead. Only when the dict holds nothing more
+        for this item does the drainer exit and clear itself from
+        `_item_status_draining`.
+
+        Two consequences fall out of this shape directly:
+
+        * At most one write is ever queued per item (the dict holds a single
+          entry) plus at most one in flight -- the same bound the old
+          cross-item/per-item `exclusive=True` groups gave, without the
+          unsoundness: a fast `j`/`k` run or an Ingest-then-Ignore burst on
+          one item still costs at most two writes, not one per keystroke,
+          but BOTH writes always run to completion in dispatch order, so the
+          LAST action dispatched is always the one the database (and the
+          cache, if `patch_item` is set) settles on -- deterministically,
+          not "whichever OS thread happened to finish last" (the old
+          model's actual behaviour once the write got a genuine suspension
+          point; see `_ITEM_STATUS_DRAIN_GROUP_PREFIX`'s docstring).
+        * A gated intent (`intent.gate`, the unread toggle and
+          mark-read-on-open) is re-checked against the backend
+          (`_item_status_write_allowed`) immediately before ITS OWN write,
+          not once at dispatch time -- so an Ingest/Ignore that lands on this
+          same item while a gated entry is still queued is seen, even though
+          neither of those two ever patches the cache this dict's staleness
+          check would otherwise rely on.
+
+        `try`/`finally` around the loop, not just around the body: whatever
+        exits the loop (the normal empty-dict return, or -- not expected in
+        practice, since `_update_item_status` itself catches `Exception` --
+        anything else) must still clear this item from `_item_status_
+        draining`, or the item would be permanently unable to dispatch a new
+        write again for the rest of the screen's life.
+        """
+        try:
+            while True:
+                intent = self._item_status_desired.pop(item_id, None)
+                if intent is None:
+                    return
+                if intent.gate:
+                    allowed = await self._item_status_write_allowed(item_id, intent)
+                    if not allowed:
+                        continue
+                await self._update_item_status(
+                    item_id,
+                    intent.status,
+                    notify_toast=intent.notify_toast,
+                    refresh=intent.refresh,
+                    patch_item=intent.patch_item,
+                )
+        finally:
+            self._item_status_draining.discard(item_id)
+
+    async def _blocking_status_for(self, item_id: Any) -> str | None:
+        """Which `_NON_READ_STATE_STATUSES` value the backend holds for this item.
+
+        One authoritative single-item read
+        (`WatchlistsBackendController.get_item_status`, down to
+        `SubscriptionsDB.get_item_status`), not an inference from a listing.
+
+        An earlier version asked `list_items` once per candidate status with
+        `limit=500` and looked for the item in each result (PR #1091 review,
+        F1). `LocalWatchlistsService.list_items` slices to the requested
+        window, so an `ingested`/`ignored`/`error` item outside the first page
+        was simply absent from the answer -- and absence from a truncated page
+        is not proof of absence. The guard returned `None`, and `Mark unread`
+        overwrote the ingest: exactly the data loss the guard exists to
+        prevent, for any source with more than 500 items in a blocking
+        status. Adding pagination would only have moved the boundary; reading
+        the item's own row removes the boundary.
+
+        Args:
+            item_id: Normalized id of the item to check.
+
+        Returns:
+            The blocking status the backend holds for this item, or `None`
+            when its status is a read/unread state (`new`/`reviewed`) that
+            `Mark unread` may legitimately overwrite.
+
+        Raises:
+            Exception: Whatever the controller raises -- including `KeyError`
+                for an item that is no longer there, and
+                `NotImplementedError` for a backend with no single-item read.
+                The caller treats an unanswerable question as a refusal, not
+                as a green light.
+        """
+        status = await self._controller.get_item_status(
+            runtime_backend=self.runtime_backend,
+            item_id=item_id,
+        )
+        normalized = str(status or "").strip().lower()
+        return normalized if normalized in _NON_READ_STATE_STATUSES else None
+
+    @on(ItemsFilterChanged)
+    def handle_items_filter_changed(self, event: ItemsFilterChanged) -> None:
+        """Mirror the Items filter/search, and re-page when the STATUS moves.
+
+        Review wave, I2. The status is now part of the query
+        (`_items_status_query`), so changing it has to re-fetch or the pane is
+        left filtering the previous status's page in memory -- which is exactly
+        the "the filter can only narrow what was already fetched" defect this
+        fix removes.
+
+        Gated on the status ACTUALLY changing. This message also fires on every
+        keystroke in the search box, which is a purely in-memory filter and
+        must not cost a query per character.
+        """
+        event.stop()
+        status_changed = event.status_filter != self._items_status_filter
+        self._items_status_filter = event.status_filter
+        self._items_search_query = event.search_query
+        if status_changed:
+            self.run_worker(self._load_items(), exclusive=True)
 
     @on(RefreshItemsRequested)
     def handle_refresh_items_requested(self, event: RefreshItemsRequested) -> None:
@@ -951,10 +7988,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             rules = await self._controller.list_alert_rules(
                 runtime_backend=self.runtime_backend,
             )
-            if self.is_mounted:
+            # Mirror to screen state (Finding 2, fix round 2) — see the note
+            # on `_loaded_sources` in `_load_sources` above; same rebuild,
+            # same gap, same fix.
+            self._loaded_rules = [dict(rule) for rule in rules]
+            if self._dom_is_live:
                 try:
                     rules_pane = self.query_one("#watchlists-rules-pane", RulesPane)
-                    rules_pane.rules = rules
+                    rules_pane.rules = self._loaded_rules
                 except Exception:
                     pass
         except Exception:
@@ -965,7 +8006,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(RuleSelected)
     def handle_rule_selected(self, event: RuleSelected) -> None:
         event.stop()
-        self.selected_entity = event.rule
+        self._select_entity(event.rule)
+
+    @on(RuleFormVisibilityChanged)
+    def handle_rule_form_visibility_changed(
+        self, event: RuleFormVisibilityChanged
+    ) -> None:
+        event.stop()
+        self._rule_form_open = event.is_open
+        # Always clear on close, regardless of what `event.editing_rule`
+        # carries: RulesPane's Cancel/Submit handlers clear `show_rule_form`
+        # before clearing `_editing_rule_id`, so the message posted at that
+        # instant can still report the rule that WAS being edited. Ignoring
+        # it here (rather than trusting it) keeps a closed form from being
+        # re-seeded as still-editing on the next rebuild.
+        self._rule_form_editing = event.editing_rule if event.is_open else None
 
     @on(RefreshRulesRequested)
     def handle_refresh_rules_requested(self, event: RefreshRulesRequested) -> None:
@@ -975,6 +8030,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(SaveRuleRequested)
     def handle_save_rule_requested(self, event: SaveRuleRequested) -> None:
         event.stop()
+        # Clear synchronously here, in the same handler, rather than relying
+        # solely on the pane's own RuleFormVisibilityChanged message: `_save_rule`
+        # below can finish its own snapshot refresh and trigger a full-screen
+        # recompose fast enough to win the race against that separately-posted
+        # message still being processed, which would seed the freshly rebuilt
+        # RulesPane with the just-submitted rule still open for edit (see
+        # `handle_create_source_requested` above for the same fix on the
+        # Sources create form). Clearing here guarantees the screen's mirrored
+        # state is already correct before `run_worker` even starts the async
+        # chain that can recompose.
+        self._rule_form_open = False
+        self._rule_form_editing = None
         self.run_worker(self._save_rule(event.payload), exclusive=True)
 
     @on(EditRuleRequested)
@@ -996,13 +8063,101 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         self.set_timer(0.05, open_edit_form)
 
-    @on(MarkReviewedRequested)
-    def handle_mark_reviewed_requested(self, event: MarkReviewedRequested) -> None:
+    @on(SaveNoiseSelectorsRequested)
+    def handle_save_noise_selectors_requested(
+        self, event: SaveNoiseSelectorsRequested
+    ) -> None:
         event.stop()
-        entity = event.entity
-        if entity is None:
+        if event.source_id is None:
+            # Fix round 1 (Minor 4). A bare `return` here made Save a dead
+            # button: the press produced no write, no error and no toast, the
+            # exact pattern this stream keeps paying for (see the watchlist
+            # -level actions in Task 5 fix round 2, disabled rather than left
+            # silently inert). Reachable only from an entity with no `id`,
+            # which is a state defect rather than anything the user did --
+            # so it is logged as well as toasted.
+            logger.warning(
+                "Ignore-rule save requested for an entity carrying no id; "
+                "nothing was written."
+            )
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(
+                    "Nothing to save: no source is selected.", severity="warning"
+                )
             return
-        self.run_worker(self._update_item_status(entity.get("id"), "reviewed"), exclusive=True)
+        self.run_worker(
+            self._save_noise_selectors(event.source_id, event.text),
+            exclusive=True,
+            group="wc_noise_selectors",
+        )
+
+    async def _save_noise_selectors(self, source_id: Any, text: str) -> None:
+        """Persist one source's `ignore_selectors` and patch, never recompose.
+
+        TASK-1362 (spec §2). Deliberately does NOT call `_load_sources()`,
+        `_refresh_overview_data()` or `_refresh_local_wc_snapshot()` the way
+        `_create_source` does. `overview_data` was `reactive({}, recompose=
+        True)` on this screen when that decision was taken, so touching it
+        rebuilt every region through its factory and replaced the mounted
+        panes wholesale -- proven live in Phase D Task 5 to detach the
+        `ItemsPane`, reset the `DataTable` cursor and drop keyboard focus.
+        TASK-2200 removed that recompose, but the conclusion is unchanged
+        for a simpler reason: nothing the user can see is derived from a
+        source's selectors -- not the Sources table's five columns, not the
+        overview counts, not the staging line. So the only stale surface is
+        the entity dict itself, which is patched in place -- the SAME object
+        held by `selected_entity`, `selected_source` and `SourcesPane.sources`
+        -- so a later read (including the Inspector rebuilt by an unrelated
+        region toggle) already sees the new value with no rebuild forced here.
+
+        Args:
+            source_id: The source's watchlist item id, namespaced or bare.
+            text: The newline-separated selector text to store.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        try:
+            await self._controller.update_source(
+                runtime_backend=self.runtime_backend,
+                item_id=source_id,
+                payload={"ignore_selectors": text},
+            )
+        except Exception:
+            logger.opt(exception=True).warning("Failed to save noise selectors.")
+            if callable(notify):
+                notify("Failed to save ignore rules.", severity="error")
+            return
+        self._patch_entity_ignore_selectors(source_id, text)
+        if callable(notify):
+            notify(
+                NOISE_SELECTORS_SAVED_TOAST,
+                severity="information",
+            )
+
+    def _patch_entity_ignore_selectors(self, source_id: Any, text: str) -> None:
+        """Mirror a saved selector text into the in-memory source dicts.
+
+        Matches `normalize_local_subscription_row`'s published shape (a list
+        under `settings`, with the key absent when there is nothing stored),
+        so a subsequent `InspectorPane._ignore_selectors_text` read reproduces
+        exactly what the backend would return.
+        """
+        selectors = [line.strip() for line in text.split("\n") if line.strip()]
+        seen: list[dict[str, Any]] = []
+        for entity in (self.selected_entity, self.selected_source):
+            if not isinstance(entity, dict) or any(entity is other for other in seen):
+                continue
+            seen.append(entity)
+            if str(entity.get("id")) != str(source_id):
+                continue
+            settings = entity.get("settings")
+            if not isinstance(settings, dict):
+                settings = {}
+                entity["settings"] = settings
+            if selectors:
+                settings["ignore_selectors"] = selectors
+            else:
+                settings.pop("ignore_selectors", None)
 
     @on(IngestRequested)
     def handle_ingest_requested(self, event: IngestRequested) -> None:
@@ -1010,7 +8165,25 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         entity = event.entity
         if entity is None:
             return
-        self.run_worker(self._update_item_status(entity.get("id"), "ingested"), exclusive=True)
+        item_id = entity.get("id")
+        if item_id is None:
+            # Fix wave (F3, Minor): an id-less entity would otherwise derive
+            # `_dispatch_item_status`'s per-item drain group as
+            # f"{_ITEM_STATUS_DRAIN_GROUP_PREFIX}None", collapsing EVERY
+            # id-less Ingest/Ignore into one shared drainer -- exactly the
+            # cross-item interaction the per-item grouping exists to avoid.
+            # Believed unreachable in practice: `normalize_watchlist_item`
+            # unconditionally sets "id" via `build_watchlist_item_id(source,
+            # "watchlist_item", row["id"])` for every item this screen's own
+            # Items pane produces, and `row["id"]` is the table's `INTEGER
+            # PRIMARY KEY`, never NULL -- so `event.entity` reaching here
+            # without an "id" would mean something other than this screen's
+            # own item pipeline constructed it. Refusing the dispatch (rather
+            # than falling back to a unique per-dispatch suffix) also matches
+            # `_mark_item_read_on_open`'s and `handle_unread_toggle_
+            # requested`'s existing `item_id is None: return` guards.
+            return
+        self._dispatch_item_status(item_id, _ItemStatusIntent(status="ingested"))
 
     @on(IgnoreRequested)
     def handle_ignore_requested(self, event: IgnoreRequested) -> None:
@@ -1018,24 +8191,358 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         entity = event.entity
         if entity is None:
             return
-        self.run_worker(self._update_item_status(entity.get("id"), "ignored"), exclusive=True)
+        item_id = entity.get("id")
+        if item_id is None:
+            # Fix wave (F3, Minor): see the identical guard and comment in
+            # `handle_ingest_requested` just above -- same hazard, same
+            # reachability analysis, same refusal.
+            return
+        self._dispatch_item_status(item_id, _ItemStatusIntent(status="ignored"))
 
-    async def _update_item_status(self, item_id: Any, status: str) -> None:
+    @on(ToggleBriefingQueueRequested)
+    def handle_toggle_briefing_queue_requested(
+        self, event: ToggleBriefingQueueRequested
+    ) -> None:
+        """Answer from memory, then dispatch the write to a worker.
+
+        Fix round 1 (Important): `SubscriptionsDB.set_item_briefing_queued`
+        is a transactional `UPDATE ... WHERE id = ?` with no busy timeout
+        beyond SQLite's default, and this branch's own docstrings (Task 4's
+        `_sweep_and_guard`) admit a second app instance against the same
+        database file. Running that write on the UI thread meant a
+        contended write could block the event loop for up to five seconds
+        before raising. This handler now does only what the UI thread is
+        entitled to do -- answer the no-selection/no-database cases from
+        memory and dispatch -- and the write itself moves into
+        `_toggle_briefing_queue`, off the UI thread, following Task 4's
+        `handle_generate_briefing_requested` -> `_generate_briefing` shape.
+
+        No `exclusive=True` and no per-item dedup: `set_item_briefing_queued`
+        is a single-row idempotent `UPDATE`, so two overlapping writes to the
+        SAME item are safe to interleave (last write wins, which is exactly
+        what two rapid presses mean), and two presses on DIFFERENT items
+        must not cancel each other -- Task 4's own lesson about
+        `exclusive=True` manufacturing zombie state applies here too, one
+        write at a time being the wrong shape for a control every row in the
+        table can trigger independently. The shared `group="wl-queue-toggle"`
+        exists only so these workers are nameable together (e.g. at
+        shutdown), not to serialize them.
+        """
+        event.stop()
+        if event.item_id is None:
+            logger.warning(
+                "Queue-for-briefing toggle requested for an entity carrying "
+                "no item id; nothing was written."
+            )
+            self._notify_watchlists(
+                "Nothing to queue: no item is selected.", severity="warning"
+            )
+            return
+        db = self._briefings_db()
+        if db is None:
+            self._notify_watchlists(
+                "Could not reach the local database, so nothing was queued.",
+                severity="error",
+            )
+            return
+        self.run_worker(
+            self._toggle_briefing_queue(db, event.item_id, event.queued),
+            group="wl-queue-toggle",
+        )
+
+    async def _toggle_briefing_queue(
+        self, db: Any, item_id: Any, queued: bool
+    ) -> None:
+        """Worker body: write the flag off the UI thread, then patch+repaint.
+
+        `asyncio.to_thread` is the load-bearing part -- `run_worker`
+        alone only *schedules* a coroutine onto this same event loop; the
+        controller's own `_maybe_await` (`watchlists_backend_controller.py`)
+        has no `to_thread` either, so dispatch through a worker without it
+        would still block the loop for the length of the `UPDATE`.
+        `SubscriptionsDB` holds thread-local connections (see its
+        `__init__`), so the worker thread gets its own, matching the idiom
+        the rest of the UI already uses for off-thread DB writes.
+
+        Honest failure, write-first-patch-after: on a DB error the flag is
+        never patched and the indicator never repainted, so a failed write
+        leaves the item exactly as it was, with an error toast reporting
+        it. `self.is_attached` is checked before every UI mutation after the
+        `await`, matching `_generate_briefing`'s own guard, since the screen
+        may have been popped while the write was in flight. The log line
+        names the exception TYPE only -- `logger.opt(exception=True)` would
+        dump the failing frame's locals (including this item's
+        title/excerpt) into a file sink running with `diagnose=True` (Task
+        3's leak, one layer up).
+        """
+        try:
+            await asyncio.to_thread(db.set_item_briefing_queued, item_id, queued)
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            logger.warning(
+                "Failed to set the briefing queue flag for item "
+                f"{item_id}: {type(exc).__name__}"
+            )
+            if self.is_attached:
+                self._notify_watchlists(
+                    "Could not update the briefing queue flag. Nothing changed.",
+                    severity="error",
+                )
+            return
+        if not self.is_attached:
+            return
+        self._patch_item_queued_flag(item_id, queued)
+        label = "queued for" if queued else "removed from"
+        self._notify_watchlists(
+            f"Item {label} the next briefing.", severity="information"
+        )
+
+    def _patch_item_queued_flag(self, raw_item_id: Any, queued: bool) -> None:
+        """Mirror a saved queue flag into every in-memory dict, then repaint.
+
+        Same shape as `_patch_entity_ignore_selectors`/
+        `_repaint_item_status_cell`: patches every dict this screen holds
+        that describes the same item, in place, so a later read (including
+        the mounted Inspector, rebuilt for an unrelated reason) already sees
+        the new value with no rebuild forced here -- then repaints the ONE
+        Items-table cell that displays it and, if the Inspector is currently
+        showing this same item, its queue button's label. Neither touches a
+        `recompose=True` reactive (Phase D pattern): the dicts are mutated
+        in place, never reassigned.
+
+        `raw_item_id` is the DB row id (`entity["item_id"]`), not the
+        namespaced `entity["id"]` the table row key and
+        `update_item_queued_cell` use -- resolved below from whichever
+        matching dict is found first, exactly as `_repaint_item_status_cell`
+        already has to for the status column.
+        """
+        row_key: Any = None
+        for item in self._loaded_items:
+            if item.get("item_id") == raw_item_id:
+                item["queued_for_briefing"] = queued
+                if row_key is None:
+                    row_key = item.get("id")
+        for entity in (self.selected_entity, self._selected_content_item):
+            if isinstance(entity, dict) and entity.get("item_id") == raw_item_id:
+                entity["queued_for_briefing"] = queued
+                if row_key is None:
+                    row_key = entity.get("id")
+        if row_key is not None:
+            try:
+                pane = self.query_one("#watchlists-items-pane", ItemsPane)
+                pane.update_item_queued_cell(row_key, queued)
+            except NoMatches:
+                pass
+        entity = self.selected_entity
+        if isinstance(entity, dict) and entity.get("item_id") == raw_item_id:
+            try:
+                inspector = self.query_one(
+                    "#watchlists-entity-inspector", InspectorPane
+                )
+                button = inspector.query_one(
+                    "#inspector-queue-briefing-button", Button
+                )
+            except NoMatches:
+                return
+            button.label = (
+                InspectorPane._UNQUEUE_BRIEFING_LABEL
+                if queued
+                else InspectorPane._QUEUE_BRIEFING_LABEL
+            )
+
+    async def _update_item_status(
+        self,
+        item_id: Any,
+        status: str,
+        *,
+        notify_toast: bool = True,
+        refresh: bool = True,
+        patch_item: dict[str, Any] | None = None,
+    ) -> None:
+        """Move one item to `status` through the shared item-status API.
+
+        Called exactly once per popped `_ItemStatusIntent`, from inside
+        `_drain_item_status`'s loop (TASK-1541, Qodo redesign) -- never
+        directly by a dispatch handler any more. That loop always `await`s
+        this to completion before looking at this item's desired-status dict
+        entry again, so at most one call to this method is ever in flight for
+        a given item at a time.
+
+        `notify_toast` is False only for the Task 5 auto-mark-read-on-open
+        path -- every other caller (Ingest/Ignore, the unread toggle) is a
+        deliberate user action and keeps the toast. The failure toast is
+        gated on `notify_toast` too (fix round 1, Minor): "Failed to mark
+        item reviewed" for a write the user never asked for reads as an
+        alarming report about nothing they did; the failure is still logged
+        unconditionally via `logger.opt(exception=True).warning` just below,
+        so it is not silent, just not toasted on the automatic path.
+
+        `refresh=False` (fix round 1, CRITICAL) skips the reload of
+        `ItemsPane.items` and `_refresh_overview_data()`. The latter sets
+        `overview_data`, which was `reactive({}, recompose=True)` on the
+        screen until TASK-2200, so calling it after EVERY item selection
+        forced a full screen recompose -- proven live to detach the mounted
+        `ItemsPane`, reset the `DataTable` cursor, and drop keyboard focus,
+        so a second arrow key did nothing. Used only by the silent
+        auto-mark-read-on-open path; every deliberate action
+        (Ingest/Ignore, the unread toggle)
+        keeps refreshing as before. When `refresh` is False and the write
+        succeeds, `patch_item` -- the same dict object already held by
+        `ItemsPane.items`/`_selected_content_item`/`ContentPane.item` -- is
+        mutated in place instead, so a later status check already sees the
+        new value without forcing a rebuild.
+
+        TASK-1541: the write itself goes through `_update_item_status_
+        off_loop`, not a direct `await self._controller.update_item_status(
+        ...)`. See that method's docstring for why a plain `await` here still
+        ran the transactional `SubscriptionsDB.mark_item_status` UPDATE on
+        the event-loop thread despite this coroutine already being dispatched
+        through `run_worker`.
+
+        No `CancelledError` handling (Qodo redesign; an earlier fix wave had
+        one here -- deleted). That handler assumed a cancellation always
+        meant "the write is durable regardless, just patch the cache to
+        match it", which a later re-review found false in a narrow but real
+        window (the underlying thread can itself raise, or -- worse -- never
+        run at all if cancelled before the executor picked it up; see
+        `_ITEM_STATUS_DRAIN_GROUP_PREFIX`'s docstring). The redesign removes
+        the premise instead of patching the handler: nothing that calls this
+        method is ever cancelled any more (`_drain_item_status`'s worker is
+        `exclusive=False` and is never explicitly cancelled), so there is no
+        cancellation path here to handle -- if this coroutine is interrupted
+        at all, it is an external teardown (e.g. the screen unmounting),
+        exactly like every other worker on this screen, not a same-item or
+        cross-item "supersede".
+        """
         notify = getattr(self.app_instance, "notify", None)
         try:
-            await self._controller.update_item_status(
-                runtime_backend=self.runtime_backend,
-                item_id=item_id,
-                status=status,
-            )
-            if callable(notify):
-                notify(f"Item marked {status}.", severity="information")
+            await self._update_item_status_off_loop(item_id=item_id, status=status)
+            if patch_item is not None:
+                patch_item["status"] = status
+                # Whole-branch review (Important): the in-place patch is
+                # invisible -- rows are built once in `ItemsPane.compose()`
+                # and this path deliberately never recomposes, so the Status
+                # column read "new" for every item the user had opened until
+                # they left the tab. Repaint the one cell instead.
+                self._repaint_item_status_cell(patch_item.get("id"), status)
+            else:
+                # TASK-2301 AC#3. The deliberate actions (Ingest, Ignore, the
+                # unread toggle) carry no `patch_item`, so their only visible
+                # result used to arrive whenever the `_load_items` reload
+                # below happened to land -- and before this task that reload
+                # DELETED the row, because the list could only ever hold
+                # `new` items. "The row disappeared" is not feedback; it is
+                # the shape of data loss. Repaint the row's Status cell the
+                # moment the write succeeds, on the same single-cell path the
+                # mark-read-on-open flow already uses, so the user sees the
+                # state they just asked for on the row they acted on.
+                self._repaint_item_status_cell(item_id, status)
+            if notify_toast:
+                label = "unread" if status == "new" else status
+                # `markup=False`: the body is app-authored today, but toasts
+                # on this screen carry item- and feed-derived text elsewhere
+                # and the convention here is to escape at the terminal step
+                # rather than to audit which messages happen to be safe.
+                self._notify_watchlists(
+                    f"Item marked {label}.", severity="information", markup=False
+                )
         except Exception:
-            logger.opt(exception=True).debug(f"Failed to mark item {status}.")
-            if callable(notify):
+            logger.opt(exception=True).warning(f"Failed to mark item {status}.")
+            if notify_toast and callable(notify):
                 notify(f"Failed to mark item {status}.", severity="error")
-        self.run_worker(self._load_items(), exclusive=True)
-        self._refresh_overview_data()
+        if refresh:
+            self.run_worker(self._load_items(), exclusive=True)
+            self._refresh_overview_data()
+            # TASK-2304 AC#1. Every status this path writes moves the item
+            # into or out of the `new` bucket the rail counts, so the rail is
+            # stale the instant this returns.
+            #
+            # Deliberately inside `if refresh`, which is a real trade-off and
+            # not an oversight. The `refresh=False` caller is the silent
+            # mark-read-on-open (`_mark_item_read_on_open`), which fires on
+            # EVERY item selection including each `j`/`k` keystroke, and it
+            # carries no reload of any kind -- that is the whole reason the
+            # flag exists (a full refresh per selection was proven live to
+            # detach the mounted `ItemsPane` and drop keyboard focus). So the
+            # rail's unread count does lag by however many items were opened
+            # since the last deliberate action, and is corrected by the next
+            # one, by a tab switch, or by any other `_load_tree_data` caller.
+            # Two SQLite queries and a rail rebuild per arrow key is the
+            # wrong price for a number that is one out.
+            self._load_tree_data()
+
+    async def _update_item_status_off_loop(
+        self, *, item_id: Any, status: str
+    ) -> dict[str, Any]:
+        """Drive the item-status write to completion off the UI thread.
+
+        TASK-1541. `_update_item_status` used to `await
+        self._controller.update_item_status(...)` directly, and every layer
+        of that call chain -- `WatchlistsBackendController.update_item_status`
+        -> `WatchlistScopeService.update_item` -> `LocalWatchlistsService.
+        update_item` -> `SubscriptionsDB.mark_item_status` -- is an `async
+        def` with no genuine `await` of its own. `_maybe_await` (the
+        controller's own helper) only awaits a value that is ALREADY
+        awaitable; it never puts a plain synchronous call on a thread. So
+        awaiting that chain runs the whole thing, including the transactional
+        `UPDATE`, synchronously to completion on whichever thread awaits the
+        outermost coroutine -- and `run_worker` only *schedules* a coroutine
+        back onto this SAME event loop, it does not move it to a thread
+        (identical shape to `_toggle_briefing_queue`'s fix, whose docstring
+        names this exact trap). `SubscriptionsDB` sets no `busy_timeout`
+        pragma, so a second app instance (or a background check) contending
+        for the same row blocked the UI thread for the length of the lock
+        wait, not just the write.
+
+        Mirrors `library_screen.py`'s `_run_library_service_call(...,
+        isolate_in_worker=True)`: `asyncio.to_thread` gives the worker thread
+        no event loop of its own, so `asyncio.run` builds a throwaway one
+        there to drive the controller coroutine to completion, rather than
+        resuming it back on this loop. `runtime_backend` is read here, on
+        the calling (event-loop) thread, and passed into the thread body as a
+        plain string -- the worker body itself must never read a screen
+        reactive directly.
+
+        Drain invariant (TASK-1541, Qodo redesign; replaces an earlier,
+        incorrect "last press wins is not guaranteed at the database" caveat
+        that used to live here). This OS thread is genuinely not cancellable
+        once started -- `asyncio.to_thread`'s underlying executor future can
+        only be cancelled before it begins running -- which is exactly why an
+        earlier design (`exclusive=True` "supersede" worker groups) could not
+        safely guarantee write ORDER: a superseded write's thread and its
+        replacement's thread were two independent, un-ordered writes to the
+        same row, either able to commit last. `_drain_item_status` sidesteps
+        that instead of tolerating it: it `await`s this method to genuine
+        completion before ever popping this SAME item's next desired entry,
+        so at most one call to this method is alive for a given item at any
+        time -- there is no second thread for the SAME row to race against.
+        Repeat Ingest/Ignore (or any other item-status action) on one item
+        now has a real "last dispatched action wins" guarantee, at the
+        database, not just at whatever the UI happens to repaint last.
+
+        Returns:
+            The controller's result dict, unused by the only current caller
+            but kept so a future caller does not have to re-add it.
+        """
+        runtime_backend = self.runtime_backend
+
+        def _invoke() -> dict[str, Any]:
+            return asyncio.run(  # policy-exception: worker-thread loop
+                self._controller.update_item_status(
+                    runtime_backend=runtime_backend,
+                    item_id=item_id,
+                    status=status,
+                )
+            )
+
+        return await asyncio.to_thread(_invoke)
+
+    def _repaint_item_status_cell(self, item_id: Any, status: str) -> None:
+        """Push a patched status into the mounted Items table's Status cell."""
+        try:
+            pane = self.query_one("#watchlists-items-pane", ItemsPane)
+        except NoMatches:
+            return
+        pane.update_item_status_cell(item_id, status)
 
     async def _save_rule(self, payload: dict[str, Any]) -> None:
         notify = getattr(self.app_instance, "notify", None)
@@ -1047,7 +8554,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Alert rule saved.", severity="information")
         except Exception:
-            logger.opt(exception=True).debug("Failed to save alert rule.")
+            logger.opt(exception=True).warning("Failed to save alert rule.")
             if callable(notify):
                 notify("Failed to save alert rule.", severity="error")
         self.run_worker(self._load_rules(), exclusive=True)
@@ -1058,6 +8565,33 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         event.stop()
         entity = event.entity
         if entity is None:
+            return
+        entity_type = InspectorPane._entity_type(entity)
+        if entity_type == "notification":
+            self.app_instance.notify(
+                "Use Dismiss to remove a notification from the inbox.",
+                severity="information",
+            )
+            return
+        if entity_type == "item":
+            # Review wave, Minor 2. `d` over an item used to open a dialog
+            # saying "Delete <title>?" and then write `status="ignored"` --
+            # never a delete. Before TASK-2301 the row vanished on the next
+            # reload, so it read as one; now the row stays, so the gesture
+            # looked like it had simply failed (and on an ALREADY-ignored row
+            # it genuinely did nothing observable at all).
+            #
+            # Routed to the vocabulary that matches the write, through the
+            # same `_dispatch_item_status` the Inspector's own Ignore button
+            # uses. That is not only naming: the old `_delete_item` called
+            # `self._controller.update_item_status(...)` DIRECTLY, bypassing
+            # both TASK-1541's per-item drain and the terminal-status gate --
+            # a second, unguarded writer of the one field this screen is
+            # careful about. It is gone; this is now the only path.
+            item_id = entity.get("id")
+            if item_id is None:
+                return
+            self._dispatch_item_status(item_id, _ItemStatusIntent(status="ignored"))
             return
         self._pending_delete_entity = dict(entity)
         title = entity.get("name") or entity.get("source_title") or entity.get("title") or "this item"
@@ -1078,8 +8612,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.run_worker(self._delete_run(entity.get("id")), exclusive=True)
         elif entity_type == "rule":
             self.run_worker(self._delete_rule(entity.get("id")), exclusive=True)
-        elif entity_type == "item":
-            self.run_worker(self._delete_item(entity.get("id")), exclusive=True)
+        # No `item` branch: items never reach this dialog any more -- see the
+        # Minor 2 note in `handle_delete_requested`.
 
     async def _delete_source(self, source_id: Any) -> None:
         try:
@@ -1089,16 +8623,31 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             self.selected_entity = None
             self.selected_source = None
+            # The mounted pane keeps its own copy of the selection, and
+            # nothing rebuilds it from screen state any more (TASK-2200) --
+            # `_load_sources` below refreshes the ROWS but only re-selects
+            # when `selected_source` is set. Without this the pane's Preview
+            # / Check now buttons stay armed on a source that is gone.
+            self._reseed_live_detail_pane()
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Source deleted.", severity="information")
         except Exception:
-            logger.opt(exception=True).debug("Failed to delete source.")
+            logger.opt(exception=True).warning("Failed to delete source.")
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Failed to delete source.", severity="error")
+        # Reload every view derived from the source list, not just the two
+        # that happened to be here (TASK-1040). `_refresh_local_wc_snapshot`
+        # feeds the staging line and `_refresh_overview_data` the cards, but
+        # `#sources-table` and the rail's counts read their own queries — so
+        # without these the table kept the previous list and the rail said
+        # `All sources  0` while the centre said `Feeds in All sources (1)`,
+        # describing the same thing on one screen.
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
+        self.run_worker(self._load_sources(), exclusive=True, group="wc_sources")
+        self._load_tree_data()
 
     async def _delete_run(self, run_id: Any) -> None:
         try:
@@ -1108,11 +8657,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             self.selected_entity = None
             self.selected_run = None
+            # See `_delete_source`: the deleted run's own pane holds the
+            # selection, and nothing rebuilds it from screen state any more
+            # (TASK-2200).
+            self._reseed_live_detail_pane()
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Run deleted.", severity="information")
         except Exception:
-            logger.opt(exception=True).debug("Failed to delete run.")
+            logger.opt(exception=True).warning("Failed to delete run.")
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Failed to delete run.", severity="error")
@@ -1130,28 +8683,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Alert rule deleted.", severity="information")
         except Exception:
-            logger.opt(exception=True).debug("Failed to delete alert rule.")
+            logger.opt(exception=True).warning("Failed to delete alert rule.")
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Failed to delete alert rule.", severity="error")
         self.run_worker(self._load_rules(), exclusive=True)
-        self._refresh_overview_data()
-
-    async def _delete_item(self, item_id: Any) -> None:
-        notify = getattr(self.app_instance, "notify", None)
-        try:
-            await self._controller.update_item_status(
-                runtime_backend=self.runtime_backend,
-                item_id=item_id,
-                status="ignored",
-            )
-            if callable(notify):
-                notify("Item ignored.", severity="information")
-        except Exception:
-            logger.opt(exception=True).debug("Failed to ignore item.")
-            if callable(notify):
-                notify("Failed to ignore item.", severity="error")
-        self.run_worker(self._load_items(), exclusive=True)
         self._refresh_overview_data()
 
     def action_switch_section(self, section_id: str) -> None:
@@ -1167,7 +8703,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def action_show_help(self) -> None:
         """Show a notification with available keyboard shortcuts."""
         self.app_instance.notify(
-            "1=Overview 2=Sources 3=Items 4=Runs 5=Rules | n=new d=delete c=check p=preview ?=help",
+            "1=Overview 2=Sources 3=Items 4=Runs 5=Rules 6=Notifications "
+            "7=Artifacts | n=new d=delete/ignore c=check p=preview ?=help",
             severity="information",
             timeout=8,
         )
@@ -1186,11 +8723,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 pass
 
     def action_delete_selected(self) -> None:
-        """Delete the currently selected entity after confirmation."""
+        """Delete the selected entity, or IGNORE it when it is an item.
+
+        Round 2, O3: this docstring used to say "after confirmation" flatly,
+        which stopped being true for one of the four kinds. The split lives in
+        `handle_delete_requested`, which is the single place that knows what
+        each kind's destructive verb actually is:
+
+        * source / run / rule -- deleted, behind `ConfirmDeleteDialog`.
+        * item -- ignored, unconfirmed, through the same dispatch the
+          Inspector's `Ignore` button uses. Unconfirmed on purpose: it is the
+          same write as that button, which has never had a dialog, and adding
+          one only here would make the keyboard path stricter than the mouse
+          path for an identical action.
+
+        The method keeps its name because the binding, the help line and this
+        action are one triple and the rename would touch every caller for no
+        behavioural gain; the copy is what had to become honest.
+        """
         entity = self.selected_entity
         if entity is None:
             self.app_instance.notify(
-                "Nothing selected to delete.",
+                "Nothing selected.",
                 severity="warning",
             )
             return
@@ -1217,3 +8771,111 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             return
         self.handle_preview_requested(PreviewRequested(entity))
+
+    def action_next_item(self) -> None:
+        """`j`: move the reader to the next item in the list (Task 6)."""
+        self._navigate_item(1)
+
+    def action_previous_item(self) -> None:
+        """`k`: move the reader to the previous item in the list (Task 6)."""
+        self._navigate_item(-1)
+
+    def _navigate_item(self, delta: int) -> None:
+        """Shared `j`/`k` implementation.
+
+        Guarded against a focused `Input`, or a focused *editable*
+        `TextArea` -- both already consume and stop a printable key
+        themselves (`Input._on_key`, `TextArea._on_key` when
+        `read_only` is False), so this guard is not what protects typing
+        today (confirmed by mutation test:
+        `test_typing_j_in_the_search_input_does_not_navigate` does not
+        redden when this check is deleted, because that test drives a real
+        keypress and `Input` already stopped it before this method could
+        ever run). It is kept anyway because this repo already binds a bare
+        letter with `priority=True` elsewhere
+        (`SearchRAGWindow.BINDINGS`'s `Binding("f", "focus_search", ...,
+        priority=True)`) -- `App.on_event` resolves priority bindings
+        BEFORE forwarding the key to the focused widget at all, bypassing
+        `Input`'s own consumption entirely. If `j`/`k` on this screen were
+        ever changed to `priority=True` (a one-line, easy-to-miss edit,
+        given the precedent), this guard would become the ONLY thing
+        stopping a keystroke from hijacking a user's typing -- load-bearing
+        overnight rather than merely defensive. Directly exercised by
+        `test_navigate_item_is_a_noop_when_a_text_input_has_focus`, which
+        calls `action_next_item()` directly, bypassing the key-event
+        pipeline (and therefore `Input`'s own protection) entirely, and
+        does go red without this check.
+
+        A *read-only* `TextArea` is deliberately NOT guarded: read-only
+        `TextArea._on_key` returns before calling `event.stop()`, so it
+        does not consume a printable key at all -- and a read-only
+        `TextArea` is exactly the shape a future reader body could take
+        (today `ContentPane` renders into a `Static`, not a `TextArea`).
+        Guarding it out unconditionally would block `j`/`k` precisely where
+        navigating away from the currently-open item is the whole point.
+
+        Scoped to the Items ("Read") tab, where `ContentPane` is actually
+        mounted (Task 4 gates CONTENT to that tab) -- firing elsewhere would
+        silently write a read-status change to the database, through
+        `_mark_item_read_on_open` below, for an item the user cannot even
+        see.
+
+        Walks `ItemsPane.displayed_items()` -- the SAME filtered/searched
+        sequence the table renders (Task 6 fix round 1, Important #1) --
+        not the screen's unfiltered `_loaded_items`. Otherwise, with a
+        search query or status filter active, `j`/`k` could open, and
+        silently mark read, an item that is not on screen at all.
+
+        Hands the chosen item to `ItemsPane.select_and_reveal` (Task 6 fix
+        round 1, Important #2) rather than calling `handle_item_selected`
+        directly: that keeps `ItemsPane.selected_item`, the table's cursor
+        row, and its scroll position all pointing at the same item as the
+        reader, through the exact same `selected_item` ->
+        `watch_selected_item` -> `ItemSelected` -> `handle_item_selected`
+        path a mouse click or an arrow-key highlight already uses -- so
+        this still inherits the Task 5 fix for free
+        (`_mark_item_read_on_open` dispatches an `_ItemStatusIntent(refresh=
+        False, patch_item=item)`, patching the item dict in place
+        instead of forcing the `overview_data` `reactive(recompose=True)`
+        full-screen rebuild that once dropped focus and broke a second
+        keypress).
+
+        Boundaries do not raise: an out-of-range index is simply a no-op.
+        """
+        focused = self.focused
+        if isinstance(focused, Input) or (
+            isinstance(focused, TextArea) and not focused.read_only
+        ):
+            return
+        if self.active_section != "items":
+            return
+        try:
+            pane = self.query_one("#watchlists-items-pane", ItemsPane)
+        except NoMatches:
+            return
+        items = pane.displayed_items()
+        if not items:
+            return
+        current = self._selected_content_item
+        current_id = current.get("id") if current else None
+        index: int | None = None
+        if current_id is not None:
+            for position, candidate in enumerate(items):
+                if candidate.get("id") == current_id:
+                    index = position
+                    break
+        if index is None:
+            # "Nothing open, or the open item is not in the displayed list"
+            # is its own case, not index -1 (whole-branch review, CRITICAL).
+            # Falling through on -1 computed `new_index = -1 + delta`, so
+            # `j` opened `items[0]` -- visibly BACKWARDS from wherever the
+            # reader was -- and `k` computed -2 and silently no-opped, for
+            # the rest of the session. Start from the near end of the list
+            # instead, which is what "next"/"previous" mean when there is no
+            # current position.
+            pane.select_and_reveal(items[0] if delta > 0 else items[-1])
+            return
+        new_index = index + delta
+        if new_index < 0 or new_index >= len(items):
+            return
+        pane.select_and_reveal(items[new_index])

@@ -4,13 +4,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from html import escape as html_escape
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional
 
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
+from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Chat.rag_scope import EffectiveScope, RagScope
 
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID = "console-inspector-review-approval"
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_LABEL = "Review approval"
+#: TASK-1972: the inspector's route to the Change Review screen -- the
+#: honest replacement for the dead "Review tool call" action TASK-1843
+#: removed. Enabled whenever change tracking is ON (git present, tracker
+#: built): the SCREEN owns the empty state ("No file changes recorded"),
+#: so enablement never needs a per-tick DB query.
+CONSOLE_INSPECTOR_REVIEW_CHANGES_ID = "console-inspector-review-changes"
+CONSOLE_INSPECTOR_REVIEW_CHANGES_LABEL = "Review changes"
+CONSOLE_INSPECTOR_NO_CHANGE_TRACKING_REASON = (
+    "Change tracking is off (git unavailable)."
+)
 CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID = "console-inspector-review-tool-call"
 CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_LABEL = "Review tool call"
 CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID = "console-inspector-save-chatbook"
@@ -18,6 +30,37 @@ CONSOLE_INSPECTOR_SAVE_CHATBOOK_LABEL = "Save Chatbook"
 CONSOLE_INSPECTOR_NO_APPROVAL_REASON = "No approval is pending."
 CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON = "No tool calls are ready for review."
 CONSOLE_INSPECTOR_NO_CHATBOOK_ARTIFACT_REASON = "No Chatbook artifact is available."
+
+#: How many staged references the composer-level evidence strip lists before
+#: it collapses the rest into a "+N more" line. The strip sits between the
+#: status chips and the composer, so it must stay short enough never to push
+#: the composer off a small terminal.
+CONSOLE_STAGED_EVIDENCE_STRIP_MAX_ROWS = 3
+CONSOLE_STAGED_EVIDENCE_UNSTAGE_ID = "console-unstage-evidence"
+CONSOLE_STAGED_EVIDENCE_UNSTAGE_LABEL = "Un-stage"
+
+_SOURCE_STATUS_CLASS_MAP = {
+    "ready": {"ready", "available", "attached", "staged"},
+    "running": {"retrieving", "running", "searching", "stale"},
+    "blocked": {"blocked", "missing", "unavailable"},
+}
+
+
+def normalize_console_source_status(status: Any) -> str:
+    """Map a raw source/launch status onto one of the UI status classes.
+
+    Args:
+        status: Raw status value from a display row, evidence reference, or
+            live-work launch.
+
+    Returns:
+        One of ``ready``, ``running``, ``blocked``, or ``muted``.
+    """
+    normalized = str(status or "").strip().lower()
+    for class_name, synonyms in _SOURCE_STATUS_CLASS_MAP.items():
+        if normalized in synonyms:
+            return class_name
+    return "muted"
 
 
 def _clean(value: Any, fallback: str) -> str:
@@ -30,6 +73,37 @@ def _clean(value: Any, fallback: str) -> str:
 def _safe_display_text(value: Any, fallback: str = "") -> str:
     """Normalize user/source text before exposing it in Console display rows."""
     return html_escape(_clean(value, fallback), quote=False)
+
+
+def resolve_assistant_identity_label(
+    *,
+    character: Any = None,
+    assistant_kind: Any = None,
+    assistant_name: Any = None,
+    assistant_id: Any = None,
+) -> str:
+    """Resolve the shared assistant identity label for Console and Chat.
+
+    Args:
+        character: Existing character display value, which always takes
+            precedence when nonblank.
+        assistant_kind: Optional presentation-only assistant kind.
+        assistant_name: Optional presentation-only assistant display name.
+        assistant_id: Optional presentation-only assistant identifier.
+
+    Returns:
+        ``Character: <value>``, ``Persona: <value>``, or the generic
+        ``Assistant: General`` fallback.
+    """
+    character_text = _clean(character, "")
+    if character_text:
+        return f"Character: {character_text}"
+
+    assistant_kind_text = _clean(assistant_kind, "").lower()
+    persona_text = _clean(assistant_name, "") or _clean(assistant_id, "")
+    if assistant_kind_text == "persona" and persona_text:
+        return f"Persona: {persona_text}"
+    return "Assistant: General"
 
 
 def coerce_non_negative_int(value: Any) -> int:
@@ -50,6 +124,24 @@ def coerce_non_negative_int(value: Any) -> int:
 def _is_blocked_rag_status(value: Any) -> bool:
     text = _clean(value, "").lower()
     return text.startswith("missing") or text in {"blocked", "unavailable"}
+
+
+def _tools_ready_text(effective_tool_count: int) -> str:
+    """Return the shared Tools copy for both the chip and the Inspector row.
+
+    TASK-1843: these two surfaces sit in the same panel and previously derived
+    their number independently, so one said "0 ready" while the other said
+    "12 ready". One function, one wording, both callers -- fixing it per-site
+    is exactly how it recurred after the first fix.
+
+    Args:
+        effective_tool_count: Built-in count plus MCP catalog size.
+
+    Returns:
+        "not loaded" at zero -- "0 ready" reads as "no tools available" when
+        built-ins are always registered -- otherwise "<n> ready".
+    """
+    return "not loaded" if effective_tool_count == 0 else f"{effective_tool_count} ready"
 
 
 def _mcp_inspector_row(
@@ -282,18 +374,22 @@ class ConsoleInspectorAction:
         return "" if self.enabled else self.disabled_reason
 
 
+CONSOLE_SYSTEM_PROMPT_LABEL_UNSET = "System Prompt"
+CONSOLE_SYSTEM_PROMPT_LABEL_SET = "System Prompt: set"
+
+
 @dataclass(frozen=True)
 class ConsoleControlState:
     """Header/control labels for the Console-native workbench chrome."""
 
     provider_label: str
     model_label: str
-    persona_label: str
+    assistant_label: str
     rag_label: str
     sources_label: str
     tools_label: str
     approvals_label: str
-    system_prompt_label: str = "System Prompt"
+    system_prompt_label: str = CONSOLE_SYSTEM_PROMPT_LABEL_UNSET
     sources_active: bool = False
     tools_active: bool = False
     approvals_active: bool = False
@@ -304,30 +400,84 @@ class ConsoleControlState:
         *,
         provider: Any = None,
         model: Any = None,
-        persona: Any = None,
+        character: Any = None,
+        assistant_kind: Any = None,
+        assistant_name: Any = None,
+        assistant_id: Any = None,
         rag_enabled: bool = False,
         staged_source_count: int = 0,
         tool_count: int = 0,
+        mcp_tool_count: int | None = None,
         approval_count: int = 0,
         system_prompt_set: bool = False,
     ) -> "ConsoleControlState":
-        persona_text = _clean(persona, "")
-        persona_label = (
-            f"Persona: {persona_text}" if persona_text else "Assistant: General"
+        """Build the Console control-bar chip state from raw run values.
+
+        Args:
+            provider: Active provider name, or falsy for "not selected".
+            model: Active model name, or falsy for "not selected".
+            character: Existing character presentation value; when present,
+                renders as ``Character: <name>``.
+            assistant_kind: Optional presentation-only assistant kind.
+            assistant_name: Optional presentation-only assistant display name.
+            assistant_id: Optional presentation-only assistant identifier.
+            rag_enabled: Whether RAG is on for this send.
+            staged_source_count: Number of staged context sources.
+            tool_count: Built-in tools that can run.
+            mcp_tool_count: MCP catalog size that can run, or ``None`` when no MCP
+                seam is wired (chip then reflects built-in tools only).
+            approval_count: Pending MCP approvals.
+            system_prompt_set: Whether the active session has a system prompt;
+                the chip then reads ``System Prompt: set``.
+
+        Returns:
+            A ``ConsoleControlState`` whose ``tools_label`` counts the tools that
+            can actually run (built-in + MCP) -- or reads "Tools: not loaded"
+            at a zero count (task-1234/F7: an honest placeholder, since this
+            app never distinguishes "definitely zero" from "not counted yet")
+            -- and whose ``*_active`` flags drive chip emphasis.
+        """
+        assistant_label = resolve_assistant_identity_label(
+            character=character,
+            assistant_kind=assistant_kind,
+            assistant_name=assistant_name,
+            assistant_id=assistant_id,
         )
+        # TASK-350: the chip must reflect the tools that can ACTUALLY run — built-in
+        # AND MCP. Counting only built-in read "Tools: 0 ready" while the inspector
+        # showed "MCP: 10 tools ready". `mcp_tool_count is None` means no MCP seam
+        # wired, so the chip falls back to built-in only.
+        effective_tool_count = tool_count + (mcp_tool_count or 0)
+        # Fleet-UX expert review F7 (task-1234): `tool_count` is sourced from
+        # a getattr hook (`ChatScreen._console_tool_count`) that production
+        # code never actually populates -- so a fresh app reads "Tools: 0
+        # ready" forever, not just before the catalog lazily builds, and
+        # that copy reads as "no tools available" even though built-ins
+        # like calculator/get_current_datetime are always registered.
+        # Eagerly counting the real enabled-builtin total was rejected: it
+        # would also feed `ConsoleInspectorState`'s "Review tool call" gate
+        # (a DIFFERENT concept -- "were any tool calls actually made this
+        # run", not "how many tools are configured") and falsely mark it
+        # actionable before any call ever happened. Scoped fix: a neutral,
+        # honest placeholder for this chip alone at the zero count --
+        # `tools_active` (dim/emphasis) is UNCHANGED, still `effective_tool_
+        # count > 0`.
+        tools_label = f"Tools: {_tools_ready_text(effective_tool_count)}"
         return cls(
             provider_label=f"Provider: {_clean(provider, 'not selected')}",
             model_label=f"Model: {_clean(model, 'not selected')}",
-            persona_label=persona_label,
+            assistant_label=assistant_label,
             rag_label=f"RAG: {'on' if rag_enabled else 'off'}",
             sources_label=f"Sources: {staged_source_count} staged",
-            tools_label=f"Tools: {tool_count} ready",
+            tools_label=tools_label,
             approvals_label=f"Approvals: {approval_count} pending",
             system_prompt_label=(
-                "System Prompt: set" if system_prompt_set else "System Prompt"
+                CONSOLE_SYSTEM_PROMPT_LABEL_SET
+                if system_prompt_set
+                else CONSOLE_SYSTEM_PROMPT_LABEL_UNSET
             ),
             sources_active=staged_source_count > 0,
-            tools_active=tool_count > 0,
+            tools_active=effective_tool_count > 0,
             approvals_active=approval_count > 0,
         )
 
@@ -379,10 +529,285 @@ class ConsoleStagedContextState:
 
     @classmethod
     def empty(cls) -> "ConsoleStagedContextState":
+        """Return the no-sources-staged display state.
+
+        Task-400: the empty state carries no summary line. The staged-context
+        tray renders its own "No sources attached. Stage sources from
+        Library." guidance Static when there are no rows, so a summary of
+        "No sources attached." here rendered the same copy twice.
+
+        Returns:
+            Empty staged-context state with the semantic ``is_empty`` flag
+            set and a blank summary.
+        """
         return cls(
             heading="Staged Context",
-            summary="No sources attached.",
+            summary="",
             is_empty=True,
+        )
+
+
+def console_staged_source_count(launch: ConsoleLiveWorkLaunch | None) -> int:
+    """Return how many sources a staged live-work launch actually carries.
+
+    The Console "Sources: N staged" chip used to hardcode ``1`` for any
+    staged launch while the staged bundle routinely carried several
+    references, so a four-result Library RAG run advertised one source.
+
+    Args:
+        launch: Currently staged live-work launch, if any.
+
+    Returns:
+        The staged bundle's reference count; ``1`` for a launch with no (or
+        an empty) evidence bundle, since the launch itself is one staged
+        item; ``0`` when nothing is staged.
+    """
+    if launch is None:
+        return 0
+    bundle = evidence_bundle_from_launch(launch)
+    if bundle is None:
+        return 1
+    return len(bundle.references) or 1
+
+
+def console_prompted_source_count(launch: ConsoleLiveWorkLaunch | None) -> int:
+    """Return how many staged references a Console send will actually prompt.
+
+    Distinct from :func:`console_staged_source_count`, which answers "how
+    much is staged". This answers "how much reaches the model", and it
+    applies exactly the filter
+    ``capture_console_staged_evidence_for_chat`` applies before formatting
+    the prompt blocks: available status (``EvidenceBundle.
+    available_references``) AND ``source_owner == "local"``. A four-result
+    bundle carrying two blocked references stages four and sends two.
+
+    Args:
+        launch: Currently staged live-work launch, if any.
+
+    Returns:
+        Count of references eligible to enter the prompt; ``0`` when nothing
+        is staged or the launch carries no evidence bundle (a bundleless
+        launch yields no prompt context at all).
+    """
+    bundle = evidence_bundle_from_launch(launch)
+    if bundle is None:
+        return 0
+    return sum(
+        1
+        for reference in bundle.available_references()
+        if reference.source_owner.strip().lower() == "local"
+    )
+
+
+@dataclass(frozen=True)
+class ConsoleStagedEvidenceRow:
+    """One compact staged-evidence line for the composer-level strip.
+
+    ``title`` and ``source`` are already display-escaped; renderers must
+    keep console markup parsing OFF so escaping stays the terminal step.
+    """
+
+    title: str
+    source: str
+    status: str = "ready"
+
+
+@dataclass(frozen=True)
+class ConsoleStagedEvidenceStripState:
+    """Display state for the staged-evidence strip above the composer.
+
+    Three mutually exclusive shapes, all built by
+    :func:`build_console_staged_evidence_strip_state`:
+
+    * hidden -- nothing staged and nothing just sent;
+    * staged -- a heading, up to
+      :data:`CONSOLE_STAGED_EVIDENCE_STRIP_MAX_ROWS` rows, an optional
+      "+N more" overflow line, and the single un-stage action;
+    * sent -- the one-send ``notice`` line, which is the only confirmation
+      an unpersisted session ever gets that evidence went out with the
+      message (the transcript's ``Sources (N)`` row needs persistence).
+    """
+
+    visible: bool = False
+    heading: str = ""
+    rows: tuple[ConsoleStagedEvidenceRow, ...] = ()
+    overflow: str = ""
+    notice: str = ""
+    unstage_label: str = CONSOLE_STAGED_EVIDENCE_UNSTAGE_LABEL
+
+
+def _source_noun(count: int) -> str:
+    return "source" if count == 1 else "sources"
+
+
+def build_console_staged_evidence_strip_state(
+    launch: ConsoleLiveWorkLaunch | None,
+    *,
+    sent_source_count: int | None = None,
+) -> ConsoleStagedEvidenceStripState:
+    """Build the staged-evidence strip state for the current Console turn.
+
+    Args:
+        launch: Currently staged live-work launch, if any.
+        sent_source_count: Source count of the evidence consumed by the most
+            recent send, when that send has not yet been superseded.
+
+    Returns:
+        The hidden, staged, or just-sent strip state. Live staging always
+        wins over a stale "sent" notice -- a strip that showed both would
+        claim evidence was consumed while new evidence sits waiting.
+    """
+    if launch is not None:
+        bundle = evidence_bundle_from_launch(launch)
+        if bundle is not None and bundle.references:
+            rows = tuple(
+                ConsoleStagedEvidenceRow(
+                    title=_safe_display_text(reference.title, "Untitled source"),
+                    source=_safe_display_text(reference.source_type, "source"),
+                    status=("ready" if reference.status == "available" else "blocked"),
+                )
+                for reference in bundle.references
+            )
+        else:
+            # A launch with no bundle (a generic handoff, or a retrieval
+            # still running / blocked) is still one staged item; show it
+            # rather than rendering an empty strip that contradicts the chip.
+            rows = (
+                ConsoleStagedEvidenceRow(
+                    title=_safe_display_text(launch.title, "Untitled source"),
+                    source=_safe_display_text(launch.source, "unknown"),
+                    status=normalize_console_source_status(launch.status),
+                ),
+            )
+        total = len(rows)
+        shown = rows[:CONSOLE_STAGED_EVIDENCE_STRIP_MAX_ROWS]
+        hidden_count = total - len(shown)
+        return ConsoleStagedEvidenceStripState(
+            visible=True,
+            heading=f"Staged for next send · {total} {_source_noun(total)}",
+            rows=shown,
+            overflow=f"+{hidden_count} more" if hidden_count > 0 else "",
+        )
+
+    if sent_source_count:
+        count = int(sent_source_count)
+        return ConsoleStagedEvidenceStripState(
+            visible=True,
+            notice=f"Evidence sent with this message · {count} {_source_noun(count)}",
+        )
+
+    return ConsoleStagedEvidenceStripState()
+
+
+@dataclass(frozen=True)
+class ConsoleRetrievalScopeState:
+    """Display state for the Inspector's "Retrieval scope" row (task-9) and
+    the header's "Scope" chip (task-10) -- both render from this SAME
+    snapshot, never a second state source.
+
+    Pure snapshot -- built from session-held state only (a persisted
+    conversation's cached last-read scope, or an unpersisted session's
+    ``SessionScopeHolder``), never a DB read at render/recompose time. A
+    scope with zero items is never represented here as "scoped": both
+    storage-layer entry points (``read_conversation_scope``,
+    ``SessionScopeHolder.set``) already normalize a zero-item scope to
+    ``None`` (unscoped) before this state is ever built from it.
+
+    ``is_empty``/``cause`` mirror ``EffectiveScope``'s ``"empty"`` state
+    (rag_scope.py) -- the configured scope(s) leave nothing to retrieve
+    from (either every item in an active scope has since been deleted, or
+    a conversation/workspace intersection with no overlap).
+
+    ``conv_item_count``/``ws_item_count`` (task-13, Phase 3) carry the
+    individual conversation-level and workspace-level scope counts
+    alongside ``item_count`` (which is always the EFFECTIVE,
+    post-intersection count) -- used only for the header chip's
+    intersection-breakdown tooltip ("conversation A ∩ workspace B → N").
+    ``None`` means that level has no active scope. Built via
+    ``from_effective`` whenever a workspace scope might be in play;
+    ``from_scope`` (the conversation-only shortcut still used before the
+    off-loop effective resolution lands in the cache) sets
+    ``conv_item_count`` to the same value as ``item_count`` and leaves
+    ``ws_item_count`` unset.
+    """
+
+    is_scoped: bool
+    item_count: int = 0
+    is_empty: bool = False
+    cause: Optional[str] = None
+    conv_item_count: Optional[int] = None
+    ws_item_count: Optional[int] = None
+
+    @classmethod
+    def unscoped(cls) -> "ConsoleRetrievalScopeState":
+        """Return the "everything" (no active scope) display state."""
+        return cls(is_scoped=False, item_count=0)
+
+    @classmethod
+    def from_scope(cls, scope: "RagScope | None") -> "ConsoleRetrievalScopeState":
+        """Build the row's display state from a resolved scope, or ``None``."""
+        if scope is None or not scope.items:
+            return cls.unscoped()
+        return cls(
+            is_scoped=True,
+            item_count=len(scope.items),
+            conv_item_count=len(scope.items),
+        )
+
+    @classmethod
+    def empty(cls, cause: Optional[str] = None) -> "ConsoleRetrievalScopeState":
+        """Return the EMPTY (action-required) display state.
+
+        Args:
+            cause: Short machine-readable reason (e.g. ``"deleted-items"``
+                or ``"no-workspace-overlap"``, mirroring
+                ``EffectiveScope.cause``); surfaced in the chip's tooltip.
+        """
+        return cls(is_scoped=False, item_count=0, is_empty=True, cause=cause)
+
+    @classmethod
+    def from_effective(
+        cls,
+        effective: "EffectiveScope",
+        *,
+        conv_item_count: Optional[int] = None,
+        ws_item_count: Optional[int] = None,
+    ) -> "ConsoleRetrievalScopeState":
+        """Build the row/chip display state from a resolved ``EffectiveScope``.
+
+        Task-13: the Inspector row and header chip render the EFFECTIVE
+        (post-intersection) state once a workspace scope is in play, not
+        just the conversation's own scope -- this is the seam that carries
+        that resolution into the display layer, mirroring
+        ``rag_scope.resolve_effective_scope``'s three states exactly.
+
+        Args:
+            effective: The resolved effective scope (conversation
+                intersected with the linked workspace's scope, if any).
+            conv_item_count: The conversation-level scope's own item count,
+                or ``None`` when the conversation has no scope. Carried
+                through only for the chip's breakdown tooltip.
+            ws_item_count: The linked workspace's scope item count, or
+                ``None`` when unset/unlinked. Carried through only for the
+                chip's breakdown tooltip.
+        """
+        if effective.state == "unscoped":
+            return cls.unscoped()
+        if effective.state == "empty":
+            return cls(
+                is_scoped=False,
+                item_count=0,
+                is_empty=True,
+                cause=effective.cause,
+                conv_item_count=conv_item_count,
+                ws_item_count=ws_item_count,
+            )
+        total = sum(len(ids) for ids in effective.allowlist.values())
+        return cls(
+            is_scoped=True,
+            item_count=total,
+            conv_item_count=conv_item_count,
+            ws_item_count=ws_item_count,
         )
 
 
@@ -396,6 +821,12 @@ class ConsoleInspectorState:
     can_save_chatbook: bool = False
     dictionary_rows: tuple[ConsoleDisplayRow, ...] = ()
     dictionary_actions: tuple[ConsoleInspectorAction, ...] = ()
+    world_book_rows: tuple[ConsoleDisplayRow, ...] = ()
+    world_book_actions: tuple[ConsoleInspectorAction, ...] = ()
+    #: TASK-347: whether a generation is actively running (thinking or
+    #: streaming) — the status-summary/Live-work surfaces read this so they
+    #: stop claiming "Ready" mid-run.
+    run_active: bool = False
 
     @classmethod
     def from_values(
@@ -417,9 +848,18 @@ class ConsoleInspectorState:
         mcp_tool_count: int | None = None,
         mcp_not_connected_count: int = 0,
         can_save_chatbook: bool = False,
+        scope_item_count: int | None = None,
+        run_active: bool = False,
+        ephemeral: bool = False,
+        change_review_available: bool = False,
     ) -> "ConsoleInspectorState":
         provider_status = "ready" if provider_ready else "blocked"
+        # F2 (task-9 review): the inspector's Save Chatbook action is a
+        # second door onto the same write the Console workbench action
+        # already gates -- consult the same registry entry.
+        chatbook_blocked = blocked_reason("save-chatbook", ephemeral=ephemeral)
         normalized_tool_count = coerce_non_negative_int(tool_count)
+        effective_tool_count = normalized_tool_count + (mcp_tool_count or 0)
         normalized_approval_count = coerce_non_negative_int(approval_count)
         rag_value = _clean(rag_status, "not staged")
         provider_value = _clean(provider_label, "provider")
@@ -429,9 +869,22 @@ class ConsoleInspectorState:
             f"{provider_value} / {model_value} / sources {source_summary} / "
             f"tools {normalized_tool_count} / approvals {normalized_approval_count}"
         )
+        # task-9: an active conversation RAG retrieval scope surfaces on the
+        # run recipe line ("... / scope N items"). ``None`` (unscoped, the
+        # overwhelming common case) leaves the line unchanged; a scope with
+        # zero items never reaches here (see ``ConsoleRetrievalScopeState``).
+        if scope_item_count is not None and scope_item_count > 0:
+            run_recipe = f"{run_recipe} / scope {scope_item_count} items"
         rows = [
             ConsoleDisplayRow("Run recipe", run_recipe),
-            ConsoleDisplayRow("Live work", _clean(live_work_title, "No active work")),
+            ConsoleDisplayRow(
+                "Live work",
+                # TASK-347: a running generation shows "Generating…"; else
+                # the pending Library-RAG launch title, else no active work.
+                "Generating…"
+                if run_active
+                else _clean(live_work_title, "No active work"),
+            ),
             ConsoleDisplayRow(
                 "Provider",
                 provider_status,
@@ -443,7 +896,14 @@ class ConsoleInspectorState:
                 source_summary,
                 status="blocked" if _is_blocked_rag_status(source_summary) else "ready",
             ),
-            ConsoleDisplayRow("Tools", f"{normalized_tool_count} ready"),
+            # TASK-1843: same derivation as the chip. `tool_count` alone comes
+            # from a getattr hook production never populates, so this row read
+            # "0 ready" beside a chip reporting a real number -- the same bug
+            # already fixed once on the chip and missed here. Both now share
+            # `_tools_ready_text`, including the honest zero placeholder
+            # ("0 ready" reads as "no tools available" when built-ins like
+            # calculator/get_current_datetime are always registered).
+            ConsoleDisplayRow("Tools", _tools_ready_text(effective_tool_count)),
             ConsoleDisplayRow(
                 "Approvals",
                 f"{normalized_approval_count} pending",
@@ -481,16 +941,18 @@ class ConsoleInspectorState:
                 disabled_reason=CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
             ),
             ConsoleInspectorAction(
-                widget_id=CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID,
-                label=CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_LABEL,
-                enabled=normalized_tool_count > 0,
-                disabled_reason=CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON,
+                widget_id=CONSOLE_INSPECTOR_REVIEW_CHANGES_ID,
+                label=CONSOLE_INSPECTOR_REVIEW_CHANGES_LABEL,
+                enabled=change_review_available,
+                disabled_reason=CONSOLE_INSPECTOR_NO_CHANGE_TRACKING_REASON,
             ),
             ConsoleInspectorAction(
                 widget_id=CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
                 label=CONSOLE_INSPECTOR_SAVE_CHATBOOK_LABEL,
-                enabled=can_save_chatbook,
-                disabled_reason=CONSOLE_INSPECTOR_NO_CHATBOOK_ARTIFACT_REASON,
+                enabled=can_save_chatbook and chatbook_blocked is None,
+                disabled_reason=(
+                    chatbook_blocked or CONSOLE_INSPECTOR_NO_CHATBOOK_ARTIFACT_REASON
+                ),
             ),
         ]
         return cls(
@@ -498,6 +960,7 @@ class ConsoleInspectorState:
             actions=tuple(actions),
             has_pending_approval=normalized_approval_count > 0,
             can_save_chatbook=can_save_chatbook,
+            run_active=run_active,
         )
 
     def to_plain_text(self) -> str:

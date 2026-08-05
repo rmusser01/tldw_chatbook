@@ -27,6 +27,7 @@ from Tests.UI.test_personas_dictionaries import (
     FakeDictScopeService,
     PersonasTestApp,
     make_dict_record,
+    patch_character_paging,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -142,6 +143,8 @@ def stub_characters(monkeypatch):
             dict(c) for c in CHARACTERS if str(c["id"]) == str(character_id)
         ),
     )
+    # Task 4: the library pages from the DB seam; feed it the same stub rows.
+    patch_character_paging(monkeypatch)
 
 
 async def _mounted(pilot):
@@ -157,6 +160,19 @@ async def _enter_characters(pilot):
     await pilot.app.workers.wait_for_complete()
     await pilot.pause()
     return screen
+
+
+async def _expand_character_dicts_section(pilot, screen):
+    """task-2231: the dictionaries section starts collapsed, below the fold;
+    scroll the center column down to it and expand it before clicking
+    Attach/Detach (the flow a user now follows)."""
+    stack = screen.query_one("#personas-detail-stack")
+    stack.scroll_end(animate=False)
+    await pilot.pause()
+    await pilot.click("#personas-char-dicts-toggle")
+    await pilot.pause()
+    stack.scroll_end(animate=False)
+    await pilot.pause()
 
 
 class TestCharacterDictionaryAttach:
@@ -188,6 +204,7 @@ class TestCharacterDictionaryAttach:
                 "_list_attachable_dictionaries",
                 lambda cid: [{"dictionary_id": 1, "name": "Slang"}],
             )
+            await _expand_character_dicts_section(pilot, screen)
             await pilot.click("#personas-char-dicts-add")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
@@ -202,6 +219,9 @@ class TestCharacterDictionaryAttach:
             assert table.row_count == 1
 
             table.move_cursor(row=0)
+            stack = screen.query_one("#personas-detail-stack")
+            stack.scroll_end(animate=False)
+            await pilot.pause()
             await pilot.click("#personas-char-dicts-detach")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
@@ -291,6 +311,7 @@ class TestCharacterDictionaryAttach:
                 "_list_attachable_dictionaries",
                 lambda cid: [{"dictionary_id": 1, "name": "Slang"}],
             )
+            await _expand_character_dicts_section(pilot, screen)
             await pilot.click("#personas-char-dicts-add")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()

@@ -1,85 +1,24 @@
-"""Regression tests for the round-3 UX batch (UX-052, 053, 055, 056, 058-063)."""
+"""Regression tests for the round-3 UX batch (UX-053, 055, 056).
+
+The UX-052/058/071 Evals card-hub tests were removed when dev retired the
+hub (commit 46b4c61b5); the Quick Test real-eval path needs a home in
+dev's bench/grid Evals architecture before it can be re-covered.
+"""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
-
-import pytest
-from textual.app import App, ComposeResult
-from textual.widgets import Static
-
-from tldw_chatbook.UI.Evals.navigation.eval_nav_screen import (
-    EVAL_NAV_CARDS,
-    evals_workflows_chip_label,
-)
-from tldw_chatbook.UI.Evals.screens.quick_test import QuickTestScreen
 from tldw_chatbook.UI.Logs_Window import LogsWindow
 from tldw_chatbook.UI.Navigation.main_navigation import nav_button_label
-from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 from tldw_chatbook.UI.Screens.scheduling.conflicts_tab import ConflictsTab
 
 
 # UX-053 -----------------------------------------------------------------
 def test_nav_labels_carry_the_ctrl_modifier() -> None:
-    assert nav_button_label(0, "Home") == "^1 Home"
-    assert nav_button_label(9, "ACP") == "^0 ACP"
+    assert nav_button_label(0, "Home") == "⌃1 Home"
+    assert nav_button_label(9, "ACP") == "⌃0 ACP"
     # Unnumbered destinations carry their F-key route.
     assert nav_button_label(10, "Lab") == "F7 Lab"
     assert nav_button_label(12, "Settings") == "F9 Settings"
-
-
-# UX-052 + UX-058 + UX-071 ----------------------------------------------
-def test_quick_test_card_runs_a_real_evaluation() -> None:
-    quick_test = next(c for c in EVAL_NAV_CARDS if c.id == "quick_test")
-    assert quick_test.demo is False
-    assert quick_test.planned is False
-    assert "simulated" not in quick_test.description.lower()
-
-
-def test_evals_chip_label_counts_live_demo_planned() -> None:
-    assert evals_workflows_chip_label() == "3 live · 3 planned"
-
-
-def test_evals_screen_binds_no_dead_digit_keys() -> None:
-    keys = {binding.key for binding in EvalsScreen.BINDINGS}
-    assert keys == {"escape", "1", "4", "5"}
-
-
-class _QuickTestHost(App[None]):
-    def __init__(self):
-        super().__init__()
-        self._screen = QuickTestScreen(app_instance=SimpleNamespace(notify=MagicMock()))
-
-    def compose(self) -> ComposeResult:
-        yield self._screen
-
-
-@pytest.mark.asyncio
-async def test_results_render_real_metrics() -> None:
-    with patch.object(QuickTestScreen, "_initialize_screen", lambda self: None):
-        app = _QuickTestHost()
-        async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.pause()
-            screen = app._screen
-            screen._handle_results(
-                {
-                    "task": "demo-task",
-                    "model": "demo-model",
-                    "samples": 12,
-                    "accuracy": 0.87,
-                    "duration": "5.2s",
-                    "timestamp": "2026-08-04T00:00:00",
-                    "run_id": "run-1",
-                    "metrics": {"accuracy": 0.87, "f1": 0.81},
-                }
-            )
-            await pilot.pause()
-            summary = str(screen.query_one("#summary-text", Static).render())
-            assert "87.00%" in summary
-            assert "run-1" in summary
-            detail = screen.query_one("#results-detail").text
-            assert '"f1": 0.81' in detail
 
 
 # UX-056 -----------------------------------------------------------------

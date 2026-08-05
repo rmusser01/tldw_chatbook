@@ -4,11 +4,16 @@ Unit tests for GitHub API client.
 Tests the GitHubAPIClient in isolation with mocked HTTP responses.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+import asyncio
 import base64
-import httpx
+import concurrent.futures
+import threading
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
+import pytest
+
+from tldw_chatbook.Utils.egress import MAX_FETCH_BYTES_GITHUB_FILE
 from tldw_chatbook.Utils.github_api_client import GitHubAPIClient, GitHubAPIError
 
 
@@ -65,13 +70,23 @@ class TestGitHubAPIClient:
 
     def test_client_property_without_token(self):
         """Test client creation without token."""
-        GitHubAPIClient()
+        with (
+            patch(
+                "tldw_chatbook.Utils.github_api_client.get_cli_setting",
+                side_effect=lambda _section, _key, default: default,
+            ),
+            patch("tldw_chatbook.Utils.github_api_client.os.getenv", return_value=None),
+            patch("httpx.AsyncClient") as mock_client_class,
+        ):
+            api_client = GitHubAPIClient()
+            api_client.client
 
-        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_class.assert_called_once()
             call_args = mock_client_class.call_args
             headers = call_args.kwargs["headers"]
 
-            # Should not have Authorization header
+            assert headers["Accept"] == "application/vnd.github.v3+json"
+            assert headers["User-Agent"] == "tldw-chatbook-repo-selector"
             assert "Authorization" not in headers
 
     @pytest.mark.parametrize(
@@ -190,10 +205,12 @@ class TestGitHubAPIClient:
         # Get branches
         branches = await api_client.get_branches("owner", "repo")
 
-        # Verify
+        # Verify (per_page=100: remote-skill-fetch slash-ref disambiguation
+        # needs the full first page — GitHub defaults to 30/page).
         assert branches == ["main", "develop", "feature/test"]
         mock_http_client.get.assert_called_once_with(
-            "https://api.github.com/repos/owner/repo/branches"
+            "https://api.github.com/repos/owner/repo/branches",
+            params={"per_page": 100},
         )
 
     @pytest.mark.asyncio
@@ -209,7 +226,9 @@ class TestGitHubAPIClient:
         assert branches == ["main", "master"]
 
     @pytest.mark.asyncio
-    async def test_get_repository_tree_success(self, api_client, mock_http_client):
+    async def test_get_repository_tree_success(
+        self, api_client, mock_http_client, monkeypatch
+    ):
         """Test successful repository tree retrieval."""
         # Mock branch response
         branch_response = MagicMock()
@@ -229,8 +248,12 @@ class TestGitHubAPIClient:
         }
         tree_response.raise_for_status = MagicMock()
 
-        # Set up mock to return different responses
-        mock_http_client.get.side_effect = [branch_response, tree_response]
+        # get_repository_tree now streams through the egress-guarded fetch
+        # helper (real byte cap) instead of calling self.client.get directly.
+        mock_fetch = AsyncMock(side_effect=[branch_response, tree_response])
+        monkeypatch.setattr(
+            "tldw_chatbook.Utils.egress.guarded_fetch_httpx_async", mock_fetch
+        )
         api_client._client = mock_http_client
 
         # Get tree
@@ -248,9 +271,11 @@ class TestGitHubAPIClient:
         assert items[2]["name"] == "main.py"
 
         # Check API calls
-        assert mock_http_client.get.call_count == 2
-        calls = mock_http_client.get.call_args_list
+        assert mock_fetch.call_count == 2
+        calls = mock_fetch.call_args_list
         assert calls[0][0][0] == "https://api.github.com/repos/owner/repo/branches/main"
+        assert calls[0].kwargs["client"] is mock_http_client
+        assert calls[0].kwargs["max_bytes"] == MAX_FETCH_BYTES_GITHUB_FILE
         assert (
             calls[1][0][0]
             == "https://api.github.com/repos/owner/repo/git/trees/abc123?recursive=1"
@@ -258,7 +283,7 @@ class TestGitHubAPIClient:
 
     @pytest.mark.asyncio
     async def test_get_repository_tree_main_fallback_to_master(
-        self, api_client, mock_http_client
+        self, api_client, mock_http_client, monkeypatch
     ):
         """Test fallback from main to master branch."""
         # Mock 404 for main branch
@@ -277,24 +302,27 @@ class TestGitHubAPIClient:
         tree_response.json.return_value = {"tree": []}
         tree_response.raise_for_status = MagicMock()
 
-        mock_http_client.get.side_effect = [
-            main_response,
-            master_response,
-            tree_response,
-        ]
+        mock_fetch = AsyncMock(
+            side_effect=[main_response, master_response, tree_response]
+        )
+        monkeypatch.setattr(
+            "tldw_chatbook.Utils.egress.guarded_fetch_httpx_async", mock_fetch
+        )
         api_client._client = mock_http_client
 
         # Should succeed with master branch
         await api_client.get_repository_tree("owner", "repo", "main")
 
         # Verify fallback happened
-        assert mock_http_client.get.call_count == 3
-        calls = mock_http_client.get.call_args_list
+        assert mock_fetch.call_count == 3
+        calls = mock_fetch.call_args_list
         assert "branches/main" in calls[0][0][0]
         assert "branches/master" in calls[1][0][0]
 
     @pytest.mark.asyncio
-    async def test_get_file_content_success(self, api_client, mock_http_client):
+    async def test_get_file_content_success(
+        self, api_client, mock_http_client, monkeypatch
+    ):
         """Test successful file content retrieval."""
         # Create base64 encoded content
         content = "Hello, World!"
@@ -305,8 +333,13 @@ class TestGitHubAPIClient:
         mock_response.status_code = 200
         mock_response.json.return_value = {"type": "file", "content": encoded_content}
         mock_response.raise_for_status = MagicMock()
-        mock_http_client.get.return_value = mock_response
 
+        # get_file_content now streams through the egress-guarded fetch
+        # helper (real byte cap) instead of calling self.client.get directly.
+        mock_fetch = AsyncMock(return_value=mock_response)
+        monkeypatch.setattr(
+            "tldw_chatbook.Utils.egress.guarded_fetch_httpx_async", mock_fetch
+        )
         api_client._client = mock_http_client
 
         # Get file content
@@ -314,21 +347,28 @@ class TestGitHubAPIClient:
 
         # Verify
         assert result == content
-        mock_http_client.get.assert_called_once_with(
+        mock_fetch.assert_called_once_with(
             "https://api.github.com/repos/owner/repo/contents/test.txt",
+            client=mock_http_client,
+            max_bytes=MAX_FETCH_BYTES_GITHUB_FILE,
             params={"ref": "main"},
         )
 
     @pytest.mark.asyncio
-    async def test_get_file_content_not_file(self, api_client, mock_http_client):
+    async def test_get_file_content_not_file(
+        self, api_client, mock_http_client, monkeypatch
+    ):
         """Test error when path is not a file."""
         # Mock response for directory
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"type": "dir"}
         mock_response.raise_for_status = MagicMock()
-        mock_http_client.get.return_value = mock_response
 
+        mock_fetch = AsyncMock(return_value=mock_response)
+        monkeypatch.setattr(
+            "tldw_chatbook.Utils.egress.guarded_fetch_httpx_async", mock_fetch
+        )
         api_client._client = mock_http_client
 
         # Should raise error
@@ -463,5 +503,273 @@ class TestGitHubAPIClient:
     async def test_close_client_no_client(self, api_client):
         """Test closing when no client exists."""
         # Should not raise error
+        await api_client.close()
+        assert api_client._client is None
+
+
+class TestGitHubAPIClientCrossEventLoop:
+    """Regression tests for TASK-981: ``GitHubAPIClient.client`` is shared by
+    handlers on the app's long-lived event loop AND by ``@work(thread=True)``
+    workers decorated with ``async def`` (``CodeRepoCopyPasteWindow``'s
+    ``_export_to_zip_worker`` / ``load_node_children``). Those workers run
+    on a brand-new event loop created by Textual's ``Worker._run_threaded``
+    via ``asyncio.run()``, which closes that loop when the worker returns.
+    Caching a single ``httpx.AsyncClient`` across those loops is a real
+    cross-loop hazard: a client built on one loop must never be handed back
+    to a caller running on a different loop, since httpx pins connection
+    pool/transport state to the loop active at construction time.
+
+    Finding-3 follow-up: the first fix for the above (a single-slot cache
+    that discards+closes whatever was cached whenever a different loop
+    touches it) is itself wrong when TWO loops are alive at once -- e.g. the
+    app loop mid-request while a worker thread's loop touches the same
+    ``GitHubAPIClient``. That closes a client that may still be in flight.
+    ``GitHubAPIClient`` now keys a per-loop cache (``_loop_clients``) instead,
+    so no live loop ever closes another live loop's client.
+    """
+
+    @staticmethod
+    async def _touch_client(api_client: GitHubAPIClient) -> httpx.AsyncClient:
+        """Access the ``client`` property from whatever loop is running."""
+        return api_client.client
+
+    def test_client_is_not_reused_across_two_asyncio_run_loops(self):
+        """Two separate ``asyncio.run()`` calls == two separate throwaway
+        loops, exactly like two invocations of the same ``@work(thread=True)``
+        async worker. The client built for the first loop must not be handed
+        back once that loop is closed and a second, unrelated loop is
+        running -- if it were, awaiting anything on it would risk
+        ``RuntimeError: Event loop is closed``.
+        """
+        api_client = GitHubAPIClient(token="t")
+
+        client_first = asyncio.run(self._touch_client(api_client))
+        loop_first = api_client._client_loop
+        assert loop_first is not None
+        assert loop_first.is_closed()
+
+        client_second = asyncio.run(self._touch_client(api_client))
+        loop_second = api_client._client_loop
+
+        # The defect this guards against: handing back `client_first`, which
+        # is bound to `loop_first` -- a loop that is now closed. (Both loops
+        # are closed by the time we inspect them here -- `asyncio.run()`
+        # always closes its loop before returning -- so the meaningful proof
+        # is that the *instances* differ, not their closed-ness.)
+        assert client_second is not client_first
+        assert loop_second is not loop_first
+        assert api_client._client is client_second
+
+    def test_second_call_after_owning_loop_closed_still_works(self):
+        """Directly exercises the acceptance-criteria phrasing: a second
+        call to the accessor, made after the loop that built the first
+        client has closed, must still succeed (not raise, not hang) and
+        must not return the dead-loop-bound instance.
+        """
+        api_client = GitHubAPIClient(token="t")
+
+        stale_client = asyncio.run(self._touch_client(api_client))
+        assert api_client._client_loop.is_closed()
+
+        # This call happens on a *third* loop, entirely unrelated to the
+        # one `stale_client` was built on. Before the fix, this returned
+        # `stale_client` unconditionally (single-slot unconditional cache).
+        fresh_client = asyncio.run(self._touch_client(api_client))
+
+        assert fresh_client is not stale_client
+        assert fresh_client.is_closed is False
+
+    def test_worker_loop_touching_client_does_not_close_the_still_running_app_loop_client(
+        self,
+    ):
+        """Simulates the realistic ordering in ``CodeRepoCopyPasteWindow``:
+        the app loop (long-lived, never closed by us) builds the client
+        first via a handler like ``load_repository``; later a worker thread
+        (``_export_to_zip_worker`` / ``load_node_children``) running its own
+        throwaway loop touches the same ``GitHubAPIClient`` instance WHILE
+        the app loop is still alive. Before the Finding-3 fix, the
+        single-slot cache treated the worker's touch as proof the app's
+        cached client was stale and scheduled ``aclose()`` on it via
+        ``run_coroutine_threadsafe`` -- closing a client that might still be
+        mid-request on the app loop. The per-loop cache must leave the
+        still-alive app loop's client alone.
+        """
+        api_client = GitHubAPIClient(token="t")
+        app_loop = asyncio.new_event_loop()
+        try:
+            app_client = app_loop.run_until_complete(self._touch_client(api_client))
+            assert app_client.is_closed is False
+            assert api_client._client_loop is app_loop
+
+            # Simulate a `@work(thread=True)` async worker touching the same
+            # shared api_client from its own asyncio.run() loop, while
+            # `app_loop` above is deliberately still alive (never closed
+            # here), exactly like the app's real long-lived loop.
+            worker_client = asyncio.run(self._touch_client(api_client))
+            assert worker_client is not app_client
+            assert api_client._client_loop is not app_loop
+
+            # Pump the still-alive app loop -- if the old single-slot bug
+            # were still present, this is where its scheduled `aclose()`
+            # hand-off would land and close `app_client`.
+            app_loop.run_until_complete(asyncio.sleep(0))
+            assert app_client.is_closed is False, (
+                "a worker loop's client lookup closed the still-alive app "
+                "loop's client -- the per-loop cache must not let one live "
+                "loop close another live loop's client"
+            )
+
+            # The app loop's own subsequent access must still return the
+            # SAME instance -- the worker's touch must not have evicted it.
+            app_client_again = app_loop.run_until_complete(
+                self._touch_client(api_client)
+            )
+            assert app_client_again is app_client
+        finally:
+            app_loop.close()
+
+    def test_concurrent_app_and_worker_loops_never_close_each_others_client(self):
+        """Genuine concurrency -- NOT sequential ``asyncio.run()`` calls where
+        the first loop is already closed by the time the second starts. The
+        app's long-lived loop is deliberately kept ALIVE and parked
+        mid-"request" (looping on ``await asyncio.sleep(...)``, exactly like
+        an in-flight ``await self.client.get(...)``) while a worker thread's
+        throwaway loop concurrently, in real wall-clock time, builds its own
+        client from the SAME ``GitHubAPIClient`` instance -- the exact
+        ``CodeRepoCopyPasteWindow`` shape: ``load_repository`` (app loop) in
+        flight while ``_export_to_zip_worker`` (worker loop) runs. A
+        single-slot cache would treat the worker's touch as proof the app's
+        cached client is stale and schedule ``aclose()`` on it via
+        ``run_coroutine_threadsafe`` -- which the app loop, still pumping its
+        event loop while parked in ``asyncio.sleep``, would actually execute,
+        closing a client that is still in flight.
+        """
+        api_client = GitHubAPIClient(token="t")
+        app_loop = asyncio.new_event_loop()
+        app_client_ready = threading.Event()
+        worker_done = threading.Event()
+        holder: dict = {}
+
+        async def app_request():
+            client = api_client.client
+            holder["app_client"] = client
+            app_client_ready.set()
+            # Genuinely overlap with the worker thread below: keep yielding
+            # control back to this loop (so any cross-loop callback
+            # scheduled on it via run_coroutine_threadsafe actually gets a
+            # chance to run) while the worker thread does its own, real,
+            # concurrent asyncio.run().
+            while not worker_done.is_set():
+                await asyncio.sleep(0.01)
+            return client
+
+        def run_app_loop() -> None:
+            holder["app_result"] = app_loop.run_until_complete(app_request())
+
+        app_thread = threading.Thread(target=run_app_loop)
+        app_thread.start()
+
+        try:
+            assert app_client_ready.wait(timeout=5), (
+                "app loop never obtained its client"
+            )
+            app_client = holder["app_client"]
+            assert app_client.is_closed is False
+
+            def run_worker() -> None:
+                holder["worker_client"] = asyncio.run(
+                    self._touch_client(api_client)
+                )
+
+            worker_thread = threading.Thread(target=run_worker)
+            worker_thread.start()
+            # The worker thread's asyncio.run() fully completes (builds its
+            # client, and asyncio.run() closes that throwaway loop) WHILE
+            # `app_loop` above is still alive and parked mid-"request" --
+            # both loops are alive at overlapping wall-clock time.
+            worker_thread.join(timeout=5)
+            assert "worker_client" in holder, "worker loop never obtained its client"
+
+            worker_client = holder["worker_client"]
+            assert worker_client is not app_client
+            assert app_client.is_closed is False, (
+                "the app-loop client was closed while its request coroutine "
+                "was still in flight -- a single-slot cache discards (and "
+                "schedules aclose() of) the previous loop's client on every "
+                "cross-loop touch, even when that loop is still alive and "
+                "mid-request"
+            )
+        finally:
+            worker_done.set()
+            app_thread.join(timeout=5)
+            app_loop.close()
+
+        assert holder.get("app_result") is app_client
+
+    def test_close_schedules_other_loop_close_and_logs_via_future_done_callback(
+        self, monkeypatch
+    ):
+        """FINDING 3 requirement: the best-effort hand-off must retain the
+        ``Future`` returned by ``run_coroutine_threadsafe`` and attach a
+        done-callback that logs any exception, so a failed close on another
+        loop is never silent. Drives the ``Future`` by hand instead of
+        racing real event-loop timing, so the assertion is deterministic.
+        """
+        api_client = GitHubAPIClient(token="t")
+        mock_logger = MagicMock()
+        monkeypatch.setattr(
+            "tldw_chatbook.Utils.github_api_client.logger", mock_logger
+        )
+
+        captured: dict = {}
+
+        def fake_run_coroutine_threadsafe(coro, loop):
+            coro.close()  # never actually run it -- we drive the Future by hand
+            future = concurrent.futures.Future()
+            captured["future"] = future
+            return future
+
+        monkeypatch.setattr(
+            asyncio, "run_coroutine_threadsafe", fake_run_coroutine_threadsafe
+        )
+
+        fake_loop = MagicMock()
+        fake_loop.is_closed.return_value = False
+        boom = RuntimeError("boom: close failed")
+
+        api_client._schedule_close(AsyncMock(), fake_loop)
+
+        assert "future" in captured, "run_coroutine_threadsafe was not called"
+        # Simulate the scheduled aclose() failing on its own loop.
+        captured["future"].set_exception(boom)
+
+        assert mock_logger.opt.called, "a failed close on another loop was never logged"
+        _, kwargs = mock_logger.opt.call_args
+        assert kwargs.get("exception") is boom
+
+    @pytest.mark.asyncio
+    async def test_close_from_different_loop_does_not_raise(self):
+        """``close()`` itself must not attempt to await a client bound to a
+        different loop than the one ``close()`` is running on -- that is
+        the same cross-loop hazard, just triggered from the cleanup path
+        (``CodeRepoCopyPasteWindow.__aexit__``) instead of the accessor.
+        """
+        api_client = GitHubAPIClient(token="t")
+
+        # Build a client on an unrelated, already-closed loop. This test is
+        # itself async (running on pytest-asyncio's loop), so this can't be
+        # nested via `asyncio.run()` directly -- do what the real worker
+        # does: run it on a separate OS thread with its own throwaway loop.
+        worker_thread = threading.Thread(
+            target=lambda: asyncio.run(self._touch_client(api_client))
+        )
+        worker_thread.start()
+        worker_thread.join()
+
+        assert api_client._client is not None
+        assert api_client._client_loop.is_closed()
+
+        # close() now runs on pytest-asyncio's loop, which is a different,
+        # live loop. This must not raise or hang.
         await api_client.close()
         assert api_client._client is None

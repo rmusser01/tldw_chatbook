@@ -2,6 +2,7 @@
 from .stts_events import (
     STTSEventHandler,
     STTSPlaygroundGenerateEvent,
+    STTSProviderConfigurationChanged,
     STTSSettingsSaveEvent,
     STTSAudioBookGenerateEvent,
 )
@@ -9,6 +10,7 @@ from .stts_events import (
 __all__ = [
     "STTSEventHandler",
     "STTSPlaygroundGenerateEvent",
+    "STTSProviderConfigurationChanged",
     "STTSSettingsSaveEvent",
     "STTSAudioBookGenerateEvent",
 ]

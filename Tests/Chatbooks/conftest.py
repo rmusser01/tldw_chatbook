@@ -53,8 +53,13 @@ def memory_db_paths():
 
 
 @pytest.fixture
-def populated_chachanotes_db(mock_db_paths):
-    """Create a populated ChaChaNotes database."""
+def populated_chachanotes_db(mock_db_paths, chachanotes_template_db):
+    """Create a populated ChaChaNotes database (schema from the session template).
+
+    Population happens live below — only the ~137ms schema DDL is replaced by
+    a ~10.5ms template copy (task-1462); rows stay per-test-fresh.
+    """
+    shutil.copyfile(chachanotes_template_db, mock_db_paths["ChaChaNotes"])
     db = CharactersRAGDB(mock_db_paths["ChaChaNotes"], "test")
 
     # Add test characters
@@ -331,32 +336,3 @@ This is a test note for the chatbook."""
         )
 
     return chatbook_path
-
-
-@pytest.fixture
-def mock_app_config():
-    """Create a mock app configuration."""
-    return {
-        "database": {
-            "chachanotes_db_path": "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-            "prompts_db_path": "~/.local/share/tldw_cli/tldw_prompts.db",
-            "media_db_path": "~/.local/share/tldw_cli/media_db_v2.db",
-        },
-        "chatbooks": {
-            "export_directory": "~/Documents/Chatbooks",
-            "auto_include_dependencies": True,
-            "default_media_quality": "thumbnail",
-        },
-    }
-
-
-class MockWizardApp:
-    """Mock wizard app for UI testing."""
-
-    def __init__(self, config_data):
-        self.config_data = config_data
-        self.notifications = []
-
-    def notify(self, message, severity="info"):
-        """Mock notify method."""
-        self.notifications.append({"message": message, "severity": severity})

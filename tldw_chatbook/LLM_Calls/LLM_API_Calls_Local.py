@@ -19,8 +19,16 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatConfigurationError,
 )
 from tldw_chatbook.Utils.Utils import logging
-from tldw_chatbook.config import load_settings, settings
+from tldw_chatbook.config import get_runtime_config_snapshot, load_settings
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.Utils.sensitive_llm_logging import (
+    is_sensitive_llm_request,
+    llm_content_byte_count,
+    llm_retry_count,
+    safe_llm_error_detail,
+    safe_llm_exception_message,
+    safe_llm_url_host,
+)
 
 
 ####################
@@ -124,8 +132,9 @@ def _chat_with_openai_compatible_local_server(
     api_retry_delay: int = 1,
 ):
     start_time = time.time()
+    logged_api_base = safe_llm_url_host(api_base_url)
     logging.debug(
-        f"{provider_name}: Chat request starting. API Base: {api_base_url}, Model: {model_name}"
+        f"{provider_name}: Chat request starting. API Base: {logged_api_base}, Model: {model_name}"
     )
 
     # Log request metrics
@@ -221,18 +230,28 @@ def _chat_with_openai_compatible_local_server(
         # This handles cases where the config provides just the server root.
         full_api_url = base_url.rstrip("/") + "/" + chat_completions_path
 
+    logged_api_url = safe_llm_url_host(full_api_url)
     logging.debug(
-        f"{provider_name}: Posting to {full_api_url}. Payload keys: {list(payload.keys())}"
+        f"{provider_name}: Posting to {logged_api_url}. Payload keys: {list(payload.keys())}"
     )
-    logging.debug(
-        f"{provider_name} Payload details (excluding messages): {{k: v for k, v in payload.items() if k != 'messages'}}"
-    )
+    if is_sensitive_llm_request():
+        logging.debug(
+            f"{provider_name}: Sensitive request metadata: "
+            f"message_count={len(api_messages)}, "
+            f"content_bytes={llm_content_byte_count(api_messages)}, "
+            f"streaming={bool(streaming)}"
+        )
+    else:
+        logging.debug(
+            f"{provider_name} Payload details (excluding messages): "
+            f"{{k: v for k, v in payload.items() if k != 'messages'}}"
+        )
 
     try:
         session = requests.Session()
         # Configure retries
         retry_strategy = Retry(
-            total=api_retries,
+            total=llm_retry_count(api_retries),
             backoff_factor=api_retry_delay,
             status_forcelist=[
                 429,
@@ -379,8 +398,13 @@ def _chat_with_openai_compatible_local_server(
             return response_data
     except requests.exceptions.HTTPError as e_http:
         # Logged by a higher level, but good to note here too
+        raw_error_text = getattr(e_http.response, "text", None)
+        if raw_error_text is None:
+            raw_error_text = safe_llm_exception_message(e_http)
+        error_text = str(safe_llm_error_detail(raw_error_text))
         logging.error(
-            f"{provider_name}: HTTP Error: {getattr(e_http.response, 'status_code', 'N/A')} - {getattr(e_http.response, 'text', str(e_http))[:500]}",
+            f"{provider_name}: HTTP Error: "
+            f"{getattr(e_http.response, 'status_code', 'N/A')} - {error_text[:500]}",
             exc_info=False,
         )
 
@@ -407,7 +431,11 @@ def _chat_with_openai_compatible_local_server(
         )
         raise  # Re-raise to be caught by chat_api_call's handler
     except requests.RequestException as e_req:
-        logging.error(f"{provider_name}: Request Exception: {e_req}", exc_info=True)
+        error_text = safe_llm_exception_message(e_req)
+        logging.error(
+            f"{provider_name}: Request Exception: {error_text}",
+            exc_info=not is_sensitive_llm_request(),
+        )
 
         # Log network error metrics
         duration = time.time() - start_time
@@ -430,7 +458,7 @@ def _chat_with_openai_compatible_local_server(
         )
         raise ChatProviderError(
             provider=provider_name,
-            message=f"Network error making request to {provider_name}: {e_req}",
+            message=f"Network error making request to {provider_name}: {error_text}",
             status_code=503,
         )  # 503 Service Unavailable
     except (
@@ -438,9 +466,10 @@ def _chat_with_openai_compatible_local_server(
         KeyError,
         TypeError,
     ) as e_data:  # Issues with payload construction or response parsing
+        error_text = safe_llm_exception_message(e_data)
         logging.error(
-            f"{provider_name}: Data processing or configuration error: {e_data}",
-            exc_info=True,
+            f"{provider_name}: Data processing or configuration error: {error_text}",
+            exc_info=not is_sensitive_llm_request(),
         )
 
         # Log data error metrics
@@ -464,7 +493,7 @@ def _chat_with_openai_compatible_local_server(
         )
         raise ChatBadRequestError(
             provider=provider_name,
-            message=f"{provider_name} data or configuration error: {e_data}",
+            message=f"{provider_name} data or configuration error: {error_text}",
         )
 
 
@@ -495,13 +524,25 @@ def chat_with_local_llm(
     top_logprobs: Optional[int] = None,
     tools: Optional[List[Dict[str, Any]]] = None,
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    api_base_url: Optional[str] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
 
     # --- Settings Load ---
-    cfg = settings.get("local-llm", {})
-    api_base_url = cfg.get("api_ip")  # api_url passed via chat_api_call or from config
+    # task-625: read from the [api_settings] table, like every sibling local
+    # provider in this module. This previously read a TOP-LEVEL "local-llm"
+    # key, which config.toml has no way to produce -- load_settings() does not
+    # preserve arbitrary top-level sections -- so the provider was unusable
+    # from its own documented configuration and always failed with the
+    # "API URL is required" error below.
+    # `api_url` is the documented key (see the [api_settings.local-llm] example
+    # in config.py); `api_ip` is what this function historically read, kept as a
+    # fallback so an existing working setup does not break. Read through the
+    # immutable runtime snapshot instead of the mutable module-level mapping.
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
+    cfg = cli_api_settings.get("local-llm", {})
+    api_base_url = api_base_url or cfg.get("api_url") or cfg.get("api_ip")
     if not api_base_url:
         raise ChatConfigurationError(
             provider="local-llm",
@@ -621,6 +662,7 @@ def chat_with_llama(
     provider_name: Optional[
         str
     ] = None,  # Added to support dynamic configuration loading
+    api_base_url: Optional[str] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
@@ -632,19 +674,26 @@ def chat_with_llama(
     )
     provider_display_name = "Llama.cpp"
 
-    api_settings_table = settings.get(
+    api_settings_table = get_runtime_config_snapshot().values.get(
         "api_settings", {}
     )  # Safely get the api_settings table
     llama_config = api_settings_table.get(
         llama_cpp_config_key_in_api_settings, {}
     )  # Safely get the llama_cpp config
-    api_base_url = llama_config.get("api_url")
+    api_base_url = api_base_url or api_url or llama_config.get("api_url")
     if not api_base_url:
         # Using the provider name for the error message
         raise ChatConfigurationError(
             provider=llama_cpp_config_key_in_api_settings,
             message=f"{provider_display_name} API URL (api_url) is required and could not be determined from configuration.",
         )
+    # task-433: tolerate legacy/partial endpoint forms (/completion, /v1, full
+    # OpenAI path) by normalizing to the server root; the shared caller then
+    # appends v1/chat/completions exactly once. Deferred import keeps
+    # console_provider_gateway's deps out of app startup.
+    from ..Chat.console_provider_gateway import normalize_llamacpp_base_url
+
+    api_base_url = normalize_llamacpp_base_url(api_base_url)
     current_api_key = api_key or llama_config.get("api_key")
     current_model = model or llama_config.get("model")
     if (
@@ -768,6 +817,7 @@ def chat_with_kobold(
     fixed_tokens_mode: bool = False,  # New parameter
     # Add api_url as an optional parameter if it can be passed directly
     api_url: Optional[str] = None,
+    api_base_url: Optional[str] = None,
 ):
     start_time = time.time()
     if model and (model.lower() == "none" or model.strip() == ""):
@@ -776,7 +826,7 @@ def chat_with_kobold(
 
     # --- Settings Load for CLI config structure ---
     # The global 'settings' object is imported from tldw_app.config
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     # Use 'koboldcpp' (lowercase) as this is the key in CONFIG_TOML_CONTENT's [api_settings]
     cfg = cli_api_settings.get("koboldcpp", {})
 
@@ -784,7 +834,7 @@ def chat_with_kobold(
     # The config.py's CONFIG_TOML_CONTENT provides a default for [api_settings.koboldcpp].api_url
     # Note: CONFIG_TOML_CONTENT uses 'api_url' for koboldcpp, not 'api_ip'.
     # Ensure your function arguments and cfg.get() match the TOML key.
-    current_api_base_url = api_url or cfg.get("api_url")
+    current_api_base_url = api_base_url or api_url or cfg.get("api_url")
     if not current_api_base_url:
         raise ChatConfigurationError(
             provider="koboldcpp",  # Consistent with the key used for cfg
@@ -905,14 +955,17 @@ def chat_with_kobold(
     # Other kobold params: typical_p, tfs, top_a, etc. could be added from cfg
 
     logging.debug(
-        f"KoboldAI (Native): Posting to {current_api_base_url}. Prompt (first 200 chars): '{final_prompt_string[:200]}...'"
+        "KoboldAI (Native) request metadata: "
+        f"host={safe_llm_url_host(current_api_base_url)}; "
+        f"model={current_model or 'default'}; streaming=false; "
+        f"message_count={len(input_data) + (1 if system_message else 0)}; "
+        f"content_bytes={llm_content_byte_count(final_prompt_string)}"
     )
-    logging.debug(f"KoboldAI (Native) Payload details: {payload}")
 
     try:
         session = requests.Session()
         retry_strategy = Retry(
-            total=api_retries,
+            total=llm_retry_count(api_retries),
             backoff_factor=api_retry_delay,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["POST"],
@@ -965,22 +1018,34 @@ def chat_with_kobold(
             }  # Assuming "stop"
         else:
             logging.error(
-                f"KoboldAI (Native): Unexpected response structure: {response_data}"
+                "KoboldAI (Native): Unexpected response structure; "
+                f"response_type={type(response_data).__name__}; "
+                f"content_bytes={llm_content_byte_count(response_data)}"
             )
+            response_detail = safe_llm_error_detail(response_data)
             raise ChatProviderError(
                 provider="kobold",
-                message=f"Unexpected response structure from KoboldAI (Native): {str(response_data)[:200]}",
+                message=(
+                    "Unexpected response structure from KoboldAI (Native): "
+                    f"{str(response_detail)[:200]}"
+                ),
             )
 
     except requests.exceptions.HTTPError as e_http:
+        status_code = getattr(e_http.response, "status_code", 500)
+        raw_error_text = getattr(e_http.response, "text", None)
+        if raw_error_text is None:
+            raw_error_text = safe_llm_exception_message(e_http)
+        error_detail = str(safe_llm_error_detail(raw_error_text))
         logging.error(
-            f"KoboldAI (Native): HTTP Error: {getattr(e_http.response, 'status_code', 'N/A')} - {getattr(e_http.response, 'text', str(e_http))[:500]}",
+            "KoboldAI (Native): HTTP error; "
+            f"host={safe_llm_url_host(current_api_base_url)}; "
+            f"status={status_code}; detail={error_detail[:500]}",
             exc_info=False,
         )
 
         # Log HTTP error metrics
         duration = time.time() - start_time
-        status_code = getattr(e_http.response, "status_code", 500)
         log_counter(
             "kobold_api_error",
             labels={
@@ -999,7 +1064,11 @@ def chat_with_kobold(
         )
         raise
     except requests.RequestException as e_req:
-        logging.error(f"KoboldAI (Native): Request Exception: {e_req}", exc_info=True)
+        error_detail = safe_llm_exception_message(e_req)
+        logging.error(
+            f"KoboldAI (Native): Request Exception: {error_detail}",
+            exc_info=not is_sensitive_llm_request(),
+        )
 
         # Log network error metrics
         duration = time.time() - start_time
@@ -1014,12 +1083,14 @@ def chat_with_kobold(
         )
         raise ChatProviderError(
             provider="kobold",
-            message=f"Network error calling KoboldAI (Native): {e_req}",
+            message=f"Network error calling KoboldAI (Native): {error_detail}",
             status_code=503,
         )
     except (ValueError, KeyError, TypeError) as e_data:
+        error_detail = safe_llm_exception_message(e_data)
         logging.error(
-            f"KoboldAI (Native): Data or configuration error: {e_data}", exc_info=True
+            f"KoboldAI (Native): Data or configuration error: {error_detail}",
+            exc_info=not is_sensitive_llm_request(),
         )
 
         # Log data error metrics
@@ -1034,7 +1105,8 @@ def chat_with_kobold(
             labels={"model": current_model or "default", "error_type": "data_error"},
         )
         raise ChatBadRequestError(
-            provider="kobold", message=f"KoboldAI (Native) config/data error: {e_data}"
+            provider="kobold",
+            message=f"KoboldAI (Native) config/data error: {error_detail}",
         )
 
 
@@ -1061,16 +1133,17 @@ def chat_with_oobabooga(
     presence_penalty: Optional[float] = None,  # from map
     frequency_penalty: Optional[float] = None,  # from map
     api_url: Optional[str] = None,  # Specific, not from generic map unless handled
+    api_base_url: Optional[str] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
 
     # --- Settings Load ---
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     # Use 'koboldcpp' (lowercase) as this is the key in CONFIG_TOML_CONTENT's [api_settings]
     cfg = cli_api_settings.get("ooba_api", {})
 
-    api_url = cfg.get("api_ip")  # api_url passed via chat_api_call or from config
+    api_url = api_base_url or api_url or cfg.get("api_ip")
     if not api_url:
         raise ChatConfigurationError(
             provider="ooba_api",
@@ -1176,16 +1249,17 @@ def chat_with_tabbyapi(
     # response_format, n, user_identifier, logit_bias, presence_penalty, frequency_penalty,
     # logprobs, top_logprobs, tools, tool_choice.
     # Add them to signature if TabbyAPI (OpenAI compatible) supports them.
+    api_base_url: Optional[str] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
 
     # --- Settings Load ---
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     # Use 'koboldcpp' (lowercase) as this is the key in CONFIG_TOML_CONTENT's [api_settings]
     cfg = cli_api_settings.get("tabby_api", {})
 
-    api_base_url = cfg.get("api_url")  # api_url passed via chat_api_call or from config
+    api_base_url = api_base_url or cfg.get("api_url")
     if not api_base_url:
         raise ChatConfigurationError(
             provider="tabbyapi",
@@ -1283,6 +1357,7 @@ def chat_with_vllm(
     provider_name: Optional[
         str
     ] = None,  # Added to support dynamic configuration loading
+    api_base_url: Optional[str] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
@@ -1290,10 +1365,10 @@ def chat_with_vllm(
     # --- Settings Load ---
     # Use provider_name if provided, otherwise default to 'vllm_api'
     vllm_config_key = provider_name if provider_name else "vllm_api"
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     cfg = cli_api_settings.get(vllm_config_key, {})
 
-    vllm_api_url = cfg.get("api_url")  # api_url passed via chat_api_call or from config
+    vllm_api_url = api_base_url or vllm_api_url or cfg.get("api_url")
     if not vllm_api_url:
         raise ChatConfigurationError(
             provider=vllm_config_key,
@@ -1413,15 +1488,16 @@ def chat_with_aphrodite(
     logprobs: Optional[bool] = None,  # from map
     user_identifier: Optional[str] = None,  # from map
     # top_logprobs, tools, tool_choice not in Aphrodite's map currently
+    api_base_url: Optional[str] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
 
     # --- Settings Load ---
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     cfg = cli_api_settings.get("aphrodite_api", {})
 
-    api_base_url = cfg.get("api_url")  # api_url passed via chat_api_call or from config
+    api_base_url = api_base_url or cfg.get("api_url")
     if not api_base_url:
         raise ChatConfigurationError(
             provider="aphrodite",
@@ -1539,6 +1615,7 @@ def chat_with_ollama(
     provider_name: Optional[
         str
     ] = None,  # Added to support dynamic configuration loading
+    api_base_url: Optional[str] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
@@ -1546,14 +1623,14 @@ def chat_with_ollama(
     # --- Settings Load for CLI config structure ---
     # Use provider_name if provided, otherwise default to 'ollama'
     ollama_config_key = provider_name if provider_name else "ollama"
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     cfg = cli_api_settings.get(
         ollama_config_key, {}
     )  # Get the config for the specific provider
 
     # API URL: function argument 'api_url' takes precedence, then config.
     # The config.py's CONFIG_TOML_CONTENT provides a default for [api_settings.ollama].api_url
-    current_api_base_url = api_url or cfg.get("api_url")
+    current_api_base_url = api_base_url or api_url or cfg.get("api_url")
     if not current_api_base_url:
         raise ChatConfigurationError(
             provider=ollama_config_key,  # Use the dynamic provider name
@@ -1735,18 +1812,17 @@ def chat_with_custom_openai(
     frequency_penalty: Optional[float] = None,
     logprobs: Optional[bool] = None,
     top_logprobs: Optional[int] = None,
+    api_base_url: Optional[str] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
 
     # --- Settings Load ---
-    cli_api_settings = settings.get("api_settings", {})
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     cfg = cli_api_settings.get(
         "custom", {}
     )  # Key for custom_openai_api in CLI is 'custom'
-    current_api_base_url = cfg.get(
-        "api_url"
-    )  # api_url passed via chat_api_call or from config
+    current_api_base_url = api_base_url or cfg.get("api_url")
     if not current_api_base_url:
         raise ChatConfigurationError(
             provider="ollama",
@@ -1878,6 +1954,7 @@ def chat_with_custom_openai_2(
     top_logprobs: Optional[int] = None,
     # This custom API 2 map is missing top_k, min_p, max_p (top_p) compared to custom 1.
     # Assuming it doesn't support them or they are set server-side.
+    api_base_url: Optional[str] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
@@ -1885,7 +1962,7 @@ def chat_with_custom_openai_2(
     cfg_section = "custom_openai_api_2"
     cfg = loaded_config_data.get(cfg_section, {})
 
-    api_base_url = cfg.get("api_ip")
+    api_base_url = api_base_url or cfg.get("api_ip")
     if not api_base_url:
         raise ChatConfigurationError(
             provider=cfg_section, message=f"{cfg_section} API URL (api_ip) required."
@@ -2040,6 +2117,7 @@ def chat_with_mlx_lm(
     provider_name: Optional[
         str
     ] = None,  # Added to support dynamic configuration loading
+    api_base_url: Optional[str] = None,
     **kwargs: Any,  # To catch any other params from API_CALL_HANDLERS
 ) -> Union[Dict[str, Any], Generator[str, None, None]]:
     """
@@ -2051,7 +2129,7 @@ def chat_with_mlx_lm(
     # --- Settings Load ---
     # Use provider_name if provided, otherwise default to 'mlx_lm'
     mlx_config_key = provider_name if provider_name else "mlx_lm"
-    api_settings_table = settings.get("api_settings", {})
+    api_settings_table = get_runtime_config_snapshot().values.get("api_settings", {})
     mlx_cfg = api_settings_table.get(mlx_config_key, {})
 
     current_model_path = model or mlx_cfg.get("model_path") or mlx_cfg.get("model")
@@ -2061,8 +2139,8 @@ def chat_with_mlx_lm(
             message="MLX-LM model path (model_path or model in config) is required and could not be determined.",
         )
 
-    if api_url:
-        current_api_base_url = api_url.rstrip("/")
+    if api_base_url or api_url:
+        current_api_base_url = (api_base_url or api_url).rstrip("/")
     else:
         host = mlx_cfg.get("host", "127.0.0.1")
         port = mlx_cfg.get("port", 8080)  # Default port for MLX server is 8080
@@ -2122,7 +2200,7 @@ def chat_with_mlx_lm(
         current_logprobs = current_logprobs.lower() == "true"
 
     logging.debug(
-        f"{provider_name}: Using API base: {current_api_base_url}, Model (path): {current_model_path}"
+        f"{provider_name}: Using API host: {safe_llm_url_host(current_api_base_url)}, Model (path): {current_model_path}"
     )
 
     return _chat_with_openai_compatible_local_server(

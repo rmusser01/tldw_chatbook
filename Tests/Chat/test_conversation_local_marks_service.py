@@ -75,7 +75,27 @@ def test_local_marks_migrate_from_v16_to_v17_with_expected_schema(tmp_path):
     conn.execute("DROP TRIGGER IF EXISTS conversations_sync_update")
     conn.execute("DROP TRIGGER IF EXISTS conversations_sync_delete")
     conn.execute("DROP TRIGGER IF EXISTS conversations_sync_undelete")
+    # A V16 fixture also predates the V27->V28 character-authority column.
+    conn.execute("ALTER TABLE conversations DROP COLUMN assistant_authority_id")
+    # A V16 fixture also predates the V29->V30 local-only usage_json column.
+    conn.execute("ALTER TABLE messages DROP COLUMN usage_json")
     conn.execute("ALTER TABLE conversations DROP COLUMN system_prompt")
+    # A V16 fixture must not retain citation tables introduced at V26->V27.
+    for table in (
+        "rag_artifact_owner_operations",
+        "rag_artifact_owner_leases",
+        "rag_source_observations",
+        "rag_message_trace_owners",
+        "rag_trace_evidence_refs",
+        "rag_answer_attempt_payloads",
+        "rag_evidence_runs",
+        "rag_citation_traces",
+        "rag_evidence_snapshots",
+        "rag_payload_tombstones",
+        "rag_legacy_migration_journal",
+        "rag_identity_context",
+    ):
+        conn.execute(f"DROP TABLE {table}")
     conn.execute(
         """
         UPDATE db_schema_version

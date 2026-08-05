@@ -4,7 +4,6 @@ This module provides a comprehensive mock architecture that correctly handles
 async/sync methods, query_one behavior, and all necessary mock attributes.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 from textual.widgets import (
     Button,
@@ -30,6 +29,10 @@ def create_comprehensive_app_mock():
 
     # Add thread lock for chat state management
     app._chat_state_lock = MagicMock()
+
+    # Sync accessor read by resolve_runtime_backend_mode(); the blanket
+    # AsyncMock would hand back an unawaited coroutine (RuntimeWarning noise).
+    app.get_authoritative_runtime_source = MagicMock(return_value="local")
 
     # Mock services and DBs
     app.chachanotes_db = MagicMock()
@@ -86,7 +89,6 @@ def create_comprehensive_app_mock():
     app.get_current_chat_is_streaming = MagicMock(return_value=False)
 
     # Timers
-    app._conversation_search_timer = None
     app._media_sidebar_search_timer = None
     app._character_search_timer = None
 
@@ -120,9 +122,6 @@ def setup_mock_widgets(app):
             TextArea, text="User message", sync_methods=["clear"]
         ),
         "#chat-log": mock_chat_log,
-        "#chat-conversation-title-input": create_widget_mock(Input, value=""),
-        "#chat-conversation-keywords-input": create_widget_mock(TextArea, text=""),
-        "#chat-conversation-uuid-display": create_widget_mock(Static),
         # Chat settings
         "#chat-api-provider": create_widget_mock(Select, value="OpenAI"),
         "#chat-api-model": create_widget_mock(Select, value="gpt-4"),
@@ -146,16 +145,6 @@ def setup_mock_widgets(app):
         "#chat-llm-tool-choice": create_widget_mock(Input, value=""),
         "#chat-llm-fixed-tokens-kobold": create_widget_mock(Checkbox, value=False),
         "#chat-strip-thinking-tags-checkbox": create_widget_mock(Checkbox, value=True),
-        # Character UI
-        "#chat-character-search-results-list": create_widget_mock(
-            ListView, async_methods=["clear", "append"]
-        ),
-        "#chat-character-name-edit": create_widget_mock(Input),
-        "#chat-character-description-edit": create_widget_mock(TextArea),
-        "#chat-character-personality-edit": create_widget_mock(TextArea),
-        "#chat-character-scenario-edit": create_widget_mock(TextArea),
-        "#chat-character-system-prompt-edit": create_widget_mock(TextArea),
-        "#chat-character-first-message-edit": create_widget_mock(TextArea),
         # Media sidebar
         "#chat-media-search-results-listview": create_widget_mock(
             ListView, async_methods=["clear", "append"]
@@ -184,8 +173,6 @@ def setup_mock_widgets(app):
         # RAG checkboxes
         "#chat-rag-enabled-checkbox": create_widget_mock(Checkbox, value=False),
         "#chat-rag-search-results-checkbox": create_widget_mock(Checkbox, value=False),
-        # Sidebars
-        "#chat-right-sidebar": MagicMock(),
         # LLM Management
         "#llm-provider-select": create_widget_mock(Select, value="ollama"),
         "#llm-server-status": create_widget_mock(Static),
@@ -261,12 +248,6 @@ def setup_mock_widgets(app):
     )
     app.screen.query = MagicMock(side_effect=lambda selector: app.query(selector))
 
-    # Setup sidebar query_one behavior
-    if "#chat-right-sidebar" in widgets:
-        widgets["#chat-right-sidebar"].query_one = MagicMock(
-            side_effect=lambda sel, _type=None: widgets.get(sel)
-        )
-
     # Add query method that returns multiple widgets
     def query_side_effect(selector):
         """Mock query that returns a list of widgets."""
@@ -324,40 +305,5 @@ def create_widget_mock(widget_class, **kwargs):
         # Static.update is sync
         if widget_class == Static:
             mock.update = MagicMock()
-
-    return mock
-
-
-@pytest.fixture
-def mock_app():
-    """Fixture that provides a comprehensive mock app."""
-    return create_comprehensive_app_mock()
-
-
-@pytest.fixture
-def mock_chat_message():
-    """Fixture for ChatMessage widget mock."""
-    from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
-
-    mock = MagicMock(spec=ChatMessage)
-    mock.role = "User"
-    mock.message_text = ""
-    mock.message_id_internal = None
-    mock.message_version_internal = 0
-    mock.generation_complete = False
-    mock.image_data = None
-    mock.image_mime_type = None
-    mock.is_mounted = True
-    mock._editing = False
-
-    # Async methods
-    mock.mount = AsyncMock()
-    mock.remove = AsyncMock()
-    mock.mark_generation_complete = MagicMock()  # This is sync
-
-    # query_one returns a Static widget
-    mock_static = MagicMock(spec=Static)
-    mock_static.update = MagicMock()
-    mock.query_one = MagicMock(return_value=mock_static)
 
     return mock

@@ -12,10 +12,12 @@ class SettingsCategoryId(StrEnum):
 
     OVERVIEW = "overview"
     PROVIDERS_MODELS = "providers-models"
+    SPEECH_TTS = "speech-tts"
     APPEARANCE = "appearance"
     THEME = "theme"
     SPLASH_SCREEN = "splash_screen"
     STORAGE = "storage"
+    WORKSPACES = "workspaces"
     PRIVACY_SECURITY = "privacy-security"
     CONSOLE_BEHAVIOR = "console-behavior"
     LIBRARY_RAG = "library-rag"
@@ -29,6 +31,8 @@ class SettingsCategoryId(StrEnum):
     ACP_DEFAULTS = "acp-defaults"
     DIAGNOSTICS = "diagnostics"
     ADVANCED_CONFIG = "advanced-config"
+    INTERNAL_PROMPTS = "internal-prompts"
+    IMAGE_GENERATION = "image_generation"
 
 
 class SettingsValidationState(StrEnum):

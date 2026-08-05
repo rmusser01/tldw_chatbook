@@ -58,7 +58,7 @@ from typing import (
 
 from loguru import logger
 
-from ..config import get_cli_setting, get_user_data_dir
+from ..config import get_cli_setting
 from ..Utils.optional_deps import embeddings_rag_deps_installed
 
 logger = logger.bind(module="ingestion_indexing")
@@ -119,7 +119,85 @@ def semantic_indexing_available() -> bool:
 # =============================================================================
 
 _shared_service: Optional[Any] = None
+# Guards ONLY reads/writes of _shared_service (and _shared_service_
+# generation) -- NEVER held across the blocking create_rag_service() call
+# (task-641). This is deliberately separate from _shared_service_build_lock
+# below so reset_shared_rag_service()/set_shared_rag_service() (reachable
+# from the main/UI thread via active_config.set_active_profile() and the
+# Settings screen's save/Backfill/Clone paths) can always acquire it
+# immediately, no matter how long a concurrent construction is taking.
 _shared_service_lock = threading.Lock()
+# Serializes actual construction ATTEMPTS so at most one create_rag_
+# service() call is ever in flight at a time (task-249's "exactly one
+# shared service gets built under concurrent first-touch" invariant,
+# Tests/Library/test_library_local_rag_search_service.py::
+# test_concurrent_rag_queries_initialize_one_shared_service). Deliberately
+# a SEPARATE lock from _shared_service_lock: reset/set never take this one,
+# so they're never blocked by an in-flight build (task-641), while two
+# concurrent get_shared_rag_service() builders still queue behind each
+# other here instead of both paying the (possibly network-bound)
+# construction cost redundantly.
+_shared_service_build_lock = threading.Lock()
+# Bumped by every set_shared_rag_service() call (including
+# reset_shared_rag_service()'s set_shared_rag_service(None)). A builder
+# captures this before releasing _shared_service_lock to build (task-641)
+# and re-checks it at swap time, so a reset that lands WHILE a build is in
+# flight invalidates that build instead of letting it silently resurrect a
+# since-superseded profile immediately after the reset already ran.
+_shared_service_generation = 0
+
+_first_run_import_attempted = False
+# Dedicated lock guarding ONLY the _first_run_import_attempted check-and-set,
+# so concurrent first callers can't both pass the flag check and both run
+# ensure_imported_profile(). Deliberately NOT _shared_service_lock: this
+# check-and-set runs BEFORE that lock is acquired (see
+# _maybe_run_first_run_import's docstring for the self-deadlock this avoids),
+# and reusing the same non-reentrant lock here would reintroduce it.
+_first_run_lock = threading.Lock()
+
+
+def _maybe_run_first_run_import() -> None:
+    """Best-effort first-run "Imported settings" capture.
+
+    Attempted at most once per process, and always BEFORE
+    ``_shared_service_lock`` is acquired: ``ensure_imported_profile`` can call
+    ``set_active_profile``, whose pointer write triggers
+    ``reset_shared_rag_service`` — which re-acquires this same non-reentrant
+    lock. Calling this helper from inside the lock would self-deadlock.
+
+    The ``_first_run_import_attempted`` check-and-set is itself guarded by a
+    SEPARATE, dedicated ``_first_run_lock`` (not ``_shared_service_lock`` —
+    see above for why reusing that one would self-deadlock). Without it, two
+    threads racing this function concurrently could both observe the flag as
+    False and both proceed to call ``ensure_imported_profile()``. The actual
+    import call happens OUTSIDE the lock (it's a slower, exception-safe
+    operation and does not itself need mutual exclusion beyond the flag),
+    but flipping the flag must be atomic so only one thread ever proceeds
+    past the check.
+
+    No longer skipped under pytest (see task-519): the previous
+    ``PYTEST_CURRENT_TEST`` guard existed only because ``get_user_data_dir()``'s
+    default-dir fallback used to be a module-level ``Path.home()`` constant
+    baked in at import time, predating (and therefore ignoring) any per-test
+    ``HOME``/``XDG_*`` monkeypatch. Now that the fallback resolves at CALL
+    time, ``Tests/conftest.py``'s autouse ``isolate_test_environment`` fixture
+    pre-arms ``_first_run_import_attempted = True`` before each test instead,
+    so this function's once-per-process import path is exercised organically
+    by the real test suite (rather than skipped) while still never touching
+    the real user data dir. Tests that want to exercise the guarded call
+    itself reset the flag directly (see ``Tests/RAG/test_first_run_import.py``).
+    """
+    global _first_run_import_attempted
+    with _first_run_lock:
+        if _first_run_import_attempted:
+            return
+        _first_run_import_attempted = True
+    try:
+        from .simplified.active_config import ensure_imported_profile
+
+        ensure_imported_profile()
+    except Exception as e:
+        logger.debug(f"First-run import skipped: {e}")
 
 
 def _configured_profile() -> str:
@@ -135,6 +213,38 @@ def _configured_profile() -> str:
     return DEFAULT_PROFILE
 
 
+def _close_discarded_rag_service(service: Any) -> None:
+    """Best-effort release of resources on a build discarded by a race.
+
+    task-640 item 2: a build loses the race in ``get_shared_rag_service()``
+    when a concurrent ``set_shared_rag_service()``/``reset_shared_rag_
+    service()`` already installed a different instance, or bumped
+    ``_shared_service_generation`` past what this build started with --
+    see the two discard branches there. Investigation found
+    ``EnhancedRAGServiceV2`` (via its ``EnhancedRAGService``/``RAGService``
+    base, ``rag_service.py``) DOES define a real ``close()`` that shuts down
+    its thread pool executor and releases its embeddings/vector-store
+    handles and DB connection pools -- a discarded build is therefore not
+    actually resource-free once the underlying service grows any of those,
+    so it is closed here rather than just dropped for GC. The ``getattr``/
+    ``callable`` guard keeps this a documented no-op seam rather than
+    inventing lifecycle machinery, in case a future service implementation
+    genuinely has nothing to close.
+
+    MUST be called OUTSIDE ``_shared_service_lock`` -- ``close()`` can block
+    (e.g. ``ThreadPoolExecutor.shutdown(wait=True)``), and holding that lock
+    across a blocking call is exactly the task-641 hazard this module's
+    two-lock design exists to avoid.
+    """
+    close = getattr(service, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except Exception as e:
+        logger.debug(f"Error closing discarded shared RAG service build: {e}")
+
+
 def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
     """Get (or lazily create) the process-wide RAG service instance.
 
@@ -144,28 +254,151 @@ def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
     one collection, and one embedding model. The first caller's profile wins;
     subsequent profile arguments are ignored.
 
+    Two-lock construction (task-641): building the service (which can
+    trigger real network I/O, e.g. a HuggingFace model download, and
+    therefore block for an unbounded amount of time) happens under
+    ``_shared_service_build_lock`` -- NEVER under ``_shared_service_lock``.
+    The original implementation held ``_shared_service_lock`` across the
+    entire construction, so any concurrent lock-taking caller --
+    ``reset_shared_rag_service()`` / ``set_shared_rag_service()``, both
+    reachable from the main/UI thread via ``active_config.
+    set_active_profile()`` and the Settings screen's save/Backfill/Clone
+    paths -- blocked for the full duration of a stalled construction. A live
+    UAT session hit exactly this: Backfill -> Clone froze the whole app for
+    6+ minutes at 0% CPU, with the main thread parked in a lock-acquire
+    while a worker thread sat in a stalled HuggingFace socket read.
+
+    ``_shared_service_build_lock`` still serializes actual construction
+    ATTEMPTS -- two concurrent first-touch callers queue behind each other
+    here rather than both paying the (possibly network-bound) construction
+    cost, preserving the "exactly one shared service gets built" invariant
+    (task-249). But reset/set only ever take the separate, always-fast
+    ``_shared_service_lock``, so they can never be blocked by however long a
+    build under ``_shared_service_build_lock`` takes.
+
+    ``_shared_service_generation`` closes the remaining race: if a reset/set
+    lands while a build is in flight (past ``_shared_service_lock``, mid-
+    ``create_rag_service()``), the generation captured before that build
+    started no longer matches at swap time, so the (now-stale) build is
+    discarded entirely rather than quietly resurrecting a superseded profile
+    immediately after the reset that was meant to clear it.
+
+    task-640 item 1: config/profile resolution (``_configured_profile()`` +
+    ``resolve_active_rag_config()``, both plain disk reads with no side
+    effects) now runs BEFORE ``_shared_service_build_lock`` is acquired --
+    previously it ran under BOTH ``_shared_service_build_lock`` and
+    ``_shared_service_lock``, needlessly widening the window builders hold
+    the fast lock for. Two racing first-touch callers may now each
+    redundantly resolve config once before queuing behind
+    ``_shared_service_build_lock`` to build, but that's cheap.
+
+    task-640 review (post-item-1 correctness fix): ``_shared_service_
+    generation`` MUST be captured BEFORE config is resolved, not after --
+    capturing it after resolution (the first cut of the item-1 change)
+    reopened exactly the race the generation machinery exists to close. If
+    a reset lands in the window between "config resolved" and "generation
+    captured", the capture reads the ALREADY-BUMPED post-reset value, so
+    the swap-time comparison sees "generation matches" and installs a
+    build made from the STALE, pre-reset config as the shared singleton --
+    confirmed via an adversarial repro (a getter blocked mid-resolution,
+    a concurrent reset, then resolution completing and the getter
+    proceeding). Capturing generation FIRST, under a brief hold of the
+    always-fast ``_shared_service_lock``, closes this: any reset from that
+    point forward -- including one landing during config resolution, or
+    at any point in the subsequent build -- is guaranteed to bump
+    generation PAST what was captured, so the swap-time check always
+    catches it. The captured value is threaded through to that swap-time
+    check unchanged; it is never recaptured later in this function.
+
     Args:
         profile_name: Optional profile override for the first construction.
 
     Returns:
         The shared RAG service, or None when it cannot be created (e.g.
-        embeddings dependencies missing).
+        embeddings dependencies missing) or when a since-superseded build
+        lost the race (the next call rebuilds fresh).
     """
+    _maybe_run_first_run_import()
     global _shared_service
     if _shared_service is not None:
         return _shared_service
-    with _shared_service_lock:
-        if _shared_service is None:
-            try:
-                from .simplified import create_rag_service
 
-                profile = profile_name or _configured_profile()
-                _shared_service = create_rag_service(profile_name=profile)
+    # Capture the generation BEFORE resolving config -- see the docstring's
+    # "task-640 review" paragraph above for why the order matters. This is
+    # the only lock taken before config resolution, and it's the fast one
+    # (never _shared_service_build_lock), so it adds no meaningful delay.
+    with _shared_service_lock:
+        if _shared_service is not None:
+            return _shared_service
+        generation = _shared_service_generation
+
+    try:
+        from .simplified import create_rag_service
+        # Function-level import: active_config is consumed by
+        # ingestion_indexing (Task 4 wires the reverse edge), so a
+        # module-top import here would risk a circular import.
+        from .simplified.active_config import resolve_active_rag_config
+
+        active = _configured_profile()
+        if profile_name is None or profile_name == active:
+            profile = active
+            build_kwargs = {
+                "profile_name": profile,
+                "config": resolve_active_rag_config(),
+            }
+        else:
+            profile = profile_name
+            build_kwargs = {"profile_name": profile_name}
+    except Exception as e:
+        logger.error(f"Failed to resolve config for shared RAG service: {e}")
+        return None
+
+    with _shared_service_build_lock:
+        with _shared_service_lock:
+            if _shared_service is not None:
+                return _shared_service
+            # Deliberately NOT re-capturing `generation` here -- the early
+            # capture above (before config resolution) is what must be
+            # compared at swap time below.
+
+        # Build OUTSIDE _shared_service_lock (but still inside
+        # _shared_service_build_lock) -- see docstring above for why this
+        # must never happen while _shared_service_lock is held.
+        try:
+            built = create_rag_service(**build_kwargs)
+        except Exception as e:
+            logger.error(f"Failed to create shared RAG service: {e}")
+            return None
+
+        discard_built = False
+        with _shared_service_lock:
+            if _shared_service is not None:
+                # An injected set_shared_rag_service() call already won
+                # while we were building; discard ours and agree with it.
+                winner = _shared_service
+                discard_built = True
+            elif generation != _shared_service_generation:
+                # A reset/set landed while we were building outside the
+                # lock -- this build reflects a since-superseded profile.
+                # Discard it so the NEXT caller rebuilds fresh rather than
+                # silently resurrecting stale config right after a reset
+                # cleared it.
+                logger.debug(
+                    "Discarding shared RAG service build superseded by a "
+                    "concurrent reset/set"
+                )
+                winner = None
+                discard_built = True
+            else:
+                _shared_service = built
                 logger.info(f"Created shared RAG service (profile={profile})")
-            except Exception as e:
-                logger.error(f"Failed to create shared RAG service: {e}")
-                return None
-    return _shared_service
+                winner = _shared_service
+
+    if discard_built:
+        # Always OUTSIDE _shared_service_lock -- see
+        # _close_discarded_rag_service's docstring (task-640 item 2).
+        _close_discarded_rag_service(built)
+    return winner
 
 
 def peek_shared_rag_service() -> Optional[Any]:
@@ -183,14 +416,35 @@ def peek_shared_rag_service() -> Optional[Any]:
 
 
 def set_shared_rag_service(service: Optional[Any]) -> None:
-    """Inject a shared RAG service instance (primarily for tests)."""
-    global _shared_service
+    """Directly install (or clear) the shared RAG service instance.
+
+    Used both by tests (injection) and production (``reset_shared_rag_
+    service()``, called from the main/UI thread by ``active_config.
+    set_active_profile()`` and the Settings screen's save path). Always
+    completes promptly -- ``_shared_service_lock`` is never held across
+    blocking construction (task-641), so this never queues up behind an
+    in-flight ``get_shared_rag_service()`` build.
+
+    Bumps ``_shared_service_generation`` so any build already in flight
+    (past the lock, mid-``create_rag_service()``) discards its result at
+    swap time instead of resurrecting a since-superseded profile right
+    after this call cleared/replaced the singleton.
+    """
+    global _shared_service, _shared_service_generation
     with _shared_service_lock:
         _shared_service = service
+        _shared_service_generation += 1
 
 
 def reset_shared_rag_service() -> None:
-    """Drop the shared RAG service instance (primarily for tests)."""
+    """Drop the shared RAG service instance.
+
+    Called from production code (not just tests): ``active_config.
+    set_active_profile()`` and ``settings_rag_profile_adapter.
+    save_rag_defaults_to_active_profile()`` both call this from the main/UI
+    thread on a successful profile pointer change / in-place save, so it
+    must never block on another thread's in-flight construction (task-641).
+    """
     set_shared_rag_service(None)
 
 
@@ -217,6 +471,15 @@ class IndexEntry:
     item_type: str
     last_modified: datetime
     document: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class IndexRemoval:
+    """A post-commit request to remove one derived index projection."""
+
+    item_id: str
+    item_type: str
+    document_id: str
 
 
 def _coerce_timestamp(value: Any) -> datetime:
@@ -377,8 +640,9 @@ def _default_indexing_db() -> Optional[Any]:
     """Create the default RAG indexing-state DB under the user data dir."""
     try:
         from ..DB.RAG_Indexing_DB import RAGIndexingDB
+        from ..config import get_rag_indexing_db_path
 
-        return RAGIndexingDB(get_user_data_dir() / DEFAULT_INDEXING_DB_FILENAME)
+        return RAGIndexingDB(get_rag_indexing_db_path())
     except Exception as e:
         logger.warning(
             f"Could not open RAG indexing-state DB (indexing will not be incremental): {e}"
@@ -458,6 +722,24 @@ async def index_entries(
     results_by_doc = {
         result.doc_id: result for result in results or [] if result is not None
     }
+    successful_entries = [
+        entry
+        for entry in to_index
+        if (
+            results_by_doc.get(entry.document["id"]) is not None
+            and results_by_doc[entry.document["id"]].success
+        )
+    ]
+    if successful_entries:
+        try:
+            await _clear_service_search_cache(service)
+        except Exception as e:
+            message = f"search-cache invalidation after indexing failed: {e}"
+            logger.warning(message)
+            summary["failed"] += len(to_index)
+            summary["errors"].append(message)
+            return summary
+
     for entry in to_index:
         result = results_by_doc.get(entry.document["id"])
         if result is not None and result.success:
@@ -481,6 +763,83 @@ async def index_entries(
             logger.error(
                 f"RAG indexing failed for {entry.item_type} {entry.item_id}: {error}"
             )
+
+    return summary
+
+
+async def _clear_service_search_cache(service: Any) -> None:
+    """Invalidate only query results, leaving the embedding cache intact."""
+    cache = getattr(service, "cache", None)
+    clear_async = getattr(cache, "clear_async", None)
+    if callable(clear_async):
+        await clear_async()
+        return
+    clear = getattr(cache, "clear", None)
+    if callable(clear):
+        clear()
+
+
+async def remove_entries(
+    service: Any,
+    indexing_db: Optional[Any],
+    removals: Sequence[IndexRemoval],
+) -> Dict[str, Any]:
+    """Remove derived vector documents and then their tracking records.
+
+    Tracking is deliberately retained when vector deletion fails so a later
+    backfill can reconcile the orphan. The source database has already
+    committed before this function is reached.
+    """
+    summary: Dict[str, Any] = {"removed": 0, "failed": 0, "errors": []}
+    delete_document = getattr(
+        getattr(service, "vector_store", None), "delete_document", None
+    )
+    if not callable(delete_document):
+        message = "vector store does not support document deletion"
+        summary["failed"] = len(removals)
+        summary["errors"].append(message)
+        return summary
+
+    deleted: List[IndexRemoval] = []
+    for removal in removals:
+        try:
+            delete_document(removal.document_id)
+        except Exception as e:
+            message = (
+                f"{removal.item_type} {removal.item_id} removal failed: {e}"
+            )
+            logger.warning(message)
+            summary["failed"] += 1
+            summary["errors"].append(message)
+            continue
+        deleted.append(removal)
+
+    if deleted:
+        try:
+            await _clear_service_search_cache(service)
+        except Exception as e:
+            message = f"search-cache invalidation after removal failed: {e}"
+            logger.warning(message)
+            summary["failed"] += len(deleted)
+            summary["errors"].append(message)
+            return summary
+
+    for removal in deleted:
+        if indexing_db is not None:
+            try:
+                indexing_db.remove_indexed_item(
+                    removal.item_id, removal.item_type
+                )
+            except Exception as e:
+                message = (
+                    f"{removal.item_type} {removal.item_id} tracking cleanup "
+                    f"failed after vector deletion: {e}"
+                )
+                logger.warning(message)
+                summary["failed"] += 1
+                summary["errors"].append(message)
+                continue
+        summary["removed"] += 1
 
     return summary
 
@@ -526,6 +885,7 @@ class IngestionIndexer:
         self._indexing_db_resolved = indexing_db is not None
         self._batch_size = max(1, batch_size)
         self._failure_notifier = failure_notifier
+        self._guidance_notifier: Optional[Callable[[str], None]] = None
         self._thread: Optional[threading.Thread] = None
         self._thread_lock = threading.Lock()
         self._state_lock = threading.Lock()
@@ -534,6 +894,7 @@ class IngestionIndexer:
         self._stats: Dict[str, Any] = {
             "submitted": 0,
             "indexed": 0,
+            "removed": 0,
             "skipped": 0,
             "failed": 0,
             "last_error": None,
@@ -565,6 +926,27 @@ class IngestionIndexer:
             )
             return False
 
+    def submit_removal(self, removal: Optional[IndexRemoval]) -> bool:
+        """Enqueue a derived-index removal. Never blocks or raises."""
+        if removal is None:
+            return False
+        try:
+            with self._thread_lock:
+                if self._stopped:
+                    return False
+                self._ensure_thread_locked()
+                with self._state_lock:
+                    self._stats["submitted"] += 1
+                    self._pending += 1
+                self._queue.put(removal)
+            return True
+        except Exception as e:
+            logger.error(
+                f"Failed to enqueue {removal.item_type} {removal.item_id} "
+                f"for index removal: {e}"
+            )
+            return False
+
     def wait_until_idle(self, timeout: float = 30.0) -> bool:
         """Block until all submitted entries have been processed (tests/backpressure).
 
@@ -587,6 +969,18 @@ class IngestionIndexer:
             snapshot = dict(self._stats)
             snapshot["pending"] = self._pending
             return snapshot
+
+    def set_guidance_notifier(
+        self, notifier: Optional[Callable[[str], None]]
+    ) -> None:
+        """Set the sink for setup-gap messages, which are not failures.
+
+        Args:
+            notifier: Callable invoked with a single guidance message, or
+                ``None`` to clear it. When unset, guidance falls back to the
+                failure notifier so the message is not lost.
+        """
+        self._guidance_notifier = notifier
 
     def set_failure_notifier(self, notifier: Optional[Callable[[str], None]]) -> None:
         """Install a callback invoked with a short message on indexing failures."""
@@ -654,7 +1048,7 @@ class IngestionIndexer:
                 item = self._queue.get()
                 if item is _STOP:
                     return
-                batch: List[IndexEntry] = [item]
+                batch: List[Any] = [item]
                 stop_after_batch = False
                 while len(batch) < self._batch_size:
                     try:
@@ -689,27 +1083,133 @@ class IngestionIndexer:
             asyncio.set_event_loop(None)
             loop.close()
 
-    async def _process_batch(self, batch: List[IndexEntry]) -> None:
+    async def _process_batch(self, batch: List[Any]) -> None:
         service = self._get_service()
         if service is None:
             self._record_batch_failure(batch, "RAG service unavailable for indexing")
             return
         indexing_db = self._get_indexing_db()
 
-        summary = await index_entries(service, indexing_db, batch)
+        position = 0
+        while position < len(batch):
+            is_removal = isinstance(batch[position], IndexRemoval)
+            end = position + 1
+            while end < len(batch) and (
+                isinstance(batch[end], IndexRemoval) == is_removal
+            ):
+                end += 1
+            work = batch[position:end]
+            if is_removal:
+                summary = await remove_entries(service, indexing_db, work)
+                indexed = skipped = 0
+                removed = summary["removed"]
+            else:
+                summary = await index_entries(service, indexing_db, work)
+                indexed = summary["indexed"]
+                skipped = summary["skipped"]
+                removed = 0
+
+            with self._state_lock:
+                self._stats["indexed"] += indexed
+                self._stats["removed"] += removed
+                self._stats["skipped"] += skipped
+                self._stats["failed"] += summary["failed"]
+                if summary["errors"]:
+                    self._stats["last_error"] = summary["errors"][-1]
+            if summary["errors"]:
+                self._report_index_summary(summary)
+            position = end
+
+
+    #: The error every item reports when embedding generation produced nothing.
+    #: On a fresh install that means no model has been downloaded yet, which is
+    #: a setup gap rather than a fault in the import that just succeeded.
+    _EMBEDDINGS_UNAVAILABLE_ERROR = "All chunks failed embedding generation"
+
+    def _report_index_summary(self, summary: Mapping[str, Any]) -> None:
+        """Tell the user what happened, distinguishing a gap from a fault.
+
+        A fresh install with the ``embeddings_rag`` deps present but no model
+        downloaded fails to embed every chunk, and this used to surface as
+        "RAG indexing failed" on every otherwise-successful ingest -- the first
+        thing a new user saw after their first working action was a failure they
+        did not cause and could not act on (task-685).
+
+        The discriminator is whether embeddings have EVER worked in this
+        process, not the error text alone: a configured install can legitimately
+        fail to embed one bad document, and that is a real failure worth
+        surfacing. So guidance is only offered when nothing has ever indexed and
+        every error is the embeddings-unavailable one; anything else is reported
+        as before.
+
+        Args:
+            summary: The counts and errors from :func:`index_entries`.
+        """
+        errors = list(summary.get("errors") or [])
+        if not errors:
+            return
 
         with self._state_lock:
-            self._stats["indexed"] += summary["indexed"]
-            self._stats["skipped"] += summary["skipped"]
-            self._stats["failed"] += summary["failed"]
-            if summary["errors"]:
-                self._stats["last_error"] = summary["errors"][-1]
-        if summary["errors"]:
-            self._notify_failure(
-                f"RAG indexing failed for {summary['failed']} item(s): {summary['errors'][-1]}"
-            )
+            ever_indexed = self._stats["indexed"] > 0
+        # This batch counts too: if anything in it embedded successfully then
+        # embeddings work, whatever the history says.
+        ever_indexed = ever_indexed or int(summary.get("indexed") or 0) > 0
+        # ...and so does anything indexed in a PREVIOUS run. ``_stats`` is
+        # in-memory and resets to 0 on every start, so relying on it alone would
+        # downgrade a genuine failure in the FIRST batch after any restart --
+        # the same error text is produced by embeddings init errors and circuit
+        # breakers, not only by a missing model. The indexing DB is the durable
+        # record of embeddings having ever worked on this install.
+        if not ever_indexed:
+            ever_indexed = self._any_previously_indexed()
 
-    def _record_batch_failure(self, batch: Sequence[IndexEntry], message: str) -> None:
+        embeddings_never_worked = not ever_indexed and all(
+            self._EMBEDDINGS_UNAVAILABLE_ERROR in str(error) for error in errors
+        )
+        if embeddings_never_worked:
+            self._notify_guidance(
+                "Saved, but not added to semantic search yet -- no embedding "
+                "model is set up. Download one in Settings to search this "
+                "content by meaning as well as by keyword."
+            )
+            return
+
+        self._notify_failure(
+            f"RAG indexing failed for {summary['failed']} item(s): {errors[-1]}"
+        )
+
+
+    def _any_previously_indexed(self) -> bool:
+        """Report whether anything has ever been indexed on this install.
+
+        Read from the indexing DB rather than in-process counters, because the
+        counters start at zero every run and "first batch of this process" is
+        not the same question as "embeddings have never worked here".
+
+        Returns:
+            ``True`` when the indexing DB records at least one indexed item.
+            A DB that cannot be read returns ``True`` -- the safe direction,
+            since it keeps reporting failures as failures.
+        """
+        try:
+            stats = self._get_indexing_db().get_indexing_stats()
+            return int(stats.get("total_indexed") or 0) > 0
+        except Exception as e:
+            logger.debug(f"Could not read indexing history: {e}")
+            return True
+
+    def _notify_guidance(self, message: str) -> None:
+        """Surface a setup gap. Falls back to the failure channel only if no
+        guidance notifier was supplied, so the message is never simply lost."""
+        notifier = self._guidance_notifier or self._failure_notifier
+        if notifier is None:
+            return
+        try:
+            notifier(message)
+        except Exception as e:
+            logger.debug(f"Indexing guidance notifier raised: {e}")
+
+    def _record_batch_failure(self, batch: Sequence[Any], message: str) -> None:
         logger.error(
             f"{message} (items: {[f'{e.item_type}:{e.item_id}' for e in batch]})"
         )
@@ -783,17 +1283,45 @@ def _media_post_ingest_hook(db: Any, media_id: int, media_uuid: Optional[str]) -
         logger.warning(f"RAG post-ingest hook failed for media_id={media_id}: {e}")
 
 
+def _media_post_delete_hook(db: Any, media_id: int, media_uuid: Optional[str]) -> None:
+    """Queue post-commit removal without making source deletion depend on RAG."""
+    try:
+        # Do not initialize a disabled or unavailable RAG runtime solely for a
+        # deletion. Existing runtimes are still cleaned immediately; otherwise
+        # durable tracking lets the next enabled backfill reconcile the orphan.
+        if peek_shared_rag_service() is None and not semantic_indexing_available():
+            return
+        get_ingestion_indexer().submit_removal(
+            IndexRemoval(
+                item_id=str(media_id),
+                item_type=ITEM_TYPE_MEDIA,
+                document_id=f"media_{media_id}",
+            )
+        )
+    except Exception as e:
+        logger.warning(f"RAG post-delete hook failed for media_id={media_id}: {e}")
+
+
 def install_media_ingest_hook(
     failure_notifier: Optional[Callable[[str], None]] = None,
+    guidance_notifier: Optional[Callable[[str], None]] = None,
 ) -> None:
     """Install the post-ingest indexing hook on the media DB seam (idempotent).
 
     Args:
         failure_notifier: Optional callable for surfacing indexing failures
             (installed on the process-wide indexer).
+        guidance_notifier: Optional callable for surfacing a setup gap, such as
+            no embedding model being available yet. Kept separate from
+            ``failure_notifier`` so a fresh install is not told its successful
+            import failed (task-685); when omitted, guidance falls back to the
+            failure channel rather than being lost.
     """
     global _hook_installed
-    from ..DB.Client_Media_DB_v2 import register_media_post_ingest_callback
+    from ..DB.Client_Media_DB_v2 import (
+        register_media_post_delete_callback,
+        register_media_post_ingest_callback,
+    )
 
     with _hook_lock:
         if failure_notifier is not None:
@@ -801,20 +1329,30 @@ def install_media_ingest_hook(
                 get_ingestion_indexer().set_failure_notifier(failure_notifier)
             except Exception as e:
                 logger.debug(f"Could not install indexing failure notifier: {e}")
+        if guidance_notifier is not None:
+            try:
+                get_ingestion_indexer().set_guidance_notifier(guidance_notifier)
+            except Exception as e:
+                logger.debug(f"Could not install indexing guidance notifier: {e}")
         if _hook_installed:
             return
         register_media_post_ingest_callback(_media_post_ingest_hook)
+        register_media_post_delete_callback(_media_post_delete_hook)
         _hook_installed = True
-        logger.info("RAG ingestion-indexing hook installed on media DB")
+        logger.info("RAG lifecycle-indexing hooks installed on media DB")
 
 
 def uninstall_media_ingest_hook() -> None:
     """Remove the post-ingest indexing hook (primarily for tests)."""
     global _hook_installed
-    from ..DB.Client_Media_DB_v2 import unregister_media_post_ingest_callback
+    from ..DB.Client_Media_DB_v2 import (
+        unregister_media_post_delete_callback,
+        unregister_media_post_ingest_callback,
+    )
 
     with _hook_lock:
         unregister_media_post_ingest_callback(_media_post_ingest_hook)
+        unregister_media_post_delete_callback(_media_post_delete_hook)
         _hook_installed = False
 
 
@@ -842,6 +1380,46 @@ def _iter_media_entries(media_db: Any, page_size: int) -> Iterator[IndexEntry]:
         if len(rows) < page_size:
             return
         offset += page_size
+
+
+def _active_media_ids(media_db: Any, page_size: int) -> set[str]:
+    """Return active media IDs for durable projection reconciliation."""
+    active: set[str] = set()
+    offset = 0
+    while True:
+        cursor = media_db.execute_query(
+            "SELECT id FROM Media WHERE deleted = 0 AND is_trash = 0 "
+            "ORDER BY id LIMIT ? OFFSET ?",
+            (page_size, offset),
+        )
+        rows = cursor.fetchall()
+        active.update(str(row["id"]) for row in rows)
+        if len(rows) < page_size:
+            return active
+        offset += page_size
+
+
+async def reconcile_media_index(
+    media_db: Any,
+    service: Any,
+    indexing_db: Optional[Any],
+    *,
+    page_size: int = 100,
+) -> Dict[str, Any]:
+    """Remove tracked media projections whose authoritative source is inactive."""
+    if indexing_db is None:
+        return {"removed": 0, "failed": 0, "errors": []}
+    tracked = indexing_db.get_indexed_items_by_type(ITEM_TYPE_MEDIA)
+    active_ids = _active_media_ids(media_db, page_size)
+    removals = [
+        IndexRemoval(
+            item_id=item_id,
+            item_type=ITEM_TYPE_MEDIA,
+            document_id=f"media_{item_id}",
+        )
+        for item_id in sorted(set(tracked) - active_ids)
+    ]
+    return await remove_entries(service, indexing_db, removals)
 
 
 def _iter_note_entries(chachanotes_db: Any, page_size: int) -> Iterator[IndexEntry]:
@@ -942,6 +1520,7 @@ async def backfill_semantic_index(
     summary: Dict[str, Any] = {
         "status": "ok",
         "indexed": 0,
+        "removed": 0,
         "skipped": 0,
         "failed": 0,
         "errors": [],
@@ -963,6 +1542,25 @@ async def backfill_semantic_index(
 
     if indexing_db is None:
         indexing_db = _default_indexing_db()
+
+    if ITEM_TYPE_MEDIA in item_types and media_db is not None:
+        try:
+            reconciliation = await reconcile_media_index(
+                media_db,
+                service,
+                indexing_db,
+                page_size=page_size,
+            )
+            summary["removed"] += reconciliation["removed"]
+            summary["failed"] += reconciliation["failed"]
+            summary["errors"].extend(reconciliation["errors"])
+            if reconciliation["failed"]:
+                summary["status"] = "partial"
+        except Exception as e:
+            message = f"media index reconciliation failed: {e}"
+            logger.opt(exception=True).error(message)
+            summary["errors"].append(message)
+            summary["status"] = "partial"
 
     sources: List[tuple] = []
     if ITEM_TYPE_MEDIA in item_types and media_db is not None:
@@ -999,7 +1597,8 @@ async def backfill_semantic_index(
         summary["by_type"][item_type] = type_summary
 
     logger.info(
-        f"RAG backfill complete: indexed={summary['indexed']} skipped={summary['skipped']} "
+        f"RAG backfill complete: indexed={summary['indexed']} removed={summary['removed']} "
+        f"skipped={summary['skipped']} "
         f"failed={summary['failed']} status={summary['status']}"
     )
     return summary

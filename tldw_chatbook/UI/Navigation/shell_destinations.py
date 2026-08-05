@@ -78,11 +78,17 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
     ),
     ShellDestination(
         "personas",
-        "Personas",
+        # A roleplay-first newcomer finds characters from this label, so it has
+        # to be readable cold. "RP&CD" could only be decoded after navigating
+        # here and reading the screen title -- i.e. after already guessing right.
+        # F-034: "Roleplay" is the one public name everywhere (nav, header,
+        # palette); the long "Roleplay & Chat Dictionaries" form is retired.
+        "Roleplay",
         "personas",
-        "Characters, personas, dictionaries, and behavior profiles.",
-        "Manage behavior profiles and persona context.",
-        ("ccp", "conversations_characters_prompts", "characters"),
+        "Characters, user profiles, dictionaries, and behavior profiles.",
+        "Manage behavior profiles and user profile context.",
+        ("ccp", "conversations_characters_prompts", "characters", "roleplay"),
+        full_label="Roleplay",
     ),
     ShellDestination(
         "watchlists_collections",

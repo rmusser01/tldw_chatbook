@@ -2,6 +2,8 @@
 #
 #
 # Imports
+import shutil
+
 import pytest
 import sqlite3
 import json
@@ -44,8 +46,8 @@ def db_path(tmp_path):
 
 
 @pytest.fixture(scope="function")
-def db_instance(db_path, client_id):
-    """Creates a DB instance for each test, ensuring a fresh database."""
+def db_instance(db_path, client_id, chachanotes_template_db):
+    """Creates a DB instance for each test from the session template (task-1460)."""
     current_db_path = Path(db_path)
 
     # Clean up any existing files from previous runs to be safe
@@ -59,6 +61,7 @@ def db_instance(db_path, client_id):
 
     db = None
     try:
+        shutil.copyfile(chachanotes_template_db, current_db_path)
         db = CharactersRAGDB(current_db_path, client_id)
         yield db
     finally:
@@ -228,6 +231,28 @@ class TestDBInitialization:
         conn.execute("DROP TRIGGER IF EXISTS conversations_sync_update")
         conn.execute("DROP TRIGGER IF EXISTS conversations_sync_delete")
         conn.execute("DROP TRIGGER IF EXISTS conversations_sync_undelete")
+        # A version-only rollback is not a valid pre-v25 fixture because the
+        # citation migration deliberately rejects pre-existing/partial tables.
+        # Remove the current provenance schema before replaying from v17.
+        for table in (
+            "rag_artifact_owner_operations",
+            "rag_artifact_owner_leases",
+            "rag_source_observations",
+            "rag_message_trace_owners",
+            "rag_trace_evidence_refs",
+            "rag_answer_attempt_payloads",
+            "rag_evidence_runs",
+            "rag_citation_traces",
+            "rag_evidence_snapshots",
+            "rag_payload_tombstones",
+            "rag_legacy_migration_journal",
+            "rag_identity_context",
+        ):
+            conn.execute(f"DROP TABLE {table}")
+        # A V17 fixture also predates the V27->V28 character-authority column.
+        conn.execute("ALTER TABLE conversations DROP COLUMN assistant_authority_id")
+        # A V17 fixture also predates the V29->V30 local-only usage_json column.
+        conn.execute("ALTER TABLE messages DROP COLUMN usage_json")
         conn.execute("ALTER TABLE conversations DROP COLUMN system_prompt")
         conn.execute(
             "UPDATE db_schema_version SET version = 17 WHERE schema_name = ?",
@@ -670,6 +695,54 @@ class TestConversationsAndMessages:
         assert len(results) == 1
         assert results[0]["id"] == msg1_data["id"]
 
+    def test_update_message_usage_local_leaves_version_and_last_modified_untouched(
+        self, db_instance: CharactersRAGDB, char_id
+    ):
+        """Qodo round (Finding 4): a usage-only local write must not bump
+        `version`/`last_modified` -- those two columns are exactly what the
+        `messages_sync_update` trigger's WHEN clause watches, so bumping
+        them on a write whose payload can never carry `usage_json` (the
+        trigger's payload only ever includes syncable columns) would
+        enqueue a cross-device `sync_log` row for a column that is
+        local-only by design.
+        """
+        conv_id = db_instance.add_conversation(
+            {"character_id": char_id, "title": "UsageLocalConv"}
+        )
+        msg_id = db_instance.add_message(
+            {
+                "conversation_id": conv_id,
+                "sender": "assistant",
+                "content": "the answer",
+            }
+        )
+        before = db_instance.get_message_by_id(msg_id)
+        assert before["usage_json"] is None
+        latest_change_id = db_instance.get_latest_sync_log_change_id()
+
+        result = db_instance.update_message_usage_local(
+            msg_id, '{"uncached_input": 10, "output": 5}'
+        )
+
+        assert result is True
+        after = db_instance.get_message_by_id(msg_id)
+        assert after["usage_json"] == '{"uncached_input": 10, "output": 5}'
+        assert after["version"] == before["version"]
+        assert after["last_modified"] == before["last_modified"]
+
+        new_entries = db_instance.get_sync_log_entries(
+            since_change_id=latest_change_id, entity_type="messages"
+        )
+        assert new_entries == [], (
+            "a usage-only local write must not enqueue a sync_log row "
+            "for the messages entity"
+        )
+
+    def test_update_message_usage_local_unknown_id_returns_false(
+        self, db_instance: CharactersRAGDB
+    ):
+        assert db_instance.update_message_usage_local("missing-id", "{}") is False
+
     # @pytest.mark.parametrize(
     #     "msg_data, raises_error",
     #     [
@@ -824,6 +897,42 @@ class TestNotesAndKeywords:
 
         # Test idempotency of unlinking
         assert db_instance.unlink_conversation_from_keyword(conv_id, kw_id) is False
+
+
+class TestKeywordCollections:
+    """TASK-864: ``keyword_collections`` was omitted from
+    ``sql_validation.VALID_TABLES['chachanotes']``, so ``update_keyword_collection``
+    (and ``soft_delete_keyword_collection``) raised ``ValueError`` for every
+    caller, unconditionally -- this feature had no test coverage at all until
+    this class, which is exactly how the omission went unnoticed.
+    """
+
+    def test_add_then_update_keyword_collection(self, db_instance: CharactersRAGDB):
+        collection_id = db_instance.add_keyword_collection("Coll A")
+        assert isinstance(collection_id, int)
+
+        updated = db_instance.update_keyword_collection(
+            collection_id, {"name": "Coll B"}, expected_version=1
+        )
+        assert updated is True
+
+        collections = db_instance.list_keyword_collections()
+        names = {c["name"] for c in collections}
+        assert "Coll B" in names
+        assert "Coll A" not in names
+
+    def test_add_then_soft_delete_keyword_collection(
+        self, db_instance: CharactersRAGDB
+    ):
+        collection_id = db_instance.add_keyword_collection("Coll To Delete")
+
+        deleted = db_instance.soft_delete_keyword_collection(
+            collection_id, expected_version=1
+        )
+        assert deleted is True
+
+        names = {c["name"] for c in db_instance.list_keyword_collections()}
+        assert "Coll To Delete" not in names
 
 
 class TestGetAllNoteIds:

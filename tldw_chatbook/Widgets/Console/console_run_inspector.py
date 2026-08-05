@@ -11,12 +11,13 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
-    CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID,
+    CONSOLE_INSPECTOR_REVIEW_CHANGES_ID,
     CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
     ConsoleDisplayRow,
     ConsoleInspectorAction,
     ConsoleInspectorState,
 )
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
 _ROW_IDS = {
@@ -41,6 +42,8 @@ _ROW_IDS = {
     "Conversation source": "console-inspector-conversation-source",
     "Workspace": "console-inspector-workspace",
     "Resume state": "console-inspector-resume-state",
+    "Prefill (next send only)": "console-inspector-prefill-one-shot",
+    "Prefill (pinned)": "console-inspector-prefill-pinned",
     "Session provider": "console-inspector-session-provider",
     "Session model": "console-inspector-session-model",
     "Session endpoint": "console-inspector-session-endpoint",
@@ -89,7 +92,14 @@ _ROW_GROUPS = (
     (
         "Selected Conversation",
         "console-inspector-selected-conversation-heading",
-        ("Selected conversation", "Conversation source", "Workspace", "Resume state"),
+        (
+            "Selected conversation",
+            "Conversation source",
+            "Workspace",
+            "Resume state",
+            "Prefill (next send only)",
+            "Prefill (pinned)",
+        ),
     ),
     (
         "Session Defaults",
@@ -118,12 +128,17 @@ _ROW_GROUPS = (
 
 _ACTION_GROUPS = {
     "Artifacts": (CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,),
-    "Tools": (CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID,),
+    # TASK-1843: the "Tools" group is intentionally empty of actions now.
+    # "Review tool call" gated on a counter production never populates, so it
+    # was permanently disabled while permanently claiming a reason, and its
+    # handler was a notify() stub. The Tools ROW stays -- it reports a real
+    # count -- but it no longer carries a control the user cannot use.
     "Approvals": (CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,),
+    "Changes": (CONSOLE_INSPECTOR_REVIEW_CHANGES_ID,),
 }
 
 
-class ConsoleRunInspector(Vertical):
+class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
     """Render Console run readiness, recovery, and action affordances."""
 
     def __init__(self, state: ConsoleInspectorState, **kwargs: Any) -> None:
@@ -219,6 +234,10 @@ class ConsoleRunInspector(Vertical):
             entries.append(
                 (f"console-inspector-dictionaries-row-{index}", row.text, row.status)
             )
+        for index, row in enumerate(getattr(state, "world_book_rows", ()) or ()):
+            entries.append(
+                (f"console-inspector-worldbooks-row-{index}", row.text, row.status)
+            )
         return entries
 
     @classmethod
@@ -252,6 +271,10 @@ class ConsoleRunInspector(Vertical):
             tuple(
                 _action_key(action)
                 for action in getattr(state, "dictionary_actions", ()) or ()
+            ),
+            tuple(
+                _action_key(action)
+                for action in getattr(state, "world_book_actions", ()) or ()
             ),
         )
 
@@ -344,6 +367,10 @@ class ConsoleRunInspector(Vertical):
             return "Status: Needs approval"
         if rag_source is not None and rag_source.status == "blocked":
             return "Status: Source blocked"
+        # TASK-347: a live generation must not read "Ready" — but a mid-run
+        # block / pending approval above is still the more important signal.
+        if getattr(state or self.state, "run_active", False):
+            return "Status: Generating…"
         return "Status: Ready"
 
     def compose(self) -> ComposeResult:
@@ -419,4 +446,22 @@ class ConsoleRunInspector(Vertical):
                     markup=False,
                 )
             for action in dict_actions:
+                yield from self._compose_action(action)
+
+        world_book_rows = getattr(self.state, "world_book_rows", ())
+        world_book_actions = getattr(self.state, "world_book_actions", ())
+        if world_book_rows or world_book_actions:
+            yield Static(
+                "World Books",
+                id="console-inspector-worldbooks-heading",
+                classes="console-inspector-group-heading destination-section",
+            )
+            for index, row in enumerate(world_book_rows):
+                yield Static(
+                    row.text,
+                    id=f"console-inspector-worldbooks-row-{index}",
+                    classes=f"console-inspector-row console-inspector-row-{row.status}",
+                    markup=False,
+                )
+            for action in world_book_actions:
                 yield from self._compose_action(action)

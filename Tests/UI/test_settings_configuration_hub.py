@@ -10,9 +10,11 @@ from unittest.mock import patch
 import httpx
 import pytest
 from textual.containers import VerticalScroll
+from textual.css.query import QueryError
 from textual.events import Key
 from textual.widgets import (
     Button,
+    Checkbox,
     Collapsible,
     Input,
     Select,
@@ -99,9 +101,26 @@ async def _settle_settings_mount_storm(pilot) -> None:
     await pilot.pause()
 
 
+async def _reveal_settings_category_button(screen, pilot, selector: str) -> None:
+    """Expand the Domain Defaults rail group when the target button is collapsed away."""
+    try:
+        button = screen.query_one(selector)
+    except QueryError:
+        return
+    if button.display:
+        return
+    toggles = screen.query("#settings-category-group-domain-defaults")
+    if toggles:
+        # press() instead of pilot.click: hit-testing is unreliable in the
+        # unstyled harness near the viewport edge.
+        toggles.first().press()
+        await pilot.pause()
+
+
 async def _open_settings_category(pilot, selector: str) -> None:
     """Click a Settings category rail button with the mount storm settled."""
     await _settle_settings_mount_storm(pilot)
+    await _reveal_settings_category_button(pilot.app.screen, pilot, selector)
     try:
         button = pilot.app.screen.query_one(selector)
         category_list = pilot.app.screen.query_one("#settings-category-list")
@@ -126,9 +145,106 @@ def test_theme_and_splash_appear_in_settings_sidebar():
     assert "splash_screen" in values
 
 
-def test_theme_and_splash_not_in_guided_mutation_categories():
-    assert SettingsCategoryId.THEME not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
-    assert SettingsCategoryId.SPLASH_SCREEN not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
+def test_self_contained_editor_categories_not_in_guided_mutation():
+    assert (
+        SettingsCategoryId.THEME
+        not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
+    )
+    assert (
+        SettingsCategoryId.SPLASH_SCREEN
+        not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
+    )
+    # Internal Prompts is a third self-contained editor (mirrors Theme): it owns
+    # its own persistence via the InternalPromptsPanel Save/Reset buttons and
+    # must never be added to the guided-mutation set.
+    assert (
+        SettingsCategoryId.INTERNAL_PROMPTS
+        not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
+    )
+
+
+def test_internal_prompts_appears_in_settings_sidebar_expert_group():
+    screen = SettingsScreen(_build_test_app())
+    summaries = screen._category_summaries()
+    values = {s.category.value for s in summaries}
+    assert "internal-prompts" in values
+
+    groups = dict(screen._category_groups())
+    assert SettingsCategoryId.INTERNAL_PROMPTS in groups["Expert"]
+    assert SettingsCategoryId.ADVANCED_CONFIG in groups["Expert"]
+
+
+def test_settings_category_summaries_cover_every_category_id_exactly_once():
+    """Guards the total sidebar category count.
+
+    Adding Internal Prompts brought the total from 19 to 20; adding Image Gen
+    (Settings > Image Gen task 4) brought it to 21; adding Workspaces
+    (settings-workspaces-folder-roots task 8) brought it to 22; Speech & TTS
+    (TASK-1984) brought it to 23. This pins
+    the literal count so the next addition must touch this assertion
+    deliberately, and cross-checks that summaries neither miss nor duplicate
+    an enum member.
+    """
+    screen = SettingsScreen(_build_test_app())
+    summaries = screen._category_summaries()
+    assert len(summaries) == len(list(SettingsCategoryId)) == 23
+    assert {s.category for s in summaries} == set(SettingsCategoryId)
+
+
+def test_inspector_guidance_covers_every_settings_category():
+    """Every non-domain sidebar category must have an explicit guidance entry.
+
+    Regression: THEME and SPLASH_SCREEN were added to the sidebar without
+    guidance entries, so selecting them raised KeyError inside compose and
+    crashed the whole app. The runtime now returns a generic fallback so a
+    missing entry can never crash, which means asserting a truthy return would
+    always pass. This test guards the stronger property instead -- that every
+    category outside DOMAIN_SETTINGS_CATEGORY_IDS is an explicit key in
+    _INSPECTOR_GUIDANCE -- so a new category without real guidance fails CI
+    rather than silently shipping the generic fallback to users.
+    """
+    screen = SettingsScreen(_build_test_app())
+    for category in SettingsCategoryId:
+        guidance = screen._inspector_guidance(category)
+        assert guidance, f"no inspector guidance for {category!r}"
+        if category in settings_screen_module.DOMAIN_SETTINGS_CATEGORY_IDS:
+            continue
+        assert category in settings_screen_module._INSPECTOR_GUIDANCE, (
+            f"{category!r} has no explicit guidance entry and would fall back "
+            f"to generic text; add it to _INSPECTOR_GUIDANCE"
+        )
+
+
+@pytest.mark.asyncio
+async def test_theme_category_opens_without_crashing():
+    """Selecting the Theme category mounts its editor without crashing compose.
+
+    The editor widget mounting is the regression signal: the original bug
+    raised KeyError inside compose, so a crash would leave the editor unmounted
+    and time this wait out. Editor content is verified in
+    test_settings_theme_editor.py.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-theme")
+        screen = _active_destination_screen(host)
+        # Poll rather than a fixed settle: selecting a category triggers a
+        # recompose whose mount lands at a load-dependent moment.
+        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+
+
+@pytest.mark.asyncio
+async def test_splash_screen_category_opens_without_crashing():
+    """Selecting the Splash Screen category mounts its viewer without crashing compose."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-splash_screen")
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(
+            screen, pilot, "#settings-splash-screen-viewer", timeout=8.0
+        )
 
 
 class FakeSettingsModelDiscoveryScope:
@@ -218,6 +334,7 @@ async def _select_settings_category(
     )
     button_selector = f"#settings-category-{category_value}"
     await _wait_for_selector(screen, pilot, button_selector, timeout=timeout)
+    await _reveal_settings_category_button(screen, pilot, button_selector)
     try:
         category_list = screen.query_one("#settings-category-list")
         category_list.scroll_to_widget(
@@ -243,24 +360,25 @@ async def _select_settings_category(
     )
 
 
-async def _wait_for_settings_input_value(
+async def _wait_for_settings_value(
     screen,
     pilot,
     selector: str,
     expected_value: str,
+    widget_type: type[Input] | type[Select],
     *,
     timeout: float = 4.0,
 ) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if screen.query(selector):
-            field = screen.query_one(selector, Input)
+            field = screen.query_one(selector, widget_type)
             if field.value == expected_value:
                 await pilot.pause()
                 return
         await pilot.pause(0.01)
     actual = (
-        screen.query_one(selector, Input).value
+        screen.query_one(selector, widget_type).value
         if screen.query(selector)
         else "<missing>"
     )
@@ -271,7 +389,7 @@ async def _wait_for_settings_input_value(
 
 async def _click_scrolled_settings_button(screen, pilot, selector: str) -> Button:
     button = screen.query_one(selector, Button)
-    detail_pane = screen.query_one("#settings-detail-pane", VerticalScroll)
+    detail_pane = screen.query_one("#settings-detail-pane-body", VerticalScroll)
     detail_pane.scroll_to_widget(
         button,
         animate=False,
@@ -297,35 +415,44 @@ async def _wait_for_settings_search_focus(
     raise AssertionError("Timed out waiting for Settings category search focus")
 
 
+# TASK-1310: task-648 (d15882398, "own provider selection by lifetime") changed
+# resolve_effective_provider_model's contract from an app-instance carrying
+# reactive chat_api_provider_value/chat_api_model_value/chat_model_value
+# attributes to a plain `persisted_defaults: Mapping` argument, and dropped the
+# "ignore the default-OpenAI reactive value" special case entirely (nothing
+# reactive is consulted any more). The tests below were never migrated off the
+# old app-instance shape; they are updated here to the current contract rather
+# than reintroducing the removed app-reactive coupling. See
+# Tests/Provider/test_provider_model_resolution.py for the canonical coverage
+# of the new contract, including test_explicit_api_has_no_application_parameter
+# which guards against regressing back to an app_instance parameter.
+
+
 def test_effective_provider_model_prefers_console_overrides():
-    app = _app(
-        provider="OpenAI",
-        api_model="gpt-4.1",
-        model=None,
-        defaults={"provider": "llama_cpp", "model": "qwen"},
-    )
+    persisted_defaults = {"provider": "llama_cpp", "model": "qwen"}
 
     result = resolve_effective_provider_model(
-        app,
+        persisted_defaults,
         console_provider="Anthropic",
         console_model="claude",
     )
 
     assert result.provider == "Anthropic"
     assert result.model == "claude"
-    assert result.provider_source == "console_control"
-    assert result.model_source == "console_control"
+    assert result.provider_source == "console_session"
+    assert result.model_source == "console_session"
 
 
 def test_effective_provider_model_preserves_configured_provider_when_reactive_is_default_openai():
-    app = _app(
-        provider="OpenAI",
-        api_model=None,
-        model=None,
-        defaults={"provider": "llama_cpp", "model": "qwen"},
-    )
+    """Preserve a non-OpenAI configured provider under the current fallback.
 
-    result = resolve_effective_provider_model(app)
+    Task-648 removed the app-reactive fallback; the persisted-defaults-only
+    fallback must still preserve a non-OpenAI configured provider (no
+    OpenAI-default special case exists to override it any more).
+    """
+    persisted_defaults = {"provider": "llama_cpp", "model": "qwen"}
+
+    result = resolve_effective_provider_model(persisted_defaults)
 
     assert result.provider == "llama_cpp"
     assert result.provider_source == "chat_defaults"
@@ -333,15 +460,10 @@ def test_effective_provider_model_preserves_configured_provider_when_reactive_is
 
 
 def test_effective_provider_model_prefers_settings_draft_values():
-    app = _app(
-        provider="OpenAI",
-        api_model="gpt-4.1",
-        model=None,
-        defaults={"provider": "llama_cpp", "model": "qwen"},
-    )
+    persisted_defaults = {"provider": "llama_cpp", "model": "qwen"}
 
     result = resolve_effective_provider_model(
-        app,
+        persisted_defaults,
         settings_provider="Ollama",
         settings_model="llama3.1",
     )
@@ -353,15 +475,10 @@ def test_effective_provider_model_prefers_settings_draft_values():
 
 
 def test_effective_provider_model_ignores_blank_provider_overrides_for_default_fallback():
-    app = _app(
-        provider="OpenAI",
-        api_model=None,
-        model=None,
-        defaults={"provider": "llama_cpp", "model": "qwen"},
-    )
+    persisted_defaults = {"provider": "llama_cpp", "model": "qwen"}
 
     result = resolve_effective_provider_model(
-        app,
+        persisted_defaults,
         settings_provider=" ",
         console_provider="None",
     )
@@ -371,45 +488,39 @@ def test_effective_provider_model_ignores_blank_provider_overrides_for_default_f
 
 
 def test_effective_provider_model_ignores_blank_reactive_provider_for_default_fallback():
-    for reactive_provider in ("", " ", "None"):
-        app = _app(
-            provider=reactive_provider,
-            api_model=None,
-            model=None,
-            defaults={"provider": "llama_cpp", "model": "qwen"},
-        )
+    """Blank configured providers pass through as the chat_defaults fallback.
 
-        result = resolve_effective_provider_model(app)
+    Task-648 dropped the app-reactive provider signal entirely; the closest
+    surviving edge case is a blank/placeholder *configured* provider value,
+    which passes straight through (only the settings/console override paths
+    run blank-text filtering).
+    """
+    for configured_provider in ("", " ", "None"):
+        persisted_defaults = {"provider": configured_provider, "model": "qwen"}
 
-        assert result.provider == "llama_cpp"
+        result = resolve_effective_provider_model(persisted_defaults)
+
+        assert result.provider == configured_provider
         assert result.provider_source == "chat_defaults"
 
 
 def test_effective_provider_model_ignores_textual_blank_select_provider_for_default_fallback():
-    app = _app(
-        provider="OpenAI",
-        api_model=None,
-        model=None,
-        defaults={"provider": "llama_cpp", "model": "qwen"},
-    )
+    persisted_defaults = {"provider": "llama_cpp", "model": "qwen"}
 
-    result = resolve_effective_provider_model(app, settings_provider=Select.BLANK)
+    result = resolve_effective_provider_model(
+        persisted_defaults, settings_provider=Select.BLANK
+    )
 
     assert result.provider == "llama_cpp"
     assert result.provider_source == "chat_defaults"
 
 
 def test_effective_provider_model_ignores_blank_model_overrides_for_default_fallback():
-    app = _app(
-        provider="OpenAI",
-        api_model=None,
-        model=None,
-        defaults={"provider": "llama_cpp", "model": "qwen"},
-    )
+    persisted_defaults = {"provider": "llama_cpp", "model": "qwen"}
 
     for blank_model in ("", " ", "None", Select.BLANK):
         result = resolve_effective_provider_model(
-            app,
+            persisted_defaults,
             settings_model=blank_model,
             console_model=" ",
         )
@@ -419,17 +530,11 @@ def test_effective_provider_model_ignores_blank_model_overrides_for_default_fall
 
 
 def test_effective_provider_model_handles_non_mapping_app_config():
-    app = SimpleNamespace(
-        app_config=[],
-        chat_api_provider_value=None,
-        chat_api_model_value=None,
-        chat_model_value=None,
-    )
-
-    result = resolve_effective_provider_model(app)
-
-    assert result.provider is None
-    assert result.model is None
+    """resolve_effective_provider_model now requires persisted_defaults itself
+    to be a Mapping (it no longer unwraps an app-instance's app_config), so a
+    non-mapping argument raises instead of silently resolving to None values."""
+    with pytest.raises(TypeError, match="mapping"):
+        resolve_effective_provider_model([])
 
 
 def test_settings_draft_tracks_dirty_values():
@@ -608,6 +713,7 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
     ].owns_config_sections == (
         "console.collapse_large_pastes",
         "console.paste_collapse_threshold",
+        "console.max_parallel_runs",
         "console.background_effects.*",
         "chat_defaults.streaming",
         "chat_defaults.temperature",
@@ -689,6 +795,14 @@ def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
         SettingsCategoryId.WORKFLOWS,
         SettingsCategoryId.MCP_DEFAULTS,
         SettingsCategoryId.ACP_DEFAULTS,
+        SettingsCategoryId.IMAGE_GENERATION,
+    }
+    # LIBRARY_RAG and IMAGE_GENERATION are the two "Domain Defaults" members
+    # with a full self-owned editor (Settings genuinely persists their
+    # config) rather than a pure view-only pointer to another destination.
+    mutable_categories = {
+        SettingsCategoryId.LIBRARY_RAG,
+        SettingsCategoryId.IMAGE_GENERATION,
     }
 
     assert set(contracts) == expected_categories
@@ -697,7 +811,7 @@ def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
         assert contract.owner_destination
         assert contract.source_of_truth
         assert contract.follow_up
-        if category is SettingsCategoryId.LIBRARY_RAG:
+        if category in mutable_categories:
             assert contract.settings_can_mutate is True
         else:
             assert contract.settings_can_mutate is False
@@ -711,7 +825,7 @@ def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
     )
     assert "citations" in library_copy
     assert "snippets" in library_copy
-    assert "AppRAGSearchConfig.rag.search" in library_copy
+    assert "active RAG profile" in library_copy
 
 
 def test_settings_domain_category_ids_are_derived_from_contract_mapping():
@@ -757,9 +871,7 @@ def test_settings_domain_categories_are_grouped_and_have_ownership_records():
         record = records[category]
         if category is SettingsCategoryId.LIBRARY_RAG:
             assert record.writes_allowed
-            assert "AppRAGSearchConfig.rag.search" in " ".join(
-                record.owns_config_sections
-            )
+            assert "active RAG profile" in " ".join(record.owns_config_sections)
         else:
             assert not record.writes_allowed
             assert record.read_only_reason
@@ -767,35 +879,45 @@ def test_settings_domain_categories_are_grouped_and_have_ownership_records():
         assert record.runtime_owner
 
 
+def _wire_rag_profile_adapter(monkeypatch, tmp_path, *, active_id=None):
+    """Point the Settings RAG adapter at an isolated profile store for a test.
+
+    Returns (manager, profile) where `profile` is a writable clone of the
+    `hybrid_basic` builtin, already the active profile.
+    """
+    from tldw_chatbook.RAG_Search.config_profiles import ConfigProfileManager
+    import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as rag_adapter_module
+
+    mgr = ConfigProfileManager(profiles_dir=tmp_path / "profiles")
+    profile = mgr.clone_profile("hybrid_basic", "My RAG")
+    mgr.save_profile(profile)
+    state = {"active": active_id or profile.id}
+    monkeypatch.setattr(rag_adapter_module, "_manager", lambda: mgr, raising=False)
+    monkeypatch.setattr(
+        rag_adapter_module, "_active_profile_id", lambda: state["active"], raising=False
+    )
+    return mgr, profile, state
+
+
 @pytest.mark.asyncio
-async def test_settings_library_rag_renders_guided_defaults_and_validates(monkeypatch):
+async def test_settings_library_rag_renders_guided_defaults_and_validates(
+    monkeypatch, tmp_path
+):
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    search = profile.rag_config.search
+    search.default_search_mode = "semantic"
+    search.default_top_k = 10
+    search.score_threshold = 0.0
+    search.include_citations = True
+    search.citation_style = "inline"
+    search.snippet_max_chars = 240
+    search.max_context_size = 16000
+    search.fts_top_k = 10
+    search.vector_top_k = 10
+    search.hybrid_alpha = 0.5
+    mgr.save_profile(profile)
+
     app = _build_test_app()
-    app.app_config["AppRAGSearchConfig"] = {
-        "rag": {
-            "search": {
-                "default_search_mode": "semantic",
-                "default_top_k": 10,
-                "score_threshold": 0.0,
-                "include_citations": True,
-                "citation_style": "inline",
-                "snippet_max_chars": 240,
-                "max_context_size": 16000,
-            },
-            "retriever": {
-                "fts_top_k": 10,
-                "vector_top_k": 10,
-                "hybrid_alpha": 0.5,
-            },
-        }
-    }
-    saved = []
-
-    class FakeAdapter:
-        def save_sections(self, section_values):
-            saved.append(section_values)
-            return True
-
-    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(190, 55)) as pilot:
@@ -803,15 +925,23 @@ async def test_settings_library_rag_renders_guided_defaults_and_validates(monkey
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
-        assert "Library & RAG" in text
-        assert "Search defaults" in text
+        assert "RAG" in text
+        # task-3/SP3: "Search defaults" became the "Search" Collapsible group
+        # title (with Embedding/Chunking/Vector store/Reranking groups added
+        # alongside it). Structural check on the Collapsible itself (not just
+        # substring-in-rendered-text) so this can't false-pass on the word
+        # "Search" appearing somewhere else in the pane.
+        assert (
+            screen.query_one("#settings-library-rag-search-group", Collapsible).title
+            == "Search"
+        )
         assert "Citation and snippets" in text
         assert "Preview defaults" in text
         assert "Semantic search | 10 results | Inline citations" in text
         assert "Context budget: 16000 chars" in text
         assert "Config keys" in text
-        assert "10 editable defaults under AppRAGSearchConfig" in text
-        assert "AppRAGSearchConfig.rag.search.default_search_mode" not in text
+        assert "10 editable defaults in the active RAG profile" in text
+        assert "AppRAGSearchConfig" not in text
         assert (
             screen.query_one("#settings-library-rag-search-mode", Select).value
             == "semantic"
@@ -851,23 +981,106 @@ async def test_settings_library_rag_renders_guided_defaults_and_validates(monkey
         await pilot.click("#settings-save-category")
         await _wait_for_settings_text(screen, pilot, "Library/RAG defaults saved.")
 
-    assert saved
-    rag = saved[-1]["AppRAGSearchConfig"]["rag"]
-    assert rag["search"]["default_top_k"] == 12
-    assert rag["search"]["snippet_max_chars"] == 360
+    # Reload from disk via a FRESH manager over the same dir to confirm the
+    # active profile's file (not AppRAGSearchConfig) is what was written.
+    from tldw_chatbook.RAG_Search.config_profiles import ConfigProfileManager
+
+    mgr2 = ConfigProfileManager(profiles_dir=mgr.profiles_dir)
+    saved_search = mgr2.get_profile(profile.id).rag_config.search
+    assert saved_search.default_top_k == 12
+    assert saved_search.snippet_max_chars == 360
 
 
 @pytest.mark.asyncio
-async def test_settings_library_rag_sync_clamps_invalid_select_values():
+async def test_settings_library_rag_inspector_uses_shortened_terse_guidance(
+    monkeypatch, tmp_path
+):
+    """UX review item 9 (Scope Inspector clipping): the guidance rows were
+    shortened so the "Citations" sentence (the row that clipped mid-word at
+    the pane's unscrolled fold, "...source markers when") completes before
+    the fold. Regression-locks the new wording and that the old, longer
+    prose is gone."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
     app = _build_test_app()
-    app.app_config["AppRAGSearchConfig"] = {
-        "rag": {
-            "search": {
-                "default_search_mode": "not-a-mode",
-                "citation_style": "not-a-style",
-            },
-        }
-    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Control guide" in text
+        assert "Citations: adds source markers to answers when supported" in text
+        assert (
+            "sets whether future RAG answers include source markers when supported"
+            not in text
+        )
+        assert "Hybrid balance: 0.0=keyword, 1.0=semantic" in text
+        assert "Config keys: 10 editable defaults in the active RAG profile" in text
+
+
+@pytest.mark.asyncio
+async def test_settings_library_rag_reranker_warning_shown_for_a_warning_triggering_draft(
+    monkeypatch, tmp_path
+):
+    """task-3 review Finding 1(c): the reranker top-k vs default-results
+    advisory becomes visible once a draft triggers it and clears once it no
+    longer does -- and never affects the Save gate (advisory only, see
+    _library_rag_soft_warnings)."""
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    default_top_k = profile.rag_config.search.default_top_k
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        warning = screen.query_one("#settings-library-rag-reranker-warning", Static)
+        assert warning.display is False
+        assert "exceeds default results" not in _visible_text(screen)
+
+        enable_checkbox = screen.query_one(
+            "#settings-library-rag-enable-reranking", Checkbox
+        )
+        screen.handle_library_rag_enable_reranking_changed(
+            Checkbox.Changed(enable_checkbox, True)
+        )
+
+        top_k_input = screen.query_one("#settings-library-rag-reranker-top-k", Input)
+        over_default = default_top_k + 50
+        top_k_input.value = str(over_default)
+        screen.handle_library_rag_reranker_top_k_changed(
+            Input.Changed(top_k_input, top_k_input.value)
+        )
+
+        assert warning.display is True
+        visible_text = _visible_text(screen)
+        assert str(over_default) in visible_text
+        assert "exceeds default results" in visible_text
+        # Advisory only -- must never affect the Save gate.
+        assert screen.query_one("#settings-save-category", Button).disabled is False
+
+        # Back within range -> the advisory clears.
+        top_k_input.value = str(default_top_k)
+        screen.handle_library_rag_reranker_top_k_changed(
+            Input.Changed(top_k_input, top_k_input.value)
+        )
+        assert warning.display is False
+        assert "exceeds default results" not in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_settings_library_rag_sync_clamps_invalid_select_values(
+    monkeypatch, tmp_path
+):
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    profile.rag_config.search.default_search_mode = "not-a-mode"
+    profile.rag_config.search.citation_style = "not-a-style"
+    mgr.save_profile(profile)
+
+    app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(190, 55)) as pilot:
@@ -1268,6 +1481,14 @@ async def test_settings_storage_surfaces_check_action_before_long_path_editor(tm
 
         assert text.index("Draft path check") < text.index("Database paths")
 
+        # TASK-720: configured config values and runtime-resolved files must
+        # not read as two conflicting current locations - the inputs are
+        # labeled configured, the resolved list is labeled active, and a note
+        # explains why they can differ (per-profile resolution).
+        assert "Database paths (configured)" in text
+        assert "Active files (resolved this session)" in text
+        assert "can differ when a user profile is set" in text
+
 
 @pytest.mark.asyncio
 async def test_settings_storage_save_and_revert_defaults(monkeypatch, tmp_path):
@@ -1343,7 +1564,18 @@ def test_settings_storage_save_uses_exclusive_thread_worker():
 
 
 @pytest.mark.asyncio
-async def test_settings_library_rag_save_preserves_mapping_like_app_config(monkeypatch):
+async def test_settings_library_rag_save_does_not_touch_app_config_and_persists_profile(
+    monkeypatch, tmp_path
+):
+    """Regression guard for the dead-writes bug this task retires.
+
+    app_config may be Mapping-like (UserDict) elsewhere in Settings; the RAG
+    category must not choke on that. And since RAG saves now go through the
+    active-profile adapter, save must never mutate app_config -- it persists
+    to the active profile's file instead.
+    """
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+
     app = _build_test_app()
     app.app_config = UserDict(
         {
@@ -1355,14 +1587,6 @@ async def test_settings_library_rag_save_preserves_mapping_like_app_config(monke
             }
         }
     )
-    saved = []
-
-    class FakeAdapter:
-        def save_sections(self, section_values):
-            saved.append(section_values)
-            return True
-
-    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(190, 55)) as pilot:
@@ -1382,9 +1606,14 @@ async def test_settings_library_rag_save_preserves_mapping_like_app_config(monke
         await pilot.click("#settings-save-category")
         await _wait_for_settings_text(screen, pilot, "Library/RAG defaults saved.")
 
-    assert saved
     assert isinstance(app.app_config, UserDict)
-    assert app.app_config["AppRAGSearchConfig"]["rag"]["search"]["default_top_k"] == 12
+    # Untouched: the RAG category no longer writes AppRAGSearchConfig.* keys.
+    assert app.app_config["AppRAGSearchConfig"]["rag"]["search"]["default_top_k"] == 10
+
+    from tldw_chatbook.RAG_Search.config_profiles import ConfigProfileManager
+
+    mgr2 = ConfigProfileManager(profiles_dir=mgr.profiles_dir)
+    assert mgr2.get_profile(profile.id).rag_config.search.default_top_k == 12
 
 
 @pytest.mark.asyncio
@@ -1476,10 +1705,10 @@ def test_settings_server_sync_workspace_rows_use_source_contracts():
     assert captured_sync_kwargs["workspace_scope"] == "research"
     assert rows["Active server profile"] == "Main Server (server-main)"
     assert rows["Local/server authority"] == "server; Settings is read-only"
-    assert rows["Sync safety"] == "Collections: Sync: dry-run only"
+    assert rows["Sync safety"] == "Collections: dry-run only"
     assert rows["Sync recovery"] == "Review dry-run results before enabling writes."
     assert rows["Workspace default"] == (
-        "Workspace: Research (research); Authority: server-backed; Sync: ready"
+        "Research (research); authority server-backed; sync ready"
     )
     assert rows["Library visibility"] == LIBRARY_WORKSPACE_VISIBILITY_COPY
     assert rows["Handoff policy"] == (
@@ -1568,10 +1797,10 @@ def test_settings_server_sync_workspace_rows_fallback_to_read_only_wip_copy():
 
     assert rows["Active server profile"] == "local-only; no active server profile"
     assert rows["Local/server authority"] == "local; Settings is read-only"
-    assert "Collections: Sync: dry-run only" in rows["Sync safety"]
-    assert "Workspaces: Sync: dry-run only" in rows["Sync safety"]
+    assert "Collections: dry-run only" in rows["Sync safety"]
+    assert "Workspaces: dry-run only" in rows["Sync safety"]
     assert rows["Workspace default"] == (
-        "Workspace: Local Default; Console/Home/Library own workspace switching"
+        "Local Default; switch in Console (Alt+W), manage in Settings > Workspaces"
     )
     assert rows["Library visibility"] == LIBRARY_WORKSPACE_VISIBILITY_COPY
     assert rows["ACP handoff readiness"] == (
@@ -1765,7 +1994,7 @@ def test_settings_status_language_agrees_with_home_console_and_library_contracts
     assert "Mode: Server" in home.sections[0].lines[0]
     assert "Server: Ready" in home.sections[0].lines[0]
     assert rows["Workspace default"] == (
-        "Workspace: workspace-a; Console context active; Library browse/search remains global"
+        "workspace-a; Console context active; Library browse/search remains global"
     )
     assert rows["Library visibility"] == LIBRARY_WORKSPACE_VISIBILITY_COPY
 
@@ -1811,12 +2040,9 @@ async def test_settings_overview_renders_server_sync_workspace_handoff_contracts
         assert "Server, sync, workspace, and handoff" in text
         assert "Active server profile: Main Server (server-main)" in text
         assert "Local/server authority: server; Settings is read-only" in text
-        assert "Collections: Sync: dry-run only" in text
-        assert "Workspaces: Sync: dry-run only" in text
-        assert (
-            "Workspace: Research (research); Authority: local-only; Sync: not-configured"
-            in text
-        )
+        assert "Collections: dry-run only" in text
+        assert "Workspaces: dry-run only" in text
+        assert "Research (research); authority local-only; sync not-configured" in text
         assert LIBRARY_WORKSPACE_VISIBILITY_COPY in text
         assert (
             "ACP handoff readiness: ACP session ready: Ticket triage (running)" in text
@@ -2018,10 +2244,7 @@ async def test_settings_inspector_has_no_write_blocked_contradiction():
         assert "Writes allowed: Yes" in text
         assert "Writes remain blocked" not in text
         assert "Mutation replay" not in text
-        assert (
-            "Saves apply to your local config file. Nothing is sent to a server "
-            "unless you run Manual sync yourself." in text
-        )
+        assert "Local-only: saves write your config file." in text
 
 
 @pytest.mark.asyncio
@@ -2434,7 +2657,9 @@ async def test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts(
 
         assert model_input.value == "srt"
         assert saved == []
-        assert screen._provider_test_result is None
+        # TASK-366: editing a provider input (the model here) marks the last
+        # Test Provider result stale rather than leaving a now-inaccurate verdict.
+        assert screen._provider_test_result == screen._PROVIDER_TEST_STALE_COPY
         assert screen._settings_drafts
 
         screen.action_settings_save_category()
@@ -2443,7 +2668,9 @@ async def test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts(
 
         assert saved == []
         assert model_input.value == "srt"
-        assert screen._provider_test_result is None
+        # TASK-366: editing a provider input (the model here) marks the last
+        # Test Provider result stale rather than leaving a now-inaccurate verdict.
+        assert screen._provider_test_result == screen._PROVIDER_TEST_STALE_COPY
         assert screen._settings_drafts
 
 
@@ -2530,7 +2757,8 @@ async def test_settings_active_category_uses_explicit_nav_marker():
         inactive = screen.query_one("#settings-category-diagnostics")
 
         assert str(active.label) == "> Advanced Config"
-        assert str(inactive.label) == "  Diagnostics"
+        # task-1563: view-only categories carry a "(view)" badge in the rail.
+        assert str(inactive.label) == "  Diagnostics (view)"
         assert active.has_class("settings-active-section")
 
 
@@ -2635,22 +2863,217 @@ async def test_settings_long_detail_and_inspector_panes_are_scrollable_container
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
 
-        assert isinstance(screen.query_one("#settings-detail-pane"), VerticalScroll)
-        assert isinstance(screen.query_one("#settings-impact-pane"), VerticalScroll)
+        # task-1716: BOTH panes are now fixed-header-over-scroll-body;
+        # the scrollable container is the -body child in each.
+        assert isinstance(
+            screen.query_one("#settings-detail-pane-body"), VerticalScroll
+        )
+        assert isinstance(
+            screen.query_one("#settings-impact-pane-body"), VerticalScroll
+        )
 
         await _open_settings_category(pilot, "#settings-category-providers-models")
-        detail_pane = screen.query_one("#settings-detail-pane", VerticalScroll)
+        detail_body = screen.query_one("#settings-detail-pane-body", VerticalScroll)
         test_provider = screen.query_one("#settings-test-provider", Button)
 
-        assert detail_pane.max_scroll_y > 0
-        detail_pane.scroll_to_widget(
+        assert detail_body.max_scroll_y > 0
+        detail_body.scroll_to_widget(
             test_provider,
             animate=False,
             immediate=True,
             top=True,
             force=True,
         )
-        assert detail_pane.scroll_y > 0
+        assert detail_body.scroll_y > 0
+
+
+def _assert_field_guide_row_painted(host, widget) -> None:
+    """Compositor-honest visibility check (mirrors the sibling helper in
+    ``test_console_parallel_runs.py``, task-1140): a widget below a
+    scrollable ancestor's fold still reports a ``region``, just one that
+    ancestor never actually paints, so a raw ``region.y`` comparison
+    cannot tell "below THIS pane's fold" apart from "on screen". This asks
+    the compositor what is ACTUALLY drawn at the widget's own top-left
+    cell -- the same bar a live terminal renders against.
+    """
+    region = widget.region
+    try:
+        hit_widget, _hit_region = host.get_widget_at(region.x + 1, region.y)
+    except Exception as exc:  # textual.errors.NoWidget
+        pytest.fail(f"nothing is painted at {widget!r}'s own region {region!r}: {exc}")
+    assert hit_widget is widget, (
+        f"the compositor paints {hit_widget!r} at {region!r}, not {widget!r} "
+        "itself -- it is not actually visible on screen"
+    )
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_focus_auto_scrolls_to_field_guide():
+    """Fleet-UX expert review F6 (task-1234): focusing "Max parallel" must
+    scroll the Scope Inspector so the Focused field guide's first row
+    (Purpose) is actually PAINTED, not merely present somewhere below the
+    fold -- live UAT found only "Purpose:" visible with the rest of the
+    guide (Consequences/Saved as/Applies) clipped by the pane's own scroll
+    fold. Mirrors task-1140's compositor-honest viewport-intersection
+    check (`App.get_widget_at`) rather than a raw `region.y` bound: a
+    widget below a scrollable ancestor's fold still reports a region, just
+    one that ancestor never paints.
+
+    A full-size terminal is used for reliable category-rail navigation
+    (a very short terminal breaks `_open_settings_category`'s click
+    target); the pane's OWN viewport height is constrained afterward to
+    deterministically force the below-the-fold condition regardless of
+    terminal size.
+    """
+    app = _build_test_app()
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+
+        pane = screen.query_one("#settings-impact-pane-body", VerticalScroll)
+        pane.styles.height = 6
+        await pilot.pause()
+        # Reset to a known baseline: opening the category already scrolls
+        # the pane once (any focus inside a guided category re-triggers
+        # the fix, not just the target field) -- force it back to the top
+        # so the assertion below proves FOCUSING THE FIELD is what moves
+        # it, not residual state from opening the category.
+        pane.scroll_to(y=0, animate=False, force=True)
+        await pilot.pause()
+        assert pane.scroll_y == 0
+
+        field = screen.query_one("#settings-console-max-parallel-runs", Input)
+        field.focus()
+        # Two hops: one for the DescendantFocus handler's own refresh, one
+        # for the scroll's `call_after_refresh` (mirrors the two-hop
+        # `_preserve_library_rail_scroll` pattern this fix is modeled on).
+        await pilot.pause()
+        await pilot.pause()
+
+        guide_row = screen.query_one("#settings-console-behavior-field-guide-0")
+        assert pane.max_scroll_y > 0, "test setup: the pane must need scrolling"
+        assert pane.scroll_y > 0, "focusing the field must have scrolled the pane"
+        _assert_field_guide_row_painted(host, guide_row)
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_focus_reveals_full_guide_when_purpose_starts_flush_with_bottom_fold():
+    """Qodo PR #1074 finding 2 (task-1230/1234 external review): the F6 fix
+    above only ever targeted the guide's FIRST row. ``scroll_to_widget``
+    no-ops once its target is already fully inside the viewport, so a
+    PRIOR scroll position that already leaves "Purpose" sitting flush with
+    the pane's own bottom edge (fully visible, technically) short-circuits
+    the whole call -- Consequences/Saved as/Applies (everything after it)
+    stay clipped below the fold and NO scroll happens at all. This is
+    distinct from the sibling test above, which starts scrolled to the
+    very top (nothing of the guide visible yet) rather than with the first
+    row already parked at the bottom -- exactly the arrangement Qodo's
+    review reported.
+
+    The precondition is built from a direct scroll computation (not a
+    guessed constant) so it holds regardless of how the guidance copy
+    changes later: it places the FALLBACK guide's row 0 (the content
+    showing before "Max parallel" is ever focused) with its bottom edge
+    exactly flush with the pane's own bottom edge.
+
+    The pane is sized tall enough to hold the ENTIRE focused guide
+    (measured from the real rendered content) so a correct fix has room to
+    reveal every row simultaneously -- a too-short pane would make "all
+    rows visible" mathematically impossible regardless of the fix, which
+    the sibling test above already covers (it only requires the first row,
+    deliberately using a too-short pane).
+
+    Must fail against the pre-fix implementation (which only ever scrolls
+    to the first row, and only when that row isn't already "in window");
+    reverting the ``_scroll_impact_pane_to_field_guide`` change confirms
+    this.
+    """
+    app = _build_test_app()
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 66)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        pane = screen.query_one("#settings-impact-pane-body", VerticalScroll)
+        field = screen.query_one("#settings-console-max-parallel-runs", Input)
+        other_field = screen.query_one("#settings-console-default-streaming", Input)
+        guide_ids = [f"#settings-console-behavior-field-guide-{i}" for i in range(4)]
+
+        # Measure the REAL (focused) guide's total span first, so the pane
+        # can be grown to hold it end to end.
+        field.focus()
+        await pilot.pause()
+        await pilot.pause()
+        first_measured = screen.query_one(guide_ids[0])
+        last_measured = screen.query_one(guide_ids[-1])
+        guide_span = (
+            last_measured.virtual_region.y + last_measured.virtual_region.height
+        ) - first_measured.virtual_region.y
+
+        # Switch back to the FALLBACK guide and measure where its row 0 sits.
+        # The pane height must satisfy TWO constraints: tall enough that the
+        # interior viewport holds the whole focused guide, yet no taller
+        # than row 0's virtual bottom edge -- otherwise the flush-with-bottom
+        # precondition below is geometrically unachievable (the +8 pad alone
+        # proved too tall once density CSS changed the guide's wrap).
+        other_field.focus()
+        await pilot.pause()
+        await pilot.pause()
+        fallback_row0 = screen.query_one(guide_ids[0])
+        fallback_row0_bottom = (
+            fallback_row0.virtual_region.y + fallback_row0.virtual_region.height
+        )
+        # +8, not the guide's span alone: `scrollable_content_region` (the
+        # interior window scrolling actually targets) is smaller than
+        # `styles.height` by the pane's own border + padding overhead
+        # (2 + 2 rows here) -- pad past that so the interior window itself
+        # ends up taller than the guide, not just the outer style value.
+        pane.styles.height = min(guide_span + 8, fallback_row0_bottom)
+        await pilot.pause()
+        viewport_height = pane.scrollable_content_region.height
+        assert viewport_height >= guide_span, (
+            "test setup: the pane's interior viewport must be tall enough "
+            f"to hold the whole guide (viewport={viewport_height}, "
+            f"guide_span={guide_span})"
+        )
+
+        # Reset scroll to a known baseline.
+        pane.scroll_to(y=0, animate=False, force=True)
+        await pilot.pause()
+
+        fallback_row0 = screen.query_one(guide_ids[0])
+        target_scroll_y = max(
+            0,
+            fallback_row0.virtual_region.y
+            + fallback_row0.virtual_region.height
+            - viewport_height,
+        )
+        pane.scroll_to(y=target_scroll_y, animate=False, force=True)
+        await pilot.pause()
+
+        # Precondition: row 0 ("Purpose", fallback text) is fully painted,
+        # flush with the pane's own INTERIOR bottom edge -- the setup must
+        # actually need scrolling, or this test proves nothing.
+        assert pane.max_scroll_y > 0, "test setup: the pane must need scrolling"
+        _assert_field_guide_row_painted(host, fallback_row0)
+        interior_bottom = pane.scrollable_content_region.bottom
+        assert fallback_row0.region.bottom == interior_bottom, (
+            "test setup: row 0 must start flush with the viewport's "
+            f"interior bottom edge, got row0={fallback_row0.region!r} "
+            f"interior_bottom={interior_bottom!r}"
+        )
+
+        # Trigger: focusing "Max parallel runs" swaps the guide's CONTENT
+        # in place (same 4 ids) to the real Purpose/Consequences/Saved as/
+        # Applies text and must re-scroll to reveal all of it.
+        field.focus()
+        await pilot.pause()
+        await pilot.pause()
+
+        for guide_id in guide_ids:
+            _assert_field_guide_row_painted(host, screen.query_one(guide_id))
 
 
 @pytest.mark.asyncio
@@ -2791,7 +3214,11 @@ async def test_settings_category_search_uses_plain_standard_input_widgets():
         screen = _active_destination_screen(host)
 
         search = screen.query_one("#settings-category-search", Input)
-        assert type(search) is Input
+        # task-1584: SettingsCategorySearchInput is a plain Input whose only
+        # deviation is the "/" re-arm interception -- still no suggester,
+        # markup, or custom rendering.
+        assert type(search) is settings_screen_module.SettingsCategorySearchInput
+        assert type(search).__mro__[1] is Input
         assert not screen.query_one(
             "#settings-category-search-status", Static
         )._render_markup
@@ -2901,17 +3328,112 @@ async def test_settings_category_search_escape_clears_filter():
 
         search = screen.query_one("#settings-category-search", Input)
         assert search.value == ""
+        # Clearing the filter restores the collapsed Domain Defaults group:
+        # only non-domain categories are visible until the group is expanded.
+        expected_visible = sum(
+            1
+            for summary in screen._category_summaries()
+            if summary.category
+            not in settings_screen_module.DOMAIN_SETTINGS_CATEGORY_IDS
+        )
         assert sum(
             1 for button in screen.query(".settings-category-button") if button.display
-        ) == len(screen._category_summaries())
+        ) == expected_visible
+
+
+@pytest.mark.asyncio
+async def test_settings_domain_defaults_group_toggle_expands_and_collapses():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _settle_settings_mount_storm(pilot)
+
+        domain_values = {
+            category.value
+            for category in settings_screen_module.DOMAIN_SETTINGS_CATEGORY_IDS
+        }
+
+        def visible_domain_buttons() -> list[Button]:
+            return [
+                button
+                for button in screen.query(".settings-category-button")
+                if button.id
+                and button.id.removeprefix("settings-category-") in domain_values
+                and button.display
+            ]
+
+        assert not visible_domain_buttons()
+
+        # press() instead of pilot.click: hit-testing is unreliable in the
+        # unstyled harness near the viewport edge; the toggle handler is what
+        # is under test here.
+        toggle = screen.query_one("#settings-category-group-domain-defaults", Button)
+        toggle.press()
+        await pilot.pause()
+        assert len(visible_domain_buttons()) == len(domain_values)
+        assert "▾" in str(toggle.label)
+
+        toggle.press()
+        await pilot.pause()
+        assert not visible_domain_buttons()
+
+
+@pytest.mark.asyncio
+async def test_settings_domain_group_expands_when_restored_to_domain_category():
+    app = _build_test_app()
+    host = DestinationHarness(
+        app, "settings", restored_state={"active_category": "personas"}
+    )
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _settle_settings_mount_storm(pilot)
+
+        button = screen.query_one("#settings-category-personas", Button)
+        assert button.display
+        assert screen.active_category == SettingsCategoryId.PERSONAS.value
+
+
+@pytest.mark.asyncio
+async def test_settings_category_search_reveals_domain_matches():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _settle_settings_mount_storm(pilot)
+
+        personas_button = screen.query_one("#settings-category-personas", Button)
+        assert not personas_button.display
+
+        await pilot.press("/")
+        await _wait_for_settings_search_focus(screen, pilot)
+        await pilot.press(*"personas")
+        await pilot.pause()
+        assert personas_button.display
+        # The indicator reflects the search-forced expansion (Qodo PR #1310).
+        toggle = screen.query_one("#settings-category-group-domain-defaults", Button)
+        assert "▾" in str(toggle.label)
+
+        search = screen.query_one("#settings-category-search", Input)
+        search.value = ""
+        await pilot.pause()
+        assert not personas_button.display
 
 
 @pytest.mark.asyncio
 async def test_settings_overview_paste_summary_updates_after_toggle(monkeypatch):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
+    # TASK-1310: 1df0c4cb4 ("reconcile privacy lifecycle eval and packaging
+    # hardening") removed settings_screen's import of the per-key
+    # save_setting_to_cli_config helper; the Console Behavior category now
+    # saves exclusively through settings_config_adapter's batched
+    # save_settings_to_cli_config (see test_settings_console_behavior_uses_batched_save_adapter).
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
         lambda *_args, **_kwargs: True,
     )
     host = DestinationHarness(app, "settings")
@@ -2933,8 +3455,13 @@ async def test_settings_overview_paste_summary_updates_after_toggle(monkeypatch)
 async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh(monkeypatch):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
+    # TASK-1310: 1df0c4cb4 ("reconcile privacy lifecycle eval and packaging
+    # hardening") removed settings_screen's import of the per-key
+    # save_setting_to_cli_config helper; the Console Behavior category now
+    # saves exclusively through settings_config_adapter's batched
+    # save_settings_to_cli_config (see test_settings_console_behavior_uses_batched_save_adapter).
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
         lambda *_args, **_kwargs: True,
     )
     host = DestinationHarness(app, "settings")
@@ -3098,6 +3625,144 @@ async def test_settings_console_behavior_saves_paste_threshold(monkeypatch):
 
     assert saved == [{"console": {"paste_collapse_threshold": 120}}]
     assert app.app_config["console"]["paste_collapse_threshold"] == 120
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_saves_max_parallel_runs(monkeypatch):
+    app = _build_test_app()
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        field = screen.query_one("#settings-console-max-parallel-runs", Input)
+
+        assert field.restrict == r"^[0-9]*$"
+        assert field.value == "3"
+
+        field.value = "0"
+        screen.handle_console_max_parallel_runs_changed(
+            Input.Changed(field, field.value)
+        )
+        await pilot.click("#settings-save-category")
+        # A pump between clicks on the same Button is required here: without
+        # it, the Button's own "-active" press-state class (and internal
+        # timer that clears it) never settles before the second click lands,
+        # and the second Button.Pressed is silently dropped.
+        await pilot.pause(0.5)
+        assert (
+            "Max parallel agent runs must be an integer of at least 1."
+            in _visible_text(screen)
+        )
+        assert saved == []
+
+        field.value = "12"
+        screen.handle_console_max_parallel_runs_changed(
+            Input.Changed(field, field.value)
+        )
+        assert "Unsaved" in _visible_text(screen)
+
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Console behavior settings saved.")
+
+    assert saved == [{"console": {"max_parallel_runs": 12}}]
+    assert app.app_config["console"]["max_parallel_runs"] == 12
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_rejects_invalid_tool_result_display_chars(
+    monkeypatch,
+):
+    """Review finding G (PR #1082, ruling DECLINE the bespoke-Pydantic ask):
+    ``_normalise_tool_result_display_chars`` already validates through
+    ``validate_number_range`` -- the same shared helper every other
+    Console Behavior numeric field uses (see
+    ``test_settings_console_behavior_saves_max_parallel_runs`` for the
+    sibling field this mirrors). This confirms, rather than assumes, that
+    an out-of-range value, a non-numeric value, and an empty value each
+    produce the existing user-facing error on Save and leave the stored
+    setting untouched -- exactly what a bespoke per-field Pydantic model
+    would also have to guarantee, without the inconsistency of one field
+    validating differently from its siblings.
+    """
+    app = _build_test_app()
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        field = screen.query_one("#settings-console-tool-result-display-chars", Input)
+
+        assert field.restrict == r"^[0-9]*$"
+        assert field.value == "160"  # DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS
+
+        # Out of range (MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS is 2000).
+        field.value = "999999"
+        screen.handle_console_tool_result_display_chars_changed(
+            Input.Changed(field, field.value)
+        )
+        await pilot.click("#settings-save-category")
+        await pilot.pause(0.5)
+        assert "Tool result display cap must be between 20 and 2000." in _visible_text(
+            screen
+        )
+        assert saved == []
+        assert "tool_result_display_chars" not in app.app_config.get("console", {})
+
+        # Non-numeric (bypasses the Input's own `restrict` -- e.g. a paste
+        # or a programmatic set -- so the handler's own guard is what's
+        # actually under test here).
+        field.value = "abc"
+        screen.handle_console_tool_result_display_chars_changed(
+            Input.Changed(field, field.value)
+        )
+        await pilot.click("#settings-save-category")
+        await pilot.pause(0.5)
+        assert "Tool result display cap must be a whole number." in _visible_text(
+            screen
+        )
+        assert saved == []
+        assert "tool_result_display_chars" not in app.app_config.get("console", {})
+
+        # Empty.
+        field.value = ""
+        screen.handle_console_tool_result_display_chars_changed(
+            Input.Changed(field, field.value)
+        )
+        await pilot.click("#settings-save-category")
+        await pilot.pause(0.5)
+        assert "Tool result display cap must be a whole number." in _visible_text(
+            screen
+        )
+        assert saved == []
+        assert "tool_result_display_chars" not in app.app_config.get("console", {})
+
+        # A valid value still saves normally after the rejected attempts.
+        field.value = "500"
+        screen.handle_console_tool_result_display_chars_changed(
+            Input.Changed(field, field.value)
+        )
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Console behavior settings saved.")
+
+    assert saved == [{"console": {"tool_result_display_chars": 500}}]
+    assert app.app_config["console"]["tool_result_display_chars"] == 500
 
 
 @pytest.mark.asyncio
@@ -3705,7 +4370,6 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
         "temperature": 0.7,
         "top_p": 0.95,
     }
-    legacy_calls = []
     batched_calls = []
 
     class FakeAdapter:
@@ -3714,10 +4378,18 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
             return True
 
     monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    # TASK-1310 + Qodo #1081: 1df0c4cb4 removed settings_screen's import of
+    # the per-key save_setting_to_cli_config helper, but a future change
+    # could re-import it and quietly reintroduce per-key writes ALONGSIDE the
+    # batched save -- the positive assertion below would still pass. Plant a
+    # tripwire on the (absent) legacy name so any reintroduced call fails
+    # loudly instead.
+    legacy_calls = []
     monkeypatch.setattr(
         settings_screen_module,
         "save_setting_to_cli_config",
-        lambda *args, **kwargs: legacy_calls.append(args) or True,
+        lambda *a, **k: legacy_calls.append((a, k)),
+        raising=False,
     )
     host = DestinationHarness(app, "settings")
 
@@ -3741,7 +4413,6 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
         await pilot.click("#settings-save-category")
         await _wait_for_settings_text(screen, pilot, "Console behavior settings saved.")
 
-    assert legacy_calls == []
     assert batched_calls == [
         {
             "console": {"paste_collapse_threshold": 120},
@@ -3750,6 +4421,10 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
     ]
     assert app.app_config["console"]["paste_collapse_threshold"] == 120
     assert app.app_config["chat_defaults"]["streaming"] is False
+    assert legacy_calls == [], (
+        "Console Behavior must save atomically through the batched adapter; "
+        "a legacy per-key save_setting_to_cli_config call was reintroduced"
+    )
 
 
 @pytest.mark.asyncio
@@ -3809,9 +4484,12 @@ async def test_settings_console_behavior_rejects_invalid_global_defaults(
         "max_tokens": 2048,
     }
     saved = []
+    # TASK-1310: 1df0c4cb4 removed settings_screen's import of the per-key
+    # save_setting_to_cli_config helper; Console Behavior saves exclusively
+    # through settings_config_adapter's batched save_settings_to_cli_config.
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
+        lambda section_values: saved.append(section_values) or True,
     )
     host = DestinationHarness(app, "settings")
 
@@ -3845,9 +4523,12 @@ async def test_settings_console_behavior_revert_restores_global_defaults(monkeyp
         "max_tokens": 2048,
     }
     saved = []
+    # TASK-1310: 1df0c4cb4 removed settings_screen's import of the per-key
+    # save_setting_to_cli_config helper; Console Behavior saves exclusively
+    # through settings_config_adapter's batched save_settings_to_cli_config.
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
+        lambda section_values: saved.append(section_values) or True,
     )
     host = DestinationHarness(app, "settings")
 
@@ -3869,11 +4550,12 @@ async def test_settings_console_behavior_revert_restores_global_defaults(monkeyp
 
         await pilot.click("#settings-revert-category")
 
-        await _wait_for_settings_input_value(
+        await _wait_for_settings_value(
             screen,
             pilot,
             "#settings-console-default-temperature",
             "0.7",
+            Input,
         )
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert "No unsaved changes" in _visible_text(screen)
@@ -3899,9 +4581,12 @@ async def test_settings_console_behavior_revert_button_works_with_input_focus(
         "max_tokens": 2048,
     }
     saved = []
+    # TASK-1310: 1df0c4cb4 removed settings_screen's import of the per-key
+    # save_setting_to_cli_config helper; Console Behavior saves exclusively
+    # through settings_config_adapter's batched save_settings_to_cli_config.
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
+        lambda section_values: saved.append(section_values) or True,
     )
     host = DestinationHarness(app, "settings")
 
@@ -3937,9 +4622,12 @@ async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
     app.app_config["console"] = {"collapse_large_pastes": True}
     saved = []
 
+    # TASK-1310: 1df0c4cb4 removed settings_screen's import of the per-key
+    # save_setting_to_cli_config helper; Console Behavior saves exclusively
+    # through settings_config_adapter's batched save_settings_to_cli_config.
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
+        lambda section_values: saved.append(section_values) or True,
     )
     host = DestinationHarness(app, "settings")
 
@@ -3970,8 +4658,11 @@ async def test_settings_non_editable_categories_disable_guided_save_revert():
             pilot,
             "Guided edits: choose Providers or Console.",
         )
-        assert screen.query_one("#settings-save-category", Button).disabled is True
-        assert screen.query_one("#settings-revert-category", Button).disabled is True
+        # task-1585: non-editable categories no longer render the pair at
+        # all (a permanently-disabled pair was dim-on-dim noise); the
+        # guided-edits state row still explains where to act.
+        assert not screen.query("#settings-save-category")
+        assert not screen.query("#settings-revert-category")
         assert "Guided edits: choose Providers or Console." in _visible_text(screen)
 
         await _select_settings_category(
@@ -3980,8 +4671,8 @@ async def test_settings_non_editable_categories_disable_guided_save_revert():
             SettingsCategoryId.PRIVACY_SECURITY,
             expected_text="Guided edits: use Check Privacy.",
         )
-        assert screen.query_one("#settings-save-category", Button).disabled is True
-        assert screen.query_one("#settings-revert-category", Button).disabled is True
+        assert not screen.query("#settings-save-category")
+        assert not screen.query("#settings-revert-category")
         assert "Guided edits: use Check Privacy." in _visible_text(screen)
 
 
@@ -4060,7 +4751,20 @@ async def test_settings_navigation_context_can_preselect_provider_category_targe
                 "model": "meta-llama/test-model",
             }
         )
-        await pilot.pause()
+        await _wait_for_settings_value(
+            screen,
+            pilot,
+            "#settings-provider-value",
+            "huggingface",
+            Select,
+        )
+        await _wait_for_settings_value(
+            screen,
+            pilot,
+            "#settings-model-value",
+            "meta-llama/test-model",
+            Input,
+        )
 
         assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
         assert (
@@ -4155,7 +4859,20 @@ async def test_settings_navigation_context_preselection_does_not_create_provider
                 "model": "meta-llama/test-model",
             }
         )
-        await pilot.pause()
+        await _wait_for_settings_value(
+            screen,
+            pilot,
+            "#settings-provider-value",
+            "huggingface",
+            Select,
+        )
+        await _wait_for_settings_value(
+            screen,
+            pilot,
+            "#settings-model-value",
+            "meta-llama/test-model",
+            Input,
+        )
 
         assert (
             screen.query_one("#settings-provider-value", Select).value == "huggingface"
@@ -4368,7 +5085,11 @@ async def test_settings_provider_category_saves_provider_defaults_without_sampli
         "streaming": True,
         "temperature": 0.7,
     }
-    assert app.chat_api_provider_value == "OpenAI"
+    # TASK-1310: task-648 (d15882398) removed the chat_api_provider_value
+    # reactive from TldwCli entirely (provider resolution now reads
+    # persisted chat_defaults directly, not an app-instance reactive), so
+    # this asserts against app_config instead of the removed attribute.
+    assert app.app_config["chat_defaults"]["provider"] == "OpenAI"
     saved = []
 
     monkeypatch.setattr(
@@ -4397,7 +5118,7 @@ async def test_settings_provider_category_saves_provider_defaults_without_sampli
         "streaming": True,
         "temperature": 0.7,
     }
-    assert app.chat_api_provider_value == "llama_cpp"
+    assert app.app_config["chat_defaults"]["provider"] == "llama_cpp"
 
 
 @pytest.mark.asyncio
@@ -5313,6 +6034,11 @@ async def test_settings_provider_category_blocks_empty_manual_provider_save(
 
 @pytest.mark.asyncio
 async def test_settings_provider_blank_select_value_is_not_treated_as_provider():
+    """task-565: ``Select.NULL`` is the real blank sentinel a blank Select
+    delivers on this Textual version -- ``Select.BLANK`` doesn't exist, it
+    silently resolves to the unrelated ``Widget.BLANK`` (``False``), so a
+    test that simulates a blank selection must use ``Select.NULL`` too (see
+    ``_select_value_text`` in settings_screen.py, the fix this exercises)."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     host = DestinationHarness(app, "settings")
@@ -5322,11 +6048,11 @@ async def test_settings_provider_blank_select_value_is_not_treated_as_provider()
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
 
-        screen.handle_provider_value_changed(Select.Changed(provider, Select.BLANK))
+        screen.handle_provider_value_changed(Select.Changed(provider, Select.NULL))
 
         draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
         assert draft.values["provider"] is None
-        assert "Select.BLANK" not in _visible_text(screen)
+        assert "Select.NULL" not in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -5354,7 +6080,7 @@ async def test_settings_provider_revert_restores_provider_dependent_placeholders
 
         provider.value = "llama_cpp"
         screen.handle_provider_value_changed(Select.Changed(provider, "llama_cpp"))
-        assert endpoint.placeholder == "http://127.0.0.1:9099/v1"
+        assert endpoint.placeholder == "http://127.0.0.1:9099"
         assert credential.placeholder == "No credential required"
 
         await pilot.click("#settings-revert-category")
@@ -5392,7 +6118,11 @@ async def test_settings_provider_switch_does_not_save_stale_endpoint(monkeypatch
             SettingsCategoryId.PROVIDERS_MODELS,
             selector="#settings-provider-endpoint-value",
         )
-        await _wait_for_selector(screen, pilot, "#settings-provider-value #label")
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-provider-value OptionList",
+        )
         provider = screen.query_one("#settings-provider-value", Select)
         provider.value = "llama_cpp"
         screen.handle_provider_value_changed(Select.Changed(provider, "llama_cpp"))
@@ -5582,7 +6312,10 @@ async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_
         text = _visible_text(screen)
         assert "Focused setting: Endpoint" in text
         assert "Controls the provider endpoint used by Console generation." in text
-        assert "Saved as: api_settings.ollama.api_url" in text
+        # task-1716: the in-place refresh folds dotted keys at separators,
+        # so the key spans two lines in visible text.
+        assert "Saved as: api_settings.ollama." in text
+        assert "api_url" in text
         assert "Validation: must start with http:// or https:// when set" in text
 
 
@@ -5930,19 +6663,23 @@ async def test_settings_storage_privacy_diagnostics_label_unsupported_mutations_
         for button_id, expected in (
             (
                 "#settings-category-privacy-security",
-                "Credential mutation: unavailable/WIP",
+                "Credential mutation: not available yet",
             ),
-            ("#settings-category-diagnostics", "Diagnostics writes: unavailable/WIP"),
+            ("#settings-category-diagnostics", "Diagnostics writes: not available yet"),
         ):
-            await pilot.click(button_id)
+            # Scroll the target into view before clicking: the category
+            # rail is taller than the fixed pilot viewport, and Settings >
+            # Workspaces (task 8) pushed Privacy & Security further down
+            # the "Data & Privacy" group, so a raw pilot.click() can land
+            # outside the visible screen region.
+            await _open_settings_category(pilot, button_id)
             screen = _active_destination_screen(host)
             text = _visible_text(screen)
 
             assert expected in text
-            assert screen.query_one("#settings-save-category", Button).disabled is True
-            assert (
-                screen.query_one("#settings-revert-category", Button).disabled is True
-            )
+            # task-1585: non-draft categories no longer render the pair.
+            assert not screen.query("#settings-save-category")
+            assert not screen.query("#settings-revert-category")
 
 
 @pytest.mark.asyncio
@@ -5975,11 +6712,11 @@ async def test_settings_privacy_security_renders_guided_redacted_posture(monkeyp
         assert "Data boundary" in text
         assert "Config encryption: disabled" in text
         assert "Sensitive config fields: 2 present" in text
-        assert "Provider env vars: 1 present / 1 missing / 2 configured" in text
+        assert "Provider env vars: 1 of 2 referenced env vars are set (1 unset)" in text
         assert "Provider config secrets: 1 present" in text
         assert "Preferred source: environment variables" in text
         assert (
-            "Credential mutation: unavailable/WIP - password-gated flow required"
+            "Credential mutation: not available yet - password-gated flow required"
             in text
         )
         assert "Open Providers & Models" in text
@@ -5988,8 +6725,9 @@ async def test_settings_privacy_security_renders_guided_redacted_posture(monkeyp
         assert DUMMY_REDACTION_ENV_VALUE not in text
         assert DUMMY_REDACTION_CONFIG_VALUE not in text
         assert DUMMY_REDACTION_SERVER_VALUE not in text
-        assert screen.query_one("#settings-save-category", Button).disabled is True
-        assert screen.query_one("#settings-revert-category", Button).disabled is True
+        # task-1585: non-draft categories no longer render the pair.
+        assert not screen.query("#settings-save-category")
+        assert not screen.query("#settings-revert-category")
 
 
 @pytest.mark.asyncio
@@ -6338,7 +7076,7 @@ def test_settings_privacy_check_reports_redacted_secret_status(monkeypatch):
     assert result[0] == "Privacy check: complete"
     assert "Config encryption: disabled" in result
     assert "Sensitive config fields: 2 present" in result
-    assert "Provider env vars: 1 present / 1 missing / 2 configured" in result
+    assert "Provider env vars: 1 of 2 referenced env vars are set (1 unset)" in result
     assert "Redaction: active; raw secret values hidden" in result
     assert DUMMY_REDACTION_ENV_VALUE not in text
     assert DUMMY_REDACTION_CONFIG_VALUE not in text
@@ -6409,6 +7147,13 @@ def test_settings_privacy_secret_count_ignores_non_secret_numeric_token_limits()
 @pytest.mark.asyncio
 async def test_settings_storage_test_shortcut_runs_safety_check(monkeypatch, tmp_path):
     config_path = tmp_path / "config" / "config.toml"
+    # TASK-1310: 1df0c4cb4 made application_owned_config_directory() return
+    # None whenever TLDW_CONFIG_PATH is set (custom config parents are never
+    # auto-created -- see config.py's docstring "never a custom parent"), so
+    # the config bootstrap no longer recovers from a missing parent directory
+    # for a test-overridden path. Pre-create it, matching real deployments
+    # where the parent always exists before TLDW_CONFIG_PATH points at it.
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
@@ -6456,20 +7201,22 @@ async def test_settings_privacy_security_test_shortcut_runs_privacy_check(monkey
         screen = _active_destination_screen(host)
 
         assert screen.query_one("#settings-check-privacy")
-        assert screen.query_one("#settings-save-category", Button).disabled is True
-        assert screen.query_one("#settings-revert-category", Button).disabled is True
+        # task-1585: non-draft categories no longer render the pair.
+        assert not screen.query("#settings-save-category")
+        assert not screen.query("#settings-revert-category")
 
         await pilot.press("t")
         await _wait_for_settings_text(screen, pilot, "Privacy check: complete")
         text = _visible_text(screen)
 
-        assert "Provider env vars: 1 present / 0 missing / 1 configured" in text
+        assert "Provider env vars: 1 of 1 referenced env vars are set (0 unset)" in text
         assert "Sensitive config fields: 1 present" in text
         assert DUMMY_REDACTION_ENV_VALUE not in text
         assert DUMMY_REDACTION_CONFIG_VALUE not in text
         assert "No test action is available" not in text
-        assert screen.query_one("#settings-save-category", Button).disabled is True
-        assert screen.query_one("#settings-revert-category", Button).disabled is True
+        # task-1585: non-draft categories no longer render the pair.
+        assert not screen.query("#settings-save-category")
+        assert not screen.query("#settings-revert-category")
 
 
 @pytest.mark.asyncio
@@ -6514,6 +7261,27 @@ def test_settings_config_path_validates_env_override(monkeypatch):
         screen._config_path()
 
 
+def test_settings_config_path_delegates_to_shared_accessor(monkeypatch, tmp_path):
+    """Regression test for task-851 review finding 5.
+
+    ``SettingsScreen._config_path()`` used to re-spell
+    ``config._get_effective_config_path()``'s override/validate logic
+    verbatim instead of calling it -- the exact re-spelled-accessor drift
+    shape this whole audit is about. Monkeypatching the shared accessor
+    (``config.get_cli_config_path``, the public wrapper every other
+    effective-path call site in this app uses) must change what
+    ``_config_path()`` returns; a re-implementation would not react to
+    that patch (it would keep resolving the override itself instead).
+    """
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    sentinel = tmp_path / "sentinel-config.toml"
+    monkeypatch.setattr(settings_screen_module, "get_cli_config_path", lambda: sentinel)
+
+    assert screen._config_path() == sentinel
+
+
 def test_settings_overview_config_path_label_hides_local_directory(
     monkeypatch, tmp_path
 ):
@@ -6523,7 +7291,7 @@ def test_settings_overview_config_path_label_hides_local_directory(
 
     value = screen._config_path_overview_value()
 
-    assert "Override config: config.toml" in value
+    assert "config.toml — override config, writable" in value
     assert str(config_path) not in value
     assert str(tmp_path) not in value
 
@@ -6602,7 +7370,7 @@ def test_settings_pane_widths_are_owned_by_stylesheet_not_inline_python():
 
     assert ".styles.width" not in source
     for selector, expected_width in (
-        ("#settings-category-pane", "3fr"),
+        ("#settings-category-pane", "30"),
         ("#settings-detail-pane", "6fr"),
         ("#settings-impact-pane", "2fr"),
     ):
@@ -6868,3 +7636,768 @@ async def test_settings_mount_triggers_at_most_one_post_mount_recompose():
         f"Settings composed {compose_calls} times after mount -- the sync-rows "
         "refresh storm is no longer coalesced (task-290)."
     )
+
+
+def test_settings_source_labels_cover_every_resolvable_source():
+    """Pin the source-label map to exactly the resolvable source keys.
+
+    TASK-1310 review follow-up: the map must cover exactly the source keys
+    `resolve_effective_provider_model` can return, so the Providers category
+    never renders a raw `key.replace("_", " ")` fallback (the stale
+    `console_control`/`app_reactive` keys did exactly that for
+    `console_session` after task-648's rename).
+    """
+    from tldw_chatbook.UI.Screens.settings_screen import SETTINGS_SOURCE_LABELS
+
+    resolvable = {"settings_draft", "console_session", "chat_defaults", "default"}
+    assert set(SETTINGS_SOURCE_LABELS) == resolvable
+
+
+# ---- [chat.images] render_remote_images toggle (task-1537 settings UI) ----
+
+
+def test_remote_images_toggle_label_reflects_config():
+    """The remote-images toggle label mirrors [chat.images].render_remote_images."""
+    app = _build_test_app()
+    app.app_config["COMPREHENSIVE_CONFIG_RAW"] = {
+        "chat": {"images": {"render_remote_images": True}}
+    }
+    screen = SettingsScreen(app)
+
+    assert screen._remote_images_button_label() == "Enabled"
+
+    app.app_config["COMPREHENSIVE_CONFIG_RAW"]["chat"]["images"][
+        "render_remote_images"
+    ] = False
+    assert screen._remote_images_button_label() == "Disabled"
+
+
+def test_remote_images_toggle_persists_and_pokes_live_config(monkeypatch):
+    """Toggling persists the dotted section AND updates the live app_config.
+
+    The App captures ``app_config`` once at startup, so the persisted write
+    alone would not take effect until restart -- the toggle must also poke
+    the in-memory raw tree the transcript gate reads.
+    """
+    app = _build_test_app()
+    app.app_config["COMPREHENSIVE_CONFIG_RAW"] = {"chat": {"images": {}}}
+    screen = SettingsScreen(app)
+    saved = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_settings_to_cli_config",
+        lambda section_values: (saved.append(section_values), True)[1],
+    )
+
+    enabled = screen._toggle_remote_images()
+
+    assert enabled is True
+    assert saved == [{"chat.images": {"render_remote_images": True}}]
+    assert (
+        app.app_config["COMPREHENSIVE_CONFIG_RAW"]["chat"]["images"][
+            "render_remote_images"
+        ]
+        is True
+    )
+
+
+# ---- task-1564: footer bindings match reality ----
+
+
+def test_footer_entries_drop_test_hint_where_no_test_action_exists():
+    """Categories without a test action must not advertise "t test category"
+    (the static footer used to over-promise; Image Gen answers the key with
+    a "No test action" toast)."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.ARTIFACTS.value
+
+    entries = screen._footer_shortcut_entries()
+
+    keys = [key for key, _ in entries]
+    assert "t" not in keys
+
+
+def test_footer_entries_advertise_test_where_it_acts():
+    """Categories with a real test action keep the t hint."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.PROVIDERS_MODELS.value
+
+    entries = screen._footer_shortcut_entries()
+
+    assert ("t", "test provider") in entries
+
+
+def test_filter_matches_owned_config_keys():
+    """The "/" filter indexes each category's owned TOML keys: searching a
+    setting name surfaces the category that owns it (task-1564 -- the
+    Owns: data existed but was unsearchable, forcing a 23-category scan)."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    matches = screen._filtered_category_summaries("paste_collapse_threshold")
+
+    assert any(
+        summary.category is SettingsCategoryId.CONSOLE_BEHAVIOR for summary in matches
+    )
+
+
+# ---- rescore P1 batch: Theme recompose storm + footer save/revert honesty ----
+
+
+@pytest.mark.asyncio
+async def test_theme_category_settles_without_recompose_storm():
+    """Opening Theme must converge: the mounted editor instance survives.
+
+    Regression (rescore P1): each freshly-mounted editor posted
+    ThemeModifiedStatus(False) at init then (True) after its programmatic
+    load, so theme_editor_modified (recompose=True) flipped forever; every
+    flip replaced the editor and the whole screen -- a busy loop that
+    starved the event loop and froze the app for keyboard AND mouse input.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-theme")
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+        for _ in range(6):
+            await pilot.pause()
+        first = screen.query_one("#settings-theme-editor")
+        for _ in range(12):
+            await pilot.pause()
+        second = screen.query_one("#settings-theme-editor")
+        assert first is second, "Theme editor was replaced: recompose storm"
+        assert screen.theme_editor_modified is False
+
+
+def test_footer_entries_drop_save_revert_where_no_draft_model_exists():
+    """Categories outside the guided draft model must not advertise
+    "s save category | r revert category": both keys answer with an
+    informational toast there (read-only Artifacts, autosave Splash,
+    immediate-apply Workspaces, editor-owned Theme). Mirrors the task-1564
+    gating that already keeps the ``t`` hint honest."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    for category in (
+        SettingsCategoryId.ARTIFACTS,
+        SettingsCategoryId.SPLASH_SCREEN,
+        SettingsCategoryId.WORKSPACES,
+        SettingsCategoryId.THEME,
+    ):
+        screen.active_category = category.value
+        keys = [key for key, _ in screen._footer_shortcut_entries()]
+        assert "s" not in keys, category
+        assert "r" not in keys, category
+
+
+def test_footer_entries_advertise_save_revert_where_draft_model_acts():
+    """Every guided-mutation category keeps the s/r hints."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    for category in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES:
+        screen.active_category = category.value
+        entries = screen._footer_shortcut_entries()
+        assert ("s", "save category") in entries, category
+        assert ("r", "revert category") in entries, category
+
+
+def test_footer_entries_testable_view_category_keeps_t_without_save_revert():
+    """Privacy & Security has a real test action but no draft: t only."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.PRIVACY_SECURITY.value
+
+    entries = screen._footer_shortcut_entries()
+
+    keys = [key for key, _ in entries]
+    assert "t" in keys
+    assert "s" not in keys
+    assert "r" not in keys
+
+
+@pytest.mark.asyncio
+async def test_theme_user_edit_does_not_remount_editor():
+    """A real color edit must keep the SAME editor instance mounted.
+
+    Qodo review of PR #1125: with theme_editor_modified as a recompose=True
+    reactive, the FIRST user edit posted ThemeModifiedStatus(True), the
+    screen recomposed, and the freshly-mounted editor discarded the
+    in-progress input -- then, storm-fix in place, the dirty flag stuck at
+    True with a clean editor. The dirty state must surface through targeted
+    refreshes instead (the InternalPromptsPanel.Modified idiom).
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-theme")
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+        for _ in range(6):
+            await pilot.pause()
+        editor = screen.query_one("#settings-theme-editor")
+        target = editor.query_one("#settings-theme-color-primary", Input)
+        target.value = "#123456"
+        for _ in range(6):
+            await pilot.pause()
+        assert screen.query_one("#settings-theme-editor") is editor, (
+            "user edit recomposed the screen and replaced the editor"
+        )
+        assert target.value == "#123456"
+        assert screen.theme_editor_modified is True
+        note = screen.query_one("#settings-theme-unsaved-note", Static)
+        assert "Yes" in str(note.renderable)
+
+
+# ---- task-1584: filter correctness (ranking, refocus, placeholder) ----
+
+
+def test_filter_word_boundary_match_outranks_substring():
+    """'rag' must surface Library/RAG first, not Storage (live-confirmed:
+    the bare substring 'sto-RAG-e' tied on rank tier and won on list index).
+    Word-boundary matches in the primary haystack outrank mid-word ones."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    matches = screen._filtered_category_summaries("rag")
+
+    assert matches, "no matches for 'rag'"
+    assert matches[0].category is SettingsCategoryId.LIBRARY_RAG
+    assert any(s.category is SettingsCategoryId.STORAGE for s in matches), (
+        "substring matches must still be findable, just ranked later"
+    )
+
+
+def test_filter_rank_tiers_keep_relative_order():
+    """Primary (id/title) matches still beat description matches, which beat
+    owned-config-key matches, regardless of the word-boundary sub-ranking."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    primary = screen._category_search_rank(
+        screen._category_summary_by_id(SettingsCategoryId.THEME), "theme"
+    )
+    owned = screen._category_search_rank(
+        screen._category_summary_by_id(SettingsCategoryId.CONSOLE_BEHAVIOR),
+        "paste_collapse_threshold",
+    )
+    assert primary is not None and owned is not None
+    assert primary < owned
+
+
+@pytest.mark.asyncio
+async def test_slash_refocus_selects_existing_filter_text():
+    """Pressing '/' while the filter already has focus must select the stale
+    text instead of inserting a literal slash, so the next keystroke starts
+    a fresh query (live-confirmed trap: repeat searches concatenated)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.query_one("#settings-category-search", Input).focus()
+        await pilot.pause()
+        for ch in "theme":
+            await pilot.press(ch)
+        await pilot.pause()
+
+        await pilot.press("/")
+        await pilot.pause()
+        search = screen.query_one("#settings-category-search", Input)
+        assert search.value == "theme", "literal slash was inserted"
+
+        await pilot.press("s")
+        await pilot.pause()
+        assert screen.query_one("#settings-category-search", Input).value == "s", (
+            "typing after '/' must replace the stale query"
+        )
+
+
+@pytest.mark.asyncio
+async def test_filter_placeholder_names_categories():
+    """The placeholder must promise what Enter actually does: open a
+    category (the old 'Filter settings (/)' oversold field-level search)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        search = screen.query_one("#settings-category-search", Input)
+        assert search.placeholder == "Filter categories (/)"
+
+
+# ---- task-1583: inspector clipping + mid-token wraps ----
+
+
+def test_fold_long_tokens_breaks_at_separators_not_mid_word():
+    """Over-long dotted keys break at their separators, never inside a word
+    (the 34-char inspector column rendered "crede/ntial_source")."""
+    folded = settings_screen_module._fold_long_tokens(
+        "api_settings.<provider>.credential_source"
+    )
+    assert "\n" in folded
+    for line in folded.splitlines():
+        assert len(line.strip()) <= 26, line
+    rejoined = "".join(part.strip() for part in folded.splitlines())
+    assert rejoined == "api_settings.<provider>.credential_source"
+
+
+def test_fold_long_tokens_leaves_short_values_alone():
+    """Values that fit the narrow column pass through untouched."""
+    assert settings_screen_module._fold_long_tokens("Console") == "Console"
+    assert (
+        settings_screen_module._fold_long_tokens("chat_defaults.provider")
+        == "chat_defaults.provider"
+    )
+    assert (
+        settings_screen_module._fold_long_tokens("no separators here at all")
+        == "no separators here at all"
+    )
+
+
+def test_detail_row_folds_long_config_keys():
+    """_detail_row values with pathological tokens gain fold points."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    row = screen._detail_row("Owns", "api_settings.<provider>.credential_source")
+
+    text = str(row.renderable)
+    assert "\n" in text
+    assert "credential_source" in text.replace("\n", "").replace(" ", "")
+
+
+@pytest.mark.asyncio
+async def test_local_scope_note_is_pinned_outside_scrollable_body():
+    """The standing local-scope reassurance must live in the pinned header
+    region, not as the scroll body's clip-bait last row (8 of 20 critique
+    captures cut it mid-sentence: 'Nothing is sent to')."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        note = screen.query_one("#settings-local-scope-note", Static)
+        body = screen.query_one("#settings-impact-pane-body")
+        assert body not in note.ancestors, (
+            "local-scope note is inside the scrollable body"
+        )
+
+
+# ---- task-1585: hygiene batch ----
+
+
+def test_env_var_summary_reads_unambiguously():
+    """'0 present / 19 missing / 19 configured' read as contradictory
+    (rescore P3); the summary states the relationship between the counts."""
+    from tldw_chatbook.UI.Screens.settings_privacy_security import env_var_summary
+
+    assert (
+        env_var_summary(present=0, missing=19, configured=19)
+        == "0 of 19 referenced env vars are set (19 unset)"
+    )
+    assert (
+        env_var_summary(present=3, missing=1, configured=4)
+        == "3 of 4 referenced env vars are set (1 unset)"
+    )
+
+
+def test_skill_trust_display_drops_raw_enum_prefix():
+    """'Skill trust: trust_uninitialized' leaked a raw enum value."""
+    from tldw_chatbook.UI.Screens.settings_privacy_security import skill_trust_display
+
+    assert skill_trust_display("trust_uninitialized") == "uninitialized"
+    assert skill_trust_display("trusted") == "trusted"
+
+
+def test_internal_prompts_group_headers_use_display_titles():
+    """Raw snake_case group headers (rag_reranker (6)) render as titles."""
+    from tldw_chatbook.Widgets.settings_internal_prompts_panel import (
+        subsystem_display_title,
+    )
+
+    assert subsystem_display_title("rag_reranker") == "RAG reranker"
+    assert subsystem_display_title("websearch") == "Web search"
+    assert subsystem_display_title("agents") == "Agents"
+    assert subsystem_display_title("console") == "Console"
+
+
+def test_mode_line_disclaimer_only_on_overview():
+    """'Runtime controls stay in MCP and ACP' repeated verbatim on all 17
+    categories; it orients once on Overview, not as standing noise."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    overview = screen._mode_line_text(
+        screen._category_summary_by_id(SettingsCategoryId.OVERVIEW)
+    )
+    theme = screen._mode_line_text(
+        screen._category_summary_by_id(SettingsCategoryId.THEME)
+    )
+    assert overview == "Mode: Overview | Runtime controls stay in MCP and ACP"
+    assert theme == "Mode: Theme"
+
+
+@pytest.mark.asyncio
+async def test_save_revert_pair_hidden_on_non_draft_categories():
+    """Read-only categories showed a permanently-disabled Save/Revert pair
+    while Workspaces alone omitted it; the pair now renders only where the
+    draft model acts (consistent with the task-1580 footer gating)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-artifacts")
+        screen = _active_destination_screen(host)
+        assert not screen.query("#settings-save-category")
+        assert not screen.query("#settings-revert-category")
+
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        assert screen.query("#settings-save-category")
+        assert screen.query("#settings-revert-category")
+
+
+@pytest.mark.asyncio
+async def test_workspaces_unselected_card_shows_hint_not_blank():
+    """With no workspace selected the card area rendered nothing -- a
+    near-empty center pane. An instructional hint fills the void."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen = _active_destination_screen(host)
+        hint = screen.query_one("#settings-workspace-card-hint", Static)
+        assert "Select a workspace" in str(hint.renderable)
+
+
+# ---- task-1582: text-carried interactive-state affordances ----
+
+
+@pytest.mark.asyncio
+async def test_disabled_save_revert_carry_text_annotation():
+    """Disabled Save/Revert differed from enabled only by dimming (rescore
+    P2: low-vision users lose the affordance). The clean-state labels say
+    why they are inert; the dirty-state labels return to the plain form."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        save = screen.query_one("#settings-save-category", Button)
+        assert save.disabled is True
+        assert "no changes" in str(save.label)
+
+        screen._stage_console_default_value("paste_collapse_threshold", 503)
+        screen._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        await pilot.pause()
+        save = screen.query_one("#settings-save-category", Button)
+        assert save.disabled is False
+        assert str(save.label) == "Save (s)"
+
+
+# ---- task-1586: interactive-control convention ----
+
+_CONVENTION_CSS_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+
+
+def test_input_focus_bg_token_completes_task_345_contract():
+    """$ds-input-focus-bg aliased $ds-surface-raised (= $surface), which
+    nullified the settings fields' focus background swap -- the exact
+    failure mode task-345's comment documents and fixed for $ds-focus-bg
+    but not for this token (critique: no visible focus indicator on
+    center-pane fields)."""
+    src = (_CONVENTION_CSS_ROOT / "core" / "_variables.tcss").read_text()
+    assert "$ds-input-focus-bg: $ds-focus-bg;" in src
+
+
+def test_compact_inputs_carry_rest_edge_and_focus_edge():
+    """The control convention (task-1586): editable fields carry a
+    one-column left edge at rest (presence of the edge, not its color, is
+    the carrier) and a thick accent edge plus the distinct focus
+    background when focused. Left borders cost a column, never a row, so
+    the dense one-row forms keep their height."""
+    src = (_CONVENTION_CSS_ROOT / "components" / "_agentic_terminal.tcss").read_text()
+    rest = re.search(r"\.settings-compact-input \{[^}]*\}", src)
+    focus = re.search(r"\.settings-compact-input:focus \{[^}]*\}", src)
+    assert rest and focus
+    assert "border-left: solid $ds-control-edge;" in rest.group(0)
+    assert "height: 1;" in rest.group(0)
+    assert "border-left: thick $ds-action-focus;" in focus.group(0)
+
+
+@pytest.mark.asyncio
+async def test_compact_input_edge_renders_under_real_bundle():
+    """Computed-style check: the rest edge actually applies under the real
+    CSS bundle (the pytest plain harness cannot see bundle interference)."""
+    app = _build_test_app()
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(
+            screen, pilot, "#settings-console-paste-collapse-threshold", timeout=8.0
+        )
+        field = screen.query_one("#settings-console-paste-collapse-threshold", Input)
+        border_style = field.styles.border_left[0]
+        assert border_style == "solid", f"rest edge missing: {border_style!r}"
+
+
+# ---- critique round-3 batch: tasks 1623-1625 and 1711-1713 ----
+
+
+def test_state_banner_leads_with_persistence_badge():
+    """Five save models coexist on this screen; the badge names the active
+    category's model in the same State-bar position everywhere (task-1717),
+    so the footer keys' coming and going stops reading as inconsistency."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    expected = {
+        SettingsCategoryId.CONSOLE_BEHAVIOR: "Draft — save with s",
+        SettingsCategoryId.SPLASH_SCREEN: "Auto-saved",
+        SettingsCategoryId.WORKSPACES: "Applies immediately",
+        SettingsCategoryId.THEME: "Managed in editor",
+        SettingsCategoryId.INTERNAL_PROMPTS: "Per-item Save/Reset",
+        SettingsCategoryId.ADVANCED_CONFIG: "Validate, then Save",
+        SettingsCategoryId.ARTIFACTS: "Read-only here",
+        SettingsCategoryId.IMAGE_GENERATION: "Draft — save/revert below",
+    }
+    for category, badge in expected.items():
+        text = screen._category_state_banner_text(category)
+        assert text.startswith(f"State: {badge} | "), (category, text)
+
+
+def test_state_banner_dirty_branch_keeps_priority():
+    """Unsaved changes outrank the badge -- the dirty banner is the model
+    talking, and its copy must stay the strongest signal."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    draft = SettingsDraft(category=SettingsCategoryId.CONSOLE_BEHAVIOR)
+    draft.set_value("paste_collapse_threshold", 50, 503)
+    screen._settings_drafts[SettingsCategoryId.CONSOLE_BEHAVIOR] = draft
+    text = screen._category_state_banner_text(SettingsCategoryId.CONSOLE_BEHAVIOR)
+    assert text == (
+        "State: Unsaved changes | Save (s) or Revert (r) — switching "
+        "categories keeps this draft."
+    )
+
+
+def test_workspaces_banner_names_reversal_paths():
+    """Workspaces applies immediately; the banner says how each action is
+    walked back instead of leaving 'no draft' unexplained (task-1717)."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    text = screen._category_state_banner_text(SettingsCategoryId.WORKSPACES)
+    assert "unarchive" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_filter_clears_after_opening_a_match():
+    """Enter-open used to leave the query behind, pruning the rail to the
+    last search's matches for the rest of the session (task-1712)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._submit_category_search("console b")
+        await pilot.pause()
+        await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.CONSOLE_BEHAVIOR.value
+        assert screen.category_search_query == ""
+        assert screen.query_one("#settings-category-search", Input).value == ""
+        storage_button = screen.query_one("#settings-category-storage", Button)
+        assert storage_button.display, "rail still pruned after open"
+
+
+def test_fold_prefers_slash_boundaries_over_extension_dots():
+    """'~/.config/tldw_cli/config.toml' folded as 'config.' / 'toml' --
+    a mid-filename break at the extension dot (task-1623). Slash
+    boundaries win; dots only split slash-free over-long chunks."""
+    folded = settings_screen_module._fold_long_tokens("~/.config/tldw_cli/config.toml")
+    lines = [line.strip() for line in folded.splitlines()]
+    assert lines[-1] == "config.toml"
+    assert not any(line.endswith("config.") for line in lines)
+
+
+def test_threshold_field_has_focused_guidance():
+    """The inspector promised setting-specific guidance on focus; the
+    Threshold field answered with the empty fallback (task-1713)."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen._active_settings_field_id = "settings-console-paste-collapse-threshold"
+    rows = screen._console_behavior_field_guidance_rows()
+    assert ("Saved as", "console.paste_collapse_threshold") in rows
+    assert all("No field-specific guidance" not in value for _, value in rows)
+
+
+@pytest.mark.asyncio
+async def test_numeric_labels_carry_units():
+    """'Threshold 50' and friends were unit-less mystery numerics; the
+    widened label column carries the unit (task-1713)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+        assert "Threshold (chars)" in text
+        assert "Display cap (chars)" in text
+
+
+@pytest.mark.asyncio
+async def test_inspector_overflow_hint_matches_body_overflow():
+    """The reserved fold-indicator row shows exactly when the inspector
+    body has more content than its viewport (task-1623)."""
+    app = _build_test_app()
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 40)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-privacy-security")
+        screen = _active_destination_screen(host)
+        for _ in range(6):
+            await pilot.pause()
+        body = screen.query_one("#settings-impact-pane-body", VerticalScroll)
+        hint = screen.query_one("#settings-impact-overflow-hint", Static)
+        overflows = body.virtual_size.height > body.container_size.height
+        assert hint.display == overflows
+        assert overflows, "expected Privacy inspector to overflow a 40-row harness"
+
+
+@pytest.mark.asyncio
+async def test_every_category_renders_the_state_banner():
+    """task-1717 AC: the persistence badge appears in the same State-bar
+    position on EVERY category -- the four own-persistence categories
+    (Theme, Splash, Internal Prompts, Image Gen) and Workspaces previously
+    skipped the banner entirely, so their save contract was unlabeled."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        for summary in screen._category_summaries():
+            screen._select_category(summary.category.value)
+            await pilot.pause()
+            await pilot.pause()
+            banner = screen.query_one("#settings-category-state-banner", Static)
+            assert str(banner.renderable).startswith("State: "), summary.category
+
+
+# ---- critique round-4 batch: tasks 1644 and 1714-1716 ----
+
+
+def test_field_search_surfaces_category_and_names_the_field():
+    """Field search surfaces the owning category and names the field.
+
+    task-1715: typing a setting's visible name ("threshold") must surface
+    its category, with the echo line promising the field-level landing.
+    """
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    matches = screen._filtered_category_summaries("threshold")
+
+    assert any(s.category is SettingsCategoryId.CONSOLE_BEHAVIOR for s in matches)
+    status = screen._category_search_status_text("threshold")
+    assert "Console Behavior › Threshold (chars)" in status
+
+
+@pytest.mark.asyncio
+async def test_field_search_enter_focuses_the_field():
+    """Enter on a field match focuses that field.
+
+    task-1715: opening the category is not enough -- landing focus on the
+    matched field is what fires its inspector guidance.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._submit_category_search("threshold")
+        for _ in range(8):
+            await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.CONSOLE_BEHAVIOR.value
+        focused = host.focused
+        assert focused is not None and focused.id == (
+            "settings-console-paste-collapse-threshold"
+        ), f"focused={focused!r}"
+
+
+@pytest.mark.asyncio
+async def test_state_banner_is_pinned_outside_detail_scroll():
+    """The State banner is pinned outside the detail scroll body.
+
+    task-1716: the persistence badge is the save-contract carrier, so it
+    must not scroll away with the category content (RAG showed no State
+    line at all in the round-4 evidence).
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        banner = screen.query_one("#settings-category-state-banner", Static)
+        body = screen.query_one("#settings-detail-pane-body")
+        assert body not in banner.ancestors, "State banner is inside the scroll body"
+
+
+def test_t_hint_uses_each_categorys_real_verb():
+    """The t hint names each category's real verb.
+
+    task-1714: "t test category" named an abstraction while the on-page
+    buttons say Check/Validate/Test.
+    """
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    expected = {
+        SettingsCategoryId.PROVIDERS_MODELS: "test provider",
+        SettingsCategoryId.STORAGE: "check storage",
+        SettingsCategoryId.PRIVACY_SECURITY: "check privacy",
+        SettingsCategoryId.DIAGNOSTICS: "validate config",
+    }
+    for category, verb in expected.items():
+        screen.active_category = category.value
+        entries = screen._footer_shortcut_entries()
+        assert ("t", verb) in entries, (category, entries)
+
+
+def test_toast_severity_variants_pin_the_left_edge():
+    """Every toast severity variant pins its own left edge.
+
+    task-1644: Textual's stock severity styling is a border-left OUTER
+    stripe, so each variant must pin a round left edge or the stripe
+    resurfaces (DESIGN.md Don'ts).
+    """
+    src = (
+        (_CONVENTION_CSS_ROOT.parent / "css" / "core" / "_base.tcss").read_text()
+        if False
+        else (
+            Path(__file__).resolve().parents[2]
+            / "tldw_chatbook"
+            / "css"
+            / "core"
+            / "_base.tcss"
+        ).read_text()
+    )
+    for sev in ("-information", "-warning", "-error", "-success"):
+        block = src.split(f"Toast.{sev} {{", 1)[1].split("}", 1)[0]
+        assert "border-left: round" in block, sev
+
+
+@pytest.mark.asyncio
+async def test_reassurance_short_line_off_overview():
+    """The long reassurance paragraph is Overview-only.
+
+    task-1714: elsewhere a single line keeps the local-first promise
+    without eating pinned inspector rows on all 23 categories.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        assert "Manual sync yourself" in _visible_text(screen)
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+        assert "Local-only: saves write your config file." in text
+        assert "Manual sync yourself" not in text

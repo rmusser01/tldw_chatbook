@@ -20,32 +20,32 @@ path end to end.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
-from tldw_chatbook.Constants import TAB_CHAT
 from tldw_chatbook.DB.Prompts_DB import ConflictError, PromptsDatabase
-from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.Library.library_prompts_state import (
     PromptEditorState,
     PromptListRow,
     PromptsListState,
+    build_prompt_editor_state,
 )
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_CREATE_PROMPT,
 )
-from tldw_chatbook.Prompt_Management.prompt_markdown_export import (
-    render_prompt_markdown,
-)
 from tldw_chatbook.Prompt_Management.Prompts_Interop import (
     parse_markdown_prompts_from_content,
+)
+from tldw_chatbook.Prompt_Management.prompt_markdown_export import (
+    render_prompt_markdown,
 )
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService as ScopeLocalPromptService,
@@ -56,9 +56,11 @@ from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.Widgets.Library.library_prompts_canvas import (
     LibraryPromptsListCanvas,
 )
+from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 
 from Tests.UI.test_destination_shells import (
     StaticLibraryConversationScopeService,
@@ -73,7 +75,7 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -117,6 +119,51 @@ class _CanvasHost(App):
         )
 
 
+def _structured_editor_state(*, artifact_type: str = "prompt") -> PromptEditorState:
+    kind = "block_recipe" if artifact_type == "recipe" else "block_prompt"
+    return build_prompt_editor_state(
+        {
+            "id": 41,
+            "name": "Blocks",
+            "artifact_type": artifact_type,
+            "prompt_format": "structured",
+            "prompt_schema_version": 2,
+            "prompt_definition": {
+                "schema_version": 2,
+                "kind": kind,
+                "lanes": [
+                    {
+                        "id": "system",
+                        "blocks": [
+                            {
+                                "id": "role",
+                                "title": "Role",
+                                "syntax": "markdown",
+                                "content": "Be exact.",
+                            }
+                        ],
+                    },
+                    {
+                        "id": "user",
+                        "blocks": [
+                            {
+                                "id": "goal",
+                                "title": "Goal",
+                                "syntax": "freeform",
+                                "content": "Ship it.",
+                            }
+                        ],
+                    },
+                ],
+            },
+            "system_prompt": "# Role\n\nBe exact.",
+            "user_prompt": "Ship it.",
+            "version": 3,
+            "backend": "local",
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # Widget-only tests (Step 2 of the brief)
 # ---------------------------------------------------------------------------
@@ -134,6 +181,120 @@ async def test_prompts_canvas_renders_a_button_per_row():
             assert button.prompt_id == prompt_id
         rows = pilot.app.query(".library-prompt-row")
         assert len(rows) == 3
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_rows_show_first_class_type_source_and_lane_summary():
+    state = PromptsListState(
+        rows=(
+            PromptListRow(
+                prompt_id=8,
+                name="Outcome first",
+                secondary="Reusable structure",
+                artifact_type="recipe",
+                type_label="Recipe",
+                source_label="Server",
+                lane_summary="System + User",
+            ),
+        ),
+        count=1,
+        sort="newest",
+    )
+    app = _CanvasHost(state)
+
+    async with app.run_test() as pilot:
+        label = str(pilot.app.query_one("#library-prompt-row-8", Button).label)
+        assert "Recipe · Server · System + User" in label
+        assert "Reusable structure" in label
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(120, 40), (80, 24)])
+async def test_prompts_canvas_supported_artifact_uses_shared_editor_and_read_only_preview(
+    size: tuple[int, int],
+):
+    editor_state = _structured_editor_state(artifact_type="recipe")
+    app = _CanvasHost(None, mode="editor", editor_state=editor_state)
+
+    async with app.run_test(size=size) as pilot:
+        editor = pilot.app.query_one(PromptBlockEditor)
+        assert editor.state.artifact_type == "recipe"
+        assert editor.state.definition.kind == "block_recipe"
+        system_preview = pilot.app.query_one("#library-prompt-system", TextArea)
+        user_preview = pilot.app.query_one("#library-prompt-user", TextArea)
+        assert system_preview.read_only is True
+        assert user_preview.read_only is True
+        assert system_preview.text == "# Role\n\nBe exact."
+        assert user_preview.text == "Ship it."
+        assert (
+            pilot.app.query_one("#library-prompt-recipe-starter", Checkbox).value
+            is False
+        )
+        system_apply = pilot.app.query_one("#prompt-editor-apply-system", Checkbox)
+        assert system_apply.disabled is True
+        assert system_apply.value is False
+        assert "System apply is unavailable in Library" in str(
+            pilot.app.query_one("#prompt-editor-apply-reason", Static).renderable
+        )
+        if size[0] == 80:
+            assert editor.has_class("-narrow")
+            assert editor.query_one("#prompt-editor-footer").has_class("two-row")
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_shared_editor_patches_preview_without_recomposing_textareas():
+    editor_state = _structured_editor_state()
+    app = _CanvasHost(None, mode="editor", editor_state=editor_state)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        editor = pilot.app.query_one(PromptBlockEditor)
+        role = pilot.app.query_one("#prompt-block-content-role", TextArea)
+        goal = pilot.app.query_one("#prompt-block-content-goal", TextArea)
+        preview = pilot.app.query_one("#library-prompt-system", TextArea)
+        role_identity = id(role)
+        goal_identity = id(goal)
+        preview_identity = id(preview)
+
+        await editor._change_field("role", "content", "Be concise.")
+        await pilot.pause()
+
+        assert (
+            id(editor.query_one("#prompt-block-content-role", TextArea))
+            == role_identity
+        )
+        assert (
+            id(editor.query_one("#prompt-block-content-goal", TextArea))
+            == goal_identity
+        )
+        assert (
+            id(pilot.app.query_one("#library-prompt-system", TextArea))
+            == preview_identity
+        )
+        assert preview.text == "# Role\n\nBe concise."
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_guarded_foreign_artifact_is_read_only_with_conversion_recovery():
+    detail = {
+        "id": 9,
+        "name": "Foreign recipe",
+        "artifact_type": "recipe",
+        "prompt_format": "structured",
+        "prompt_schema_version": 1,
+        "prompt_definition": {"schema_version": 1, "kind": "future"},
+        "system_prompt": "compat system",
+        "user_prompt": "compat user",
+    }
+    editor_state = build_prompt_editor_state(detail)
+    app = _CanvasHost(None, mode="editor", editor_state=editor_state)
+
+    async with app.run_test() as pilot:
+        assert len(pilot.app.query(PromptBlockEditor)) == 0
+        assert pilot.app.query_one("#library-prompt-system", TextArea).read_only is True
+        assert pilot.app.query_one("#library-prompt-user", TextArea).read_only is True
+        reason = pilot.app.query_one("#library-prompt-compatibility", Static)
+        assert "read-only" in str(reason.renderable).lower()
+        assert pilot.app.query_one("#library-prompt-convert", Button).disabled is False
 
 
 @pytest.mark.asyncio
@@ -507,6 +668,77 @@ async def test_library_shell_prompts_row_secondary_line_shows_details_not_author
         label_text = str(button.label)
         assert "Summarizes text" in label_text
         assert "Alice" not in label_text
+
+
+@pytest.mark.asyncio
+async def test_library_real_recipe_list_pipeline_preserves_type_source_and_lanes(
+    tmp_path,
+):
+    """Normalized list metadata must survive the Screen's raw-row adapter."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, prompt_uuid, _message = db.add_prompt(
+        name="Outcome recipe",
+        author="Author",
+        details="Reusable outcome structure",
+        system_prompt="# Role\n\nBe exact.",
+        user_prompt="# Goal\n\nShip it.",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition={
+            "kind": "block_recipe",
+            "schema_version": 2,
+            "lanes": [
+                {
+                    "id": "system",
+                    "blocks": [
+                        {
+                            "id": "role",
+                            "title": "Role",
+                            "syntax": "markdown",
+                            "content": "Be exact.",
+                        }
+                    ],
+                },
+                {
+                    "id": "user",
+                    "blocks": [
+                        {
+                            "id": "goal",
+                            "title": "Goal",
+                            "syntax": "markdown",
+                            "content": "Ship it.",
+                        }
+                    ],
+                },
+            ],
+        },
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-prompts").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        button = screen.query_one(f"#library-prompt-row-{prompt_id}", Button)
+        assert "Recipe · Local · System + User" in str(button.label)
+        _count, records = screen._local_source_records["prompts"]
+        [record] = records
+        assert record["id"] == prompt_id
+        assert record["local_id"] == prompt_id
+        assert record["source_id"] == prompt_uuid
+        assert record["uuid"] == prompt_uuid
+        assert record["version"] == 1
+        assert record["backend"] == "local"
+        assert record["artifact_type"] == "recipe"
+        assert record["has_system_prompt"] is True
+        assert record["has_user_prompt"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -967,11 +1199,11 @@ async def test_library_prompt_save_stale_version_shows_conflict_bar(tmp_path):
         screen.query_one("#library-prompt-save", Button).press()
         await pilot.pause()
         for _ in range(150):
-            if len(screen.query("#library-prompt-conflict-overwrite")) > 0:
+            if len(screen.query("#library-prompt-conflict-save-new")) > 0:
                 break
             await pilot.pause(0.02)
 
-        assert screen.query_one("#library-prompt-conflict-overwrite", Button)
+        assert screen.query_one("#library-prompt-conflict-save-new", Button)
         assert screen.query_one("#library-prompt-conflict-reload", Button)
 
 
@@ -1021,12 +1253,12 @@ async def test_library_prompt_save_write_time_conflict_shows_conflict_bar(tmp_pa
         screen.query_one("#library-prompt-save", Button).press()
         await pilot.pause()
         for _ in range(150):
-            if len(screen.query("#library-prompt-conflict-overwrite")) > 0:
+            if len(screen.query("#library-prompt-conflict-save-new")) > 0:
                 break
             await pilot.pause(0.02)
 
         assert calls["count"] == 1
-        assert screen.query_one("#library-prompt-conflict-overwrite", Button)
+        assert screen.query_one("#library-prompt-conflict-save-new", Button)
         assert screen.query_one("#library-prompt-conflict-reload", Button)
         status_widgets = screen.query("#library-prompt-save-status")
         if len(status_widgets) > 0:
@@ -1034,7 +1266,7 @@ async def test_library_prompt_save_write_time_conflict_shows_conflict_bar(tmp_pa
                 "Couldn't save this prompt. Try again."
             )
 
-        # The stashed snapshot the banner's Overwrite/Reload actions read
+        # The stashed snapshot the banner's Save-as-new/Reload actions read
         # from must carry this entry path's live-edit fields too, exactly
         # like the pre-check path's snapshot.
         snapshot = screen._library_prompt_conflict_snapshot
@@ -1042,19 +1274,39 @@ async def test_library_prompt_save_write_time_conflict_shows_conflict_bar(tmp_pa
         assert snapshot.prompt_id == prompt_id
         assert snapshot.author == "Race Author"
 
-        # Overwrite should succeed once the monkeypatch's single-raise
-        # budget is spent (the second call delegates to the real write).
-        screen.query_one("#library-prompt-conflict-overwrite", Button).press()
+        # The conflict banner leaves the shared block editor live. Edits made
+        # after the conflict must belong to the detached copy rather than be
+        # overwritten by the snapshot captured when the conflict first arose.
+        live_block = screen.query(".prompt-block-content").first()
+        assert isinstance(live_block, TextArea)
+        live_block.text = "Edited during conflict"
         await pilot.pause()
+
+        # Saving as new is detached from the conflicted source. Give the copy
+        # a distinct name, then the second call delegates to create.
+        screen.query_one("#library-prompt-name", Input).value = "Kappa copy"
+        screen.query_one("#library-prompt-conflict-save-new", Button).press()
+        await pilot.pause()
+        # The handler removes the conflict banner synchronously, then starts
+        # the detached save after the recompose. Wait for that save's actual
+        # success state instead of treating banner removal as completion.
         for _ in range(150):
-            if len(screen.query("#library-prompt-conflict-overwrite")) == 0:
+            if (
+                calls["count"] == 2
+                and len(screen.query("#library-prompt-conflict-save-new")) == 0
+                and screen._library_prompt_dirty is False
+                and screen._selected_prompt_id is not None
+            ):
                 break
             await pilot.pause(0.02)
 
         assert calls["count"] == 2
-        assert len(screen.query("#library-prompt-conflict-overwrite")) == 0
-        persisted = db.fetch_prompt_details(prompt_id)
+        assert len(screen.query("#library-prompt-conflict-save-new")) == 0
+        assert screen._selected_prompt_id != prompt_id
+        persisted = db.fetch_prompt_details(screen._selected_prompt_id)
         assert persisted["author"] == "Race Author"
+        assert persisted["user_prompt"] == "Edited during conflict"
+        assert db.fetch_prompt_details(prompt_id)["author"] == "Original"
 
 
 @pytest.mark.asyncio
@@ -1064,7 +1316,7 @@ async def test_library_shell_create_prompt_write_time_conflict_recovers_on_reloa
     """Task 8b Fix wave 1: the CREATE flow (``_selected_prompt_id`` is
     ``None``) must recover from a genuine write-time ``ConflictError`` the
     same way the update flow does above -- NOT silently no-op both
-    Overwrite and Reload just because ``prompt_id`` happens to be the
+    Save as new and Reload just because ``prompt_id`` happens to be the
     create-flow's ``None`` sentinel.
 
     Regression for the finding: ``_resolve_library_prompt_conflict``'s
@@ -1101,18 +1353,21 @@ async def test_library_shell_create_prompt_write_time_conflict_recovers_on_reloa
 
         screen.query_one("#library-prompt-name", Input).value = "Brand New"
         await pilot.pause()
-        screen.query_one("#library-prompt-user", TextArea).text = "Hello {name}"
+        screen.query_one("#prompt-lane-add-user", Button).press()
+        await pilot.pause()
+        content = screen.query_one("#prompt-block-content-block", TextArea)
+        content.text = "Hello {name}"
         await pilot.pause()
         screen.query_one("#library-prompt-save", Button).press()
         await pilot.pause()
         for _ in range(150):
-            if len(screen.query("#library-prompt-conflict-overwrite")) > 0:
+            if len(screen.query("#library-prompt-conflict-save-new")) > 0:
                 break
             await pilot.pause(0.02)
 
         assert calls["count"] == 1
         assert screen._selected_prompt_id is None
-        assert screen.query_one("#library-prompt-conflict-overwrite", Button)
+        assert screen.query_one("#library-prompt-conflict-save-new", Button)
         assert screen.query_one("#library-prompt-conflict-reload", Button)
         # The trap the finding describes: dirty stuck true, so every other
         # exit is vetoed too -- assert it up front so a regression here is
@@ -1122,14 +1377,14 @@ async def test_library_shell_create_prompt_write_time_conflict_recovers_on_reloa
         screen.query_one("#library-prompt-conflict-reload", Button).press()
         await pilot.pause()
         for _ in range(150):
-            if len(screen.query("#library-prompt-conflict-overwrite")) == 0:
+            if len(screen.query("#library-prompt-conflict-save-new")) == 0:
                 break
             await pilot.pause(0.02)
 
         # Reload must land on a usable, blank create state -- not a
         # permanently stuck banner -- and must clear the dirty flag so
         # navigation is no longer vetoed.
-        assert len(screen.query("#library-prompt-conflict-overwrite")) == 0
+        assert len(screen.query("#library-prompt-conflict-save-new")) == 0
         assert screen._library_prompt_conflict_snapshot is None
         assert screen._library_prompt_dirty is False
         assert screen.query_one("#library-prompt-name", Input).value == ""
@@ -1146,15 +1401,10 @@ async def test_library_shell_create_prompt_write_time_conflict_recovers_on_reloa
 
 
 @pytest.mark.asyncio
-async def test_library_shell_create_prompt_write_time_conflict_overwrite_retries_create(
+async def test_library_shell_create_prompt_write_time_conflict_save_as_new_retries_create(
     tmp_path,
 ):
-    """Task 8b Fix wave 1: Overwrite on a CREATE-flow conflict retries the
-    create with the kept text (rather than the update path's "re-save
-    against a fresh version", which a not-yet-persisted record has none
-    of) -- once the monkeypatch's single-raise budget is spent, the retry
-    delegates to the real write and the prompt is actually persisted.
-    """
+    """Save as new on a CREATE-flow conflict retries a detached create."""
     db, service = _real_prompt_scope_service(tmp_path)
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
@@ -1181,27 +1431,37 @@ async def test_library_shell_create_prompt_write_time_conflict_overwrite_retries
 
         screen.query_one("#library-prompt-name", Input).value = "Brand New"
         await pilot.pause()
-        screen.query_one("#library-prompt-user", TextArea).text = "Hello {name}"
+        screen.query_one("#prompt-lane-add-user", Button).press()
+        await pilot.pause()
+        content = screen.query_one("#prompt-block-content-block", TextArea)
+        content.text = "Hello {name}"
         await pilot.pause()
         screen.query_one("#library-prompt-save", Button).press()
         await pilot.pause()
         for _ in range(150):
-            if len(screen.query("#library-prompt-conflict-overwrite")) > 0:
+            if len(screen.query("#library-prompt-conflict-save-new")) > 0:
                 break
             await pilot.pause(0.02)
 
         assert calls["count"] == 1
         assert screen._selected_prompt_id is None
 
-        screen.query_one("#library-prompt-conflict-overwrite", Button).press()
+        screen.query_one("#library-prompt-conflict-save-new", Button).press()
         await pilot.pause()
+        # The banner disappears before the post-refresh save worker starts,
+        # so wait for the retry to reach its persisted success state.
         for _ in range(150):
-            if len(screen.query("#library-prompt-conflict-overwrite")) == 0:
+            if (
+                calls["count"] == 2
+                and len(screen.query("#library-prompt-conflict-save-new")) == 0
+                and screen._library_prompt_dirty is False
+                and screen._selected_prompt_id is not None
+            ):
                 break
             await pilot.pause(0.02)
 
         assert calls["count"] == 2
-        assert len(screen.query("#library-prompt-conflict-overwrite")) == 0
+        assert len(screen.query("#library-prompt-conflict-save-new")) == 0
         assert screen._library_prompt_dirty is False
         assert screen._selected_prompt_id is not None
         persisted = db.fetch_prompt_details(screen._selected_prompt_id)
@@ -1310,6 +1570,192 @@ async def test_library_prompt_save_success_updates_status_and_persists(tmp_path)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("include_starter", [False, True])
+async def test_library_save_recipe_respects_explicit_starter_content_choice(
+    tmp_path, include_starter
+):
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Recipe source",
+        author="A",
+        details="d",
+        system_prompt="Stay direct.",
+        user_prompt="Draft the plan.",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        starter = screen.query_one("#library-prompt-recipe-starter", Checkbox)
+        assert starter.value is False
+        starter.value = include_starter
+        screen.query_one(
+            "#library-prompt-name", Input
+        ).value = f"Saved recipe {include_starter}"
+        screen.query_one("#prompt-editor-save-recipe", Button).press()
+        status_text = await _wait_for_prompt_status(screen, pilot)
+
+        assert status_text == "Recipe saved as a new artifact."
+        assert screen._selected_prompt_id == prompt_id
+        persisted = db.fetch_prompt_details(f"Saved recipe {include_starter}")
+        assert persisted["artifact_type"] == "recipe"
+        assert db.fetch_prompt_details(prompt_id)["artifact_type"] == "prompt"
+        raw_definition = persisted["prompt_definition"]
+        definition = (
+            json.loads(raw_definition)
+            if isinstance(raw_definition, str)
+            else raw_definition
+        )
+        contents = [
+            block["content"] for lane in definition["lanes"] for block in lane["blocks"]
+        ]
+        if include_starter:
+            assert contents == ["Stay direct.", "Draft the plan."]
+            assert persisted["system_prompt"] == "Stay direct."
+            assert persisted["user_prompt"] == "Draft the plan."
+        else:
+            assert contents == ["", ""]
+            assert persisted["system_prompt"] == ""
+            assert persisted["user_prompt"] == ""
+
+
+@pytest.mark.asyncio
+async def test_library_use_recipe_creates_unsaved_prompt_copy_without_staging(tmp_path):
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Planning recipe",
+        author="A",
+        details="d",
+        system_prompt="",
+        user_prompt="Draft the plan.",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition={
+            "kind": "block_recipe",
+            "schema_version": 2,
+            "lanes": [
+                {"id": "system", "blocks": []},
+                {
+                    "id": "user",
+                    "blocks": [
+                        {
+                            "id": "goal",
+                            "title": "Goal",
+                            "syntax": "markdown",
+                            "content": "Draft the plan.",
+                            "mapping_hint": "State the outcome.",
+                        }
+                    ],
+                },
+            ],
+        },
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    app.stage_console_prompt_insert = Mock()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        screen.query_one("#library-prompt-insert-console", Button).press()
+        await pilot.pause()
+
+        app.stage_console_prompt_insert.assert_not_called()
+        assert screen._selected_prompt_id is None
+        assert screen._library_prompt_dirty is True
+        assert screen._library_prompt_block_state is not None
+        assert screen._library_prompt_block_state.artifact_type == "prompt"
+        assert screen._library_prompt_block_state.definition.kind == "block_prompt"
+        assert "unsaved Prompt copy" in screen._library_prompt_status
+        assert db.fetch_prompt_details(prompt_id)["artifact_type"] == "recipe"
+
+
+@pytest.mark.asyncio
+async def test_library_use_mismatched_structured_prompt_requires_conversion(tmp_path):
+    """A mismatched discriminator cannot execute compatibility User text."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _message = db.add_prompt(
+        name="Mismatched artifact",
+        author="Author",
+        details="Outer Prompt, inner Recipe",
+        user_prompt="# Goal\n\nDo not stage this.",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition={
+            "kind": "block_recipe",
+            "schema_version": 2,
+            "lanes": [
+                {"id": "system", "blocks": []},
+                {
+                    "id": "user",
+                    "blocks": [
+                        {
+                            "id": "goal",
+                            "title": "Goal",
+                            "syntax": "markdown",
+                            "content": "Do not stage this.",
+                        }
+                    ],
+                },
+            ],
+        },
+        artifact_type="prompt",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    app.stage_console_prompt_insert = Mock()
+    app.notify = Mock()
+    record_usage = AsyncMock()
+    service.record_prompt_usage = record_usage
+    host = LibraryHarness(app)
+    before = db.fetch_prompt_details(prompt_id)
+    session_before = app.get_acp_runtime_session_state()
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        assert screen._library_prompt_block_state is None
+        assert screen._current_library_prompt_editor_state().definition_state == (
+            "mismatched"
+        )
+        convert = screen.query_one("#library-prompt-convert", Button)
+        assert str(convert.label) == "Convert and save as new Prompt"
+        assert convert.disabled is False
+
+        screen.query_one("#library-prompt-insert-console", Button).press()
+        await pilot.pause()
+
+        app.stage_console_prompt_insert.assert_not_called()
+        record_usage.assert_not_awaited()
+        assert not app.pending_handoffs.has_pending(
+            HandoffChannel.CONSOLE_PROMPT_INSERT
+        )
+        assert host.seen_routes == []
+        assert app.get_acp_runtime_session_state() == session_before
+        app.notify.assert_called_once()
+        assert "Convert and save as new Prompt" in app.notify.call_args.args[0]
+        assert screen._selected_prompt_id == prompt_id
+        assert screen._library_prompt_dirty is False
+        after = db.fetch_prompt_details(prompt_id)
+        assert after["version"] == before["version"]
+        assert after["artifact_type"] == "prompt"
+
+
+@pytest.mark.asyncio
 async def test_library_prompt_editing_shows_unsaved_marker_and_save_clears_it(tmp_path):
     """U6 (Task 8c): editing a field surfaces a visible unsaved-changes
     marker on the meta line -- previously the dirty flag was invisible
@@ -1366,25 +1812,6 @@ async def _open_prompts_list(screen, pilot) -> None:
     await pilot.pause()
 
 
-async def _wait_for_import_status(screen, pilot, *, attempts=200) -> str:
-    for _ in range(attempts):
-        if screen._library_prompts_import_status:
-            return screen._library_prompts_import_status
-        await pilot.pause(0.02)
-    return screen._library_prompts_import_status
-
-
-async def _run_import(screen, pilot, path: str) -> str:
-    """Open the Import row, type ``path``, press Import, and wait for the outcome."""
-    screen.query_one("#library-prompts-import", Button).press()
-    await pilot.pause()
-    screen.query_one("#library-prompts-import-path", Input).value = path
-    await pilot.pause()
-    screen.query_one("#library-prompts-import-run", Button).press()
-    await pilot.pause()
-    return await _wait_for_import_status(screen, pilot)
-
-
 @pytest.mark.asyncio
 async def test_library_prompts_import_button_opens_row(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -1429,25 +1856,64 @@ async def test_library_prompts_import_cancel_closes_row(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_library_prompts_import_from_file_creates_prompt_and_reports_outcome(
-    tmp_path,
-):
+async def test_library_prompts_import_preserves_recipe_structure_in_real_db(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
     app.prompt_scope_service = service
     host = LibraryHarness(app)
-
-    import_file = tmp_path / "imported.md"
-    import_file.write_text(
+    definition = {
+        "kind": "block_recipe",
+        "schema_version": 2,
+        "lanes": [
+            {
+                "id": "system",
+                "blocks": [
+                    {
+                        "id": "role",
+                        "title": "Role",
+                        "syntax": "markdown",
+                        "content": "Starter role",
+                        "mapping_hint": "Define the job.",
+                    },
+                    {
+                        "id": "voice",
+                        "title": "Voice",
+                        "syntax": "freeform",
+                        "content": "Direct",
+                        "mapping_hint": "Set the tone.",
+                    },
+                ],
+            },
+            {
+                "id": "user",
+                "blocks": [
+                    {
+                        "id": "goal",
+                        "title": "Goal",
+                        "syntax": "xml",
+                        "xml_tag": "goal",
+                        "content": "Ship the outcome",
+                        "mapping_hint": "State success.",
+                    }
+                ],
+            },
+        ],
+    }
+    export_path = tmp_path / "recipe.md"
+    export_path.write_text(
         render_prompt_markdown(
             {
-                "name": "Imported Prompt",
-                "author": "Importer",
-                "details": "from a file",
-                "system_prompt": "sys text",
-                "user_prompt": "user text",
-                "keywords": ["a", "b"],
+                "name": "Imported Recipe",
+                "author": "Author",
+                "details": "Details",
+                "artifact_type": "recipe",
+                "prompt_format": "structured",
+                "prompt_schema_version": 2,
+                "prompt_definition": definition,
+                "system_prompt": "# Role\n\nStarter role\n\nDirect",
+                "user_prompt": "<goal>Ship the outcome</goal>",
+                "keywords": ["structured"],
             }
         ),
         encoding="utf-8",
@@ -1458,272 +1924,17 @@ async def test_library_prompts_import_from_file_creates_prompt_and_reports_outco
         await _wait_for_library_shell(screen, pilot)
         await _open_prompts_list(screen, pilot)
 
-        status_text = await _run_import(screen, pilot, str(import_file))
+        await screen._run_library_prompts_import(str(export_path))
+        await pilot.pause()
 
-        assert status_text == "1 imported · 0 skipped (duplicate name)"
-        persisted = db.fetch_prompt_details("Imported Prompt")
+        persisted = db.fetch_prompt_details("Imported Recipe")
         assert persisted is not None
-        assert persisted["author"] == "Importer"
-        assert persisted["details"] == "from a file"
-        assert persisted["system_prompt"] == "sys text"
-        assert persisted["user_prompt"] == "user text"
-        assert sorted(persisted["keywords"]) == ["a", "b"]
-
-
-@pytest.mark.asyncio
-async def test_library_prompts_import_skips_existing_duplicate_name(tmp_path):
-    """Duplicate names are SKIPPED, never overwritten -- the pre-existing
-    row's content must be untouched after the import runs."""
-    db, service = _real_prompt_scope_service(tmp_path)
-    db.add_prompt(
-        name="Existing", author="Original", details="d", user_prompt="original text"
-    )
-    app = _build_test_app()
-    _wire_empty_non_prompt_services(app)
-    app.prompt_scope_service = service
-    host = LibraryHarness(app)
-
-    import_file = tmp_path / "dup.md"
-    import_file.write_text(
-        render_prompt_markdown(
-            {
-                "name": "Existing",
-                "author": "Different",
-                "details": "d2",
-                "system_prompt": "sys2",
-                "user_prompt": "different text",
-                "keywords": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_prompts_list(screen, pilot)
-
-        status_text = await _run_import(screen, pilot, str(import_file))
-
-        assert status_text == "0 imported · 1 skipped (duplicate name)"
-        persisted = db.fetch_prompt_details("Existing")
-        assert persisted["author"] == "Original"
-        assert persisted["user_prompt"] == "original text"
-
-
-@pytest.mark.asyncio
-async def test_library_prompts_import_from_folder_aggregates_two_files(tmp_path):
-    db, service = _real_prompt_scope_service(tmp_path)
-    app = _build_test_app()
-    _wire_empty_non_prompt_services(app)
-    app.prompt_scope_service = service
-    host = LibraryHarness(app)
-
-    import_dir = tmp_path / "prompts_to_import"
-    import_dir.mkdir()
-    (import_dir / "one.md").write_text(
-        render_prompt_markdown(
-            {
-                "name": "Folder One",
-                "author": "A",
-                "details": "",
-                "system_prompt": "s1",
-                "user_prompt": "u1",
-                "keywords": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    (import_dir / "two.md").write_text(
-        render_prompt_markdown(
-            {
-                "name": "Folder Two",
-                "author": "B",
-                "details": "",
-                "system_prompt": "s2",
-                "user_prompt": "u2",
-                "keywords": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    (import_dir / "ignored.dat").write_text(
-        "not a supported extension", encoding="utf-8"
-    )
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_prompts_list(screen, pilot)
-
-        status_text = await _run_import(screen, pilot, str(import_dir))
-
-        assert status_text == "2 imported · 0 skipped (duplicate name)"
-        assert db.fetch_prompt_details("Folder One") is not None
-        assert db.fetch_prompt_details("Folder Two") is not None
-
-
-@pytest.mark.asyncio
-async def test_library_prompts_import_invalid_path_shows_quiet_status(tmp_path):
-    db, service = _real_prompt_scope_service(tmp_path)
-    app = _build_test_app()
-    _wire_empty_non_prompt_services(app)
-    app.prompt_scope_service = service
-    host = LibraryHarness(app)
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_prompts_list(screen, pilot)
-
-        status_text = await _run_import(
-            screen, pilot, str(tmp_path / "does_not_exist.md")
-        )
-
-        assert status_text == "Could not find that file or folder."
-        assert db.list_prompts()[3] == 0  # total_items
-
-
-@pytest.mark.asyncio
-async def test_library_prompts_import_counts_per_prompt_save_failures_as_failed(
-    tmp_path,
-):
-    """A per-prompt save failure (a non-duplicate-name exception from the
-    scope service's ``save_prompt``) must be tracked as its own ``failed``
-    bucket -- previously it fell into neither ``imported`` nor ``skipped``
-    and vanished from the outcome line entirely."""
-    db, service = _real_prompt_scope_service(tmp_path)
-    app = _build_test_app()
-    _wire_empty_non_prompt_services(app)
-
-    real_save_prompt = service.save_prompt
-
-    def _flaky_save_prompt(*args, **kwargs):
-        if kwargs.get("name") == "Boom":
-            raise RuntimeError("simulated save failure")
-        return real_save_prompt(*args, **kwargs)
-
-    app.prompt_scope_service = SimpleNamespace(
-        get_prompt=service.get_prompt, save_prompt=_flaky_save_prompt
-    )
-    host = LibraryHarness(app)
-
-    import_dir = tmp_path / "prompts_to_import"
-    import_dir.mkdir()
-    (import_dir / "ok.md").write_text(
-        render_prompt_markdown(
-            {
-                "name": "Fine",
-                "author": "A",
-                "details": "",
-                "system_prompt": "s1",
-                "user_prompt": "u1",
-                "keywords": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    (import_dir / "boom.md").write_text(
-        render_prompt_markdown(
-            {
-                "name": "Boom",
-                "author": "B",
-                "details": "",
-                "system_prompt": "s2",
-                "user_prompt": "u2",
-                "keywords": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_prompts_list(screen, pilot)
-
-        status_text = await _run_import(screen, pilot, str(import_dir))
-
-        assert status_text == "1 imported · 0 skipped (duplicate name) · 1 failed"
-        assert db.fetch_prompt_details("Fine") is not None
-        assert db.fetch_prompt_details("Boom") is None
-
-
-@pytest.mark.asyncio
-async def test_library_prompts_import_outcome_omits_failed_segment_when_zero(tmp_path):
-    """When nothing failed, the outcome line keeps its exact pre-existing
-    two-part copy -- no trailing "· K failed" segment at all (not even
-    "· 0 failed"). ``test_library_prompts_import_from_file_creates_prompt_and_reports_outcome``
-    already pins this exact string for the plain success path; this test
-    pins it again explicitly alongside the failed-segment tests above so
-    both copies ("N imported · M skipped (duplicate name)" and its
-    "· K failed" extension) are each proven by a dedicated assertion."""
-    db, service = _real_prompt_scope_service(tmp_path)
-    app = _build_test_app()
-    _wire_empty_non_prompt_services(app)
-    app.prompt_scope_service = service
-    host = LibraryHarness(app)
-
-    import_file = tmp_path / "clean.md"
-    import_file.write_text(
-        render_prompt_markdown(
-            {
-                "name": "Clean Import",
-                "author": "A",
-                "details": "",
-                "system_prompt": "s",
-                "user_prompt": "u",
-                "keywords": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_prompts_list(screen, pilot)
-
-        status_text = await _run_import(screen, pilot, str(import_file))
-
-        assert status_text == "1 imported · 0 skipped (duplicate name)"
-
-
-@pytest.mark.asyncio
-async def test_library_prompts_import_folder_permission_error_shows_quiet_status(
-    tmp_path, monkeypatch
-):
-    """A folder enumeration failure (e.g. permissions revoked between the
-    Import row's path-validation check and the worker's own ``iterdir()``
-    call) must surface an honest status line -- mirroring the per-file read
-    try/except below it -- rather than raising out of the worker or
-    reporting a misleading "No supported prompt files found."."""
-    db, service = _real_prompt_scope_service(tmp_path)
-    app = _build_test_app()
-    _wire_empty_non_prompt_services(app)
-    app.prompt_scope_service = service
-    host = LibraryHarness(app)
-
-    import_dir = tmp_path / "locked_prompts"
-    import_dir.mkdir()
-
-    real_iterdir = Path.iterdir
-
-    def _flaky_iterdir(self):
-        if str(self) == str(import_dir):
-            raise PermissionError("simulated permission error")
-        return real_iterdir(self)
-
-    monkeypatch.setattr(Path, "iterdir", _flaky_iterdir)
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_prompts_list(screen, pilot)
-
-        status_text = await _run_import(screen, pilot, str(import_dir))
-
-        assert status_text == "Could not read that folder."
+        assert persisted["artifact_type"] == "recipe"
+        assert persisted["prompt_format"] == "structured"
+        assert persisted["prompt_schema_version"] == 2
+        assert json.loads(persisted["prompt_definition"]) == definition
+        assert persisted["system_prompt"] == "# Role\n\nStarter role\n\nDirect"
+        assert persisted["user_prompt"] == "<goal>Ship the outcome</goal>"
 
 
 @pytest.mark.asyncio
@@ -1762,6 +1973,66 @@ async def test_library_prompt_export_pushes_file_save_dialog(tmp_path):
 
         await host.pop_screen()
         await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_export_blocks_invalid_recipe_without_downgrade(tmp_path):
+    db, service = _real_prompt_scope_service(tmp_path)
+    definition = {
+        "kind": "block_recipe",
+        "schema_version": 2,
+        "lanes": [
+            {"id": "system", "blocks": []},
+            {
+                "id": "user",
+                "blocks": [
+                    {
+                        "id": "goal",
+                        "title": "Goal",
+                        "syntax": "xml",
+                        "xml_tag": "goal",
+                        "content": "Starter",
+                    }
+                ],
+            },
+        ],
+    }
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Invalid export",
+        author="Author",
+        details="Details",
+        user_prompt="<goal>Starter</goal>",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=definition,
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    app.notify = Mock()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        screen.query_one("#prompt-block-xml-tag-goal", Input).value = "bad tag"
+        await pilot.pause()
+        assert screen._library_prompt_block_state is not None
+        assert screen._library_prompt_block_state.issues
+
+        stack_size = len(host.screen_stack)
+        await screen._export_library_prompt()
+        await pilot.pause()
+
+        assert len(host.screen_stack) == stack_size
+        app.notify.assert_called_once()
+        args, kwargs = app.notify.call_args
+        assert "Fix block validation errors before exporting" in args[0]
+        assert kwargs.get("severity") == "warning"
+        assert not (tmp_path / "Invalid export.md").exists()
 
 
 @pytest.mark.asyncio
@@ -1821,6 +2092,68 @@ async def test_library_prompt_write_export_file_writes_roundtrippable_markdown(
             "u",
         )
         assert p["keywords"] == ["k1", "k2"]
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_write_export_preserves_live_recipe_structure(tmp_path):
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Recipe export", author="Author", details="Details", user_prompt=""
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    app.notify = Mock()
+    host = LibraryHarness(app)
+    definition = {
+        "kind": "block_recipe",
+        "schema_version": 2,
+        "lanes": [
+            {"id": "system", "blocks": []},
+            {
+                "id": "user",
+                "blocks": [
+                    {
+                        "id": "goal",
+                        "title": "Goal",
+                        "syntax": "xml",
+                        "xml_tag": "goal",
+                        "content": "Starter",
+                        "mapping_hint": "State the outcome.",
+                    }
+                ],
+            },
+        ],
+    }
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        destination = tmp_path / "recipe.md"
+        screen._write_library_prompt_export_file(
+            destination,
+            "Recipe export",
+            "Author",
+            "Details",
+            "",
+            "<goal>Starter</goal>",
+            "recipe",
+            prompt_id,
+            {
+                "artifact_type": "recipe",
+                "prompt_format": "structured",
+                "prompt_schema_version": 2,
+                "prompt_definition": definition,
+                "system_prompt": "",
+                "user_prompt": "<goal>Starter</goal>",
+            },
+        )
+
+        [parsed] = parse_markdown_prompts_from_content(
+            destination.read_text(encoding="utf-8")
+        )
+        assert parsed["artifact_type"] == "recipe"
+        assert parsed["prompt_definition"] == definition
         app.notify.assert_called_once()
         assert "exported successfully" in app.notify.call_args.args[0]
 
@@ -2077,8 +2410,12 @@ async def test_library_shell_create_prompt_save_creates_and_increments_count(tmp
 
         screen.query_one("#library-prompt-name", Input).value = "Brand New"
         await pilot.pause()
-        screen.query_one("#library-prompt-user", TextArea).text = "Hello {name}"
+        screen.query_one("#prompt-lane-add-user", Button).press()
         await pilot.pause()
+        content = screen.query_one("#prompt-block-content-block", TextArea)
+        content.text = "Hello {name}"
+        await pilot.pause()
+        content_identity = id(content)
         screen.query_one("#library-prompt-save", Button).press()
         await pilot.pause()
 
@@ -2106,6 +2443,18 @@ async def test_library_shell_create_prompt_save_creates_and_increments_count(tmp
                 break
             await pilot.pause(0.02)
         assert "(2)" in rail_label
+        assert id(screen.query_one("#prompt-block-content-block", TextArea)) == (
+            content_identity
+        )
+        outer_update = screen.query_one("#library-prompt-save", Button)
+        shared_update = screen.query_one("#prompt-editor-update-original", Button)
+        assert str(outer_update.label) == "Update original"
+        assert outer_update.disabled is False
+        assert shared_update.disabled is False
+        assert (
+            str(screen.query_one("#prompt-editor-update-reason", Static).renderable)
+            == ""
+        )
 
 
 @pytest.mark.asyncio
@@ -2221,6 +2570,65 @@ async def test_library_prompt_duplicate_prefills_blank_editor_and_saves_distinct
         assert total == 2
         original = db.fetch_prompt_details(prompt_id)
         assert original["name"] == "Original"
+
+
+@pytest.mark.asyncio
+async def test_library_recipe_duplicate_outer_save_is_honest_and_preserves_starter(
+    tmp_path,
+):
+    db, service = _real_prompt_scope_service(tmp_path)
+    definition = {
+        "kind": "block_recipe",
+        "schema_version": 2,
+        "lanes": [
+            {"id": "system", "blocks": []},
+            {
+                "id": "user",
+                "blocks": [
+                    {
+                        "id": "goal",
+                        "title": "Goal",
+                        "syntax": "markdown",
+                        "content": "Starter",
+                        "mapping_hint": "State the outcome.",
+                    }
+                ],
+            },
+        ],
+    }
+    recipe_id, _uuid, _msg = db.add_prompt(
+        name="Original Recipe",
+        author="Author",
+        details="Details",
+        user_prompt="# Goal\n\nStarter",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=definition,
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, recipe_id)
+
+        screen.query_one("#library-prompt-duplicate", Button).press()
+        await pilot.pause()
+        save = screen.query_one("#library-prompt-save", Button)
+        assert str(save.label) == "Save Recipe"
+        screen.query_one("#library-prompt-recipe-starter", Checkbox).value = True
+        save.press()
+        assert await _wait_for_prompt_status(screen, pilot) == "Saved."
+
+        duplicate = db.fetch_prompt_details("Original Recipe (copy)")
+        assert duplicate is not None
+        assert duplicate["artifact_type"] == "recipe"
+        persisted_definition = json.loads(duplicate["prompt_definition"])
+        assert persisted_definition["lanes"][1]["blocks"][0]["content"] == "Starter"
 
 
 # ---------------------------------------------------------------------------
@@ -2382,137 +2790,114 @@ async def test_library_prompts_import_browse_button_fills_path_input(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Task 12: editor "Use in Console" -- ChatHandoffPayload-free direct route
-# (stages a bare string via ``TldwCli.stage_console_prompt_insert`` and
-# navigates to Chat; ChatScreen itself owns append-vs-replace and the
-# provider-setup-blocked gate, tested in ``test_console_command_composer.py``).
+# Task 12: editor "Use in Console" guard functions. The successful producer
+# and consumer route is exercised by the full production application in
+# ``Tests/ProductionApp/test_personas_library_root_state.py``.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_library_prompt_insert_console_stages_live_user_prompt_and_navigates(
-    tmp_path,
-):
-    db, service = _real_prompt_scope_service(tmp_path)
-    prompt_id, _uuid, _msg = db.add_prompt(
-        name="Summarize",
-        author="Alice",
-        details="A summarizer",
-        system_prompt="You are concise.",
-        user_prompt="Summarize: {text}",
-        keywords=["writing"],
-    )
-    app = _build_test_app()
-    _wire_empty_non_prompt_services(app)
-    app.prompt_scope_service = service
-    host = LibraryHarness(app)
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_prompt_editor(screen, pilot, prompt_id)
-        assert screen._library_prompt_dirty is False
-
-        # ``app`` (the plain ``TldwCli`` built by ``_build_test_app``) is a
-        # data/logic container here, never itself run as the active Textual
-        # App (``host``/``LibraryHarness`` is) -- so a real ``post_message``
-        # would queue into a message pump that is never started, and
-        # ``host.seen_routes`` would never observe it. Spying on
-        # ``post_message`` directly (mirrors
-        # ``test_chat_first_handoffs.py``'s ``open_chat_with_handoff``
-        # coverage) proves the navigation intent without depending on that
-        # unrelated plumbing.
-        post_message_spy = Mock(wraps=app.post_message)
-        app.post_message = post_message_spy
-
-        screen.query_one("#library-prompt-insert-console", Button).press()
-        await pilot.pause()
-
-        assert app.pending_console_prompt_insert == "Summarize: {text}"
-        posted = post_message_spy.call_args.args[0]
-        assert isinstance(posted, NavigateToScreen)
-        assert posted.screen_name == TAB_CHAT
-        # The source prompt itself is never touched by this action.
-        assert screen._library_prompts_view == "editor"
-        assert screen._selected_prompt_id == prompt_id
-
-
-@pytest.mark.asyncio
-async def test_library_prompt_insert_console_refuses_while_dirty(tmp_path):
+def test_library_prompt_insert_console_refuses_while_dirty():
     """An unsaved in-progress edit refuses the action outright (rather than
     staging text that a vetoed navigation would later fire unexpectedly on
     some unrelated future Console visit) -- the prompt is never lost either
     way, since the edit simply stays in the still-open editor."""
-    db, service = _real_prompt_scope_service(tmp_path)
-    prompt_id, _uuid, _msg = db.add_prompt(
-        name="Summarize",
-        author="",
-        details="",
-        system_prompt="",
-        user_prompt="Summarize: {text}",
-        keywords=[],
+    notify = Mock()
+    stage = Mock()
+    read_fields = Mock()
+    screen = SimpleNamespace(
+        _library_prompts_view="editor",
+        _library_prompt_dirty=True,
+        app_instance=SimpleNamespace(
+            notify=notify,
+            stage_console_prompt_insert=stage,
+        ),
+        _current_library_prompt_editor_state=lambda: _structured_editor_state(),
+        _read_library_prompt_editor_fields=read_fields,
     )
-    app = _build_test_app()
-    _wire_empty_non_prompt_services(app)
-    app.prompt_scope_service = service
-    host = LibraryHarness(app)
+    event = SimpleNamespace(stop=Mock())
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_prompt_editor(screen, pilot, prompt_id)
+    LibraryScreen.handle_library_prompt_insert_console(screen, event)
 
-        screen.query_one("#library-prompt-user", TextArea).text = "Hello {name}"
-        await pilot.pause()
-        assert screen._library_prompt_dirty is True
-
-        notify_spy = Mock()
-        app.notify = notify_spy
-        post_message_spy = Mock(wraps=app.post_message)
-        app.post_message = post_message_spy
-        screen.query_one("#library-prompt-insert-console", Button).press()
-        await pilot.pause()
-
-        notify_spy.assert_called_once_with(
-            "Save your changes before using this prompt in Console.", severity="warning"
-        )
-        assert app.pending_console_prompt_insert is None
-        post_message_spy.assert_not_called()
-        assert screen.query_one("#library-prompt-user", TextArea).text == "Hello {name}"
-
-
-@pytest.mark.asyncio
-async def test_library_prompt_insert_console_notifies_when_user_prompt_is_empty(
-    tmp_path,
-):
-    db, service = _real_prompt_scope_service(tmp_path)
-    prompt_id, _uuid, _msg = db.add_prompt(
-        name="System Only",
-        author="",
-        details="",
-        system_prompt="You are helpful.",
-        user_prompt="",
-        keywords=[],
+    event.stop.assert_called_once_with()
+    notify.assert_called_once_with(
+        "Save your changes before using this prompt in Console.",
+        severity="warning",
     )
-    app = _build_test_app()
-    _wire_empty_non_prompt_services(app)
-    app.prompt_scope_service = service
-    host = LibraryHarness(app)
+    read_fields.assert_not_called()
+    stage.assert_not_called()
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_prompt_editor(screen, pilot, prompt_id)
 
-        notify_spy = Mock()
-        app.notify = notify_spy
-        post_message_spy = Mock(wraps=app.post_message)
-        app.post_message = post_message_spy
-        screen.query_one("#library-prompt-insert-console", Button).press()
-        await pilot.pause()
+def test_library_prompt_insert_console_notifies_when_user_prompt_is_empty():
+    notify = Mock()
+    stage = Mock()
+    screen = SimpleNamespace(
+        _library_prompts_view="editor",
+        _library_prompt_dirty=False,
+        app_instance=SimpleNamespace(
+            notify=notify,
+            stage_console_prompt_insert=stage,
+        ),
+        _current_library_prompt_editor_state=lambda: _structured_editor_state(),
+        _read_library_prompt_editor_fields=lambda: (
+            "System Only",
+            "",
+            "",
+            "You are helpful.",
+            "",
+            "",
+        ),
+        _sanitize_note_content=lambda value, *, max_length: value,
+    )
+    event = SimpleNamespace(stop=Mock())
 
-        notify_spy.assert_called_once_with(
-            "This prompt has no user prompt text to insert.", severity="warning"
+    LibraryScreen.handle_library_prompt_insert_console(screen, event)
+
+    event.stop.assert_called_once_with()
+    notify.assert_called_once_with(
+        "This prompt has no user prompt text to insert.",
+        severity="warning",
+    )
+    stage.assert_not_called()
+
+
+@pytest.mark.parametrize("structured", [False, True], ids=["legacy", "supported-v2"])
+def test_library_prompt_insert_console_stages_safe_prompt_states(structured):
+    notify = Mock()
+    stage = Mock()
+    editor_state = (
+        _structured_editor_state()
+        if structured
+        else build_prompt_editor_state(
+            {
+                "id": 41,
+                "name": "Legacy Prompt",
+                "system_prompt": "Stay direct.",
+                "user_prompt": "Ship it.",
+            }
         )
-        assert app.pending_console_prompt_insert is None
-        post_message_spy.assert_not_called()
+    )
+    screen = SimpleNamespace(
+        _library_prompts_view="editor",
+        _library_prompt_dirty=False,
+        app_instance=SimpleNamespace(
+            notify=notify,
+            stage_console_prompt_insert=stage,
+        ),
+        _current_library_prompt_editor_state=lambda: editor_state,
+        _read_library_prompt_editor_fields=lambda: (
+            "Prompt",
+            "",
+            "",
+            "Stay direct.",
+            "Ship it.",
+            "",
+        ),
+        _sanitize_note_content=lambda value, *, max_length: value,
+    )
+    event = SimpleNamespace(stop=Mock())
+
+    LibraryScreen.handle_library_prompt_insert_console(screen, event)
+
+    event.stop.assert_called_once_with()
+    notify.assert_not_called()
+    stage.assert_called_once_with("Ship it.")

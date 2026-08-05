@@ -10,7 +10,11 @@ from loguru import logger
 
 # Import tldw_chatbook components
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
-from ..DB.Client_Media_DB_v2 import MediaDatabase
+from ..DB.Client_Media_DB_v2 import (
+    MediaDatabase,
+    get_media_transcripts,
+    get_chunk_by_uuid,
+)
 
 # `get_note_by_id` (tldw_chatbook.Notes.Notes_Library) and
 # `get_character_by_id` (tldw_chatbook.Character_Chat.Character_Chat_Lib)
@@ -84,7 +88,9 @@ class MCPResources:
                 "content": content,
                 "metadata": {
                     "created": conv["created_at"],
-                    "updated": conv.get("updated_at"),
+                    # conversations has `last_modified`, not `updated_at`
+                    # -- `.get("updated_at")` always returned None.
+                    "updated": conv.get("last_modified"),
                     "character_id": conv.get("character_id"),
                     "message_count": len(messages),
                 },
@@ -126,8 +132,11 @@ class MCPResources:
                 content += f"*Tags: {tags}*\n\n"
 
             content += f"*Created: {note['created_at']}*\n"
-            if note.get("updated_at"):
-                content += f"*Updated: {note['updated_at']}*\n"
+            # notes has `last_modified`, not `updated_at` -- the old
+            # `.get("updated_at")` always returned None/falsy, so the
+            # "Updated" line never rendered for any real note.
+            if note.get("last_modified"):
+                content += f"*Updated: {note['last_modified']}*\n"
 
             content += "\n---\n\n"
             content += note["content"]
@@ -139,7 +148,15 @@ class MCPResources:
                 "content": content,
                 "metadata": {
                     "created": note["created_at"],
-                    "updated": note.get("updated_at"),
+                    "updated": note.get("last_modified"),
+                    # `tags`/`template`: the `notes` table has neither
+                    # column -- notes have no tagging or template concept
+                    # in this schema (keyword/tag *linking* is a separate,
+                    # unrelated API, `link_note_to_keyword`, this resource
+                    # never called). Left as always-empty defaults rather
+                    # than removed outright: whether to surface linked
+                    # keywords here instead is a product decision, not a
+                    # bug fix (see TASK-983's Implementation Notes).
                     "tags": note.get("tags", []),
                     "template": note.get("template"),
                 },
@@ -185,11 +202,14 @@ class MCPResources:
             if char.get("scenario"):
                 content += f"## Scenario\n\n{char['scenario']}\n\n"
 
-            if char.get("greeting"):
-                content += f"## Greeting\n\n{char['greeting']}\n\n"
+            # character_cards' real columns are `first_message` and
+            # `message_example` -- `char.get("greeting")` /
+            # `char.get("example_dialogue")` never matched anything.
+            if char.get("first_message"):
+                content += f"## Greeting\n\n{char['first_message']}\n\n"
 
-            if char.get("example_dialogue"):
-                content += f"## Example Dialogue\n\n{char['example_dialogue']}\n\n"
+            if char.get("message_example"):
+                content += f"## Example Dialogue\n\n{char['message_example']}\n\n"
 
             # Add metadata
             content += "\n---\n\n"
@@ -202,7 +222,8 @@ class MCPResources:
                 "content": content,
                 "metadata": {
                     "created": char["created_at"],
-                    "updated": char.get("updated_at"),
+                    # character_cards has `last_modified`, not `updated_at`.
+                    "updated": char.get("last_modified"),
                     "message_count": char.get("message_count", 0),
                 },
             }
@@ -236,13 +257,25 @@ class MCPResources:
                     "content": "Media not found",
                 }
 
-            # Get transcript/content
-            transcript = self.media_db.get_media_transcript(int(media_id))
+            # Get transcript/content. `get_media_transcript` (singular)
+            # never existed as an instance method on MediaDatabase; the real
+            # accessor is the module-level `get_media_transcripts` (plural),
+            # which returns every active transcript row ordered newest
+            # first -- take the most recent one, matching this call site's
+            # original single-value assumption.
+            transcripts = get_media_transcripts(self.media_db, int(media_id))
+            transcript = transcripts[0]["transcription"] if transcripts else None
 
-            # Format content
+            # Format content. The Media table's own column is `type`, not
+            # `media_type` -- `media['media_type']` raised KeyError on
+            # every real row (the "media_type" name is this tool's own
+            # output-field naming, applied below, not the DB column).
+            # The Media table's own column is `ingestion_date` -- there is
+            # no `created_at` column at all -- `media['created_at']`
+            # raised KeyError on every real row.
             content = f"# {media['title']}\n\n"
-            content += f"*Type: {media['media_type']}*\n"
-            content += f"*Created: {media['created_at']}*\n\n"
+            content += f"*Type: {media['type']}*\n"
+            content += f"*Created: {media['ingestion_date']}*\n\n"
 
             if media.get("url"):
                 content += f"**Source**: {media['url']}\n\n"
@@ -262,9 +295,9 @@ class MCPResources:
                 "mimeType": "text/markdown",
                 "content": content,
                 "metadata": {
-                    "media_type": media["media_type"],
+                    "media_type": media["type"],
                     "url": media.get("url"),
-                    "created": media["created_at"],
+                    "created": media["ingestion_date"],
                     "duration": media.get("duration"),
                     "author": media.get("author"),
                 },
@@ -279,21 +312,33 @@ class MCPResources:
                 "content": f"Error loading media: {str(e)}",
             }
 
-    async def get_rag_chunk_resource(self, chunk_id: str) -> Dict[str, Any]:
+    async def get_rag_chunk_resource(self, chunk_uuid: str) -> Dict[str, Any]:
         """Get a RAG chunk as a resource.
 
         Args:
-            chunk_id: ID of the chunk
+            chunk_uuid: UUID of the chunk (`UnvectorizedMediaChunks.uuid`).
+
+                This used to be an integer id (`int(chunk_id)`) passed to
+                `self.media_db.get_chunk_by_id(...)`, a method that has
+                never existed on `MediaDatabase` (TASK-985). The real
+                accessor for a single chunk's row, `get_chunk_by_uuid`
+                (added alongside this fix, a sibling of the pre-existing
+                `get_chunk_text`), keys on the chunk's UUID rather than an
+                int id -- matching how chunks are addressed everywhere else
+                in the app (vector-store lookups use this same UUID). There
+                is no `embedding_id` column on `UnvectorizedMediaChunks` at
+                all, so it is dropped from the metadata below rather than
+                guessed at.
 
         Returns:
-            Resource dict with content and metadata
+            Resource dict with content and metadata.
         """
         try:
             # Get chunk from media database
-            chunk = self.media_db.get_chunk_by_id(int(chunk_id))
+            chunk = get_chunk_by_uuid(self.media_db, chunk_uuid)
             if not chunk:
                 return {
-                    "uri": f"rag-chunk://{chunk_id}",
+                    "uri": f"rag-chunk://{chunk_uuid}",
                     "name": "Not Found",
                     "mimeType": "text/plain",
                     "content": "Chunk not found",
@@ -303,15 +348,15 @@ class MCPResources:
             media = self.media_db.get_media_by_id(chunk["media_id"])
 
             # Format content
-            content = f"# RAG Chunk {chunk_id}\n\n"
+            content = f"# RAG Chunk {chunk_uuid}\n\n"
             if media:
                 content += f"**From**: {media['title']}\n"
-            content += f"**Position**: {chunk.get('start_char', 0)} - {chunk.get('end_char', 0)}\n\n"
+            content += f"**Position**: {chunk.get('start_char') or 0} - {chunk.get('end_char') or 0}\n\n"
             content += "---\n\n"
-            content += chunk["text"]
+            content += chunk["chunk_text"]
 
             return {
-                "uri": f"rag-chunk://{chunk_id}",
+                "uri": f"rag-chunk://{chunk_uuid}",
                 "name": f"Chunk from {media['title'] if media else 'Unknown'}",
                 "mimeType": "text/plain",
                 "content": content,
@@ -319,14 +364,15 @@ class MCPResources:
                     "media_id": chunk["media_id"],
                     "start_char": chunk.get("start_char"),
                     "end_char": chunk.get("end_char"),
-                    "embedding_id": chunk.get("embedding_id"),
+                    "chunk_index": chunk.get("chunk_index"),
+                    "chunk_type": chunk.get("chunk_type"),
                 },
             }
 
         except Exception as e:
             logger.error(f"Error getting RAG chunk resource: {e}")
             return {
-                "uri": f"rag-chunk://{chunk_id}",
+                "uri": f"rag-chunk://{chunk_uuid}",
                 "name": "Error",
                 "mimeType": "text/plain",
                 "content": f"Error loading chunk: {str(e)}",
@@ -342,7 +388,14 @@ class MCPResources:
             List of resource references
         """
         try:
-            conversations = self.chachanotes_db.get_recent_conversations(limit=limit)
+            # `get_recent_conversations` never existed on CharactersRAGDB.
+            # `list_all_active_conversations` is the real, already-ordered
+            # equivalent ("more recently active or created conversations
+            # appear first", per its own docstring) -- same `limit` kwarg,
+            # same id/title/created_at fields used below.
+            conversations = self.chachanotes_db.list_all_active_conversations(
+                limit=limit
+            )
 
             resources = []
             for conv in conversations:
@@ -371,7 +424,11 @@ class MCPResources:
             List of resource references
         """
         try:
-            notes = self.chachanotes_db.get_recent_notes(limit=limit)
+            # `get_recent_notes` never existed on CharactersRAGDB.
+            # `list_notes` is the real, already-ordered equivalent (`last_modified
+            # DESC`, per its own index/query) -- same `limit` kwarg, same
+            # id/title/created_at fields used below.
+            notes = self.chachanotes_db.list_notes(limit=limit)
 
             resources = []
             for note in notes:

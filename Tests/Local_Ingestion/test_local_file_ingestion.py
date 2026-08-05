@@ -43,6 +43,46 @@ def _make_ebook_result(**kwargs) -> Dict[str, Any]:
     }
 
 
+def test_quick_ingest_uses_canonical_media_database_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tldw_chatbook import config
+    from tldw_chatbook.Local_Ingestion import local_file_ingestion
+
+    expected_path = tmp_path / "runtime" / "media.db"
+    captured: dict[str, object] = {}
+
+    class FakeMediaDatabase:
+        def __init__(self, db_path, client_id):
+            captured["db_path"] = db_path
+            captured["client_id"] = client_id
+
+        def close_connection(self):
+            captured["closed"] = True
+
+    monkeypatch.setattr(config, "get_media_db_path", lambda: expected_path)
+    monkeypatch.setattr(
+        local_file_ingestion,
+        "MediaDatabase",
+        FakeMediaDatabase,
+    )
+    monkeypatch.setattr(
+        local_file_ingestion,
+        "ingest_local_file",
+        lambda file_path, media_db: {"status": "ok"},
+    )
+
+    result = local_file_ingestion.quick_ingest(tmp_path / "document.txt")
+
+    assert result == {"status": "ok"}
+    assert captured == {
+        "db_path": str(expected_path),
+        "client_id": "quick_ingest",
+        "closed": True,
+    }
+
+
 def test_pdf_options_are_routed_to_process_pdf(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "doc.pdf"
     source.write_bytes(b"%PDF-1.4 stub")
@@ -142,8 +182,13 @@ def test_audio_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     parse_local_file_for_ingest(
         str(source),
         {
-            "transcription_model": "small",
-            "language": "es",
+            "transcription_provider": "parakeet-onnx",
+            "transcription_model_dir": "/models/parakeet-v2-int8",
+            "transcription_model": "nemo-parakeet-tdt-0.6b-v2",
+            "language": "en",
+            "transcription_precision": "int8",
+            "transcription_local_files_only": True,
+            "transcription_batch_route_resolved": True,
             "timestamps": False,
             "diarization": True,
         },
@@ -151,8 +196,13 @@ def test_audio_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
 
     assert len(calls) == 1
     call = calls[0]
-    assert call["transcription_model"] == "small"
-    assert call["transcription_language"] == "es"
+    assert call["transcription_provider"] == "parakeet-onnx"
+    assert call["transcription_model_dir"] == "/models/parakeet-v2-int8"
+    assert call["transcription_model"] == "nemo-parakeet-tdt-0.6b-v2"
+    assert call["transcription_language"] == "en"
+    assert call["transcription_precision"] == "int8"
+    assert call["transcription_local_files_only"] is True
+    assert call["transcription_batch_route_resolved"] is True
     assert call["timestamp_option"] is False
     assert call["diarize"] is True
 
@@ -189,8 +239,14 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     parse_local_file_for_ingest(
         str(source),
         {
+            "transcription_provider": "faster-whisper",
+            "transcription_model_dir": None,
             "transcription_model": "medium",
             "language": "fr",
+            "translation_target_language": "en",
+            "transcription_precision": "int8",
+            "transcription_local_files_only": True,
+            "transcription_batch_route_resolved": True,
             "timestamps": True,
             "diarization": False,
         },
@@ -198,8 +254,14 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
 
     assert len(calls) == 1
     call = calls[0]
+    assert call["transcription_provider"] == "faster-whisper"
+    assert call["transcription_model_dir"] is None
     assert call["transcription_model"] == "medium"
     assert call["transcription_language"] == "fr"
+    assert call["translation_target_language"] == "en"
+    assert call["transcription_precision"] == "int8"
+    assert call["transcription_local_files_only"] is True
+    assert call["transcription_batch_route_resolved"] is True
     assert call["timestamp_option"] is True
     assert call["diarize"] is False
 

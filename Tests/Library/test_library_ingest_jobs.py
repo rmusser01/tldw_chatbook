@@ -418,6 +418,9 @@ def test_counts_returns_per_state_counts() -> None:
         "writing": 1,
         "done": 1,
         "failed": 1,
+        # counts() is keyed by every IngestJobState, so a state with no jobs
+        # still reports zero rather than being absent.
+        "cancelled": 0,
     }
 
 
@@ -1029,4 +1032,88 @@ def test_requeue_refuses_unsupported_file_type() -> None:
         error="Unsupported file type",
         error_detail={"category": "unsupported_file_type"},
     )
+    assert registry.requeue(job.job_id) is None
+
+
+# --- cancelled lifecycle (task-684.2) ---------------------------------------
+
+
+def test_mark_cancelled_transitions_and_stamps_finish() -> None:
+    """A server-cancelled job is neither a success nor a failure.
+
+    The server reports ``cancelled`` for a job the user stopped; recording it
+    as ``failed`` would offer Retry for something nobody wants retried and
+    would read as an error the user did not cause (task-684.2).
+    """
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.mp3", origin="server")
+    registry.mark_parsing(job.job_id)
+
+    cancelled = registry.mark_cancelled(job.job_id, reason="Cancelled on the server.")
+
+    assert cancelled is not None
+    assert cancelled.state is IngestJobState.CANCELLED
+    assert cancelled.finished_at is not None
+    assert cancelled.finished_at_wall
+    assert "Cancelled on the server." in cancelled.error
+
+
+def test_mark_cancelled_is_a_noop_for_a_finished_job() -> None:
+    """A job that already reached a terminal state cannot be cancelled."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
+    registry.mark_done(job.job_id, media_id=3)
+
+    assert registry.mark_cancelled(job.job_id) is None
+    assert registry.jobs()[0].state is IngestJobState.DONE
+
+
+def test_mark_cancelled_unknown_job_id_returns_none() -> None:
+    registry = LibraryIngestJobRegistry()
+    assert registry.mark_cancelled("ingest-job-999") is None
+
+
+def test_counts_includes_cancelled() -> None:
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.mp3", origin="server")
+    registry.mark_cancelled(job.job_id)
+
+    assert registry.counts()["cancelled"] == 1
+
+
+def test_clear_finished_removes_a_cancelled_job() -> None:
+    """Cancelled is terminal, so "Clear finished" must sweep it up."""
+    registry = LibraryIngestJobRegistry()
+    cancelled = registry.submit(source_path="/tmp/a.mp3", origin="server")
+    registry.mark_cancelled(cancelled.job_id)
+    queued = registry.submit(source_path="/tmp/b.txt")
+
+    removed = registry.clear_finished()
+
+    assert removed == 1
+    assert [j.job_id for j in registry.jobs()] == [queued.job_id]
+
+
+def test_dismiss_accepts_a_cancelled_job() -> None:
+    """A cancelled row can be cleared individually, not only in bulk.
+
+    Retry stays withheld -- ``requeue`` is FAILED-only, so offering it would be
+    dead bait -- but dismissing is the natural per-row gesture.
+    """
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.mp3", origin="server")
+    registry.mark_cancelled(job.job_id)
+
+    assert registry.dismiss(job.job_id) is not None
+    assert registry.jobs() == ()
+
+
+def test_requeue_still_refuses_a_cancelled_job() -> None:
+    """Retry is not offered for a cancellation, so requeue must not honour one."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.mp3", origin="server")
+    registry.mark_cancelled(job.job_id)
+
     assert registry.requeue(job.job_id) is None

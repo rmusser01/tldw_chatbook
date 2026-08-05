@@ -1,23 +1,129 @@
-# TTS Module
-# This module provides text-to-speech functionality with support for multiple providers
-
-from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest, NormalizationOptions
-from tldw_chatbook.TTS.TTS_Backends import TTSBackendBase, TTSBackendManager
+from tldw_chatbook.TTS.adapter_types import (
+    CapabilitySnapshotState,
+    ProgressSink,
+    ProviderHealth,
+    TTSAudioResponse,
+    TTSModelInfo,
+    TTSNativeCapabilitySnapshot,
+    TTSOperationCode,
+    TTSOperationError,
+    TTSProgress,
+    TTSProviderCatalog,
+    TTSProviderDescriptor,
+    TTSRequest,
+    TTSStructuredVoiceAdapter,
+    TTSVoiceDiscoveryResult,
+    VoiceDiscoveryState,
+)
+from tldw_chatbook.TTS.audio_schemas import NormalizationOptions, OpenAISpeechRequest
+from tldw_chatbook.TTS.character_request_resolver import (
+    CharacterTTSRequestResolution,
+    CharacterTTSRequestResolver,
+    CharacterTTSResolutionError,
+    CharacterTTSResolutionSource,
+)
+from tldw_chatbook.TTS.playground_types import (
+    STTSGeneratedAudio,
+    STTSPlaygroundRequest,
+    TTSRequestedSelectionSnapshot,
+)
+from tldw_chatbook.TTS.preferences import TTSConfigMutation, TTSPreferencesSnapshot
+from tldw_chatbook.TTS.profile_errors import (
+    ProfileRepositoryError,
+    ProfileServiceError,
+    ProfileValidationError,
+)
+from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
+from tldw_chatbook.TTS.profile_service import (
+    LoadedCharacterTTSAssignment,
+    LoadedTTSProfile,
+    PortableProfileAvailabilityObservation,
+    PortableProfileImportPlan,
+    PortableProfileImportResult,
+    ProfileAvailabilityState,
+    TTSPlaygroundSelectionPreset,
+    TTSProfileAvailability,
+    TTSProfileAvailabilitySnapshot,
+    TTSProfilePageSnapshot,
+    TTSProfileService,
+)
+from tldw_chatbook.TTS.profile_types import (
+    AssignedTTSProfileSnapshot,
+    CharacterRef,
+    CharacterTTSAssignment,
+    ProfileBackupReceipt,
+    ProfileRepositoryState,
+    ProfileRestoreReceipt,
+    ProfileStoreResult,
+    TTSGenerationProfile,
+    TTSProfileDraft,
+    TTSProfilePage,
+    canonical_json_options,
+)
 from tldw_chatbook.TTS.TTS_Generation import (
     TTSService,
-    get_tts_service,
+    bind_tts_service,
     close_tts_resources,
+    get_tts_service,
+    reset_tts_service_binding,
 )
 
 __all__ = [
-    # Schemas
-    "OpenAISpeechRequest",
+    "AssignedTTSProfileSnapshot",
+    "CapabilitySnapshotState",
+    "CharacterRef",
+    "CharacterTTSRequestResolution",
+    "CharacterTTSRequestResolver",
+    "CharacterTTSResolutionError",
+    "CharacterTTSResolutionSource",
+    "CharacterTTSAssignment",
+    "LoadedCharacterTTSAssignment",
+    "LoadedTTSProfile",
     "NormalizationOptions",
-    # Backend classes
-    "TTSBackendBase",
-    "TTSBackendManager",
-    # Service
+    "OpenAISpeechRequest",
+    "ProfileAvailabilityState",
+    "ProfileBackupReceipt",
+    "ProfileRepositoryError",
+    "ProfileRepositoryState",
+    "ProfileRestoreReceipt",
+    "ProfileServiceError",
+    "ProfileStoreResult",
+    "ProfileValidationError",
+    "PortableProfileAvailabilityObservation",
+    "PortableProfileImportPlan",
+    "PortableProfileImportResult",
+    "ProgressSink",
+    "ProviderHealth",
+    "STTSGeneratedAudio",
+    "STTSPlaygroundRequest",
+    "TTSAudioResponse",
+    "TTSConfigMutation",
+    "TTSGenerationProfile",
+    "TTSModelInfo",
+    "TTSNativeCapabilitySnapshot",
+    "TTSOperationCode",
+    "TTSOperationError",
+    "TTSPlaygroundSelectionPreset",
+    "TTSPreferencesSnapshot",
+    "TTSProfileAvailability",
+    "TTSProfileAvailabilitySnapshot",
+    "TTSProfileDraft",
+    "TTSProfilePage",
+    "TTSProfilePageSnapshot",
+    "TTSProfileRepository",
+    "TTSProfileService",
+    "TTSProgress",
+    "TTSProviderCatalog",
+    "TTSProviderDescriptor",
+    "TTSRequest",
+    "TTSRequestedSelectionSnapshot",
     "TTSService",
-    "get_tts_service",
+    "TTSStructuredVoiceAdapter",
+    "TTSVoiceDiscoveryResult",
+    "VoiceDiscoveryState",
+    "bind_tts_service",
+    "canonical_json_options",
     "close_tts_resources",
+    "get_tts_service",
+    "reset_tts_service_binding",
 ]

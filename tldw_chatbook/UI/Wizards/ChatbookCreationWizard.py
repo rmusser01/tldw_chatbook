@@ -37,6 +37,7 @@ from textual.reactive import reactive
 from textual import on
 from loguru import logger
 
+from ...Utils.private_paths import secure_private_directory
 from .BaseWizard import WizardContainer, WizardStep, WizardStepConfig, WizardScreen
 from ..Widgets.SmartContentTree import (
     SmartContentTree,
@@ -44,6 +45,10 @@ from ..Widgets.SmartContentTree import (
     ContentSelectionChanged,
 )
 from ...Chatbooks.chatbook_creator import ChatbookCreator
+from ...Chatbooks.database_paths import (
+    get_chatbook_database_paths,
+    get_private_chatbooks_dir,
+)
 from ...Chatbooks.chatbook_models import ContentType
 from ...Chatbooks.server_chatbook_service import (
     build_server_job_record,
@@ -180,7 +185,8 @@ class ContentSelectionStep(WizardStep):
         """Compose the content selection UI."""
         with Container(classes="selection-header"):
             yield Static(
-                "Select the conversations, notes, characters, media, and prompts to include in your chatbook."
+                "Select the conversations, notes, characters, media, prompts, and "
+                "kept briefings to include in your chatbook."
             )
 
         # Smart content tree
@@ -197,6 +203,7 @@ class ContentSelectionStep(WizardStep):
             ContentType.CHARACTER: [],
             ContentType.MEDIA: [],
             ContentType.PROMPT: [],
+            ContentType.KEPT_BRIEFING: [],
         }
 
         try:
@@ -286,6 +293,42 @@ class ContentSelectionStep(WizardStep):
                                 subtitle=description[:50] + "..."
                                 if description and len(description) > 50
                                 else description,
+                            )
+                        )
+
+                    # Kept briefings (task-1870). Kept scripts are not
+                    # independently selectable -- they ride along nested
+                    # inside their parent briefing's export payload -- so
+                    # the subtitle just reports how many come along.
+                    kept_briefings = main_db.list_kept_briefings(limit=200)
+                    logger.debug(
+                        f"Found {len(kept_briefings) if kept_briefings else 0} kept briefings"
+                    )
+                    # A grouped COUNT, not a per-briefing
+                    # len(list_kept_scripts(...)) -- the latter materialized
+                    # every kept script's full turns_json/roster_snapshot_json
+                    # (a complete cast transcript) on the UI thread purely to
+                    # discard it and keep the length (task-1870 fix-wave F3).
+                    kept_script_counts = main_db.kept_script_counts(
+                        [kept.get("id") for kept in kept_briefings]
+                    )
+
+                    for kept in kept_briefings:
+                        kept_id = kept.get("id")
+                        script_count = kept_script_counts.get(kept_id, 0)
+                        title = kept.get("watchlist_name") or (
+                            f"Kept briefing {kept_id}"
+                        )
+
+                        content_data[ContentType.KEPT_BRIEFING].append(
+                            ContentNodeData(
+                                type=ContentType.KEPT_BRIEFING,
+                                id=str(kept_id),
+                                title=title,
+                                subtitle=f"{script_count} script"
+                                f"{'s' if script_count != 1 else ''}"
+                                if script_count
+                                else "no scripts",
                             )
                         )
 
@@ -610,19 +653,26 @@ class PreviewConfirmStep(WizardStep):
                 notes_node.add("...")
 
         # Update export path
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_name = "".join(c for c in title if c.isalnum() or c in " -_").strip()
-        export_format = export_options.get("format", "zip")
-        filename = f"{safe_name}_{timestamp}.{export_format}"
-        export_path = Path.home() / "Documents" / "Chatbooks" / filename
         execution_mode = export_options.get("execution_mode", "local")
 
         if execution_mode == "server":
+            # Server-mode exports never touch a local directory, so don't
+            # resolve one -- get_private_chatbooks_dir() hardens and *creates*
+            # the directory as a side effect, which would otherwise make
+            # merely previewing a server-mode export mutate the filesystem.
             self.query_one("#export-path", Static).update(
                 "Server-side export via configured TLDW API"
             )
             self.wizard.wizard_data["export_path"] = ""
         else:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_name = "".join(c for c in title if c.isalnum() or c in " -_").strip()
+            export_format = export_options.get("format", "zip")
+            filename = f"{safe_name}_{timestamp}.{export_format}"
+            # Default to the app's private, hardened data directory rather than
+            # the hardcoded ~/Documents/Chatbooks literal (task-984); existing
+            # exports at the old location are left in place.
+            export_path = get_private_chatbooks_dir() / filename
             self.query_one("#export-path", Static).update(str(export_path))
             self.wizard.wizard_data["export_path"] = str(export_path)
 
@@ -843,31 +893,7 @@ class ProgressStep(WizardStep):
                 finally:
                     await close_server_chatbook_service_lease(lease)
 
-            db_config = config.get("database", {})
-            db_paths = {
-                "ChaChaNotes": str(
-                    Path(
-                        db_config.get(
-                            "chachanotes_db_path",
-                            "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                        )
-                    ).expanduser()
-                ),
-                "Prompts": str(
-                    Path(
-                        db_config.get(
-                            "prompts_db_path", "~/.local/share/tldw_cli/tldw_prompts.db"
-                        )
-                    ).expanduser()
-                ),
-                "Media": str(
-                    Path(
-                        db_config.get(
-                            "media_db_path", "~/.local/share/tldw_cli/media_db_v2.db"
-                        )
-                    ).expanduser()
-                ),
-            }
+            db_paths = get_chatbook_database_paths()
 
             creator = ChatbookCreator(db_paths)
 
@@ -876,7 +902,11 @@ class ProgressStep(WizardStep):
                 raise ValueError(
                     "Export path is not configured for local chatbook creation."
                 )
-            export_path.parent.mkdir(parents=True, exist_ok=True)
+            secure_private_directory(
+                export_path.parent,
+                create=True,
+                application_owned=True,
+            )
 
             # Update status before starting
             self._update_status("status-validate", "completed", "✓ Validated content")
@@ -1044,17 +1074,44 @@ class ProgressStep(WizardStep):
         button_id = event.button.id
 
         if button_id == "open-folder" and self.export_path:
-            # Open the folder containing the export
-            import subprocess
+            # Open the folder containing the export.
+            #
+            # Launched, never awaited (TASK-1373). This runs on Textual's
+            # serialized message pump, so `subprocess.run` -- which waits for the
+            # child -- froze the app for as long as the file manager took to
+            # return. `open` on macOS returns promptly, which is why this went
+            # unnoticed, but `xdg-open` is a shell script that in several desktop
+            # environments does not return until the launched handler exits: an
+            # unbounded freeze from a button press.
             import platform
+            import subprocess
 
             folder = str(self.export_path.parent)
-            if platform.system() == "Darwin":  # macOS
-                subprocess.run(["open", folder])
-            elif platform.system() == "Linux":
-                subprocess.run(["xdg-open", folder])
-            elif platform.system() == "Windows":
-                subprocess.run(["explorer", folder])
+            launchers = {
+                "Darwin": ["open", folder],
+                "Linux": ["xdg-open", folder],
+                "Windows": ["explorer", folder],
+            }
+            command = launchers.get(platform.system())
+            if command is not None:
+                try:
+                    subprocess.Popen(
+                        command,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                except Exception as exc:
+                    # A missing launcher must not take down the wizard.
+                    logger.warning(
+                        "Could not open export folder "
+                        "(platform={}, exception_category={}).",
+                        platform.system(),
+                        type(exc).__name__,
+                    )
+                    self.app.notify(
+                        "Couldn't open the folder. The export is still saved.",
+                        severity="warning",
+                    )
 
         elif button_id == "create-another":
             # Dismiss wizard to create another

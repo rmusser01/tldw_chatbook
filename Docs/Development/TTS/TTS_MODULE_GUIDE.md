@@ -6,14 +6,53 @@ The TTS module in tldw_chatbook provides a flexible, extensible system for gener
 
 ## Architecture
 
+### TTS adapter service
+
+The application owns one sealed `TTSAdapterRegistry` and one `TTSService`.
+Native adapters use canonical provider IDs and `TTSService.synthesize()`.
+`audio_cpp` is the first native adapter. It is registered first, by the exact
+canonical ID `audio_cpp`, with display label `audio.cpp` and no alias. The
+adapter remains unmaterialized until its first operation.
+
+The following six entries remain unchanged behind the temporary compatibility
+bridge: `openai`, `elevenlabs`, `kokoro`, `chatterbox`, `higgs`, and `alltalk`.
+Each bridge adapter lazily owns one provider-scoped `TTSBackendManager`;
+application and UI code must not access that manager or any concrete adapter.
+The bridge is removed only after every retained provider has a native adapter
+and all legacy internal-model callers have migrated.
+
+New providers are implemented as native adapters. See
+[ADR-023](../../../backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
+and the approved
+[audio.cpp adapter design](../../superpowers/specs/2026-07-23-audio-cpp-tts-adapter-registry-design.md).
+
 ### Module Structure
 
 ```
 tldw_chatbook/TTS/
 ├── __init__.py              # Module exports
+├── adapter_types.py         # Provider-neutral adapter contracts
+├── adapter_registry.py      # Sealed app-scoped provider registry
+├── adapter_bootstrap.py     # Application service construction
+├── legacy_bridge.py         # Temporary provider-scoped compatibility adapters
+├── audio_cpp_config.py      # Immutable external-server configuration
+├── audio_cpp_contract.py    # Pinned JSON and PCM16 WAV validation
+├── preferences.py           # Immutable global defaults and config mutations
+├── request_admission.py     # Atomic preference/revision/lease admission
+├── profile_errors.py        # Value-independent profile/store failures
+├── profile_types.py         # Immutable profiles, assignments, and receipts
+├── profile_schema.py        # Dedicated SQLite validation and codecs
+├── migrations/
+│   └── v0_to_v1.py         # Versioned profile-store schema migration
+├── profile_store_lock.py    # Cooperative shared/exclusive process locking
+├── profile_repository.py    # Serialized CRUD, backup, and restore lifecycle
+├── profile_service.py       # Native profile validation and capability overlay
+├── playground_types.py      # Immutable Playground request/artifact contracts
+├── adapters/
+│   └── audio_cpp.py         # Native external audio.cpp adapter
 ├── audio_schemas.py         # Pydantic schemas for requests/responses
 ├── TTS_Generation.py        # Main TTS service orchestration
-├── TTS_Backends.py          # Backend manager and base class
+├── TTS_Backends.py          # Legacy bridge manager and base class
 ├── audio_service.py         # Audio format conversion service
 ├── text_processing.py       # Text normalization and chunking
 ├── backends/                # Backend implementations
@@ -33,29 +72,355 @@ tldw_chatbook/TTS/
 
 ### Core Components
 
-#### 1. TTSService (TTS_Generation.py)
+#### 1. TTSService (`TTS_Generation.py`)
 The main orchestration layer that:
-- Manages backend selection based on model/provider
-- Handles streaming audio generation
-- Coordinates text processing and audio conversion
-- Provides a unified interface for all backends
+- Routes canonical provider IDs through the sealed registry
+- Exposes provider-neutral synthesis, catalog, voice, and reconfiguration
+  operations
+- Retains adapter resources until each audio response is closed
+- Preserves the legacy byte-stream interface during migration
 
-#### 2. TTSBackendBase (TTS_Backends.py)
-Abstract base class that all backends must implement:
-```python
-class TTSBackendBase(ABC):
-    async def initialize(self)
-    async def generate_speech_stream(request: OpenAISpeechRequest) -> AsyncGenerator[bytes, None]
-    async def close(self)
+#### 2. TTSAdapterRegistry (`adapter_registry.py`)
+The application-owned registry performs exact provider lookup, lazy adapter
+materialization, operation leasing, targeted reconfiguration, and bounded
+shutdown. Registration is sealed at construction time.
+
+`TTSBackendBase`, `TTSBackendManager`, and the class-global legacy backend
+registry are compatibility-bridge internals. They are not the extension point
+for new providers.
+
+### Local generation profiles (Slices 2A–2B)
+
+Reusable generation profiles now have a dedicated, versioned SQLite ownership
+boundary. `TldwCli` constructs one initially closed `TTSProfileRepository` and
+opens it lazily for a profile-store consumer such as **Backup All**. The default
+file is `tldw_chatbook_tts_profiles.db` in the current Chatbook user data
+directory. An installation may instead set a validated path:
+
+```toml
+[database]
+tts_profiles_db_path = "/absolute/path/to/tts-profiles.db"
 ```
 
-#### 3. Audio Service (audio_service.py)
+The store is local-only and separate from character cards, provider
+configuration, and conversation storage. Schema version 1 holds complete,
+immutable profile snapshots and authority-scoped assignment records. Profile
+display names are trimmed and have a unique key derived as
+`NFKC(display_name).casefold()`. Creates begin at revision 1; updates require
+the exact revision read by the editor and increment it atomically. A stale
+revision or normalized-name collision reports a conflict without overwriting
+the stored row. Assignment identity is the complete
+`(source, authority_id, character_id)` tuple, and a foreign-key restriction
+prevents deletion of an assigned profile.
+
+Every repository operation runs through one serialized off-event-loop worker,
+which owns at most one long-lived SQLite connection. An open repository keeps a
+cooperative shared lock next to the database, so multiple Chatbook processes
+may read and write through SQLite while each retains shared ownership. Restore
+must first quiesce admitted work and acquire a bounded exclusive lock. A second
+process that still holds a shared lock therefore prevents replacement and
+causes restore to fail before the live file is changed.
+
+Normal operations and results carry a monotonic lifecycle generation. Restore
+advances that generation when admitted, rejects new normal work while
+`restoring`, cancels queued older work, and prevents an already-running older
+result from being published. The public states are `open`, `restoring`,
+`unavailable`, and `closed`; definitive close is terminal.
+
+`TTSProfileRepository.backup_to()` uses SQLite's online-backup API, validates
+the completed standalone snapshot, and publishes it atomically at its
+destination. **Backup All** reaches the profile database only through this
+repository method; it never copies the open profile file. The databases in one
+Backup All directory are individually consistent snapshots taken during the
+run, not one cross-database atomic snapshot.
+
+Restore is an explicit, bounded repository operation. It validates a private
+snapshot of the candidate, stages it through SQLite online backup, performs
+schema, full-integrity, foreign-key, and domain-row checks, and creates a
+durable pre-restore recovery database before atomic replacement. Quiescence,
+candidate validation, exclusive-lock, recovery-backup, or replacement failure
+leaves the current store authoritative and rebinds it when safe. If replacement
+succeeds but shared-lock reacquisition or authoritative reopen fails, the
+repository reports `unavailable`, retains recovery evidence, and does not
+create a blank database. Corrupt, partial, unsupported-version, or missing
+established stores likewise fail closed instead of being recreated.
+
+The restore timeout is one absolute cooperative budget. SQLite copies run in
+bounded page batches; structural, quick-check, foreign-key, integrity, and
+count queries use SQLite VM progress interruption; and schema-owned rows and
+private candidate-copy chunks check the same deadline. Checkpoint busy waiting
+is capped to the remaining budget. Checks also surround staging, sidecar
+handling, recovery, replacement, final publication, and durable flush
+boundaries so the exclusive lease is released promptly on expiry.
+An individual kernel call such as `fsync`, `replace`, `stat`, `read`, or
+`write` cannot be interrupted after it starts, so one such in-flight call may
+finish just beyond the requested timeout before cleanup releases ownership.
+
+Profiles persist generation selections, not connection or process
+configuration. Provider origins, credentials, API keys, custom headers, binary
+paths, `server.json` paths, health observations, message text, and raw local
+paths are excluded from profile data and safe repository diagnostics.
+
+`TTSProfileService` is a native-only boundary over the application-owned
+repository and `TTSService`. It creates profiles only from immutable successful
+audio.cpp Playground artifacts and copies the artifact's admitted provider,
+exact model, optional exact voice, WAV format, speed `1.0`, and empty options.
+Before saving, it verifies that the artifact's admitted
+configuration revision is still current; the revision itself is not persisted.
+It never derives persisted values from mutable UI selectors. The service also
+provides bounded 50-row pages, optimistic
+edit/delete/duplicate operations, assignment-aware deletion, and exact
+capability observation without mutating stored rows.
+
+The **Voice profiles** view renders repository rows before capability
+enrichment, then marks each exact selection `available`, `unavailable`, or
+`unverified`. Unavailable is an authoritative incompatibility and recovers by
+editing; unverified is a transient or stale observation and recovers by
+refreshing. Preview copies the stored values into a one-shot exact Playground
+preset without synthesizing. Search, paging, refresh, edit, duplicate, preview,
+and delete operate on the exact loaded repository generation and revision.
+Repository failures remain isolated: the library shows bounded recovery copy
+while ordinary Playground and Console speech continue to work.
+
+Slice 2B does not provide character-assignment UI or authority acquisition,
+roleplay routing, profile/card portability or synchronization, legacy-provider
+profile execution, provider connection details, or managed audio.cpp process
+behavior. See
+[ADR-028](../../../backlog/decisions/028-character-tts-generation-profile-ownership.md).
+
+### Slice 3A assignment mutation service
+
+Character assignment identity is the exact
+`(source, authority_id, character_id)` tuple. Set or replace requires the
+caller-held repository generation, selected profile revision, expected current
+assignment (including explicitly unassigned), and a fresh authoritative
+capability check. Detach is idempotent when the assignment is already absent,
+but refuses to remove a different replacement. The repository's final
+transaction checks remain authoritative.
+
+This slice adds no assignment UI, speech resolver, automatic speech, Persona
+inheritance, profile portability, Sync behavior, or managed audio.cpp behavior.
+See
+[ADR-037](../../../backlog/decisions/037-roleplay-assistant-identity-and-persona-user-profile-separation.md).
+
+### Global defaults and Console request admission
+
+TASK-710 represents global TTS defaults as one immutable
+`TTSPreferencesSnapshot`. audio.cpp supports explicit selection modes in
+`[app_tts]`:
+
+```toml
+[app_tts]
+default_provider = "audio_cpp"
+default_model_mode = "first_available" # or "exact"
+default_voice_mode = "server_default"  # or "exact"
+default_format = "wav"
+default_speed = 1.0
+```
+
+`exact` mode also requires the corresponding non-empty `default_model` or
+`default_voice`. `first_available` resolves the first model from one admitted
+catalog snapshot, and `server_default` omits `voice` from the request. Existing
+audio.cpp configurations that have no mode keys and contain blank model or
+voice values read as `first_available` and `server_default` without a startup
+write.
+
+The settings UI translates its local Select sentinels before persistence, so a
+sentinel cannot become an empty exact identifier. One atomic configuration
+mutation always writes the authoritative mode keys. Exact values are
+dual-written to the canonical and legacy exact keys; dynamic modes remove stale
+exact values from both locations. Exact-mode configurations therefore remain
+readable by older builds. Dynamic-mode downgrade is not transparent: save
+explicit model and voice values before downgrading, or restore a trusted
+pre-feature configuration backup.
+
+`TTSRequestAdmissionCoordinator` freezes the complete preference selection,
+resolves any dynamic model, reads the provider revision, and acquires the
+matching registry lease under one writer-preferred admission gate. Settings
+publication persists off the Textual event loop in one service-retained task,
+then uses the exclusive side of that gate for a bounded handoff. A foreground
+save may report **Saved — applying after current speech**; the admitted speech
+continues, only the latest pending generation may become active, and the old
+audio.cpp adapter closes before a replacement can be created.
+
+Console **Speak** does not post caller-supplied message text. The Console store
+issues an ephemeral immutable `TTSMessageSpeechSnapshot` and binds it to the
+store validator. Before the cooldown clock, normalization, or provider work,
+the TTS handler revalidates the active session and branch, native and persisted
+message identity, selected text variant and exact content, process-local speech
+revision, durable row version when present, completed assistant role/status,
+and trusted assistant authorship. A stale, edited, deleted, incomplete,
+non-assistant, or authorship-mismatched snapshot fails closed with bounded retry
+copy asking the user to select **Speak** again.
+
+The snapshot is process-local, is not persisted, and is not a voice-profile
+selection. Once admitted, Console still uses the saved global TTS defaults.
+Direct `TTSRequestEvent` callers outside Console retain their explicit trusted
+global path.
+
+Console **Speak** calls `TTSService.synthesize_default()`. An `audio_cpp`
+selection uses the native adapter with locked WAV, speed `1.0`, and empty
+options. The six retained providers continue through `LegacyTTSAdapter`. The
+native complete WAV is still consumed through `TTSAudioResponse`'s asynchronous
+iterator and closed through the existing artifact/playback lifecycle. Snapshot
+admission neither persists the snapshot nor performs message writes, and it
+does not change ownership of the external audio.cpp process.
+
+### Native audio.cpp adapter (external mode)
+
+Slice 2 connects to one existing `audiocpp_server`; it does not launch or
+supervise a process. Configuration comes only from `[app_tts.audio_cpp]`:
+
+```toml
+[app_tts.audio_cpp]
+mode = "external"
+base_url = "http://127.0.0.1:8080"
+connect_timeout_seconds = 5
+synthesis_timeout_seconds = 600
+max_input_characters = 10000
+max_response_bytes = 134217728
+max_metadata_bytes = 1048576
+max_catalog_models = 1000
+max_voices_per_model = 1000
+max_identifier_characters = 256
+```
+
+`base_url` must be a canonical absolute HTTP or HTTPS origin. Credentials,
+non-root paths, query strings, fragments, and invalid ports are rejected. The
+configuration has no environment override, authentication or custom-header
+field, binary path, `server.json` path, or other process field. HTTPS keeps
+certificate verification enabled. Invalid configuration is rejected during
+local projection or adapter materialization with a safe, value-independent
+`ValueError`, before any provider operation; the external adapter does not emit
+`configuration_invalid`.
+
+`connect_timeout_seconds` configures HTTP connection establishment and also
+bounds the complete required health-plus-models discovery sequence, including
+an eligible safe-GET retry. The same value independently bounds each optional
+voice-discovery operation. `synthesis_timeout_seconds` bounds the speech request
+through complete response consumption; the HTTP connect timeout still applies
+inside it. There is no read-inactivity timer.
+
+The adapter implements the pinned `audio_cpp_http_v1` structure from
+audio.cpp commit
+[`d3d748179e5ace353386fbf17bcaedfacf482d75`](https://github.com/0xShug0/audio.cpp/tree/d3d748179e5ace353386fbf17bcaedfacf482d75):
+
+- Required readiness surfaces: `GET /health` and `GET /v1/models`.
+- Optional lazy voice metadata:
+  `GET /v1/audio/voices?model=<id>`.
+- Complete speech response: `POST /v1/audio/speech`.
+
+Readiness retains only bounded TTS model metadata. Voice discovery is lazy,
+bounded, per model, and cached by provider configuration and catalog revision.
+A missing or invalid optional voices endpoint produces no discovered voices;
+it does not make an otherwise compatible provider unavailable. Callers
+represent the server-selected voice as `None`: the UI-facing “Server default”
+sentinel is not sent in the speech payload.
+
+Requests accept a known model, non-empty bounded text, an optional safe voice,
+WAV output, speed exactly `1.0`, and no adapter options. Synthesis sends one
+non-retried POST containing only `model`, `input`, `response_format: "wav"`,
+and an optional `voice`. Safe GET operations may receive one bounded retry.
+All requests disable redirects and request identity encoding.
+
+The adapter bounds metadata and audio reads before parsing. It rejects
+compressed, oversized, malformed, or incompatible responses and validates the
+entire response as structurally complete, uncompressed PCM16 RIFF/WAV.
+Validated bytes are then yielded as one asynchronous chunk. The asynchronous
+stream contract is preserved, but Slice 2 does not provide incremental audio
+streaming.
+
+`TTSOperationError` exposes only a stable code, safe message, retryability,
+local operation ID, and optional recovery action. Connectivity and
+required-contract failures make cached health stale; invalid requests, optional
+voice failures, busy responses, generation failures, invalid audio, and
+cancellation do not. There is no automatic fallback to another model or a
+legacy provider.
+Successful response metadata contains only safe scalar provenance, sample, and
+bounded timing values. Logs exclude submitted text, configured origins and
+values, response bodies, and rejected identifiers.
+
+The registry admits only one active audio.cpp adapter. An unchanged normalized
+configuration is a no-op. A changed configuration blocks new operations,
+drains active leases, closes the old adapter, and only then installs the new
+configuration; the replacement remains lazy, so old and new instances never
+overlap.
+
+Normal tests use fake HTTP transport and fixtures pinned to the reviewed
+upstream commit. They require neither an audio.cpp binary nor model downloads.
+
+The installed Homebrew package `audio-cpp 0.4` was characterized on
+2026-07-25 as compatible with the pinned health, model, voice, and speech
+endpoints and complete PCM16 `audio/wav` response contract. This is
+compatible-build evidence only: it does not move the ADR-023 upstream pin or
+grant Chatbook ownership of the external server process.
+
+An isolated clean-config Textual Console UAT subsequently selected
+`audio_cpp` at `http://127.0.0.1:8080` with `first_available` model and
+`server_default` voice, generated a deterministic Mira response, and exercised
+one native adapter. Console produced one owner-only (`0600`) complete WAV of
+594,604 bytes: mono PCM16 at 44.1 kHz, 297,280 frames, and 6.741 seconds.
+Observed lifecycle counts were complete `1`, playback `1`, progress `4`, and
+streaming `0`; `/usr/bin/afplay` exited `0`. The same external listener identity
+and healthy response were present before and after the run, and application
+shutdown took no action on that user-owned process.
+
+After the implementation was rebased, all 23 patches were range-diff
+identical. Fresh focused and broad automated suites passed, but a second live
+run was unavailable because the installed `audio-cpp 0.4` binary had no
+running process, listener, or healthy endpoint. Chatbook intentionally did not
+launch it; external-process ownership remains with the user.
+
+### Catalog-driven STTS Playground (Slice 3)
+
+TASK-569 implements the external audio.cpp Playground vertical. Opening the
+Playground reads sealed registry descriptors through `TTSService`; descriptor
+discovery does not resolve provider factories or materialize adapters. Only the
+selected provider is resolved. Selecting `audio_cpp` for the first time performs
+bounded readiness and model discovery against the saved external server.
+
+Catalog and voice discovery use independent Textual worker groups. Their result
+tokens include the canonical provider ID and configuration revision, plus the
+catalog revision and model ID where applicable. Results from an old selection,
+configuration, catalog, or model are discarded. Catalog refresh, generation,
+and playback cannot cancel one another, and a second generation cannot replace
+the active generation operation.
+
+One catalog-control projection drives provider, model, voice, format, and speed
+controls. For audio.cpp, the local **Server default** voice sentinel is initially
+selected and becomes `voice=None`; it is never sent as an identifier. Format is
+locked to WAV and speed to `1.0`. Switching to one of the six legacy providers
+restores that provider's prior model, voice, format, speed, and provider-specific
+control state. If refreshed metadata removes a selection, the Playground
+announces and selects a valid fallback. A stale catalog remains visible but
+disables new generation until readiness recovers.
+
+Generation captures an immutable provider-neutral request. `audio_cpp` is the
+native path and calls `TTSService.synthesize(TTSRequest)`; the six existing
+providers remain on the temporary `generate_audio_stream()` compatibility path.
+The validated complete WAV is stored as an immutable artifact containing its
+provider, model, optional voice, source-text snapshot, operation ID, actual
+format/content type, and safe response metadata. Playback and export use that
+artifact, so later selector changes cannot relabel the result or its filename.
+
+Stable adapter failures map to safe, actionable Playground messages and
+recovery actions. Cancellation remains cancellation, existing artifacts remain
+playable and exportable after discovery failures, and an audio.cpp generation
+never automatically falls back to another model or provider. The UI and logs
+do not expose submitted text, configured origins or values, credentials, raw
+remote bodies, or unsafe remote identifiers.
+
+Slice 3 connects only to an existing externally managed `audiocpp_server`.
+User-provided binary and user-provided `server.json` launch, supervision, and
+managed Playground controls remain deferred to Slices 4–5.
+
+#### 3. Audio Service (`audio_service.py`)
 Handles audio format conversion with:
 - `StreamingAudioWriter`: Real-time encoding for streaming
 - Support for MP3, Opus, AAC, FLAC, WAV, PCM
 - Async and sync conversion methods
 
-#### 4. Text Processing (text_processing.py)
+#### 4. Text Processing (`text_processing.py`)
 Provides text preparation for TTS:
 - `TextNormalizer`: Handles URLs, emails, phone numbers, units
 - `TextChunker`: Splits long texts respecting sentence boundaries
@@ -293,9 +658,12 @@ Local TTS installs:
 The S/TT/S tab provides a comprehensive TTS testing environment:
 
 1. **Text Input**: Enter any text to synthesize
-2. **Provider Selection**: Choose from OpenAI, ElevenLabs, Kokoro, or Chatterbox
-3. **Voice Selection**: Provider-specific voices including custom uploads
+2. **Provider Selection**: Choose `audio_cpp` or one of the six legacy
+   providers from registry descriptors
+3. **Voice Selection**: Discovered audio.cpp voices with Server default, or
+   legacy provider-specific voices including custom uploads
 4. **Advanced Settings**:
+   - **audio.cpp**: Catalog-selected model, complete WAV, and speed `1.0`
    - **Chatterbox**: Exaggeration, CFG weight, temperature, candidates, validation
    - **ElevenLabs**: Stability, similarity boost, style, speaker boost
    - **Kokoro**: Language selection
@@ -305,12 +673,11 @@ The S/TT/S tab provides a comprehensive TTS testing environment:
 ### Programmatic Usage
 
 ```python
-from tldw_chatbook.TTS import get_tts_service, OpenAISpeechRequest
+from tldw_chatbook.TTS import OpenAISpeechRequest, get_tts_service
 
-# Initialize service
-tts_service = await get_tts_service(app_config)
+# The application binds the service before callers request it.
+tts_service = await get_tts_service()
 
-# Create request
 request = OpenAISpeechRequest(
     model="tts-1",
     input="Hello, world!",
@@ -319,12 +686,17 @@ request = OpenAISpeechRequest(
     speed=1.0
 )
 
-# Generate audio
 internal_model_id = "openai_official_tts-1"
 async for chunk in tts_service.generate_audio_stream(request, internal_model_id):
-    # Process audio chunks
     audio_file.write(chunk)
 ```
+
+`TTSService.synthesize(TTSRequest)` is the native-adapter API. Use it directly
+for `audio_cpp`. Its complete validated WAV is exposed as one chunk through the
+response's asynchronous iterator, and callers must close the response. The six
+legacy registry entries require private bridge metadata that
+`generate_audio_stream()` supplies; do not call `synthesize()` directly for
+those entries.
 
 ### Event System Integration
 
@@ -362,12 +734,34 @@ default_format = "mp3"       # Audio output format
 default_speed = 1.0          # Speech speed (0.25-4.0)
 ```
 
-### Provider Selection
-The system automatically selects backends based on the model:
-- `tts-1`, `tts-1-hd` → OpenAI backend
-- `kokoro` → Local Kokoro backend
-- `eleven_*` models → ElevenLabs backend
-- `chatterbox` → Chatterbox backend
+### Exact legacy route allowlist
+
+The compatibility generator accepts only these internal model IDs:
+
+- `openai_official_tts-1` → `openai`
+- `openai_official_tts-1-hd` → `openai`
+- `openai_official_tts1` → `openai`
+- `openai_official_tts1hd` → `openai`
+- `elevenlabs_eleven_monolingual_v1` → `elevenlabs`
+- `elevenlabs_eleven_multilingual_v1` → `elevenlabs`
+- `elevenlabs_eleven_multilingual_v2` → `elevenlabs`
+- `elevenlabs_eleven_turbo_v2` → `elevenlabs`
+- `elevenlabs_eleven_turbo_v2_5` → `elevenlabs`
+- `elevenlabs_eleven_flash_v2` → `elevenlabs`
+- `elevenlabs_eleven_flash_v2_5` → `elevenlabs`
+- `elevenlabs_english_v1` → `elevenlabs`
+- `elevenlabs_elevenlabs` → `elevenlabs`
+- `local_kokoro_default_onnx` → `kokoro`
+- `local_kokoro_default_pytorch` → `kokoro`
+- `local_chatterbox_default` → `chatterbox`
+- `local_higgs_default` → `higgs`
+- `local_higgs_v2` → `higgs`
+- `alltalk_default` → `alltalk`
+- `alltalk_alltalk` → `alltalk`
+
+These IDs are temporary bridge inputs, not native provider/model identities.
+New native-adapter code selects a canonical provider and opaque model ID
+explicitly with `TTSRequest`.
 
 ### Audio Formats
 Supported formats vary by provider:
@@ -431,7 +825,10 @@ extra_params = {
 }
 ```
 
-### Streaming with Chunk Processing
+### Legacy Streaming with Chunk Processing
+
+Concrete backend streaming is retained only inside the temporary bridge:
+
 ```python
 async for chunk in backend.generate_speech_stream(request):
     # Process chunks in real-time
@@ -557,16 +954,25 @@ class OpenAISpeechRequest(BaseModel):
     extra_params: Optional[Dict[str, Any]]  # Provider-specific parameters
 ```
 
-### Backend Methods
+### Native Adapter Methods
 
-#### initialize()
-Async initialization of the backend. Called once before first use.
+#### ensure_ready()
+Initialize or connect to provider resources lazily. The service synthesis path
+invokes this as its prerequisite.
 
-#### generate_speech_stream()
-Main generation method returning an async generator of audio bytes.
+#### get_catalog()
+Own readiness and return provider health, models, formats, voices, and
+supported controls. Callers do not pre-resolve a concrete adapter.
+
+#### get_voices(model_id, refresh=False)
+Own readiness and lazily return bounded voices for one model. A refresh bypasses
+the adapter's current voice result without exposing the adapter to callers.
+
+#### synthesize()
+Return a provider-neutral `TTSAudioResponse` with an asynchronous byte stream.
 
 #### close()
-Cleanup method for releasing resources.
+Release provider resources. The registry controls when adapter shutdown occurs.
 
 ## Future Enhancements
 
@@ -586,30 +992,19 @@ Cleanup method for releasing resources.
 
 ## Contributing
 
-### Adding a New Backend
+### Adding a Native Adapter
 
-1. Create new file in `backends/`:
-```python
-from tldw_chatbook.TTS.TTS_Backends import TTSBackendBase
+1. Implement the asynchronous adapter contract (`ensure_ready`,
+   `get_catalog`, `get_voices`, `synthesize`, and `close`) using the
+   provider-neutral request, response, catalog, health, and progress types.
+   `get_catalog()` and `get_voices()` own their readiness step;
+   `ensure_ready()` remains the service synthesis prerequisite.
+2. Add one explicit provider specification to application service
+   construction.
+3. Add configuration validation, contract tests, and provider documentation.
 
-class MyBackend(TTSBackendBase):
-    async def initialize(self):
-        # Setup code
-        pass
-    
-    async def generate_speech_stream(self, request):
-        # Generation logic
-        yield audio_bytes
-```
-
-2. Register in `TTS_Backends.py`:
-```python
-elif backend_id == "my_backend":
-    self._backends[backend_id] = MyBackend(config)
-```
-
-3. Add configuration schema
-4. Update documentation
+Do not register new providers in `TTS_Backends.py` or subclass
+`TTSBackendBase`; those APIs exist only for the six-provider temporary bridge.
 
 ### Testing
 Run TTS-specific tests:
@@ -622,7 +1017,9 @@ pytest Tests/TTS/
 1. **API Keys**: Never log or display API keys
 2. **Input Validation**: All text inputs are sanitized
 3. **File Paths**: Temporary files use secure generation
-4. **Network**: HTTPS only for API calls
+4. **Network**: External audio.cpp accepts an explicit HTTP or HTTPS origin;
+   synthesis text is sent to that configured origin, HTTPS certificate
+   verification remains enabled, and redirects are disabled
 5. **Local Models**: Verify model file integrity
 6. **Voice Cloning**: Be aware of ethical implications
    - Only clone voices with permission

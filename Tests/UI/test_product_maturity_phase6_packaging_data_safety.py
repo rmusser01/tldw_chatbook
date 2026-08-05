@@ -95,6 +95,9 @@ def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> N
     config = _text(CONFIG)
     chachanotes_db = _text(CHACHANOTES_DB)
     media_db = _text(MEDIA_DB)
+    write_raw_config_block = config.split(
+        "def _write_raw_cli_config_unlocked(", maxsplit=1
+    )[1].split("\ndef ", maxsplit=1)[0]
 
     project = pyproject["project"]
     assert project["name"] == "tldw_chatbook"
@@ -140,7 +143,9 @@ def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> N
     assert "TLDW_CONFIG_PATH" in config
     assert "_get_effective_config_path" in config
     assert "_CONFIG_CACHE_SOURCE == config_path" in config
-    assert "atomic_write_text(DEFAULT_CONFIG_PATH" in config
+    assert "create_private_text(" in config
+    assert "atomic_private_write_text(" in write_raw_config_block
+    assert "application_owned_directory=application_directory" in write_raw_config_block
     assert "Do not use machine-specific absolute paths" in recovery_doc
 
     for required_migration_signal in (

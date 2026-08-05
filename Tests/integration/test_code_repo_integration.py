@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 """
 Full integration tests for Code Repo Copy/Paste feature.
 
@@ -9,19 +10,17 @@ Console); the window itself is exercised directly here.
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from tldw_chatbook.app import TldwCli
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.CodeRepoCopyPasteWindow import CodeRepoCopyPasteWindow
 from tldw_chatbook.Utils.github_api_client import GitHubAPIError
 
 
-class CodeRepoTestApp(TldwCli):
-    """Minimal app shell for code-repo integration screens."""
-
-    def compose(self):
-        yield from []
-
-    def on_mount(self):
-        pass
+def _production_app():
+    """Return the real application with onboarding already completed."""
+    app = _build_test_app()
+    app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
+    return app
 
 
 class TestCodeRepoIntegration:
@@ -104,7 +103,7 @@ class TestCodeRepoIntegration:
             yield mock_copy
 
     @pytest.mark.asyncio
-    async def test_error_handling_workflow(self, app_pilot, mock_github_api):
+    async def test_error_handling_workflow(self, mock_github_api):
         """Test error handling throughout the workflow."""
         # Set up API to fail
         mock_github_api.get_repository_info.side_effect = GitHubAPIError(
@@ -113,16 +112,19 @@ class TestCodeRepoIntegration:
 
         errors_captured = []
 
-        class TestApp(CodeRepoTestApp):
-            def notify(self, message, severity="information", **kwargs):
-                if severity == "error":
-                    errors_captured.append(message)
-                super().notify(message, severity=severity, **kwargs)
+        app = _production_app()
+        real_notify = app.notify
 
-        async with app_pilot(TestApp) as pilot:
+        def capture_notify(message, severity="information", **kwargs):
+            if severity == "error":
+                errors_captured.append(message)
+            real_notify(message, severity=severity, **kwargs)
+
+        app.notify = capture_notify
+        async with app.run_test() as pilot:
             # Open repo window directly
-            repo_window = CodeRepoCopyPasteWindow(pilot.app)
-            await pilot.app.push_screen(repo_window)
+            repo_window = CodeRepoCopyPasteWindow(app)
+            await app.push_screen(repo_window)
             await pilot.pause()
 
             # Try to load non-existent repository
@@ -142,7 +144,7 @@ class TestCodeRepoIntegration:
             assert repo_window.current_repo is None
 
     @pytest.mark.asyncio
-    async def test_large_repository_handling(self, app_pilot, mock_github_api):
+    async def test_large_repository_handling(self, mock_github_api):
         """Test handling of large repositories."""
         # Create large tree structure
         large_tree = []
@@ -159,12 +161,10 @@ class TestCodeRepoIntegration:
 
         mock_github_api.build_tree_hierarchy.return_value = large_tree
 
-        class TestApp(CodeRepoTestApp):
-            pass
-
-        async with app_pilot(TestApp) as pilot:
-            repo_window = CodeRepoCopyPasteWindow(pilot.app)
-            await pilot.app.push_screen(repo_window)
+        app = _production_app()
+        async with app.run_test() as pilot:
+            repo_window = CodeRepoCopyPasteWindow(app)
+            await app.push_screen(repo_window)
             await pilot.pause()
 
             # Set up repo
@@ -188,7 +188,7 @@ class TestCodeRepoIntegration:
             assert stats["size"] == sum(1000 * (i + 1) for i in range(100))
 
     @pytest.mark.asyncio
-    async def test_branch_switching_workflow(self, app_pilot, mock_github_api):
+    async def test_branch_switching_workflow(self, mock_github_api):
         """Test switching between branches."""
         # Different content for different branches
         main_tree = [
@@ -205,12 +205,10 @@ class TestCodeRepoIntegration:
 
         mock_github_api.build_tree_hierarchy.return_value = main_tree
 
-        class TestApp(CodeRepoTestApp):
-            pass
-
-        async with app_pilot(TestApp) as pilot:
-            repo_window = CodeRepoCopyPasteWindow(pilot.app)
-            await pilot.app.push_screen(repo_window)
+        app = _production_app()
+        async with app.run_test() as pilot:
+            repo_window = CodeRepoCopyPasteWindow(app)
+            await app.push_screen(repo_window)
             await pilot.pause()
 
             # Load repository
@@ -237,7 +235,7 @@ class TestCodeRepoIntegration:
             assert "main.txt" not in tree_view.nodes
 
     @pytest.mark.asyncio
-    async def test_cancellation_and_cleanup(self, app_pilot, mock_github_api):
+    async def test_cancellation_and_cleanup(self, mock_github_api):
         """Test cancellation and resource cleanup."""
         cleanup_called = False
 
@@ -247,12 +245,10 @@ class TestCodeRepoIntegration:
 
         mock_github_api.close = mock_close
 
-        class TestApp(CodeRepoTestApp):
-            pass
-
-        async with app_pilot(TestApp) as pilot:
-            repo_window = CodeRepoCopyPasteWindow(pilot.app)
-            await pilot.app.push_screen(repo_window)
+        app = _production_app()
+        async with app.run_test() as pilot:
+            repo_window = CodeRepoCopyPasteWindow(app)
+            await app.push_screen(repo_window)
             await pilot.pause()
 
             # Cleanup should close the API client when window exits.
@@ -260,7 +256,7 @@ class TestCodeRepoIntegration:
             assert cleanup_called
 
     @pytest.mark.asyncio
-    async def test_file_filtering_workflow(self, app_pilot, mock_github_api):
+    async def test_file_filtering_workflow(self, mock_github_api):
         """Test file filtering functionality."""
         # Mixed file types
         mixed_tree = [
@@ -281,12 +277,10 @@ class TestCodeRepoIntegration:
         ]
         mock_github_api.build_tree_hierarchy.return_value = mixed_tree
 
-        class TestApp(CodeRepoTestApp):
-            pass
-
-        async with app_pilot(TestApp) as pilot:
-            repo_window = CodeRepoCopyPasteWindow(pilot.app)
-            await pilot.app.push_screen(repo_window)
+        app = _production_app()
+        async with app.run_test() as pilot:
+            repo_window = CodeRepoCopyPasteWindow(app)
+            await app.push_screen(repo_window)
             await pilot.pause()
 
             # Load repository
@@ -315,33 +309,19 @@ class TestCodeRepoIntegration:
 
             assert filter_select.value == "config"
 
-    @pytest.mark.asyncio
-    async def test_keyboard_shortcuts(self, app_pilot, mock_github_api):
-        """Test keyboard shortcuts in the window."""
+    def test_keyboard_shortcuts_route_to_production_actions(self, mock_github_api):
+        """The declared shortcuts map to the production action methods."""
+        bindings = {
+            key: action for key, action, _label in CodeRepoCopyPasteWindow.BINDINGS
+        }
+        assert bindings == {
+            "escape": "close_window",
+            "ctrl+a": "select_all",
+            "ctrl+shift+a": "deselect_all",
+            "ctrl+i": "invert_selection",
+        }
 
-        class TestApp(CodeRepoTestApp):
-            pass
-
-        async with app_pilot(TestApp) as pilot:
-            repo_window = CodeRepoCopyPasteWindow(pilot.app)
-            await pilot.app.push_screen(repo_window)
-            await pilot.pause()
-
-            # Test Ctrl+A (select all)
-            await pilot.press("ctrl+a")
-            await pilot.pause()
-
-            # Test Ctrl+Shift+A (deselect all)
-            await pilot.press("ctrl+shift+a")
-            await pilot.pause()
-
-            # Test Ctrl+I (invert selection)
-            await pilot.press("ctrl+i")
-            await pilot.pause()
-
-            # Test Escape (close window)
-            repo_window.dismiss = MagicMock()
-            await pilot.press("escape")
-            await pilot.pause()
-
-            repo_window.dismiss.assert_called_once()
+        repo_window = object.__new__(CodeRepoCopyPasteWindow)
+        with patch.object(CodeRepoCopyPasteWindow, "dismiss") as dismiss:
+            CodeRepoCopyPasteWindow.action_close_window(repo_window)
+        dismiss.assert_called_once_with(None)

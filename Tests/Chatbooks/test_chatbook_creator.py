@@ -3,6 +3,7 @@
 
 import pytest
 import json
+import os
 import zipfile
 from pathlib import Path
 from datetime import datetime
@@ -20,11 +21,36 @@ from tldw_chatbook.Chatbooks.chatbook_models import (
     ChatbookVersion,
 )
 from tldw_chatbook.Chatbooks.chatbook_creator import ChatbookCreator
+import tldw_chatbook.Chatbooks.chatbook_creator as creator_module
 from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter
 
 
 class TestChatbookCreator:
     """Test ChatbookCreator functionality."""
+
+    @pytest.fixture(autouse=True)
+    def stub_citation_composition(self, monkeypatch):
+        """Keep unrelated chatbook unit tests on their existing mocked DB seam."""
+
+        from tldw_chatbook.Chat.chat_conversation_service import (
+            ChatConversationService,
+        )
+
+        def build_local(db, *, sidecar_path):
+            return (
+                ChatConversationService(db, rag_context_store_path=sidecar_path),
+                None,
+                None,
+            )
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chatbooks.chatbook_creator.build_local_citation_conversation_service",
+            build_local,
+        )
+        monkeypatch.setattr(
+            "tldw_chatbook.Chatbooks.chatbook_importer.build_local_citation_conversation_service",
+            build_local,
+        )
 
     @pytest.fixture
     def temp_db_paths(self, tmp_path):
@@ -126,6 +152,53 @@ class TestChatbookCreator:
         assert chatbook_creator.db_paths == temp_db_paths
         assert chatbook_creator.temp_dir.exists()
         assert "chatbooks" in str(chatbook_creator.temp_dir)
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX temp privacy contract")
+    def test_creator_hardens_existing_temp_directory(
+        self,
+        temp_db_paths,
+        tmp_path,
+        monkeypatch,
+    ):
+        user_data_dir = tmp_path / "runtime-data"
+        user_data_dir.mkdir(mode=0o700)
+        temp_dir = user_data_dir / "temp" / "chatbooks"
+        temp_dir.mkdir(parents=True, mode=0o755)
+        monkeypatch.setattr(
+            creator_module,
+            "get_user_data_dir",
+            lambda: user_data_dir,
+        )
+
+        creator = ChatbookCreator(db_paths=temp_db_paths)
+
+        assert creator.temp_dir == temp_dir
+        assert creator.temp_dir.stat().st_mode & 0o777 == 0o700
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX fallback privacy contract")
+    def test_creator_uses_private_fallback_when_runtime_root_is_unavailable(
+        self,
+        temp_db_paths,
+        tmp_path,
+        monkeypatch,
+    ):
+        fallback = tmp_path / "fallback"
+
+        def create_fallback(*_args, **_kwargs):
+            fallback.mkdir(mode=0o700)
+            return str(fallback)
+
+        monkeypatch.setattr(
+            creator_module,
+            "get_user_data_dir",
+            lambda: (_ for _ in ()).throw(OSError("runtime root unavailable")),
+        )
+        monkeypatch.setattr(creator_module.tempfile, "mkdtemp", create_fallback)
+
+        creator = ChatbookCreator(db_paths=temp_db_paths)
+
+        assert creator.temp_dir == fallback
+        assert creator.temp_dir.stat().st_mode & 0o777 == 0o700
 
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
@@ -256,6 +329,38 @@ class TestChatbookCreator:
         assert output_path.exists() and zipfile.is_zipfile(output_path)
         assert not output_path.with_name(output_path.name + ".partial").exists()
 
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX archive privacy contract")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
+    def test_create_chatbook_archive_is_private_under_umask_zero(
+        self,
+        mock_prompts_db,
+        mock_chacha_db,
+        chatbook_creator,
+        tmp_path,
+    ):
+        mock_chacha_db.return_value = MagicMock()
+        mock_prompts_db.return_value = MagicMock()
+        output_dir = tmp_path / "selected-output"
+        output_dir.mkdir(mode=0o755)
+        output_path = output_dir / "private.zip"
+
+        previous = os.umask(0)
+        try:
+            success, _message, _details = chatbook_creator.create_chatbook(
+                name="Private",
+                description="Sensitive",
+                content_selections={ContentType.CONVERSATION: []},
+                output_path=output_path,
+            )
+        finally:
+            os.umask(previous)
+
+        assert success is True
+        assert output_dir.stat().st_mode & 0o777 == 0o755
+        assert output_path.stat().st_mode & 0o777 == 0o600
+        assert not output_path.with_name(output_path.name + ".partial").exists()
+
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
     def test_stat_failure_after_finalize_still_reports_success(
@@ -309,6 +414,27 @@ class TestChatbookCreator:
         assert success is False
         assert partial_dir.is_dir()
         assert (partial_dir / "sentinel.txt").read_text(encoding="utf-8") == "keep me"
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
+    def test_existing_partial_file_is_not_overwritten_or_deleted(
+        self, mock_prompts_db, mock_chacha_db, chatbook_creator, tmp_path
+    ):
+        mock_chacha_db.return_value = MagicMock()
+        mock_prompts_db.return_value = MagicMock()
+        output_path = tmp_path / "cb.zip"
+        partial_path = output_path.with_name(output_path.name + ".partial")
+        partial_path.write_bytes(b"belongs-to-another-export")
+
+        success, _msg, _dep = chatbook_creator.create_chatbook(
+            name="C",
+            description="",
+            content_selections={ContentType.CONVERSATION: []},
+            output_path=output_path,
+        )
+
+        assert success is False
+        assert partial_path.read_bytes() == b"belongs-to-another-export"
 
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
@@ -559,10 +685,32 @@ class TestChatbookCreator:
         mock_chacha_db,
         chatbook_creator,
         tmp_path,
+        monkeypatch,
     ):
         """Production-shaped DB messages hydrate citation artifacts from the RAG context store."""
+        import tldw_chatbook.Chatbooks.chatbook_creator as creator_module
+        from tldw_chatbook.Chat.chat_conversation_service import (
+            ChatConversationService,
+        )
+
         mock_db_instance = MagicMock()
         mock_chacha_db.return_value = mock_db_instance
+        compositions = []
+
+        def build_local(db, *, sidecar_path):
+            service = ChatConversationService(
+                db,
+                rag_context_store_path=sidecar_path,
+            )
+            compositions.append((db, sidecar_path))
+            return service, None, None
+
+        monkeypatch.setattr(
+            creator_module,
+            "build_local_citation_conversation_service",
+            build_local,
+            raising=False,
+        )
         timestamp = datetime.now().isoformat()
         mock_db_instance.get_conversation_by_id.return_value = {
             "id": "conv-rag",
@@ -641,6 +789,7 @@ class TestChatbookCreator:
         )
 
         assert success is True
+        assert compositions == [(mock_db_instance, rag_store_path)]
         with zipfile.ZipFile(output_path, "r") as zf:
             conversation = json.loads(
                 zf.read("content/conversations/conversation_conv-rag.json")
@@ -831,13 +980,35 @@ class TestChatbookCreator:
         mock_get_user_data_dir,
         temp_db_paths,
         tmp_path,
+        monkeypatch,
     ):
         """Import preserves exported citation fields in the conversation RAG context store."""
+        import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
+        from tldw_chatbook.Chat.chat_conversation_service import (
+            ChatConversationService,
+        )
+
         user_data_dir = tmp_path / "user-data"
         mock_get_user_data_dir.return_value = user_data_dir
 
         mock_db_instance = MagicMock()
         mock_chacha_db.return_value = mock_db_instance
+        compositions = []
+
+        def build_local(db, *, sidecar_path):
+            service = ChatConversationService(
+                db,
+                rag_context_store_path=sidecar_path,
+            )
+            compositions.append((db, sidecar_path))
+            return service, None, None
+
+        monkeypatch.setattr(
+            importer_module,
+            "build_local_citation_conversation_service",
+            build_local,
+            raising=False,
+        )
         mock_db_instance.get_conversation_by_name.return_value = []
         mock_db_instance.add_conversation.return_value = "new-conv"
         mock_db_instance.add_message.return_value = "new-msg"
@@ -915,6 +1086,12 @@ class TestChatbookCreator:
         success, message = importer.import_chatbook(chatbook_path)
 
         assert success is True, message
+        assert compositions == [
+            (
+                mock_db_instance,
+                user_data_dir / "tldw_chatbook_chat_rag_context.json",
+            )
+        ]
         rag_store = json.loads(
             (user_data_dir / "tldw_chatbook_chat_rag_context.json").read_text(
                 encoding="utf-8"
@@ -951,3 +1128,59 @@ class TestChatbookCreator:
             assert manifest_data.get("include_media") is True
             assert manifest_data.get("media_quality") == "original"
             assert manifest_data.get("include_embeddings") is True
+
+
+@pytest.mark.unit
+def test_the_temp_dir_fallback_survives_a_symlinked_system_temp_root(monkeypatch, tmp_path):
+    """The fallback must not die on the guard that protects it.
+
+    Args:
+        monkeypatch: Redirects `get_user_data_dir` into failure and points
+            `mkdtemp` at the symlinked root below.
+        tmp_path: Provides the real directory and the symlink to it.
+
+    `secure_private_directory` refuses to traverse a symlinked path
+    component. On macOS the system temp root is /var/folders/..., and /var
+    is a symlink to /private/var, so the raw `mkdtemp()` path is rejected
+    with `PrivatePathError: link_or_non_regular`.
+
+    That error subclasses OSError and is raised *inside* the `except OSError`
+    handler that reaches this branch, so it propagates straight out of
+    `__init__` rather than falling back to anything: on macOS every export
+    that hit this path died here, and the fallback that exists to keep
+    exporting working was the thing that broke it.
+
+    Simulated rather than macOS-only so it runs everywhere: a symlinked temp
+    root is the general shape of the bug, not an Apple quirk.
+    """
+    real_root = tmp_path / "real-tmp"
+    real_root.mkdir()
+    linked_root = tmp_path / "linked-tmp"
+    try:
+        linked_root.symlink_to(real_root, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        # Windows refuses symlink creation without developer mode or admin.
+        # This test is `unit`-marked so it runs in CI on every OS; skipping
+        # where the filesystem cannot express the precondition is honest,
+        # and the bug it guards is POSIX-shaped anyway (/var -> /private/var).
+        pytest.skip(f"symlinks unavailable on this platform: {exc}")
+
+    def failing_user_data_dir():
+        raise OSError("configured temp dir unavailable")
+
+    monkeypatch.setattr(creator_module, "get_user_data_dir", failing_user_data_dir)
+    monkeypatch.setattr(
+        creator_module.tempfile,
+        "mkdtemp",
+        lambda *a, **kw: str(linked_root / "chatbooks-work"),
+    )
+    (linked_root / "chatbooks-work").mkdir()
+
+    creator = ChatbookCreator(db_paths={})
+
+    # Landed on the real directory, with no symlinked component left in it.
+    assert creator.temp_dir.is_dir()
+    assert not any(
+        part.is_symlink() for part in [creator.temp_dir, *creator.temp_dir.parents]
+        if str(part).startswith(str(tmp_path))
+    ), f"temp_dir still traverses a symlink: {creator.temp_dir}"

@@ -464,7 +464,18 @@ async def test_rag_mode_without_deps_returns_blocked_outcome_and_skips_factory(
     assert result.status == "blocked"
     assert result.recovery_state is not None
     assert result.recovery_state.status_label == "RAG unavailable"
-    assert "switch mode to Search" in result.recovery_state.next_action
+    # (Task-14 enabler) the recovery copy must name the pip extra to
+    # install -- "unavailable" alone leaves the user with no next step.
+    # Voice mirrors RAG_Search/semantic_availability.py's
+    # SEMANTIC_REASON_DEPS_MISSING copy family. Also keeps the immediate
+    # "switch mode to Search" escape (review finding): this is the
+    # always-rendered "Next:" line, and the two sibling RAG-blocked states
+    # in this module (index-empty, no-backend) both pair their durable fix
+    # with an escape too.
+    assert result.recovery_state.next_action == (
+        'Install RAG support: pip install "tldw_chatbook[embeddings_rag]", '
+        "then restart, or switch mode to Search."
+    )
     assert result.recovery_state.recovery_action == "Settings > RAG"
     assert getattr(app, "_rag_service", None) is None
 
@@ -698,6 +709,190 @@ async def test_rag_mode_empty_scope_does_not_filter():
     result = await service.search("credential", (), "rag", top_k=5)
 
     assert [row["source_id"] for row in result["results"]] == ["note-1"]
+
+
+# --- Task 8: semantic coverage diagnostics ----------------------------------
+#
+# Live UAT (RAG-29): a "cake" query in rag mode returned three unrelated
+# media fixtures at cosine 0.06-0.09 and no conversation, even though a
+# conversation plainly discussing cake existed -- with nothing on screen
+# distinguishing "your notes contain nothing relevant" from "semantic search
+# never looked at your notes". `_search_semantic` now reports which of the
+# *requested* source types are actually present in the returned rows'
+# provenance, so the UI can say so honestly.
+
+
+# The requested type with zero surviving rows is reported "uncovered"; the
+# requested type that IS present is "covered". Order follows `source_types`
+# (the caller's request), not discovery order in the raw results.
+@pytest.mark.asyncio
+async def test_rag_mode_diagnostics_report_uncovered_requested_source_type():
+    rag_service = FakeRagService(
+        results=[
+            {
+                "id": "media-chunk",
+                "score": 0.8,
+                "document": "Media evidence.",
+                "metadata": {
+                    "title": "Media doc",
+                    "source_id": "media-1",
+                    "source_type": "media",
+                },
+            },
+        ]
+    )
+    app = SimpleNamespace(_rag_service=rag_service)
+    service = LibraryLocalRagSearchService(app)
+
+    result = await service.search(
+        "cake", ("notes", "media"), "rag", top_k=5
+    )
+
+    assert result["diagnostics"]["semantic_scope_coverage"] == {
+        "covered": ["media"],
+        "uncovered": ["notes"],
+    }
+
+
+# Every requested type present in the returned provenance -> uncovered is
+# empty (the happy path the coverage note must stay silent for).
+@pytest.mark.asyncio
+async def test_rag_mode_diagnostics_report_all_covered_when_every_type_present():
+    rag_service = FakeRagService(
+        results=[
+            {
+                "id": "note-chunk",
+                "score": 0.9,
+                "document": "Note evidence.",
+                "metadata": {
+                    "title": "Note doc",
+                    "source_id": "note-1",
+                    "source_type": "note",
+                },
+            },
+            {
+                "id": "media-chunk",
+                "score": 0.8,
+                "document": "Media evidence.",
+                "metadata": {
+                    "title": "Media doc",
+                    "source_id": "media-1",
+                    "source_type": "media_chunk",
+                },
+            },
+        ]
+    )
+    app = SimpleNamespace(_rag_service=rag_service)
+    service = LibraryLocalRagSearchService(app)
+
+    result = await service.search(
+        "cake", ("notes", "media"), "rag", top_k=5
+    )
+
+    assert result["diagnostics"]["semantic_scope_coverage"] == {
+        "covered": ["notes", "media"],
+        "uncovered": [],
+    }
+
+
+# Edge case (b): a row with missing/unrecognized provenance survives the
+# existing scope post-filter (it cannot be attributed to any scope toggle)
+# but must not silently count as "covering" any requested source type --
+# otherwise an unattributable row would mask a genuinely uncovered type.
+@pytest.mark.asyncio
+async def test_rag_mode_diagnostics_unknown_provenance_row_does_not_count_as_covered():
+    rag_service = FakeRagService(
+        results=[
+            {
+                "id": "unknown-chunk",
+                "score": 0.6,
+                "document": "Unattributed evidence.",
+                "metadata": {"title": "Mystery doc", "source_id": "mystery-1"},
+            },
+        ]
+    )
+    app = SimpleNamespace(_rag_service=rag_service)
+    service = LibraryLocalRagSearchService(app)
+
+    result = await service.search("cake", ("notes",), "rag", top_k=5)
+
+    assert [row["source_id"] for row in result["results"]] == ["mystery-1"]
+    assert result["diagnostics"]["semantic_scope_coverage"] == {
+        "covered": [],
+        "uncovered": ["notes"],
+    }
+
+
+# task-15 finding I2: the REAL default Search-canvas scope is all four
+# toggles on -- `("notes", "media", "conversations", "prompts")` -- whenever
+# the workspace has >=1 prompt. `prompts` has no entry in
+# `_SEMANTIC_SOURCE_TYPE_MAP` that produces it (no semantic-index seam
+# exists for prompts at all), so before this fix every non-empty rag-mode
+# query under the default scope permanently reported "Semantic search found
+# nothing from: Prompts." -- a structural absence misrepresented as a
+# per-query "searched and found nothing" result. `prompts` must be excluded
+# from the coverage computation entirely: it appears in neither `covered`
+# nor `uncovered`.
+@pytest.mark.asyncio
+async def test_rag_mode_diagnostics_exclude_prompts_structurally_uncoverable_under_default_scope():
+    rag_service = FakeRagService(
+        results=[
+            {
+                "id": "note-chunk",
+                "score": 0.9,
+                "document": "Note evidence.",
+                "metadata": {
+                    "title": "Note doc",
+                    "source_id": "note-1",
+                    "source_type": "note",
+                },
+            },
+        ]
+    )
+    app = SimpleNamespace(_rag_service=rag_service)
+    service = LibraryLocalRagSearchService(app)
+
+    result = await service.search(
+        "cake", ("notes", "media", "conversations", "prompts"), "rag", top_k=5
+    )
+
+    assert result["diagnostics"]["semantic_scope_coverage"] == {
+        "covered": ["notes"],
+        "uncovered": ["media", "conversations"],
+    }
+
+
+# Edge case (c): when the post-filter/merge leaves zero rows, this is the
+# empty/no-match state -- Task 11's territory, not a coverage note listing
+# every requested source as "uncovered". The service must not attach a
+# `diagnostics` key at all here, matching the existing bare two-key
+# `{"results": [], "runtime_backend": ...}` contract for the zero-rows path.
+@pytest.mark.asyncio
+async def test_rag_mode_diagnostics_omitted_when_rows_end_up_empty():
+    rag_service = FakeRagServiceWithStore(
+        results=[
+            {
+                "id": "media-chunk",
+                "score": 0.8,
+                "document": "Media evidence.",
+                "metadata": {
+                    "title": "Media doc",
+                    "source_id": "media-1",
+                    "source_type": "media",
+                },
+            },
+        ],
+        stats={"count": 12},
+    )
+    app = SimpleNamespace(_rag_service=rag_service)
+    service = LibraryLocalRagSearchService(app)
+
+    # "notes" is requested, but the only raw result is media-provenance, so
+    # the scope post-filter drops it entirely and rows == [].
+    result = await service.search("cake", ("notes",), "rag", top_k=5)
+
+    assert result == {"results": [], "runtime_backend": "rag-semantic"}
+    assert "diagnostics" not in result
 
 
 # rag mode success path: delegates to _rag_service.search and maps results.
@@ -1112,11 +1307,15 @@ def real_notes_app(tmp_path):
     """Real notes seam (NotesScopeService -> NotesInteropService -> FTS DB).
 
     File-backed on purpose: NotesInteropService re-opens the DB by path per
-    user, so an in-memory DB would hand it a blank schema.
+    user, so an in-memory DB would hand it a blank schema. The custom
+    per-user namespace is caller-owned and must exist before the service is
+    constructed.
     """
     notes_db = CharactersRAGDB(tmp_path / "library_notes_fts.db", client_id="notes-fts")
+    notes_user_dbs = tmp_path / "notes_user_dbs"
+    notes_user_dbs.mkdir(mode=0o700)
     interop = NotesInteropService(
-        base_db_directory=tmp_path / "notes_user_dbs",
+        base_db_directory=notes_user_dbs,
         api_client_id="library-notes-fts-test",
         global_db_to_use=notes_db,
     )

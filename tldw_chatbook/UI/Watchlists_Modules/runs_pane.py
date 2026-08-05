@@ -5,12 +5,16 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from rich.text import Text
 from textual import work
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Static
 from textual.worker import get_current_worker
+
+from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from .table_selection import highlight_is_user_driven
 
 
 class RunSelected(Message):
@@ -37,8 +41,12 @@ class RerunRunRequested(Message):
         super().__init__()
 
 
-class RunsPane(Vertical):
+class RunsPane(RecomposeCaptureGuard, Vertical):
     """Run list and run inspector for watchlists."""
+
+    #: task-876: same Rich terminal-agnostic "current item" idiom as
+    #: `SourcesPane._SELECTED_ROW_STYLE` -- see that attribute's docstring.
+    _SELECTED_ROW_STYLE = "reverse bold"
 
     runs = reactive[list[dict[str, Any]]]([], recompose=True)
     selected_run = reactive[dict[str, Any] | None](None)
@@ -46,28 +54,31 @@ class RunsPane(Vertical):
     run_logs = reactive("", recompose=True)
     runtime_backend = reactive("local")
 
+    # Plain attribute, not a reactive: mirrors SourcesPane's
+    # `_highlighted_source_key` for the identical reason -- see that
+    # attribute's docstring.
+    _highlighted_run_key: str | None = None
+
     def compose(self):
         with Horizontal(id="runs-toolbar", classes="destination-filter-strip"):
             yield Button("Refresh", id="runs-refresh-button", variant="primary")
             yield Button("Cancel run", id="runs-cancel-button", disabled=True)
             yield Button("Re-run source", id="runs-rerun-button", disabled=True)
 
+        selected_key = str(self.selected_run.get("id")) if self.selected_run else None
         table = DataTable(id="runs-table")
         table.add_columns(
             "Source / Job", "Status", "Started", "Duration", "Found", "Processed", "Filtered", "Errors"
         )
         for run in self.runs:
+            row_key = str(run.get("id") or id(run))
             table.add_row(
-                str(run.get("source_title") or run.get("job_name") or "Untitled"),
-                str(run.get("status") or "-"),
-                str(run.get("started_at") or "-"),
-                str(run.get("duration") or "-"),
-                str(run.get("found_count") or "0"),
-                str(run.get("processed_count") or "0"),
-                str(run.get("filtered_count") or "0"),
-                str(run.get("error_count") or "0"),
-                key=str(run.get("id") or id(run)),
+                *self._run_row_cells(run, row_key == selected_key),
+                key=row_key,
             )
+        # See `SourcesPane.compose()`'s identical assignment for why this is
+        # authoritative going forward.
+        self._highlighted_run_key = selected_key
         yield table
 
         selected_run = self.selected_run
@@ -91,10 +102,29 @@ class RunsPane(Vertical):
             yield Static(self.run_logs, id="runs-detail-logs")
 
     @staticmethod
+    def _run_row_cells(run: dict[str, Any], highlighted: bool) -> tuple[Text, ...]:
+        """One row's cell values, styled if `highlighted` (task-876).
+
+        Shared between `compose()` and `_update_selection_highlight` so both
+        draw an identical row -- see `SourcesPane._source_row_cells`.
+        """
+        style = RunsPane._SELECTED_ROW_STYLE if highlighted else ""
+        return (
+            Text(str(run.get("source_title") or run.get("job_name") or "Untitled"), style=style),
+            Text(str(run.get("status") or "-"), style=style),
+            Text(str(run.get("started_at") or "-"), style=style),
+            Text(str(run.get("duration") or "-"), style=style),
+            Text(str(run.get("found_count") or "0"), style=style),
+            Text(str(run.get("processed_count") or "0"), style=style),
+            Text(str(run.get("filtered_count") or "0"), style=style),
+            Text(str(run.get("error_count") or "0"), style=style),
+        )
+
+    @staticmethod
     def _stats_text(run: dict[str, Any] | None) -> str:
         if not run:
             return "No run selected."
-        return (
+        base = (
             f"Status: {run.get('status', '-')}\n"
             f"Started: {run.get('started_at', '-')}\n"
             f"Duration: {run.get('duration', '-')}\n"
@@ -103,14 +133,86 @@ class RunsPane(Vertical):
             f"Filtered: {run.get('filtered_count', 0)} | "
             f"Errors: {run.get('error_count', 0)}"
         )
+        # TASK-1362 Task 7 (spec §4): a url-family run's check dispositions,
+        # so a silent run finally says WHY it was silent (unchanged? withheld
+        # under threshold? re-baselined?) instead of just "Found: 0". Absent
+        # entirely for feed/API runs, which have no dispositions at all (see
+        # `normalize_watchlist_run`) -- `dispositions` is only ever `{}` or
+        # missing for those, so no empty "Checks:" line is added.
+        dispositions = run.get("dispositions") or {}
+        if dispositions:
+            # Whole-branch review, Critical 1. `baseline` and `rebaselined` are
+            # rendered separately because they mean opposite things: a first
+            # check discarded nothing, while a settings-change re-baseline
+            # threw away a real diff window in which a change could have been
+            # lost. Spec §3 accepts that lost window only on the strength of
+            # this line saying so -- one `baseline` count could not, which left
+            # the disposition's `reason` with no consumer anywhere in the
+            # product.
+            withheld = dispositions.get("withheld", 0)
+            withheld_text = f"{withheld} withheld"
+            max_withheld = run.get("max_withheld_pct")
+            if withheld and isinstance(max_withheld, (int, float)):
+                # Spec §1: say what is being withheld, not merely that
+                # something was. Without the number the user cannot tell a
+                # threshold that is slightly too high from one that is
+                # swallowing everything.
+                withheld_text += f" (largest {float(max_withheld):.1f}%)"
+            base += (
+                f"\nChecks: {dispositions.get('changed', 0)} changed | "
+                f"{dispositions.get('unchanged', 0)} unchanged | "
+                f"{withheld_text} | "
+                f"{dispositions.get('baseline', 0)} baseline | "
+                f"{dispositions.get('rebaselined', 0)} re-baselined "
+                "(settings changed) | "
+                # task-1394: a URL that raised (timeout, SSRF block, HTTP
+                # error) instead of completing `check_url` -- rendered
+                # unconditionally, same as `changed`/`baseline`/etc. above,
+                # so a partially-failed run says so rather than reading like
+                # a clean one that merely found nothing.
+                f"{dispositions.get('error', 0)} error"
+            )
+        return base
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         event.stop()
+        if event.data_table.id != "runs-table":
+            return
         self.select_run_by_id(str(event.row_key.value))
 
     def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
         event.stop()
+        if event.data_table.id != "runs-table":
+            return
         self.select_run_by_id(str(event.cell_key.row_key.value))
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Select on cursor movement, which is what a mouse click produces.
+
+        TASK-1105, matching `SourcesPane`. Scoped to `#runs-table`: this pane
+        also owns `#runs-detail-items`, whose rows are the *content* of the
+        selected run, not runs -- highlighting one of those must not try to
+        re-select a run by an item's key (and would resolve to `None`,
+        clearing the very selection that produced the detail table).
+        """
+        event.stop()
+        if event.data_table.id != "runs-table":
+            return
+        if not highlight_is_user_driven(event):
+            return
+        if event.row_key is not None and event.row_key.value is not None:
+            self.select_run_by_id(str(event.row_key.value))
+
+    def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
+        """Same, for a table whose cursor is cell-shaped rather than row-shaped."""
+        event.stop()
+        if event.data_table.id != "runs-table":
+            return
+        if not highlight_is_user_driven(event):
+            return
+        row_key = getattr(event.cell_key, "row_key", None)
+        if row_key is not None and row_key.value is not None:
+            self.select_run_by_id(str(row_key.value))
 
     def select_run_by_id(self, run_id: str) -> None:
         """Select the run with the given id and notify listeners."""
@@ -125,8 +227,45 @@ class RunsPane(Vertical):
         if self.is_mounted:
             self.post_message(RunSelected(run))
         self._update_action_buttons()
+        self._update_selection_highlight(run)
         if run and str(run.get("status", "")).lower() == "running":
             self._start_run_poll(run)
+
+    def _update_selection_highlight(self, run: dict[str, Any] | None) -> None:
+        """Move the table's selected-row highlight without rebuilding it.
+
+        Mirrors `SourcesPane._update_selection_highlight` -- see that
+        method's docstring; `selected_run` is not `recompose=True` for the
+        same reason `selected_source` is not.
+        """
+        new_key = str(run.get("id")) if run else None
+        old_key = self._highlighted_run_key
+        if new_key == old_key:
+            return
+        try:
+            table = self.query_one("#runs-table", DataTable)
+        except Exception:
+            self._highlighted_run_key = new_key
+            return
+        try:
+            column_keys = list(table.columns.keys())
+        except Exception:
+            column_keys = []
+        for row_key, highlighted in ((old_key, False), (new_key, True)):
+            if row_key is None:
+                continue
+            candidate = next(
+                (r for r in self.runs if str(r.get("id") or "") == row_key), None
+            )
+            if candidate is None:
+                continue
+            cells = self._run_row_cells(candidate, highlighted)
+            for column_key, value in zip(column_keys, cells):
+                try:
+                    table.update_cell(row_key, column_key, value, update_width=False)
+                except Exception:
+                    pass
+        self._highlighted_run_key = new_key
 
     def _update_action_buttons(self) -> None:
         try:

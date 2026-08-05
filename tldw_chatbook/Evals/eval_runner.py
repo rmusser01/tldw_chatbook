@@ -15,7 +15,9 @@ Handles dataset loading, prompt formatting, model inference, and metric calculat
 """
 
 import asyncio
+import inspect
 import json
+import math
 import re
 import time
 import traceback
@@ -55,6 +57,45 @@ from .eval_errors import (
     ErrorSeverity,
 )
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+
+
+def _positive_integer(name: str, value: object) -> int:
+    """Return a positive integer execution bound."""
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
+def _non_negative_integer(name: str, value: object) -> int:
+    """Return a non-negative integer execution bound."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return value
+
+
+def _finite_number(name: str, value: object, *, positive: bool) -> float:
+    """Return a finite numeric execution bound."""
+    numeric_value = None
+    if not isinstance(value, bool) and isinstance(value, (int, float)):
+        try:
+            numeric_value = float(value)
+        except (OverflowError, ValueError):
+            pass
+    if numeric_value is None or not math.isfinite(numeric_value) or (
+        numeric_value <= 0 if positive else numeric_value < 0
+    ):
+        qualifier = "positive" if positive else "non-negative"
+        raise ValueError(f"{name} must be a {qualifier} finite number")
+    return numeric_value
+
+
+async def _invoke_callback(callback, *args) -> None:
+    """Invoke a callback and await an awaitable return value."""
+    if callback is None:
+        return
+    result = callback(*args)
+    if inspect.isawaitable(result):
+        await result
 
 
 class EvalError(Exception):
@@ -747,6 +788,18 @@ class MetricsCalculator:
         if not predicted or not expected:
             return 0.0
 
+        # Exact string equality guarantees cosine similarity of 1.0 by
+        # construction (a vector's similarity with itself is always 1),
+        # so short-circuit before touching the embedding model at all.
+        # This is NOT the same guarantee as "the model embeds these two
+        # (possibly different) strings identically" - computing that case
+        # through dot()/norm() at float64 lands short of 1.0 for a real
+        # fraction of embeddings (float32 rounding in the model output
+        # doesn't cancel exactly under sqrt-then-square), so it must not
+        # be special-cased here. Only a literal `==` match qualifies.
+        if predicted == expected:
+            return 1.0
+
         lexical_fallback = MetricsCalculator._calculate_lexical_semantic_fallback(
             predicted, expected
         )
@@ -768,18 +821,44 @@ class MetricsCalculator:
 
             # Calculate cosine similarity
             try:
-                from numpy import dot
+                from numpy import asarray, dot, float64
                 from numpy.linalg import norm
 
-                dot(pred_embedding, exp_embedding) / (
-                    norm(pred_embedding) * norm(exp_embedding)
+                # Upcast to float64: real embedding models commonly hand back
+                # float32 vectors, and computing the dot product / norms at
+                # float32 precision can make a vector's similarity with
+                # itself land a few ULPs short of 1.0 (e.g. 0.99999988
+                # instead of 1.0). Computing in double precision reduces
+                # that avoidable precision loss, but sqrt-then-square
+                # rounding still leaves a real fraction of embeddings a
+                # few ULPs off exact 1.0 even at float64 - this is a
+                # quality improvement, not an exactness guarantee. Exact
+                # equality of the *input strings* is handled separately
+                # above, before the embedding model is ever called.
+                pred_vec = asarray(pred_embedding, dtype=float64)
+                exp_vec = asarray(exp_embedding, dtype=float64)
+                norm_product = norm(pred_vec) * norm(exp_vec)
+                similarity = (
+                    float(dot(pred_vec, exp_vec) / norm_product)
+                    if norm_product > 0
+                    else 0.0
                 )
             except ImportError:
-                # Fallback to pure Python cosine similarity
-                dot_product = sum(a * b for a, b in zip(pred_embedding, exp_embedding))
-                norm1 = sum(a * a for a in pred_embedding) ** 0.5
-                norm2 = sum(b * b for b in exp_embedding) ** 0.5
-                dot_product / ((norm1 * norm2) if norm1 * norm2 > 0 else 0.0)
+                # Fallback to pure Python cosine similarity. Cast each
+                # element to a native Python float (double precision) so
+                # this matches the numpy branch above regardless of the
+                # embedding model's native dtype.
+                dot_product = sum(
+                    float(a) * float(b) for a, b in zip(pred_embedding, exp_embedding)
+                )
+                norm1 = sum(float(a) * float(a) for a in pred_embedding) ** 0.5
+                norm2 = sum(float(b) * float(b) for b in exp_embedding) ** 0.5
+                norm_product = norm1 * norm2
+                similarity = dot_product / norm_product if norm_product > 0 else 0.0
+
+            # Cosine similarity ranges over [-1, 1]; callers/tests expect a
+            # [0, 1] score, so clamp before returning.
+            return max(0.0, min(1.0, similarity))
 
         except ImportError:
             # Fallback to token overlap if embeddings not available
@@ -836,6 +915,185 @@ class MetricsCalculator:
         except (ValueError, OverflowError):
             return float("inf")
 
+    @staticmethod
+    def calculate_rouge_scores(predicted: str, expected: str) -> Dict[str, float]:
+        """
+        Calculate all ROUGE scores (ROUGE-1, ROUGE-2, ROUGE-L).
+
+        Args:
+            predicted: Predicted text.
+            expected: Reference (expected) text.
+
+        Returns:
+            Dictionary with keys "rouge_1", "rouge_2", and "rouge_l", each mapping
+            to the corresponding ROUGE F-measure score.
+        """
+        return {
+            "rouge_1": MetricsCalculator.calculate_rouge_1(predicted, expected),
+            "rouge_2": MetricsCalculator.calculate_rouge_2(predicted, expected),
+            "rouge_l": MetricsCalculator.calculate_rouge_l(predicted, expected),
+        }
+
+    @staticmethod
+    def calculate_classification_metrics(
+        predicted_labels: List[str],
+        true_labels: List[str],
+        labels: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Calculate classification metrics (accuracy, precision, recall, F1).
+
+        Args:
+            predicted_labels: List of predicted labels.
+            true_labels: List of true labels.
+            labels: Optional list of all possible labels to score. If ``None``
+                or an empty list, the label set is derived from the union of
+                ``predicted_labels`` and ``true_labels``.
+
+        Returns:
+            Dictionary with the macro-averaged "accuracy", "precision",
+            "recall", and "f1" (all floats), plus "per_label_metrics": a dict
+            mapping each label to its own precision/recall/f1 (empty dict when
+            there are no labels or no predictions to report). This shape is
+            identical on every return path.
+        """
+        if len(predicted_labels) != len(true_labels):
+            raise ValueError("Predicted and true labels must have the same length")
+
+        if not predicted_labels:
+            return {
+                "accuracy": 0.0,
+                "precision": 0.0,
+                "recall": 0.0,
+                "f1": 0.0,
+                "per_label_metrics": {},
+            }
+
+        # Get unique labels if not provided. An explicitly empty list is
+        # treated the same as None (derive from the data) rather than being
+        # left as a label set of size zero, which would make the
+        # macro-average below undefined.
+        if not labels:
+            labels = list(set(true_labels) | set(predicted_labels))
+
+        # Calculate confusion matrix
+        confusion_matrix = {}
+        for label in labels:
+            confusion_matrix[label] = {"tp": 0, "fp": 0, "fn": 0, "tn": 0}
+
+        for pred, true in zip(predicted_labels, true_labels):
+            for label in labels:
+                if true == label and pred == label:
+                    confusion_matrix[label]["tp"] += 1
+                elif true != label and pred == label:
+                    confusion_matrix[label]["fp"] += 1
+                elif true == label and pred != label:
+                    confusion_matrix[label]["fn"] += 1
+                else:
+                    confusion_matrix[label]["tn"] += 1
+
+        # Calculate metrics per label
+        label_metrics = {}
+        for label in labels:
+            tp = confusion_matrix[label]["tp"]
+            fp = confusion_matrix[label]["fp"]
+            fn = confusion_matrix[label]["fn"]
+
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            f1 = (
+                2 * (precision * recall) / (precision + recall)
+                if (precision + recall) > 0
+                else 0.0
+            )
+
+            label_metrics[label] = {"precision": precision, "recall": recall, "f1": f1}
+
+        # Calculate overall metrics
+        accuracy = sum(
+            1 for p, t in zip(predicted_labels, true_labels) if p == t
+        ) / len(predicted_labels)
+
+        # Macro-averaged metrics
+        macro_precision = sum(m["precision"] for m in label_metrics.values()) / len(
+            label_metrics
+        )
+        macro_recall = sum(m["recall"] for m in label_metrics.values()) / len(
+            label_metrics
+        )
+        macro_f1 = sum(m["f1"] for m in label_metrics.values()) / len(label_metrics)
+
+        return {
+            "accuracy": accuracy,
+            "precision": macro_precision,
+            "recall": macro_recall,
+            "f1": macro_f1,
+            "per_label_metrics": label_metrics,
+        }
+
+    @staticmethod
+    def calculate_all_metrics(
+        predicted: str, expected: str, metric_names: Optional[List[str]] = None
+    ) -> Dict[str, float]:
+        """
+        Calculate all requested metrics.
+
+        Args:
+            predicted: Predicted text.
+            expected: Expected text.
+            metric_names: List of metric names to calculate. Supported values
+                are "exact_match", "contains", "f1", "bleu", "rouge_1",
+                "rouge_2", "rouge_l", and "semantic_similarity". Defaults to
+                ``["exact_match", "f1", "rouge_1"]`` when ``None``. Unknown
+                names are logged and skipped rather than raising.
+
+        Returns:
+            Dictionary mapping each recognized metric name in ``metric_names``
+            to its computed float value.
+        """
+        if metric_names is None:
+            metric_names = ["exact_match", "f1", "rouge_1"]
+
+        metrics = {}
+
+        for metric_name in metric_names:
+            if metric_name == "exact_match":
+                metrics[metric_name] = MetricsCalculator.calculate_exact_match(
+                    predicted, expected
+                )
+            elif metric_name == "contains":
+                metrics[metric_name] = MetricsCalculator.calculate_contains_match(
+                    predicted, expected
+                )
+            elif metric_name == "f1":
+                metrics[metric_name] = MetricsCalculator.calculate_f1_score(
+                    predicted, expected
+                )
+            elif metric_name == "bleu":
+                metrics[metric_name] = MetricsCalculator.calculate_bleu_score(
+                    predicted, expected, n=4
+                )
+            elif metric_name == "rouge_1":
+                metrics[metric_name] = MetricsCalculator.calculate_rouge_1(
+                    predicted, expected
+                )
+            elif metric_name == "rouge_2":
+                metrics[metric_name] = MetricsCalculator.calculate_rouge_2(
+                    predicted, expected
+                )
+            elif metric_name == "rouge_l":
+                metrics[metric_name] = MetricsCalculator.calculate_rouge_l(
+                    predicted, expected
+                )
+            elif metric_name == "semantic_similarity":
+                metrics[metric_name] = MetricsCalculator.calculate_semantic_similarity(
+                    predicted, expected
+                )
+            else:
+                logger.warning(f"Unknown metric: {metric_name}")
+
+        return metrics
+
 
 class ErrorHandler:
     """Handles retries and error classification for evaluation runs."""
@@ -845,10 +1103,12 @@ class ErrorHandler:
         max_retries: int = 3,
         retry_delay: float = 1.0,
         backoff_factor: float = 2.0,
+        request_timeout: float = 30.0,
     ):
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.backoff_factor = backoff_factor
+        self.request_timeout = request_timeout
         self.rate_limit_delays = {}  # Provider -> delay time
         self.error_handler = get_error_handler()
         self.consecutive_errors = {}  # Track consecutive errors per provider
@@ -957,10 +1217,10 @@ class ErrorHandler:
                     await asyncio.sleep(delay)
                     retry_count += 1
                     last_exception = ExecutionError.timeout(
-                        sample_id, 30.0
-                    )  # Default timeout
+                        sample_id, self.request_timeout
+                    )
                 else:
-                    raise ExecutionError.timeout(sample_id, 30.0)
+                    raise ExecutionError.timeout(sample_id, self.request_timeout)
 
             except Exception as e:
                 logger.error(f"Unexpected error for sample {sample_id}: {e}")
@@ -1022,7 +1282,17 @@ class BaseEvalRunner(ABC):
 
         async def generate(self, prompt: str, **kwargs) -> str:
             """Generate text using the runner's LLM."""
-            return await self.runner._call_llm(prompt, **kwargs)
+            try:
+                result, _ = await self.runner.error_handler.with_retry(
+                    lambda: self.runner._call_llm(prompt, **kwargs),
+                    self.runner.task_config.name,
+                    self.runner.provider_name,
+                )
+                return result
+            except EvaluationError as error:
+                if error.original_error is not None:
+                    raise error.original_error
+                raise
 
     def __init__(self, task_config: TaskConfig, model_config: Dict[str, Any]):
         self.task_config = task_config
@@ -1030,10 +1300,16 @@ class BaseEvalRunner(ABC):
         self.provider_name = model_config["provider"].lower()
         self.model_id = model_config["model_id"]
         self.api_key = model_config.get("api_key")
+        self.request_timeout = model_config.get("request_timeout", 30.0)
 
         self.error_handler = ErrorHandler(
-            max_retries=task_config.metadata.get("max_retries", 3),
-            retry_delay=task_config.metadata.get("retry_delay", 1.0),
+            max_retries=model_config.get(
+                "retry_attempts", task_config.metadata.get("max_retries", 3)
+            ),
+            retry_delay=model_config.get(
+                "retry_delay", task_config.metadata.get("retry_delay", 1.0)
+            ),
+            request_timeout=self.request_timeout,
         )
 
         # Create llm_interface for compatibility with specialized runners
@@ -1095,8 +1371,16 @@ class BaseEvalRunner(ABC):
             if param in kwargs:
                 call_params[param] = kwargs[param]
 
-        # Use the existing chat_api_call function which already handles all providers
-        response = await chat_api_call(**call_params)
+        async def invoke_dispatcher():
+            response = await asyncio.to_thread(chat_api_call, **call_params)
+            if inspect.isawaitable(response):
+                response = await response
+            return response
+
+        # The production dispatcher is synchronous; keep it off the event loop.
+        response = await asyncio.wait_for(
+            invoke_dispatcher(), timeout=self.request_timeout
+        )
 
         # Handle response format based on provider
         if isinstance(response, tuple):
@@ -2306,12 +2590,36 @@ class EvalRunner:
 
     def __init__(self, task_config: TaskConfig, model_config: Dict[str, Any]):
         self.task_config = task_config
-        self.model_config = model_config
+        effective_config = dict(model_config)
+        effective_config["max_concurrent_requests"] = _positive_integer(
+            "max_concurrent_requests",
+            model_config.get("max_concurrent_requests", 10),
+        )
+        effective_config["request_timeout"] = _finite_number(
+            "request_timeout",
+            model_config.get("request_timeout", 30.0),
+            positive=True,
+        )
+        effective_config["retry_attempts"] = _non_negative_integer(
+            "retry_attempts",
+            model_config.get(
+                "retry_attempts", task_config.metadata.get("max_retries", 3)
+            ),
+        )
+        effective_config["retry_delay"] = _finite_number(
+            "retry_delay",
+            model_config.get(
+                "retry_delay", task_config.metadata.get("retry_delay", 1.0)
+            ),
+            positive=False,
+        )
+        self.model_config = effective_config
 
         # Expose configuration values as properties for tests
-        self.max_concurrent_requests = model_config.get("max_concurrent_requests", 10)
-        self.request_timeout = model_config.get("request_timeout", 30.0)
-        self.retry_attempts = model_config.get("retry_attempts", 3)
+        self.max_concurrent_requests = effective_config["max_concurrent_requests"]
+        self.request_timeout = effective_config["request_timeout"]
+        self.retry_attempts = effective_config["retry_attempts"]
+        self.retry_delay = effective_config["retry_delay"]
 
         # Store LLM interface for tests
         self.llm_interface = None
@@ -2340,25 +2648,27 @@ class EvalRunner:
                 "algorithms",
                 "code_completion",
             ]:
-                self.runner = CodeExecutionRunner(task_config, model_config)
+                self.runner = CodeExecutionRunner(task_config, effective_config)
             elif category == "safety" or subcategory in [
                 "harmfulness",
                 "bias",
                 "truthfulness",
             ]:
-                self.runner = SafetyEvaluationRunner(task_config, model_config)
+                self.runner = SafetyEvaluationRunner(task_config, effective_config)
             elif subcategory in ["translation", "cross_lingual_qa", "multilingual"]:
-                self.runner = MultilingualEvaluationRunner(task_config, model_config)
+                self.runner = MultilingualEvaluationRunner(
+                    task_config, effective_config
+                )
             elif category == "creative" or subcategory in [
                 "creative_writing",
                 "story_completion",
                 "dialogue_generation",
             ]:
-                self.runner = CreativeEvaluationRunner(task_config, model_config)
+                self.runner = CreativeEvaluationRunner(task_config, effective_config)
             else:
-                self.runner = self._create_basic_runner(task_config, model_config)
+                self.runner = self._create_basic_runner(task_config, effective_config)
         else:
-            self.runner = self._create_basic_runner(task_config, model_config)
+            self.runner = self._create_basic_runner(task_config, effective_config)
 
     async def run_single_sample(
         self, task_config: TaskConfig, sample: Any
@@ -2394,61 +2704,89 @@ class EvalRunner:
         )
         logger.info(f"Loaded {len(samples)} samples")
 
-        results = []
+        results: List[Optional[EvalSampleResult]] = [None] * len(samples)
         error_count = 0
         retry_count = 0
+        semaphore = asyncio.Semaphore(self.max_concurrent_requests)
 
-        for i, sample in enumerate(samples):
-            try:
-                result = await self.runner.run_sample(sample)
-                results.append(result)
+        async def run_indexed_sample(
+            index: int, sample: EvalSample
+        ) -> Tuple[int, EvalSampleResult]:
+            async with semaphore:
+                try:
+                    result = await self.runner.run_sample(sample)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    logger.error(
+                        f"Fatal error processing sample {sample.id}: {error}"
+                    )
+                    result = EvalSampleResult(
+                        sample_id=sample.id,
+                        input_text=sample.input_text,
+                        expected_output=sample.expected_output,
+                        actual_output=f"FATAL_ERROR: {str(error)}",
+                        metrics={"error": 1.0},
+                        error_info={
+                            "error_type": type(error).__name__,
+                            "error_message": str(error),
+                            "error_category": "fatal",
+                            "is_retryable": False,
+                        },
+                    )
+                return index, result
 
-                # Track retry statistics
-                if hasattr(result, "retry_count"):
-                    retry_count += result.retry_count
+        tasks = [
+            asyncio.create_task(
+                run_indexed_sample(index, sample),
+                name=f"eval-sample-{sample.id}",
+            )
+            for index, sample in enumerate(samples)
+        ]
 
-                # Track error statistics
-                if result.error_info:
+        completed = 0
+        try:
+            for settled in asyncio.as_completed(tasks):
+                index, result = await settled
+                results[index] = result
+                completed += 1
+
+                retry_count += result.retry_count
+                if result.error_info or "error" in result.metrics:
                     error_count += 1
                     logger.warning(
-                        f"Sample {sample.id} completed with errors: {result.error_info.get('error_category', 'unknown')}"
+                        f"Sample {result.sample_id} completed with errors: "
+                        f"{result.error_info.get('error_category', 'unknown')}"
                     )
 
-                if progress_callback:
-                    progress_callback(i + 1, len(samples), result)
-
-                # Log progress periodically with enhanced info
-                if (i + 1) % 10 == 0:
-                    success_rate = ((i + 1 - error_count) / (i + 1)) * 100
-                    logger.info(
-                        f"Processed {i + 1}/{len(samples)} samples | Success rate: {success_rate:.1f}% | Total retries: {retry_count}"
-                    )
-
-            except Exception as e:
-                logger.error(f"Fatal error processing sample {sample.id}: {e}")
-                error_count += 1
-
-                # Create error result
-                error_result = EvalSampleResult(
-                    sample_id=sample.id,
-                    input_text=sample.input_text,
-                    expected_output=sample.expected_output,
-                    actual_output=f"FATAL_ERROR: {str(e)}",
-                    metrics={"error": 1.0},
-                    error_info={
-                        "error_type": type(e).__name__,
-                        "error_message": str(e),
-                        "error_category": "fatal",
-                        "is_retryable": False,
-                    },
+                await _invoke_callback(
+                    progress_callback, completed, len(samples), result
                 )
-                results.append(error_result)
+
+                if completed % 10 == 0:
+                    success_rate = (
+                        (completed - error_count) / completed
+                    ) * 100
+                    logger.info(
+                        f"Processed {completed}/{len(samples)} samples | "
+                        f"Success rate: {success_rate:.1f}% | "
+                        f"Total retries: {retry_count}"
+                    )
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        ordered_results = [result for result in results if result is not None]
 
         # Log final statistics
         success_rate = (
-            ((len(results) - error_count) / len(results)) * 100 if results else 0
+            ((len(ordered_results) - error_count) / len(ordered_results)) * 100
+            if ordered_results
+            else 0
         )
-        logger.info(f"Evaluation completed: {len(results)} results")
+        logger.info(f"Evaluation completed: {len(ordered_results)} results")
         logger.info(
             f"Success rate: {success_rate:.1f}% | Errors: {error_count} | Total retries: {retry_count}"
         )
@@ -2475,7 +2813,7 @@ class EvalRunner:
         )
         log_histogram(
             "eval_runner_sample_count",
-            len(results),
+            len(ordered_results),
             labels={
                 "task_type": self.task_config.task_type,
                 "provider": self.model_config.get("provider", "unknown"),
@@ -2502,7 +2840,7 @@ class EvalRunner:
         )
 
         # Calculate and log success rate
-        if len(results) > 0:
+        if ordered_results:
             log_histogram(
                 "eval_runner_success_rate",
                 success_rate / 100.0,
@@ -2513,7 +2851,7 @@ class EvalRunner:
                 },
             )
 
-        return results
+        return ordered_results
 
     def calculate_aggregate_metrics(
         self, results: List[EvalSampleResult]

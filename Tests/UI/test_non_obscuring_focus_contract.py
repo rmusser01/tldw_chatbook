@@ -18,22 +18,18 @@ BASE_COMPONENTS = ROOT / "tldw_chatbook/Widgets/base_components.py"
 WIDGETS = ROOT / "tldw_chatbook/css/components/_widgets.tcss"
 MESSAGES = ROOT / "tldw_chatbook/css/components/_messages.tcss"
 CHAT = ROOT / "tldw_chatbook/css/features/_chat.tcss"
-CHAT_TABS = ROOT / "tldw_chatbook/css/features/_chat_tabs.tcss"
 CONVERSATIONS = ROOT / "tldw_chatbook/css/features/_conversations.tcss"
 SIDEBARS = ROOT / "tldw_chatbook/css/layout/_sidebars.tcss"
 LAYOUT_TABS = ROOT / "tldw_chatbook/css/layout/_tabs.tcss"
 BUNDLE = ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 CODING = ROOT / "tldw_chatbook/css/features/_coding.tcss"
 CODE_REPO = ROOT / "tldw_chatbook/css/features/_code_repo.tcss"
-SEARCH_RAG = ROOT / "tldw_chatbook/css/features/_search-rag.tcss"
 CONFIG_SEARCH = ROOT / "tldw_chatbook/css/features/config_search.tcss"
 FEATURE_ALERTS = ROOT / "tldw_chatbook/css/features/feature_alerts.tcss"
-INGESTION_REBUILT = ROOT / "tldw_chatbook/css/features/_ingestion_rebuilt.tcss"
 NEW_INGEST = ROOT / "tldw_chatbook/css/features/_new_ingest.tcss"
 UNIFIED_SIDEBAR = ROOT / "tldw_chatbook/css/components/_unified_sidebar.tcss"
 WIZARDS = ROOT / "tldw_chatbook/css/features/_wizards.tcss"
 EVALUATION_UNIFIED = ROOT / "tldw_chatbook/css/features/_evaluation_unified.tcss"
-EVAL_NAV_SCREEN = ROOT / "tldw_chatbook/UI/Evals/navigation/eval_nav_screen.py"
 EMBEDDINGS = ROOT / "tldw_chatbook/css/features/_embeddings.tcss"
 INGEST = ROOT / "tldw_chatbook/css/features/_ingest.tcss"
 TOOLS_SETTINGS = ROOT / "tldw_chatbook/css/features/_tools-settings.tcss"
@@ -45,8 +41,6 @@ MEDIA_LIST_PANEL = ROOT / "tldw_chatbook/Widgets/Media/media_list_panel.py"
 REPO_TREE_WIDGETS = ROOT / "tldw_chatbook/Widgets/Coding_Widgets/repo_tree_widgets.py"
 CHATBOOKS_IMPROVED = ROOT / "tldw_chatbook/css/features/_chatbooks_improved.tcss"
 CHATBOOKS_WINDOW_IMPROVED = ROOT / "tldw_chatbook/UI/Chatbooks_Window_Improved.py"
-SAMPLE_BROWSER_DIALOG = ROOT / "tldw_chatbook/Widgets/Evals/sample_browser_dialog.py"
-RAG_SEARCH_WINDOW = ROOT / "tldw_chatbook/UI/Views/RAGSearch/search_rag_window.py"
 EMOJI_PICKER = ROOT / "tldw_chatbook/Widgets/emoji_picker.py"
 ENHANCED_FILE_PICKER = ROOT / "tldw_chatbook/Widgets/enhanced_file_picker.py"
 MODEL_CARD_VIEWER = ROOT / "tldw_chatbook/Widgets/HuggingFace/model_card_viewer.py"
@@ -80,6 +74,22 @@ NATIVE_CHOICE_SELECTED_MARKERS = (
 NATIVE_CHOICE_HOVER_MARKERS = (
     ".option-list--option-hover",
     ".tree--highlight-line",
+)
+
+# task-430 AC#1: the generic OptionList/Tree/SelectionList "selected" contract
+# (assert_native_row_selected_state_contract, background: $surface) is close
+# to invisible against the file picker dialog's own background. This
+# id-scoped selector deliberately opts out of the neutral native-row contract
+# in favor of the higher-contrast $ds-focus-bg/$ds-focus-fg readable-selected
+# contract (assert_readable_selected_state_contract) -- see
+# test_file_picker_list_highlight_uses_high_contrast_override_contract below.
+NATIVE_CHOICE_HIGH_CONTRAST_OVERRIDES = (
+    "#file-list-pane .option-list--option-highlighted",
+    # TASK-368: the discovered-model checkbox CHECKED glyph is a sanctioned
+    # high-contrast override (scoped by id) so selected reads distinctly from the
+    # empty unchecked box — the shared $surface/$text contract erases that.
+    "#settings-discovered-models-list .selection-list--button-selected",
+    "#settings-discovered-models-list .selection-list--button-selected-highlighted",
 )
 
 
@@ -302,6 +312,7 @@ def assert_all_native_choice_selectors_follow_contracts(text: str) -> None:
         selector
         for selector in css_selectors(text)
         if any(marker in selector for marker in NATIVE_CHOICE_SELECTED_MARKERS)
+        and selector not in NATIVE_CHOICE_HIGH_CONTRAST_OVERRIDES
     ]
     assert selected_selectors
     for selector in selected_selectors:
@@ -681,6 +692,17 @@ def test_library_mode_chip_selector_is_retired_from_focus_contracts():
         assert not css_selectors_contain_class(selectors, ".notes-mode-chip")
 
 
+def test_search_rag_selectors_are_retired_from_bundled_css():
+    """features/_search-rag.tcss was deleted (RAG UX v2 PR-2 Task 2); its
+    selectors must not resurface in any bundled css module."""
+    for module_path in bundled_css_module_paths():
+        selectors = css_selectors(module_path.read_text(encoding="utf-8"))
+        assert not css_selectors_contain_class(
+            selectors, ".search-query-input-enhanced"
+        )
+        assert not css_selectors_contain_class(selectors, ".results-list-enhanced")
+
+
 def test_css_class_selector_matching_uses_token_boundaries():
     assert css_selectors_contain_class(
         [".notes-mode-chip:focus", ".foo.notes-mode-chip.is-active"],
@@ -895,14 +917,27 @@ def test_settings_compact_select_uses_non_clipping_row_contract():
 
 
 def test_settings_detail_and_inspector_panes_scroll_long_content():
-    text = AGENTIC.read_text(encoding="utf-8")
-    detail = "\n".join(css_blocks(text, "#settings-detail-pane"))
-    inspector = "\n".join(css_blocks(text, "#settings-impact-pane"))
+    """Both panes' scroll BODIES carry the scroll + scrollbar contract.
 
-    for block in (detail, inspector):
-        assert "overflow-y: auto;" in block
-        assert "overflow-x: hidden;" in block
-        assert "scrollbar-size: 1 1;" in block
+    Qodo PR #1147: each pane is a fixed header over a scrollable body
+    (detail since task-1716, inspector since task-1560), so the theming
+    belongs on the -body children that actually scroll; the outer panes
+    only hold their column width and clip.
+    """
+    text = AGENTIC.read_text(encoding="utf-8")
+    bodies = "\n".join(
+        css_blocks(text, "#settings-detail-pane-body")
+        + css_blocks(text, "#settings-impact-pane-body")
+    )
+    outers = "\n".join(
+        css_blocks(text, "#settings-detail-pane")
+        + css_blocks(text, "#settings-impact-pane")
+    )
+
+    assert "overflow-y: auto;" in bodies
+    assert "overflow-x: hidden;" in bodies
+    assert "scrollbar-size: 1 1;" in bodies
+    assert "overflow-x: hidden;" in outers
 
 
 def test_settings_category_active_states_use_selected_contract():
@@ -968,13 +1003,18 @@ def test_shared_section_container_collapse_button_hover_is_non_obscuring():
 
 
 @pytest.mark.unit
-def test_shared_collapsible_header_hover_uses_non_obscuring_surface_contract():
+def test_library_rag_collapsible_header_hover_uses_non_obscuring_surface_contract():
     for label, text in (
         ("components/_widgets.tcss", WIDGETS.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
     ):
-        base = css_block(text, "Collapsible > .collapsible--header")
-        blocks = css_blocks(text, "Collapsible > .collapsible--header:hover")
+        base = css_block(
+            text, "#settings-library-rag-card Collapsible > CollapsibleTitle"
+        )
+        blocks = css_blocks(
+            text,
+            "#settings-library-rag-card Collapsible > CollapsibleTitle:hover",
+        )
         assert "background: $surface-lighten-1;" in base
         assert blocks, f"{label} is missing Collapsible header hover"
         assert len(blocks) == 1, (
@@ -986,9 +1026,9 @@ def test_shared_collapsible_header_hover_uses_non_obscuring_surface_contract():
 
 def test_shared_collapsible_header_focus_is_underlined_and_non_heavy():
     text = WIDGETS.read_text(encoding="utf-8")
-    block = css_block(text, "Collapsible > .collapsible--header:focus")
+    block = css_block(text, "Collapsible > CollapsibleTitle:focus")
     collapsed_focus = css_block(
-        text, "Collapsible.-collapsed > .collapsible--header:focus"
+        text, "Collapsible.-collapsed > CollapsibleTitle:focus"
     )
     assert_non_obscuring_focus(block)
     assert "outline: heavy" not in block
@@ -1000,9 +1040,9 @@ def test_conversations_collapsible_active_header_uses_selected_contract():
         CONVERSATIONS.read_text(encoding="utf-8"),
         BUNDLE.read_text(encoding="utf-8"),
     ):
-        blocks = css_blocks(text, "Collapsible.-active > .collapsible--header")
+        blocks = css_blocks(text, "Collapsible.-active > CollapsibleTitle")
         assert blocks, (
-            "Missing CSS block for Collapsible.-active > .collapsible--header"
+            "Missing CSS block for Collapsible.-active > CollapsibleTitle"
         )
         active = blocks[-1]
         assert_readable_selected_state_contract(active)
@@ -1037,41 +1077,6 @@ def test_chat_rag_focus_within_uses_non_semantic_container_cue():
     assert "$boost" not in block
     assert "border: round $ds-focus-accent;" in block
     assert "background: $panel;" in block
-
-
-def test_chat_tab_active_state_is_readable_without_dominant_fill():
-    for text in (
-        CHAT_TABS.read_text(encoding="utf-8"),
-        BUNDLE.read_text(encoding="utf-8"),
-    ):
-        for selector in (
-            ".chat-tab.active",
-            ".chat-tab.active:focus",
-            ".chat-tab.active:hover",
-            ".chat-tab.active:hover:focus",
-        ):
-            active = css_block(text, selector)
-            assert_readable_selected_state_contract(active)
-            assert_no_dominant_selected_geometry(active)
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    "selector",
-    (
-        ".close-tab-button:hover",
-        ".new-tab-button:hover",
-    ),
-)
-def test_chat_tab_action_hover_states_use_neutral_readable_surface(selector: str):
-    for label, text in (
-        ("_chat_tabs.tcss", CHAT_TABS.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
-    ):
-        blocks = css_blocks(text, selector)
-        assert blocks, f"{label} is missing {selector}"
-        assert len(blocks) == 1, f"{label} should define exactly one {selector}"
-        assert_native_row_hover_state_contract(blocks[0])
 
 
 def test_layout_tab_active_states_use_underlined_selected_contracts():
@@ -1127,17 +1132,6 @@ def test_feature_buttons_inherit_shared_button_focus_contract_without_duplicate_
         )
         == []
     )
-
-
-def test_ingestion_rebuilt_focus_overrides_defer_to_shared_contracts():
-    text = INGESTION_REBUILT.read_text(encoding="utf-8")
-    widget_focus_selector = re.compile(r"\b(Input|TextArea|Select|Button)\b.*:focus")
-    offenders = [
-        selector
-        for selector in css_selectors(text)
-        if widget_focus_selector.search(selector)
-    ]
-    assert offenders == []
 
 
 def test_new_ingest_focus_overrides_defer_to_shared_contracts():
@@ -1304,25 +1298,6 @@ def test_bundled_feature_navigation_states_match_source_contracts():
     assert_feature_nav_active_contract(
         css_block(text, ".tools-nav-pane .ts-nav-button.active-nav")
     )
-
-
-def test_llm_management_default_css_nav_states_follow_contracts():
-    from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
-
-    text = LLMManagementWindow.DEFAULT_CSS
-    hover = css_block(text, ".llm-nav-button:hover")
-    assert "outline: heavy" not in hover
-    assert "border: thick" not in hover
-    assert "$primary" not in hover
-    assert "$accent" not in hover
-    assert "$warning" not in hover
-    assert "$error" not in hover
-    assert "background: $ds-surface-raised;" in hover
-    assert "color: $ds-text-primary;" in hover
-
-    active = css_block(text, ".llm-nav-button.-active")
-    assert_readable_selected_state_contract(active)
-    assert_no_dominant_selected_geometry(active)
 
 
 def test_ingest_selected_files_list_uses_non_obscuring_container_cue():
@@ -1498,6 +1473,30 @@ def test_bundled_native_choice_and_tree_states_match_source_contracts():
     assert_all_native_choice_selectors_follow_contracts(text)
 
 
+def test_file_picker_list_highlight_uses_high_contrast_override_contract():
+    """task-430 AC#1: the file picker's list pane opts out of the neutral
+    native-row $surface contract in favor of the readable-selected
+    $ds-focus-bg/$ds-focus-fg contract.
+
+    The generic ``OptionList > .option-list--option-highlighted`` rule paints
+    ``$surface``, which is near-invisible against the file picker dialog's
+    own background. ``#file-list-pane .option-list--option-highlighted``
+    beats that rule (same App-CSS origin tier, higher specificity) with the
+    sanctioned non-obscuring focus tokens instead. It is intentionally
+    excluded from ``NATIVE_CHOICE_SELECTED_MARKERS`` scans (see
+    ``NATIVE_CHOICE_HIGH_CONTRAST_OVERRIDES``) because it targets the same
+    native pseudo-class but deliberately does not follow the neutral
+    native-row contract.
+    """
+    for _, text in (
+        ("components/_lists.tcss", LISTS.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        for selector in NATIVE_CHOICE_HIGH_CONTRAST_OVERRIDES:
+            block = css_block(text, selector)
+            assert_readable_selected_state_contract(block)
+
+
 def test_media_selected_and_active_states_follow_shared_contracts():
     media_text = MEDIA.read_text(encoding="utf-8")
     for selector in (
@@ -1612,45 +1611,39 @@ def test_chatbooks_search_input_focus_uses_stable_thin_contracts():
     assert_thin_inline_input_focus(inline_focus)
 
 
-def test_evals_sample_browser_selected_row_uses_readable_inline_contract():
-    text = SAMPLE_BROWSER_DIALOG.read_text(encoding="utf-8")
-    assert_readable_inline_selected_state_contract(
-        css_block(text, ".sample-row.selected")
-    )
+def test_library_rag_query_input_uses_stable_thin_contracts():
+    text = AGENTIC.read_text(encoding="utf-8")
+    base = css_block(text, "#library-rag-query-input")
+    focus = css_block(text, "#library-rag-query-input:focus")
+    assert_stable_solid_border_geometry(base, focus)
+    assert_thin_input_focus(focus)
+    assert "background: $ds-input-focus-bg;" in focus
 
 
-def test_evals_sample_browser_selected_row_children_show_inline_selected_cue():
-    text = SAMPLE_BROWSER_DIALOG.read_text(encoding="utf-8")
-    for selector in (
-        ".sample-row.selected .sample-id",
-        ".sample-row.selected .sample-type",
-        ".sample-row.selected .sample-preview",
+@pytest.mark.unit
+def test_library_rag_result_card_focus_uses_stable_border_geometry():
+    """Task 12/RAG-36: the focusable evidence-row card border only changes
+    COLOR on focus (never adds a border edge the base rule doesn't already
+    reserve, per the stable-border-geometry rule from Task 5 -- otherwise
+    Tab/Shift+Tab through the results list would visibly jitter). Also
+    confirms focus is distinguished from `.library-rag-result-row.is-
+    selected`'s own $ds-focus-bg/$ds-focus-fg treatment by NOT touching
+    background/color, so "keyboard is here" never reads as "this evidence
+    is selected"."""
+    for _, text in (
+        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
     ):
-        block = css_block(text, selector)
-        assert "$accent" not in block
-        assert "$primary" not in block
-        assert "color: $text;" in block
-        assert "text-style: bold underline;" in block
-
-
-def test_evals_navigation_card_focus_is_non_obscuring_and_ordered_after_type_borders():
-    text = EVAL_NAV_SCREEN.read_text(encoding="utf-8")
-    focus = css_block(text, ".nav-card:focus")
-    assert_custom_widget_focus_contract(focus)
-    assert css_blocks(text, ".nav-card.quick-test") == []
-    assert css_blocks(text, ".nav-card.batch") == []
-
-    for selector in (".nav-card.quick_test", ".nav-card.batch_eval"):
-        assert css_blocks(text, selector)
-        assert text.index(selector) < text.index(".nav-card:focus")
-
-    for selector in (
-        ".nav-card:focus .card-icon",
-        ".nav-card:focus .card-title",
-        ".nav-card:focus .card-description",
-        ".nav-card:focus .card-shortcut",
-    ):
-        assert css_blocks(text, selector) == []
+        base = css_block(text, ".library-rag-result-card")
+        focus = css_block(text, ".library-rag-result-card:focus")
+        assert_stable_solid_border_geometry(base, focus)
+        assert "border: solid $ds-focus-accent;" in focus
+        assert "border-bottom: solid $ds-focus-accent;" in focus
+        assert "outline: heavy" not in focus
+        assert "$primary" not in focus
+        assert "$accent" not in focus
+        assert "background:" not in focus
+        assert "color:" not in focus
 
 
 def test_tamagotchi_focus_uses_non_obscuring_custom_widget_contract():
@@ -1688,17 +1681,6 @@ def test_huggingface_model_card_selected_file_row_is_readable():
         "ModelCardViewer .file-item.selected:hover",
     ):
         assert_readable_inline_selected_state_contract(css_block(text, selector))
-
-
-def test_search_rag_query_input_focus_targets_rendered_input_without_jitter():
-    ui_text = RAG_SEARCH_WINDOW.read_text(encoding="utf-8")
-    text = SEARCH_RAG.read_text(encoding="utf-8")
-    assert 'classes="search-query-input-enhanced"' in ui_text
-    base = css_block(text, ".search-query-input-enhanced")
-    focus = css_block(text, ".search-query-input-enhanced:focus")
-    assert_stable_solid_border_geometry(base, focus)
-    assert_thin_input_focus(focus)
-    assert "background: $ds-input-focus-bg;" in focus
 
 
 def test_config_search_highlight_focus_uses_thin_non_semantic_focus():
@@ -1773,35 +1755,9 @@ def test_bundled_sidebar_inputs_keep_stable_effective_geometry(selector: str):
     assert "border-bottom: solid" in block
 
 
-def test_sidebar_preset_active_state_is_readable_without_dominant_fill():
-    text = SIDEBARS.read_text(encoding="utf-8")
-    active = css_block(text, ".preset-button.active")
-    assert "outline: heavy" not in active
-    assert "reverse" not in active
-    assert "$primary" not in active
-    assert "$warning" not in active
-    assert "$error" not in active
-    assert "background: $ds-focus-bg;" in active
-    assert "color: $ds-focus-fg;" in active
-    assert "text-style: bold underline;" in active
-
-
-def test_sidebar_preset_active_hover_preserves_active_cue():
-    for label, text in (
-        ("layout/_sidebars.tcss", SIDEBARS.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
-    ):
-        blocks = css_blocks(text, ".preset-button.active:hover")
-        assert blocks, f"{label} is missing .preset-button.active:hover"
-        assert_readable_selected_state_contract(blocks[-1])
-        assert "border: tall $ds-focus-accent;" in blocks[-1]
-
-
 @pytest.mark.parametrize(
     "selector",
     (
-        ".preset-button:hover",
-        ".sidebar-resize-button:hover",
         ".search-result-item:hover",
         ".reset-button:hover",
     ),

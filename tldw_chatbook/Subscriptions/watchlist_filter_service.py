@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping
 
+from .watchlist_rule_matching import build_rule_haystack
+
 
 class WatchlistFilterService:
     """Evaluate source-level include/exclude/flag filters against candidate items."""
@@ -48,9 +50,10 @@ class WatchlistFilterService:
         if not pattern:
             return False
 
-        haystack = " ".join(
-            str(item.get(key) or "") for key in ("title", "summary", "content", "author")
-        ).lower()
+        # Shared with `WatchlistContentAlertService` so the two cannot drift,
+        # and page-scoped rather than diff-scoped for a site change -- see
+        # `watchlist_rule_matching`.
+        haystack = build_rule_haystack(item)
 
         if rule_type == "keyword":
             needle = pattern.lower()

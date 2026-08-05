@@ -17,7 +17,7 @@ from Tests.UI.test_product_maturity_phase1_first_run import (
     _build_clean_first_run_app,
     _test_cli_setting,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Constants import (
     TAB_CHAT,
     TAB_HOME,
@@ -48,8 +48,8 @@ CORE_FIRST_USE_ROUTES = (
     # row selected, so this smoke entry lands on LibraryScreen (canonical
     # tab "library") and checks the skills canvas's own empty-state copy
     # rather than the retired SkillsScreen's.
-    (TAB_SKILLS, TAB_LIBRARY, "LibraryScreen", ("No skills yet", "Library ▸ Skills")),
-    (TAB_MCP, TAB_MCP, "MCPScreen", ("MCP", "Unified MCP")),
+    (TAB_SKILLS, TAB_LIBRARY, "LibraryScreen", ("No skills yet", "New skill")),
+    (TAB_MCP, TAB_MCP, "MCPScreen", ("MCP", "Model Context Protocol")),
     (TAB_SETTINGS, TAB_SETTINGS, "SettingsScreen", ("Settings", "Providers & Models")),
 )
 

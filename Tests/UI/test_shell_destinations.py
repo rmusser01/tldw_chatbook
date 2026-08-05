@@ -1,8 +1,9 @@
 from tldw_chatbook.UI.Navigation.shell_destinations import (
     SHELL_DESTINATION_ORDER,
+    get_shell_destination,
     resolve_shell_route,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 
 def test_master_shell_destination_order_matches_spec():
@@ -11,7 +12,7 @@ def test_master_shell_destination_order_matches_spec():
         "Console",
         "Library",
         "Artifacts",
-        "Personas",
+        "Roleplay",
         "Watchlists",
         "Schedules",
         "Workflows",
@@ -21,6 +22,46 @@ def test_master_shell_destination_order_matches_spec():
         "Logs",
         "Settings",
     ]
+
+
+def test_personas_destination_labelled_roleplay_with_aliases():
+    """The nav destination reads "Roleplay" - the one public name everywhere.
+
+    "Personas" stays reserved for the in-screen user-identity mode
+    (``MODE_LABELS["personas"]``), which this test does not touch (task-435).
+
+    The label was "RP&CD" until a roleplay UAT found that a newcomer -- whose
+    whole goal is roleplay -- could not decode the abbreviation from the nav
+    bar, which is exactly where the decision to navigate gets made. F-034
+    then retired the long "Roleplay & Chat Dictionaries" expansion (palette
+    full_label) so nav, header, and palette all say the same thing. Every
+    legacy route alias below still resolves, so muscle memory and links are
+    unaffected.
+    """
+    dest = get_shell_destination("personas")
+    assert dest.label == "Roleplay"
+    assert dest.full_label == "Roleplay"
+    assert dest.accessible_label == "Roleplay"
+    assert "roleplay" in dest.legacy_routes
+    for route in (
+        "personas",
+        "ccp",
+        "conversations_characters_prompts",
+        "characters",
+        "roleplay",
+    ):
+        assert resolve_shell_route(route).destination_id == "personas"
+
+
+def test_tab_display_labels_use_roleplay_for_personas_and_ccp_tabs():
+    """Both Personas-seating tab ids show the renamed destination label.
+
+    Covers the top-level tab chrome for the Roleplay rename.
+    """
+    from tldw_chatbook.Constants import TAB_CCP, TAB_PERSONAS, get_tab_display_label
+
+    assert get_tab_display_label(TAB_CCP) == "Roleplay"
+    assert get_tab_display_label(TAB_PERSONAS) == "Roleplay"
 
 
 def test_legacy_routes_resolve_to_master_destinations():
@@ -40,6 +81,7 @@ def test_legacy_routes_resolve_to_master_destinations():
         "ccp": ("personas", "personas"),
         "conversation": ("library", "conversation"),
         "conversations_characters_prompts": ("personas", "personas"),
+        "roleplay": ("personas", "personas"),
         "subscriptions": ("watchlists_collections", "subscriptions"),
         "tools_settings": ("mcp", "tools_settings"),
         "settings": ("settings", "settings"),
@@ -61,7 +103,7 @@ def test_legacy_routes_resolve_to_master_destinations():
 
 
 def test_ccp_legacy_routes_resolve_to_personas_destination():
-    for legacy in ("ccp", "characters", "conversations_characters_prompts"):
+    for legacy in ("ccp", "characters", "conversations_characters_prompts", "roleplay"):
         resolved = resolve_shell_route(legacy)
         assert resolved.destination_id == "personas"
         assert resolved.canonical_route == "personas"

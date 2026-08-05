@@ -12,8 +12,12 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Button, Static
 
-from Tests.UI.test_screen_navigation import _build_test_app
-from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.UI.Navigation.main_navigation import (
+    MainNavigationBar,
+    nav_button_label,
+)
+from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -30,18 +34,11 @@ PHASE_6_FIRST_TIME_TASK = Path(
 )
 
 EXPECTED_NAV = [
-    ("nav-home", "^1 Home"),
-    ("nav-console", "^2 Console"),
-    ("nav-library", "^3 Library"),
-    ("nav-artifacts", "^4 Artifacts"),
-    ("nav-personas", "^5 Personas"),
-    ("nav-watchlists_collections", "^6 Watchlists"),
-    ("nav-schedules", "^7 Schedules"),
-    ("nav-workflows", "^8 Workflows"),
-    ("nav-mcp", "^9 MCP"),
-    ("nav-acp", "^0 ACP"),
-    ("nav-lab", "F7 Lab"),
-    ("nav-settings", "F9 Settings"),
+    (
+        f"nav-{destination.destination_id}",
+        nav_button_label(index, destination.label),
+    )
+    for index, destination in enumerate(SHELL_DESTINATION_ORDER)
 ]
 
 
@@ -142,7 +139,7 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
             )
 
             nav_buttons = list(
-                app.screen.query(MainNavigationBar).first().query(Button)
+                app.screen.query(MainNavigationBar).first().query("Button.nav-button")
             )
             assert [
                 (button.id, str(button.label).strip()) for button in nav_buttons
@@ -152,7 +149,7 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
             assert "Console needs a working model before live AI tasks." in home_text
             assert "Needs Attention" in home_text
             assert "Set up Console model" in home_text
-            assert "More: Ctrl+P" in home_text
+            assert "More ›" in home_text
 
             for button_id, current_tab, screen_name, required_copy in (
                 (

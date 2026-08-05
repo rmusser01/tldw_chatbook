@@ -8,9 +8,11 @@ import threading
 import queue
 import time
 import wave
+from collections import deque
 from types import SimpleNamespace
-from typing import Optional, Callable, List, Dict, Any
+from typing import Optional, Callable, Deque, List, Dict, Any
 from contextlib import contextmanager
+
 from loguru import logger
 
 # Try to import numpy as optional dependency for audio functionality
@@ -28,12 +30,24 @@ except ImportError:
 PYAUDIO_AVAILABLE = False
 SOUNDDEVICE_AVAILABLE = False
 
+# Final whole-branch review (streaming-pcm-sink, C1), belt-and-braces: all
+# three backend probes below catch `Exception`, not just `ImportError`.
+# `sounddevice` in particular calls `Pa_Initialize()` at IMPORT TIME
+# (`_initialize()`, module scope) and raises `PortAudioError` -- a
+# `RuntimeError` subclass, not `ImportError` -- when PortAudio itself can't
+# initialize (headless container, no ALSA, CoreAudio unavailable, audio
+# server down), which an `except ImportError` alone lets propagate
+# uncaught. `Audio/__init__.py` no longer imports this module eagerly
+# (same review, same fix), so this module is now reached only when a
+# caller genuinely wants a real audio backend -- but it must still degrade
+# to "unavailable" rather than raise when that backend can't come up,
+# exactly as the package already promises for a merely-missing package.
 try:
     import pyaudio
 
     PYAUDIO_AVAILABLE = True
     logger.info("PyAudio backend available")
-except ImportError:
+except Exception:
     pyaudio = SimpleNamespace(PyAudio=None, paInt16=8)
     logger.warning("PyAudio not available. Install with: pip install pyaudio")
 
@@ -42,7 +56,7 @@ try:
 
     SOUNDDEVICE_AVAILABLE = True
     logger.info("Sounddevice backend available")
-except ImportError:
+except Exception:
     sd = SimpleNamespace(
         InputStream=None,
         query_devices=lambda: [],
@@ -57,7 +71,7 @@ try:
 
     VAD_AVAILABLE = True
     logger.info("WebRTC VAD available for voice activity detection")
-except ImportError:
+except Exception:
     webrtcvad = SimpleNamespace(Vad=None)
     logger.warning("WebRTC VAD not available. Install with: pip install webrtcvad")
 
@@ -92,11 +106,40 @@ class AudioRecordingService:
     - Automatic gain control
     """
 
+    #: Class-level fallback so an instance built via `__new__` (as some
+    #: tests do, to skip the constructor's device-opening backend probe)
+    #: still has somewhere to put rejected frames instead of raising
+    #: AttributeError from `_process_audio_chunk`. `maxlen=0` makes
+    #: `.append()` a safe no-op -- nothing is ever actually retained by this
+    #: shared class-level object, so there is no cross-instance state
+    #: leakage despite the attribute being mutable. `__init__` always
+    #: replaces this with a real per-instance deque sized from
+    #: `vad_preroll_ms`.
+    _preroll_frames: Deque[bytes] = deque(maxlen=0)
+
     # Audio configuration defaults
     DEFAULT_SAMPLE_RATE = 16000  # 16kHz is standard for speech recognition
     DEFAULT_CHANNELS = 1  # Mono
     DEFAULT_CHUNK_SIZE = 1024  # Samples per chunk
     DEFAULT_AUDIO_FORMAT = "int16"  # 16-bit PCM
+
+    #: Frame duration `_process_audio_chunk` slices VAD input into. WebRTC
+    #: VAD only accepts 10/20/30 ms frames; this service has always used 20.
+    VAD_FRAME_DURATION_MS = 20
+
+    #: How much recently-*rejected* audio `_process_audio_chunk` replays the
+    #: instant VAD accepts a frame after a silence run (incident: live
+    #: dictation on real hardware with parakeet-mlx transcribed "stop" as
+    #: "dot"/"top"-like forms and "send" as "and" -- the leading consonant
+    #: gone). At `vad_aggressiveness=3`, low-energy speech onsets --
+    #: word-initial fricatives especially -- are classified as non-speech,
+    #: so the first frame(s) of an utterance were dropped before
+    #: transcription ever saw them. 240 ms (12 x 20 ms frames) is chosen to
+    #: comfortably cover a fricative onset while staying short enough that
+    #: replaying it does not meaningfully dilute VAD gating (i.e. does not
+    #: risk dragging a run of ambient noise into "speech"). Configurable as
+    #: `dictation.vad_preroll_ms`.
+    VAD_PREROLL_MS = 240
 
     def __init__(
         self,
@@ -106,6 +149,9 @@ class AudioRecordingService:
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         use_vad: bool = True,
         vad_aggressiveness: int = 2,
+        vad_preroll_ms: int = VAD_PREROLL_MS,
+        max_buffer_bytes: Optional[int] = None,
+        on_buffer_limit: Optional[Callable[[], None]] = None,
     ):
         """
         Initialize audio recording service.
@@ -117,6 +163,13 @@ class AudioRecordingService:
             chunk_size: Number of samples per chunk
             use_vad: Whether to use Voice Activity Detection
             vad_aggressiveness: VAD aggressiveness (0-3, higher is more aggressive)
+            vad_preroll_ms: How many milliseconds of rejected audio to keep
+                on hand and replay when VAD accepts a frame after a silence
+                run, to recover a clipped speech onset. Negative values are
+                clamped to 0 (pre-roll disabled).
+            max_buffer_bytes: Optional hard limit for retained PCM bytes
+            on_buffer_limit: Optional callback invoked once on a daemon
+                notification thread when the limit is reached
         """
         # Check for numpy requirement first
         if not NUMPY_AVAILABLE:
@@ -136,6 +189,18 @@ class AudioRecordingService:
         self.chunk_size = chunk_size
         self.use_vad = use_vad and VAD_AVAILABLE
         self.vad_aggressiveness = max(0, min(3, vad_aggressiveness))
+        self.max_buffer_bytes = (
+            max(0, int(max_buffer_bytes)) if max_buffer_bytes is not None else None
+        )
+        self.on_buffer_limit = on_buffer_limit
+        self.vad_preroll_ms = max(0, int(vad_preroll_ms))
+        preroll_frame_count = max(
+            0, round(self.vad_preroll_ms / self.VAD_FRAME_DURATION_MS)
+        )
+        # Ring buffer of the most recently *rejected* VAD frames, flushed
+        # ahead of the next accepted frame after a silence run. See
+        # `VAD_PREROLL_MS` above for the incident this exists to fix.
+        self._preroll_frames: Deque[bytes] = deque(maxlen=preroll_frame_count)
 
         # Initialize backend
         self.backend = self._initialize_backend(backend)
@@ -148,6 +213,8 @@ class AudioRecordingService:
         self.is_recording = False
         self.audio_queue = queue.Queue()
         self.audio_buffer: List[bytes] = []
+        self._audio_buffer_bytes = 0
+        self._buffer_limit_reached = False
         self.recording_thread = None
         self.callback = None
         self.save_file = None
@@ -309,6 +376,8 @@ class AudioRecordingService:
             self.callback = callback if callback is not None else self.callback
             self.save_file = save_to_file
             self.audio_buffer = []
+            self._audio_buffer_bytes = 0
+            self._buffer_limit_reached = False
             self.is_recording = True
 
             # Start recording thread
@@ -431,7 +500,7 @@ class AudioRecordingService:
         if self.use_vad and self.vad:
             # VAD requires 16-bit PCM at specific frame sizes
             # For 16kHz: 10, 20, or 30 ms frames
-            frame_duration_ms = 20
+            frame_duration_ms = self.VAD_FRAME_DURATION_MS
             frame_size = (
                 int(self.sample_rate * frame_duration_ms / 1000) * 2
             )  # 2 bytes per sample
@@ -440,25 +509,83 @@ class AudioRecordingService:
             for i in range(0, len(chunk) - frame_size + 1, frame_size):
                 frame = chunk[i : i + frame_size]
                 if self.vad.is_speech(frame, self.sample_rate):
+                    # Speech onset after a silence run: replay the buffered
+                    # pre-roll frames first so the onset they contain (a
+                    # fricative/plosive VAD just rejected) reaches the
+                    # transcriber ahead of this frame. `_preroll_frames` is
+                    # only ever non-empty here on a silence -> speech
+                    # transition -- it is cleared immediately after this
+                    # flush, so two consecutive accepted frames never
+                    # re-flush anything.
+                    if self._preroll_frames:
+                        for buffered_frame in self._preroll_frames:
+                            self._handle_audio_chunk(buffered_frame)
+                        self._preroll_frames.clear()
                     self._handle_audio_chunk(frame)
+                else:
+                    # Not (yet) speech: hold onto it in case it turns out to
+                    # be the clipped onset of an utterance that starts on
+                    # the very next frame. `maxlen` keeps only the most
+                    # recent `vad_preroll_ms` worth.
+                    self._preroll_frames.append(frame)
         else:
             # No VAD, process entire chunk
             self._handle_audio_chunk(chunk)
 
     def _handle_audio_chunk(self, chunk: bytes):
         """Handle processed audio chunk."""
+        retained = chunk
+        hit_limit = False
+        if self.max_buffer_bytes is not None:
+            frame_bytes = 2 * self.channels
+            remaining = max(0, self.max_buffer_bytes - self._audio_buffer_bytes)
+            retained_bytes = min(len(chunk), remaining)
+            retained_bytes -= retained_bytes % frame_bytes
+            retained = chunk[:retained_bytes]
+            hit_limit = retained_bytes < len(chunk) or (
+                self._audio_buffer_bytes + retained_bytes + frame_bytes
+                > self.max_buffer_bytes
+            )
+
         # Add to buffer
-        self.audio_buffer.append(chunk)
+        if retained:
+            self.audio_buffer.append(retained)
+            self._audio_buffer_bytes += len(retained)
 
         # Add to queue
-        self.audio_queue.put(chunk)
+        if retained:
+            self.audio_queue.put(retained)
 
         # Call callback if provided
-        if self.callback:
+        if retained and self.callback:
             try:
-                self.callback(chunk)
+                self.callback(retained)
             except Exception as e:
                 logger.error(f"Callback error: {e}")
+
+        if hit_limit:
+            self.is_recording = False
+            if not self._buffer_limit_reached:
+                self._buffer_limit_reached = True
+                self._notify_buffer_limit()
+
+    def _notify_buffer_limit(self) -> None:
+        """Invoke the buffer-limit callback away from the recording thread."""
+        callback = self.on_buffer_limit
+        if callback is None:
+            return
+
+        def invoke() -> None:
+            try:
+                callback()
+            except Exception as e:
+                logger.error(f"Buffer limit callback error: {e}")
+
+        threading.Thread(
+            target=invoke,
+            name="AudioBufferLimitCallback",
+            daemon=True,
+        ).start()
 
     def stop_recording(self) -> Optional[bytes]:
         """
@@ -487,6 +614,7 @@ class AudioRecordingService:
 
         # Cleanup
         self.audio_buffer = []
+        self._audio_buffer_bytes = 0
         self.callback = None
 
         # Close PyAudio if needed

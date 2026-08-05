@@ -30,6 +30,7 @@ except ImportError:
     logger.warning("scipy not available. Statistical tests will be limited.")
 
 from .eval_orchestrator import EvaluationOrchestrator
+from .eval_runner import _invoke_callback
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 
@@ -153,25 +154,28 @@ class ABTestRunner:
 
         try:
             # Run evaluations in parallel
-            if progress_callback:
-                progress_callback(0, 2, "Starting model evaluations...")
+            await _invoke_callback(
+                progress_callback, 0, 2, "Starting model evaluations..."
+            )
 
             # Create progress wrappers
-            def model_a_progress(completed: int, total: int, sample_result):
-                if progress_callback:
-                    # Scale to first half of progress
-                    overall_progress = int(completed / total * 50)
-                    progress_callback(
-                        overall_progress, 100, f"Model A: {completed}/{total}"
-                    )
+            async def model_a_progress(completed: int, total: int, sample_result):
+                overall_progress = int(completed / total * 50)
+                await _invoke_callback(
+                    progress_callback,
+                    overall_progress,
+                    100,
+                    f"Model A: {completed}/{total}",
+                )
 
-            def model_b_progress(completed: int, total: int, sample_result):
-                if progress_callback:
-                    # Scale to second half of progress
-                    overall_progress = 50 + int(completed / total * 50)
-                    progress_callback(
-                        overall_progress, 100, f"Model B: {completed}/{total}"
-                    )
+            async def model_b_progress(completed: int, total: int, sample_result):
+                overall_progress = 50 + int(completed / total * 50)
+                await _invoke_callback(
+                    progress_callback,
+                    overall_progress,
+                    100,
+                    f"Model B: {completed}/{total}",
+                )
 
             # Run both evaluations
             model_a_task = asyncio.create_task(
@@ -197,8 +201,9 @@ class ABTestRunner:
             # Wait for both to complete
             run_a_id, run_b_id = await asyncio.gather(model_a_task, model_b_task)
 
-            if progress_callback:
-                progress_callback(100, 100, "Analyzing results...")
+            await _invoke_callback(
+                progress_callback, 100, 100, "Analyzing results..."
+            )
 
             # Get results
             results_a = self.orchestrator.get_run_results(run_a_id)

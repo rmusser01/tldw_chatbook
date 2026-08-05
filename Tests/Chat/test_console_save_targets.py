@@ -1,6 +1,8 @@
 """Pure tests for Console Save-as title and payload derivation."""
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 from tldw_chatbook.Chat.console_save_targets import (
     CONSOLE_CHATBOOK_ARTIFACT_CONTENT_MAX_CHARS,
@@ -8,6 +10,7 @@ from tldw_chatbook.Chat.console_save_targets import (
     console_chatbook_artifact_payload,
     console_message_preview,
     derive_console_save_title,
+    resolve_console_artifact_owner_request,
 )
 
 FIXED_NOW = datetime(2026, 7, 11, 12, 30, tzinfo=timezone.utc)
@@ -86,6 +89,108 @@ def test_console_chatbook_artifact_payload_marks_console_saved_artifact():
     assert metadata["message_id"] == "m2"
     assert metadata["provider"] == "llama_cpp"
     assert metadata["model"] == "test-model"
+
+
+def test_console_artifact_owner_resolution_uses_persisted_message_revision_and_body():
+    expected_request = object()
+    repository = SimpleNamespace(
+        db=SimpleNamespace(
+            get_message_by_id=Mock(
+                return_value={
+                    "id": "persisted-message-1",
+                    "version": 7,
+                    "content": "grounded answer",
+                    "deleted": 0,
+                }
+            )
+        )
+    )
+    coordinator = SimpleNamespace(
+        writes_enabled=True,
+        trace_repository=repository,
+        owner_request_for_message=Mock(return_value=expected_request),
+    )
+
+    result = resolve_console_artifact_owner_request(
+        coordinator=coordinator,
+        persisted_message_id="persisted-message-1",
+        message_text="grounded answer",
+    )
+
+    assert result is expected_request
+    coordinator.owner_request_for_message.assert_called_once_with(
+        message_id="persisted-message-1",
+        message_revision=7,
+        current_body="grounded answer",
+    )
+
+
+def test_console_artifact_owner_resolution_fails_closed_for_missing_or_mismatched_body():
+    coordinator = SimpleNamespace(
+        writes_enabled=True,
+        trace_repository=SimpleNamespace(
+            db=SimpleNamespace(
+                get_message_by_id=Mock(
+                    return_value={
+                        "id": "persisted-message-1",
+                        "version": 7,
+                        "content": "different answer",
+                        "deleted": 0,
+                    }
+                )
+            )
+        ),
+        owner_request_for_message=Mock(),
+    )
+
+    assert (
+        resolve_console_artifact_owner_request(
+            coordinator=coordinator,
+            persisted_message_id="persisted-message-1",
+            message_text="edited answer",
+        )
+        is None
+    )
+    assert (
+        resolve_console_artifact_owner_request(
+            coordinator=coordinator,
+            persisted_message_id=None,
+            message_text="edited answer",
+        )
+        is None
+    )
+    coordinator.owner_request_for_message.assert_not_called()
+
+
+def test_console_artifact_owner_resolution_fails_closed_for_ambiguous_switch_or_store_error():
+    get_message = Mock(side_effect=RuntimeError("database unavailable"))
+    coordinator = SimpleNamespace(
+        writes_enabled=object(),
+        trace_repository=SimpleNamespace(
+            db=SimpleNamespace(get_message_by_id=get_message)
+        ),
+        owner_request_for_message=Mock(),
+    )
+
+    assert (
+        resolve_console_artifact_owner_request(
+            coordinator=coordinator,
+            persisted_message_id="persisted-message-1",
+            message_text="grounded answer",
+        )
+        is None
+    )
+    get_message.assert_not_called()
+
+    coordinator.writes_enabled = True
+    assert (
+        resolve_console_artifact_owner_request(
+            coordinator=coordinator,
+            persisted_message_id="persisted-message-1",
+            message_text="grounded answer",
+        )
+        is None
+    )
 
 
 def test_console_chatbook_artifact_payload_omits_blank_optional_metadata():

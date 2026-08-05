@@ -69,6 +69,45 @@ from __future__ import annotations
 from typing import Any, Dict
 
 
+def silence_ingest_worker_import_noise() -> None:
+    """Pool ``initializer``: keep worker import noise off the parent's TTY.
+
+    (task-2016) Spawn workers inherit a REAL-TTY stderr: the parent
+    constructs the pool under ``redirect_stderr(sys.__stderr__)`` when
+    Textual's fd-less stderr wrapper is active (see
+    ``_create_ingest_parse_pool``), so anything a worker's lazy imports
+    emit -- loguru's default stderr sink ("python-frontmatter not
+    installed…"), ``RequestsDependencyWarning`` and friends -- paints raw
+    text over the running TUI on the first submit. Runs INSIDE each worker
+    process before any job. Deliberately does NOT touch ``sys.stderr``
+    itself: a hard worker crash should still be able to reach a terminal
+    for diagnosis; only the known import-noise channels are silenced.
+    """
+    import logging
+    import warnings
+
+    try:
+        from loguru import logger as loguru_logger
+
+        loguru_logger.remove()
+    except Exception:
+        pass
+    # Route ``warnings.warn`` through logging (which has no configured
+    # handlers in a worker) instead of straight to stderr.
+    logging.captureWarnings(True)
+    warnings.simplefilter("ignore")
+    # (task-2041) A handler-less root logger auto-basicConfigs a stderr
+    # StreamHandler on the first bare ``logging.warning()`` -- the
+    # "WARNING:root:…" flood channel. A NullHandler keeps root non-empty
+    # so neither auto-basicConfig nor lastResort fires.
+    logging.getLogger().addHandler(logging.NullHandler())
+
+
+#: Max underlying exception-chain messages captured for the UI's
+#: expanded failure details (task-2130).
+_ERROR_CHAIN_CAP = 3
+
+
 def classify_parse_failure(exc: Exception) -> bool:
     """Return whether an ingest-time exception is a *permanent* failure.
 
@@ -148,6 +187,8 @@ def run_parse_job(file_path: str, options: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - must never raise across the process boundary
         message = str(exc).strip() or exc.__class__.__name__
         permanent = classify_parse_failure(exc)
+        stt_error_detail = getattr(exc, "error_detail", None)
+        stt_failure_provenance = getattr(exc, "stt_failure_provenance", None)
         category = (
             "unsupported_file_type"
             if str(exc).strip().startswith("Unsupported file type")
@@ -155,14 +196,42 @@ def run_parse_job(file_path: str, options: Dict[str, Any]) -> Dict[str, Any]:
             if isinstance(exc, FileNotFoundError)
             else "parse_error"
         )
-        return {
+        # (task-2130) The generic wrapper message ("PDF Extraction Error.")
+        # often hides the actual failure in the exception chain -- capture
+        # up to three distinct underlying messages so the UI's expanded
+        # details can say more than the one-line summary.
+        chain: list[str] = []
+        seen = {message}
+        visited_ids: set[int] = set()
+        cause = exc.__cause__ or exc.__context__
+        # Visited-identity guard (Qodo round): __cause__/__context__ can
+        # form a cycle, and repeated messages keep len(chain) flat -- a
+        # message-only loop condition could spin forever.
+        while (
+            cause is not None
+            and len(chain) < _ERROR_CHAIN_CAP
+            and id(cause) not in visited_ids
+        ):
+            visited_ids.add(id(cause))
+            text = str(cause).strip() or cause.__class__.__name__
+            if text not in seen:
+                chain.append(f"{cause.__class__.__name__}: {text}")
+                seen.add(text)
+            cause = cause.__cause__ or cause.__context__
+        failure = {
             "ok": False,
             "error": message,
             "permanent": permanent,
-            "error_detail": {
+            "error_detail": stt_error_detail
+            if isinstance(stt_error_detail, dict)
+            else {
                 "category": category,
                 "message": message,
                 "exception_type": exc.__class__.__name__,
+                "chain": chain,
             },
         }
+        if isinstance(stt_failure_provenance, dict):
+            failure["stt_failure_provenance"] = stt_failure_provenance
+        return failure
     return {"ok": True, "payload": payload}

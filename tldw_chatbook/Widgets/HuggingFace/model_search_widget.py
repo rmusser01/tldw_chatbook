@@ -4,8 +4,10 @@ Search widget for HuggingFace GGUF models.
 """
 
 from typing import Optional, List, Dict, Any
+
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
+from textual.css.query import QueryError
 from textual.widgets import Input, Button, Select, ListView, ListItem, Static
 from textual.message import Message
 from textual.reactive import reactive
@@ -138,9 +140,25 @@ class ModelSearchWidget(Container):
         # Results list directly without container wrapper
         yield ListView(id="results-list", classes="results-list")
 
-    def on_mount(self) -> None:
-        """Initialize with popular models on mount."""
-        # Defer initial browse to allow Select to fully initialize
+    # No `on_mount` here on purpose. It used to
+    # `call_after_refresh(self._initial_browse)`, which reaches
+    # huggingface.co. This widget lives inside `llm-view-download-models`,
+    # which `LLMManagementWindow.compose()` builds eagerly, so every visit
+    # to the Models screen fired an unrequested live request -- including
+    # for users who never open Download Models -- and it fed that screen's
+    # 488-787ms mount cost. The browse waits for `ensure_initial_browse`,
+    # called from `LLMManagementWindow.watch_active_view`.
+
+    def ensure_initial_browse(self) -> None:
+        """Run the first browse, once, when the view is actually shown.
+
+        Idempotent: activating the view repeatedly must not re-fetch, and a
+        user who has already searched must not have their results replaced
+        by the popular list.
+        """
+        if self._initial_browse_done:
+            return
+        self._initial_browse_done = True
         self.call_after_refresh(self._initial_browse)
 
     def _initial_browse(self) -> None:
@@ -228,13 +246,32 @@ class ModelSearchWidget(Container):
 
         # Use run_worker with an async coroutine
         async def _perform_search():
-            search_input = self.query_one("#model-search-input", Input)
+            # The widget can be torn down (screen navigated away, view
+            # unmounted) between run_worker() scheduling this coroutine and
+            # it actually starting to run. A plain `is_mounted` check is not
+            # enough on its own: children are removed before the parent's
+            # own mounted flag flips, so `self.is_mounted` can still read
+            # True while a child query below already raises NoMatches --
+            # guard each query individually too.
+            if not self.is_mounted:
+                return
+            try:
+                search_input = self.query_one("#model-search-input", Input)
+            except QueryError:
+                logger.debug(
+                    "model-search-input not found; widget torn down mid-search"
+                )
+                return
             query = search_input.value.strip()
 
             if not query and not self.browsing_mode:
                 return
 
-            sort_select = self.query_one("#sort-select", Select)
+            try:
+                sort_select = self.query_one("#sort-select", Select)
+            except QueryError:
+                logger.debug("sort-select not found; widget torn down mid-search")
+                return
             sort_display = sort_select.value or "Most Downloads"
 
             # Map display value to API value
@@ -299,15 +336,40 @@ class ModelSearchWidget(Container):
         """Initialize the search widget."""
         super().__init__(**kwargs)
         self.browsing_mode = False
+        #: Guards `ensure_initial_browse` so activating the download-models
+        #: view repeatedly does not re-fetch, and a user who has already
+        #: searched does not get their results replaced by the popular list.
+        self._initial_browse_done = False
 
     async def _update_results_list(self, results: List[Dict[str, Any]]) -> None:
         """Update the ListView with search results."""
-        results_list = self.query_one("#results-list", ListView)
+        # Scheduled via call_later from watch_results, which can fire after
+        # the widget has been torn down (screen navigated away). is_mounted
+        # alone is not sufficient -- see _perform_search's comment -- so the
+        # query itself is guarded too.
+        if not self.is_mounted:
+            return
+        try:
+            results_list = self.query_one("#results-list", ListView)
+        except QueryError:
+            logger.debug("results-list not found; widget torn down mid-update")
+            return
         await results_list.clear()
 
         if not results and not self.is_loading:
+            # "No models found" is only true once something has been looked
+            # for. Before the first browse the list is empty because nothing
+            # has been fetched, and saying "none found" there reads as "none
+            # exist". Deciding it here rather than writing a placeholder at
+            # mount is what makes it stick: `watch_results` fires on the
+            # initial empty `results` and would overwrite any earlier copy.
+            message = (
+                "No models found"
+                if self._initial_browse_done
+                else "Open this view to browse popular models."
+            )
             await results_list.append(
-                ListItem(Static("No models found", classes="loading-message"))
+                ListItem(Static(message, classes="loading-message"))
             )
             return
 
@@ -319,7 +381,15 @@ class ModelSearchWidget(Container):
 
     async def _show_loading_message(self) -> None:
         """Show loading message in the ListView."""
-        results_list = self.query_one("#results-list", ListView)
+        # Scheduled via call_later from watch_is_loading; see
+        # _update_results_list for why both guards are needed.
+        if not self.is_mounted:
+            return
+        try:
+            results_list = self.query_one("#results-list", ListView)
+        except QueryError:
+            logger.debug("results-list not found; widget torn down mid-update")
+            return
         await results_list.clear()
         await results_list.append(
             ListItem(Static("Loading models...", classes="loading-message"))
@@ -327,7 +397,15 @@ class ModelSearchWidget(Container):
 
     async def _show_error_message(self, error: str) -> None:
         """Show error message in the ListView."""
-        results_list = self.query_one("#results-list", ListView)
+        # Scheduled via call_later from watch_error_message; see
+        # _update_results_list for why both guards are needed.
+        if not self.is_mounted:
+            return
+        try:
+            results_list = self.query_one("#results-list", ListView)
+        except QueryError:
+            logger.debug("results-list not found; widget torn down mid-update")
+            return
         await results_list.clear()
         await results_list.append(
             ListItem(Static(f"Error: {error}", classes="error-message"))

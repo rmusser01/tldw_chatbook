@@ -271,24 +271,17 @@ def test_local_rag_admin_service_detail_requires_chroma_backed_store():
 @pytest.mark.skipif(
     not embeddings_rag_deps_installed(), reason="embeddings_rag deps not installed"
 )
-def test_write_via_rag_service_is_visible_to_search_and_admin(tmp_path, monkeypatch):
+def test_write_via_rag_service_is_visible_to_search_and_admin(tmp_path):
     """task-248 unification proof: a document indexed through the RAG service
     is (a) returned by semantic search and (b) visible to the retrieval-admin
     collection surface, because both read the same persistent Chroma store.
 
     Args:
         tmp_path: pytest fixture; holds the temporary Chroma persist dir.
-        monkeypatch: pytest fixture; isolates the process-wide RAG query-cache
-            singleton (``simple_cache._global_cache`` is first-caller-wins, so
-            without isolation this cache-disabled service would poison later
-            cache-enabled tests in the same process).
     """
     pytest.importorskip("chromadb")
-    from tldw_chatbook.RAG_Search.simplified import simple_cache
     from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
     from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
-
-    monkeypatch.setattr(simple_cache, "_global_cache", None)
 
     cfg = RAGConfig()
     cfg.embedding.model = "mock"  # deterministic bag-of-words backend, offline
@@ -324,14 +317,15 @@ def test_write_via_rag_service_is_visible_to_search_and_admin(tmp_path, monkeypa
         ingestion_indexing.set_shared_rag_service(rag_service)
         try:
             admin = LocalRAGAdminService(None)
+            collection_name = rag_service.vector_store.collection_name
             names = [record["name"] for record in admin.list_collections()]
-            assert cfg.vector_store.collection_name in names
+            assert collection_name in names
 
-            detail = admin.get_collection_detail(cfg.vector_store.collection_name)
+            detail = admin.get_collection_detail(collection_name)
             assert detail["count"] > 0
 
             exported = admin.export_collection(
-                cfg.vector_store.collection_name, include_embeddings=False
+                collection_name, include_embeddings=False
             )
             assert any(
                 "zanzibar" in (item["document"] or "") for item in exported["items"]

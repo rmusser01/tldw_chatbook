@@ -17,6 +17,7 @@ from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Button, Static
 
 from .personas_pane_messages import EditCharacterRequested
+from .personas_character_tts_widget import PersonasCharacterTTSWidget
 
 
 class PersonasCharacterCardWidget(Container):
@@ -27,7 +28,12 @@ class PersonasCharacterCardWidget(Container):
     DEFAULT_CSS = """
     PersonasCharacterCardWidget {
         width: 100%;
+        /* height: 100% fills the (scrollable) detail-stack viewport so the
+           character info owns the center by default; min-height is the real
+           floor under it (task-2231 AC#5) - attachment sections can never
+           squeeze the card to a sliver, the stack scrolls instead. */
         height: 100%;
+        min-height: 10;
     }
 
     PersonasCharacterCardWidget #personas-character-card-body {
@@ -102,6 +108,7 @@ class PersonasCharacterCardWidget(Container):
             yield Static(
                 "", id="personas-character-card-greeting-preview", markup=False
             )
+            yield PersonasCharacterTTSWidget(context="card")
             yield Static("Avatar: none", id="personas-card-avatar-status")
         with Horizontal(classes="ds-toolbar"):
             yield Button(
@@ -109,6 +116,8 @@ class PersonasCharacterCardWidget(Container):
                 id="personas-card-edit-character",
                 classes="console-action-secondary",
                 disabled=True,
+                # F-037: a disabled Edit explains itself.
+                tooltip="Select a character to edit.",
             )
 
     # ===== Public API =====
@@ -179,8 +188,12 @@ class PersonasCharacterCardWidget(Container):
         # for the handler's call_from_thread continuation.
         self.query_one("#personas-character-card-empty").display = False
         self.query_one("#personas-character-card-body").display = True
-        self.query_one("#personas-card-edit-character", Button).disabled = (
-            self._character_id is None
+        edit_button = self.query_one("#personas-card-edit-character", Button)
+        edit_button.disabled = self._character_id is None
+        edit_button.tooltip = (
+            None
+            if self._character_id is not None
+            else "This character has no saved record to edit."
         )
 
     # ===== Events =====

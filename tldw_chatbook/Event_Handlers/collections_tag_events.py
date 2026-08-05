@@ -128,22 +128,6 @@ async def handle_keyword_merge(app: "TldwCli", event: KeywordMergeEvent) -> None
             except Exception:
                 pass  # Window might not be active
 
-            # Also refresh any active media views to reflect the keyword changes
-            try:
-                from ..Event_Handlers.media_events import (
-                    perform_media_search_and_display,
-                )
-
-                # If we're in a media view, refresh it
-                if (
-                    hasattr(app, "current_media_type_filter_slug")
-                    and app.current_media_type_filter_slug
-                ):
-                    await perform_media_search_and_display(
-                        app, app.current_media_type_filter_slug, ""
-                    )
-            except Exception:
-                pass
         else:
             app.notify("Failed to merge keywords", severity="error")
 
@@ -223,22 +207,6 @@ async def handle_keyword_delete(app: "TldwCli", event: KeywordDeleteEvent) -> No
                 collections_window.clear_selection()
             except Exception:
                 pass  # Window might not be active
-
-            # Also refresh any active media views
-            try:
-                from ..Event_Handlers.media_events import (
-                    perform_media_search_and_display,
-                )
-
-                if (
-                    hasattr(app, "current_media_type_filter_slug")
-                    and app.current_media_type_filter_slug
-                ):
-                    await perform_media_search_and_display(
-                        app, app.current_media_type_filter_slug, ""
-                    )
-            except Exception:
-                pass
 
         if success_count < count:
             app.notify(

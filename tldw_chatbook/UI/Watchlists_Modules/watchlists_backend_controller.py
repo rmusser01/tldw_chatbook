@@ -216,6 +216,42 @@ class WatchlistsBackendController:
         result = await self._maybe_await(method(runtime_backend=backend, run_id=run_id))
         return dict(result)
 
+    async def get_item_status(
+        self,
+        *,
+        runtime_backend: str | None = None,
+        item_id: Any,
+    ) -> str:
+        """Read one content item's current status from the active backend.
+
+        Args:
+            runtime_backend: Target backend (``local`` or ``server``).
+            item_id: Item identifier, namespaced or bare.
+
+        Returns:
+            The item's current status.
+
+        Raises:
+            ValueError: If no scope service is configured.
+            NotImplementedError: If the active backend exposes no single-item
+                status read. Callers guarding a destructive write must treat
+                this as a refusal, not as a green light -- there is no safe
+                fallback, since inferring the status from a paged listing is
+                exactly the bug this method exists to remove.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        if self.scope_service is None:
+            raise ValueError("Watchlist scope service is unavailable.")
+        method = getattr(self.scope_service, "get_item_status", None)
+        if not callable(method):
+            raise NotImplementedError(
+                "Item status reads are not supported by the current backend."
+            )
+        result = await self._maybe_await(
+            method(runtime_backend=backend, item_id=item_id)
+        )
+        return str(result)
+
     async def update_item_status(
         self,
         *,
@@ -296,9 +332,24 @@ class WatchlistsBackendController:
 
         total_sources = len(sources)
         active_sources = sum(1 for s in sources if s.get("active"))
-        sources_in_error = sum(
-            1 for s in sources if str(s.get("status") or "").lower() == "error"
-        )
+        # TASK-1090: `status` alone is a key no watchlists normalizer emits --
+        # they publish `status_summary`, whose error form carries a count
+        # (`error (3)`). This counter therefore read 0 however many sources
+        # were failing, so the "Sources in error" card on the Overview was a
+        # permanent zero. Same resolution and same fallback as
+        # `SourcesPane.source_status_text`.
+        # `paused` counts as in-error too (task-2050 review), for the same
+        # reason it stays in the Sources pane's Error filter bucket: an
+        # auto-paused source failed PAST the threshold -- the most broken
+        # state there is -- and its `status_summary` now reads "paused"
+        # rather than "error (N)". Excluding it would make the Overview's
+        # error card DROP the moment a failing source finally trips
+        # auto-pause.
+        sources_in_error = 0
+        for s in sources:
+            status = str(s.get("status_summary") or s.get("status") or "").lower()
+            if status.startswith("error") or status == "paused":
+                sources_in_error += 1
         total_items = len(items)
         new_items = sum(1 for item in items if str(item.get("status") or "").lower() == "new")
 

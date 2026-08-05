@@ -26,6 +26,11 @@ class PreflightResult:
             is not known from the probe.
         truncated: ``True`` when a directory scan reached ``scan_limit``.
         total_files: Number of files discovered (``1`` for a reachable URL).
+        path_invalid: ``True`` when the errors are about the *path itself* --
+            missing, malformed, or neither a file nor a directory. Those are
+            not worth retrying: the same path will fail the same way, and the
+            fix is to correct it. A URL that failed to respond, by contrast,
+            may well succeed on a second attempt.
     """
 
     type_groups: dict[str, list[str]]
@@ -34,3 +39,18 @@ class PreflightResult:
     total_size: int
     truncated: bool
     total_files: int
+    path_invalid: bool = False
+    #: (task-2160) 0-byte files, pulled out of their type group at
+    #: analysis time: the pipeline is guaranteed to fail them ("<name> is
+    #: empty; there was nothing to ingest"), so the forecast must say so
+    #: instead of promising "1 will import" for a file it measured at 0 B.
+    empty_files: tuple[str, ...] = ()
+    #: (task-2043) How many staged files appear to already exist in the
+    #: Library (content-hash match, generic/text group only -- the DB hashes
+    #: PARSED content, so only read≈parse types can be checked pre-parse).
+    already_in_library: int = 0
+    #: (task-2130) True when the duplicate check hit its candidate cap --
+    #: ``already_in_library`` is then a floor, not a total, and the UI must
+    #: say "at least N" rather than presenting the cap as the truth (an
+    #: 80-duplicate folder read "20 files appear to already be…").
+    already_in_library_capped: bool = False

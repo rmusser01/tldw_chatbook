@@ -67,11 +67,13 @@ from tldw_chatbook.DB.Prompts_DB import (
     export_prompts_formatted as db_export_prompts_formatted,
 )
 from tldw_chatbook.Utils.path_validation import validate_path
+from tldw_chatbook.config import get_cli_config_path
 from .server_prompt_adapter import (
     local_prompt_to_preview_payload,
     local_prompt_to_server_payload,
     server_prompt_to_local_update,
 )
+from .prompt_artifact_codec import decode_prompt_artifact
 #
 #######################################################################################################################
 #
@@ -80,6 +82,12 @@ from .server_prompt_adapter import (
 _db_instance: Optional[PromptsDatabase] = None
 _db_path_global: Optional[Union[str, Path]] = None
 _client_id_global: Optional[str] = None
+
+
+def _default_prompt_import_directory() -> Path:
+    """Return the active profile's default directory for prompt imports."""
+    return get_cli_config_path().parent / "prompts"
+
 
 # --- Initialization and Management ---
 
@@ -198,6 +206,8 @@ def add_prompt(
     prompt_format: Optional[str] = None,
     prompt_schema_version: Optional[int] = None,
     prompt_definition: Optional[Any] = None,
+    artifact_type: Optional[str] = None,
+    serialize_create: bool = False,
 ) -> Tuple[Optional[int], Optional[str], str]:
     """Adds or updates a prompt. See PromptsDatabase.add_prompt for details."""
     db = get_db_instance()
@@ -212,6 +222,8 @@ def add_prompt(
         prompt_format=prompt_format,
         prompt_schema_version=prompt_schema_version,
         prompt_definition=prompt_definition,
+        artifact_type=artifact_type,
+        serialize_create=serialize_create,
     )
 
 
@@ -308,6 +320,7 @@ def import_prompt_from_server_payload(payload: Dict[str, Any]) -> Dict[str, Any]
         prompt_format=local_update.get("prompt_format"),
         prompt_schema_version=local_update.get("prompt_schema_version"),
         prompt_definition=local_update.get("prompt_definition"),
+        artifact_type=local_update.get("artifact_type"),
     )
     return {"prompt_id": prompt_id, "prompt_uuid": prompt_uuid, "message": message}
 
@@ -399,6 +412,7 @@ def add_or_update_prompt_interop(
     prompt_format: Optional[str] = None,
     prompt_schema_version: Optional[int] = None,
     prompt_definition: Optional[Any] = None,
+    artifact_type: Optional[str] = None,
 ) -> Tuple[Optional[int], Optional[str], str]:
     """
     Adds a new prompt or updates an existing one (identified by name).
@@ -417,6 +431,7 @@ def add_or_update_prompt_interop(
         prompt_format=prompt_format,
         prompt_schema_version=prompt_schema_version,
         prompt_definition=prompt_definition,
+        artifact_type=artifact_type,
     )
 
 
@@ -489,6 +504,7 @@ PROMPT_FIELDS = [
     "prompt_format",
     "prompt_schema_version",
     "prompt_definition",
+    "artifact_type",
 ]
 
 
@@ -523,6 +539,15 @@ def _normalize_prompt_data(data: Dict[str, Any]) -> Dict[str, Any]:
             "Defaulting to legacy."
         )
         normalized["prompt_format"] = "legacy"
+
+    artifact_type = normalized["artifact_type"]
+    if artifact_type is None:
+        normalized["artifact_type"] = "prompt"
+    elif not isinstance(artifact_type, str) or artifact_type not in {
+        "prompt",
+        "recipe",
+    }:
+        raise InputError("artifact_type must be either 'prompt' or 'recipe'.")
 
     if normalized["prompt_schema_version"] is not None and not isinstance(
         normalized["prompt_schema_version"], int
@@ -611,6 +636,52 @@ def parse_yaml_prompts_from_content(content: str) -> List[Dict[str, Any]]:
 # onto, and the whole fragment must be followed by end-of-line/string, not
 # just appear somewhere later in the text.
 _MD_SECTION_HEADER_LINE_RE = r"[ \t]*###[ \t]*[A-Za-z][A-Za-z0-9_]*[ \t]*###[ \t]*"
+_MARKDOWN_FALLBACK_NAME_ATTEMPTS = 1000
+
+
+def _parse_fenced_structure(section_text: Any) -> Optional[Dict[str, Any]]:
+    """Decode exactly one JSON fence from a STRUCTURE section."""
+    if not isinstance(section_text, str):
+        return None
+    match = re.fullmatch(r"```json\r?\n(.*)\r?\n```", section_text, re.DOTALL)
+    if not match:
+        return None
+    try:
+        definition = json.loads(match.group(1))
+    except (TypeError, ValueError):
+        return None
+    return definition if isinstance(definition, dict) else None
+
+
+def _restore_structured_markdown_prompt(parsed_data: Dict[str, Any]) -> bool:
+    """Restore v2 structure, or report that foreign metadata needs a safe import."""
+    artifact_type = parsed_data.pop("artifact_type_raw", None)
+    structure_text = parsed_data.pop("structure_raw", None)
+    definition = _parse_fenced_structure(structure_text)
+    if definition is None or not isinstance(artifact_type, str):
+        return artifact_type is not None or structure_text is not None
+
+    record = {
+        **parsed_data,
+        "artifact_type": artifact_type,
+        "prompt_format": "structured",
+        "prompt_schema_version": definition.get("schema_version"),
+        "prompt_definition": definition,
+    }
+    try:
+        decoded = decode_prompt_artifact(record)
+    except ValueError:
+        return True
+    if decoded.state != "supported_v2":
+        return True
+
+    parsed_data.update(
+        artifact_type=decoded.artifact_type,
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=decoded.raw_definition,
+    )
+    return False
 
 
 def parse_markdown_prompts_from_content(content: str) -> List[Dict[str, Any]]:
@@ -633,6 +704,8 @@ def parse_markdown_prompts_from_content(content: str) -> List[Dict[str, Any]]:
         "SYSTEM": "system_prompt",
         "USER": "user_prompt",
         "KEYWORDS": "keywords_str",
+        "ARTIFACT_TYPE": "artifact_type_raw",
+        "STRUCTURE": "structure_raw",
     }
 
     # Attempt to parse TITLE and DETAILS block first
@@ -711,7 +784,12 @@ def parse_markdown_prompts_from_content(content: str) -> List[Dict[str, Any]]:
     if "keywords_str" in parsed_data:  # Clean up temporary key
         del parsed_data["keywords_str"]
 
-    prompts_data.append(_normalize_prompt_data(parsed_data))
+    structured_fallback = _restore_structured_markdown_prompt(parsed_data)
+
+    normalized_data = _normalize_prompt_data(parsed_data)
+    if structured_fallback:
+        normalized_data["_markdown_structured_fallback"] = True
+    prompts_data.append(normalized_data)
     logger.debug(f"Parsed custom MD/TXT prompt: {parsed_data.get('name')}")
 
     return prompts_data
@@ -741,6 +819,52 @@ def _get_file_type(file_path: Path) -> Optional[str]:
     return None
 
 
+def _create_markdown_fallback_prompt(
+    prompt_data: Dict[str, Any],
+) -> Tuple[Optional[int], Optional[str], str]:
+    """Create a legacy fallback without ever updating a same-named artifact.
+
+    ``Prompts.name`` is exactly unique. Each insert therefore asks the database
+    to create, rather than pre-checking a name, so a competing importer cannot
+    turn a collision into an update. The deterministic `` (N)`` suffix mirrors
+    the repository's existing generated-name convention.
+    """
+    original_name = str(prompt_data["name"]).strip()
+    for suffix in range(1, _MARKDOWN_FALLBACK_NAME_ATTEMPTS + 1):
+        candidate_name = (
+            original_name if suffix == 1 else f"{original_name} ({suffix})"
+        )
+        try:
+            prompt_id, prompt_uuid, message = add_prompt(
+                name=candidate_name,
+                author=prompt_data.get("author"),
+                details=prompt_data.get("details"),
+                system_prompt=prompt_data.get("system_prompt"),
+                user_prompt=prompt_data.get("user_prompt"),
+                keywords=prompt_data.get("keywords"),
+                overwrite=False,
+                prompt_format="legacy",
+                prompt_schema_version=None,
+                prompt_definition=None,
+                artifact_type="prompt",
+                serialize_create=True,
+            )
+        except ConflictError:
+            continue
+
+        created = (
+            get_prompt_by_uuid(prompt_uuid, include_deleted=True)
+            if prompt_uuid is not None
+            else None
+        )
+        if created and not created.get("deleted"):
+            return prompt_id, prompt_uuid, message
+
+    raise ConflictError(
+        "Could not allocate a unique name for the structured Markdown fallback."
+    )
+
+
 def import_prompts_from_files(
     file_paths: Union[str, Path, List[Union[str, Path]]],
     base_directory: Optional[str] = None,
@@ -749,7 +873,9 @@ def import_prompts_from_files(
     Imports prompts from one or more files (JSON, YAML, Markdown, TXT).
 
     Each file can contain one or multiple prompts according to its format's conventions.
-    Prompts are added or updated in the database based on their 'name'.
+    Prompts are added or updated in the database based on their 'name'. Foreign
+    structured Markdown falls back to a new legacy Prompt instead, so it cannot
+    overwrite an existing structured artifact with the same title.
 
     Args:
         file_paths: A single file path (str or Path) or a list of file paths.
@@ -786,7 +912,7 @@ def import_prompts_from_files(
 
     # Set default base directory for prompt files
     if base_directory is None:
-        base_directory = os.path.expanduser("~/.config/tldw_cli/prompts/")
+        base_directory = _default_prompt_import_directory()
 
     results: List[Dict[str, Any]] = []
     parser_map: Dict[str, Callable[[str], List[Dict[str, Any]]]] = {
@@ -900,19 +1026,28 @@ def import_prompts_from_files(
                 continue
 
             try:
+                structured_fallback = bool(
+                    prompt_data.pop("_markdown_structured_fallback", False)
+                )
                 # Ensure all expected fields are present, defaulting to None or []
                 # This is now handled by _normalize_prompt_data within each parser.
-                p_id, p_uuid, db_msg = add_or_update_prompt_interop(
-                    name=prompt_name,
-                    author=prompt_data.get("author"),
-                    details=prompt_data.get("details"),
-                    system_prompt=prompt_data.get("system_prompt"),
-                    user_prompt=prompt_data.get("user_prompt"),
-                    keywords=prompt_data.get("keywords"),
-                    prompt_format=prompt_data.get("prompt_format"),
-                    prompt_schema_version=prompt_data.get("prompt_schema_version"),
-                    prompt_definition=prompt_data.get("prompt_definition"),
-                )
+                if structured_fallback:
+                    p_id, p_uuid, db_msg = _create_markdown_fallback_prompt(
+                        prompt_data
+                    )
+                else:
+                    p_id, p_uuid, db_msg = add_or_update_prompt_interop(
+                        name=prompt_name,
+                        author=prompt_data.get("author"),
+                        details=prompt_data.get("details"),
+                        system_prompt=prompt_data.get("system_prompt"),
+                        user_prompt=prompt_data.get("user_prompt"),
+                        keywords=prompt_data.get("keywords"),
+                        prompt_format=prompt_data.get("prompt_format"),
+                        prompt_schema_version=prompt_data.get("prompt_schema_version"),
+                        prompt_definition=prompt_data.get("prompt_definition"),
+                        artifact_type=prompt_data.get("artifact_type"),
+                    )
                 logger.info(
                     f"Imported prompt '{prompt_name}' from {file_path_str}: {db_msg}"
                 )

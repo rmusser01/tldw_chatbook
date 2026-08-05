@@ -1,11 +1,11 @@
 ---
 id: TASK-1334
 title: Toggle selected Console message off on repeated activation
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-31 22:16'
-updated_date: '2026-07-31 22:20'
+updated_date: '2026-08-01 00:05'
 labels:
   - console
   - messages
@@ -25,11 +25,12 @@ Let Console users clear the active transcript message by activating that same me
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Clicking an already selected transcript message clears selection and hides its contextual action row.
-- [ ] #2 Pressing Enter while a transcript message is selected clears selection and hides its contextual action row.
-- [ ] #3 Pressing Enter with no selected message still selects the first transcript message.
-- [ ] #4 Arrow-key navigation and contextual action activation retain their existing behavior.
-- [ ] #5 Focused automated regressions cover the mouse and keyboard toggle paths.
+- [x] #1 Clicking an already selected transcript message clears selection and hides its contextual action row.
+- [x] #2 Pressing Enter while a transcript message is selected clears selection and hides its contextual action row.
+- [x] #3 Pressing Enter with no selected message still selects the first transcript message.
+- [x] #4 Arrow-key navigation and contextual action activation retain their existing behavior.
+- [x] #5 Focused automated regressions cover the mouse and keyboard toggle paths.
+- [x] #6 The Enter binding help accurately describes toggling message selection.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,4 +49,21 @@ Implementation plan: Docs/superpowers/plans/2026-07-31-console-message-selection
 4. Route transcript Enter through the toggle API while preserving no-selection Enter and idempotent navigation behavior.
 5. Run the focused transcript module, broader selected-message Console regressions, and git diff --check.
 6. Self-review, complete all acceptance criteria, add implementation notes, and set TASK-1334 to Done.
+7. Address review feedback by documenting the modified public actions, correcting the Enter binding hint, and adding a focused help-contract regression.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Added `ConsoleTranscript.toggle_message_selection()` as the explicit activation toggle while preserving idempotent `select_message()` for navigation and internal callers. Repeated message-row clicks and Enter on the selected transcript message now clear selection through the existing refresh/notification path; Enter with no selection, boundary navigation, and focused contextual action buttons retain their prior behavior.
+
+Added mounted Textual regressions for mouse, keyboard, boundary-navigation, and focused-action paths. Updated the existing keyboard-copy flow to remove its obsolete preliminary Enter, which now correctly means deselect.
+
+Qodo follow-up: added Google-style documentation for `toggle_message_selection()` and `action_confirm_selection()`, and changed the visible Enter binding hint from the obsolete one-way “Show actions” wording to “Toggle message selection.” Added a focused regression that failed against the stale hint before the production change. This review step was appended to the implementation plan during review remediation after the initial implementation was already complete.
+
+Verification after review remediation: 80 focused transcript tests passed; 16 broader selected-message/message-action tests passed with 257 deselected. Both runs emitted the pre-existing Requests dependency warning. `git diff --check` passed. The earlier user-approved full-suite exception remains the unrelated Audio stream recovery failure documented on PR #1148.
+
+ADR required: no. This routine UI interaction correction stays within the existing Console transcript selection boundary.
+
+Modified: `tldw_chatbook/Widgets/Console/console_transcript.py`, `Tests/UI/test_console_native_transcript.py`, and `Tests/UI/test_console_native_chat_flow.py`.
+<!-- SECTION:NOTES:END -->

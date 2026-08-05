@@ -10,9 +10,10 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Static
 
 from tldw_chatbook.Home.dashboard_state import HOME_PRIMARY_ACTION_ID, HomeCanvasState
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
-class HomeCanvas(Vertical):
+class HomeCanvas(RecomposeCaptureGuard, Vertical):
     """Render the selected item (or next best action) with its controls.
 
     Attributes:

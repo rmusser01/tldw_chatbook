@@ -11,6 +11,16 @@ the "Model: …" chip and the "Persona: …" chip.
 
 ## Background
 
+> **Rebase note (2026-08-03):** this spec was first written against a checkout
+> where the chips lived in `console_control_bar.py` and the persona chip read
+> "Persona: …". Current `dev` extracted the chips into
+> `tldw_chatbook/Widgets/Console/console_status_chips.py` (`ConsoleStatusChips`)
+> and renamed the persona chip to the **Assistant/Character** chip
+> (`ConsoleAssistantChip`, `assistant_label`). The implementation below follows
+> the current-dev structure; sibling action chips there
+> (`ConsoleModelChip`/`ConsoleAssistantChip`) post a nested `OpenRequested`
+> message handled on `ChatScreen`, and this chip follows that contract.
+
 The backend for this feature already exists:
 
 - `ConsoleSystemPromptModal` (`tldw_chatbook/Widgets/Console/console_system_prompt_modal.py`)
@@ -38,28 +48,27 @@ What is missing: a visible, clickable control in the console control bar.
      session settings and must stop discarding them (`provider, model, _settings = ...`)
      so it can pass the prompt-set state through.
 
-2. **`ConsoleSystemPromptChip`** (`tldw_chatbook/Widgets/Console/console_control_bar.py`)
-   - Focusable, clickable chip modeled on the existing interactive `ConsoleApprovalsChip`
-     (`console_control_bar.py:92-111`).
-   - Nested message class named `EditRequested` (i.e. `ConsoleSystemPromptChip.EditRequested`,
-     matching the `<Chip>.<Verb>Requested` convention of `ConsoleApprovalsChip.ReviewRequested`),
-     posted from both the Enter/Space key bindings and `_on_click`.
-   - Inserted in `ConsoleControlBar.compose()` between the model chip (line ~320) and the
-     persona chip (line ~321), id `console-system-prompt-chip`.
+2. **`ConsoleSystemPromptChip`** (`tldw_chatbook/Widgets/Console/console_status_chips.py`)
+   - Focusable, clickable chip modeled on the sibling action chips
+     (`ConsoleModelChip` / `ConsoleAssistantChip`).
+   - Nested message class named `OpenRequested` (matching the sibling action-chip
+     convention), posted from both the Enter/Space key bindings and `_on_click`.
+   - Inserted in `ConsoleStatusChips.compose()` between the model chip and the
+     assistant chip, id `console-system-prompt-chip`.
    - Add `"#console-system-prompt-chip": state.system_prompt_label` to the hardcoded
-     selector→field `label_values` dict in `ConsoleControlBar.sync_state`
-     (`console_control_bar.py:187-203`) — without this entry the label never refreshes
-     (the `NoMatches` guard fails silently).
+     selector→field `label_values` dict in `ConsoleStatusChips.sync_state`
+     — without this entry the label never refreshes (the `NoMatches` guard fails
+     silently).
 
 3. **`ChatScreen` handler** (`tldw_chatbook/UI/Screens/chat_screen.py`)
-   - One `@on(ConsoleSystemPromptChip.EditRequested)` handler on `ChatScreen` (the editor
-     is a screen method, so — unlike `ConsoleApprovalsChip.ReviewRequested`, which is
-     handled on the bar — this handler belongs on the screen).
-   - `_open_console_system_prompt_editor()` is `async`; the handler wraps it in
-     `self.run_worker(...)` like the existing entry points (`chat_screen.py:1246`, `11453`).
+   - One `@on(ConsoleSystemPromptChip.OpenRequested)` handler on `ChatScreen`,
+     next to `_console_assistant_chip_activated`, delegating to
+     `action_open_console_system_prompt_editor()` (which wraps the async editor
+     opener in `run_worker`, like the `/system` and command-palette entry points).
    - `_apply_console_session_system_prompt` currently only calls
      `_sync_console_chat_core_state()` and `_sync_console_settings_summary()`, neither of
-     which reaches `_sync_console_control_bar()`. Add a control-bar sync there so the chip
+     which reaches `_sync_console_control_bar()` (which pushes the new state into
+     `ConsoleStatusChips.sync_state`). Add a control-bar sync there so the chip
      label updates immediately after Apply/Clear instead of going stale until an unrelated
      sync fires.
 

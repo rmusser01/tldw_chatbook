@@ -1,6 +1,35 @@
 # baseline_manager.py
 # Description: Baseline management system for content change detection
 #
+# ============================================================================
+# NOT WIRED — this module is imported by nothing in the repository (TASK-1360).
+# A grep for `baseline_manager`/`BaselineManager` returns only docstring
+# mentions (this file, `monitoring_engine.py`, `test_watchlist_snapshot_
+# pruning.py`); there is no `import`. Nothing calls any of its 20 methods, and
+# it has no tests. It reads as live to a search but carries nothing — the
+# recurring "orphaned-but-grep-live" trap this codebase has hit before
+# (TASK-1220 `content_processor`, TASK-1221 gated-on-nothing packages).
+#
+# DECISION (TASK-1360): KEPT as a documented future component, not adopted and
+# not deleted. It is deliberately NOT pulled into the live fetch path:
+#   * The live change detector is `monitoring_engine.URLMonitor.check_url`,
+#     which computes `change_percentage` from `difflib.SequenceMatcher` and
+#     hardcodes `change_type: "content"`.
+#   * This module is genuinely BETTER — `ChangeReport.change_type` carries the
+#     `'content'/'structural'/'semantic'/'new'/'removed'` vocabulary the spec
+#     site mockup shows, plus a `summary` field that is exactly what the
+#     `diff_summary` column wants, and it compares key elements STRUCTURALLY
+#     rather than only by text ratio. That capability is the reason to keep it.
+#   * But adopting it is a deliberate, separate effort, NOT a drive-by: it must
+#     first be re-keyed per (subscription, url) — its `_cleanup_old_baselines`
+#     prunes per SUBSCRIPTION, which under the per-URL baselines shipped by
+#     TASK-1361/1362 would evict OTHER urls' baselines on a multi-url source
+#     and cause endless re-baselining (TASK-1393) — AND gain test coverage
+#     before it enters the fetch path, AND `monitoring_engine`'s duplicate
+#     text-ratio detection must be retired rather than left as a second
+#     implementation. Those are the conditions any future adoption task owns.
+# ============================================================================
+#
 # This module provides intelligent change detection by maintaining baselines
 # and comparing new content against them using multiple strategies:
 # - Content hashing for exact matches

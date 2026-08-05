@@ -1,5 +1,6 @@
 import asyncio
 import builtins
+import dataclasses
 import http.server
 import json
 import threading
@@ -16,20 +17,42 @@ from tldw_chatbook.Chat.Chat_Deps import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_gateway import (
+    MAX_AUXILIARY_OUTPUT_TOKENS,
+    AuxiliaryCompletionRequest,
+    AuxiliaryCompletionResult,
     GENERATION_READ_TIMEOUT_SECONDS,
     NO_PROVIDER_CONTENT_COPY,
     PROBE_TIMEOUT_SECONDS,
     UNSUPPORTED_PROVIDER_RESPONSE_COPY,
     ConsoleProviderGateway,
     ConsoleProviderResolution,
+    ConsoleProviderStreamSignals,
     LlamaCppProviderConfig,
     ProviderToolCalls,
     build_llamacpp_chat_payload,
+    normalize_llamacpp_base_url,
     safe_provider_error_copy,
 )
+from tldw_chatbook.Utils.sensitive_llm_logging import is_sensitive_llm_request
 from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
 )
+from tldw_chatbook.Chat import console_provider_gateway as gateway_module
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+
+def test_normalize_llamacpp_base_url_strips_known_suffixes_to_root() -> None:
+    root = "http://localhost:8080"
+    assert normalize_llamacpp_base_url("http://localhost:8080/completion") == root
+    assert normalize_llamacpp_base_url("http://localhost:8080/v1") == root
+    assert normalize_llamacpp_base_url("http://localhost:8080/v1/chat/completions") == root
+    assert normalize_llamacpp_base_url("http://localhost:8080") == root
+    assert normalize_llamacpp_base_url("localhost:8080/completion") == root  # scheme-less
+    # a reverse-proxy prefix is NOT an exact suffix -> left unchanged
+    assert (
+        normalize_llamacpp_base_url("http://host/proxy/v1/chat/completions")
+        == "http://host/proxy/v1/chat/completions"
+    )
 
 
 def test_llamacpp_payload_includes_supported_sampling_params() -> None:
@@ -80,6 +103,45 @@ def test_llamacpp_payload_includes_explicit_top_k_zero() -> None:
     )
 
     assert payload == {"model": "m", "messages": [], "stream": False, "top_k": 0}
+
+
+def test_llamacpp_payload_disables_thinking_for_trailing_assistant_message() -> None:
+    """A trailing assistant message is a response prefill; llama.cpp rejects
+    prefills when the chat template's thinking mode is enabled, so the
+    payload must ask the server to disable it."""
+    payload = build_llamacpp_chat_payload(
+        model="m",
+        messages=[
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "Sure, here is"},
+        ],
+        stream=True,
+    )
+
+    assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_llamacpp_payload_omits_thinking_kwarg_for_trailing_user_message() -> None:
+    payload = build_llamacpp_chat_payload(
+        model="m",
+        messages=[
+            {"role": "assistant", "content": "Hi there"},
+            {"role": "user", "content": "hello"},
+        ],
+        stream=True,
+    )
+
+    assert "chat_template_kwargs" not in payload
+
+
+def test_llamacpp_payload_omits_thinking_kwarg_for_empty_messages() -> None:
+    payload = build_llamacpp_chat_payload(
+        model="m",
+        messages=[],
+        stream=False,
+    )
+
+    assert "chat_template_kwargs" not in payload
 
 
 @pytest.mark.asyncio
@@ -563,7 +625,7 @@ async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_fr
 
 
 @pytest.mark.asyncio
-async def test_resolve_for_send_ignores_cloud_session_base_url_without_configured_endpoint() -> (
+async def test_resolve_for_send_preserves_explicit_cloud_url_without_configured_endpoint() -> (
     None
 ):
     gateway = ConsoleProviderGateway(
@@ -586,7 +648,114 @@ async def test_resolve_for_send_ignores_cloud_session_base_url_without_configure
     assert resolved.ready is True
     assert resolved.readiness_key == "openai"
     assert resolved.execution_key == "openai"
+    assert resolved.base_url == "http://127.0.0.1:9999/v1"
     assert "save the endpoint in Settings" not in resolved.visible_copy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "model", "expected_base_url"),
+    [
+        ("openai", "gpt-test", "https://api.openai.com/v1"),
+        ("anthropic", "claude-test", "https://api.anthropic.com/v1"),
+    ],
+)
+async def test_resolve_for_send_materializes_builtin_cloud_endpoint(
+    provider: str,
+    model: str,
+    expected_base_url: str,
+) -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {provider: {"api_key": "unit-test-key", "model": model}}
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider=provider, explicit_model=model)
+    )
+
+    assert resolved.ready is True
+    assert resolved.base_url == expected_base_url
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_materializes_configured_huggingface_router() -> None:
+    router_base_url = "https://router.example.test/hf-inference"
+    api_base_url = "https://api-base.example.test/v1"
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "huggingface": {
+                    "api_key": "unit-test-key",
+                    "model": "org/model",
+                    "use_router_url_format": True,
+                    "router_base_url": router_base_url,
+                    "api_base_url": api_base_url,
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="huggingface", explicit_model="org/model")
+    )
+
+    assert resolved.ready is True
+    assert resolved.base_url == router_base_url
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_nonrouter_huggingface_preserves_api_base_precedence() -> (
+    None
+):
+    api_base_url = "https://api-base.example.test/v1"
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "huggingface": {
+                    "api_key": "unit-test-key",
+                    "model": "org/model",
+                    "use_router_url_format": False,
+                    "router_base_url": "https://router.example.test/hf-inference",
+                    "api_base_url": api_base_url,
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="huggingface", explicit_model="org/model")
+    )
+
+    assert resolved.ready is True
+    assert resolved.base_url == api_base_url
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_router_huggingface_preserves_builtin_default() -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "huggingface": {
+                    "api_key": "unit-test-key",
+                    "model": "org/model",
+                    "use_router_url_format": True,
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="huggingface", explicit_model="org/model")
+    )
+
+    assert resolved.ready is True
+    assert resolved.base_url == "https://router.huggingface.co/hf-inference"
 
 
 @pytest.mark.asyncio
@@ -1044,6 +1213,204 @@ def test_normalize_generic_provider_response_shapes() -> None:
     ) == [unsupported]
 
 
+def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload() -> (
+    None
+):
+    signals = gateway_module.ConsoleProviderStreamSignals()
+
+    signal_fields = dataclasses.fields(signals)
+    assert [item.name for item in signal_fields] == [
+        "_synthetic_fallback",
+        "usage_payload",
+        "completed_usage_payloads",
+        "_usage_lock",
+    ]
+    assert isinstance(signals._synthetic_fallback, threading.Event)
+    assert signals.__class__.__slots__ == (
+        "_synthetic_fallback",
+        "usage_payload",
+        "completed_usage_payloads",
+        "_usage_lock",
+    )
+    assert not hasattr(signals, "__dict__")
+    assert signals.synthetic_fallback_emitted is False
+    with pytest.raises(AttributeError):
+        signals.synthetic_fallback_emitted = True
+    assert signals.usage_payload is None
+    assert signals.completed_usage_payloads == []
+    assert signals.usage_payloads() == []
+
+    # Content-free repr: usage payloads are provider-reported token counts,
+    # not transcript text, but they are still per-request data that has no
+    # business landing in a log line, so every field stays repr=False.
+    rendered = repr(signals)
+    assert rendered == "ConsoleProviderStreamSignals()"
+    signals.record_usage_payload({"prompt_tokens": 4242})
+    assert repr(signals) == "ConsoleProviderStreamSignals()"
+    for governed_text in (
+        NO_PROVIDER_CONTENT_COPY,
+        UNSUPPORTED_PROVIDER_RESPONSE_COPY,
+        "provider output body",
+        "credential-secret",
+        "raw exception detail",
+        "retrieval evidence text",
+        "INITIAL_BODY_SENTINEL_TASK_553_15",
+        "REPAIRED_BODY_SENTINEL_TASK_553_15",
+        "EVIDENCE_SENTINEL_TASK_553_15",
+        "SOURCE_IDENTITY_SENTINEL_TASK_553_15",
+        "LOCATOR_SENTINEL_TASK_553_15",
+        "FULL_REPAIR_PROMPT_SENTINEL_TASK_553_15",
+        "PROVIDER_EXCEPTION_SENTINEL_TASK_553_15",
+    ):
+        assert governed_text.lower() not in rendered.lower()
+
+
+@pytest.mark.parametrize(
+    ("response_factory", "expected"),
+    [
+        (lambda: {"content": ""}, NO_PROVIDER_CONTENT_COPY),
+        (lambda: iter(()), NO_PROVIDER_CONTENT_COPY),
+        (
+            lambda: iter(({"unexpected": {"secret": "do not expose"}},)),
+            UNSUPPORTED_PROVIDER_RESPONSE_COPY,
+        ),
+        (
+            lambda: [{"content": "unsupported list body"}],
+            UNSUPPORTED_PROVIDER_RESPONSE_COPY,
+        ),
+        (lambda: "data: [DONE]", NO_PROVIDER_CONTENT_COPY),
+    ],
+)
+def test_synthetic_fallback_stream_signal_is_set_before_copy_is_observed(
+    response_factory,
+    expected,
+) -> None:
+    signals = gateway_module.ConsoleProviderStreamSignals()
+    normalized = ConsoleProviderGateway.normalize_provider_response(
+        response_factory(),
+        signals=signals,
+    )
+
+    assert signals.synthetic_fallback_emitted is False
+    assert next(normalized) == expected
+    assert signals.synthetic_fallback_emitted is True
+
+
+def test_synthetic_fallback_stream_signal_marks_only_when_iterable_reaches_junk() -> (
+    None
+):
+    signals = gateway_module.ConsoleProviderStreamSignals()
+    normalized = ConsoleProviderGateway.normalize_provider_response(
+        iter(("real answer", {"unexpected": "junk"})),
+        signals=signals,
+    )
+
+    assert next(normalized) == "real answer"
+    assert signals.synthetic_fallback_emitted is False
+    assert next(normalized) == UNSUPPORTED_PROVIDER_RESPONSE_COPY
+    assert signals.synthetic_fallback_emitted is True
+
+
+@pytest.mark.parametrize(
+    "real_answer",
+    [NO_PROVIDER_CONTENT_COPY, UNSUPPORTED_PROVIDER_RESPONSE_COPY],
+)
+def test_real_answer_equal_to_fallback_copy_does_not_mark_stream_signal(
+    real_answer,
+) -> None:
+    signals = gateway_module.ConsoleProviderStreamSignals()
+
+    chunks = list(
+        ConsoleProviderGateway.normalize_provider_response(
+            {"choices": [{"message": {"content": real_answer}}]},
+            signals=signals,
+        )
+    )
+
+    assert chunks == [real_answer]
+    assert signals.synthetic_fallback_emitted is False
+
+
+@pytest.mark.asyncio
+async def test_stream_signal_is_set_before_async_synthetic_fallback_chunk() -> None:
+    def fake_chat_api_call(**_kwargs):
+        return {"choices": [{"message": {"content": ""}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+    signals = gateway_module.ConsoleProviderStreamSignals()
+    stream = gateway.stream_chat(
+        resolution,
+        [{"role": "user", "content": "hi"}],
+        signals=signals,
+    )
+
+    assert signals.synthetic_fallback_emitted is False
+    assert await anext(stream) == NO_PROVIDER_CONTENT_COPY
+    assert signals.synthetic_fallback_emitted is True
+    await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_signal_omission_preserves_yielded_types_and_text() -> None:
+    def fake_chat_api_call(**_kwargs):
+        return iter(("hel", {"unexpected": "junk"}, "lo"))
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution,
+            [{"role": "user", "content": "hi"}],
+        )
+    ]
+
+    assert chunks == ["hel", UNSUPPORTED_PROVIDER_RESPONSE_COPY, "lo"]
+    assert [type(chunk) for chunk in chunks] == [str, str, str]
+
+
+@pytest.mark.asyncio
+async def test_synthetic_fallback_suppression_leaves_stream_signal_unset() -> None:
+    def fake_chat_api_call(**_kwargs):
+        return {"choices": [{"message": {}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="groq", explicit_model="llama3-groq", streaming=False
+        )
+    )
+    signals = gateway_module.ConsoleProviderStreamSignals()
+
+    with pytest.raises(ChatProviderError):
+        _ = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                [{"role": "user", "content": "hi"}],
+                tools=TOOLS,
+                signals=signals,
+            )
+        ]
+
+    assert signals.synthetic_fallback_emitted is False
+
+
 def test_normalize_generic_provider_response_dict_precedence() -> None:
     payload = {
         "choices": [
@@ -1366,6 +1733,63 @@ async def test_gateway_does_not_close_injected_http_client():
     await client.aclose()
 
 
+def test_aclose_does_not_let_a_later_loop_adopt_a_previously_claimed_client():
+    """Review finding: `aclose()` clears `_loop_clients` and resets
+    `_client_loop` to `None`, but never touched `self.http_client` itself,
+    so the "unclaimed init client" escape hatch in `_active_http_client()`
+    -- which used to key off `self._client_loop is None` -- could not tell
+    "never claimed by any loop" apart from "was claimed and released by a
+    loop that is now gone". Force the reliable version of the hazard: loop
+    A claims a client via a plain ``asyncio.run()`` call, which closes loop
+    A the instant it returns (mirrors a `console_agent_bridge` per-turn
+    loop that finished on its own, with `aclose()` never having run on it).
+    When `aclose()` later runs on an unrelated loop B, A's client can't even
+    be scheduled for closing (its owning loop is already gone), so it is
+    left with `is_closed is False`. A subsequent loop C must never adopt
+    that leftover client -- doing so reuses a client whose httpx/httpcore
+    connection-pool primitives are already bound to loop A, reintroducing
+    the cross-loop binding failure this per-loop cache exists to eliminate.
+
+    Uses three separate ``asyncio.run()`` calls (each spins up and tears
+    down its own loop) rather than ``@pytest.mark.asyncio`` -- a loop
+    cannot run another loop nested inside it, and the whole point here is
+    three DISTINCT loops, the first already closed before the second ever
+    starts.
+    """
+    gateway = ConsoleProviderGateway()
+
+    async def claim() -> tuple[httpx.AsyncClient, asyncio.AbstractEventLoop]:
+        return gateway._active_http_client(), asyncio.get_running_loop()
+
+    client_a, loop_a = asyncio.run(claim())
+
+    # Sanity: loop A really did claim the client, and `asyncio.run()` has
+    # already closed loop A by the time control returns here.
+    assert gateway._client_loop is loop_a
+    assert gateway.http_client is client_a
+    assert loop_a.is_closed()
+
+    # `aclose()` now runs on loop B -- unrelated to loop A, and gone by the
+    # time it returns too. It cannot schedule a close of A's client (A is
+    # already closed), so A's client is left open; that alone is fine (its
+    # own finalizer reclaims the sockets). What must NOT happen is a later
+    # loop adopting it.
+    asyncio.run(gateway.aclose())
+    assert client_a.is_closed is False
+
+    async def reclaim() -> httpx.AsyncClient:
+        return gateway._active_http_client()
+
+    new_client = asyncio.run(reclaim())
+
+    assert new_client is not client_a, (
+        "a client already bound to loop A's (now-closed) httpx/httpcore "
+        "internals must never be adopted for a different loop"
+    )
+
+    asyncio.run(gateway.aclose())
+
+
 @pytest.mark.asyncio
 async def test_owned_http_client_uses_generous_generation_read_timeout():
     """The owned client must not cap slow local generations at the old 30s."""
@@ -1559,19 +1983,74 @@ def test_injected_http_client_is_never_swapped_across_loops():
     asyncio.run(client.aclose())
 
 
-def test_active_http_client_swap_is_mutually_exclusive_across_threads():
-    """PR #629 Fix 1(a) (Gemini HIGH x2 + Qodo-8): the check-and-swap of
-    ``http_client``/``_client_loop`` must be a single atomic critical
-    section guarded by one lock, not two independently-racy reads/writes --
-    otherwise a concurrent caller from another thread/loop can interleave
-    with an in-flight swap and desync the client/loop pair (see the
-    interleaving hammer test below for the crash this produces in
-    practice). Proven deterministically here (no reliance on GIL
-    scheduling luck): thread A is parked *inside* the swap via a
-    monkeypatched, blocking ``_new_owned_http_client``, and thread B's
-    concurrent call must provably fail to complete while A is still in
-    flight -- only completing once A releases and the lock is free."""
+def test_active_http_client_first_touch_adopts_the_unclaimed_init_client(monkeypatch):
+    """TASK-1064 item 1: the client built in ``__init__`` is not yet bound to
+    (has not made a request on) any event loop, so the FIRST loop to call
+    ``_active_http_client()`` adopts it directly into the per-loop cache
+    instead of discarding it and building a fresh one -- construction should
+    not waste a connection, and there is nothing to close since no loop has
+    touched it yet. Directly supersedes the old single-slot design's
+    behavior (PR #629 Fix 1(b)), where the first touch unconditionally
+    swapped in a brand-new client and scheduled a close of the original."""
     gateway = ConsoleProviderGateway()
+    original_client = gateway.http_client
+    scheduled: list[tuple[int, object]] = []
+
+    def fake_schedule(client, loop):
+        scheduled.append((id(client), loop))
+
+    monkeypatch.setattr(
+        ConsoleProviderGateway,
+        "_schedule_stale_client_close",
+        staticmethod(fake_schedule),
+    )
+
+    async def touch() -> httpx.AsyncClient:
+        return gateway._active_http_client()
+
+    adopted = asyncio.run(touch())
+
+    assert adopted is original_client, (
+        "the first loop to touch the gateway must adopt the unclaimed "
+        "init-time client rather than discarding it for a fresh one"
+    )
+    assert scheduled == [], (
+        "adopting an unclaimed client must not schedule a close of it -- "
+        "nothing was ever using it"
+    )
+
+
+def test_active_http_client_creation_is_mutually_exclusive_across_threads():
+    """PR #629 Fix 1(a) (Gemini HIGH x2 + Qodo-8), preserved across the move
+    to a per-loop cache (TASK-1064 item 1): building a NEW per-loop cache
+    entry must be a single atomic critical section guarded by one lock, not
+    two independently-racy reads/writes -- otherwise two concurrent callers
+    on different not-yet-cached loops could each decide the cache is empty
+    and both build+insert, or interleave with the cache's other bookkeeping.
+    Proven deterministically here (no reliance on GIL scheduling luck):
+    thread A is parked *inside* client construction via a monkeypatched,
+    blocking ``_new_owned_http_client``, and thread B's concurrent call for
+    a DIFFERENT loop must provably fail to complete while A is still in
+    flight -- only completing once A releases and the lock is free.
+
+    The gateway is primed with one throwaway touch first so that both
+    threads' loops are genuinely new to the cache and both take the
+    ``_new_owned_http_client`` creation path -- the very first touch ever is
+    now an adopt-in-place of the unclaimed ``__init__`` client (see
+    ``test_active_http_client_first_touch_adopts_the_unclaimed_init_client``)
+    and would not exercise this path.
+    """
+    gateway = ConsoleProviderGateway()
+    priming_loop = asyncio.new_event_loop()
+    try:
+
+        async def prime() -> None:
+            gateway._active_http_client()
+
+        priming_loop.run_until_complete(prime())
+    finally:
+        priming_loop.close()
+
     original_new_client = ConsoleProviderGateway._new_owned_http_client
     entered = threading.Event()
     release = threading.Event()
@@ -1580,7 +2059,7 @@ def test_active_http_client_swap_is_mutually_exclusive_across_threads():
         # Only the FIRST call (thread A's) blocks -- a concurrent second
         # call (thread B's) that is *not* actually serialized by a lock
         # would sail straight through this on its own turn and finish its
-        # swap well before thread A ever releases, which is exactly the
+        # creation well before thread A ever releases, which is exactly the
         # unlocked-race behavior this test must catch.
         if not entered.is_set():
             entered.set()
@@ -1603,7 +2082,7 @@ def test_active_http_client_swap_is_mutually_exclusive_across_threads():
 
         thread_a = threading.Thread(target=call_a)
         thread_a.start()
-        assert entered.wait(timeout=5), "thread A must have entered the swap"
+        assert entered.wait(timeout=5), "thread A must have entered creation"
 
         def call_b() -> None:
             async def go() -> None:
@@ -1615,13 +2094,14 @@ def test_active_http_client_swap_is_mutually_exclusive_across_threads():
         thread_b = threading.Thread(target=call_b)
         thread_b.start()
 
-        # Thread A is still parked inside its swap -- give thread B ample
-        # opportunity to race ahead if the swap were not actually
+        # Thread A is still parked inside its creation -- give thread B
+        # ample opportunity to race ahead if creation were not actually
         # serialized by a lock.
         premature = second_done.wait(timeout=0.5)
         assert premature is False, (
-            "a concurrent swap completed while another thread's swap was "
-            "still in flight -- the check-and-swap is not atomic"
+            "a concurrent cache-entry creation completed while another "
+            "thread's creation was still in flight -- the critical section "
+            "is not atomic"
         )
         assert second_done.wait(timeout=5)
     finally:
@@ -1646,35 +2126,51 @@ def test_active_http_client_swap_is_mutually_exclusive_across_threads():
         loop_b.close()
 
 
-def test_first_swap_still_schedules_close_of_the_original_owned_client(monkeypatch):
-    """PR #629 Fix 1(b) (Gemini HIGH + Qodo-8): the very first swap has
-    ``_client_loop`` still ``None`` (there is no previous loop to close the
-    replaced client on), and the old code's ``if stale_loop is not None:``
-    guard skipped scheduling a close entirely in that case -- silently
-    leaking the client created in ``__init__``. The replaced client must
-    always be closed best-effort, even on the first swap."""
+def test_aclose_closes_current_loop_client_and_schedules_others(monkeypatch):
+    """The per-loop cache can hold multiple live clients at once (one per
+    loop that has touched the gateway); ``aclose()`` must close the calling
+    loop's own client directly and hand off every OTHER cached loop's client
+    to ``_schedule_stale_client_close`` -- never await, and never directly
+    close, a client bound to a loop it is not currently running on. This is
+    the non-leaking-close guarantee (PR #629 Fix 1(b)) restated for a cache
+    that can hold more than one entry."""
     gateway = ConsoleProviderGateway()
-    original_client = gateway.http_client
-    scheduled: list[tuple[int, object]] = []
+    other_loop = asyncio.new_event_loop()
+    try:
 
-    def fake_schedule(client, loop):
-        scheduled.append((id(client), loop))
+        async def touch() -> None:
+            gateway._active_http_client()
 
-    monkeypatch.setattr(
-        ConsoleProviderGateway,
-        "_schedule_stale_client_close",
-        staticmethod(fake_schedule),
-    )
+        other_loop.run_until_complete(touch())
+        other_client = gateway._loop_clients[other_loop]
+        assert other_client.is_closed is False
 
-    async def touch() -> None:
-        gateway._active_http_client()
+        scheduled: list[tuple[int, object]] = []
 
-    asyncio.run(touch())
+        def fake_schedule(client, loop):
+            scheduled.append((id(client), loop))
 
-    assert scheduled, (
-        "the original owned client must be scheduled for close on the first swap too"
-    )
-    assert scheduled[0][0] == id(original_client)
+        monkeypatch.setattr(
+            ConsoleProviderGateway,
+            "_schedule_stale_client_close",
+            staticmethod(fake_schedule),
+        )
+
+        async def close_from_new_loop() -> None:
+            await gateway.aclose()
+
+        asyncio.run(close_from_new_loop())
+
+        assert scheduled == [(id(other_client), other_loop)], (
+            "aclose() must hand off every other cached loop's client to "
+            "_schedule_stale_client_close, keyed to its own loop"
+        )
+        # `fake_schedule` never actually closed it -- confirms aclose() did
+        # not itself await/close a client bound to a different loop.
+        assert other_client.is_closed is False
+    finally:
+        other_loop.run_until_complete(other_client.aclose())
+        other_loop.close()
 
 
 def test_active_http_client_concurrent_swap_never_leaves_client_bound_to_wrong_loop(
@@ -1772,6 +2268,73 @@ def test_active_http_client_concurrent_swap_never_leaves_client_bound_to_wrong_l
         thread.join(timeout=2)
 
     assert errors == []
+
+
+def test_concurrent_live_loops_never_close_each_others_client():
+    """TASK-1064 item 1 -- genuine concurrency, NOT sequential ``asyncio.run()``
+    calls. A sequential two-loop probe does not discriminate: the first loop
+    is already closed by the time the second one runs, so both the fixed and
+    the unfixed single-slot code pass it. Two real OS threads each run their
+    own ``asyncio.run()`` loop and are barrier-synchronized so both loops are
+    genuinely alive at the same wall-clock moment while each resolves
+    ``_active_http_client()`` on the SAME shared gateway instance -- exactly
+    the overlap the gateway's own docstrings describe: a readiness probe
+    awaited on the app's own event loop racing an agent-runtime generation
+    call bridged from a worker thread's fresh ``asyncio.run()``. Under the
+    old single-slot ``http_client``/``_client_loop`` cache, the second
+    thread's touch treats the first thread's still-in-flight client as
+    "stale" and schedules ``aclose()`` of it on the first thread's own
+    (still-running) loop -- which actually executes it, closing a client the
+    first thread is still using.
+    """
+    gateway = ConsoleProviderGateway()
+    barrier = threading.Barrier(2)
+    obtained: dict[str, httpx.AsyncClient] = {}
+    errors: list[BaseException] = []
+    errors_lock = threading.Lock()
+
+    def run(name: str) -> None:
+        async def go() -> None:
+            client = gateway._active_http_client()
+            obtained[name] = client
+            barrier.wait(timeout=5)
+            # Keep this loop alive and pumping so a cross-loop `aclose()`
+            # scheduled onto it via `run_coroutine_threadsafe` (the bug)
+            # actually gets a chance to execute, exactly like a real
+            # in-flight request would still be holding the client open.
+            for _ in range(50):
+                await asyncio.sleep(0.01)
+                if client.is_closed:
+                    break
+
+        try:
+            asyncio.run(go())
+        except BaseException as exc:  # noqa: BLE001 -- collected, asserted below
+            with errors_lock:
+                errors.append(exc)
+
+    thread_a = threading.Thread(target=run, args=("a",))
+    thread_b = threading.Thread(target=run, args=("b",))
+    thread_a.start()
+    thread_b.start()
+    thread_a.join(timeout=10)
+    thread_b.join(timeout=10)
+
+    assert errors == [], f"unexpected errors from worker threads: {errors!r}"
+    assert "a" in obtained and "b" in obtained, "both loops must obtain a client"
+    assert obtained["a"] is not obtained["b"], (
+        "two live loops must never share the same owned http client"
+    )
+    assert obtained["a"].is_closed is False, (
+        "loop A's client was closed while loop B was concurrently alive and "
+        "touching the shared gateway -- a live loop must never close "
+        "another live loop's client"
+    )
+    assert obtained["b"].is_closed is False, (
+        "loop B's client was closed while loop A was concurrently alive and "
+        "touching the shared gateway -- a live loop must never close "
+        "another live loop's client"
+    )
 
 
 def _sse(payload):
@@ -2180,3 +2743,982 @@ async def test_tools_run_real_answer_equal_to_fallback_copy_survives() -> None:
     items = await _collect(gateway, resolution, tools=TOOLS)
 
     assert items == [NO_PROVIDER_CONTENT_COPY]  # it IS the model's answer here
+
+
+# ---- system-row extraction (PR #1112 Qodo finding 3) ----
+
+
+def _bare_resolution() -> ConsoleProviderResolution:
+    """Minimal ready resolution for direct `_chat_api_kwargs` calls."""
+    return ConsoleProviderResolution(
+        provider="anthropic",
+        base_url="",
+        model="claude-x",
+        ready=True,
+        execution_key="anthropic",
+        api_key="k",
+        streaming=False,
+    )
+
+
+def test_chat_api_kwargs_extracts_leading_system_rows_to_system_message() -> None:
+    """Leading system rows leave the payload and ride `system_message`.
+
+    Anthropic/Gemini adapters only accept system content via their dedicated
+    parameter and reject (or drop) `role="system"` rows in the message
+    array, so the Console's system prompt / folded greeting must be
+    extracted here or those providers never see it.
+    """
+    messages = [
+        {"role": "system", "content": "Stay in character."},
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"},
+    ]
+
+    kwargs = ConsoleProviderGateway._chat_api_kwargs(_bare_resolution(), messages)
+
+    assert kwargs["system_message"] == "Stay in character."
+    assert [m["role"] for m in kwargs["messages_payload"]] == ["user", "assistant"]
+
+
+def test_chat_api_kwargs_joins_multiple_leading_system_rows() -> None:
+    """Contiguous leading system rows concatenate into one system_message."""
+    messages = [
+        {"role": "system", "content": "A."},
+        {"role": "system", "content": "B."},
+        {"role": "user", "content": "hi"},
+    ]
+
+    kwargs = ConsoleProviderGateway._chat_api_kwargs(_bare_resolution(), messages)
+
+    assert kwargs["system_message"] == "A.\n\nB."
+    assert [m["role"] for m in kwargs["messages_payload"]] == ["user"]
+
+
+def test_chat_api_kwargs_without_system_rows_omits_system_message() -> None:
+    """No leading system rows: payload passes through, no system_message key."""
+    messages = [{"role": "user", "content": "hi"}]
+
+    kwargs = ConsoleProviderGateway._chat_api_kwargs(_bare_resolution(), messages)
+
+    assert "system_message" not in kwargs
+    assert kwargs["messages_payload"] == messages
+
+
+def test_chat_api_kwargs_system_message_is_byte_stable_across_turns() -> None:
+    """The extracted system_message must be BYTE-identical turn over turn.
+
+    Anthropic prompt caching matches on an exact byte prefix (tools ->
+    system -> messages), so any drift in the extracted system string -- a
+    changed join, an interpolated timestamp, a re-ordered row -- silently
+    invalidates the cache and re-pays the 1.25x write premium on every send.
+    This is the seam the cost-ticker spec names: the gateway's
+    leading-system-row extraction, not the controller's verbatim prompt.
+
+    Note the extraction is normalizing, not verbatim: rows are stripped and
+    joined with "\\n\\n". That is fine for caching precisely because it is
+    deterministic -- the same rows always produce the same bytes.
+    """
+    system_rows = [
+        {"role": "system", "content": "You are terse.\n\nAnswer in one line."},
+        {"role": "system", "content": "Never use emoji."},
+    ]
+    turn_1 = system_rows + [{"role": "user", "content": "first question"}]
+    turn_2 = turn_1 + [
+        {"role": "assistant", "content": "first answer"},
+        {"role": "user", "content": "second question"},
+    ]
+
+    kwargs_1 = ConsoleProviderGateway._chat_api_kwargs(_bare_resolution(), turn_1)
+    kwargs_2 = ConsoleProviderGateway._chat_api_kwargs(_bare_resolution(), turn_2)
+
+    assert kwargs_1["system_message"] == kwargs_2["system_message"]
+    assert (
+        kwargs_1["system_message"].encode() == kwargs_2["system_message"].encode()
+    )
+    # and the history prefix itself is untouched by the extraction
+    assert kwargs_2["messages_payload"][: len(kwargs_1["messages_payload"])] == (
+        kwargs_1["messages_payload"]
+    )
+
+
+# ---- per-turn cache_control opt-in (Console-only) ----
+
+
+def test_chat_api_kwargs_forwards_configured_anthropic_base_url() -> None:
+    """Confirm a configured Anthropic api_base_url reaches the primary send path's kwargs."""
+    resolution = ConsoleProviderResolution(
+        provider="anthropic",
+        base_url="https://proxy.example.test/v1",
+        model="claude-x",
+        ready=True,
+        execution_key="anthropic",
+        api_key="k",
+        streaming=False,
+    )
+
+    kwargs = ConsoleProviderGateway._chat_api_kwargs(
+        resolution, [{"role": "user", "content": "hi"}]
+    )
+
+    assert kwargs["api_base_url"] == "https://proxy.example.test/v1"
+
+
+def test_chat_api_kwargs_omits_api_base_url_for_non_anthropic() -> None:
+    """Confirm the api_base_url forwarding fix is scoped to Anthropic only."""
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://proxy.example.test/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        api_key="k",
+        streaming=False,
+    )
+
+    kwargs = ConsoleProviderGateway._chat_api_kwargs(
+        resolution, [{"role": "user", "content": "hi"}]
+    )
+
+    assert "api_base_url" not in kwargs
+
+
+def test_chat_api_kwargs_omits_prompt_caching_for_non_anthropic() -> None:
+    """`prompt_caching=None` is stripped, so non-Anthropic kwargs are
+    unchanged from before prompt caching existed."""
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        api_key="k",
+        streaming=False,
+    )
+
+    kwargs = ConsoleProviderGateway._chat_api_kwargs(
+        resolution, [{"role": "user", "content": "hi"}]
+    )
+
+    assert "prompt_caching" not in kwargs
+
+
+@pytest.mark.asyncio
+async def test_anthropic_resolution_forwards_prompt_caching_opt_in() -> None:
+    """Console sends are multi-turn, so they opt into the per-turn
+    breakpoint; one-shot callers of `chat_with_anthropic` never do."""
+    calls: list[dict] = []
+
+    def fake_chat_api_call(**kwargs):
+        calls.append(kwargs)
+        return "done"
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"anthropic": {"api_key": "k"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="anthropic",
+            explicit_model="claude-sonnet-4-6",
+            streaming=False,
+        )
+    )
+
+    assert resolution.prompt_caching is True
+
+    _ = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
+
+    assert calls[0]["api_endpoint"] == "anthropic"
+    assert calls[0]["prompt_caching"] is True
+
+
+@pytest.mark.asyncio
+async def test_anthropic_resolution_respects_caching_kill_switch() -> None:
+    """`[caching] anthropic_enabled = false` turns the opt-in off at the
+    gateway too (the provider's own kill-switch is the second line)."""
+    calls: list[dict] = []
+
+    def fake_chat_api_call(**kwargs):
+        calls.append(kwargs)
+        return "done"
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {"anthropic": {"api_key": "k"}},
+            "caching": {"anthropic_enabled": False},
+        },
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="anthropic",
+            explicit_model="claude-sonnet-4-6",
+            streaming=False,
+        )
+    )
+
+    assert resolution.prompt_caching is False
+
+    _ = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
+
+    # falsy either way: the per-turn marker is off
+    assert not calls[0].get("prompt_caching")
+
+
+@pytest.mark.asyncio
+async def test_anthropic_resolution_respects_kill_switch_in_load_settings_shape() -> None:
+    """The live Console's config_provider is `load_settings()` output, which
+    nests the raw TOML under COMPREHENSIVE_CONFIG_RAW and never projects
+    `[caching]` to the top level the way it does `api_settings` (Qodo
+    finding, PR #1239): a plain `app_config.get("caching")` always misses
+    and the kill-switch silently reads as always-on. Pin resolution against
+    exactly that shape."""
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {"anthropic": {"api_key": "k"}},
+            "COMPREHENSIVE_CONFIG_RAW": {"caching": {"anthropic_enabled": False}},
+        },
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="anthropic",
+            explicit_model="claude-sonnet-4-6",
+            streaming=False,
+        )
+    )
+
+    assert resolution.prompt_caching is False
+
+
+@pytest.mark.asyncio
+async def test_non_anthropic_resolution_has_no_prompt_caching_flag() -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {"openai": {"api_key": "sk-test-placeholder-not-a-key"}}
+        },
+        chat_api_call_fn=lambda **_kwargs: "done",
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="openai", explicit_model="gpt-4.1", streaming=False
+        )
+    )
+
+    assert resolution.prompt_caching is None
+
+
+# ---- task-2114: configured api_base_url reaches the real posted URL ----
+
+
+def _fake_anthropic_message_response() -> dict:
+    return {
+        "id": "msg_test",
+        "model": "claude-sonnet-4-6",
+        "content": [{"type": "text", "text": "ok"}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+    }
+
+
+class _CapturedURLSession:
+    """Minimal `requests.Session` stand-in recording only the posted URL --
+    a narrower cousin of `Tests/Chat/test_chat_functions.py::_CapturedSession`
+    (that file already owns the full request-capture fixture; this one only
+    needs the URL for the assertion below)."""
+
+    def __init__(self, captured: dict) -> None:
+        self._captured = captured
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc_info):
+        return False
+
+    def mount(self, *_args, **_kwargs) -> None:
+        return None
+
+    def post(self, url, *, headers=None, json=None, stream=False, timeout=None):
+        self._captured["url"] = url
+        return _FakeAnthropicPostResponse()
+
+
+class _FakeAnthropicPostResponse:
+    status_code = 200
+    text = "{}"
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return _fake_anthropic_message_response()
+
+
+@pytest.mark.asyncio
+async def test_console_send_honors_configured_anthropic_base_url(monkeypatch) -> None:
+    """Confirm the real gateway-to-adapter chain posts to a configured Anthropic api_base_url.
+
+    Drives the real gateway -> ``chat_api_call`` -> ``chat_with_anthropic``
+    chain (no ``chat_api_call_fn`` stand-in) on the primary Console send
+    path, not just the auxiliary/one-shot path.
+
+    Args:
+        monkeypatch: Pytest fixture used to stub the outgoing HTTP session.
+    """
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        LLM_API_Calls.requests, "Session", lambda: _CapturedURLSession(captured)
+    )
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "anthropic": {
+                    "api_key": "k",
+                    "api_base_url": "https://proxy.example.test/v1",
+                }
+            }
+        },
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="anthropic",
+            explicit_model="claude-sonnet-4-6",
+            streaming=False,
+        )
+    )
+    assert resolution.base_url == "https://proxy.example.test/v1"
+
+    _ = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
+
+    assert captured["url"] == "https://proxy.example.test/v1/messages"
+
+
+@pytest.mark.asyncio
+async def test_console_send_default_anthropic_url_unchanged_when_unconfigured(
+    monkeypatch,
+) -> None:
+    """Confirm the default Anthropic endpoint is unchanged when api_base_url is not configured.
+
+    Args:
+        monkeypatch: Pytest fixture used to stub the outgoing HTTP session.
+    """
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        LLM_API_Calls.requests, "Session", lambda: _CapturedURLSession(captured)
+    )
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"anthropic": {"api_key": "k"}}},
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="anthropic",
+            explicit_model="claude-sonnet-4-6",
+            streaming=False,
+        )
+    )
+
+    _ = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
+
+    assert captured["url"] == "https://api.anthropic.com/v1/messages"
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_records_usage_payload_from_sse_chunk() -> None:
+    usage_line = (
+        'data: {"object": "chat.completion.chunk", "choices": [], '
+        '"usage": {"prompt_tokens": 100, "completion_tokens": 20}}'
+    )
+
+    def fake_chat_api_call(**_kwargs):
+        yield 'data: {"choices": [{"delta": {"content": "hi"}}]}'
+        yield usage_line
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+    signals = ConsoleProviderStreamSignals()
+
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}], signals=signals
+        )
+    ]
+
+    assert chunks == ["hi"]  # usage chunk yields no text
+    # The call ended, so its payload was closed out of the in-flight slot and
+    # into the completed list -- one provider call, one billable payload.
+    assert signals.usage_payload is None
+    assert signals.usage_payloads() == [
+        {"prompt_tokens": 100, "completion_tokens": 20}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_merges_split_usage_payloads() -> None:
+    # Anthropic emits input-side usage at message_start and output at end.
+    # Both belong to ONE call, so they must still key-merge into ONE payload.
+    def fake_chat_api_call(**_kwargs):
+        yield (
+            'data: {"choices": [], "usage": {"input_tokens": 3571, '
+            '"cache_read_input_tokens": 6656}}'
+        )
+        yield 'data: {"choices": [{"delta": {"content": "hi"}}]}'
+        yield 'data: {"choices": [], "usage": {"output_tokens": 727}}'
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"anthropic": {"api_key": "k"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="anthropic", explicit_model="claude-sonnet-4-6")
+    )
+    signals = ConsoleProviderStreamSignals()
+    _ = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}], signals=signals
+        )
+    ]
+    assert signals.usage_payloads() == [
+        {
+            "input_tokens": 3571,
+            "cache_read_input_tokens": 6656,
+            "output_tokens": 727,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_usage_accumulates_per_call_without_leaking_stale_cache_fields() -> None:
+    """Two provider calls on one signals object must not key-merge.
+
+    Regression for the final-review F2 finding: an agent turn makes N calls
+    through the SAME signals object. Merging call 2's ``prompt_tokens`` on top
+    of call 1's ``prompt_tokens_details.cached_tokens`` made the second call
+    look 100% cached (uncached_input=0) and fabricated a 4096-token cache
+    read that was never billed.
+    """
+    calls = iter(
+        (
+            (
+                'data: {"choices": [{"delta": {"content": "a"}}]}',
+                'data: {"choices": [], "usage": {"prompt_tokens": 5000, '
+                '"completion_tokens": 10, '
+                '"prompt_tokens_details": {"cached_tokens": 4096}}}',
+            ),
+            (
+                'data: {"choices": [{"delta": {"content": "b"}}]}',
+                'data: {"choices": [], "usage": {"prompt_tokens": 900, '
+                '"completion_tokens": 30}}',
+            ),
+        )
+    )
+
+    def fake_chat_api_call(**_kwargs):
+        yield from next(calls)
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+    signals = ConsoleProviderStreamSignals()
+    for _ in range(2):
+        _ = [
+            chunk
+            async for chunk in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "hi"}], signals=signals
+            )
+        ]
+
+    # Two separate payloads, each intact -- no cross-call key merge.
+    assert signals.usage_payloads() == [
+        {
+            "prompt_tokens": 5000,
+            "completion_tokens": 10,
+            "prompt_tokens_details": {"cached_tokens": 4096},
+        },
+        {"prompt_tokens": 900, "completion_tokens": 30},
+    ]
+
+    # And the normalized, summed buckets are the honest bill: call 1 is
+    # 904 uncached + 4096 cached, call 2 is 900 uncached + 0 cached.
+    total = None
+    for payload in signals.usage_payloads():
+        usage = ProviderUsage.from_provider_payload(
+            payload, provider="openai", model="gpt-4.1"
+        )
+        total = usage if total is None else total.plus(usage)
+    assert total.uncached_input == 1804
+    assert total.cache_read == 4096
+    assert total.output == 40
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_mapping_response_records_usage() -> None:
+    def fake_chat_api_call(**_kwargs):
+        return {
+            "choices": [{"message": {"content": "hello"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 2},
+        }
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+    signals = ConsoleProviderStreamSignals()
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}], signals=signals
+        )
+    ]
+    assert chunks == ["hello"]
+    assert signals.usage_payloads() == [{"prompt_tokens": 10, "completion_tokens": 2}]
+
+
+@pytest.mark.asyncio
+async def test_stream_without_usage_leaves_signals_none() -> None:
+    def fake_chat_api_call(**_kwargs):
+        yield "plain text"
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+    signals = ConsoleProviderStreamSignals()
+    _ = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}], signals=signals
+        )
+    ]
+    assert signals.usage_payload is None
+    assert signals.usage_payloads() == []
+
+
+def _auxiliary_resolution(**overrides) -> ConsoleProviderResolution:
+    values = {
+        "provider": "OpenAI",
+        "base_url": "https://api.example.test/v1?token=ENDPOINT-CANARY",
+        "model": "gpt-test",
+        "ready": True,
+        "readiness_key": "openai",
+        "execution_key": "openai",
+        "api_key": "API-KEY-CANARY",
+        "temperature": 0.2,
+        "top_p": 0.8,
+        "min_p": 0.03,
+        "top_k": 17,
+        "max_tokens": 999,
+        "seed": 42,
+        "presence_penalty": 0.1,
+        "frequency_penalty": 0.2,
+        "reasoning_effort": "high",
+        "reasoning_summary": "auto",
+        "verbosity": "low",
+        "thinking_effort": "medium",
+        "thinking_budget_tokens": 2048,
+        "streaming": True,
+    }
+    values.update(overrides)
+    return ConsoleProviderResolution(**values)
+
+
+def _auxiliary_request(**overrides) -> AuxiliaryCompletionRequest:
+    values = {
+        "resolution": _auxiliary_resolution(),
+        "messages": (
+            {"role": "system", "content": "OPTIMIZER-CANARY"},
+            {"role": "user", "content": "USER-CANARY"},
+        ),
+        "response_format": {"type": "json_object"},
+        "max_output_tokens": 321,
+    }
+    values.update(overrides)
+    return AuxiliaryCompletionRequest(**values)
+
+
+def test_auxiliary_request_is_frozen_and_copies_nested_input() -> None:
+    message = {"role": "user", "content": "BLOCK-CANARY"}
+    required = ["rewritten_prompt"]
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {"required": required},
+    }
+
+    request = AuxiliaryCompletionRequest(
+        resolution=_auxiliary_resolution(),
+        messages=(message,),
+        response_format=response_format,
+        max_output_tokens=10,
+    )
+    message["role"] = "assistant"
+    required.append("MUTATED")
+
+    assert request.messages[0]["role"] == "user"
+    assert request.messages[0]["content"] == "BLOCK-CANARY"
+    assert request.response_format == {
+        "type": "json_schema",
+        "json_schema": {"required": ("rewritten_prompt",)},
+    }
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        request.max_output_tokens = 11  # type: ignore[misc]
+
+
+def test_auxiliary_request_preserves_exact_text_and_freezes_json_sequences() -> None:
+    content = "\n  Preserve this spacing exactly.  \t"
+    enum_values = ["alpha", {"nested": [True, None, 3, 1.25]}]
+
+    request = AuxiliaryCompletionRequest(
+        resolution=_auxiliary_resolution(),
+        messages=({"role": "user", "content": content},),
+        response_format={"schema": {"enum": enum_values}},
+        max_output_tokens=10,
+    )
+    enum_values[1]["nested"].append("MUTATED")
+
+    assert request.messages[0]["content"] == content
+    assert request.response_format == {
+        "schema": {"enum": ("alpha", {"nested": (True, None, 3, 1.25)})}
+    }
+
+
+@pytest.mark.parametrize(
+    "response_format",
+    [
+        {"schema": {"bad": {"set-value"}}},
+        {"schema": {"bad": object()}},
+        {"schema": {"bad": b"bytes"}},
+        {"schema": {"bad": range(2)}},
+        {"schema": {"bad": float("nan")}},
+        {"schema": {"bad": float("inf")}},
+        {1: "non-string-key"},
+    ],
+)
+def test_auxiliary_request_rejects_nested_non_json_values(response_format) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        AuxiliaryCompletionRequest(
+            resolution=_auxiliary_resolution(),
+            messages=({"role": "user", "content": "x"},),
+            response_format=response_format,
+            max_output_tokens=10,
+        )
+
+
+def test_auxiliary_contract_repr_omits_sensitive_request_and_response_fields() -> None:
+    request = _auxiliary_request()
+    result = AuxiliaryCompletionResult(
+        provider="OpenAI",
+        model="gpt-test",
+        text="RESPONSE-CANARY",
+    )
+
+    rendered = repr((request, result))
+
+    assert "ENDPOINT-CANARY" not in rendered
+    assert "API-KEY-CANARY" not in rendered
+    assert "OPTIMIZER-CANARY" not in rendered
+    assert "USER-CANARY" not in rendered
+    assert "RESPONSE-CANARY" not in rendered
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"resolution": _auxiliary_resolution(ready=False)},
+        {"resolution": _auxiliary_resolution(model="")},
+        {"messages": []},
+        {"messages": ({"role": "user"},)},
+        {"messages": ({"role": "", "content": "x"},)},
+        {"messages": ({"role": "user", "content": ["image"]},)},
+        {"max_output_tokens": 0},
+        {"max_output_tokens": MAX_AUXILIARY_OUTPUT_TOKENS + 1},
+        {"sensitive": False},
+    ],
+)
+def test_auxiliary_request_rejects_invalid_contract(overrides) -> None:
+    values = {
+        "resolution": _auxiliary_resolution(),
+        "messages": ({"role": "user", "content": "x"},),
+        "response_format": None,
+        "max_output_tokens": 10,
+    }
+    values.update(overrides)
+
+    with pytest.raises((TypeError, ValueError)):
+        AuxiliaryCompletionRequest(**values)
+
+
+def test_auxiliary_output_cap_matches_prompt_improvement_application_limit() -> None:
+    assert MAX_AUXILIARY_OUTPUT_TOKENS == 16_384
+
+
+def test_auxiliary_output_cap_accepts_boundary_and_rejects_one_over() -> None:
+    request = _auxiliary_request(max_output_tokens=16_384)
+
+    assert request.max_output_tokens == 16_384
+    with pytest.raises(ValueError, match="between 1 and 16384"):
+        _auxiliary_request(max_output_tokens=16_385)
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_completion_is_one_shot_nonstreaming_and_tool_free() -> None:
+    calls: list[dict[str, object]] = []
+    sensitive_states: list[bool] = []
+
+    def fake_chat_api_call(**kwargs):
+        sensitive_states.append(is_sensitive_llm_request())
+        calls.append(kwargs)
+        return '  {"kind":"prompt_rewrite","rewritten_prompt":"Better"}\n'
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
+
+    result = await gateway.complete_auxiliary(_auxiliary_request())
+
+    assert result == AuxiliaryCompletionResult(
+        provider="OpenAI",
+        model="gpt-test",
+        text='  {"kind":"prompt_rewrite","rewritten_prompt":"Better"}\n',
+    )
+    assert len(calls) == 1
+    assert sensitive_states == [True]
+    call = calls[0]
+    assert call == {
+        "api_endpoint": "openai",
+        "api_base_url": "https://api.example.test/v1?token=ENDPOINT-CANARY",
+        "system_message": "OPTIMIZER-CANARY",
+        "messages_payload": [{"role": "user", "content": "USER-CANARY"}],
+        "api_key": "API-KEY-CANARY",
+        "model": "gpt-test",
+        "streaming": False,
+        "temp": 0.2,
+        "topp": 0.8,
+        "maxp": 0.8,
+        "topk": 17,
+        "minp": 0.03,
+        "max_tokens": 321,
+        "seed": 42,
+        "presence_penalty": 0.1,
+        "frequency_penalty": 0.2,
+        "reasoning_effort": "high",
+        "reasoning_summary": "auto",
+        "verbosity": "low",
+        "thinking_effort": "medium",
+        "thinking_budget_tokens": 2048,
+        "response_format": {"type": "json_object"},
+    }
+    assert not ({"tools", "tool_choice", "stop", "history", "images"} & call.keys())
+    assert is_sensitive_llm_request() is False
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_completion_preserves_exact_empty_string() -> None:
+    gateway = ConsoleProviderGateway(chat_api_call_fn=lambda **_kwargs: "")
+
+    result = await gateway.complete_auxiliary(_auxiliary_request())
+
+    assert result.text == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "unsupported",
+    [None, (), [], iter(["chunk"]), {"unexpected": "shape"}],
+)
+async def test_auxiliary_completion_rejects_unsupported_response_shapes(
+    unsupported,
+) -> None:
+    gateway = ConsoleProviderGateway(chat_api_call_fn=lambda **_kwargs: unsupported)
+
+    with pytest.raises(ChatProviderError, match="unsupported auxiliary response"):
+        await gateway.complete_auxiliary(_auxiliary_request())
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_completion_accepts_standard_provider_mapping_exactly() -> None:
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **_kwargs: {
+            "choices": [{"message": {"content": " exact mapping text \n"}}]
+        }
+    )
+
+    result = await gateway.complete_auxiliary(_auxiliary_request())
+
+    assert result.text == " exact mapping text \n"
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_completion_redacts_provider_exception_and_resets_context() -> (
+    None
+):
+    def fail(**_kwargs):
+        assert is_sensitive_llm_request() is True
+        raise RuntimeError("EXCEPTION-CANARY")
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=fail)
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        await gateway.complete_auxiliary(_auxiliary_request())
+
+    assert "EXCEPTION-CANARY" not in str(exc_info.value)
+    assert is_sensitive_llm_request() is False
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_completion_ignores_injected_raw_error_formatter() -> None:
+    def fail(**_kwargs):
+        raise RuntimeError("EXCEPTION-CANARY")
+
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=fail,
+        safe_error_copy=lambda _provider, exc: str(exc),
+    )
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        await gateway.complete_auxiliary(_auxiliary_request())
+
+    assert "EXCEPTION-CANARY" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_completion_cancellation_starts_no_second_call_and_resets() -> (
+    None
+):
+    started = threading.Event()
+    release = threading.Event()
+    calls = 0
+    observed: list[bool] = []
+
+    def blocking(**_kwargs):
+        nonlocal calls
+        calls += 1
+        observed.append(is_sensitive_llm_request())
+        started.set()
+        release.wait(timeout=2)
+        observed.append(is_sensitive_llm_request())
+        return "late"
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=blocking)
+    task = asyncio.create_task(gateway.complete_auxiliary(_auxiliary_request()))
+    await asyncio.to_thread(started.wait, 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    release.set()
+    await asyncio.sleep(0.05)
+
+    assert calls == 1
+    assert observed == [True, True]
+    assert is_sensitive_llm_request() is False
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_direct_llama_is_nonstreaming_exact_and_sensitive() -> None:
+    captured: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["payload"] = json.loads(request.content)
+        captured["sensitive"] = is_sensitive_llm_request()
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": " llama exact \n"}}]},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = ConsoleProviderGateway(http_client=client)
+    request = _auxiliary_request(
+        resolution=_auxiliary_resolution(
+            provider="llama_cpp",
+            execution_key="llama_cpp",
+            readiness_key="llama_cpp",
+            base_url="http://127.0.0.1:9099/v1",
+        )
+    )
+
+    result = await gateway.complete_auxiliary(request)
+
+    assert result.text == " llama exact \n"
+    assert captured["url"] == "http://127.0.0.1:9099/v1/chat/completions"
+    assert captured["sensitive"] is True
+    assert captured["payload"] == {
+        "model": "gpt-test",
+        "messages": [
+            {"role": "system", "content": "OPTIMIZER-CANARY"},
+            {"role": "user", "content": "USER-CANARY"},
+        ],
+        "stream": False,
+        "temperature": 0.2,
+        "top_p": 0.8,
+        "min_p": 0.03,
+        "top_k": 17,
+        "max_tokens": 321,
+        "seed": 42,
+        "presence_penalty": 0.1,
+        "frequency_penalty": 0.2,
+    }
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_direct_llama_rejects_malformed_completion_shape() -> None:
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, json={"unexpected": "shape"})
+        )
+    )
+    gateway = ConsoleProviderGateway(http_client=client)
+    request = _auxiliary_request(
+        resolution=_auxiliary_resolution(
+            provider="llama_cpp",
+            execution_key="llama_cpp",
+            readiness_key="llama_cpp",
+            base_url="http://127.0.0.1:9099/v1",
+        )
+    )
+
+    with pytest.raises(ChatProviderError):
+        await gateway.complete_auxiliary(request)
+
+    await client.aclose()

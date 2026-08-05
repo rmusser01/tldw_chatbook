@@ -296,12 +296,25 @@ def alert_mindmap_not_available(parent) -> None:
 
 def alert_subscriptions_not_available(parent) -> None:
     """Show alert for missing subscriptions dependencies."""
-    from .optional_deps import DEPENDENCIES_AVAILABLE
+    from ..Library.ingest_capabilities import _module_present
+    from .optional_deps import OPTIONAL_FEATURES
 
-    missing = []
-    for dep in ["markdown", "schedule", "feedparser", "defusedxml"]:
-        if not DEPENDENCIES_AVAILABLE.get(dep, False):
-            missing.append(dep)
+    # Read the packages from the feature gate rather than repeating them, and
+    # resolve them with the same helper the gate uses, so this alert cannot
+    # disagree with the availability check that produced it.
+    #
+    # The list here used to be hardcoded as markdown/schedule/feedparser/
+    # defusedxml -- three of which the code never imports -- while omitting
+    # beautifulsoup4, the one package whose absence actually breaks Watchlists.
+    # It told users to install the wrong things (TASK-1221). Note the gate keys
+    # on PyPI names ("beautifulsoup4"), which do not match either the import
+    # name ("bs4") or the lazily-populated DEPENDENCIES_AVAILABLE keys, so a
+    # plain dict lookup here would report installed packages as missing.
+    missing = [
+        dep
+        for dep in OPTIONAL_FEATURES["subscriptions"].package_dependencies
+        if not _module_present(dep)
+    ]
 
     show_feature_alert(
         parent,

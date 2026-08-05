@@ -559,6 +559,81 @@ class TestMetricsCalculation:
         score = MetricsCalculator.calculate_f1_score("hello world", "goodbye universe")
         assert score == 0.0
 
+    def test_classification_metrics_normal_inputs(self):
+        """Normal inputs produce correct values and the canonical key set."""
+        from tldw_chatbook.Evals.eval_runner import MetricsCalculator
+
+        predicted = ["cat", "dog", "cat", "dog"]
+        true = ["cat", "dog", "dog", "dog"]
+
+        result = MetricsCalculator.calculate_classification_metrics(predicted, true)
+
+        expected_keys = {"accuracy", "precision", "recall", "f1", "per_label_metrics"}
+        assert set(result.keys()) == expected_keys
+
+        # 3 of 4 predictions match -> accuracy 0.75
+        assert result["accuracy"] == pytest.approx(0.75)
+
+        # cat: tp=1 (idx0), fp=1 (idx2: pred=cat,true=dog), fn=0
+        #      -> precision=0.5, recall=1.0, f1=2/3
+        # dog: tp=2 (idx1,idx3), fp=0, fn=1 (idx2: true=dog,pred=cat)
+        #      -> precision=1.0, recall=2/3, f1=0.8
+        assert result["per_label_metrics"]["cat"]["precision"] == pytest.approx(0.5)
+        assert result["per_label_metrics"]["cat"]["recall"] == pytest.approx(1.0)
+        assert result["per_label_metrics"]["cat"]["f1"] == pytest.approx(2 / 3)
+        assert result["per_label_metrics"]["dog"]["precision"] == pytest.approx(1.0)
+        assert result["per_label_metrics"]["dog"]["recall"] == pytest.approx(2 / 3)
+        assert result["per_label_metrics"]["dog"]["f1"] == pytest.approx(0.8)
+
+        # Macro averages over the two labels
+        assert result["precision"] == pytest.approx((0.5 + 1.0) / 2)
+        assert result["recall"] == pytest.approx((1.0 + 2 / 3) / 2)
+        assert result["f1"] == pytest.approx((2 / 3 + 0.8) / 2)
+
+    def test_classification_metrics_empty_labels_list_does_not_crash(self):
+        """labels=[] must not raise ZeroDivisionError and must match the
+        normal-path key set, since it is treated the same as labels=None."""
+        from tldw_chatbook.Evals.eval_runner import MetricsCalculator
+
+        predicted = ["a", "b"]
+        true = ["a", "b"]
+
+        result = MetricsCalculator.calculate_classification_metrics(
+            predicted, true, labels=[]
+        )
+
+        expected_keys = {"accuracy", "precision", "recall", "f1", "per_label_metrics"}
+        assert set(result.keys()) == expected_keys
+
+        # Perfect predictions -> perfect scores, derived label set {"a", "b"}
+        assert result["accuracy"] == 1.0
+        assert result["precision"] == 1.0
+        assert result["recall"] == 1.0
+        assert result["f1"] == 1.0
+        assert set(result["per_label_metrics"].keys()) == {"a", "b"}
+
+        # labels=[] must behave identically to labels=None on the same data
+        result_none = MetricsCalculator.calculate_classification_metrics(
+            predicted, true, labels=None
+        )
+        assert result == result_none
+
+    def test_classification_metrics_empty_inputs(self):
+        """Empty predicted/true label lists return zeroed metrics with the
+        same key set as the normal and labels=[] paths (no crash)."""
+        from tldw_chatbook.Evals.eval_runner import MetricsCalculator
+
+        result = MetricsCalculator.calculate_classification_metrics([], [])
+
+        expected_keys = {"accuracy", "precision", "recall", "f1", "per_label_metrics"}
+        assert set(result.keys()) == expected_keys
+
+        assert result["accuracy"] == 0.0
+        assert result["precision"] == 0.0
+        assert result["recall"] == 0.0
+        assert result["f1"] == 0.0
+        assert result["per_label_metrics"] == {}
+
     def test_code_execution_metric(self):
         """Test code execution metric calculation."""
         # Skip this test as code metrics are not in base MetricsCalculator

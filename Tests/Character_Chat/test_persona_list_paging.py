@@ -1,3 +1,4 @@
+import tldw_chatbook.Character_Chat.persona_list_paging as persona_list_paging
 from tldw_chatbook.Character_Chat.persona_list_paging import page_persona_profiles
 
 PROFILES = [
@@ -5,6 +6,13 @@ PROFILES = [
     {"id": "2", "name": "bob", "description": "villain", "created_at": "2026-01-02", "last_modified": "2026-01-02"},
     {"id": "3", "name": "Carol", "description": "hero mage", "created_at": "2026-01-03", "last_modified": "2026-01-01"},
 ]
+
+
+def test_pager_exposes_only_persona_profile_name():
+    assert hasattr(persona_list_paging, "page_persona_profiles")
+    assert not hasattr(
+        persona_list_paging, "_".join(("page", "user", "profiles"))
+    )
 
 
 def test_search_matches_name_and_description_case_insensitive():

@@ -3,7 +3,9 @@
 # Imports
 #
 # 3rd-party Libraries
+from rich.cells import cell_len
 from textual.app import ComposeResult
+from textual.events import Resize
 from textual.widget import Widget
 from textual.widgets import Static
 
@@ -14,6 +16,11 @@ from ..UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
 ########################################################################################################################
 #
 # AppFooterStatus
+
+#: TASK-451: cells reserved for the footer's padding/margins plus a gap so the
+#: key hints don't sit flush against the debug memory stats at the boundary.
+#: Below `hints + word + token + stats + this`, the memory stats hide.
+_FOOTER_STATS_HEADROOM = 10
 
 
 class AppFooterStatus(Widget):
@@ -109,10 +116,24 @@ class AppFooterStatus(Widget):
         self._shortcut_source: str | None = None
         self._shortcut_display = Static(self._shortcut_text, id="footer-key-quit")
         self._word_count_display: Static = Static("", id="footer-word-count")
-        self._token_count_display: Static = Static(
-            "Tokens: --", id="footer-token-count"
-        )
+        self._token_count_display: Static = Static("", id="footer-token-count")
+        # F-003: the Tokens chip is meaningful only where token counts exist
+        # (chat contexts). It starts empty and hidden -- no "Tokens: --"
+        # placeholder -- and `update_token_count` reveals it once a real
+        # count lands (the periodic updater writes "" on non-chat tabs, so
+        # authoring/config destinations never render dead chrome).
+        self._token_count_display.display = False
         self._db_status_display: Static = Static("", id="internal-db-size-indicator")
+        # F-014: the DB-size readout left user chrome (telemetry lives in
+        # the Library Details disclosure and the logs now), so the indicator
+        # starts collapsed and only takes space while it has content.
+        self._db_status_display.display = False
+        # task-1714: labels are spelled in the readout itself now; the
+        # tooltip only adds the "local database file sizes" context.
+        self._db_status_display.tooltip = "Local database file sizes"
+        #: TASK-451: last known footer width, so a content change (new shortcut
+        #: context / DB stats) can re-run the priority reflow without a resize.
+        self._last_footer_width = 0
 
     def compose(self) -> ComposeResult:
         yield self._shortcut_display
@@ -120,6 +141,52 @@ class AppFooterStatus(Widget):
         yield self._word_count_display  # Word count display
         yield self._token_count_display  # Token count display
         yield self._db_status_display  # This is the existing DB size display
+
+    def on_resize(self, event: Resize) -> None:
+        """Reprioritise the footer when its width changes (TASK-451).
+
+        Runs both responsive pipelines: the shortcut-context ladder (hint
+        variants + right-cluster visibility) and the priority reflow, which
+        gets the final say on the debug memory stats.
+
+        Args:
+            event: The resize event; its ``size.width`` becomes the width the
+                priority reflow measures against.
+        """
+        self._last_footer_width = event.size.width
+        self._apply_responsive_footer()
+        self._reflow_footer_priority()
+
+    def _reflow_footer_priority(self) -> None:
+        """Preserve the left key hints; the right debug memory stats yield.
+
+        On a narrow footer the right-docked memory stats (``P:/C/N:/M:`` file
+        sizes -- debug telemetry) would otherwise keep full width and squeeze
+        the left-docked key hints (navigation the user needs). When there is not
+        room for the hints AND every right-side item, the memory stats hide
+        (TASK-451). Recomputed from the raw renderables, so the decision is
+        stable regardless of the stats' current visibility (no flicker).
+
+        F-014: an EMPTY indicator (the normal state now that DB sizes live
+        in the Library Details disclosure) stays collapsed regardless of
+        width -- the reflow must never resurrect blank chrome.
+        """
+        width = self._last_footer_width or self.size.width
+        if width <= 0:
+            return
+        stats_text = str(self._db_status_display.renderable)
+        # Measure the DISPLAYED hint variant (the responsive ladder may have
+        # shrunk `self._shortcut_text` to a compact form), not the stored
+        # full text -- otherwise the stats would yield to hints that are not
+        # actually taking the cells.
+        needed = (
+            cell_len(str(self._shortcut_display.renderable))
+            + cell_len(str(self._word_count_display.renderable))
+            + cell_len(str(self._token_count_display.renderable))
+            + cell_len(stats_text)
+            + _FOOTER_STATS_HEADROOM
+        )
+        self._db_status_display.display = bool(stats_text) and width >= needed
 
     @property
     def shortcut_text(self) -> str:
@@ -133,7 +200,12 @@ class AppFooterStatus(Widget):
 
     def _set_shortcut_text(self, text: str) -> None:
         self._shortcut_text = text
+        # The responsive ladder owns the hint text (it may render a shrunken
+        # variant for the current width); the TASK-451 reflow then gets the
+        # final say on the debug memory stats, since a new shortcut context
+        # changes how much room the hints need.
         self._apply_responsive_footer()
+        self._reflow_footer_priority()
 
     def set_shortcut_context(self, context: ShortcutContext) -> None:
         # Drop hints that duplicate the always-present global keys.
@@ -180,9 +252,6 @@ class AppFooterStatus(Widget):
     # ------------------------------------------------------------------
     # Responsive behavior
     # ------------------------------------------------------------------
-    def on_resize(self) -> None:
-        self._apply_responsive_footer()
-
     def _right_cluster_text_len(self) -> int:
         """Rendered width of the visible right-cluster displays."""
         total = 0
@@ -198,9 +267,13 @@ class AppFooterStatus(Widget):
     def _apply_responsive_footer(self) -> None:
         """Pick the honest hint variant that fits; never clip mid-word.
 
-        Degradation order (discoverability outranks metrics chrome): shrink
-        the right cluster (DB sizes, then word, then token counts) BEFORE
-        eliding the screen's own hints; globals stay to the last row.
+        Degradation order with a screen context registered (discoverability
+        outranks metrics chrome): shrink the right cluster (DB sizes, then
+        word, then token counts) BEFORE eliding the screen's own hints;
+        globals stay to the last row. With no context the full and compact
+        variants advertise the same global keys, so the hints shrink to
+        compact first and the DB stats chip keeps its cells until even that
+        overflows (matching the TASK-451 reflow's geometry).
         """
         width = self.size.width
         if width <= 0:
@@ -221,16 +294,31 @@ class AppFooterStatus(Widget):
             ellipsis = self.GLOBAL_HINTS_COMPACT
             compact = self.GLOBAL_HINTS_COMPACT
 
-        # (text, show_token, show_word, show_db) in degradation order.
-        steps = [
-            (full, True, True, True),
-            (full, True, True, False),
-            (full, True, False, False),
-            (full, False, False, False),
-            (ellipsis, False, False, False),
-            (compact, False, False, False),
-            (self.GLOBAL_HINTS_MIN, False, False, False),
-        ]
+        if self._context_text:
+            # (text, show_token, show_word, show_db) in degradation order.
+            steps = [
+                (full, True, True, True),
+                (full, True, True, False),
+                (full, True, False, False),
+                (full, False, False, False),
+                (ellipsis, False, False, False),
+                (compact, False, False, False),
+                (self.GLOBAL_HINTS_MIN, False, False, False),
+            ]
+        else:
+            # No screen context: the full and compact variants advertise the
+            # same global keys, so shrink the hints to compact and keep the
+            # DB stats chip until even that overflows (the TASK-451 reflow's
+            # geometry assumes the stats can coexist with short hints).
+            steps = [
+                (full, True, True, True),
+                (compact, False, False, True),
+                (full, True, True, False),
+                (full, True, False, False),
+                (full, False, False, False),
+                (compact, False, False, False),
+                (self.GLOBAL_HINTS_MIN, False, False, False),
+            ]
         for text, token_flag, word_flag, db_flag in steps:
             token_vis = token_flag and hard_token
             word_vis = word_flag and hard_word
@@ -256,7 +344,12 @@ class AppFooterStatus(Widget):
     def update_db_sizes_display(self, status_string: str) -> None:
         try:
             self._db_status_display.update(status_string)
+            # F-014: the indicator takes footer space only while it has
+            # content -- an empty string collapses it (the reflow keeps it
+            # down; see `_reflow_footer_priority`).
+            self._db_status_display.display = bool(status_string)
             self._apply_responsive_footer()
+            self._reflow_footer_priority()
         except Exception as e:
             # If the app is shutting down, the widget might be gone
             # In a real scenario, you'd use self.log from the widget
@@ -269,6 +362,9 @@ class AppFooterStatus(Widget):
                 self._word_count_display.update(f"Words: {word_count} | ")
             else:
                 self._word_count_display.update("")
+            # The count's width feeds the priority threshold, so re-run the
+            # reflow when it changes without a resize (Qodo #834).
+            self._reflow_footer_priority()
         except Exception as e:
             print(f"Error updating word count display: {e}")
 
@@ -279,6 +375,9 @@ class AppFooterStatus(Widget):
                 self._token_count_display.update(f"{display_text} | ")
             else:
                 self._token_count_display.update("")
+            # F-003: the chip takes footer space only while it has content.
+            self._token_count_display.display = bool(display_text)
+            self._reflow_footer_priority()
         except Exception as e:
             print(f"Error updating token count display: {e}")
 

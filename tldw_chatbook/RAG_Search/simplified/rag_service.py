@@ -6,12 +6,13 @@ embeddings, vector stores, chunking, and search operations.
 """
 
 import asyncio
-from typing import List, Optional, Dict, Any, Literal, Union, Tuple
-from pathlib import Path
-from loguru import logger
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Any, Collection, Dict, List, Literal, Mapping, Optional, Tuple, Union
+
+from loguru import logger
 
 # Optional numpy import
 try:
@@ -23,13 +24,22 @@ except ImportError:
     np = None
 import psutil
 
+from tldw_chatbook.config import load_settings
+from tldw_chatbook.Metrics.metrics_logger import (
+    log_counter,
+    log_histogram,
+    log_gauge,
+    timeit,
+)
+from tldw_chatbook.Utils.path_validation import validate_path
 from .embeddings_wrapper import EmbeddingsServiceWrapper
 from .vector_store import create_vector_store, SearchResult, SearchResultWithCitations
 from .citations import Citation, CitationType, merge_citations
 from .config import RAGConfig
+from .collection_fingerprint import fingerprinted_collection_name, collection_provenance
 from ..fusion import reciprocal_rank_fusion, resolve_hybrid_alpha, DEFAULT_RRF_K
 from ..chunking_service import ChunkingService
-from .simple_cache import get_rag_cache
+from .simple_cache import SimpleRAGCache
 from .db_connection_pool import get_connection_pool
 from .indexing_helpers import (
     chunk_documents_batch,
@@ -38,14 +48,6 @@ from .indexing_helpers import (
 )
 from .health_check import init_health_checker, get_health_status
 from .data_models import IndexingResult
-from tldw_chatbook.Metrics.metrics_logger import (
-    log_counter,
-    log_histogram,
-    log_gauge,
-    timeit,
-)
-from tldw_chatbook.Utils.path_validation import validate_path
-from tldw_chatbook.config import load_settings
 
 
 # Load constants from config with fallbacks
@@ -138,8 +140,9 @@ class RAGService:
         self.vector_store = create_vector_store(
             store_type=self.config.vector_store_type,
             persist_directory=self.config.persist_directory,
-            collection_name=self.config.collection_name,
+            collection_name=fingerprinted_collection_name(self.config),
             distance_metric=self.config.distance_metric,
+            collection_metadata=collection_provenance(self.config),
         )
 
         # Initialize chunking service
@@ -163,7 +166,10 @@ class RAGService:
         if hasattr(config.search, "hybrid_cache_ttl"):
             ttl_by_search_type["hybrid"] = config.search.hybrid_cache_ttl
 
-        self.cache = get_rag_cache(
+        # Search results belong to this service's vector-store/profile state.
+        # A process-global cache can return documents from another collection
+        # and cannot be invalidated reliably when one service mutates.
+        self.cache = SimpleRAGCache(
             max_size=cache_size,
             ttl_seconds=cache_ttl,
             enabled=cache_enabled,
@@ -542,6 +548,8 @@ class RAGService:
         filter_metadata: Optional[Dict[str, Any]] = None,
         include_citations: Optional[bool] = None,
         score_threshold: Optional[float] = None,
+        *,
+        metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
         Search with optional citations.
@@ -550,13 +558,31 @@ class RAGService:
             query: Search query text
             top_k: Number of results to return (default from config)
             search_type: Type of search to perform
-            filter_metadata: Metadata filters to apply
+            filter_metadata: Metadata filters to apply (Python-side equality
+                post-filter, applied after the store call; unchanged from
+                before, kept for backward compatibility)
             include_citations: Whether to include citations (default from config)
             score_threshold: Minimum score threshold (default from config)
+            metadata_allowlist: Metadata key -> allowed values, pushed down
+                into the vector store's own candidate selection instead of
+                filtered afterward. Only supported for
+                ``search_type="semantic"``; see ``_semantic_search``. Passing
+                a non-empty allowlist with ``search_type="hybrid"`` or
+                ``search_type="keyword"`` raises ``ValueError`` rather than
+                silently ignoring the scoping request.
 
         Returns:
             List of search results (with or without citations)
+
+        Raises:
+            ValueError: If ``metadata_allowlist`` is provided with a
+                ``search_type`` other than ``"semantic"``.
         """
+        if metadata_allowlist and search_type != "semantic":
+            raise ValueError(
+                "metadata_allowlist is only supported for search_type='semantic'"
+            )
+
         # Use defaults from config if not specified
         top_k = top_k or self.config.default_top_k
         include_citations = (
@@ -580,7 +606,7 @@ class RAGService:
 
         # Check cache first
         cached_result = await self.cache.get_async(
-            query, search_type, top_k, filter_metadata
+            query, search_type, top_k, filter_metadata, metadata_allowlist
         )
         if cached_result is not None:
             results, context = cached_result
@@ -600,7 +626,12 @@ class RAGService:
 
             if search_type == "semantic":
                 results = await self._semantic_search(
-                    query, top_k, filter_metadata, include_citations, score_threshold
+                    query,
+                    top_k,
+                    filter_metadata,
+                    include_citations,
+                    score_threshold,
+                    metadata_allowlist=metadata_allowlist,
                 )
             elif search_type == "hybrid":
                 results = await self._hybrid_search(
@@ -652,7 +683,13 @@ class RAGService:
             # For caching, we need to extract a simple context string
             context = self._extract_context_from_results(results)
             await self.cache.put_async(
-                query, search_type, top_k, results, context, filter_metadata
+                query,
+                search_type,
+                top_k,
+                results,
+                context,
+                filter_metadata,
+                metadata_allowlist,
             )
 
             return results
@@ -678,8 +715,30 @@ class RAGService:
         filter_metadata: Optional[Dict[str, Any]] = None,
         include_citations: bool = True,
         score_threshold: float = 0.0,
+        *,
+        metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
-        """Perform semantic similarity search."""
+        """Perform semantic similarity search.
+
+        Args:
+            query: Search query text.
+            top_k: Number of results to return.
+            filter_metadata: Metadata equality filters applied *after* the
+                store call (Python-side post-filter, unchanged from before
+                this parameter existed). Kept for backward compatibility;
+                prefer ``metadata_allowlist`` for scoping, since a narrow
+                post-filter can starve top-k on large corpora.
+            include_citations: Whether to fetch citations from the store.
+            score_threshold: Minimum similarity score to keep.
+            metadata_allowlist: Metadata key -> allowed values, threaded
+                through to the vector store's ``search``/
+                ``search_with_citations`` so out-of-scope candidates are
+                excluded before the store ranks and truncates to
+                ``top_k * SEARCH_RESULT_MULTIPLIER`` results.
+
+        Returns:
+            Up to ``top_k`` search results, most similar first.
+        """
         # Create query embedding
         logger.debug("Creating query embedding")
         query_embedding = await self.embeddings.create_embeddings_async([query])
@@ -692,10 +751,13 @@ class RAGService:
                 query,
                 top_k * SEARCH_RESULT_MULTIPLIER,
                 score_threshold,
+                metadata_allowlist=metadata_allowlist,
             )
         else:
             results = self.vector_store.search(
-                query_embedding, top_k * SEARCH_RESULT_MULTIPLIER
+                query_embedding,
+                top_k * SEARCH_RESULT_MULTIPLIER,
+                metadata_allowlist=metadata_allowlist,
             )
             # Apply score threshold for basic results
             results = [r for r in results if r.score >= score_threshold]
@@ -1409,6 +1471,9 @@ class RAGService:
             # Close embeddings service
             self.embeddings.close()
 
+            # Release vector-store clients, including persistent SQLite handles.
+            self.vector_store.close()
+
             # Close all database connection pools
             from .db_connection_pool import close_all_pools
 
@@ -1455,49 +1520,11 @@ async def create_and_index(
     return service, results
 
 
-def create_rag_service(
-    embedding_model: Optional[Union[str, RAGConfig]] = None,
-    vector_store: str = "chroma",
-    persist_dir: Optional[Union[str, Path]] = None,
-    **kwargs,
-) -> RAGService:
-    """
-    Create a RAG service with common configurations.
-
-    Args:
-        embedding_model: Embedding model to use, or a RAGConfig object
-        vector_store: Vector store type ("chroma" or "memory")
-        persist_dir: Directory for persistence (if using chroma)
-        **kwargs: Additional config parameters
-
-    Returns:
-        Configured RAGService instance
-    """
-    # If the first argument is already a RAGConfig, use it directly
-    if isinstance(embedding_model, RAGConfig):
-        return RAGService(embedding_model)
-
-    # Create a default config
-    config = RAGConfig()
-
-    # Update embedding model if provided
-    if embedding_model:
-        config.embedding.model = embedding_model
-
-    # Update vector store settings
-    config.vector_store.type = vector_store
-    if persist_dir:
-        config.vector_store.persist_directory = Path(persist_dir)
-
-    # Update any additional kwargs that match config structure
-    for key, value in kwargs.items():
-        if hasattr(config.embedding, key):
-            setattr(config.embedding, key, value)
-        elif hasattr(config.vector_store, key):
-            setattr(config.vector_store, key, value)
-        elif hasattr(config.chunking, key):
-            setattr(config.chunking, key, value)
-        elif hasattr(config.search, key):
-            setattr(config.search, key, value)
-
-    return RAGService(config)
+# NOTE (task-655): a `create_rag_service(embedding_model=None, vector_store=
+# "chroma", persist_dir=None, **kwargs)` convenience function used to live
+# here. `simplified/__init__.py` never imported it -- it only imports the
+# same-named `rag_factory.create_rag_service(profile_name="hybrid_basic",
+# ...)`, which is what the public seam and every real caller (production and
+# tests) actually reach. The version in this module was therefore dead code
+# with a different, misleading signature; it was removed rather than kept as
+# an unreachable duplicate. See Tests/RAG/simplified/test_create_rag_service_seam.py.

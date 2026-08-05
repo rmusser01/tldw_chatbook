@@ -131,6 +131,6 @@ text. Original-resolution inspection found no API key, credential, personal
 conversation, personal filename, file-picker contents, absolute path, or
 repository path.
 
-The user explicitly approved this rendered evidence on 2026-07-23. TASK-398
+The user explicitly approved this rendered evidence on 2026-07-23. TASK-487
 was then eligible for Backlog closeout; no merge or push was performed as part
 of this evidence update.

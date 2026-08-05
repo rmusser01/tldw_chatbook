@@ -3,8 +3,12 @@ pytest
 pytest-asyncio
 pytest-mock
 pytest-timeout
+pytest-xdist
+pytest-cov
 hypothesis
 aiohttp
+build
+setuptools>=77
 
 # Optional dependencies needed for tests
 numpy
@@ -35,6 +39,7 @@ defusedxml
 ebooklib
 html2text
 lxml
+markdown
 markdownify
 beautifulsoup4
 anytree

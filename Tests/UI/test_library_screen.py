@@ -1,5 +1,7 @@
 """LibraryScreen rail-level UI tests."""
 
+from pathlib import Path
+
 import pytest
 import pytest_asyncio
 from textual.widgets import Button
@@ -12,6 +14,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
 )
 from tldw_chatbook.Library.library_ingest_state import LibraryIngestFormState
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
@@ -19,7 +22,7 @@ from Tests.UI.test_library_shell import (
     _two_conversations,
     _wait_for_library_shell,
 )
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 
 
 @pytest_asyncio.fixture
@@ -35,9 +38,11 @@ async def library_screen():
 
 @pytest.mark.asyncio
 async def test_ingest_button_present(library_screen):
-    """The rail-top Ingest button is rendered with the expected label."""
+    """The rail-top primary button names the action in plain language
+    (F-013) and explains where it takes the user."""
     button = library_screen.query_one("#library-ingest-top-button", Button)
-    assert str(button.label) == "Ingest content…"
+    assert str(button.label) == "Add content…"
+    assert str(button.tooltip) == "Add files, links, and transcripts to your Library."
 
 
 # ----- Ingest options snapshot (Task 13) ------------------------------------
@@ -47,6 +52,9 @@ def _minimal_ingest_screen() -> LibraryScreen:
     """Return a LibraryScreen instance without mounting the full UI."""
     screen = object.__new__(LibraryScreen)
     screen._library_ingest_form = LibraryIngestFormState()
+    screen._transcribe_cpp_configured = False
+    # Set by ``__init__``, which this shortcut bypasses.
+    screen._library_ingest_preflight_worker = None
     return screen
 
 
@@ -139,18 +147,33 @@ def test_do_submit_ingest_persists_options(monkeypatch) -> None:
         "audio_video": {"transcription_model": "small"},
     }
 
-    saved: list[tuple[str, str, object]] = []
+    batches: list[dict] = []
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
+        "tldw_chatbook.UI.Screens.library_screen.save_settings_to_cli_config",
+        lambda section_values: batches.append(
+            {s: dict(v) for s, v in section_values.items()}
+        )
+        or True,
     )
 
     screen._do_submit_ingest("/tmp/test.pdf")
 
+    # One batched write, not one full config read/parse/reload per option key.
+    assert len(batches) == 1, f"expected a single batched save, got {len(batches)}"
+    saved = [
+        (section, key, value)
+        for section, values in batches[0].items()
+        for key, value in values.items()
+    ]
+
     assert screen.app_instance.submit_library_ingest_job.called
     assert ("library.ingest_options.pdf", "pdf_engine", "docling") in saved
     assert ("library.ingest_options.pdf", "ocr", True) in saved
-    assert ("library.ingest_options.audio_video", "transcription_model", "small") in saved
+    assert (
+        "library.ingest_options.audio_video",
+        "transcription_model",
+        "small",
+    ) in saved
     assert ("library.ingest_options.generic", "analyze", True) in saved
     assert ("library.ingest_options.generic", "chunk", False) in saved
     assert ("library.ingest_options.generic", "chunk_size", 1500) in saved
@@ -164,6 +187,7 @@ def test_load_ingest_options_from_config(monkeypatch) -> None:
         ("library.ingest_options.pdf", "pdf_engine"): "docling",
         ("library.ingest_options.pdf", "ocr"): True,
         ("library.ingest_options.audio_video", "transcription_model"): "small",
+        ("transcription.transcribe_cpp", "model_path"): "/private/model.gguf",
     }
 
     def fake_get_cli_setting(section: str, key: str = None, default: object = None):
@@ -183,6 +207,75 @@ def test_load_ingest_options_from_config(monkeypatch) -> None:
     assert screen._library_ingest_form.type_options["audio_video"] == {
         "transcription_model": "small"
     }
+    assert screen._transcribe_cpp_configured is True
+    assert "/private/model.gguf" not in repr(screen._library_ingest_form)
+
+
+def test_transcribe_cpp_picker_filters_to_gguf() -> None:
+    filters = library_screen_module._transcribe_cpp_gguf_filters()
+
+    assert filters.selections == [("GGUF models", 0)]
+    assert filters[0](Path("model.gguf"))
+    assert not filters[0](Path("model.bin"))
+
+
+def test_transcribe_cpp_config_worker_reports_path_free_success(
+    tmp_path, monkeypatch
+) -> None:
+    screen = _minimal_ingest_screen()
+    selected = tmp_path / "private-model.gguf"
+    configured: list[Path] = []
+    fake_app = MagicMock()
+    monkeypatch.setattr(
+        LibraryScreen, "app", property(lambda _self: fake_app)
+    )
+    monkeypatch.setattr(
+        library_screen_module,
+        "configure_transcribe_cpp_model_path",
+        lambda path: configured.append(path),
+    )
+    screen._apply_transcribe_cpp_gguf_result = MagicMock()
+
+    LibraryScreen._configure_transcribe_cpp_gguf.__wrapped__(
+        screen, selected, retry_job_id="ingest-job-1"
+    )
+
+    assert configured == [selected]
+    fake_app.call_from_thread.assert_called_once_with(
+        screen._apply_transcribe_cpp_gguf_result,
+        True,
+        "ingest-job-1",
+    )
+    assert str(selected) not in repr(fake_app.call_from_thread.call_args)
+
+
+def test_transcribe_cpp_config_success_requeues_failed_job_without_path() -> None:
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.refresh = MagicMock()
+
+    screen._apply_transcribe_cpp_gguf_result(True, "ingest-job-1")
+
+    screen.app_instance.retry_library_ingest_job.assert_called_once_with(
+        "ingest-job-1"
+    )
+    assert screen._transcribe_cpp_configured is True
+    assert "GGUF configured" in screen.app_instance.notify.call_args.args[0]
+
+
+def test_faster_whisper_recovery_handler_uses_explicit_provider() -> None:
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.refresh = MagicMock()
+    event = MagicMock()
+    event.button.id = "library-ingest-retry-faster-whisper-ingest-job-1"
+
+    screen.handle_library_ingest_retry_faster_whisper(event)
+
+    event.stop.assert_called_once_with()
+    screen.app_instance.retry_library_ingest_job_with_provider.assert_called_once_with(
+        "ingest-job-1", "faster-whisper"
+    )
 
 
 # ----- Pre-flight retry (Task 18) -------------------------------------------
@@ -253,7 +346,9 @@ def test_open_job_in_library_falls_back_to_source_url() -> None:
     job = _minimal_ingest_job(media_id=None, source_path="/tmp/foo.txt")
     screen._open_job_in_library(job)
 
-    screen.app_instance.media_db.get_media_by_url.assert_called_once_with("/tmp/foo.txt")
+    screen.app_instance.media_db.get_media_by_url.assert_called_once_with(
+        "/tmp/foo.txt"
+    )
     screen._navigate_to_media.assert_called_once_with(7)
     screen.notify.assert_not_called()
 
@@ -289,9 +384,7 @@ def test_open_job_in_library_notifies_when_no_match() -> None:
     screen._open_job_in_library(job)
 
     screen._navigate_to_media.assert_not_called()
-    screen.notify.assert_called_once_with(
-        "Already in Library — no single match found"
-    )
+    screen.notify.assert_called_once_with("Already in Library — no single match found")
 
 
 def test_open_job_in_library_handles_missing_media_db() -> None:
@@ -305,9 +398,7 @@ def test_open_job_in_library_handles_missing_media_db() -> None:
     screen._open_job_in_library(job)
 
     screen._navigate_to_media.assert_not_called()
-    screen.notify.assert_called_once_with(
-        "Already in Library — no single match found"
-    )
+    screen.notify.assert_called_once_with("Already in Library — no single match found")
 
 
 @pytest.mark.asyncio
@@ -324,3 +415,120 @@ async def test_handle_library_ingest_open_wires_to_open_job_in_library() -> None
 
     screen._library_ingest_job_by_id.assert_called_once_with("ingest-job-1")
     screen._open_job_in_library.assert_called_once_with(job)
+
+
+def test_ingest_browse_location_prefers_last_used_then_home(tmp_path, monkeypatch) -> None:
+    """The file browser opens somewhere the user actually keeps files.
+
+    It defaulted to ``"."`` -- whichever directory the process was started
+    from, which for anyone launching from a shell is arbitrary (task-668).
+    """
+    screen = _minimal_ingest_screen()
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.get_cli_setting",
+        lambda *args, **kwargs: str(tmp_path),
+    )
+    assert screen._library_ingest_browse_location() == str(tmp_path)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.get_cli_setting",
+        lambda *args, **kwargs: None,
+    )
+    assert screen._library_ingest_browse_location() == str(Path.home())
+
+    # A remembered directory that no longer exists must not be handed back.
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.get_cli_setting",
+        lambda *args, **kwargs: str(tmp_path / "deleted"),
+    )
+    assert screen._library_ingest_browse_location() == str(Path.home())
+
+
+def test_ingest_browse_remembers_the_directory_of_the_picked_file(
+    tmp_path, monkeypatch
+) -> None:
+    """Picking a file stores its folder, so the next Browse starts there."""
+    screen = _minimal_ingest_screen()
+    picked = tmp_path / "doc.txt"
+    picked.write_text("hi")
+
+    saved: list[tuple] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+
+    screen._remember_library_ingest_location(picked)
+
+    assert saved == [("library.ingest", "last_directory", str(tmp_path))]
+
+
+def test_ingestible_file_filters_separate_importable_from_the_rest() -> None:
+    """The picker distinguishes files ingest can handle from ones it cannot."""
+    from tldw_chatbook.UI.Screens.library_screen import _ingestible_file_filters
+
+    filters = _ingestible_file_filters()
+    importable = filters[0]
+
+    assert importable(Path("/tmp/notes.txt")) is True
+    assert importable(Path("/tmp/paper.pdf")) is True
+    assert importable(Path("/tmp/cover.jpg")) is False
+
+
+def test_backend_switch_flips_and_persists_the_target(monkeypatch) -> None:
+    """Switching backends writes the preference, so it survives a restart.
+
+    A user who deliberately points imports at their server should not silently
+    be back on local next launch (task-684.1).
+    """
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.app_instance._resolve_ingest_backend = MagicMock(return_value="local")
+    screen.refresh = MagicMock()
+
+    saved: list[tuple] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+
+    screen.handle_library_ingest_backend_switch(MagicMock())
+
+    assert saved == [("library.ingest", "backend", "server")]
+    assert screen.refresh.called
+
+
+def test_backend_switch_returns_to_local(monkeypatch) -> None:
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.app_instance._resolve_ingest_backend = MagicMock(return_value="server")
+    screen.refresh = MagicMock()
+
+    saved: list[tuple] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+
+    screen.handle_library_ingest_backend_switch(MagicMock())
+
+    assert saved == [("library.ingest", "backend", "local")]
+
+
+def test_switch_is_not_offered_when_the_server_seam_cannot_submit() -> None:
+    """A service object that cannot submit must not advertise a switch.
+
+    Otherwise the canvas offers a toggle whose only outcome is a failed job.
+    """
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.app_instance.media_db = object()
+    screen.app_instance._resolve_ingest_backend = MagicMock(return_value="local")
+    # A stand-in with no submit methods at all.
+    screen.app_instance.server_media_reading_service = object()
+    screen._library_ingest_registry = MagicMock(return_value=MagicMock(jobs=lambda: ()))
+
+    state = screen._build_library_ingest_state()
+
+    assert state.show_backend_switch is False

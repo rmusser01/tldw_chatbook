@@ -9,8 +9,8 @@ Improved UI for the chatbooks feature with better visual hierarchy,
 more features, and enhanced user experience.
 """
 
+import asyncio
 from typing import List, Dict, Any, TYPE_CHECKING
-from pathlib import Path
 from datetime import datetime
 
 from textual.app import ComposeResult
@@ -19,6 +19,12 @@ from textual.containers import Container, Horizontal, VerticalScroll, Grid
 from textual.widgets import Static, Button, Input, ListView, ListItem
 from textual.reactive import reactive
 from loguru import logger
+
+from ..Chatbooks.database_paths import (
+    get_private_chatbooks_dir,
+    secure_chatbook_directory,
+)
+from ..Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -188,8 +194,26 @@ class EmptyStateWidget(Container):
             )
 
 
-class ChatbooksWindowImproved(Screen):
-    """Enhanced Chatbooks management interface."""
+class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
+    """Enhanced Chatbooks management interface.
+
+    This class is a ``Screen`` subclass but is embedded as a plain child
+    widget of ``ChatbooksScreen`` (a ``BaseAppScreen``, see
+    ``UI/Screens/chatbooks_screen.py``), not pushed via the screen stack --
+    it never inherited ``BaseAppScreen``'s task-627 guard. It still inherits
+    ``RecomposeCaptureGuard`` (task-637) defensively: ``compose()`` is
+    static (it never reads ``self.chatbooks``/``view_mode``/``search_query``),
+    so none of this widget's own reactives are declared ``recompose=True``
+    -- ``_update_content()`` does the DOM rebuild imperatively from the
+    watchers instead (task-671; a ``recompose=True`` ``chatbooks`` reactive
+    used to schedule a deferred ``Widget.recompose()`` that tore the whole
+    subtree back down to ``compose()``'s empty skeleton one tick after
+    ``_update_content()`` had just populated it -- silently erasing any
+    non-empty chatbooks list). The guard mixin is kept because
+    ``Widget.refresh(recompose=True)`` can still be invoked directly (see
+    ``Tests/UI/test_chatbooks_screen_server_actions.py``'s task-637
+    regression coverage) and other recompose reactives may be added later.
+    """
 
     GRID_VIEW_TOOLTIP = "Show chatbooks as visual cards."
     LIST_VIEW_TOOLTIP = "Show chatbooks as a dense text list."
@@ -349,15 +373,27 @@ class ChatbooksWindowImproved(Screen):
     }
     """
 
-    # Reactive properties
-    chatbooks = reactive([], recompose=True)
+    # Reactive properties. None of these are `recompose=True`: `compose()`
+    # is static and doesn't read any of them, so the watchers below rebuild
+    # `#chatbooks-container` imperatively via `_update_content()` instead
+    # (task-671; see the class docstring for why `recompose=True` on
+    # `chatbooks` was actively harmful here).
+    chatbooks = reactive([])
     view_mode = reactive("grid")
     search_query = reactive("")
 
     def __init__(self, app_instance: "TldwCli", **kwargs):
+        """Store the owning app and resolve the default export directory.
+
+        Args:
+            app_instance: The running TldwCli app instance.
+        """
         super().__init__(**kwargs)
         self.app_instance = app_instance
-        self._export_path = Path.home() / "Documents" / "Chatbooks"
+        # Default to the app's private, hardened data directory rather than
+        # the hardcoded ~/Documents/Chatbooks literal (task-984). Pre-existing
+        # exports at the old location are not moved by this change.
+        self._export_path = get_private_chatbooks_dir()
 
     def compose(self) -> ComposeResult:
         # Header
@@ -440,9 +476,23 @@ class ChatbooksWindowImproved(Screen):
                 "0 chatbooks • 0 MB total", id="stats-text", classes="stats-text"
             )
 
-    async def on_mount(self) -> None:
-        """Called when screen is mounted."""
-        await self._refresh_chatbooks()
+    def on_mount(self) -> None:
+        """Mount now, scan after (TASK-1320).
+
+        Synchronous by design: mounting is awaited by the app's own navigation
+        handler, so awaiting the directory scan here held the App's message
+        pump for the length of the scan on top of blocking the event loop.
+        """
+        self.run_worker(
+            self._refresh_chatbooks(),
+            group="chatbooks_refresh",
+            # A failed scan is an empty list with an error toast (see
+            # `_refresh_chatbooks`), never a dead app. Textual defaults this to
+            # True, so deferring the scan into a worker would otherwise turn any
+            # error the scan does not catch itself into an app exit.
+            exit_on_error=False,
+            exclusive=True,
+        )
 
     def watch_chatbooks(self, old_value: List[Dict], new_value: List[Dict]) -> None:
         """React to chatbooks list changes."""
@@ -490,15 +540,21 @@ class ChatbooksWindowImproved(Screen):
             )
 
             if self.view_mode == "grid":
-                # Grid view
+                # Grid view. `container` is already attached (it comes from
+                # `query_one`), so mount the (still-unattached) grid into it
+                # FIRST -- only then is the grid itself attached and safe to
+                # mount cards into. `Widget.mount()` raises `MountError`
+                # synchronously when called on a widget that isn't attached
+                # yet (task-671).
                 grid = Grid(classes="chatbooks-grid")
+                container.mount(grid)
                 for cb_data in filtered:
                     card = ChatbookCard(cb_data)
                     grid.mount(card)
-                container.mount(grid)
             else:
-                # List view
+                # List view -- same attach-before-populate ordering as above.
                 list_view = ListView(classes="chatbooks-list")
+                container.mount(list_view)
                 for cb_data in filtered:
                     item = ListItem(
                         Static(
@@ -506,7 +562,6 @@ class ChatbooksWindowImproved(Screen):
                         )
                     )
                     list_view.mount(item)
-                container.mount(list_view)
 
     def _filter_chatbooks(self) -> List[Dict[str, Any]]:
         """Filter chatbooks based on search query."""
@@ -529,69 +584,82 @@ class ChatbooksWindowImproved(Screen):
         self.query_one("#stats-text", Static).update(stats_text)
 
     async def _refresh_chatbooks(self) -> None:
-        """Load chatbooks from export directory."""
+        """Load chatbooks from the export directory, off the event loop.
+
+        The scan itself is blocking (`glob`, `stat`, and a `ZipFile` open plus
+        manifest read per chatbook) and used to run directly here. Being inside
+        an `async def` bought nothing: with no await around the blocking calls
+        the whole event loop stopped for the duration, so the app froze while a
+        directory of chatbooks was read. Measured at ~1s per second of scan.
+
+        The scan now runs in a thread and only the reactive assignment happens
+        back on the loop (TASK-1320).
+        """
         try:
-            if not self._export_path.exists():
-                self._export_path.mkdir(parents=True, exist_ok=True)
-
-            chatbooks = []
-
-            # Scan for .zip files
-            for zip_file in self._export_path.glob("*.zip"):
-                try:
-                    # Get basic info
-                    cb_info = {
-                        "name": zip_file.stem,
-                        "path": str(zip_file),
-                        "size_mb": zip_file.stat().st_size / (1024 * 1024),
-                        "created_at": datetime.fromtimestamp(
-                            zip_file.stat().st_ctime
-                        ).isoformat(),
-                    }
-
-                    # Try to read manifest for more info
-                    import zipfile
-                    import json
-
-                    try:
-                        with zipfile.ZipFile(zip_file, "r") as zf:
-                            if "manifest.json" in zf.namelist():
-                                manifest_data = json.loads(zf.read("manifest.json"))
-                                cb_info.update(
-                                    {
-                                        "name": manifest_data.get(
-                                            "name", cb_info["name"]
-                                        ),
-                                        "description": manifest_data.get(
-                                            "description", ""
-                                        ),
-                                        "tags": manifest_data.get("tags", []),
-                                        "statistics": manifest_data.get(
-                                            "statistics",
-                                            {
-                                                "conversations": 0,
-                                                "notes": 0,
-                                                "characters": 0,
-                                            },
-                                        ),
-                                    }
-                                )
-                    except Exception:
-                        pass
-
-                    chatbooks.append(cb_info)
-                except Exception as e:
-                    logger.error(f"Error reading chatbook {zip_file}: {e}")
-
-            # Sort by created date, newest first
-            chatbooks.sort(key=lambda x: x["created_at"], reverse=True)
+            chatbooks = await asyncio.to_thread(self._scan_chatbooks)
             self.chatbooks = chatbooks
-
         except Exception as e:
             logger.error(f"Error refreshing chatbooks: {e}")
             self.app_instance.notify(
                 f"Error loading chatbooks: {str(e)}", severity="error"
             )
+
+    def _scan_chatbooks(self) -> List[Dict[str, Any]]:
+        """Read the export directory. Blocking -- always call via a thread."""
+        self._export_path = secure_chatbook_directory(self._export_path)
+
+        chatbooks = []
+
+        # Scan for .zip files
+        for zip_file in self._export_path.glob("*.zip"):
+            try:
+                # Get basic info
+                cb_info = {
+                    "name": zip_file.stem,
+                    "path": str(zip_file),
+                    "size_mb": zip_file.stat().st_size / (1024 * 1024),
+                    "created_at": datetime.fromtimestamp(
+                        zip_file.stat().st_ctime
+                    ).isoformat(),
+                }
+
+                # Try to read manifest for more info
+                import zipfile
+                import json
+
+                try:
+                    with zipfile.ZipFile(zip_file, "r") as zf:
+                        if "manifest.json" in zf.namelist():
+                            manifest_data = json.loads(zf.read("manifest.json"))
+                            cb_info.update(
+                                {
+                                    "name": manifest_data.get(
+                                        "name", cb_info["name"]
+                                    ),
+                                    "description": manifest_data.get(
+                                        "description", ""
+                                    ),
+                                    "tags": manifest_data.get("tags", []),
+                                    "statistics": manifest_data.get(
+                                        "statistics",
+                                        {
+                                            "conversations": 0,
+                                            "notes": 0,
+                                            "characters": 0,
+                                        },
+                                    ),
+                                }
+                            )
+                except Exception:
+                    pass
+
+                chatbooks.append(cb_info)
+            except Exception as e:
+                logger.error(f"Error reading chatbook {zip_file}: {e}")
+
+        # Sort by created date, newest first
+        chatbooks.sort(key=lambda x: x["created_at"], reverse=True)
+        return chatbooks
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""

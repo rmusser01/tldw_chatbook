@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from loguru import logger
 
-from tldw_chatbook.DB.Evals_DB import EvalsDB, InputError
+from tldw_chatbook.DB.Evals_DB import EvalsDB, EvalsDBError, InputError
 
 
 class TestEvalsDBInitialization:
@@ -176,6 +176,46 @@ class TestTaskOperations:
         task = in_memory_db.get_task(task_id)
         assert task["description"] == "Updated description"
         assert task["config_data"]["version"] == 2
+
+    def test_create_task_strips_control_characters_from_description(self, in_memory_db):
+        """create_task has always filtered control characters out of
+        ``description`` -- see its own inline comment ("Clean control
+        characters from name and description"). Pins the exact round-trip
+        so a future refactor (e.g. task-1614's shared ``_clean_task_
+        description`` helper) cannot silently change this behavior."""
+        task_id = in_memory_db.create_task(
+            name="hazard_task",
+            description="Hazard\x00\x01\x07 description\x1b[31m",
+            task_type="question_answer",
+            config_format="custom",
+            config_data={"test": "data"},
+        )
+
+        task = in_memory_db.get_task(task_id)
+        assert task["description"] == "Hazard description[31m"
+
+    def test_update_task_strips_control_characters_from_description(self, in_memory_db):
+        """task-1614: parity fix -- update_task used to pass ``description``
+        straight through with NO control-character filtering at all,
+        unlike create_task (see the sibling test above for that path's
+        identical, pre-existing behavior). Both now share
+        ``_clean_task_description``, so this pins the same exact
+        round-trip on the update path."""
+        task_id = in_memory_db.create_task(
+            name="hazard_update_task",
+            description="Original",
+            task_type="question_answer",
+            config_format="custom",
+            config_data={"test": "data"},
+        )
+
+        success = in_memory_db.update_task(
+            task_id, description="Hazard\x00\x01\x07 description\x1b[31m"
+        )
+        assert success
+
+        task = in_memory_db.get_task(task_id)
+        assert task["description"] == "Hazard description[31m"
 
     def test_delete_task(self, in_memory_db):
         """Test task deletion (soft delete)."""
@@ -373,6 +413,66 @@ class TestRunOperations:
         run = in_memory_db.get_run(run_id)
         assert run["status"] == "running"
 
+    def test_list_runs_filters_by_run_group_id_in_sql(self, in_memory_db):
+        """list_runs(run_group_id=...) must filter in SQL, not just page and
+        filter in Python -- otherwise an older run group becomes
+        unreachable once the table holds more rows than the default LIMIT."""
+        task_id = in_memory_db.create_task(
+            name="test_task",
+            description="Test",
+            task_type="question_answer",
+            config_format="custom",
+            config_data={},
+        )
+        model_id = in_memory_db.create_model(
+            name="Test Model", provider="test", model_id="test-1", config={}
+        )
+
+        target_group = "group-under-test"
+        target_run_ids = set()
+        for i in range(2):
+            run_id = in_memory_db.create_run(
+                name=f"Target Run {i}", task_id=task_id, model_id=model_id,
+                config_overrides={},
+            )
+            in_memory_db.update_run(run_id, {"run_group_id": target_group})
+            target_run_ids.add(run_id)
+
+        # Other runs, in a different group, that a naive Python filter over
+        # a fixed-size page could still legitimately see -- the point is
+        # that SQL-side filtering returns exactly the requested group either
+        # way, regardless of how many other rows exist.
+        for i in range(3):
+            run_id = in_memory_db.create_run(
+                name=f"Other Run {i}", task_id=task_id, model_id=model_id,
+                config_overrides={},
+            )
+            in_memory_db.update_run(run_id, {"run_group_id": "other-group"})
+
+        found = in_memory_db.list_runs(run_group_id=target_group)
+        assert {r["id"] for r in found} == target_run_ids
+        assert len(found) == 2
+
+    def test_list_runs_without_run_group_id_is_unaffected(self, in_memory_db):
+        """The new parameter must be additive: omitting it keeps returning
+        every run, exactly as before the parameter existed."""
+        task_id = in_memory_db.create_task(
+            name="test_task",
+            description="Test",
+            task_type="question_answer",
+            config_format="custom",
+            config_data={},
+        )
+        model_id = in_memory_db.create_model(
+            name="Test Model", provider="test", model_id="test-1", config={}
+        )
+        run_id = in_memory_db.create_run(
+            name="Test Run", task_id=task_id, model_id=model_id, config_overrides={}
+        )
+
+        found = in_memory_db.list_runs()
+        assert {r["id"] for r in found} == {run_id}
+
 
 class TestResultOperations:
     """Test operations for evaluation results."""
@@ -445,6 +545,106 @@ class TestResultOperations:
         for i, result in enumerate(results):
             assert result["sample_id"] == f"sample_{i}"
             assert result["metrics"]["score"] == i * 0.3
+
+
+class TestRunGroupCellFailureCounts:
+    """``run_group_cell_failure_counts`` (TASK-1480 amendment): the single
+    aggregate query the Evals rail's "all cells failed" glyph reads,
+    instead of a per-group query loop. ``word_bench.storage.save_cell``
+    writes a failed cell's ``logprobs`` as ``{"schema": ..., "error":
+    {...}}`` and a successful one without an ``"error"`` key -- these
+    tests write that exact shape directly via ``store_result`` (the
+    method ``save_cell`` itself calls) so the DB-layer aggregate is
+    pinned independently of the word_bench module.
+    """
+
+    def _task_and_model(self, db):
+        task_id = db.create_task(
+            name="test_task", description="Test", task_type="question_answer",
+            config_format="custom", config_data={},
+        )
+        model_id = db.create_model(
+            name="Test Model", provider="test", model_id="test-1", config={}
+        )
+        return task_id, model_id
+
+    def _run_in_group(self, db, task_id, model_id, group_id):
+        run_id = db.create_run(
+            name="run", task_id=task_id, model_id=model_id, config_overrides={}
+        )
+        db.update_run(run_id, {"run_group_id": group_id})
+        return run_id
+
+    def _store_cell(self, db, run_id, sample_id, *, failed):
+        logprobs = (
+            {"schema": "word_bench/1", "error": {"reason": "unreachable", "detail": ""}}
+            if failed
+            else {"schema": "word_bench/1", "top_k": []}
+        )
+        db.store_result(
+            run_id=run_id, sample_id=sample_id, input_data={}, actual_output=None,
+            logprobs=logprobs, metrics={},
+        )
+
+    def test_counts_total_and_errored_cells_for_a_single_group(self, in_memory_db):
+        task_id, model_id = self._task_and_model(in_memory_db)
+        run_id = self._run_in_group(in_memory_db, task_id, model_id, "group-a")
+        self._store_cell(in_memory_db, run_id, "s1", failed=False)
+        self._store_cell(in_memory_db, run_id, "s2", failed=True)
+        self._store_cell(in_memory_db, run_id, "s3", failed=True)
+
+        counts = in_memory_db.run_group_cell_failure_counts()
+        assert counts["group-a"] == (3, 2)
+
+    def test_aggregates_across_every_run_sharing_the_same_group(self, in_memory_db):
+        """A word bench group is N per-target runs sharing one
+        run_group_id -- the aggregate must sum cells across all of them,
+        not just the first run found."""
+        task_id, model_id = self._task_and_model(in_memory_db)
+        run_a = self._run_in_group(in_memory_db, task_id, model_id, "group-b")
+        run_b = self._run_in_group(in_memory_db, task_id, model_id, "group-b")
+        self._store_cell(in_memory_db, run_a, "s1", failed=True)
+        self._store_cell(in_memory_db, run_b, "s1", failed=False)
+
+        counts = in_memory_db.run_group_cell_failure_counts()
+        assert counts["group-b"] == (2, 1)
+
+    def test_one_query_reports_every_group_at_once(self, in_memory_db):
+        """The rail's cost budget is ONE aggregate query per
+        ``run_groups()`` call, regardless of how many groups exist -- this
+        pins that a single call already returns every group's counts, so a
+        caller never needs to call this once per group."""
+        task_id, model_id = self._task_and_model(in_memory_db)
+        run_a = self._run_in_group(in_memory_db, task_id, model_id, "group-c")
+        run_b = self._run_in_group(in_memory_db, task_id, model_id, "group-d")
+        self._store_cell(in_memory_db, run_a, "s1", failed=True)
+        self._store_cell(in_memory_db, run_b, "s1", failed=False)
+
+        counts = in_memory_db.run_group_cell_failure_counts()
+        assert counts["group-c"] == (1, 1)
+        assert counts["group-d"] == (1, 0)
+
+    def test_a_run_with_no_run_group_id_contributes_no_entry(self, in_memory_db):
+        task_id, model_id = self._task_and_model(in_memory_db)
+        run_id = in_memory_db.create_run(
+            name="ungrouped run", task_id=task_id, model_id=model_id,
+            config_overrides={},
+        )
+        self._store_cell(in_memory_db, run_id, "s1", failed=True)
+
+        counts = in_memory_db.run_group_cell_failure_counts()
+        assert counts == {}
+
+    def test_a_group_with_no_stored_cells_has_no_entry(self, in_memory_db):
+        """A group that exists (runs created, ``run_group_id`` set) but
+        has captured nothing yet must not appear at all -- callers treat a
+        missing key as ``(0, 0)``, the "nothing failed yet" reading, never
+        as "all failed"."""
+        task_id, model_id = self._task_and_model(in_memory_db)
+        self._run_in_group(in_memory_db, task_id, model_id, "group-empty")
+
+        counts = in_memory_db.run_group_cell_failure_counts()
+        assert "group-empty" not in counts
 
 
 class TestMetricsOperations:
@@ -623,6 +823,133 @@ class TestErrorHandling:
         success = temp_db.update_task(task_id, description="Updated")
         # For now, this will succeed as optimistic locking is not implemented
         assert success
+
+    def test_delete_task_wraps_a_driver_error_in_evalsdberror(self, temp_db):
+        """delete_task's docstring promises EvalsDBError for "the delete
+        failed for a reason other than 'no matching row'" -- for the whole
+        method, not just the UPDATE that soft-deletes the task. The run-group
+        lookup that runs before that UPDATE (to find the task's
+        character-probe annotations to cascade) used to run outside the
+        method's own try/except, so a failure there leaked sqlite3's raw
+        driver exception instead. Dropping eval_runs simulates that lookup
+        failing; delete_task must still raise EvalsDBError, matching every
+        other failure path in this method and the docstring callers rely on.
+        """
+        task_id = temp_db.create_task(
+            name="test_task",
+            description="Test",
+            task_type="question_answer",
+            config_format="custom",
+            config_data={},
+        )
+        conn = temp_db.get_connection()
+        conn.execute("DROP TABLE eval_runs")
+        conn.commit()
+
+        with pytest.raises(EvalsDBError):
+            temp_db.delete_task(task_id)
+
+
+class TestProbeAnnotationCascadeBatching:
+    """PR #1216 Qodo review, finding 1: `delete_probe_annotations_for_run_groups`
+    used to build a single `DELETE ... WHERE run_group_id IN (?, ?, ...)`
+    with one bind parameter per run group. A bench with enough run groups
+    would exceed SQLite's own host-parameter limit (as low as 999 on some
+    builds), the DELETE would raise, and `delete_task` would leave the
+    bench undeletable. The fix batches the id list.
+    """
+
+    def test_delete_probe_annotations_for_run_groups_processes_every_batch(
+        self, in_memory_db, monkeypatch
+    ):
+        """Shrinking the batch-size constant to 3 (rather than inserting
+        thousands of rows to force a real overflow -- this machine's SQLite
+        build tolerates tens of thousands of host parameters, so no
+        practical row count here would reproduce the original crash)
+        exercises the exact same multi-batch code path deterministically
+        and fast: 7 run groups span three batches (3, 3, 1) per table.
+        Proves no id is skipped and none is double-counted.
+        """
+        import tldw_chatbook.DB.Evals_DB as evals_db_module
+
+        monkeypatch.setattr(
+            evals_db_module, "_PROBE_ANNOTATION_CASCADE_BATCH_SIZE", 3
+        )
+
+        run_group_ids = [f"rg-{i}" for i in range(7)]
+        for rg in run_group_ids:
+            in_memory_db.upsert_probe_turn_annotation(
+                run_group_id=rg,
+                card_id=1,
+                probe_index=0,
+                sample_index=0,
+                target_id="t-1",
+                turn_index=0,
+                tags=["refused"],
+                note="",
+            )
+
+        removed = in_memory_db.delete_probe_annotations_for_run_groups(
+            run_group_ids
+        )
+
+        assert removed == 7
+        for rg in run_group_ids:
+            assert in_memory_db.list_probe_turn_annotations(rg) == []
+
+    def test_deleting_a_bench_with_more_run_groups_than_one_batch_cascades_them_all(
+        self, in_memory_db
+    ):
+        """The scenario the brief asks for directly: a bench with more run
+        groups than fit in one cascade batch (default batch size 500) still
+        deletes cleanly through the real `delete_task` path, and every
+        annotation row is removed -- none silently skipped by a batch
+        boundary. 1200 run groups span three batches (500, 500, 200).
+
+        Run and annotation rows are stamped in directly via bulk `executemany`
+        against `eval_runs` / `eval_probe_turn_annotations` rather than via
+        `create_run` + `upsert_probe_turn_annotation` in a 1200-iteration
+        Python loop (each of those commits its own transaction) -- no real
+        conversations are needed, only rows the cascade should catch, per
+        the fix brief.
+        """
+        task_id = in_memory_db.create_task(
+            name="big bench",
+            description="",
+            task_type="generation",
+            config_format="custom",
+            config_data={"bench_type": "character_probe"},
+        )
+        model_id = in_memory_db.create_model(
+            name="m", provider="llama_cpp", model_id="m"
+        )
+
+        n = 1200
+        run_group_ids = [f"rg-{i}" for i in range(n)]
+
+        conn = in_memory_db.get_connection()
+        with conn:
+            conn.executemany(
+                "INSERT INTO eval_runs "
+                "(name, task_id, model_id, config_overrides, run_group_id, client_id) "
+                "VALUES (?, ?, ?, '{}', ?, 'test_client')",
+                [(f"r-{i}", task_id, model_id, rg) for i, rg in enumerate(run_group_ids)],
+            )
+            conn.executemany(
+                "INSERT INTO eval_probe_turn_annotations "
+                "(run_group_id, card_id, probe_index, sample_index, target_id, "
+                " turn_index, tags, note, client_id) "
+                "VALUES (?, 1, 0, 0, 't-1', 0, '[\"refused\"]', '', 'test_client')",
+                [(rg,) for rg in run_group_ids],
+            )
+
+        assert in_memory_db.delete_task(task_id) is True
+
+        remaining = conn.execute(
+            "SELECT COUNT(*) FROM eval_probe_turn_annotations "
+            "WHERE run_group_id LIKE 'rg-%'"
+        ).fetchone()[0]
+        assert remaining == 0
 
 
 class TestThreadSafety:
