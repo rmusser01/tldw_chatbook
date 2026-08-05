@@ -2573,6 +2573,44 @@ async def test_notes_handoff_evidence_bundle_reaches_capture_as_real_context():
 
 
 @pytest.mark.asyncio
+async def test_conversation_handoff_evidence_bundle_reaches_capture_as_real_context():
+    """Same round trip as the media/notes cases, for a Library conversation
+    handoff -- the third of the three brief-named kinds. Rounds out the
+    suite so all three kinds this task actually fixes (media, notes,
+    conversations) get the same deep, unmocked capture-round-trip proof,
+    not just two of the three."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_handoff_as_console_live_work(_conversation_handoff_payload())
+        await pilot.pause()
+        launch = screen._pending_console_launch_context
+        assert launch is not None
+
+    capture_app = SimpleNamespace(
+        chachanotes_db=_ExistingChaChaDBDouble(conversation_ids={"conv-9"})
+    )
+    result = await capture_console_staged_evidence_for_chat(
+        capture_app, launch, user_message="What did we plan?"
+    )
+
+    assert isinstance(result, LocalRagContextResult)
+    assert result.context is not None
+    # `item_type="conversation"` maps to `CanonicalSourceKind.CHAT_HISTORY`,
+    # labeled "CHAT HISTORY" in the formatted context (`_SOURCE_LABELS` in
+    # `RAG_Search/local_citation_capture.py`).
+    assert "CHAT HISTORY" in result.context
+    # Same pre-existing `display_summary`-over-`body` snippet formula as the
+    # media case (see the report): the conversation handoff also sets a
+    # generic `display_summary`, so that -- not the multi-line body -- is
+    # what reaches the model here.
+    assert "Conversation staged: Prior planning chat" in result.context
+
+
+@pytest.mark.asyncio
 async def test_console_send_blocked_reason_sendable_for_media_handoff_with_new_bundle():
     """Send-gating blast radius: `_console_send_blocked_reason` only checks
     available evidence for a RAG-labeled source (`_source_mentions_rag`).
