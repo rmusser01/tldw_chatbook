@@ -861,6 +861,115 @@ async def test_a_plain_string_reply_yields_empty_provider_fields_without_raising
     assert answer.usage is None
 
 
+# --- Contract 7b: a post-call failure never discards already-spent money --
+#
+# Fix-review finding on this same task: `build_answer_citation_validation`/
+# `_is_abstention` run AFTER `_invoke_chat` returns and AFTER provider/model/
+# usage are captured from `raw` -- and both are inside the containment `try`
+# widened by commit 375c267da specifically because they DO raise in
+# practice. An exception there must not discard usage that is already live
+# in scope: a call that produced a real answer and cost real money, then
+# failed one step later in post-processing, must still report what it cost.
+
+
+async def test_a_post_call_processing_failure_still_carries_the_already_captured_usage(
+    monkeypatch,
+):
+    """The money-lost-on-error case: `raw` was a real, billable Anthropic
+    response (model + usage both present) and `_invoke_chat` returned
+    successfully -- provider/model/usage were captured -- and THEN citation
+    validation raises. The failed answer must still carry all three; the
+    hoisted `response_model`/`usage` (mirroring the existing `bundle`
+    pattern) are what make that possible instead of the `except` block
+    silently reporting `provider=""`/`usage=None`.
+    """
+    from tldw_chatbook.Library import library_rag_answer_service
+
+    def _explode(body, bundle):
+        raise RuntimeError("citation validator exploded")
+
+    monkeypatch.setattr(
+        library_rag_answer_service, "build_answer_citation_validation", _explode
+    )
+
+    raw = _anthropic_raw_response(model="claude-sonnet-4-6")
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="anthropic",
+        model=None,
+        chat=_FakeChat(reply=raw),
+    )
+
+    assert answer.status == ANSWER_STATUS_FAILED
+    assert answer.text == ""
+    assert answer.provider == "anthropic"
+    assert answer.model == "claude-sonnet-4-6"
+    assert answer.usage == ProviderUsage(
+        uncached_input=3571,
+        cache_read=6656,
+        cache_write=1024,
+        output=727,
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+    )
+
+
+async def test_a_bundle_build_failure_still_defaults_model_and_usage_cleanly(
+    monkeypatch,
+):
+    """The other sub-case: an exception BEFORE `_invoke_chat` ever runs (no
+    call was made, nothing was spent) must still degrade cleanly to the
+    hoisted defaults -- not a `NameError` on top of the original exception.
+    """
+    from tldw_chatbook.Library import library_rag_answer_service
+
+    def _explode(results, *, query):
+        raise RuntimeError("bundle build exploded")
+
+    monkeypatch.setattr(
+        library_rag_answer_service, "build_library_rag_evidence_bundle", _explode
+    )
+
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="anthropic",
+        model=None,
+        chat=_FakeChat(reply=GROUNDED_ANSWER),
+    )
+
+    assert answer.status == ANSWER_STATUS_FAILED
+    # `provider` is a function parameter -- always safe, always included.
+    assert answer.provider == "anthropic"
+    # Nothing was ever spent: no call was made, so these stay at default.
+    assert answer.model == ""
+    assert answer.usage is None
+
+
+async def test_a_provider_call_exception_still_defaults_model_and_usage_cleanly():
+    """The provider call itself raising (`_invoke_chat` never returns a
+    `raw`) is the other "before `_invoke_chat` returns" sub-case: genuinely
+    nothing was captured, and the answer must say so cleanly rather than
+    raising a `NameError` in the `except` block.
+    """
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="openai",
+        model=None,
+        chat=_FakeChat(error=ChatProviderError("upstream 503", provider="openai")),
+    )
+
+    assert answer.status == ANSWER_STATUS_FAILED
+    assert answer.provider == "openai"
+    assert answer.model == ""
+    assert answer.usage is None
+
+
 # --- The honesty prompt itself ------------------------------------------
 
 

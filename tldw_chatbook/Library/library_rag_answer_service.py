@@ -210,23 +210,30 @@ class LibraryRagAnswer:
         evidence_bundle: The bundle the attempt used, so the panel can map
             citation labels back to rows -- present even on the no-evidence
             path, where it explains why each row was ineligible.
-        provider: The configured endpoint a provider call was made against,
-            or ``""`` when no call was made (no-evidence path) or it raised
-            before a response existed. NOT the provider's own model name --
-            see ``model``.
+        provider: The configured endpoint, always present whenever a provider
+            call was attempted -- including every failure path, since it is
+            a plain function parameter and never depends on how far the
+            attempt got. ``""`` only on the no-evidence path, where no call
+            is ever attempted. NOT the provider's own model name -- see
+            ``model``.
         model: The MODEL THE PROVIDER ACTUALLY RAN, read from the response
             payload's own ``"model"`` key -- never the configured endpoint
             name. This is the only app-side source of the model, since
             ``resolve_library_rag_answer_provider`` deliberately resolves
             ``model=None`` and leaves the handler to pick its own default.
-            ``""`` when no call was made, it raised before a response
-            existed, or the response carried no ``"model"`` key.
+            ``""`` when no response was ever obtained -- no call was made
+            (no-evidence path), or an exception fired before `_invoke_chat`
+            returned one (a bundle-build failure, or the provider call
+            itself raising) -- or the response carried no ``"model"`` key.
         usage: Normalized token usage from the response payload's ``"usage"``
-            block, or ``None`` when no call was made, it raised before a
-            response existed, or the payload carried no usage the normalizer
-            recognizes. Populated on the ready, abstained, AND empty-response
-            failure paths -- a call that cost money and returned nothing
-            still cost money.
+            block, or ``None`` under the same no-response conditions as
+            ``model``, or when the payload carried no usage the normalizer
+            recognizes. Populated whenever a response WAS obtained, whatever
+            happened next: the ready, abstained, and empty-response-failure
+            paths, but ALSO a post-call processing failure (citation
+            validation or abstention detection raising after a real,
+            billable response was already parsed) -- a call that cost money
+            and then failed one step later in processing still cost money.
     """
 
     status: str
@@ -448,11 +455,25 @@ async def generate_library_rag_answer(
     # worker that runs it with Textual's default `exit_on_error=True` and
     # crashing the whole app, while the top-level handler's traceback log
     # (diagnose=True) dumped this frame's locals: the user's own library
-    # content. `bundle` starts `None` and is only ever set once built, so a
-    # failure that happens before it exists still returns a well-formed
-    # `LibraryRagAnswer` rather than a `NameError` on top of the original
-    # exception.
+    # content. `bundle`, `response_model` and `usage` all start at their
+    # empty default and are only ever set once genuinely known, so a
+    # failure that happens before any of them exist still returns a
+    # well-formed `LibraryRagAnswer` rather than a `NameError` on top of the
+    # original exception.
+    #
+    # Task-2 fix-review: `response_model`/`usage` are hoisted here for the
+    # same reason `bundle` already was, and for a case `bundle` does not
+    # have -- `build_answer_citation_validation`/`_is_abstention` (both AFTER
+    # the provider call and both inside this containment net) can raise
+    # AFTER a billable call has already completed and its usage has already
+    # been captured into local variables. Without the hoist, the `except`
+    # block below would return a "failed, nothing spent" answer for a call
+    # that in fact spent real tokens -- the exact defect this task exists to
+    # close, just reached through the post-call-exception door instead of
+    # the empty-response one.
     bundle: EvidenceBundle | None = None
+    response_model: str = ""
+    usage: ProviderUsage | None = None
     try:
         bundle = build_library_rag_evidence_bundle(results, query=query)
 
@@ -549,6 +570,20 @@ async def generate_library_rag_answer(
         # frame's locals -- and those locals are the prompt/response, i.e.
         # the user's own library content, in a file they never chose to
         # write it to. Only the exception's TYPE NAME is logged.
+        #
+        # `provider` is always safe here (a function parameter). `response_
+        # model`/`usage` are whatever was captured before the exception --
+        # `""`/`None` if it fired before the provider call returned (nothing
+        # was ever spent: bundle-build failure, or the call itself raising),
+        # but the REAL captured values if it fired in citation validation or
+        # abstention detection, i.e. AFTER a billable call already
+        # completed and its response was already parsed. That second case is
+        # exactly the region this same `try` was widened to contain
+        # (fix-review I1) -- a known-raising region, not a hypothetical one.
+        # Reporting `provider=""`/`usage=None` there would mean a call that
+        # cost real money and produced a real answer reports as if nothing
+        # had been spent, the moment it failed one step later in
+        # post-processing.
         logger.warning(
             f"library rag answer: generation failed for provider {provider}: "
             f"{type(exc).__name__}"
@@ -558,4 +593,7 @@ async def generate_library_rag_answer(
             text="",
             error=_error_text(exc),
             evidence_bundle=bundle,
+            provider=provider,
+            model=response_model,
+            usage=usage,
         )
