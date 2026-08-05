@@ -83,7 +83,17 @@ class RealtimeCallbacks:
             transcript text.
         on_speech_started: Server-side voice activity detection observed the
             user starting to speak (used for barge-in).
-        on_usage: Token/billing usage information for the session.
+        on_usage: Token/billing usage information for the ASSISTANT reply
+            (from `response.done`).
+        on_transcription_usage: Usage information for the USER's spoken
+            input turn, from a source event entirely independent of
+            `response.done` (`conversation.item.input_audio_transcription.
+            completed`'s own `usage` field). NOT a token count -- for the
+            OpenAI Realtime API this is `{"type": "duration", "seconds":
+            N}`, live-confirmed (see `openai_session.py`'s ground-truth
+            header, USAGE section). Raw passthrough, like `on_usage`: this
+            callback receives the wire payload unmodified, interpretation
+            happens downstream.
         on_error: An error occurred; the argument is the raised exception.
         on_closed: The session closed; the argument is a reason string.
     """
@@ -98,6 +108,7 @@ class RealtimeCallbacks:
     on_output_transcript_delta: Callable[[str], None] | None = None
     on_speech_started: Callable[[], None] | None = None
     on_usage: Callable[[dict], None] | None = None
+    on_transcription_usage: Callable[[dict], None] | None = None
     on_error: Callable[[Exception], None] | None = None
     on_closed: Callable[[str], None] | None = None
 

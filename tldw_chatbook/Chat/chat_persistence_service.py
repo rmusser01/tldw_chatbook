@@ -388,6 +388,7 @@ class ChatPersistenceService:
         update_feedback: bool = False,
         attachments: Optional[Sequence[Mapping[str, Any]]] = None,
         usage_json: Optional[str] = None,
+        metadata_json: Optional[str] = None,
     ) -> bool:
         """Update a message's content, optionally its parent/feedback, and its images.
 
@@ -442,6 +443,9 @@ class ChatPersistenceService:
                 ``None``, so a content-only update (no usage known yet,
                 e.g. a mid-stream edit) never overwrites an already-persisted
                 value with NULL.
+            metadata_json: Optional structured message metadata JSON
+                (task-2364). Follows the same only-when-supplied rule as
+                ``usage_json``, for the same reason.
 
         Returns:
             True if the row update was applied; False if the underlying
@@ -495,6 +499,10 @@ class ChatPersistenceService:
         # usage is known).
         if usage_json is not None:
             update_data["usage_json"] = usage_json
+        # Same only-when-supplied contract for the local-only
+        # ``metadata_json`` column (task-2364).
+        if metadata_json is not None:
+            update_data["metadata_json"] = metadata_json
 
         citation_repository = self.citation_repository
         if citation_repository is not None and citation_repository.db is not self.db:
@@ -599,6 +607,33 @@ class ChatPersistenceService:
         """
         return self.db.update_message_usage_local(message_id, usage_json)
 
+    def update_message_metadata(self, *, message_id: str, metadata_json: str) -> bool:
+        """Persist structured message metadata WITHOUT touching sync metadata.
+
+        The metadata sibling of :meth:`update_message_usage`, routed to
+        :meth:`CharactersRAGDB.update_message_metadata_local` for the same
+        reason: ``metadata_json`` (task-2364) is local-only, so a
+        metadata-only write through the general-purpose row updater would
+        bump ``version``/``last_modified``, trip the
+        ``messages_sync_update`` trigger and enqueue a ``sync_log`` row
+        whose payload can never carry the column that changed.
+
+        Use this ONLY for a metadata-only write against an already-persisted
+        row (e.g. marking a reply interrupted after it was flushed). When
+        metadata rides changed content, ``update_message_content``'s
+        ``metadata_json`` kwarg is the right seam -- the version bump there
+        belongs to the content.
+
+        Args:
+            message_id: UUID of the message to update.
+            metadata_json: ``MessageMetadata.to_json()`` payload.
+
+        Returns:
+            True if a non-deleted message with this id was found and
+            updated; False otherwise.
+        """
+        return self.db.update_message_metadata_local(message_id, metadata_json)
+
     def create_message(
         self,
         *,
@@ -614,6 +649,7 @@ class ChatPersistenceService:
         generation_metadata: Optional[Sequence[Mapping[str, Any]]] = None,
         citation_write: SealedCitationWrite | None = None,
         usage_json: Optional[str] = None,
+        metadata_json: Optional[str] = None,
     ) -> str:
         """Create a new message, optionally with a legacy image or a full attachment list.
 
@@ -674,6 +710,10 @@ class ChatPersistenceService:
             usage_json: Optional normalized provider-usage JSON (Console
                 cost ticker), written into the row's local-only
                 ``usage_json`` column via ``CharactersRAGDB.add_message``.
+            metadata_json: Optional structured message metadata JSON
+                (task-2364: engine provenance, interrupted flag, transcript
+                status), written into the row's local-only
+                ``metadata_json`` column via ``CharactersRAGDB.add_message``.
 
         Returns:
             The newly created message's id.
@@ -743,6 +783,7 @@ class ChatPersistenceService:
             "image_mime_type": effective_image_mime_type,
             "client_id": self.db.client_id,
             "usage_json": usage_json,
+            "metadata_json": metadata_json,
         }
         if prepared_citation is not None:
             with self.db.transaction() as cursor:

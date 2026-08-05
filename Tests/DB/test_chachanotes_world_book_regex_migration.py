@@ -13,6 +13,11 @@ def test_world_book_entries_regex_migrate_v21_to_v22(tmp_path):
     conn.execute("ALTER TABLE conversations DROP COLUMN assistant_authority_id")
     # A V21 fixture also predates the V29->V30 local-only usage_json column.
     conn.execute("ALTER TABLE messages DROP COLUMN usage_json")
+    # ...and the V30->V31 local-only metadata_json column. Without this the
+    # "rewound" fixture still carried a v31 column, so the re-migration took
+    # `_migrate_from_v30_to_v31`'s already-present branch and this test
+    # silently stopped exercising the clean path (task-2364 Qodo round).
+    conn.execute("ALTER TABLE messages DROP COLUMN metadata_json")
     # A v21 fixture must not retain citation tables introduced at v26→v27.
     for table in (
         "rag_artifact_owner_operations",

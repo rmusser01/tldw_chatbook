@@ -687,3 +687,154 @@ def test_screen_state_round_trip_tolerates_missing_and_broken_usage():
 
     corrupt = {**legacy, "usage_json": "{not json"}
     assert ChatScreen._restore_console_message(corrupt).usage is None
+
+
+def test_resume_restores_metadata_from_metadata_json():
+    """task-2364: without the read-back a resumed conversation loses every
+    structured fact -- and the reseed builder, which now reads the
+    interrupted FLAG, would replay the visible marker into the model."""
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        service = ChatConversationService(db)
+        conversation_id = service.create_conversation(
+            id="meta-conv-1",
+            title="Metadata",
+            scope_type="global",
+            state="in-progress",
+        )
+        u1 = db.add_message(
+            {
+                "id": "m-meta-u1",
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "role": "user",
+                "content": "u1",
+                "timestamp": "2026-01-01T00:00:00.000000+00:00",
+                "metadata_json": (
+                    '{"engine": "realtime", "provider": "openai",'
+                    ' "model": "gpt-4o-transcribe", "interrupted": false,'
+                    ' "transcript_status": "final"}'
+                ),
+            }
+        )
+        db.add_message(
+            {
+                "id": "m-meta-a1",
+                "conversation_id": conversation_id,
+                "parent_message_id": u1,
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "a1 ⏹ interrupted",
+                "timestamp": "2026-01-01T00:00:01.000000+00:00",
+                "metadata_json": (
+                    '{"engine": "realtime", "provider": "openai",'
+                    ' "model": "gpt-realtime", "interrupted": true,'
+                    ' "transcript_status": ""}'
+                ),
+            }
+        )
+
+        store, session = _resume_into_store(db, conversation_id)
+
+        user, assistant = store.messages_for_session(session.id)
+        assert user.metadata is not None
+        assert user.metadata.transcript_status == "final"
+        assert user.metadata.model == "gpt-4o-transcribe"
+        assert assistant.metadata is not None
+        assert assistant.metadata.interrupted is True
+        assert assistant.metadata.engine == "realtime"
+    finally:
+        db.close_connection()
+
+
+def test_resume_tolerates_null_and_garbage_metadata_json():
+    # Legacy rows (NULL) and corrupt JSON load with metadata=None, never raise.
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        service = ChatConversationService(db)
+        conversation_id = service.create_conversation(
+            id="meta-conv-2",
+            title="MetadataLegacy",
+            scope_type="global",
+            state="in-progress",
+        )
+        u1 = db.add_message(
+            {
+                "id": "m-meta-legacy-u1",
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "role": "user",
+                "content": "u1",
+                "timestamp": "2026-01-01T00:00:00.000000+00:00",
+            }
+        )
+        db.add_message(
+            {
+                "id": "m-meta-legacy-a1",
+                "conversation_id": conversation_id,
+                "parent_message_id": u1,
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "a1",
+                "timestamp": "2026-01-01T00:00:01.000000+00:00",
+                "metadata_json": "{broken",
+            }
+        )
+
+        store, session = _resume_into_store(db, conversation_id)
+
+        assert all(
+            m.metadata is None for m in store.messages_for_session(session.id)
+        )
+    finally:
+        db.close_connection()
+
+
+def test_screen_state_round_trip_preserves_metadata():
+    """Navigating away and back must not silently drop the interrupted flag
+    -- the same class of loss F6 fixed for usage."""
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleChatMessage,
+        ConsoleMessageRole,
+    )
+    from tldw_chatbook.Chat.message_metadata import MessageMetadata
+
+    metadata = MessageMetadata(
+        engine="realtime",
+        provider="openai",
+        model="gpt-realtime",
+        interrupted=True,
+    )
+    payload = ChatScreen._serialize_console_message(
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer ⏹ interrupted",
+            status="complete",
+            metadata=metadata,
+        )
+    )
+    assert payload["metadata_json"] is not None
+
+    restored = ChatScreen._restore_console_message(payload)
+
+    assert restored is not None
+    assert restored.metadata == metadata
+
+
+def test_screen_state_round_trip_tolerates_missing_and_broken_metadata():
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleChatMessage,
+        ConsoleMessageRole,
+    )
+
+    without_metadata = ChatScreen._serialize_console_message(
+        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="a")
+    )
+    without_metadata.pop("metadata_json", None)
+    assert ChatScreen._restore_console_message(without_metadata).metadata is None
+
+    broken = ChatScreen._serialize_console_message(
+        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="a")
+    )
+    broken["metadata_json"] = "{nope"
+    assert ChatScreen._restore_console_message(broken).metadata is None

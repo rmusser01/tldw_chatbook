@@ -13,11 +13,27 @@ event *names*:
     response.output_audio_transcript.done, response.done,
     input_audio_buffer.speech_started, input_audio_buffer.speech_stopped,
     input_audio_buffer.committed, error.
+CORRECTION (V4 final review M9 (d)): at the time this paragraph was
+written, `openai_realtime_probe.py` sent no audio at all (its docstring
+still described a stale "audio+text modalities" shape it never actually
+sent either), so it could not have produced any `input_audio_buffer.*`
+event -- the claim above outran what the referenced script could prove.
+Fixed by the task-2362/2363 follow-up: the script's docstring now matches
+its real (text-turn) behavior, and a new `--audio` mode was added and run
+live three times (see the USAGE ground truth section below), each of which
+DID observe `input_audio_buffer.committed` -- via a manual `input_audio_
+buffer.commit`, not server VAD (that mode disables `turn_detection`
+entirely for probe determinism; see that mode's own docstring). `speech_
+started`/`speech_stopped` remain UNCONFIRMED by any script committed to
+this repo -- they are VAD-only events the manual-commit probe mode never
+exercises, and their entry above traces only to the brief's a-priori
+expected set, never independently re-probed.
 `conversation.item.input_audio_transcription.completed` (field
 `transcript`) -- in the brief's list, but not captured by this task's own
 probe run (an ad hoc audio-turn script raced a second spurious
 `input_audio_buffer.speech_started` that interrupted the response first)
--- was subsequently CONFIRMED live by the task-2 reviewer's own re-probe.
+-- was subsequently CONFIRMED live by the task-2 reviewer's own re-probe,
+and again, independently, by all three task-2362/2363 `--audio` runs above.
 That re-probe also discovered a sibling event this session was not told
 about: `conversation.item.input_audio_transcription.delta`, which arrives
 *first* (before `...completed`), carrying the same incremental text under
@@ -62,6 +78,51 @@ Also live-confirmed: a *partial* `session.update` sent mid-session (only
 `{"type": "realtime", "instructions": "..."}`, no `audio` block -- the
 shape `send_seed` sends) is accepted and returns `session.updated`, so it
 does not need to repeat the full audio schema every time.
+
+USAGE ground truth (2026-08-04, `Tests/LLM_Calls/openai_realtime_probe.py
+--audio`, live key, same GA endpoint, three separate runs -- follow-up
+task-2362/2363, closing V4 final review M9 (e) and T2-F12). Moved here from
+a `Chat/provider_usage.py` comment, which claimed "live-confirmed" without
+this header ever recording the probe that did it:
+
+`response.done`'s `response.usage` -- the payload `on_usage` receives --
+splits BOTH `input_token_details` and `output_token_details` (SINGULAR
+"token", confirmed by three live runs; `Chat/provider_usage.py`'s
+`from_provider_payload` checks this spelling as a Realtime-specific
+fallback after the Responses API's plural `input_tokens_details`) into
+`text_tokens`/`audio_tokens` (input also carries `image_tokens` and a
+nested `cached_tokens_details` with the same three-way split; output does
+not -- only input can be served from cache):
+    {"total_tokens": 151, "input_tokens": 33, "output_tokens": 118,
+     "input_token_details": {"text_tokens": 15, "audio_tokens": 18,
+       "image_tokens": 0, "cached_tokens": 0,
+       "cached_tokens_details": {"text_tokens": 0, "audio_tokens": 0,
+         "image_tokens": 0}},
+     "output_token_details": {"text_tokens": 28, "audio_tokens": 90}}
+Realtime is billed per audio minute, not per audio token, but the API
+still reports audio usage in token units -- `ProviderUsage.audio_input`/
+`audio_output` capture this split distinctly from the plain uncached/cached
+buckets (task-2363); no cost-catalog wiring reads them yet, so they are
+inert for billing until a follow-up task adds that.
+
+`conversation.item.input_audio_transcription.completed` carries its OWN
+`usage` field, entirely separate from `response.done`'s above -- NOT a
+token count at all, a plain duration of the transcribed input audio:
+    {"type": "duration", "seconds": 2}
+Previously invisible to `on_usage` (T2-F12: this event only ever fed
+`on_input_transcript`). Delivered via the dedicated `on_transcription_
+usage` callback (task-2363) so a duration payload can never be
+misinterpreted as a token-usage payload by `ProviderUsage.from_provider_
+payload`, which does not recognize this shape at all.
+
+`conversation.item.input_audio_transcription.completed` was also observed,
+across these three runs, to arrive both BEFORE and AFTER `response.done`
+for the same turn -- the same raciness this header already noted for the
+task-2 reviewer's own re-probe (an interrupting spurious `speech_started`).
+The probe script's `--audio` mode keeps listening a bounded grace period
+past `response.done` for exactly this reason; production's own wiring has
+no such ordering dependency (`on_transcription_usage`/`on_input_transcript`
+target the user's row, `on_usage` the assistant's, entirely independently).
 
 TURN DETECTION ground truth (2026-08-04,
 `Tests/LLM_Calls/openai_realtime_turn_detection_probe.py`, live key, same
@@ -708,10 +769,19 @@ class OpenAIRealtimeSession:
 
     def _on_input_transcript_completed(self, event: dict) -> None:
         """Handle `conversation.item.input_audio_transcription.completed`:
-        fire `on_input_transcript` with the user's spoken-input transcript.
+        fire `on_input_transcript` with the user's spoken-input transcript,
+        and -- when present -- `on_transcription_usage` with the event's own
+        `usage` field.
+
+        `usage` here (task-2363, T2-F12) is independent of `response.done`'s
+        usage: live-confirmed `{"type": "duration", "seconds": N}`, the
+        transcribed input audio's length, not a token count (see this
+        module's header, USAGE section). Not every arrival of this event
+        carries `usage`, so the second dispatch is conditional.
 
         Args:
-            event: The decoded event; `event["transcript"]` is the text.
+            event: The decoded event; `event["transcript"]` is the text,
+                `event.get("usage")` is the optional duration-usage payload.
 
         Returns:
             None.
@@ -721,6 +791,13 @@ class OpenAIRealtimeSession:
             event.get("transcript", ""),
             op="on_input_transcript",
         )
+        usage = event.get("usage")
+        if usage is not None:
+            self._safe_invoke(
+                self._callbacks.on_transcription_usage,
+                usage,
+                op="on_transcription_usage",
+            )
 
     def _on_speech_started(self, _event: dict) -> None:
         """Handle `input_audio_buffer.speech_started`: fire

@@ -48,6 +48,14 @@ real thread interleaving:
     default 2.0s): a hung consumer must not hang `stop()` forever once
     this tap is wired to a live session; expiry logs a warning and
     `stop()` proceeds anyway. (NEW-1b)
+  - `begin_buffering()` (task-2360) re-arms the SAME bounded, in-order
+    pre-ready buffer for a mid-loop RECONNECT, extending the entry-time
+    first-words guarantee across a transport drop instead of letting
+    `on_frames` receive audio the wiring has nowhere to send. It is
+    deliberately NOT `stop()` -- `stop()` stays terminal, per a prior
+    review's binding ruling, and is never repurposed as a pause; the
+    recorder keeps running underneath and the call is instant, unlike
+    `stop()`'s bounded quiescence wait.
 """
 
 from __future__ import annotations
@@ -259,6 +267,49 @@ class RealtimeMicTap:
             finally:
                 with self._cond:
                     self._clear_in_flight_locked()
+
+    def begin_buffering(self) -> None:
+        """Re-arm the pre-ready buffer for a mid-loop RECONNECT (task-2360).
+
+        Flips the tap back to "buffering": frames captured from this call
+        onward are queued into the SAME bounded pre-ready buffer
+        `_on_recorder_frames` already uses before the very first
+        `mark_ready()` call (same ordering and eviction rules -- nothing
+        new), instead of being forwarded to `on_frames`. This extends the
+        entry-time first-words guarantee across a reconnect: without it,
+        speech captured while the session slot is momentarily `None` (the
+        transport dropped and a fresh session has not connected yet) would
+        otherwise reach `on_frames`, which the wiring drops on the floor
+        because there is nowhere to send it.
+
+        Deliberately NOT `stop()` -- a prior review's binding ruling is
+        that `stop()` is TERMINAL and must never be repurposed as a pause
+        (see `stop()`'s own docstring). This call does not touch the
+        recorder at all: capture keeps running, nothing is joined, and
+        this returns instantly, unlike `stop()`'s bounded quiescence wait.
+
+        The buffer built up here is released, in order, by the NEXT
+        `mark_ready()` call (once the reconnected session is ready) --
+        the exact same flush path the entry-time buffer uses, so the two
+        windows are indistinguishable from `on_frames`'s point of view.
+        A reconnect that never succeeds discards it instead: `stop()`
+        already clears the buffer outright as part of its existing
+        terminal contract (see `stop()`), so a failed reconnect's ordinary
+        teardown is all that is needed -- no separate discard path exists
+        or is needed here.
+
+        A no-op if `stop()` has already been called (nothing left to
+        re-arm), or if the tap was never marked ready in the first place
+        (it is already buffering; calling this would be redundant, not
+        wrong, but the guard keeps the state transition explicit).
+
+        Returns:
+            None.
+        """
+        with self._cond:
+            if self._stopped or not self._ready:
+                return
+            self._ready = False
 
     def set_gated(self, gated: bool) -> None:
         """Mute or unmute the tap without closing the microphone device.

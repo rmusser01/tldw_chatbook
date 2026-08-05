@@ -90,9 +90,18 @@ pre-reply anchor in place -- a barge-in IS a reply-audio end, which the
 spec's idle definition counts as activity, and stamping nothing here would
 otherwise let the very next `tick()` fire `idle-timeout` against a
 long-stale anchor moments after the user's own keypress proved the session
-attended (review F1). Once `now - _last_activity >=
-idle_timeout_seconds` while still `live`, `tick()` emits `ExitLoop(reason
-="idle-timeout")` -- an unattended session must not bill indefinitely.
+attended (review F1). `on_speech_started` while ALREADY `live` (no reply
+outstanding, so no barge-in either) marks the anchor pending too, in BOTH
+barge-in modes (task-2361, review M3) -- a user who starts an utterance
+just before the ceiling but has not yet reached `on_turn_committed` (the
+turn is still being transcribed server-side) must not be cut off
+mid-sentence; a speaker is a speaker regardless of whether
+`acoustic_barge_in` is enabled, since that flag only ever governs
+INTERRUPTING an outstanding reply, never idle bookkeeping. Once
+`now - _last_activity >= idle_timeout_seconds` while still `live`,
+`tick()` emits `ExitLoop(reason="idle-timeout")` -- an unattended session
+must not bill indefinitely; a genuinely silent session (no turn commit,
+no reply, no speech_started at all) still exits exactly as before.
 """
 
 from __future__ import annotations
@@ -332,11 +341,32 @@ class RealtimeLoopController:
         self._transition("live")
 
     def on_speech_started(self) -> None:
-        """Server-side VAD detected the user starting to speak. Barges in
-        (see the module docstring's "Barge-in" section) only when
-        `acoustic_barge_in` is enabled AND a reply is outstanding
-        (`thinking` or `speaking`); a no-op in default mode (keyboard-only
-        barge-in) and a no-op with nothing to interrupt."""
+        """Server-side VAD detected the user starting to speak.
+
+        Two independent things happen here, in order:
+
+        1. Idle-anchor refresh (task-2361, V4 final review M3): while
+           `live`, this marks the idle-ceiling anchor pending (the same
+           idiom `enter()`/`on_session_ready()` use) REGARDLESS of
+           `acoustic_barge_in` -- a speaker mid-utterance is never
+           activity-starved just because the loop is in default (keyboard-
+           only) barge-in mode. Without this, a user who started talking
+           just before the ceiling but had not yet reached `on_turn_
+           committed` could be ejected by `tick()` with "idle for N
+           minutes" mid-sentence, even though they were plainly attending.
+           Scoped to `live` only: while `thinking`/`speaking` (reachable
+           here only in acoustic mode, since that is the only mode where
+           the mic stays hot then), the barge-in path below already
+           refreshes the anchor as part of returning to `live` -- see
+           `_barge_in_if_reply_outstanding`.
+        2. Barge-in (see the module docstring's "Barge-in" section): only
+           when `acoustic_barge_in` is enabled AND a reply is outstanding
+           (`thinking` or `speaking`); a no-op in default mode (keyboard-
+           only barge-in) and a no-op with nothing to interrupt. This half
+           is UNCHANGED by the anchor refresh above.
+        """
+        if self._state == "live":
+            self._last_activity = None
         if not self._acoustic_barge_in:
             return
         self._barge_in_if_reply_outstanding()

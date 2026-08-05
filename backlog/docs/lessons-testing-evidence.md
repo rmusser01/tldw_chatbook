@@ -697,3 +697,26 @@ a new consumer needs to *distinguish* failure from a real value, give it a probe
 says so — `_statted_size()` returning `None` on `OSError` — and leave the summing
 caller on the old fallback. Before reusing any helper whose docstring says "or `0` on
 error", ask what your caller will conclude from that zero.
+
+---
+
+## "the field is set" is not "the resource is ready" — check what the real object does before it's ready (2026-08-04/05)
+
+**What happened.** TASK-2360's bug report said reconnect audio was dropped because
+`session.session is None` during the reconnect window. Reading the wiring showed
+`session.session` is actually reassigned to the NEW provider session quite early
+(`_connect_console_realtime`, before `await provider_session.connect()` even runs) —
+so a fix gated only on "is `session.session` set" would have looked correct and
+still leaked frames into a session with no live transport yet. The REAL drop
+mechanism was one layer deeper: `OpenAIRealtimeSession._enqueue` silently discards
+anything sent before `connect()` populates its outbound queue. A test double
+(`FakeRealtimeSession.append_audio`) that just appends to a list, with no
+before-connect gate, would have made a wiring test pass for the wrong reason —
+proving frames "reached the session" when a real session would have swallowed them.
+
+**What to do.** When a bug report names a field as the cause ("X is None during the
+bad window"), verify what that field actually holds moment-to-moment, not just
+whether it is set — a reassigned-but-not-yet-live reference passes an `is not None`
+check while still being unsafe to use. And before trusting a wiring test built on a
+fake, ask whether the fake reproduces the real object's OWN pre-ready guard, or is
+simply more permissive than production in exactly the window under test.
