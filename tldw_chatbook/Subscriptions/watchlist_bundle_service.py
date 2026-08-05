@@ -363,3 +363,10 @@ class WatchlistBundleService:
             Mapping of bucket id to ``{"total": int, "unread": int}``.
         """
         return self._db.get_watchlist_item_counts()
+
+    def get_source_item_counts(self) -> dict[int, dict[str, int]]:
+        """Per-source {total, unread} for tree source badges.
+
+        Thin delegation, same contract as `get_watchlist_item_counts` above.
+        """
+        return self._db.get_source_item_counts()

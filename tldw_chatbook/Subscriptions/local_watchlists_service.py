@@ -360,6 +360,9 @@ class LocalWatchlistsService:
         limit: int = 100,
         offset: int = 0,
         run_id: Any = None,
+        watchlist_id: Any = None,
+        unassigned_only: bool = False,
+        statuses: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """List watchlist items from the local subscriptions database.
 
@@ -393,6 +396,14 @@ class LocalWatchlistsService:
             offset: Page offset.
             run_id: Restrict to the items one run produced (TASK-2306), or
                 `None` for every run's.
+            watchlist_id: Restrict to items of the sources in one watchlist
+                (TASK-2511), or `None` for every watchlist's.
+            unassigned_only: Restrict to items of sources belonging to no
+                watchlist (TASK-2511).
+            statuses: Restrict to any of several statuses (TASK-2511), or
+                `None` to defer to `status`. Safe to combine with the default
+                falsey `status` only -- `get_new_items` rejects passing both
+                a truthy `status` and `statuses`.
 
         Returns:
             Normalized item dicts for the requested window.
@@ -406,6 +417,9 @@ class LocalWatchlistsService:
             status=status_filter,
             limit=fetch_limit,
             run_id=int(run_id) if run_id is not None else None,
+            watchlist_id=int(watchlist_id) if watchlist_id is not None else None,
+            unassigned_only=bool(unassigned_only),
+            statuses=list(statuses) if statuses is not None else None,
         )
         normalized = [normalize_watchlist_item("local", row) for row in rows]
         return normalized[int(offset) : int(offset) + int(limit)]

@@ -221,6 +221,9 @@ class WatchlistScopeService:
         limit: int = 100,
         offset: int = 0,
         run_id: Any = None,
+        watchlist_id: Any = None,
+        unassigned_only: bool = False,
+        statuses: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """List content items for watchlist sources.
 
@@ -234,6 +237,12 @@ class WatchlistScopeService:
             run_id: Optional run whose items to return (TASK-2306). Routed as
                 ``items.list`` like every other item read: it narrows which
                 items come back, it does not read the run record.
+            watchlist_id: Optional watchlist whose sources' items to return
+                (TASK-2511).
+            unassigned_only: When true, return only items of sources in no
+                watchlist (TASK-2511).
+            statuses: Optional list of statuses to match any of (TASK-2511);
+                combine only with a falsey ``status``.
 
         Returns:
             List of normalized watchlist item dicts.
@@ -254,6 +263,9 @@ class WatchlistScopeService:
                 limit=limit,
                 offset=offset,
                 run_id=run_id,
+                watchlist_id=watchlist_id,
+                unassigned_only=unassigned_only,
+                statuses=statuses,
             )
         )
 

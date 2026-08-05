@@ -712,10 +712,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # reader out from under a user who hadn't touched Items at all.
         self._selected_content_item: dict[str, Any] | None = None
         # Left-rail tree inputs (Task 4): loaded together by `_load_tree_data`
-        # in exactly two queries (`list_watchlists` + `get_watchlist_item_counts`),
+        # in exactly three queries (`list_watchlists`,
+        # `get_watchlist_item_counts`, `get_source_item_counts`),
         # never one per node -- see that method's docstring.
         self._tree_watchlists: list[dict[str, Any]] = []
         self._tree_counts: dict[int, dict[str, int]] = {}
+        # Per-source totals/unread for the tree's source badges (Task 8 of
+        # the reader-first plan); loaded with the rest, rendered there.
+        self._tree_source_counts: dict[int, dict[str, int]] = {}
         # Which watchlists are expanded in the rail, and the rail's tag
         # filter (whole-branch review, Finding 2). Held here, not on
         # `WatchlistTree`, for exactly the reason the create-form draft and
@@ -1066,11 +1070,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     @work(exclusive=True, group="wc_tree")
     async def _load_tree_data(self) -> None:
-        """Load the left-rail tree's two inputs: watchlists and counts.
+        """Load the left-rail tree's three inputs: watchlists and counts.
 
-        Exactly two queries total, never one per node: `list_watchlists()`
-        for the watchlist rows themselves, and `get_watchlist_item_counts()`
-        for every bucket's total/unread counts in a single statement. Both
+        Exactly three queries total, never one per node: `list_watchlists()`
+        for the watchlist rows themselves, `get_watchlist_item_counts()`
+        for every bucket's total/unread counts, and
+        `get_source_item_counts()` for every source's, each in a single
+        statement. All three
         are reached through `WatchlistBundleService` (Task 1) rather than a
         second accessor onto `SubscriptionsDB` directly.
 
@@ -1085,9 +1091,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             service = self._watchlist_bundle_service()
             self._tree_watchlists = service.list_watchlists()
             self._tree_counts = service.get_watchlist_item_counts()
+            self._tree_source_counts = service.get_source_item_counts()
         except Exception:
             logger.opt(exception=True).debug("Failed to load watchlists tree data.")
-            self._tree_watchlists, self._tree_counts = [], {}
+            self._tree_watchlists, self._tree_counts, self._tree_source_counts = [], {}, {}
             if callable(notify):
                 notify("Failed to load watchlists.", severity="error")
         # Re-resolve the Inspector's breadcrumb against what was just loaded
