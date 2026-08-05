@@ -3,10 +3,10 @@ id: TASK-2364
 title: >-
   Console message metadata field: engine provenance, interrupted flag, empty-row
   strand
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04'
-updated_date: '2026-08-05 04:40'
+updated_date: '2026-08-05 05:04'
 labels:
   - console
   - realtime
@@ -26,24 +26,9 @@ priority: medium
 6. Docs: replace the V4 spec's Continuity deferral note with what shipped; tick ACs + Implementation Notes.
 <!-- SECTION:PLAN:END -->
 
-## Description (the why)
-
-`ConsoleChatMessage` has no metadata field, so the V4 spec's engine provenance
-(engine/provider/model) and interruption marking ride a visible " ⏹ interrupted" content
-marker plus usage-attach (documented deferral, spec Continuity section). Consequences: the
-marker is fed back to the model on reseed only via a strip hack; exports/summaries
-string-match UI copy; a legitimately-empty transcript strands an empty user row forever
-with nothing recording why. A store-level metadata field closes all three.
-
-## Acceptance Criteria (the what)
-
-- [x] Messages can carry structured metadata (engine, provider, model, interrupted,
-      transcript-status) without content markers.
-- [x] The reseed builder and exports read the field instead of string-matching.
-- [x] The spec's Continuity deferral note is updated to point at the shipped field.
-
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Added `MessageMetadata` (`tldw_chatbook/Chat/message_metadata.py`) -- a frozen
 dataclass carrying `engine`/`provider`/`model`, `interrupted` and
 `transcript_status` -- persisted as the local-only `messages.metadata_json`
@@ -104,3 +89,20 @@ in `backlog/docs/lessons-live-verification.md`.
 Continuity section, `backlog/docs/lessons-live-verification.md`, and the
 store/resume/realtime test suites (plus four schema-version literals in sibling
 DB tests that move with each migration).
+<!-- SECTION:NOTES:END -->
+
+## Description (the why)
+
+`ConsoleChatMessage` has no metadata field, so the V4 spec's engine provenance
+(engine/provider/model) and interruption marking ride a visible " ⏹ interrupted" content
+marker plus usage-attach (documented deferral, spec Continuity section). Consequences: the
+marker is fed back to the model on reseed only via a strip hack; exports/summaries
+string-match UI copy; a legitimately-empty transcript strands an empty user row forever
+with nothing recording why. A store-level metadata field closes all three.
+
+## Acceptance Criteria (the what)
+
+- [x] Messages can carry structured metadata (engine, provider, model, interrupted,
+      transcript-status) without content markers.
+- [x] The reseed builder and exports read the field instead of string-matching.
+- [x] The spec's Continuity deferral note is updated to point at the shipped field.
