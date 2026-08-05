@@ -1,8 +1,10 @@
 """Console live-work launch and staged-context handoff boundary tests."""
 
+import json
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -10,10 +12,20 @@ from textual.app import App
 
 from Tests.UI.test_destination_shells import DestinationHarness, _wait_for_selector
 from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Chat.citation_evidence_models import (
+    EvidenceBundle,
+    EvidenceReference,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+    LocalRagContextResult,
+    capture_console_staged_evidence_for_chat,
+)
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
@@ -2292,3 +2304,301 @@ async def test_stage_console_library_rag_launch_still_auto_opens_inspector():
         await pilot.pause()
 
         assert screen.query_one("#console-right-rail").styles.display != "none"
+
+
+# --------------------------------------------------------------------------
+# Task 9 (Task-2 review bonus find): non-RAG "Use in Console" handoffs
+# silently sent zero staged content to the model. Only a handoff whose
+# `payload.source` contained the substring "rag" reached the
+# `evidence_bundle`-building branch of `_stage_handoff_as_console_live_work`
+# -- so Library media/conversation handoffs (`source="library"`) and Library
+# note handoffs (`source="notes"`) staged visibly in the strip/tray but
+# `capture_console_staged_evidence_for_chat` short-circuited to
+# `LocalRagContextResult(None, None)` on send, because
+# `payload.get("evidence_bundle")` was never a mapping for them.
+# --------------------------------------------------------------------------
+
+
+def _media_handoff_payload() -> ChatHandoffPayload:
+    return ChatHandoffPayload(
+        source="library",
+        item_type="media",
+        title="Transformer notes",
+        body="Attention is all you need. " * 5,
+        source_id="media-77",
+        content_ref="media-77#c1",
+        display_summary="Media staged: Transformer notes",
+        suggested_prompt="Use this media as source context for my next question.",
+        runtime_backend="local",
+        source_owner="local",
+        source_selector_state="local",
+    )
+
+
+def _notes_handoff_payload() -> ChatHandoffPayload:
+    return ChatHandoffPayload(
+        source="notes",
+        item_type="note",
+        title="Meeting notes",
+        body="Discussed the Q3 roadmap and follow-up owners.",
+        source_id="42",
+        suggested_prompt="Use this note as context and help me work with it.",
+        runtime_backend="local",
+        source_owner="local",
+        source_selector_state="local",
+    )
+
+
+def _conversation_handoff_payload() -> ChatHandoffPayload:
+    return ChatHandoffPayload(
+        source="library",
+        item_type="conversation",
+        title="Prior planning chat",
+        body=(
+            "Conversation: Prior planning chat\n"
+            "Conversation ID: conv-9\n"
+            "Messages: 12\n"
+            "Workspace: unassigned\n"
+            "Updated: unknown\n"
+            "Source authority: local"
+        ),
+        source_id="conv-9",
+        display_summary="Conversation staged: Prior planning chat",
+        suggested_prompt="Use this conversation as source context for my next question.",
+        runtime_backend="local",
+        source_owner="local",
+        source_selector_state="local",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "build_payload",
+    (_media_handoff_payload, _notes_handoff_payload, _conversation_handoff_payload),
+    ids=("media", "notes", "conversation"),
+)
+async def test_non_rag_handoff_stages_a_non_empty_evidence_bundle(build_payload):
+    """A Library/Notes handoff (no "rag" token in its source) must still
+    carry a real, non-empty `evidence_bundle` after staging -- the strip and
+    the model must agree on what content is staged."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+
+        payload = build_payload()
+        screen._stage_handoff_as_console_live_work(payload)
+        await pilot.pause()
+
+        launch = screen._pending_console_launch_context
+        assert launch is not None
+        bundle_payload = launch.payload.get("evidence_bundle")
+        assert isinstance(bundle_payload, dict), (
+            "evidence_bundle must be a real mapping, not absent -- "
+            "capture_console_staged_evidence_for_chat treats anything else "
+            "as if nothing were staged at all"
+        )
+        references = bundle_payload.get("references")
+        assert references, "bundle must carry at least one reference"
+        reference = references[0]
+        assert reference["source_id"] == payload.source_id
+        assert reference["snippet"].strip()
+        assert reference["title"].strip()
+
+
+@pytest.mark.asyncio
+async def test_rag_labeled_handoff_evidence_bundle_shape_is_byte_unchanged():
+    """Pin: dropping the `"rag" in source` gate so every handoff builds a
+    bundle must not change the bundle a RAG-labeled handoff already built.
+    The expected shape below is hand-derived from the branch's own formula
+    (see `_stage_handoff_as_console_live_work`), independent of the
+    production code path, so a regression in field derivation trips this."""
+    payload = ChatHandoffPayload(
+        source="Library Search/RAG",
+        item_type="rag-result",
+        title="Transformer notes",
+        body="Attention is all you need.",
+        source_id="media-77",
+        content_ref="media-77#c1",
+        suggested_prompt="Use this retrieved result as context.",
+        runtime_backend="local",
+    )
+    expected_bundle = EvidenceBundle(
+        bundle_id="media-77#c1",
+        query="Use this retrieved result as context.",
+        source="Library Search/RAG",
+        references=(
+            EvidenceReference(
+                evidence_id="S1",
+                source_id="media-77",
+                source_type="rag-result",
+                title="Transformer notes",
+                snippet="Attention is all you need.",
+                authority_label="local",
+                content_ref="media-77#c1",
+            ),
+        ),
+    ).to_payload()
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_handoff_as_console_live_work(payload)
+        await pilot.pause()
+        launch = screen._pending_console_launch_context
+        assert launch is not None
+        actual_bundle = launch.payload["evidence_bundle"]
+
+    assert actual_bundle == expected_bundle
+
+
+class _RowsDouble:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+
+class _ExistingMediaDBDouble:
+    """Minimal double for `app.media_db`'s existence-check seam.
+
+    Module name starts with "Tests." so `_sensitive_fetchall`'s test-double
+    allowance (`chat_rag_events._sensitive_fetchall`) accepts `execute_query`
+    in place of the production `get_connection` path.
+    """
+
+    is_memory_db = True
+
+    def __init__(self, *existing_ids: str):
+        self.existing_ids = set(existing_ids)
+
+    def execute_query(self, _query, params):
+        requested = set(json.loads(params[0]))
+        return _RowsDouble(
+            [(source_id,) for source_id in sorted(requested & self.existing_ids)]
+        )
+
+
+class _ExistingChaChaDBDouble:
+    """Minimal double for `app.chachanotes_db`'s existence-check seam."""
+
+    is_memory_db = True
+
+    def __init__(self, *, note_ids=(), conversation_ids=()):
+        self.note_ids = set(note_ids)
+        self.conversation_ids = set(conversation_ids)
+
+    def execute_query(self, _query, params):
+        requested_notes = set(json.loads(params[0]))
+        requested_conversations = set(json.loads(params[1]))
+        rows = [
+            ("notes", note_id)
+            for note_id in sorted(requested_notes & self.note_ids)
+        ]
+        rows += [
+            ("chat_history", conversation_id)
+            for conversation_id in sorted(
+                requested_conversations & self.conversation_ids
+            )
+        ]
+        return _RowsDouble(rows)
+
+
+@pytest.mark.asyncio
+async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context():
+    """The exact launch a media handoff stages must let
+    `capture_console_staged_evidence_for_chat` return REAL context, not the
+    `LocalRagContextResult(None, None)` it always returned before this fix
+    (the handoff carried no `evidence_bundle` key at all).
+
+    The pre-existing (byte-unchanged) snippet formula in
+    `_stage_handoff_as_console_live_work` is `payload.display_summary or
+    payload.body` -- and `library_screen.py`'s real media/conversation
+    handoffs set `display_summary` to a short "Media staged: <title>" label
+    rather than the body excerpt, so that label -- not the raw body -- is
+    what reaches the model here. This test asserts the actual production
+    formula's output, not the excerpt; see the report for this as a
+    separate, pre-existing content-fidelity note out of this task's scope.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_handoff_as_console_live_work(_media_handoff_payload())
+        await pilot.pause()
+        launch = screen._pending_console_launch_context
+        assert launch is not None
+
+    capture_app = SimpleNamespace(media_db=_ExistingMediaDBDouble("media-77"))
+    result = await capture_console_staged_evidence_for_chat(
+        capture_app, launch, user_message="What does this media say?"
+    )
+
+    assert isinstance(result, LocalRagContextResult)
+    assert result.context is not None
+    assert "Media staged: Transformer notes" in result.context
+
+
+@pytest.mark.asyncio
+async def test_notes_handoff_evidence_bundle_reaches_capture_as_real_context():
+    """Same round trip as the media case, for a Library note handoff."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_handoff_as_console_live_work(_notes_handoff_payload())
+        await pilot.pause()
+        launch = screen._pending_console_launch_context
+        assert launch is not None
+
+    capture_app = SimpleNamespace(
+        chachanotes_db=_ExistingChaChaDBDouble(note_ids={"42"})
+    )
+    result = await capture_console_staged_evidence_for_chat(
+        capture_app, launch, user_message="What should I follow up on?"
+    )
+
+    assert isinstance(result, LocalRagContextResult)
+    assert result.context is not None
+    assert "Discussed the Q3 roadmap" in result.context
+
+
+@pytest.mark.asyncio
+async def test_console_send_blocked_reason_sendable_for_media_handoff_with_new_bundle():
+    """Send-gating blast radius: `_console_send_blocked_reason` only checks
+    available evidence for a RAG-labeled source (`_source_mentions_rag`).
+    `"library"` never matches that token, so a media handoff gaining a real
+    `evidence_bundle` here must not newly block the send."""
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1-2025-04-14",
+        },
+        "api_settings": {"openai": {"api_key": "configured-test-key"}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+
+        screen._stage_handoff_as_console_live_work(_media_handoff_payload())
+        await pilot.pause()
+
+        launch = screen._pending_console_launch_context
+        assert launch is not None
+        assert isinstance(launch.payload.get("evidence_bundle"), dict)
+        assert chat_screen_module._source_mentions_rag(launch.source) is False
+        assert screen._console_send_blocked_reason() == ""

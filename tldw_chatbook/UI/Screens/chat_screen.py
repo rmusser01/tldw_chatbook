@@ -16647,35 +16647,50 @@ class ChatScreen(BaseAppScreen):
             "source_selector_state": _safe_text(payload.source_selector_state),
             "metadata": dict(payload.metadata or {}),
         }
-        if "rag" in (payload.source or "").lower():
-            # RAG-class sources gate Console sends on available evidence;
-            # always carry a single-reference bundle (title stands in when
-            # the snippet is empty) so the handoff cannot dead-end the send.
-            try:
-                launch_payload["evidence_bundle"] = EvidenceBundle(
-                    bundle_id=_safe_text(payload.content_ref or payload.source_id)
-                    or "handoff-evidence",
-                    query=_safe_text(payload.suggested_prompt) or title,
-                    source=_safe_text(payload.source) or "Search/RAG",
-                    references=(
-                        EvidenceReference(
-                            evidence_id="S1",
-                            source_id=_safe_text(payload.source_id) or "unknown",
-                            source_type=_safe_text(payload.item_type) or "rag-result",
-                            title=title,
-                            snippet=snippet or title,
-                            authority_label=_safe_text(payload.runtime_backend)
-                            or "local",
-                            content_ref=payload.content_ref,
-                        ),
+        # Task-2 review bonus find (Task 9): this used to run only when
+        # `"rag" in (payload.source or "").lower()`. RAG-class sources gate
+        # Console sends on available evidence, and that gate is exactly why
+        # this branch existed -- but restricting bundle-building to a
+        # source-name substring meant every OTHER handoff (Library media,
+        # Library conversations, Library notes, and any future source that
+        # doesn't happen to spell "rag") staged visibly in the strip/tray
+        # while `capture_console_staged_evidence_for_chat` silently returned
+        # `LocalRagContextResult(None, None)` on send, because
+        # `payload.get("evidence_bundle")` was never a mapping for them: a
+        # live content-loss bug, not merely a missing gate. The gate itself
+        # is dropped rather than widened to an allowlist of known source
+        # names, since an allowlist only recreates the same class of bug for
+        # the next new source. Every handoff staged here now always carries
+        # a single-reference bundle (title stands in when the snippet is
+        # empty) so it can never dead-end the send, and the non-RAG sources
+        # this restores content for are never subject to the RAG evidence
+        # send-gate in the first place (`_console_send_blocked_reason` only
+        # checks it for a source whose label mentions "rag").
+        try:
+            launch_payload["evidence_bundle"] = EvidenceBundle(
+                bundle_id=_safe_text(payload.content_ref or payload.source_id)
+                or "handoff-evidence",
+                query=_safe_text(payload.suggested_prompt) or title,
+                source=_safe_text(payload.source) or "Search/RAG",
+                references=(
+                    EvidenceReference(
+                        evidence_id="S1",
+                        source_id=_safe_text(payload.source_id) or "unknown",
+                        source_type=_safe_text(payload.item_type) or "rag-result",
+                        title=title,
+                        snippet=snippet or title,
+                        authority_label=_safe_text(payload.runtime_backend)
+                        or "local",
+                        content_ref=payload.content_ref,
                     ),
-                ).to_payload()
-            except (TypeError, ValueError, ValidationError) as exc:
-                logger.warning(
-                    "Could not build evidence bundle for handoff "
-                    "(exception_category={})",
-                    type(exc).__name__,
-                )
+                ),
+            ).to_payload()
+        except (TypeError, ValueError, ValidationError) as exc:
+            logger.warning(
+                "Could not build evidence bundle for handoff "
+                "(exception_category={})",
+                type(exc).__name__,
+            )
 
         # PR-4/task-1: route through the staging SEAM, never a bare
         # assignment. This method finishes via `_sync_native_console_chat_ui`,
