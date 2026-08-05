@@ -28,6 +28,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-028](028-structured-prompts-and-auxiliary-improvement-calls.md) | Superseded by ADR-029 | Original structured Prompt and auxiliary improvement decision; replaced after discovering the existing server schema-v1 collision and composer segment boundary. |
 | [ADR-029](029-versioned-prompt-artifacts-and-safe-improvement-transactions.md) | Accepted | Use schema v2 plus a first-class Prompt/Recipe discriminator, segment-safe composer transactions, recipe-fill responses, and sensitive auxiliary provider calls. |
 | [ADR-030](030-local-library-agent-tool-boundary.md) | Accepted | Share one byte-bounded lexical-only local Library read contract across Console and MCP while keeping Console mode selection and MCP policy boundaries distinct. |
+| [ADR-032](032-local-agent-tool-permission-boundary.md) | Accepted | Register workspace-local agent tools as a first-class provider reusing the MCP permission store under a synthetic server key, with fail-closed approval and workspace-root path confinement. |
 
 ## Historical Decision Material
 
