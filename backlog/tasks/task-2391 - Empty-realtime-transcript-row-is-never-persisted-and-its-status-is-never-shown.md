@@ -97,4 +97,56 @@ message_metadata + native_transcript render tests).
 Related but out of scope: the "failed" transcript_status branch (a content write that raises)
 has a similar-shaped unpersisted-in-memory edge once content is mutated before the exception;
 not touched here since it is a distinct failure mode not named in this task's AC.
+
+FIX-NOW addendum (review escalation, same day): the review confirmed the AC premises above
+but caught a real regression the "matches the interrupted-marker precedent" reasoning in
+paragraph 3 got wrong. Because the placeholder is now real, non-blank CONTENT, it flows
+through `_provider_message_payloads` (`console_chat_controller.py`) exactly like a genuine
+user turn -- before this task, an empty-content row was silently dropped by that function's
+`if not text: continue` guard; after task-2391's fix alone, the model would receive
+`{"role": "user", "content": "(no speech detected)"}` as if the user had typed it, on every
+ordinary send/retry/edit/fork/regenerate for the life of the conversation. The reseed builder
+exclusion (paragraph 3) only covers the REALTIME reconnect path, not this one -- a distinct
+mainline consumer the interrupted-marker analogy doesn't cover (that marker is a suffix on
+otherwise-real spoken words; this placeholder IS the entire, zero-real-words content of the
+turn).
+
+Fix: added `_is_empty_transcript_row(message)` (module-level helper, `console_chat_controller.
+py`, reads `message.metadata` via `getattr` so it stays safe against test doubles that
+duck-type only role/content/status) and wired it into every place that walks the transcript to
+build a request FOR A MODEL: `_provider_message_payloads`'s two loops (image-budget reservation
++ the `_emit` loop -- skip entirely, mirroring the existing `skip_failed` idiom, rather than
+emitting empty text), `summarize_up_to`'s `before`/`span` list comprehensions (this hand-builds
+a prompt sent to `_collect_summary_completion`, a REAL provider call -- so an empty-transcript
+row was also silently fabricating a turn in the SUMMARIZER's context, and the "nothing to
+summarize" gate needed the same exclusion so it doesn't fall through to sending an empty span),
+and `impersonate_user_reply`'s hand-rolled transcript builder (its own comment already said
+"mirror `_provider_message_payloads`'s rules exactly" -- it simply predates `transcript_status`
+existing; found by continuing the audit, not separately requested, but the same defect class
+and a one-line fix reusing the same helper, and arguably the most dangerous of the three since
+this prompt explicitly asks the model to draft the user's NEXT message "in their voice" from
+this exact transcript).
+
+Export path: deliberately LEFT UNCHANGED, not silently -- audited
+`_save_console_message_as_note/_media/_prompt/_chatbook` (`chat_screen.py`) and
+`build_context_snapshot`'s `current_messages` field. All are human-facing: the save-as actions
+operate on exactly one message the user explicitly selected and save its literal visible
+content (the placeholder read there is exactly what the user saw and chose to save -- hiding it
+would defeat this task's own AC#1), and `current_messages` is a raw snapshot for a UI inspector
+panel, not sent to a provider (`next_send_payload`, the part that IS sent, already routes
+through the now-fixed `_provider_messages_for_session`). No model-facing consumer was found
+outside the three fixed above (also checked: `retry_message`/`regenerate_message`/
+`edit_and_resend_message`/the cost-ticker fingerprint baseline all route through the same fixed
+`_provider_message_payloads`/`_provider_messages_for_session`, so no separate fix needed there).
+
+Tests (RED-first, each mutation-verified by temporarily reverting the guard and re-running):
+`Tests/Chat/test_console_chat_controller.py::test_provider_payloads_exclude_an_empty_
+transcript_placeholder` and `::test_impersonate_excludes_an_empty_transcript_placeholder`;
+`Tests/Chat/test_console_rewind_summarize.py::test_summarize_span_excludes_an_empty_
+transcript_placeholder` and `::test_summarize_nothing_before_target_when_only_prior_is_empty_
+transcript`. Foreground-only per repo convention: covering suites (chat_controller,
+rewind_summarize, composer_menu, chat_store, realtime_wiring, resume_active_path,
+message_metadata) all green; contract trio (test_console_hands_free.py,
+test_console_hands_free_wiring.py, test_console_dictation.py) confirmed byte-identical via
+`git status` and all pass unmodified.
 <!-- SECTION:NOTES:END -->
