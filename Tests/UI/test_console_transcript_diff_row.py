@@ -14,6 +14,7 @@ from collections.abc import Callable
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.widgets import Button
 from textual_diff_view import DiffView
 
 from tldw_chatbook.Chat.console_chat_models import (
@@ -61,7 +62,8 @@ def _tool_message(**overrides) -> ConsoleChatMessage:
 @pytest.mark.asyncio
 async def test_expanded_write_marker_mounts_prepared_diff(monkeypatch):
     """AC1+AC2: expanding a diff-carrying marker mounts a DiffView whose
-    diff was computed off the UI thread (prepare ran before mount)."""
+    diff was computed off the UI thread (prepare ran before mount). Covers
+    the marker that ALSO has hidden full text (expansion shows both)."""
     prepared = []
     real_make_diff = transcript_module.make_diff
 
@@ -121,6 +123,42 @@ async def test_expanded_write_marker_mounts_prepared_diff(monkeypatch):
             lambda: not transcript.query(ConsoleToolDiffRow)
         )
         assert removed, "diff row was not removed on collapse"
+
+
+@pytest.mark.asyncio
+async def test_diff_only_marker_expands_via_action_button():
+    """AC1 end-to-end: a typical file write (stripped result fits the
+    preview, so ``tool_output_full`` is None) must still reach its diff --
+    through the real selected-message action button, not a direct toggle.
+    """
+    app = DiffHarness()
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages([_tool_message(tool_output_full=None)])
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        # The action row offers the expansion affordance for a diff-only
+        # marker, labeled for what it opens.
+        transcript.select_message("m1")
+        found = await wait_for_condition(
+            lambda: bool(transcript.query("#console-message-action-tool-output-m1"))
+        )
+        assert found, "diff-only marker must offer the expansion action"
+        button = transcript.query_one(
+            "#console-message-action-tool-output-m1", Button
+        )
+        assert str(button.label) == "Diff"
+
+        # Pressing it (the real Button.Pressed -> _intercept_tool_output_press
+        # -> toggle path) mounts the diff row.
+        button.press()
+        mounted = await wait_for_condition(lambda: bool(transcript.query(DiffView)))
+        assert mounted, "pressing the Diff action did not mount the diff row"
+        diff_view = transcript.query(DiffView).first()
+        assert diff_view.path_modified == "/tmp/a.py"
+        assert diff_view.code_original == "def f():\n    return 1\n"
+        assert diff_view.code_modified == "def f():\n    return 2\n"
 
 
 @pytest.mark.asyncio

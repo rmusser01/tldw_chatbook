@@ -859,3 +859,65 @@ def test_save_image_is_disabled_with_a_reason_in_a_temporary_chat():
     }
     assert normal_actions["save-image"].enabled is True
     assert normal_actions["save-image"].disabled_reason == ""
+
+
+def _tool_output_action(message):
+    return {
+        action.action_id: action
+        for action in ConsoleMessageActionService().available_actions(message)
+    }.get("tool-output")
+
+
+def test_diff_only_tool_marker_offers_expansion_labeled_diff():
+    """TASK-1366: a file-write marker whose stripped result fit the preview
+    (tool_output_full is None -- the common case) must still offer the
+    expansion affordance, labeled for what it actually opens: the diff."""
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="write_file → /tmp/a.py",
+        tool_diff=("/tmp/a.py", "old\n", "new\n"),
+    )
+
+    action = _tool_output_action(message)
+
+    assert action is not None, "diff-only marker must offer expansion"
+    assert action.label == "Diff"
+
+
+def test_full_output_tool_marker_keeps_full_output_label():
+    """TASK-1860 copy is unchanged for a marker with hidden full text."""
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="calculator → 42",
+        tool_output_full="the whole untruncated result",
+    )
+
+    action = _tool_output_action(message)
+
+    assert action is not None
+    assert action.label == "Full output"
+
+
+def test_tool_marker_with_full_output_and_diff_keeps_full_output_label():
+    """Expansion shows both the full text and the diff; name the text."""
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="write_file → /tmp/a.py",
+        tool_output_full="the whole untruncated result",
+        tool_diff=("/tmp/a.py", "old\n", "new\n"),
+    )
+
+    action = _tool_output_action(message)
+
+    assert action is not None
+    assert action.label == "Full output"
+
+
+def test_plain_tool_marker_offers_no_expansion():
+    """No hidden text and no diff: no dead affordance (TASK-1843 rule)."""
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="calculator → 42",
+    )
+
+    assert _tool_output_action(message) is None
