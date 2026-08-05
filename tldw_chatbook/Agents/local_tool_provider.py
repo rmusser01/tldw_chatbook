@@ -86,6 +86,13 @@ class LocalToolProvider:
         on_todo_change: (list) -> None hook fired after each successful
             ``todo_write`` (e.g. transcript rendering); guarded never-raise
             like the provider's other seams.
+        no_callback_refusal: Refusal copy returned when an "ask"-state call
+            reaches the "no_callback" verdict (approval_callback is None).
+            None keeps the pinned LOCAL_TIMEOUT_REFUSAL -- the override
+            exists for external MCP serving, where no operator can ever
+            approve and the timeout copy is misleading
+            (MCP/local_server_tools.EXTERNAL_NO_CALLBACK_REFUSAL). The
+            "timeout" verdict ALWAYS keeps LOCAL_TIMEOUT_REFUSAL.
     """
 
     def __init__(
@@ -101,6 +108,7 @@ class LocalToolProvider:
         record_decision: Callable[[HubTool, str], None] | None = None,
         todo_store: list | None = None,
         on_todo_change: Callable[[list], None] | None = None,
+        no_callback_refusal: str | None = None,
     ) -> None:
         self._root = workspace_root
         self._specs = {
@@ -121,6 +129,7 @@ class LocalToolProvider:
         self._is_session_approved = is_session_approved
         self._persist_approval = persist_approval
         self._record_decision = record_decision
+        self._no_callback_refusal = no_callback_refusal
         self._stamps: dict[str, str] = {}
 
     # -- catalog ------------------------------------------------------
@@ -260,8 +269,10 @@ class LocalToolProvider:
 
         Fail-closed: only an explicit "allow" verdict executes; "deny" and
         any unrecognized verdict refuse with LOCAL_DENY_REFUSAL (mirrors
-        MCPToolProvider._apply_verdict's fallthrough), "timeout"/
-        "no_callback" with LOCAL_TIMEOUT_REFUSAL.
+        MCPToolProvider._apply_verdict's fallthrough), "timeout" with
+        LOCAL_TIMEOUT_REFUSAL, and "no_callback" with the constructor's
+        ``no_callback_refusal`` override when set (LOCAL_TIMEOUT_REFUSAL
+        otherwise).
 
         Audit (MCP parity): refusals are recorded via the optional
         ``record_decision`` seam -- "denied" for kill-switch/deny outcomes,
@@ -283,9 +294,17 @@ class LocalToolProvider:
                 return ToolResult(ok=True, content=_fit_result(spec.handler(args)))
             except Exception as exc:  # noqa: BLE001 — never raises across the boundary
                 return ToolResult(ok=False, error=(str(exc) or repr(exc))[:_MAX_ERROR_CHARS])
-        if verdict in ("timeout", "no_callback"):
+        if verdict == "timeout":
             self._record_decision_safe(self.hub_tool_for(name), "denied-timeout")
             return ToolResult(ok=False, error=LOCAL_TIMEOUT_REFUSAL)
+        if verdict == "no_callback":
+            self._record_decision_safe(self.hub_tool_for(name), "denied-timeout")
+            refusal = (
+                self._no_callback_refusal
+                if self._no_callback_refusal is not None
+                else LOCAL_TIMEOUT_REFUSAL
+            )
+            return ToolResult(ok=False, error=refusal)
         # "deny" and any unrecognized verdict fail closed the same way.
         self._record_decision_safe(self.hub_tool_for(name), "denied")
         return ToolResult(ok=False, error=LOCAL_DENY_REFUSAL)
