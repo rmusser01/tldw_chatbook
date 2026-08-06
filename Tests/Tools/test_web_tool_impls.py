@@ -320,7 +320,19 @@ def test_cache_entry_cap_evicts_earliest_expiry(fetch_env):
 # PDF fetch (spec 2026-08-06 §1)
 # ---------------------------------------------------------------------------
 
-pymupdf = pytest.importorskip("pymupdf")
+# NOT a module-level pytest.importorskip: that raises Skipped at import time,
+# which would skip the WHOLE FILE (including the 27 pre-existing v1 tests and
+# task 1's cache tests) in any environment without the optional `pdf` extra.
+# Only the PDF-dependent tests below should skip; a plain `pip install
+# -e ".[dev]"` install must still exercise SSRF/redirect/rate-limit/cache.
+try:
+    import pymupdf
+except ImportError:
+    pymupdf = None
+
+requires_pymupdf = pytest.mark.skipif(
+    pymupdf is None, reason="pymupdf not installed (pdf extra)"
+)
 
 
 def _make_pdf(pages: list[str]) -> bytes:
@@ -338,6 +350,7 @@ def _pdf_response(body: bytes, content_type: str = "application/pdf") -> httpx.R
     return httpx.Response(200, content=body, headers=headers)
 
 
+@requires_pymupdf
 def test_fetch_extracts_pdf_text(fetch_env):
     body = _make_pdf(["alpha page one text", "beta page two text"])
     fetch_env.routes["http://example.com/doc.pdf"] = _pdf_response(body)
@@ -346,6 +359,7 @@ def test_fetch_extracts_pdf_text(fetch_env):
     assert "beta page two text" in result
 
 
+@requires_pymupdf
 def test_fetch_pdf_sniff_beats_mislabeled_content_type(fetch_env):
     body = _make_pdf(["sniffed content"])
     for ctype in ("application/octet-stream", "text/html", ""):
@@ -355,6 +369,7 @@ def test_fetch_pdf_sniff_beats_mislabeled_content_type(fetch_env):
         assert "sniffed content" in result, f"failed for content-type {ctype!r}"
 
 
+@requires_pymupdf
 def test_fetch_pdf_reads_past_html_cap(fetch_env):
     """Mid-stream cap raise: a >max_bytes PDF must be read in full (spec §1)."""
     filler = "lorem ipsum dolor sit amet " * 40
@@ -365,6 +380,7 @@ def test_fetch_pdf_reads_past_html_cap(fetch_env):
     assert "page 0" in result  # parsed => the full byte stream was read
 
 
+@requires_pymupdf
 def test_fetch_pdf_over_ceiling_refused(fetch_env, monkeypatch):
     monkeypatch.setattr(web_tool_impls, "PDF_MAX_BYTES", 1024)
     body = _make_pdf(["x" * 500] * 20)
@@ -374,6 +390,7 @@ def test_fetch_pdf_over_ceiling_refused(fetch_env, monkeypatch):
         web_fetch("http://example.com/huge.pdf")
 
 
+@requires_pymupdf
 def test_fetch_pdf_extracted_text_truncated_with_page_count(fetch_env):
     body = _make_pdf([f"page {i} " + "words " * 200 for i in range(30)])
     fetch_env.routes["http://example.com/long.pdf"] = _pdf_response(body)
@@ -384,6 +401,7 @@ def test_fetch_pdf_extracted_text_truncated_with_page_count(fetch_env):
     assert "processed 30 of 30" not in result
 
 
+@requires_pymupdf
 def test_fetch_pdf_encrypted_refused(fetch_env):
     doc = pymupdf.open()
     doc.new_page().insert_text((72, 72), "secret")
@@ -394,6 +412,7 @@ def test_fetch_pdf_encrypted_refused(fetch_env):
         web_fetch("http://example.com/locked.pdf")
 
 
+@requires_pymupdf
 def test_fetch_pdf_textless_points_at_ocr(fetch_env):
     doc = pymupdf.open()
     doc.new_page()  # one blank page, no text layer
@@ -404,6 +423,7 @@ def test_fetch_pdf_textless_points_at_ocr(fetch_env):
         web_fetch("http://example.com/scan.pdf")
 
 
+@requires_pymupdf
 def test_fetch_pdf_damaged_bytes_error(fetch_env):
     # pymupdf is sometimes lenient with garbage after a valid header: it may
     # raise at open (-> pdf-error) or yield a zero-page doc (-> empty-content).
@@ -413,6 +433,7 @@ def test_fetch_pdf_damaged_bytes_error(fetch_env):
         web_fetch("http://example.com/junk.pdf")
 
 
+@requires_pymupdf
 def test_fetch_pdf_missing_dep_message(fetch_env, monkeypatch):
     import builtins
     real_import = builtins.__import__
@@ -428,6 +449,7 @@ def test_fetch_pdf_missing_dep_message(fetch_env, monkeypatch):
         web_fetch("http://example.com/doc.pdf")
 
 
+@requires_pymupdf
 def test_fetch_pdf_result_is_cached(fetch_env):
     body = _make_pdf(["cache me"])
     fetch_env.routes["http://example.com/doc.pdf"] = _pdf_response(body)
