@@ -369,7 +369,7 @@ from tldw_chatbook.config import (
     settings,
     get_chachanotes_db_lazy,
 )
-from .UI.Navigation.main_navigation import NavigateToScreen
+from .UI.Navigation.main_navigation import MainNavigationBar, NavigateToScreen
 from .UI.Navigation.pending_handoff_store import (
     ConsoleProviderIntent,
     HandoffChannel,
@@ -6506,7 +6506,18 @@ class TldwCli(
     async def handle_screen_navigation(self, message: NavigateToScreen) -> None:
         """Handle navigation to a different screen using switch_screen for better performance."""
         async with self._screen_navigation_lock():
-            await self._handle_screen_navigation_locked(message)
+            try:
+                await self._handle_screen_navigation_locked(message)
+            except Exception:
+                # task-2720: several steps in the locked body are legitimately
+                # unguarded (target resolution, runtime identity, snapshot
+                # restore, transition admission) and a transient error in any
+                # of them used to fail SILENTLY: no message, nav-bar highlight
+                # stuck on the destination, retry clicks no-opped. Recover the
+                # user-facing state, then re-raise so the worker hook still
+                # writes the `worker_failed` diagnostics line (ADR-029).
+                self._notify_navigation_failure(message.screen_name)
+                raise
 
     async def _handle_screen_navigation_locked(self, message: NavigateToScreen) -> None:
         """Body of `handle_screen_navigation`, run under its FIFO lock."""
@@ -6725,6 +6736,23 @@ class TldwCli(
             )
         except Exception:
             logger.debug(f"Could not surface navigation failure for {screen_name!r}.")
+        # task-2720: the nav bar highlighted the destination the moment it was
+        # clicked, before the navigation worker ran. Roll it back to the screen
+        # actually on the stack — otherwise the bar shows a destination that
+        # never loaded AND its already-active check swallows every retry click,
+        # leaving the destination unreachable until restart.
+        try:
+            current_screen = self.screen
+            current_route = getattr(current_screen, "screen_name", None)
+            if isinstance(current_route, str) and current_route.strip():
+                current_screen.query_one(MainNavigationBar).restore_active(
+                    current_route
+                )
+        except Exception:
+            logger.debug(
+                f"Could not roll back nav-bar state after failing to open "
+                f"{screen_name!r}."
+            )
 
     async def _complete_screen_navigation(
         self,
@@ -8191,8 +8219,21 @@ class TldwCli(
                 return
 
         try:
-            self._db_size_status_widget = self.query_one(AppFooterStatus)
-            self.loguru_logger.info("AppFooterStatus widget instance acquired.")
+            # The cache is only a pre-first-screen fallback: per-tick updates
+            # resolve the ACTIVE screen's footer via `_active_footer_status`.
+            # Splash and the first-run wizard mount no AppFooterStatus, so a
+            # miss here must not abort timer setup (task-2721: it previously
+            # logged two tracebacks per fresh install and left the DB-size and
+            # token timers never started for the whole session).
+            try:
+                self._db_size_status_widget = self.query_one(AppFooterStatus)
+                self.loguru_logger.info("AppFooterStatus widget instance acquired.")
+            except QueryError:
+                self._db_size_status_widget = None
+                self.loguru_logger.debug(
+                    "Active screen has no AppFooterStatus; footer timers start "
+                    "anyway and each tick resolves the active screen's footer."
+                )
 
             self.set_timer(
                 DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS,

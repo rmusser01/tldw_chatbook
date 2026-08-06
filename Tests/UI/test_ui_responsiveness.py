@@ -191,6 +191,58 @@ def test_footer_status_scheduling_records_stable_timer_names():
     assert len(scheduled_periodic) == 2
 
 
+def test_footer_status_scheduling_tolerates_screen_without_footer():
+    """A footer-less active screen (splash, first-run wizard) must not abort
+    timer setup or record an error — the per-tick updates re-resolve the
+    active screen's footer themselves (task-2721)."""
+    from textual.css.query import NoMatches
+
+    from tldw_chatbook import app as app_module
+
+    monitor = UIResponsivenessMonitor(enabled=True)
+    scheduled_once = []
+    scheduled_periodic = []
+    errors = []
+
+    def raising_query_one(_selector):
+        raise NoMatches("No nodes match 'AppFooterStatus'")
+
+    fake_app = SimpleNamespace(
+        ui_responsiveness_monitor=monitor,
+        query_one=raising_query_one,
+        loguru_logger=SimpleNamespace(
+            info=lambda *_args, **_kwargs: None,
+            debug=lambda *_args, **_kwargs: None,
+            error=lambda *args, **kwargs: errors.append(args),
+            opt=lambda **_kwargs: SimpleNamespace(
+                error=lambda *args, **kwargs: errors.append(args)
+            ),
+        ),
+        db_status_manager=SimpleNamespace(
+            start_periodic_updates=lambda interval: scheduled_periodic.append(
+                ("db", interval)
+            )
+        ),
+        update_db_sizes=lambda: None,
+        update_token_count_display=lambda: None,
+        call_after_refresh=lambda callback: callback,
+        set_timer=lambda delay, callback: scheduled_once.append((delay, callback)),
+        set_interval=lambda interval, callback: scheduled_periodic.append(
+            ("token", interval, callback)
+        ),
+        _token_count_update_timer=None,
+        _db_size_status_widget=object(),
+    )
+
+    app_module.TldwCli._schedule_footer_status_updates(fake_app)
+
+    assert errors == []
+    assert fake_app._db_size_status_widget is None
+    assert len(scheduled_once) == 2
+    assert len(scheduled_periodic) == 2
+    assert monitor.snapshot().active_timers == 2
+
+
 def test_app_stops_footer_status_timers_and_diagnostics():
     from tldw_chatbook import app as app_module
 

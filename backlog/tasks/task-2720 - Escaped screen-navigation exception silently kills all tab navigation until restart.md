@@ -3,7 +3,7 @@ id: TASK-2720
 title: >-
   Escaped screen-navigation exception silently kills all tab navigation until
   restart
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-06 17:00'
 labels:
@@ -33,12 +33,25 @@ One PermissionError from any transient cause therefore converts to "this tab is 
 Evidence: scratch-profile persistent log lines at 16:10:16 / 16:12:17 2026-08-06; pane captures showing Console highlighted over Home content.
 <!-- SECTION:DESCRIPTION:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. RED: three tests — escaped exception (injected at `_current_runtime_identity`, an actually-unguarded step) must notify + roll the nav bar back; a dispatched failure must still record `worker_failed` (guard re-raises); widget-level `restore_active` must undo the optimistic highlight and make the destination re-clickable.
+2. GREEN: `MainNavigationBar.restore_active(route)`; `_notify_navigation_failure` additionally rolls the current screen's bar back to the on-stack route; `handle_screen_navigation` wraps the locked body — recover, then re-raise for ADR-029 diagnostics.
+<!-- SECTION:PLAN:END -->
+
 ## Acceptance Criteria
 
 <!-- SECTION:ACCEPTANCE_CRITERIA:BEGIN -->
-- [ ] An exception raised at any point inside the navigation worker (including target resolution, runtime-identity read, snapshot restore, and transition admission) results in a user-visible failure notification.
-- [ ] After a failed navigation, the nav-bar highlight reflects the screen actually on the stack (no split-brain).
-- [ ] After a failed navigation, clicking the same destination again issues a fresh navigation attempt (no dead tab).
-- [ ] A regression test injects an exception into an unguarded step and verifies notification + highlight rollback + retryability.
-- [ ] The `worker_failed` diagnostics line for navigation failures is preserved (ADR-029 sanitization unchanged).
+- [x] An exception raised at any point inside the navigation worker (including target resolution, runtime-identity read, snapshot restore, and transition admission) results in a user-visible failure notification.
+- [x] After a failed navigation, the nav-bar highlight reflects the screen actually on the stack (no split-brain).
+- [x] After a failed navigation, clicking the same destination again issues a fresh navigation attempt (no dead tab).
+- [x] A regression test injects an exception into an unguarded step and verifies notification + highlight rollback + retryability.
+- [x] The `worker_failed` diagnostics line for navigation failures is preserved (ADR-029 sanitization unchanged).
 <!-- SECTION:ACCEPTANCE_CRITERIA:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Root mechanism (from the live incident): the nav bar activates a destination optimistically at click time, and its already-active check then swallows every retry once the navigation worker dies — one transient exception made a tab unreachable until restart, silently. Fix in three parts: (1) `MainNavigationBar.restore_active(route)` re-points highlight + active ids at the route actually on the stack; (2) `_notify_navigation_failure` now performs that rollback too, which also repairs the pre-existing desync on the already-guarded construction/mount failure paths; (3) `handle_screen_navigation` catches anything escaping the locked body, recovers the user-facing state, and re-raises so the `worker_failed operation=handle_screen_navigation` diagnostics line keeps being written (pinned by test). The transient PermissionError trigger itself remains unreproduced (3 faithful replications); this hardens the degradation path per the ACs. An always-green app-level retry test was deleted during RED verification — app-level retry was never broken; retryability lives in the bar and is pinned at the widget level. Files: tldw_chatbook/app.py, tldw_chatbook/UI/Navigation/main_navigation.py, Tests/UI/test_screen_navigation_failure_recovery.py.
+<!-- SECTION:NOTES:END -->

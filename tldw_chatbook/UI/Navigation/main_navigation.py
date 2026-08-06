@@ -394,3 +394,27 @@ class MainNavigationBar(Container):
 
         logger.info(f"Navigation requested to screen: {screen_name}")
         return True
+
+    def restore_active(self, route: str) -> None:
+        """Reset the highlight to ``route``, undoing a click's optimism.
+
+        A click activates its destination here before the navigation worker
+        has run; when that navigation fails, the app calls this with the
+        route still on the screen stack so the highlight matches reality and
+        the failed destination stays re-clickable — the already-active check
+        in `_activate_navigation_button` would otherwise swallow every retry
+        (task-2720, observed live: one transient error made a tab
+        unreachable for the rest of the session).
+
+        Args:
+            route: Screen or destination route actually on the screen stack.
+        """
+        resolved = resolve_shell_route(route)
+        self.active_destination_id = resolved.destination_id
+        self.active_route = resolved.canonical_route
+        self.active_screen = self.active_destination_id
+        for nav_button in self.query(".nav-button"):
+            nav_button.set_class(
+                nav_button.id == f"nav-{self.active_destination_id}",
+                "is-active",
+            )
