@@ -16,7 +16,16 @@ from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message
-from textual.widgets import Button, Collapsible, Label, Select, Static, TextArea
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Collapsible,
+    Input,
+    Label,
+    Select,
+    Static,
+    TextArea,
+)
 
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
 from tldw_chatbook.Library.library_rag_state import (
@@ -25,7 +34,11 @@ from tldw_chatbook.Library.library_rag_state import (
 )
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
-from tldw_chatbook.MCP.local_runtime_delegate import RawToolCallRefusedError
+from tldw_chatbook.MCP.local_runtime_delegate import (
+    PERMISSION_STATE_UNRESOLVED_CLAUSE,
+    RawToolCallRefusedError,
+    capitalize_first,
+)
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.MCP.readiness import (
     REASON_LABELS,
@@ -147,7 +160,23 @@ _ORIGIN_SENTENCES: dict[str, str] = {
 # `.get(effective.origin, "")` used to render a blank line here instead of
 # ANY explanation, which reads as a broken UI rather than "we don't know
 # why, but don't trust it".
-_UNKNOWN_ORIGIN_SENTENCE = "Permission state could not be resolved."
+#
+# Fix Round I, Item 4: this was a THIRD independently-maintained literal
+# stating the same "permission state could not be resolved" claim
+# `unified_control_plane_service._ADVANCED_EXECUTE_GATE_ERROR_MESSAGE` and
+# `mcp_workbench._TOOL_TEST_BLOCKED_UNKNOWN_TEXT` already derive from
+# `local_runtime_delegate.PERMISSION_STATE_UNRESOLVED_CLAUSE` -- and, unlike
+# `_decision_note()`'s own former `gate_error` branch (proven dead and
+# removed the round before this one), this one is genuinely live: reachable
+# via `show_tool()`'s `effective` keyword whenever `MCPWorkbench.
+# _effective_for_display()`'s single-tool `gate_tool_test()` fallback
+# raises (`on_mcp_tools_mode_tool_selected()`, no `cascade` at that call
+# site, so `_render_permission_container()` falls through to THIS sentence
+# rather than `_cascade_rungs()`). Derived the same way as the other two --
+# `capitalize_first()`, not `.capitalize()`, for the reason given on that
+# function's own docstring -- so mutating the shared clause reddens a test
+# for this surface too, not just the other two.
+_UNKNOWN_ORIGIN_SENTENCE = f"{capitalize_first(PERMISSION_STATE_UNRESOLVED_CLAUSE)}."
 _CONFIG_CHANGED_NOTICE = "Definition changed since you allowed it."
 _RISK_FLOORED_NOTICE = "High-risk tool — asks even though the inherited default is Allow."
 _REALLOW_TOOLTIP = "Store the new definition hash and allow again."
@@ -195,17 +224,44 @@ _ADVANCED_EXECUTE_ACTION = "tool.execute"
 # comment already rejected once, both are now wired to disarm
 # (`_on_advanced_collapsible_toggled()`, `_on_advanced_payload_changed()`),
 # closing the two remaining gaps between what this sentence claims and
-# what the code does. This also reconciles the wording with `_TEST_RUN_
-# ARMED_HINT`'s copy of the SAME sentence for the Test Tool arm
-# (`_test_run_armed`): the two arms' trigger sets were never identical
-# (`_test_run_armed` deliberately does NOT disarm on an argument-form
-# edit, because `_handle_test_run()` always re-collects CURRENT form
-# values rather than confirming a snapshot, so an edit before confirming
-# is safe without disarming), but both are now genuinely "every meaningful
-# interaction with this widget besides pressing the confirm control
-# itself" for THEIR OWN widget -- the chosen fix is to make the shared
-# sentence true of each arm on its own terms, not to force one arm's
-# trigger set to imitate the other's.
+# what the code does.
+#
+# Fix Round I, Item 1 (review of Fix Round G): the paragraph this replaces
+# claimed the two arms' sentence was "genuinely true of each arm on its
+# own terms" because `_test_run_armed` "deliberately does NOT disarm on an
+# argument-form edit" -- and defended that as safe because
+# `_handle_test_run()` "always re-collects CURRENT form values rather than
+# confirming a snapshot." That defence was backwards: re-collecting
+# CURRENT values is exactly why the old behavior was UNSAFE, not why it
+# was fine -- the whole point of a same-payload confirm is that the run
+# executes against what the user was SHOWN, and an edit after arming meant
+# the confirming press ran arguments no confirm was ever rendered for.
+# Verified live: an "ask" tool armed against `{"id": 1}`, the argument
+# form then edited to `{"id": 999, "danger": true}`, ran on the very next
+# press with no second confirm for the edited payload. `MCPSchemaForm`'s
+# controls (`Input`, `Select`, `Checkbox`, and the raw-JSON `TextArea`
+# fallback -- the only source of any of those four widget types anywhere
+# in this pane) are now wired to `disarm_test_run()` the same way
+# `#mcp-adv-payload` disarms the Advanced arm (`on_select_changed()`'s
+# schema-field branch, `on_input_changed()`, `on_checkbox_changed()`, and
+# the `#mcp-schema-raw` `TextArea.Changed` handler, all near
+# `_handle_test_run()` below). Both arms now disarm on every meaningful
+# interaction with THEIR OWN widget, for real -- not merely by assertion.
+#
+# The two arms still differ in one respect, left as-is on purpose: the
+# Advanced arm keys on `(action, payload)` (`_run_advanced_action()`
+# below) so a payload that happens to round-trip back to what was armed
+# (e.g. switching sections and back) does not force a redundant re-arm;
+# `_test_run_armed` stays a bare boolean, so ANY edit disarms it, even one
+# that reproduces the original text byte-for-byte. Widening the boolean
+# into a keyed arm would need `_handle_test_run()` to snapshot the
+# argument dict at ARM time and compare it at CONFIRM time (today it
+# always collects fresh, by design, so a confirming run reflects whatever
+# the form currently shows) -- a real behavior change, not a truthfulness
+# fix, and out of this item's scope. Disarm-on-edit alone already closes
+# the actual defect (an edited payload can never run under a stale
+# confirm); the byte-identical round-trip case it leaves un-optimized
+# costs the user one extra press, never an unconfirmed execution.
 _ADVANCED_EXECUTE_CONFIRM = (
     "Runs {tool} now — press Run Action again to confirm; anything else cancels."
 )
@@ -2252,6 +2308,42 @@ class MCPInspector(Vertical):
         run_button.disabled = True
         self.post_message(self.ToolTestRequested(tool.server_key, tool.name, arguments))
 
+    # -- Fix Round I, Item 1: disarm the Test Tool confirm on any argument
+    # edit, mirroring `#mcp-adv-payload`'s own disarm-on-edit for the
+    # Advanced arm (`_on_advanced_payload_changed()` below). `MCPSchemaForm`
+    # (mounted once, as `#mcp-inspector-test-form`, by `_mount_test_tool_
+    # panel()`) is the ONLY source of `Input`/`Checkbox`/(non-`#mcp-adv-
+    # payload`) `TextArea` widgets anywhere in this pane -- verified by
+    # grep, not assumed -- so these three handlers need no extra ID/
+    # ancestor check to know an event came from the argument form.
+    # `disarm_test_run()` is already a no-op when nothing is armed, so a
+    # form's own initial mount (default values passed via each control's
+    # constructor, never a later `.value =`/`.text =` assignment) is safe
+    # even on the off chance a widget posts a spurious Changed at mount.
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """A string/number/integer/array field's `Input` changed -- disarm
+        (see the module comment above `_ADVANCED_EXECUTE_ACTION` for the
+        full "why disarm-on-edit" reasoning, shared by both arms)."""
+        event.stop()
+        self.disarm_test_run()
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        """A boolean field's `Checkbox` changed -- disarm, same reasoning
+        as `on_input_changed()` just above."""
+        event.stop()
+        self.disarm_test_run()
+
+    @on(TextArea.Changed, "#mcp-schema-raw")
+    def _on_test_form_raw_payload_changed(self, event: TextArea.Changed) -> None:
+        """The raw-JSON fallback `MCPSchemaForm` mounts when
+        `parse_schema()` can't render the tool's schema faithfully --
+        disarm, same reasoning as `on_input_changed()` above. A distinct id
+        (`#mcp-schema-raw`) and its own `@on` selector from `#mcp-adv-
+        payload`'s handler just below, so the two can never cross-fire."""
+        event.stop()
+        self.disarm_test_run()
+
     def show_tool_result(
         self, *, server_key: str, tool_name: str, ok: bool,
         text: str | None = None,
@@ -2536,7 +2628,17 @@ class MCPInspector(Vertical):
             str(d["name"]): str(d.get("payload_template") or "{}") for d in descriptors
         }
         hint = self.query_one("#mcp-adv-empty-hint", Static)
-        with action_select.prevent(Select.Changed):
+        # Fix Round I, Item 2: `payload.text = ...` below is a PROGRAMMATIC
+        # rewrite, not a user edit -- `payload.prevent(TextArea.Changed)`
+        # (mirroring `action_select`'s own `Select.Changed` prevent, an
+        # instance-scoped guard that does nothing for a DIFFERENT widget's
+        # messages, hence the separate call here) stops it from reaching
+        # `_on_advanced_payload_changed()` at all, so a confirm armed
+        # during THIS call's caller's own `await` (`_load_advanced_
+        # section()` awaits `self._service.load_section()` before calling
+        # this method) can never be silently disarmed by this rewrite --
+        # see that handler's own docstring for the race this closes.
+        with action_select.prevent(Select.Changed), payload.prevent(TextArea.Changed):
             if not descriptors:
                 action_select.set_options([("No actions available", Select.BLANK)])
                 action_select.value = Select.BLANK
@@ -2691,36 +2793,83 @@ class MCPInspector(Vertical):
             if _was_armed:
                 self.query_one("#mcp-adv-result", Static).update("")
             if not _is_blank(event.value):
-                self.query_one("#mcp-adv-payload", TextArea).text = (
-                    self._action_templates.get(str(event.value), "{}")
-                )
+                # Fix Round I, Item 2: programmatic rewrite, not a user
+                # edit -- see `_refresh_advanced_actions()`'s matching
+                # `payload.prevent(...)` for the full rationale (this call
+                # site's own clear two lines up already runs synchronously
+                # right before this write with no `await` between them, so
+                # in practice this was already a no-op; the prevent makes
+                # that mechanical instead of order-dependent, the same
+                # guarantee `_refresh_advanced_actions()` now carries).
+                payload = self.query_one("#mcp-adv-payload", TextArea)
+                with payload.prevent(TextArea.Changed):
+                    payload.text = self._action_templates.get(str(event.value), "{}")
+        elif select_id.startswith("mcp-schema-field-"):
+            # Fix Round I, Item 1: an enum-kind field in the Test Tool
+            # argument form (`MCPSchemaForm`'s only other `Select` source
+            # in this pane, id template "mcp-schema-field-{index}") disarms
+            # a pending confirm on edit -- same fix, and same reasoning
+            # (module comment above `_ADVANCED_EXECUTE_ACTION`), as
+            # `on_input_changed()`/`on_checkbox_changed()`/
+            # `_on_test_form_raw_payload_changed()` near `_handle_test_run()`.
+            event.stop()
+            self.disarm_test_run()
 
     @on(TextArea.Changed, "#mcp-adv-payload")
     def _on_advanced_payload_changed(self, event: TextArea.Changed) -> None:
-        """Item 2 (PR-T3 fix round G): `_run_advanced_action()`'s own
-        docstring has always promised "switching action or editing the
-        payload re-arms" -- the action-switch half was implemented (Fix
-        Round E, Item 2, `on_select_changed()` above); the payload-edit
-        half had NO handler at all (there was no `TextArea.Changed`
-        listener anywhere in this module), so a `tool.execute` arm
-        survived a payload edit with the STALE confirm sentence still on
-        screen -- naming the OLD tool and promising a confirm the very
-        next press would not give (`_run_advanced_action()`'s own
-        `confirm_key` mismatch already made that outcome SAFE -- an edited
-        payload always re-arms instead of running, never the reverse --
-        just not TRUTHFUL about what the pane was about to do).
+        """A genuine user edit to the Advanced payload disarms a pending
+        `tool.execute` confirm. Item 2 (PR-T3 fix round G):
+        `_run_advanced_action()`'s own docstring has always promised
+        "switching action or editing the payload re-arms" -- the
+        action-switch half was implemented (Fix Round E, Item 2,
+        `on_select_changed()` above); the payload-edit half had NO handler
+        at all (there was no `TextArea.Changed` listener anywhere in this
+        module), so a `tool.execute` arm survived a payload edit with the
+        STALE confirm sentence still on screen -- naming the OLD tool and
+        promising a confirm the very next press would not give
+        (`_run_advanced_action()`'s own `confirm_key` mismatch already
+        made that outcome SAFE -- an edited payload always re-arms instead
+        of running, never the reverse -- just not TRUTHFUL about what the
+        pane was about to do).
 
-        Fires on every keystroke (and on this module's own programmatic
-        `payload.text = ...` assignments -- `_refresh_advanced_actions()`,
-        the action-switch branch above -- but those always run AFTER that
-        call site's own clear, so `_was_armed` is already False there and
-        this is a no-op). Same `_was_armed` gate as every other disarm
-        site in this class: only touch `#mcp-adv-result` when an arm was
-        actually live, so real run output/a refusal sitting there while
-        UNARMED survives ordinary typing. Deliberately does not touch
-        `event.text_area` itself -- clearing state and updating a
-        DIFFERENT widget never fights the user's cursor or selection in
-        this one.
+        Fix Round I, Item 2 (review of Fix Round G): this docstring used to
+        claim every programmatic `payload.text = ...` write "always runs
+        AFTER that call site's own clear, so `_was_armed` is already False
+        there and this is a no-op." True for `on_select_changed()`'s
+        action-switch branch and `set_service_context()` (both clear, then
+        write, with no `await` between the two) -- FALSE for
+        `_load_advanced_section()`: its own clear runs BEFORE `await
+        self._service.load_section(section)`, and `_refresh_advanced_
+        actions()`'s payload write happens AFTER that await, a real yield
+        point during which a Run Action press can arm a NEW confirm
+        against whatever the OLD section still shows on screen. When that
+        race landed, this handler saw the LATE, post-await write as an
+        "edit" and silently disarmed a confirm the user never touched --
+        the button reverting to "Run" and the confirm sentence vanishing
+        through no action of theirs, direction-wise fail-safe (never an
+        extra execution) but reintroducing the "button reads as dead for
+        one press" symptom Fix Round G, Item 2 existed to eliminate, from
+        the opposite side (a background load cancelling the user's arm,
+        instead of an edit failing to cancel it).
+
+        Fixed at the SOURCE rather than by inspecting who's calling: every
+        programmatic write to `#mcp-adv-payload` (`_refresh_advanced_
+        actions()`'s two `payload.text = ...` assignments, and
+        `on_select_changed()`'s own) is now wrapped in
+        `payload.prevent(TextArea.Changed)`, so `TextArea.load_text()`
+        (what the `.text` setter calls, and what a real keystroke's
+        `Edit()` also posts through) never even posts the message for a
+        programmatic write. This handler now fires ONLY for a genuine user
+        edit, unconditionally -- a mechanical guarantee, not an accounting
+        of call-site ordering a future call site could silently violate
+        again.
+
+        Same `_was_armed` gate as every other disarm site in this class:
+        only touch `#mcp-adv-result` when an arm was actually live, so
+        real run output/a refusal sitting there while UNARMED survives
+        ordinary typing. Deliberately does not touch `event.text_area`
+        itself -- clearing state and updating a DIFFERENT widget never
+        fights the user's cursor or selection in this one.
         """
         event.stop()
         _was_armed = self._advanced_confirm_key is not None

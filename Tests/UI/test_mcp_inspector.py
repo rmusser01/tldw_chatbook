@@ -2652,6 +2652,135 @@ async def test_close_button_disarms_pending_confirm():
         assert inspector.test_run_armed is False
 
 
+# -- Fix Round I, Item 1: an argument-form edit disarms the pending confirm --
+#
+# The armed hint promises "press again to run; anything else cancels" -- and
+# the confirm was granted against the arguments on screen WHEN it was
+# granted. Before this fix `_test_run_armed` survived argument edits, and
+# `_handle_test_run()` re-collects CURRENT form values, so the confirming
+# press ran arguments no confirm was ever rendered for (verified live: arm
+# against `{"id": 1}`, edit to `{"id": 999, "danger": true}`, one press ran
+# it). Every control kind `MCPSchemaForm` can mount gets its own test --
+# `Input` (string/number), `Checkbox` (boolean), `Select` (enum), and the
+# raw-JSON `TextArea` fallback -- because each disarm lives in a DIFFERENT
+# handler (`on_input_changed()` / `on_checkbox_changed()` /
+# `on_select_changed()`'s schema-field branch /
+# `_on_test_form_raw_payload_changed()`), and dropping any one of them must
+# redden its own test, not hide behind a sibling's.
+
+
+@pytest.mark.asyncio
+async def test_editing_an_argument_input_disarms_pending_confirm():
+    """A genuine keystroke in a schema-form `Input` cancels the armed
+    confirm -- the Test Tool arm's twin of the Advanced pane's own
+    disarm-on-payload-edit."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())  # string "query" -> Input
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.require_confirm(None)
+        await pilot.pause()
+        assert inspector.test_run_armed is True
+
+        await pilot.click("#mcp-schema-field-0")
+        await pilot.press("x")
+        await pilot.pause()
+
+        assert inspector.test_run_armed is False
+        hint = app.query_one("#mcp-inspector-test-armed-hint", Static)
+        assert str(hint.renderable) == ""
+
+
+@pytest.mark.asyncio
+async def test_toggling_an_argument_checkbox_disarms_pending_confirm():
+    """The boolean field rides alongside a string one because an
+    ALL-boolean schema crashes `_mount_test_tool_panel()`'s focus code
+    outright (`panel.query("Input, Select, TextArea").first()` -- no
+    `Checkbox` in the query, and `DOMQuery.first()` raises `NoMatches` on
+    an empty result rather than returning None, so the `is None` fallback
+    to the Close button is dead code): a pre-existing defect found by this
+    test's first draft, filed separately rather than fixed under this
+    item. The mixed schema keeps THIS test pointed at its own claim --
+    `on_checkbox_changed()`'s disarm."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool(input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "verbose": {"type": "boolean", "default": False},
+            },
+        }))
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.require_confirm(None)
+        await pilot.pause()
+        assert inspector.test_run_armed is True
+
+        await pilot.click("#mcp-schema-field-1")  # the Checkbox
+        await pilot.pause()
+
+        assert inspector.test_run_armed is False
+
+
+@pytest.mark.asyncio
+async def test_changing_an_argument_enum_select_disarms_pending_confirm():
+    """Value assignment posts the same `Select.Changed` a user pick does
+    (the section-select tests in this file rely on the identical
+    delivery), and `on_select_changed()`'s schema-field branch must catch
+    it -- enum fields are the one control kind that routes through that
+    shared handler rather than a dedicated one."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool(input_schema={
+            "type": "object",
+            "properties": {"mode": {"type": "string", "enum": ["fast", "thorough"]}},
+        }))
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.require_confirm(None)
+        await pilot.pause()
+        assert inspector.test_run_armed is True
+
+        app.query_one("#mcp-schema-field-0", Select).value = "thorough"
+        await pilot.pause()
+
+        assert inspector.test_run_armed is False
+
+
+@pytest.mark.asyncio
+async def test_editing_the_raw_json_fallback_disarms_pending_confirm():
+    """A nested-object property makes `parse_schema()` return None, so the
+    form mounts the raw `#mcp-schema-raw` `TextArea` -- the fallback where
+    an unnoticed edit-after-arm would be WORST (the whole payload is
+    free-text), so it must disarm like every rendered control."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool(input_schema={
+            "type": "object",
+            "properties": {"config": {"type": "object"}},
+        }))
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.require_confirm(None)
+        await pilot.pause()
+        assert inspector.test_run_armed is True
+
+        app.query_one("#mcp-schema-raw", TextArea).text = '{"config": {"x": 1}}'
+        await pilot.pause()
+
+        assert inspector.test_run_armed is False
+
+
 @pytest.mark.asyncio
 async def test_confirming_press_reposts_tool_test_requested():
     """The confirming press is a plain second Run/Confirm-run click -- the
@@ -4244,6 +4373,84 @@ async def test_section_change_disarms_a_pending_confirm():
         assert app.service.action_calls == [
             ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "example"}})
         ]
+
+
+class _ArmDuringLoadAdvService(ToolExecuteAdvService):
+    """`load_section()` blocks (once, when told to via `block_next`) until
+    the test releases it -- opening a REAL await window inside
+    `_load_advanced_section()`, between that method's own deliberate disarm
+    (before the await) and `_refresh_advanced_actions()`'s payload rewrite
+    (after it). Fix Round I, Item 2 lives entirely inside that window."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.block_next = False
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def load_section(self, section=None):
+        if self.block_next:
+            self.block_next = False
+            self.entered.set()
+            await self.release.wait()
+        return await super().load_section(section)
+
+
+@pytest.mark.asyncio
+async def test_arming_during_a_section_load_survives_the_post_load_refresh():
+    """Fix Round I, Item 2 (review of Fix Round G): the previous round's
+    `_on_advanced_payload_changed()` docstring claimed every programmatic
+    `payload.text = ...` write "always runs AFTER that call site's own
+    clear, so this is a no-op" -- FALSE for `_load_advanced_section()`,
+    whose clear runs BEFORE `await self._service.load_section(...)` while
+    `_refresh_advanced_actions()`'s payload write lands AFTER it. A user
+    who armed during that window (the Run button is not disabled during a
+    load) was silently disarmed by the post-await write, with no user
+    action at all -- the exact inverse of the copy's "anything else
+    cancels" promise (nothing-the-user-did cancelled), and a fresh copy of
+    the "button reads as dead for one press" symptom Fix Round G, Item 2
+    existed to eliminate. The write is now wrapped in
+    `payload.prevent(TextArea.Changed)`; the arm must survive the refresh
+    AND still be a live arm (the follow-up press really runs).
+
+    Counterpoint to `test_section_change_disarms_a_pending_confirm` just
+    above: an arm from BEFORE the section change is deliberately cleared
+    (attention moved), but an arm placed DURING the load belongs to the
+    user standing right there, and background plumbing must not eat it."""
+    app = ToolExecuteInspectorApp()
+    app.service = _ArmDuringLoadAdvService()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        inspector.set_service_context(
+            app.service, [("Inventory", "inventory"), ("Overview", "overview")]
+        )
+        await pilot.pause()
+        await pilot.pause()  # let the rebind's own initial load settle
+
+        app.service.block_next = True
+        app.query_one("#mcp-adv-section-select", Select).value = "overview"
+        await asyncio.wait_for(app.service.entered.wait(), timeout=2)
+        # Inside the await window: `_load_advanced_section()` has already
+        # done its own deliberate pre-await disarm; the user arms NOW.
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        assert inspector._advanced_confirm_key is not None  # sanity: armed
+        assert app.service.action_calls == []
+
+        app.service.release.set()
+        await pilot.pause()
+        await pilot.pause()  # post-await refresh (payload rewrite) runs here
+
+        assert inspector._advanced_confirm_key is not None, (
+            "the background load's own payload rewrite disarmed a confirm "
+            "the user armed during the load window"
+        )
+        assert "again" in _adv_result(app)
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [
+            ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "example"}})
+        ], "the surviving arm must be LIVE -- the confirming press runs"
 
 
 # -- Fix Round C, Item 4: the confirm sentence survives the disarm -----------
