@@ -1,7 +1,7 @@
 ---
 id: TASK-1341
 title: Legacy web_search_tool snippet-key bug
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-05 16:47'
 labels: []
@@ -16,5 +16,9 @@ Found during task-1340 review: Tools/web_search_tool.py:113 reads item.get('snip
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Legacy web_search_tool renders result body text from real perform_websearch payloads,Tests pin the real normalized shape
+- [x] #1 Legacy web_search_tool renders result body text from real perform_websearch payloads,Tests pin the real normalized shape
 <!-- AC:END -->
+
+## Implementation Notes
+
+Fixed in PR #1364 (merged to dev): `Tools/web_search_tool.py` snippet mapping now falls back `snippet` → `content` → "No description available" (empty-string `content` falls through too, per Qodo review). Regression tests in `Tests/Tools/test_web_search_tool.py` pin the real normalized payload shape and the empty-content case.
