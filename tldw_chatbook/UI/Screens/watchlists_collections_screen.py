@@ -1596,15 +1596,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def scoped_source_rows(self) -> list[dict[str, Any]]:
         """Source rows the current tree scope covers.
 
-        The Feeds region renders these, so selecting a node in the tree
-        actually narrows what the centre shows rather than only recording a
-        selection (Task 7). Kept on the screen (not the pane) because the
-        workbench recomposes and pane-local state does not survive it -- the
-        same reasoning already applied to `tree_scope` itself.
+        The centre header's scoped summary line and the Sources table both
+        render these (and, after Task 7, the items list scope does too), so
+        selecting a node in the tree actually narrows what the centre shows
+        rather than only recording a selection (Task 7). Kept on the screen
+        (not the pane) because the workbench recomposes and pane-local state
+        does not survive it -- the same reasoning already applied to
+        `tree_scope` itself.
 
         Reads `tree_scope`, not `selected_scope`: only tree navigation
-        changes what Feeds covers. See the note on those two reactives for
-        why they are not the same value.
+        changes what that summary covers. See the note on those two
+        reactives for why they are not the same value.
 
         Each branch costs exactly one query (`list_source_rows`,
         `list_all_source_rows`, or `list_unassigned_source_rows`); the
@@ -2784,7 +2786,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         notify keyed to a region the user is not looking at.
         """
         if self.focused_region not in CENTRE_REGIONS:
-            self.notify("Solo applies to the Feeds, Items, or Content panes.")
+            self.notify("Solo applies to the Items or Content panes.")
             return
         if self._focus_in_centre_header:
             return
@@ -3468,7 +3470,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         self._refresh_centre_header_for_scope()
         if self.active_section == "items":
-            self.run_worker(self._load_items(), exclusive=True)
+            # Own group, not the default one: `exclusive=True` in the
+            # default group would cancel every in-flight default-group
+            # worker (`_create_source`, `_delete_source`, ...) -- the
+            # hazard `_request_surface_refresh` documents for its drainer.
+            self.run_worker(self._load_items(), exclusive=True, group="wc_items")
         # TASK-2304 AC#2. The Sources table follows the same scope the
         # centre header just took, so the two counts of "how many sources
         # are in view" cannot disagree. An in-place push on the pane's own
@@ -3914,10 +3920,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         Deliberately leaves `tree_scope` ALONE (fix round 1, Finding 2).
         Inspecting a row is not navigation: the tree has not moved, so the
-        Feeds region must keep showing the watchlist the user opened. Before
-        the two scopes were split, this reset silently rebuilt Feeds back to
-        "All sources" -- an interaction in one region discarding the user's
-        navigation in another, with no tree selection highlight to fall back
+        centre header's scoped summary must keep naming the watchlist the
+        user opened. Before the two scopes were split, this reset silently
+        rebuilt that readout back to "All sources" -- an interaction in one
+        region discarding the user's navigation in another, with no tree
+        selection highlight to fall back
         on. Clearing `_breadcrumb_labels` alone would not have been a
         substitute: `InspectorPane._scope_levels` derives an ancestor level
         from `scope` alone and falls back to a `Watchlist {id}` label, so an
@@ -4385,7 +4392,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # feeds the staging line and `_refresh_overview_data` the cards, but
         # `#sources-table` and the rail's counts read their own queries — so
         # without these the table kept the previous list and the rail said
-        # `All sources  0` while the centre said `Feeds in All sources (1)`,
+        # `All sources  0` while the centre said `Feeds in All sources (1)`
+        # (then Feeds, now the header summary),
         # describing the same thing on one screen.
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
@@ -9624,7 +9632,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # feeds the staging line and `_refresh_overview_data` the cards, but
         # `#sources-table` and the rail's counts read their own queries — so
         # without these the table kept the previous list and the rail said
-        # `All sources  0` while the centre said `Feeds in All sources (1)`,
+        # `All sources  0` while the centre said `Feeds in All sources (1)`
+        # (then Feeds, now the header summary),
         # describing the same thing on one screen.
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()

@@ -312,7 +312,7 @@ class WatchlistBundleService:
         return [{"id": row[0], "name": row[1], "type": row[2]} for row in rows]
 
     def list_all_source_rows(self) -> list[dict[str, Any]]:
-        """Every source, in the shape the tree and Feeds region render.
+        """Every source, in the shape the tree and the scoped summary render.
 
         One statement, not a fan-out: the "all sources" scope must cost the
         same one query regardless of how many sources exist, the same
@@ -331,8 +331,8 @@ class WatchlistBundleService:
         """Sources belonging to no watchlist.
 
         These are otherwise unreachable from a watchlist-only tree, which is
-        why the tree carries a permanent Unassigned root and the Feeds
-        region needs its own resolver for this scope.
+        why the tree carries a permanent Unassigned root and the scoped
+        source readout needs its own resolver for this scope.
 
         Returns:
             One dict per unassigned source with ``id``, ``name`` and

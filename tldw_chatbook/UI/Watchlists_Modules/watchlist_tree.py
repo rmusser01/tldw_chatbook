@@ -1,9 +1,10 @@
 """Left-rail watchlist tree: roots, watchlists, lazily-loaded sources.
 
 This is the screen's primary navigation surface. Selecting a node sets a
-*scope* that the Feeds and Items regions read, which is why the message
-carries a structured `TreeScope` rather than a bare id — "watchlist 1" and
-"source 10 inside watchlist 1" are different scopes with the same numbers.
+*scope* that the centre header's scoped summary and the Items region read,
+which is why the message carries a structured `TreeScope` rather than a
+bare id — "watchlist 1" and "source 10 inside watchlist 1" are different
+scopes with the same numbers.
 """
 
 from __future__ import annotations
