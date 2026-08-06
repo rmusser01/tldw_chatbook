@@ -577,6 +577,45 @@ def test_resolve_by_key_agent_builtin_allow_still_downgrades():
     assert result.config_changed is True
 
 
+def test_resolve_by_key_agent_builtin_server_default_allow_still_downgrades():
+    """Fix Round E, Item 3: restores coverage Round C's narrowing dropped.
+    The control test above only pins `agent:builtin` at the
+    ``tool_override`` origin; this pins the INHERITED ``server_default``
+    origin -- exactly the case this function's own docstring argues about
+    ("this function has no tags to floor an inherited allow with", and
+    unlike ``builtin:tldw_chatbook``, `agent:builtin`'s real resolver
+    (``resolve_builtin_state``) DOES floor high-risk tags). This asserts
+    the by-key path's own strict behaviour (it downgrades to ``ask`` here);
+    it does NOT assert that behaviour matches ``resolve_builtin_state`` --
+    the two resolvers diverge on this exact shape (an untagged inherited
+    allow), with the by-key path being the stricter of the two."""
+    payload = _payload(servers={BUILTIN_TOOL_SERVER_KEY: {"default": "allow"}})
+
+    result = resolve_effective_state_by_key(
+        payload, BUILTIN_TOOL_SERVER_KEY, "calculator"
+    )
+
+    assert result.state == "ask"
+    assert result.origin == "server_default"
+    assert result.config_changed is True
+
+
+def test_resolve_by_key_agent_builtin_global_default_allow_still_downgrades():
+    """Fix Round E, Item 3: the other inherited origin the narrowing
+    dropped coverage for -- ``global_default``. Same reasoning as the
+    ``server_default`` sibling above: this is the by-key path's own strict
+    behaviour, not a claim that it matches ``resolve_builtin_state``."""
+    payload = _payload(global_default="allow", servers={BUILTIN_TOOL_SERVER_KEY: {}})
+
+    result = resolve_effective_state_by_key(
+        payload, BUILTIN_TOOL_SERVER_KEY, "calculator"
+    )
+
+    assert result.state == "ask"
+    assert result.origin == "global_default"
+    assert result.config_changed is True
+
+
 # -- hand-edited store: null/malformed intermediates never crash --------------
 #
 # A hand-edited `mcp_permissions.json` can pass `load()`'s top-level dict +
