@@ -27,6 +27,7 @@ from tldw_chatbook.MCP.hub_tool_catalog import (
     HubTool,
     builtin_tools_from_inventory,
     local_tools_from_record,
+    schema_argument_names,
     server_tools_from_inventory,
 )
 from tldw_chatbook.MCP.mcp_import import ImportCandidate
@@ -3346,10 +3347,20 @@ class MCPWorkbench(Container):
             inspector.reenable_test_run(server_key, tool_name)
             return
         self._tool_test_in_flight.add(key)
+        # Task 4 (PR-T3): `tool` (already resolved above for gating) carries
+        # the SAME `input_schema` the Test Tool form renders from -- derive
+        # the schema-approved argument names here, once, and thread them
+        # through so the execution log records real provenance. `tool is
+        # None` (a server-source/vanished tool) yields an empty set, not
+        # `None` -- `schema_argument_names()` never raises on that input.
+        registered_argument_names = schema_argument_names(
+            tool.input_schema if tool is not None else None
+        )
         self.run_worker(
             self._run_tool_test(
                 server_key, tool_name, dict(event.arguments),
                 gate=gate, ask_approved=ask_approved,
+                registered_argument_names=registered_argument_names,
             ),
             group="mcp-tool-test",
             exclusive=False,
@@ -3358,6 +3369,7 @@ class MCPWorkbench(Container):
     async def _run_tool_test(
         self, server_key: str, tool_name: str, arguments: dict[str, Any],
         *, gate: EffectiveToolState | None = None, ask_approved: bool = False,
+        registered_argument_names: set[str] | None = None,
     ) -> None:
         """Run one `test_hub_tool()` call and report the outcome.
 
@@ -3376,6 +3388,14 @@ class MCPWorkbench(Container):
         `decision_note` threads through every `_show_tool_test_result()`
         call below (success, service-call failure, and formatting-failure
         alike) since it describes the DISPATCH decision, not the outcome.
+
+        Task 4 (PR-T3): `registered_argument_names` -- the tool's schema-
+        approved argument names, resolved by
+        `on_mcp_inspector_tool_test_requested()` from the SAME `HubTool`
+        it already looks up for gating -- is forwarded to `test_hub_tool()`
+        unchanged so the execution log records real argument NAMES (never
+        values) instead of the always-empty `[]` every caller produced
+        before this task.
 
         The WHOLE body is wrapped in `try/except Exception` (not just the
         service call) -- Textual 8.2.7's `run_worker()` defaults to
@@ -3431,7 +3451,8 @@ class MCPWorkbench(Container):
                 if service is None:
                     raise RuntimeError("MCP control-plane service is unavailable.")
                 envelope = await service.test_hub_tool(
-                    server_key, tool_name, arguments, decision=decision
+                    server_key, tool_name, arguments, decision=decision,
+                    registered_argument_names=registered_argument_names,
                 )
             except Exception as exc:
                 duration_ms = int((time.monotonic() - started) * 1000)

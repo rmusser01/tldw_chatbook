@@ -2278,6 +2278,7 @@ class UnifiedMCPControlPlaneService:
         arguments: dict[str, Any] | None = None,
         *,
         decision: str = "allowed",
+        registered_argument_names: set[str] | None = None,
     ) -> dict[str, Any]:
         """Execute one tool test against a local or built-in server.
 
@@ -2299,6 +2300,11 @@ class UnifiedMCPControlPlaneService:
                 Hub UI passes ``"approved"`` for an Ask-gated tool the
                 user just confirmed; every other caller keeps the default
                 ``"allowed"`` this method has always recorded.
+            registered_argument_names: Optional schema-approved argument
+                names, forwarded unchanged to :meth:`execute_hub_tool`
+                (Task 4, PR-T3). Omitted callers keep recording every
+                supplied argument as unknown -- byte-identical to
+                pre-Task-4 behavior.
 
         Returns:
             The raw result payload from the underlying service call.
@@ -2315,6 +2321,7 @@ class UnifiedMCPControlPlaneService:
             initiator="test",
             decision=decision,
             timeout_seconds=self._lifecycle_timeout(),
+            registered_argument_names=registered_argument_names,
         )
 
     # ---- Chat bridge seam (Phase 5) -------------------------------------

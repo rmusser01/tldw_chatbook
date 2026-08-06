@@ -44,6 +44,7 @@ from tldw_chatbook.MCP.hub_tool_catalog import (
     HubTool,
     builtin_tools_from_inventory,
     local_tools_from_record,
+    schema_argument_names,
 )
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.MCP.redaction import redact_mapping
@@ -710,12 +711,18 @@ class MCPToolProvider:
         execution_coroutine = None
         try:
             timeout = self._service._tool_call_timeout() + _RESULT_WAIT_SLACK_SECONDS
+            # Task 4 (PR-T3): the same schema `tool.input_schema` the Hub
+            # workbench's Test Tool form renders from -- named argument
+            # NAMES only, never values, so an agent-initiated run is
+            # audited with real provenance instead of the pre-Task-4
+            # always-empty `argument_names: []`.
             execution_coroutine = self._service.execute_hub_tool(
                 tool.server_key,
                 tool.name,
                 args,
                 initiator="agent",
                 decision=decision,
+                registered_argument_names=schema_argument_names(tool.input_schema),
             )
             future = asyncio.run_coroutine_threadsafe(
                 execution_coroutine,

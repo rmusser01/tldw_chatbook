@@ -2936,6 +2936,12 @@ class ToolTestHubService(FakeHubService):
         # (`test_calls == [("local:docs", "fetch", {})]`), so the decision
         # string goes in its own list rather than growing that tuple.
         self.decision_calls: list[str] = []
+        # Task 4 (PR-T3): the schema-approved argument names the dispatch
+        # path (`on_mcp_inspector_tool_test_requested()`) derives from the
+        # resolved `HubTool.input_schema` and forwards here -- separate
+        # from `test_calls` for the same reason `decision_calls` is (that
+        # 3-tuple's shape is pinned by many pre-existing assertions).
+        self.registered_argument_names_calls: list[set[str] | None] = []
 
     def gate_tool_test(self, tool: Any) -> EffectiveToolState:
         self.gate_calls.append((tool.server_key, tool.name))
@@ -3007,9 +3013,18 @@ class ToolTestHubService(FakeHubService):
     async def local_external_catalog(self):
         return await self.load_section("external_servers")
 
-    async def test_hub_tool(self, server_key, tool_name, arguments=None, *, decision="allowed"):
+    async def test_hub_tool(
+        self,
+        server_key,
+        tool_name,
+        arguments=None,
+        *,
+        decision="allowed",
+        registered_argument_names=None,
+    ):
         self.test_calls.append((server_key, tool_name, dict(arguments or {})))
         self.decision_calls.append(decision)
+        self.registered_argument_names_calls.append(registered_argument_names)
         if self.test_gate is not None:
             await self.test_gate.wait()
         if self.raise_error is not None:
@@ -3456,6 +3471,53 @@ async def test_test_tool_double_run_reenables_run_button_for_the_swallowed_press
         await pilot.pause()
 
 
+# -- Task 4 (PR-T3): the dispatch path threads the tool's schema-approved
+# argument names through to `test_hub_tool()` -- before this task NO caller
+# in the tree supplied `registered_argument_names`, so every audit row
+# recorded `argument_names: []` regardless of what was actually called.
+
+
+@pytest.mark.asyncio
+async def test_tool_test_dispatch_supplies_registered_argument_names_from_schema():
+    """`docs::search` (row 1) carries `inputSchema.properties: {"query": ...}`
+    -- `on_mcp_inspector_tool_test_requested()` must resolve that schema via
+    `_tool_for()` and forward its property names to `test_hub_tool()`, not
+    the pre-Task-4 `None`/omitted default that always logged `[]`."""
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        tools = workbench._last_hub_tools
+        tool = next(t for t in tools if t.name == "search")
+        event = MCPInspector.ToolTestRequested(tool.server_key, tool.name, {"query": "hello"})
+        workbench.on_mcp_inspector_tool_test_requested(event)
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.unified_mcp_service.registered_argument_names_calls == [{"query"}]
+
+
+@pytest.mark.asyncio
+async def test_tool_test_dispatch_no_schema_supplies_empty_registered_argument_names():
+    """`docs::fetch` (row 0) has no `inputSchema` -- the derived set is
+    empty, never `None`/omitted, so the execution log records a real
+    (if empty) provenance check rather than silently skipping it."""
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        tools = workbench._last_hub_tools
+        tool = next(t for t in tools if t.name == "fetch")
+        event = MCPInspector.ToolTestRequested(tool.server_key, tool.name, {})
+        workbench.on_mcp_inspector_tool_test_requested(event)
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.unified_mcp_service.registered_argument_names_calls == [set()]
+
+
 @pytest.mark.asyncio
 async def test_slow_tool_result_does_not_render_under_a_different_selected_tool():
     """I1: tool A's ("docs::fetch") slow test run must not land in tool B's
@@ -3800,7 +3862,15 @@ class NoGateToolTestHubService(FakeHubService):
         self.test_calls: list[tuple[str, str, dict]] = []
         self.decision_calls: list[str] = []
 
-    async def test_hub_tool(self, server_key, tool_name, arguments=None, *, decision="allowed"):
+    async def test_hub_tool(
+        self,
+        server_key,
+        tool_name,
+        arguments=None,
+        *,
+        decision="allowed",
+        registered_argument_names=None,
+    ):
         self.test_calls.append((server_key, tool_name, dict(arguments or {})))
         self.decision_calls.append(decision)
         return {"ok": True}

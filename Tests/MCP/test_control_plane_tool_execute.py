@@ -318,3 +318,43 @@ async def test_hub_tool_approved_decision_recorded_on_failure_too(tmp_path):
     records = _log_records(store)
     assert records and records[0]["decision"] == "approved"
     assert records[0]["ok"] is False
+
+
+# -- Task 4 (PR-T3): `registered_argument_names` threads from `test_hub_tool()`
+# through to the execution log -- before this task NO caller in the tree
+# supplied it, so every row recorded `argument_names: []` and
+# `unknown_argument_count == len(arguments)` regardless of what the tool's
+# schema actually registered.
+
+
+@pytest.mark.asyncio
+async def test_hub_tool_registered_argument_names_threads_to_execution_log(tmp_path):
+    service, fake, client, store = _service(tmp_path)
+
+    await service.test_hub_tool(
+        "local:docs",
+        "search",
+        {"q": "hi", "surprise": "unexpected arg"},
+        registered_argument_names={"q", "limit"},
+    )
+
+    records = _log_records(store)
+    assert records and records[0]["argument_names"] == ["q"]
+    # "surprise" was supplied but never registered on the schema.
+    assert records[0]["unknown_argument_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_hub_tool_omitted_registered_argument_names_keeps_pre_task4_behavior(
+    tmp_path,
+):
+    """A caller that doesn't supply `registered_argument_names` (every
+    caller before Task 4) keeps recording NO names and counting every
+    supplied argument as unknown -- byte-identical to before this task."""
+    service, fake, client, store = _service(tmp_path)
+
+    await service.test_hub_tool("local:docs", "search", {"q": "hi"})
+
+    records = _log_records(store)
+    assert records and records[0]["argument_names"] == []
+    assert records[0]["unknown_argument_count"] == 1

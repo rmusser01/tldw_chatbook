@@ -4,6 +4,7 @@ from tldw_chatbook.MCP.hub_tool_catalog import (
     builtin_tools_from_inventory,
     filter_tools,
     local_tools_from_record,
+    schema_argument_names,
     server_tools_from_inventory,
 )
 
@@ -168,3 +169,36 @@ def test_server_tools_dedupe_duplicate_names():
     tools = server_tools_from_inventory(payload, target_id="main", target_label="Main")
     assert [t.name for t in tools] == ["web_search"]
     assert tools[0].description == "first"
+
+
+# -- Task 4 (PR-T3): schema_argument_names() -- the execution log's
+# argument-provenance seam reads a tool's registered names from here.
+
+
+def test_schema_argument_names_reads_top_level_properties():
+    schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+    }
+    assert schema_argument_names(schema) == {"query", "limit"}
+
+
+def test_schema_argument_names_none_schema_yields_empty_set():
+    assert schema_argument_names(None) == set()
+
+
+def test_schema_argument_names_malformed_properties_yields_empty_set():
+    assert schema_argument_names({"type": "object", "properties": "not-a-dict"}) == set()
+    assert schema_argument_names({"type": "object"}) == set()
+    assert schema_argument_names("not-a-dict") == set()  # defensive: never raises
+
+
+def test_schema_argument_names_tolerates_unrenderable_nested_property():
+    """Unlike `parse_schema()` (which falls back to raw JSON for a nested
+    object property), this only reports NAMES -- an unrenderable nested
+    property still counts as a registered top-level argument name."""
+    schema = {
+        "type": "object",
+        "properties": {"filters": {"type": "object", "properties": {"a": {}}}},
+    }
+    assert schema_argument_names(schema) == {"filters"}

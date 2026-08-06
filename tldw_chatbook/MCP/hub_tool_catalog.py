@@ -57,6 +57,33 @@ def _normalized_schema(raw: Any) -> dict | None:
     return None
 
 
+def schema_argument_names(input_schema: dict | None) -> set[str]:
+    """The schema-approved argument NAMES for a tool's execution-log record.
+
+    Reads only the top-level ``properties`` keys of ``input_schema`` — the
+    same shape `mcp_schema_form.parse_schema()` renders the Test Tool form
+    from — but stays lenient where that parser is strict about rendering: a
+    schema with a nested/unrenderable property (which would make
+    `parse_schema()` fall back to the raw-JSON text area) still names its
+    top-level arguments correctly here. This function only ever inspects
+    and returns argument NAMES, never values.
+
+    Args:
+        input_schema: A tool's JSON schema (`HubTool.input_schema`), or
+            `None`/malformed when the source didn't advertise one.
+
+    Returns:
+        The schema's top-level ``properties`` keys, or an empty set when
+        the schema is absent or not the expected shape.
+    """
+    if not isinstance(input_schema, dict):
+        return set()
+    properties = input_schema.get("properties")
+    if not isinstance(properties, dict):
+        return set()
+    return {str(name) for name in properties}
+
+
 def _text(value: Any) -> str:
     return str(value or "").strip()
 
