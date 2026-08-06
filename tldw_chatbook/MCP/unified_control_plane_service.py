@@ -2758,15 +2758,23 @@ class UnifiedMCPControlPlaneService:
             #
             # Item 1 (PR-T3 fix round F): `"gate_denied"` itself is ALSO
             # false for the `is_gate_error` case -- it means "the Hub's
-            # gate denied", and here the gate never resolved at all. A
-            # fourth token, consistent with the three this branch already
-            # distinguishes (`"gate_denied"` = the Hub's own Allow/Ask/Off
-            # gate genuinely resolving to Off; `"governance_denied"` =
-            # the separate in-process runtime-governance profile, a few
-            # hundred lines up; `"policy_denied"` would name the unrelated
-            # `runtime_policy` engine, per that comment): `"gate_error"`,
-            # matching the `EffectiveToolState.origin` value that produced
-            # it rather than inventing an unrelated word for the same fact.
+            # gate denied", and here the gate never resolved at all.
+            #
+            # Fix Round H (PR-T3 review), Item 3: corrected the arithmetic
+            # below -- `"policy_denied"` is a name this branch REJECTED
+            # (see the comment just above), never a token it produces, so
+            # it does not count toward "already distinguishes". `"gate_
+            # error"` is the THIRD token this branch actually produces,
+            # consistent with the TWO real ones that came before it
+            # (`"gate_denied"` = the Hub's own Allow/Ask/Off gate genuinely
+            # resolving to Off; `"governance_denied"` = the separate
+            # in-process runtime-governance profile, a few hundred lines
+            # up) -- matching the `EffectiveToolState.origin` value that
+            # produced it rather than inventing an unrelated word for the
+            # same fact. `"policy_denied"` stays named here ONLY as the
+            # rejected alternative -- naming it would have falsely cross-
+            # referenced the unrelated `runtime_policy` engine's own
+            # `PolicyDeniedError`.
             self.record_tool_decision(
                 BUILTIN_SERVER_KEY,
                 normalized_tool_name,
