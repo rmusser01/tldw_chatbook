@@ -148,4 +148,8 @@ never deleted once created — safe to ignore if you notice it.
 against 9f90e17b8 — 2026-08-06 (PR-T3, docs pass against shipped
 code/tests: weak-match notice, always-reports toasts, live Audit
 refresh + argument names, the gated/logged Advanced panel, readable
-boolean fields — live check pending Task 9).*
+boolean fields — live check pending Task 9). Fix round I, 2026-08-06:
+"do anything else to cancel" on the Test Tool confirm now genuinely
+covers editing the argument form (it previously did not), and a
+background section load can no longer cancel an Advanced confirm you
+armed while it loaded — only your own actions cancel, as written.*
