@@ -1945,11 +1945,20 @@ class SettingsScreen(BaseAppScreen):
         self._speech_tts_leave_in_progress = False
         self._speech_tts_leave_bypass = False
         #: (display_name, profile_id) choices for the "Default voice profile"
-        #: picker. `None` means the profile store hasn't answered yet or is
-        #: unavailable -- the panel renders that state honestly rather than
-        #: showing an empty/fake list. Loaded once per screen instance by
-        #: `_load_speech_tts_default_profile_choices`.
+        #: picker. `None` means the profile store hasn't answered yet (the
+        #: default) OR answered with failure -- `_speech_tts_profile_choices_
+        #: unavailable` distinguishes those two so the panel can render a
+        #: genuine "loading" state that is never worded like "unavailable"
+        #: (task 3 review round 1: the two were getting collapsed together
+        #: because `_render_detail_pane` read this cache in the same call
+        #: that kicked off the async fetch, always seeing it still `None`
+        #: with no way to tell "hasn't answered" from "failed"). Loaded once
+        #: per screen instance by `_load_speech_tts_default_profile_choices`;
+        #: once it resolves, the mounted panel is updated narrowly via
+        #: `apply_profile_choices` (never a recompose -- that stole focus,
+        #: see the same review round).
         self._speech_tts_profile_choices: list[tuple[str, str]] | None = None
+        self._speech_tts_profile_choices_unavailable = False
         self._speech_tts_profile_choices_requested = False
         #: One-shot focus intent (task-290): `Widget.focus()` defers its
         #: set_focus via call_later, so a storm recompose can destroy the
@@ -11681,38 +11690,60 @@ class SettingsScreen(BaseAppScreen):
         profiles itself -- this impure screen owns that I/O and hands the
         panel a static list, per the purity boundary. The fetch never blocks
         the first render: `_render_detail_pane` always yields immediately
-        with whatever is cached (honestly `None`, i.e. "unavailable", until
-        this resolves). Deliberately does NOT force a recompose on success --
-        an unsolicited `mutate_reactive(active_category)` landing after a
-        deep-link navigation or mid-edit would steal/reset focus out from
-        under the user (confirmed live: it broke
-        test_bounded_speech_settings_deep_link_restores_provider_without_action's
-        focus assertion during this task's own verification). The cached
-        result is picked up honestly on the next natural re-render of this
-        category (leaving and returning, Save, Revert, Restore Defaults) --
-        never wrong, only possibly stale within one visit. Any failure (no
-        profile service, store unavailable, I/O error) leaves the choices
-        `None` -- the panel's own honesty requirement, never fabricated.
+        with whatever is cached so far, honestly `None`/"loading" until this
+        resolves (task 3 review round 1: `_render_detail_pane` reads the
+        cache in the SAME call that starts this worker, so it is always
+        still `None` on first paint -- that must render as "loading", never
+        "unavailable", which is why the panel now distinguishes the two).
+
+        On resolution, does NOT force a recompose -- an earlier version did
+        (`mutate_reactive(active_category)`) and that landed after a
+        deep-link navigation and stole focus (confirmed live against
+        `test_bounded_speech_settings_deep_link_restores_provider_without_
+        action`, same review round). Instead, the currently-mounted panel
+        (if any) is updated narrowly via `apply_profile_choices`, mirroring
+        `personas_screen.py`'s `_publish_character_tts_presentation` ->
+        `control.apply_state(state)` pattern: touches only the Select's
+        options/value and the note's text, never focus, so it is safe to
+        call at any time including mid-edit.
+
+        Any failure (no profile service, store unavailable, I/O error)
+        reports `unavailable=True` with an empty cache -- the panel's own
+        honesty requirement, never fabricated.
         """
         loader = getattr(self.app_instance, "_ensure_tts_profile_service", None)
+        choices: list[tuple[str, str]] | None = None
+        failed = False
         if not callable(loader):
+            failed = True
+        else:
+            try:
+                service = await loader()
+                if service is None:
+                    failed = True
+                else:
+                    page = await service.list_profiles(search=None, offset=0)
+                    choices = [
+                        (profile.display_name, str(profile.profile_id))
+                        for profile in page.profiles
+                    ]
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - optional store, never crash Settings
+                logger.debug(
+                    "Speech & TTS default-profile choices unavailable: %s",
+                    type(exc).__name__,
+                )
+                failed = True
+        self._speech_tts_profile_choices = choices
+        self._speech_tts_profile_choices_unavailable = failed
+        if not getattr(self, "is_mounted", False):
             return
         try:
-            service = await loader()
-            if service is None:
-                return
-            page = await service.list_profiles(search=None, offset=0)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - optional store, never crash Settings
-            logger.debug(
-                "Speech & TTS default-profile choices unavailable: %s",
-                type(exc).__name__,
-            )
+            panel = self.query_one(SpeechTTSSettingsPanel)
+        except QueryError:
             return
-        self._speech_tts_profile_choices = [
-            (profile.display_name, str(profile.profile_id)) for profile in page.profiles
-        ]
+        panel.apply_profile_choices(choices, unavailable=failed)
 
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
@@ -11742,6 +11773,7 @@ class SettingsScreen(BaseAppScreen):
                 original_state=self._speech_tts_original_state,
                 configure_provider=self._speech_tts_configure_provider,
                 profiles=self._speech_tts_profile_choices,
+                profiles_unavailable=self._speech_tts_profile_choices_unavailable,
                 audio_cpp_observation=audio_cpp_observation,
                 audio_cpp_configuration_revision=provider_runtime_revisions.get(
                     "audio_cpp"

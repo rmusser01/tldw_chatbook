@@ -106,6 +106,7 @@ class _PanelHarness(App[None]):
         configure_provider: str = "audio_cpp",
         state=None,
         profiles: object = _PROFILES_UNSET,
+        profiles_unavailable: bool = False,
         observation: TTSNativeCapabilityObservation | None = None,
         current_configuration_revision: int | None = None,
         runtime_status_store: SpeechTTSRuntimeStatusStore | None = None,
@@ -116,6 +117,7 @@ class _PanelHarness(App[None]):
         self.profiles = (
             list(_DEFAULT_TEST_PROFILES) if profiles is _PROFILES_UNSET else profiles
         )
+        self.profiles_unavailable = profiles_unavailable
         self.observation = observation
         self.current_configuration_revision = current_configuration_revision
         self.runtime_status_store = runtime_status_store
@@ -127,6 +129,7 @@ class _PanelHarness(App[None]):
             state=self.state,
             configure_provider=self.configure_provider,
             profiles=self.profiles,
+            profiles_unavailable=self.profiles_unavailable,
             audio_cpp_observation=self.observation,
             audio_cpp_configuration_revision=self.current_configuration_revision,
             runtime_status_store=self.runtime_status_store,
@@ -2497,11 +2500,17 @@ async def test_choosing_none_clears_the_default_voice_profile() -> None:
 
 @pytest.mark.asyncio
 async def test_unavailable_profile_store_keeps_the_saved_id_and_says_so() -> None:
-    # Seed a saved default, then construct with profiles=None to simulate the
-    # profile store being unavailable at render time.
+    # Seed a saved default, then construct with profiles=None + an explicit
+    # "confirmed unavailable" flag -- distinct from the default "loading"
+    # state (see the next test), which must never say "unavailable".
     state = load_global_speech_tts_state({})
     state.defaults.default_profile_id = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
-    app = _PanelHarness(configure_provider="openai", state=state, profiles=None)
+    app = _PanelHarness(
+        configure_provider="openai",
+        state=state,
+        profiles=None,
+        profiles_unavailable=True,
+    )
     async with app.run_test(size=(150, 60)) as pilot:
         await pilot.pause()
         rendered = str(
@@ -2514,6 +2523,91 @@ async def test_unavailable_profile_store_keeps_the_saved_id_and_says_so() -> Non
         # saved id as its value, and the raw pick survives untouched.
         select = app.query_one("#settings-speech-default-profile", Select)
         assert select.value == "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+
+
+@pytest.mark.asyncio
+async def test_default_profile_store_loading_state_is_distinct_from_unavailable() -> (
+    None
+):
+    """Regression coverage for task 3 review round 1's IMPORTANT finding:
+    `_render_detail_pane` starts the fetch and reads the cache in the same
+    call, so it is always `None` on first paint -- that must render as
+    "loading", never "unavailable" (a healthy store must not look broken).
+    """
+    state = load_global_speech_tts_state({})
+    state.defaults.default_profile_id = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+    # profiles=None with the default profiles_unavailable=False -- exactly
+    # what `_render_detail_pane` passes on a session's first visit, before
+    # its background fetch has had a chance to resolve.
+    app = _PanelHarness(configure_provider="openai", state=state, profiles=None)
+    async with app.run_test(size=(150, 60)) as pilot:
+        await pilot.pause()
+        rendered = str(
+            app.query_one("#settings-speech-default-profile-note", Static).renderable
+        )
+
+        assert "loading" in rendered.lower()
+        assert "unavailable" not in rendered.lower()
+        # Still never dropped while loading.
+        select = app.query_one("#settings-speech-default-profile", Select)
+        assert select.value == "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+
+
+@pytest.mark.asyncio
+async def test_dangling_default_profile_id_is_flagged_when_the_store_is_available() -> (
+    None
+):
+    """MINOR finding from task 3 review round 1: the store answers
+    successfully, but the saved id isn't among the known profiles (e.g. the
+    profile was deleted elsewhere). Distinct from "store unavailable" --
+    same honesty requirement, different cause."""
+    state = load_global_speech_tts_state({})
+    state.defaults.default_profile_id = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+    app = _PanelHarness(
+        configure_provider="openai",
+        state=state,
+        profiles=[("Some Other Voice", "9c858901-8a57-4791-81fe-4c455b099bc9")],
+    )
+    async with app.run_test(size=(150, 60)) as pilot:
+        await pilot.pause()
+        rendered = str(
+            app.query_one("#settings-speech-default-profile-note", Static).renderable
+        )
+
+        assert "3f2504e0-4f89-11d3-9a0c-0305e82c3301" in rendered
+        assert "not found" in rendered.lower() or "deleted" in rendered.lower()
+        select = app.query_one("#settings-speech-default-profile", Select)
+        assert select.value == "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+
+
+@pytest.mark.asyncio
+async def test_apply_profile_choices_preserves_the_current_selection() -> None:
+    """The narrow live-update mechanism (`apply_profile_choices`, called by
+    settings_screen.py once its background fetch resolves) must never reset
+    an in-progress pick -- `Select.set_options()` resets the selection by
+    default, which is exactly the "silently reverts the user's choice" bug
+    this test guards against.
+    """
+    app = _PanelHarness(configure_provider="openai")
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        select = app.query_one("#settings-speech-default-profile", Select)
+        select.value = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+        await pilot.pause()
+
+        panel.apply_profile_choices(
+            [
+                ("Test Voice", "3f2504e0-4f89-11d3-9a0c-0305e82c3301"),
+                ("Another Voice", "9c858901-8a57-4791-81fe-4c455b099bc9"),
+            ]
+        )
+        await pilot.pause()
+
+        assert select.value == "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+        note = str(
+            app.query_one("#settings-speech-default-profile-note", Static).renderable
+        )
+        assert note == ""
 
 
 @pytest.mark.asyncio

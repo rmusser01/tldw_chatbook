@@ -407,6 +407,7 @@ class SpeechTTSSettingsPanel(Vertical):
         original_state: GlobalSpeechTTSState | None = None,
         configure_provider: str | None = None,
         profiles: Sequence[tuple[str, str]] | None = None,
+        profiles_unavailable: bool = False,
         audio_cpp_observation: TTSNativeCapabilityObservation | None = None,
         audio_cpp_configuration_revision: int | None = None,
         audio_cpp_saved_configuration_revision: int | None = None,
@@ -463,12 +464,22 @@ class SpeechTTSSettingsPanel(Vertical):
             if state.defaults.provider_id in BUILT_IN_TTS_PROVIDER_ORDER
             else "audio_cpp"
         )
-        # `None` means the profile store could not be listed (impure screen's
-        # honest failure signal, per the purity boundary) -- distinct from an
-        # empty sequence, which means the store answered with zero profiles.
-        # Never loaded here: this widget must stay pure of profile-store I/O.
+        # `None` means the profile store hasn't answered yet, or answered
+        # with failure -- `profiles_unavailable` distinguishes those two
+        # (only meaningful when `profiles is None`): a genuine third state,
+        # "loading", that must never be conflated with "unavailable" -- that
+        # collapse is exactly the defect this comment guards against (task 3
+        # review round 1). An empty sequence is a distinct fourth state: the
+        # store answered successfully with zero profiles. Never loaded here:
+        # this widget must stay pure of profile-store I/O; the impure screen
+        # both supplies the initial value and later calls
+        # `apply_profile_choices` with a narrow, focus-safe live update once
+        # its async fetch resolves.
         self._profile_choices: list[tuple[str, str]] | None = (
             list(profiles) if profiles is not None else None
+        )
+        self._profile_choices_unavailable: bool = (
+            profiles is None and bool(profiles_unavailable)
         )
         self.result_text = "No global Speech & TTS changes saved this session."
         self._syncing = False
@@ -561,15 +572,30 @@ class SpeechTTSSettingsPanel(Vertical):
             markup=False,
         )
 
-    def _default_profile_options(self) -> list[tuple[str, str]]:
+    def _unresolved_profile_label(self, profile_id: str) -> str:
+        """Label a Select fallback option for an id absent from known profiles.
+
+        Distinguishes "still loading" (`self._profile_choices is None` and
+        the screen hasn't reported failure) from a confirmed failure/
+        dangling reference -- the loading copy never says "unavailable".
+        """
+        if self._profile_choices is None and not self._profile_choices_unavailable:
+            return f"{profile_id} (loading…)"
+        return f"{profile_id} (unavailable)"
+
+    def _default_profile_options(
+        self, *, protect_value: str | None = None
+    ) -> list[tuple[str, str]]:
         """Build the Select's options from the injected static profile list.
 
-        Always includes the blank "None" choice. When the saved id is not
-        among the known profiles -- either because the store is unavailable
-        (`self._profile_choices is None`) or the profile is dangling (e.g.
-        deleted, or a malformed value from Task 2's non-rejecting loader) --
-        an explicit extra option is appended so the Select's initial value
-        stays valid without inventing a display name or dropping the value.
+        Always includes the blank "None" choice. When a value that must
+        stay selectable (the saved id, and/or `protect_value` -- the
+        Select's own current value during a live refresh) is not among the
+        known profiles -- store still loading, confirmed unavailable, or a
+        dangling reference (e.g. deleted, or a malformed value from Task 2's
+        non-rejecting loader) -- an explicit extra option is appended so the
+        Select's value stays legal without inventing a display name or
+        dropping the value.
         """
         options: list[tuple[str, str]] = [
             ("None — use the fields below", _NO_DEFAULT_PROFILE_ID)
@@ -579,18 +605,33 @@ class SpeechTTSSettingsPanel(Vertical):
             for display_name, profile_id in self._profile_choices:
                 options.append((display_name, profile_id))
                 known_ids.add(profile_id)
-        saved_id = self.state.defaults.default_profile_id
-        if saved_id and saved_id not in known_ids:
-            options.append((f"{saved_id} (unavailable)", saved_id))
+        for candidate in (self.state.defaults.default_profile_id, protect_value):
+            if candidate and candidate not in known_ids:
+                options.append((self._unresolved_profile_label(candidate), candidate))
+                known_ids.add(candidate)
         return options
 
     def _default_profile_select_value(self) -> str:
         return self.state.defaults.default_profile_id or _NO_DEFAULT_PROFILE_ID
 
     def _default_profile_note_copy(self) -> str:
-        """Explain an unresolvable saved default -- never silently dropped."""
+        """Explain an unresolvable or not-yet-resolved saved default.
+
+        Three distinct states, never conflated (task 3 review round 1
+        finding): still loading (never says "unavailable"), confirmed
+        unavailable (the store answered with failure), and a dangling
+        reference (the store answered successfully but doesn't know this
+        id). A saved default is never silently dropped in any of them.
+        """
         saved_id = self.state.defaults.default_profile_id
         if self._profile_choices is None:
+            if not self._profile_choices_unavailable:
+                if saved_id:
+                    return (
+                        "Loading voice profiles… the saved default voice "
+                        f"profile ({saved_id}) is kept while this resolves."
+                    )
+                return "Loading voice profiles…"
             if saved_id:
                 return (
                     "The voice profile list is unavailable right now, so "
@@ -619,6 +660,47 @@ class SpeechTTSSettingsPanel(Vertical):
             ),
             markup=False,
         )
+
+    def apply_profile_choices(
+        self,
+        profiles: Sequence[tuple[str, str]] | None,
+        *,
+        unavailable: bool = False,
+    ) -> None:
+        """Live-update the picker once the impure screen's fetch resolves.
+
+        Mirrors `personas_screen.py`'s `_publish_character_tts_presentation`
+        -> `control.apply_state(state)` pattern: a narrow, targeted update to
+        already-mounted controls (the Select's options/value, the note's
+        text), never a recompose. A recompose here previously stole focus
+        out from under a deep-link navigation (task 3 review round 1,
+        confirmed live against `test_bounded_speech_settings_deep_link_
+        restores_provider_without_action`) -- this path touches nothing
+        else, so it is safe to call at any time, including mid-edit.
+
+        The Select's *current* value (whatever the user has it on, saved or
+        not) is preserved across the options refresh: `Select.set_options`
+        otherwise resets the selection, which would have silently reverted
+        an in-progress pick.
+        """
+        self._profile_choices = list(profiles) if profiles is not None else None
+        self._profile_choices_unavailable = profiles is None and unavailable
+        try:
+            select = self.query_one("#settings-speech-default-profile", Select)
+        except QueryError:
+            return
+        current_value = (
+            select.value if isinstance(select.value, str) else _NO_DEFAULT_PROFILE_ID
+        )
+        select.set_options(self._default_profile_options(protect_value=current_value))
+        select.value = current_value
+        try:
+            note = self.query_one("#settings-speech-default-profile-note", Static)
+        except QueryError:
+            return
+        message = self._default_profile_note_copy()
+        note.update(message)
+        note.set_class(bool(message), "settings-speech-field-error-visible")
 
     def _default_profile_row(self) -> Horizontal:
         select = Select(
