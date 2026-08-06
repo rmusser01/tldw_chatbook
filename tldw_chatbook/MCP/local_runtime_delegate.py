@@ -136,19 +136,41 @@ class LocalMCPRuntimeDelegate:
         """The methods `request()` recognizes and will dispatch on by name.
 
         NOTE: "recognized" is not "will succeed" -- `tools/call` is listed
-        here because `request()` genuinely understands that method name (it
-        is not an "unsupported method" `KeyError`), but every call is
-        unconditionally refused (see `request()`'s `tools/call` branch and
-        `RAW_TOOL_CALL_REFUSED_MESSAGE`). `get_protocol_diagnostics()` is
-        the surface that answers "will this actually work" per method
-        (its `methods` list carries an explicit `supported` flag,
-        `False` for `tools/call`) -- read that one before planning a
-        `runtime.request` call around a name found here.
+        in `request_methods` because `request()` genuinely understands that
+        method name (it is not an "unsupported method" `KeyError`), but
+        every call is unconditionally refused (see `request()`'s
+        `tools/call` branch and `RAW_TOOL_CALL_REFUSED_MESSAGE`).
+
+        Item 4 (PR-T3 fix round D), closing the scope Fix Round C
+        deliberately left open (see that round's own commit message): an
+        agent reading ONLY this method -- never cross-referencing
+        `get_protocol_diagnostics()` -- used to see `tools/call` in
+        `request_methods` with nothing here to say it would be refused, and
+        could plan a `runtime.request` call the enforcement would then
+        reject. `request_methods` itself is UNCHANGED (Fix Round C's own
+        reasoning still holds: dropping `tools/call` from it would itself
+        be inaccurate, since `request()` recognizes the method by name
+        rather than raising the generic "unsupported method" `KeyError`).
+        Instead, `unavailable_request_methods` is a NEW field, using the
+        same `_UNAVAILABLE_DIRECT_METHODS` vocabulary
+        `get_protocol_diagnostics()` already uses for its per-method
+        `supported` flag -- so the "recognized but refused" distinction is
+        now visible on THIS surface directly, without requiring the reader
+        to already know to check the other one. `get_protocol_diagnostics()`
+        remains the surface with full per-method detail (a real `supported`
+        flag on every entry, not just the unavailable ones); this field is
+        the minimal signal needed so `get_protocol_capabilities()` alone no
+        longer misleads.
         """
         return {
             "adapter": "direct_in_process",
             "supports_batch": True,
             "request_methods": list(self._REQUEST_METHODS),
+            "unavailable_request_methods": [
+                method
+                for method in self._REQUEST_METHODS
+                if method in self._UNAVAILABLE_DIRECT_METHODS
+            ],
         }
 
     def get_protocol_diagnostics(self) -> dict[str, Any]:

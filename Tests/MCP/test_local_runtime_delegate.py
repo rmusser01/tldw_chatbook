@@ -149,3 +149,28 @@ def test_protocol_diagnostics_reports_tools_call_as_unsupported():
         if name == "tools/call":
             continue
         assert supported is True, name
+
+
+def test_protocol_capabilities_flags_tools_call_as_unavailable():
+    """Item 4 (PR-T3 fix round D), closing the scope Fix Round C left open.
+    `get_protocol_capabilities()`'s `request_methods` still lists
+    `tools/call` (Fix Round C's own reasoning: `request()` genuinely
+    recognizes the method by name, so removing it would itself be
+    inaccurate) -- but an agent reading ONLY this method, never
+    cross-referencing `get_protocol_diagnostics()`, used to have no way to
+    learn it would be refused. `unavailable_request_methods` closes that:
+    asserted against the REAL delegate, not a hand-written double, so a
+    future change re-flipping the flag (or removing the entry) is caught
+    here even if a fake elsewhere drifts."""
+    delegate = _delegate()
+
+    capabilities = delegate.get_protocol_capabilities()
+
+    assert "tools/call" in capabilities["request_methods"]
+    assert capabilities["unavailable_request_methods"] == ["tools/call"]
+    # Every other recognized method is absent from the unavailable list --
+    # the refusal is scoped to `tools/call` alone.
+    for method in capabilities["request_methods"]:
+        if method == "tools/call":
+            continue
+        assert method not in capabilities["unavailable_request_methods"]

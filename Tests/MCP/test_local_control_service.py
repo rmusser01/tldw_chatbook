@@ -157,6 +157,10 @@ class FakeLocalRuntimeDelegate:
                 "resources/read",
                 "prompts/get",
             ],
+            # Item 4 (PR-T3 fix round D): mirrors the real delegate's new
+            # `unavailable_request_methods` field (`_UNAVAILABLE_DIRECT_
+            # METHODS`) -- this fake's own shape must not drift from it.
+            "unavailable_request_methods": ["tools/call"],
         }
 
     def get_protocol_diagnostics(self):
@@ -1039,6 +1043,10 @@ async def test_local_control_service_exposes_runtime_status_and_protocol_helpers
                 "resources/read",
                 "prompts/get",
             ],
+            # Item 4 (PR-T3 fix round D): the fixture's `get_protocol_
+            # capabilities()` (above) now returns this field too -- kept in
+            # sync here since `get_advanced()` passes it through verbatim.
+            "unavailable_request_methods": ["tools/call"],
         },
         "protocol_diagnostics": {
             "adapter": "direct_in_process",
