@@ -116,6 +116,17 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
 
     sources = reactive[list[dict[str, Any]]]([], recompose=True)
     selected_source = reactive[dict[str, Any] | None](None)
+    #: TASK-2309. The source ids ("id" field, the same namespaced form
+    #: `selected_source` carries) with a check currently in flight anywhere
+    #: on the screen -- not just the one selected here, since the Inspector
+    #: can trigger a check for a source that is not this pane's current
+    #: selection. `WatchlistsCollectionsScreen._checks_in_flight` is the
+    #: source of truth; this mirrors it in, the same way `sources` mirrors
+    #: `_loaded_sources`. Deliberately NOT `recompose=True`: a check starting
+    #: or finishing must not rebuild the table under the user (the same
+    #: reason `selected_source` above is not), so `watch_busy_source_ids`
+    #: repaints the one button that can show it, surgically.
+    busy_source_ids = reactive[frozenset[str]](frozenset())
     search_query = reactive("", recompose=True)
     source_type_filter = reactive("all", recompose=True)
     status_filter = reactive("all", recompose=True)
@@ -364,10 +375,19 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     id="sources-preview-button",
                     disabled=self.selected_source is None,
                 )
+                # TASK-2309: busy state read at compose time too, not only via
+                # the surgical `_update_action_buttons` repaint below -- this
+                # pane is reconstructed from scratch on every workbench
+                # rebuild (`_build_detail_pane`), and the screen seeds
+                # `busy_source_ids` onto the fresh instance BEFORE it mounts,
+                # so the very first paint has to already reflect an
+                # in-flight check rather than waiting for a watcher that
+                # cannot repaint a widget that does not exist yet.
+                check_now_busy = self._is_check_now_busy(self.selected_source)
                 yield Button(
-                    "Check now",
+                    "Checking..." if check_now_busy else "Check now",
                     id="sources-check-now-button",
-                    disabled=self.selected_source is None,
+                    disabled=self.selected_source is None or check_now_busy,
                 )
                 yield Button("Import OPML", id="sources-import-opml-button")
                 yield Button("Export OPML", id="sources-export-opml-button")
@@ -1215,6 +1235,22 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         self._update_action_buttons()
         self._update_selection_highlight(source)
 
+    def watch_busy_source_ids(self, _busy_source_ids: frozenset[str]) -> None:
+        """Repaint Check now, without a recompose, when a check starts or ends.
+
+        TASK-2309. Mirrors `watch_selected_source`'s repaint-not-rebuild
+        choice above, for the identical reason.
+        """
+        self._update_action_buttons()
+
+    def _is_check_now_busy(self, source: dict[str, Any] | None) -> bool:
+        """Whether `source` (typically `self.selected_source`) has a check
+        in flight right now, per the screen's `busy_source_ids` mirror."""
+        if source is None:
+            return False
+        source_key = str(source.get("id") or "")
+        return bool(source_key) and source_key in self.busy_source_ids
+
     def _update_selection_highlight(self, source: dict[str, Any] | None) -> None:
         """Move the table's selected-row highlight without rebuilding it.
 
@@ -1277,4 +1313,11 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             return
         disabled = self.selected_source is None
         preview_button.disabled = disabled
-        check_now_button.disabled = disabled
+        # TASK-2309: Check now additionally disables, and relabels, while the
+        # selected source has a check in flight -- the busy state a second,
+        # confused click must see rather than silently queuing a duplicate
+        # run. `Preview` is unaffected: it makes no write and a check running
+        # is no reason to block reading the same feed.
+        check_now_busy = self._is_check_now_busy(self.selected_source)
+        check_now_button.disabled = disabled or check_now_busy
+        check_now_button.label = "Checking..." if check_now_busy else "Check now"

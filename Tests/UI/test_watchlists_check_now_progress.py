@@ -1,0 +1,335 @@
+"""Check now gives progress and a completion signal — TASK-2309.
+
+UAT F19: pressing "Check now" produced ~5 seconds of dead air (no
+acknowledgment, no busy state, no completion signal), and a confused second
+press queued a duplicate check. Every scenario here gates the fake run
+executor behind an `asyncio.Event` so the "check is still running" window is
+deterministic rather than a race against a real fetch.
+"""
+
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+from textual.widgets import Button
+
+from Tests.UI.full_app_destination_context import (
+    FullAppDestinationContext as DestinationHarness,
+)
+from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
+from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
+from Tests.UI.app_factory import _build_test_app
+
+
+class Notified:
+    """Capture what the app told the user, since the toast itself is transient."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def __call__(self, message, *args, severity: str = "information", **kwargs) -> None:
+        self.calls.append((str(message), severity))
+
+    def messages(self, severity: str | None = None) -> list[str]:
+        if severity is None:
+            return [message for message, _ in self.calls]
+        return [message for message, sev in self.calls if sev == severity]
+
+
+def _seed_source(app, *, name: str = "Summit Route") -> int:
+    db = app.local_watchlists_service._db()
+    return db.add_subscription(
+        name=name, type="rss", source="https://summitroute.com/blog/feed.xml"
+    )
+
+
+async def _open_sources(pilot, host):
+    screen = host.screen_stack[-1]
+    screen.active_section = "sources"
+    await pilot.pause(0.3)
+    pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+    for _ in range(40):
+        await pilot.pause()
+        if pane.sources:
+            break
+    return screen, pane
+
+
+def _gated_run_executor(gate: asyncio.Event, *, items: list[dict] | None = None):
+    """A `run_executor` that blocks on `gate` before returning.
+
+    Lets a test hold a check "in flight" for exactly as long as it needs to
+    press a second time / inspect the busy state, then release it
+    deterministically -- no sleeps, no timing races.
+    """
+
+    async def _executor(subscription):
+        await gate.wait()
+        return {"items": list(items or [])}
+
+    return _executor
+
+
+@pytest.mark.asyncio
+async def test_pressing_check_now_gives_an_immediate_toast_and_a_busy_button():
+    """AC#1: acknowledgment before the worker even finishes, and a busy
+    state (disabled + relabelled) that outlives the toast."""
+    app = _build_test_app()
+    _seed_source(app)
+    notified = Notified()
+    app.notify = notified
+
+    gate = asyncio.Event()
+    app.local_watchlists_service.run_executor = _gated_run_executor(gate)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _open_sources(pilot, host)
+        pane.select_source_by_id(str(pane.sources[0]["id"]))
+        await pilot.pause(0.2)
+
+        button = pane.query_one("#sources-check-now-button", Button)
+        assert str(button.label) == "Check now"
+        assert not button.disabled
+
+        button.press()
+        for _ in range(40):
+            await pilot.pause()
+            if notified.calls:
+                break
+
+        # The immediate acknowledgment (AC#1) -- posted before the gated
+        # executor has returned anything at all.
+        assert any("checking" in m.lower() for m in notified.messages()), (
+            f"no immediate acknowledgment toast, got: {notified.calls!r}"
+        )
+        assert str(button.label) == "Checking...", (
+            f"the button must relabel while busy, got: {button.label!r}"
+        )
+        assert button.disabled, "the button must disable while a check is running"
+
+        # Release the gate and let the check finish.
+        gate.set()
+        for _ in range(60):
+            await pilot.pause()
+            if str(button.label) == "Check now":
+                break
+
+        assert str(button.label) == "Check now", "the busy state must clear on completion"
+        assert not button.disabled
+        assert any(
+            "complete" in m.lower() or "started" in m.lower()
+            for m in notified.messages("information")
+        ), f"no completion signal, got: {notified.calls!r}"
+
+
+@pytest.mark.asyncio
+async def test_a_second_press_while_checking_is_refused_not_duplicated():
+    """AC#2: a second activation while the same source is mid-check is
+    refused with a stated toast, and never starts a second run executor
+    call."""
+    app = _build_test_app()
+    _seed_source(app)
+    notified = Notified()
+    app.notify = notified
+
+    gate = asyncio.Event()
+    call_count = 0
+
+    async def _counting_executor(subscription):
+        nonlocal call_count
+        call_count += 1
+        await gate.wait()
+        return {"items": []}
+
+    app.local_watchlists_service.run_executor = _counting_executor
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _open_sources(pilot, host)
+        pane.select_source_by_id(str(pane.sources[0]["id"]))
+        await pilot.pause(0.2)
+
+        button = pane.query_one("#sources-check-now-button", Button)
+        button.press()
+        for _ in range(40):
+            await pilot.pause()
+            if call_count >= 1:
+                break
+        assert call_count == 1, "the precondition: the first check must have started"
+
+        # A confused second press while it is still running. The button is
+        # disabled by this point (proven by the previous test), so drive the
+        # SAME message a second click would post, exactly as
+        # `on_button_pressed` does, to prove the screen-level debounce holds
+        # even if some other path posted it.
+        from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import CheckNowRequested
+
+        screen.post_message(CheckNowRequested(pane.selected_source))
+        await pilot.pause(0.3)
+
+        assert call_count == 1, (
+            "a second activation while the same source is mid-check must "
+            "NOT start a second run"
+        )
+        assert any(
+            "already checking" in m.lower() for m in notified.messages("warning")
+        ), f"the refusal must be stated, not silent: {notified.calls!r}"
+
+        gate.set()
+        await pilot.pause(0.3)
+
+
+@pytest.mark.asyncio
+async def test_a_different_source_can_still_be_checked_while_one_is_busy():
+    """The debounce is per-source, not global: `run_worker` uses a named
+    group instead of the old screen-wide `exclusive=True`, specifically so
+    checking source B does not touch source A's in-flight run."""
+    app = _build_test_app()
+    _seed_source(app, name="Source A")
+    _seed_source(app, name="Source B")
+    app.notify = Notified()
+
+    gate_a = asyncio.Event()
+    calls: dict[str, int] = {"a": 0, "b": 0}
+
+    async def _executor(subscription):
+        # `subscription` here is the RAW db row (`db.get_subscription`), not
+        # the normalized entity `pane.sources` holds -- it carries "name",
+        # the actual DB column.
+        name = subscription.get("name") if hasattr(subscription, "get") else None
+        key = "a" if name == "Source A" else "b"
+        calls[key] += 1
+        if key == "a":
+            await gate_a.wait()
+        return {"items": []}
+
+    app.local_watchlists_service.run_executor = _executor
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _open_sources(pilot, host)
+        # `normalize_local_subscription_row` surfaces the display name as
+        # "title", not "name" -- `pane.sources` holds the normalized shape.
+        source_a = next(s for s in pane.sources if s.get("title") == "Source A")
+        source_b = next(s for s in pane.sources if s.get("title") == "Source B")
+
+        pane.select_source_by_id(str(source_a["id"]))
+        await pilot.pause(0.2)
+        pane.query_one("#sources-check-now-button", Button).press()
+        for _ in range(40):
+            await pilot.pause()
+            if calls["a"] >= 1:
+                break
+        assert calls["a"] == 1
+
+        pane.select_source_by_id(str(source_b["id"]))
+        await pilot.pause(0.2)
+        pane.query_one("#sources-check-now-button", Button).press()
+        for _ in range(40):
+            await pilot.pause()
+            if calls["b"] >= 1:
+                break
+
+        assert calls["b"] == 1, (
+            "checking a DIFFERENT source must not be blocked by source A's "
+            "in-flight check"
+        )
+        gate_a.set()
+        await pilot.pause(0.3)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_check_still_clears_the_busy_state():
+    """AC#1's failure half: the busy state must clear in a `finally`, so a
+    raising check cannot strand the button permanently disabled."""
+    app = _build_test_app()
+    _seed_source(app)
+    notified = Notified()
+    app.notify = notified
+
+    async def dead_host(subscription):
+        raise ConnectionError("Name or service not known: summitroute.com")
+
+    app.local_watchlists_service.run_executor = dead_host
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _open_sources(pilot, host)
+        pane.select_source_by_id(str(pane.sources[0]["id"]))
+        await pilot.pause(0.2)
+
+        button = pane.query_one("#sources-check-now-button", Button)
+        button.press()
+        for _ in range(60):
+            await pilot.pause()
+            if notified.messages("error"):
+                break
+
+        assert notified.messages("error"), (
+            f"a failed check must still be reported as a failure: {notified.calls!r}"
+        )
+        for _ in range(40):
+            await pilot.pause()
+            if not button.disabled:
+                break
+        assert not button.disabled, (
+            "a check that failed must not leave the button permanently disabled"
+        )
+        assert str(button.label) == "Check now"
+
+
+@pytest.mark.asyncio
+async def test_the_inspector_check_now_button_shows_the_same_busy_state():
+    """Both activation sites (Sources pane, Inspector) post the identical
+    `CheckNowRequested`, so both must show the same busy state -- otherwise
+    the Inspector's copy stays enabled while a duplicate run is already
+    refused elsewhere, inviting exactly the confused click AC#2 is about."""
+    app = _build_test_app()
+    _seed_source(app)
+    app.notify = Notified()
+
+    gate = asyncio.Event()
+    app.local_watchlists_service.run_executor = _gated_run_executor(gate)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _open_sources(pilot, host)
+        pane.select_source_by_id(str(pane.sources[0]["id"]))
+        await pilot.pause(0.2)
+
+        pane.query_one("#sources-check-now-button", Button).press()
+        for _ in range(40):
+            await pilot.pause()
+            inspector = screen.query_one(
+                "#watchlists-entity-inspector", InspectorPane
+            )
+            try:
+                inspector_button = inspector.query_one(
+                    "#inspector-check-now-button", Button
+                )
+            except Exception:
+                continue
+            if str(inspector_button.label) == "Checking...":
+                break
+
+        inspector_button = screen.query_one(
+            "#watchlists-entity-inspector", InspectorPane
+        ).query_one("#inspector-check-now-button", Button)
+        assert str(inspector_button.label) == "Checking...", (
+            "the Inspector's Check now must show the same busy state as the "
+            "Sources pane's own button"
+        )
+        assert inspector_button.disabled
+
+        gate.set()
+        for _ in range(60):
+            await pilot.pause()
+            inspector_button = screen.query_one(
+                "#watchlists-entity-inspector", InspectorPane
+            ).query_one("#inspector-check-now-button", Button)
+            if str(inspector_button.label) == "Check now":
+                break
+        assert str(inspector_button.label) == "Check now"
+        assert not inspector_button.disabled

@@ -92,9 +92,15 @@ async def test_a_failed_fetch_is_reported_as_a_failure_and_leaves_a_trace():
         pane.select_source_by_id(str(pane.sources[0]["id"]))
         await pilot.pause(0.2)
         pane.query_one("#sources-check-now-button", Button).press()
+        # TASK-2309: pressing Check now now ALSO posts an immediate
+        # "Checking …" acknowledgment (severity=information) before the
+        # worker even starts, so `notified.calls` goes non-empty on that
+        # ack alone. Poll for `notified.errors` specifically -- the failure
+        # this test is actually about -- so the loop does not exit before
+        # the check has even run.
         for _ in range(60):
             await pilot.pause()
-            if notified.calls:
+            if notified.errors:
                 break
 
         assert notified.errors, (
@@ -260,10 +266,20 @@ def test_source_row_cells_render_the_normalizer_status_summary():
     `status`/`last_scraped` shape that the real normalizer never produces,
     which is how a column reading `-` for every source in every state stayed
     green.
+
+    TASK-2308: this used to assert the column rendered the raw ISO-8601
+    string verbatim -- exactly the premise that task exists to remove. The
+    column now renders `humane_timestamp` of the same value; asserted here
+    by calling that formatter directly (not by pinning one of its outputs),
+    since which of "Today HH:MM"/"Jul 28 09:00"/"2025-12-31" it produces for
+    a fixed stored value depends on the machine's local zone and the date the
+    suite happens to run -- exactly why `humane_time.py` has its own,
+    clock-controlled unit tests (`test_humane_time.py`) covering every branch.
     """
     from tldw_chatbook.Subscriptions.watchlist_normalizers import (
         normalize_local_subscription_row,
     )
+    from tldw_chatbook.UI.Watchlists_Modules.humane_time import humane_timestamp
 
     source = normalize_local_subscription_row(
         {
@@ -282,8 +298,9 @@ def test_source_row_cells_render_the_normalizer_status_summary():
     assert "error" in cells[2].plain.lower(), (
         f"Status column rendered {cells[2].plain!r} for an errored source"
     )
-    assert cells[3].plain == "2026-07-28T09:00:00+00:00", (
-        f"Last scraped column rendered {cells[3].plain!r}"
+    assert cells[3].plain == humane_timestamp("2026-07-28T09:00:00+00:00"), (
+        f"Last scraped column rendered {cells[3].plain!r}, not through "
+        "humane_timestamp"
     )
 
 

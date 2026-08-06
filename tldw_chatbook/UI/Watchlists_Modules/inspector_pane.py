@@ -245,6 +245,18 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
     #: wire path for membership edits, while this button wrote a local
     #: `watchlist_sources` row and reported success.
     write_disabled_reason = reactive[str | None](None, recompose=True)
+    #: TASK-2309. Screen-seeded like the four reactives above (mirrors
+    #: `WatchlistsCollectionsScreen._checks_in_flight`, the same way
+    #: `SourcesPane.busy_source_ids` does): the ids of sources with a check
+    #: currently in flight, so this pane's own "Check now" -- a second
+    #: activation site for the identical write -- can show the same busy
+    #: state rather than inviting a confused second click while the Sources
+    #: pane already shows one greyed out. `recompose=True`, unlike
+    #: `SourcesPane`'s copy: this pane already fully recomposes on every
+    #: selection/scope change, a check starting or ending is rare next to
+    #: that, and there is no live table selection or scroll position here for
+    #: a recompose to disturb.
+    busy_source_ids = reactive[frozenset[str]](frozenset(), recompose=True)
 
     #: TASK-1362 (spec §2). The source types whose checks run through
     #: `URLMonitor.check_url` -- the only ones that extract text from HTML and
@@ -517,7 +529,27 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
         with Vertical(id="inspector-actions"):
             if deepest.kind == "source":
                 yield Button("Preview", id="inspector-preview-button", variant="primary")
-                yield Button("Check now", id="inspector-check-now-button", variant="primary")
+                # TASK-2309: this is a SECOND activation site for the same
+                # `CheckNowRequested` write the Sources pane's own button
+                # posts, so it must show the same busy state the screen is
+                # tracking -- otherwise this copy stays enabled while the
+                # Sources pane shows one greyed out, and a click here queues
+                # a duplicate check the debounce in
+                # `handle_check_now_requested` exists to prevent from ever
+                # looking silent. `deepest.entity` is `None` for a scope-only
+                # "browsing this source" level with nothing selected below
+                # it -- such a level was never sent to `check_now` either, so
+                # it cannot be in `busy_source_ids`, and this reads False.
+                check_now_busy = (
+                    deepest.entity is not None
+                    and str(deepest.entity.get("id") or "") in self.busy_source_ids
+                )
+                yield Button(
+                    "Checking..." if check_now_busy else "Check now",
+                    id="inspector-check-now-button",
+                    variant="primary",
+                    disabled=check_now_busy,
+                )
                 # task-2050 (AC#1/#2): rendered ONLY for a paused local
                 # subscription -- `deepest.entity` can be None here (a
                 # scope-only "browsing this source" level with nothing
