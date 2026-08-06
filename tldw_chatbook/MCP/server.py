@@ -660,30 +660,25 @@ class TldwMCPServer:
         ``arguments: dict`` signature; the provider's JSON schema travels
         on the registration for introspection/future SDK use.
         """
-        import os
-
-        from ..config import coerce_bool_setting, get_cli_setting, get_user_data_dir
+        from ..config import get_user_data_dir
         from .local_server_tools import (
             _local_agent_tool_registrations,
             _parameter_summary,
             build_server_local_provider,
+            local_tools_exposure_enabled,
+            resolve_server_workspace_root,
         )
         from .permission_store import MCPPermissionStore
 
-        # Coerce at the consumer: get_cli_setting reads the RAW TOML tree, so
-        # a quoted "false" would otherwise be truthy and fail this
-        # security-relevant gate OPEN (quality review, phase-4 Task 2).
-        if not coerce_bool_setting(
-            get_cli_setting("mcp", "expose_local_tools", False), False
-        ):
+        # The gate lives in local_server_tools (server.py never calls
+        # get_cli_setting directly — an AST test pins that).
+        if not local_tools_exposure_enabled():
             return
 
         # Guard the whole flag-on body: a failure here must never cost the
         # operator the built-in tools — log and start without local tools.
         try:
-            workspace_root = Path(
-                get_cli_setting("console", "workspace_root", "") or os.getcwd()
-            ).resolve()
+            workspace_root = resolve_server_workspace_root()
             store = MCPPermissionStore(
                 get_user_data_dir() / "mcp_permissions.json"
             )

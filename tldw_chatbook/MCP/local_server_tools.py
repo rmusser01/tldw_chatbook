@@ -170,3 +170,31 @@ def _local_agent_tool_registrations(
             )
         )
     return registrations
+
+
+def local_tools_exposure_enabled() -> bool:
+    """The `[mcp] expose_local_tools` gate, coerced.
+
+    Lives here (not in server.py) because Tests/MCP pin server.py to never
+    call ``get_cli_setting`` directly. Coercion at the consumer matters:
+    ``get_cli_setting`` reads the raw TOML tree, so a quoted ``"false"``
+    would otherwise be truthy and fail this security-relevant gate OPEN.
+    """
+    from ..config import coerce_bool_setting, get_cli_setting
+
+    return coerce_bool_setting(
+        get_cli_setting("mcp", "expose_local_tools", False), False
+    )
+
+
+def resolve_server_workspace_root() -> Path:
+    """The workspace root for external MCP serving (Console's rule).
+
+    ``[console] workspace_root`` with ``~`` expanded, else the process cwd.
+    """
+    import os
+
+    from ..config import get_cli_setting
+
+    raw = (get_cli_setting("console", "workspace_root", "") or "").strip()
+    return Path(raw).expanduser().resolve() if raw else Path(os.getcwd()).resolve()

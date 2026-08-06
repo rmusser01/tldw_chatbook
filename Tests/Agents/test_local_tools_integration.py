@@ -238,9 +238,25 @@ BUILTIN_TOOL_NAMES = {"calculator", "get_current_datetime"}
 
 
 def fs_only_specs(workspace):
-    """The 6 fs_* specs: 6 local + 2 builtin = 8 entries, exactly at the
+    """The original 6 fs_* specs (fs_patch and later tools deliberately
+    excluded): 6 local + 2 builtin = 8 entries, comfortably under the
     direct-disclosure threshold."""
     return [s for s in _default_specs(workspace) if s.name in FS_TOOL_NAMES]
+
+
+def _padding_specs(count: int):
+    """Inert local specs used to pad a registry past the disclosure threshold."""
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolSpec
+
+    return [
+        LocalToolSpec(
+            name=f"fs_pad_{i}",
+            description=f"Inert padding spec {i} (test only).",
+            parameters={"type": "object", "properties": {}},
+            handler=lambda args: "noop",
+        )
+        for i in range(count)
+    ]
 
 
 def production_registry(workspace, extra_specs=(), specs=None):
@@ -256,22 +272,33 @@ def production_registry(workspace, extra_specs=(), specs=None):
     return registry
 
 
-def test_direct_disclosure_boundary_at_eight_entries(workspace):
-    """6 fs_* local (fs_patch deliberately excluded to stay at the boundary)
-    + 2 builtin = 8 entries is still direct-disclosed; the full default
-    catalog (14 local + 2 builtin = 16) crosses into find/load. Documents the
-    boundary via the runtime's own API (initial_disclosure, the same call
-    AgentService.run_turn makes)."""
+def test_direct_disclosure_boundary(workspace):
+    """At exactly DIRECT_DISCLOSE_THRESHOLD entries the registry
+    direct-discloses; one more flips it to find/load. Threshold-relative
+    (dev raised it 8 -> 16 once already) and pinned via the runtime's own
+    API (initial_disclosure, the same call AgentService.run_turn makes)."""
+    # 6 fs + 2 builtin = 8 entries: under any threshold >= 8, direct-disclosed.
     registry = production_registry(workspace, specs=fs_only_specs(workspace))
-    assert len(registry.list_catalog()) == DIRECT_DISCLOSE_THRESHOLD == 8
+    assert len(registry.list_catalog()) == 8 <= DIRECT_DISCLOSE_THRESHOLD
     schemas, offer_find_load = initial_disclosure(registry, RunBudget())
     assert offer_find_load is False
     assert {s.name for s in schemas} == FS_TOOL_NAMES | BUILTIN_TOOL_NAMES
 
-    full = production_registry(workspace)
-    assert len(full.list_catalog()) == DIRECT_DISCLOSE_THRESHOLD + 8
-    assert {e.name for e in full.list_catalog()} == LOCAL_TOOL_NAMES | BUILTIN_TOOL_NAMES
-    schemas, offer_find_load = initial_disclosure(full, RunBudget())
+    # Padded to exactly the threshold: still direct.
+    pad = DIRECT_DISCLOSE_THRESHOLD - 8
+    at_boundary = production_registry(
+        workspace, specs=fs_only_specs(workspace), extra_specs=_padding_specs(pad)
+    )
+    assert len(at_boundary.list_catalog()) == DIRECT_DISCLOSE_THRESHOLD
+    schemas, offer_find_load = initial_disclosure(at_boundary, RunBudget())
+    assert offer_find_load is False
+
+    # One past: find/load.
+    past = production_registry(
+        workspace, specs=fs_only_specs(workspace), extra_specs=_padding_specs(pad + 1)
+    )
+    assert len(past.list_catalog()) == DIRECT_DISCLOSE_THRESHOLD + 1
+    schemas, offer_find_load = initial_disclosure(past, RunBudget())
     assert offer_find_load is True
     assert schemas == []
 
@@ -295,9 +322,10 @@ def test_find_load_path_executes_fs_edit_after_approve_once(db, workspace):
         {"fs_edit": "approve_once"},
         approval_calls,
         # The fence loop dispatches find_tools/load_tools by name even when
-        # they aren't offered; the phase-3a default catalog (10 entries)
-        # crosses the threshold on its own, making the offer real (the
-        # boundary test above pins the offering).
+        # they aren't offered; the one-spec pad pushes the catalog past the
+        # disclosure threshold so the offer is real (the boundary test above
+        # pins the offering).
+        extra_specs=_padding_specs(1),
     )
     config = AgentConfig(
         model="test-model",
@@ -428,6 +456,9 @@ def test_find_load_path_executes_web_fetch_after_approve_once(db, workspace):
         {"web_fetch": "approve_once"},
         approval_calls,
         specs=specs,
+        # Pad one past the disclosure threshold so find/load is genuinely
+        # the live mode (default catalog sits exactly at it).
+        extra_specs=_padding_specs(1),
     )
     config = AgentConfig(
         model="test-model",
@@ -611,6 +642,9 @@ def test_find_load_path_executes_git_log_after_approve_once(db, workspace):
         {"git_log": "approve_once"},
         approval_calls,
         specs=specs,
+        # Pad one past the disclosure threshold so find/load is genuinely
+        # the live mode (default catalog sits exactly at it).
+        extra_specs=_padding_specs(1),
     )
     config = AgentConfig(
         model="test-model",
