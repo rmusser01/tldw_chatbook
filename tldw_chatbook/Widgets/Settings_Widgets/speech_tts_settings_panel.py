@@ -141,9 +141,13 @@ def _realtime_provider_options(configured: str) -> list[tuple[str, str]]:
         it is not among them.
     """
     value = str(configured or "").strip()
-    if not value or any(value == option for _label, option in _REALTIME_PROVIDER_OPTIONS):
+    if not value or any(
+        value == option for _label, option in _REALTIME_PROVIDER_OPTIONS
+    ):
         return list(_REALTIME_PROVIDER_OPTIONS)
     return [*_REALTIME_PROVIDER_OPTIONS, (f"{value} (not supported)", value)]
+
+
 _REALTIME_TURN_DETECTION_OPTIONS = [
     ("Semantic (model decides when you finished)", "semantic_vad"),
     ("Server VAD (silence-gated)", "server_vad"),
@@ -478,8 +482,8 @@ class SpeechTTSSettingsPanel(Vertical):
         self._profile_choices: list[tuple[str, str]] | None = (
             list(profiles) if profiles is not None else None
         )
-        self._profile_choices_unavailable: bool = (
-            profiles is None and bool(profiles_unavailable)
+        self._profile_choices_unavailable: bool = profiles is None and bool(
+            profiles_unavailable
         )
         self.result_text = "No global Speech & TTS changes saved this session."
         self._syncing = False
@@ -1482,9 +1486,7 @@ class SpeechTTSSettingsPanel(Vertical):
         conventions, not `GlobalSpeechTTSState`.
         """
         draft = self._realtime_draft
-        with Vertical(
-            id="settings-speech-realtime", classes="settings-focus-card"
-        ):
+        with Vertical(id="settings-speech-realtime", classes="settings-focus-card"):
             yield Static("Realtime engine", classes="destination-section")
             yield Static(
                 "Optional low-latency voice engine for the Console's hands-free "
@@ -1521,9 +1523,7 @@ class SpeechTTSSettingsPanel(Vertical):
                     value=draft.model,
                     id="settings-speech-realtime-model",
                     placeholder=DEFAULT_REALTIME_MODEL,
-                    classes=(
-                        "settings-compact-input settings-speech-draft-field"
-                    ),
+                    classes=("settings-compact-input settings-speech-draft-field"),
                 ),
                 error=self._error("realtime", "model"),
             )
@@ -1533,9 +1533,7 @@ class SpeechTTSSettingsPanel(Vertical):
                     value=draft.voice,
                     id="settings-speech-realtime-voice",
                     placeholder="Provider default",
-                    classes=(
-                        "settings-compact-input settings-speech-draft-field"
-                    ),
+                    classes=("settings-compact-input settings-speech-draft-field"),
                 ),
                 error=self._error("realtime", "voice"),
             )
@@ -1545,9 +1543,7 @@ class SpeechTTSSettingsPanel(Vertical):
                     value=draft.idle_timeout_minutes,
                     id="settings-speech-realtime-idle-timeout-minutes",
                     placeholder=str(DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES),
-                    classes=(
-                        "settings-compact-input settings-speech-draft-field"
-                    ),
+                    classes=("settings-compact-input settings-speech-draft-field"),
                 ),
                 error=self._error("realtime", "idle_timeout_minutes"),
             )
@@ -1581,9 +1577,7 @@ class SpeechTTSSettingsPanel(Vertical):
                     id="settings-speech-realtime-vad-threshold",
                     placeholder="Provider default",
                     disabled=draft.turn_detection != "server_vad",
-                    classes=(
-                        "settings-compact-input settings-speech-draft-field"
-                    ),
+                    classes=("settings-compact-input settings-speech-draft-field"),
                 ),
                 error=self._error("realtime", "vad_threshold"),
             )
@@ -1594,9 +1588,7 @@ class SpeechTTSSettingsPanel(Vertical):
                     id="settings-speech-realtime-vad-silence-ms",
                     placeholder="Provider default",
                     disabled=draft.turn_detection != "server_vad",
-                    classes=(
-                        "settings-compact-input settings-speech-draft-field"
-                    ),
+                    classes=("settings-compact-input settings-speech-draft-field"),
                 ),
                 error=self._error("realtime", "vad_silence_ms"),
             )
@@ -1978,9 +1970,7 @@ class SpeechTTSSettingsPanel(Vertical):
     def _collect_realtime_visible_state(self) -> None:
         """Copy the Realtime block's mounted widget values into its draft."""
         try:
-            enabled_widget = self.query_one(
-                "#settings-speech-realtime-enabled", Switch
-            )
+            enabled_widget = self.query_one("#settings-speech-realtime-enabled", Switch)
             provider_widget = self.query_one(
                 "#settings-speech-realtime-provider", Select
             )
@@ -2322,7 +2312,10 @@ class SpeechTTSSettingsPanel(Vertical):
         )
         dictation_section = {"handsfree_engine": self._realtime_draft.handsfree_engine}
         return _RealtimeSavePayload(
-            section_values={"realtime": realtime_section, "dictation": dictation_section},
+            section_values={
+                "realtime": realtime_section,
+                "dictation": dictation_section,
+            },
             delete_keys=delete_keys,
         )
 

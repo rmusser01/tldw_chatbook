@@ -661,9 +661,7 @@ class TTSEventHandler:
 
         message_id = f"handsfree-{uuid4().hex}"
         try:
-            prepared_text = await self._prepare_tts_text(
-                text, message_id, quiet=quiet
-            )
+            prepared_text = await self._prepare_tts_text(text, message_id, quiet=quiet)
             if prepared_text is None:
                 return
             generation_task = asyncio.create_task(
@@ -856,8 +854,7 @@ class TTSEventHandler:
                         raise
                     except Exception as error:
                         logger.warning(
-                            "TTS profile service load failed "
-                            "(exception_category={})",
+                            "TTS profile service load failed (exception_category={})",
                             type(error).__name__,
                         )
                 profile_service_loaded = True
@@ -1166,9 +1163,7 @@ class TTSEventHandler:
                         model_mode="exact",
                         model_id=exact_request.model_id,
                         voice_mode=(
-                            "server_default"
-                            if exact_request.voice is None
-                            else "exact"
+                            "server_default" if exact_request.voice is None else "exact"
                         ),
                         voice_id=exact_request.voice,
                         response_format=exact_request.response_format,
@@ -1176,33 +1171,35 @@ class TTSEventHandler:
                         provider_options=exact_request.options,
                     )
                     if resolution.source == "assigned":
-                        response, effective_selection = (
-                            await service.synthesize_effective(
-                                text=text,
-                                character_profile=TTSCharacterProfileSelection(
-                                    selection=exact_selection,
-                                    repository_generation=(
-                                        resolution.repository_generation
-                                    ),
-                                    profile_revision=resolution.profile_revision,
+                        (
+                            response,
+                            effective_selection,
+                        ) = await service.synthesize_effective(
+                            text=text,
+                            character_profile=TTSCharacterProfileSelection(
+                                selection=exact_selection,
+                                repository_generation=(
+                                    resolution.repository_generation
                                 ),
-                                progress_sink=progress_sink,
-                            )
+                                profile_revision=resolution.profile_revision,
+                            ),
+                            progress_sink=progress_sink,
                         )
                     else:
                         assert resolution.source == "default_profile"
-                        response, effective_selection = (
-                            await service.synthesize_effective(
-                                text=text,
-                                default_profile=TTSDefaultProfileSelection(
-                                    selection=exact_selection,
-                                    repository_generation=(
-                                        resolution.repository_generation
-                                    ),
-                                    profile_revision=resolution.profile_revision,
+                        (
+                            response,
+                            effective_selection,
+                        ) = await service.synthesize_effective(
+                            text=text,
+                            default_profile=TTSDefaultProfileSelection(
+                                selection=exact_selection,
+                                repository_generation=(
+                                    resolution.repository_generation
                                 ),
-                                progress_sink=progress_sink,
-                            )
+                                profile_revision=resolution.profile_revision,
+                            ),
+                            progress_sink=progress_sink,
                         )
                     requested_selection = TTSRequestedSelectionSnapshot(
                         provider_id=effective_selection.provider_id,

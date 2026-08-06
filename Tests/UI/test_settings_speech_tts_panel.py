@@ -2110,7 +2110,9 @@ async def test_realtime_semantic_mode_deletes_the_server_vad_keys(
     """Switching back to semantic must not leave stale server_vad numbers
     in config for a later reader to hand the provider."""
     monkeypatch.setattr(
-        speech_tts_settings_panel_module, "_read_realtime_turn_detection", lambda: "server_vad"
+        speech_tts_settings_panel_module,
+        "_read_realtime_turn_detection",
+        lambda: "server_vad",
     )
     calls: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
@@ -2247,7 +2249,9 @@ async def test_realtime_toggle_and_save_writes_exact_keys_through_shared_helper(
         panel = app.query_one("#panel", SpeechTTSSettingsPanel)
         await _settle(pilot)
         app.query_one("#settings-speech-realtime-enabled", Switch).value = True
-        app.query_one("#settings-speech-realtime-model", Input).value = "gpt-realtime-mini"
+        app.query_one(
+            "#settings-speech-realtime-model", Input
+        ).value = "gpt-realtime-mini"
         app.query_one("#settings-speech-realtime-voice", Input).value = "marin"
         app.query_one(
             "#settings-speech-realtime-idle-timeout-minutes", Input
@@ -2396,9 +2400,7 @@ async def test_realtime_save_failure_surfaces_error_and_keeps_draft_dirty(
         await pilot.pause()
 
         assert panel.has_unsaved_changes() is True
-        result = str(
-            app.query_one("#settings-speech-save-result", Static).renderable
-        )
+        result = str(app.query_one("#settings-speech-save-result", Static).renderable)
         assert "not saved" in result.lower()
 
 
@@ -2417,9 +2419,7 @@ async def test_realtime_block_dirty_state_and_revert() -> None:
         await panel.revert_to_saved()
         await pilot.pause()
 
-        assert (
-            app.query_one("#settings-speech-realtime-enabled", Switch).value is False
-        )
+        assert app.query_one("#settings-speech-realtime-enabled", Switch).value is False
         assert panel.has_unsaved_changes() is False
 
 

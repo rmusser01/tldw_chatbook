@@ -49,7 +49,7 @@ label or via the command palette (**Ctrl+P**).
 
 | Guide | What it covers |
 |-------|----------------|
-| [Using OpenAI-compatible TTS servers](openai-compatible-tts.md) | Pointing text-to-speech at your own server (e.g. a local, keyless engine like pocket-tts) via Settings ▸ Speech & TTS. |
+| [Using OpenAI-compatible TTS servers](openai-compatible-tts.md) | Pointing text-to-speech at your own server (e.g. a local, keyless engine like pocket-tts) via Settings ▸ Speech & TTS; also covers the app-wide default voice profile. |
 
 **Note:** The digit shown before each nav label is that screen's hotkey
 digit: press **Ctrl+digit** (Ctrl+1 … Ctrl+9, Ctrl+0) to switch to it from

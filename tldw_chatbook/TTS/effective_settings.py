@@ -261,7 +261,10 @@ class TTSEffectiveSelectionRevisions:
         for label, value in (
             ("Studio TTS preference revision", self.studio_preferences),
             ("Character TTS repository generation", self.character_repository),
-            ("Default-profile TTS repository generation", self.default_profile_repository),
+            (
+                "Default-profile TTS repository generation",
+                self.default_profile_repository,
+            ),
             ("TTS provider catalog revision", self.provider_catalog),
         ):
             if value is not None:

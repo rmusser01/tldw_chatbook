@@ -54,7 +54,9 @@ def _profile(
 
 
 class _FakeDefaultProfileService:
-    def __init__(self, *, result: object = None, error: BaseException | None = None) -> None:
+    def __init__(
+        self, *, result: object = None, error: BaseException | None = None
+    ) -> None:
         self.result = result
         self.error = error
         self.calls: list[UUID] = []

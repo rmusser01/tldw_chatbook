@@ -157,16 +157,12 @@ async def resolve_default_profile(
         _log_default_profile_resolution_failure(
             "default_profile_store_unavailable", error
         )
-        raise CharacterTTSResolutionError(
-            "default_profile_store_unavailable"
-        ) from None
+        raise CharacterTTSResolutionError("default_profile_store_unavailable") from None
     except Exception as error:
         _log_default_profile_resolution_failure(
             "default_profile_store_unavailable", error
         )
-        raise CharacterTTSResolutionError(
-            "default_profile_store_unavailable"
-        ) from None
+        raise CharacterTTSResolutionError("default_profile_store_unavailable") from None
 
     try:
         if type(loaded) is not LoadedTTSProfile:
@@ -194,9 +190,7 @@ async def resolve_default_profile(
         _log_default_profile_resolution_failure(
             "default_profile_store_unavailable", error
         )
-        raise CharacterTTSResolutionError(
-            "default_profile_store_unavailable"
-        ) from None
+        raise CharacterTTSResolutionError("default_profile_store_unavailable") from None
 
 
 __all__ = ["resolve_default_profile"]

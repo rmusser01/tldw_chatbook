@@ -2569,7 +2569,6 @@ class SettingsScreen(BaseAppScreen):
     def _domain_category_contracts(self) -> tuple[SettingsDomainCategoryContract, ...]:
         return SETTINGS_DOMAIN_CATEGORY_CONTRACTS
 
-
     def _domain_contract_by_category(
         self,
     ) -> Mapping[SettingsCategoryId, SettingsDomainCategoryContract]:
@@ -4234,7 +4233,6 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return
         button.label = self._category_button_label(summary)
-
 
     def _active_category_id(self) -> SettingsCategoryId:
         return SettingsCategoryId(self.active_category)
@@ -8816,7 +8814,10 @@ class SettingsScreen(BaseAppScreen):
                     "Saved as",
                     f"{provider_config_prefix}.model_defaults.<model>.streaming",
                 ),
-                ("Validation", "choose On or Off; Inherit default keeps the inherited default"),
+                (
+                    "Validation",
+                    "choose On or Off; Inherit default keeps the inherited default",
+                ),
             )
         if field_id == "settings-model-catalog-stale-hours":
             return (
@@ -9167,9 +9168,7 @@ class SettingsScreen(BaseAppScreen):
             group_heading.display = bool(visible_categories)
             yield group_heading
             group_expanded = (
-                not is_domain_group
-                or search_active
-                or self._domain_group_is_expanded()
+                not is_domain_group or search_active or self._domain_group_is_expanded()
             )
             for category_id in category_ids:
                 summary = summaries_by_id[category_id]
@@ -9534,9 +9533,7 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-model-catalog-group",
                 classes="settings-instant-apply-group",
             ):
-                yield Static(
-                    "Automatic refresh", classes="destination-section"
-                )
+                yield Static("Automatic refresh", classes="destination-section")
                 yield Static(
                     INSTANT_APPLY_BEHAVIOR_COPY,
                     id="settings-model-catalog-instant-hint",
@@ -9548,7 +9545,9 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-model-catalog-auto-refresh",
                 )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Refresh after (hours):", classes="settings-status-row")
+                    yield Static(
+                        "Refresh after (hours):", classes="settings-status-row"
+                    )
                     yield Input(
                         f"{model_catalog_settings.stale_after_hours:g}",
                         id="settings-model-catalog-stale-hours",
@@ -9569,7 +9568,8 @@ class SettingsScreen(BaseAppScreen):
                         )
                         yield Checkbox(
                             "save to config",
-                            value=_provider_key in model_catalog_settings.write_to_config,
+                            value=_provider_key
+                            in model_catalog_settings.write_to_config,
                             id=f"settings-mc-write-{_pid}",
                             tooltip=(
                                 "Append newly discovered models to config.toml — "
@@ -10255,7 +10255,9 @@ class SettingsScreen(BaseAppScreen):
             f"{update.get('failed', 0)} failed"
         )
 
-    def _apply_library_rag_backfill_progress(self, update: Mapping[str, object]) -> None:
+    def _apply_library_rag_backfill_progress(
+        self, update: Mapping[str, object]
+    ) -> None:
         """Imperatively update the index-status Static with a live per-batch
         backfill progress line -- called off-thread (via ``call_from_thread``)
         from ``_rag_backfill_worker``'s ``progress_callback``.
@@ -11502,9 +11504,7 @@ class SettingsScreen(BaseAppScreen):
         so the row states the reason instead of offering a dead toggle.
         Copy stays monochrome per the pane's conventions.
         """
-        yield Static(
-            "Change review (post-run diffs)", classes="destination-section"
-        )
+        yield Static("Change review (post-run diffs)", classes="destination-section")
         from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 
         if not ShadowRepoService().available:
@@ -11522,8 +11522,7 @@ class SettingsScreen(BaseAppScreen):
             # Qodo #1264: the per-workspace toggle is moot under the
             # global kill switch — say so instead of claiming tracking.
             yield Static(
-                "Change review is disabled globally "
-                "([change_review] enabled = false).",
+                "Change review is disabled globally ([change_review] enabled = false).",
                 id="settings-workspace-change-review-global-off",
                 classes="settings-detail-row",
             )
@@ -12633,7 +12632,8 @@ class SettingsScreen(BaseAppScreen):
                     else VerticalScroll
                 )
                 detail_pane = Vertical(
-                    id="settings-detail-pane", classes="destination-workbench-pane" + pane_class_suffix
+                    id="settings-detail-pane",
+                    classes="destination-workbench-pane" + pane_class_suffix,
                 )
                 # Inline height: same bundle-collapse guard as the impact
                 # pane below.
@@ -12653,7 +12653,8 @@ class SettingsScreen(BaseAppScreen):
                 yield self._column_divider("settings-detail-impact-divider")
                 impact_pane = Vertical(
                     id="settings-impact-pane",
-                    classes="destination-workbench-pane ds-inspector" + pane_class_suffix,
+                    classes="destination-workbench-pane ds-inspector"
+                    + pane_class_suffix,
                 )
                 # Explicit height: under the real CSS bundle the pane class
                 # sizes a scroll container, not a plain Vertical -- without
@@ -13745,9 +13746,7 @@ class SettingsScreen(BaseAppScreen):
         )
 
     @on(Collapsible.Toggled, "#settings-overview-sync-details")
-    def handle_overview_sync_details_toggled(
-        self, event: Collapsible.Toggled
-    ) -> None:
+    def handle_overview_sync_details_toggled(self, event: Collapsible.Toggled) -> None:
         # task-1369 (review): persist disclosure state across recomposes.
         self._overview_sync_details_collapsed = event.collapsible.collapsed
 
@@ -14111,9 +14110,7 @@ class SettingsScreen(BaseAppScreen):
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
     @on(Checkbox.Changed, "#settings-console-default-streaming")
-    def handle_console_default_streaming_changed(
-        self, event: Checkbox.Changed
-    ) -> None:
+    def handle_console_default_streaming_changed(self, event: Checkbox.Changed) -> None:
         event.stop()
         if self._syncing_console_defaults:
             return
@@ -16898,10 +16895,8 @@ class SettingsScreen(BaseAppScreen):
                     pass
             for selector, (enum_key, value) in select_values.items():
                 try:
-                    self.query_one(selector, Select).value = (
-                        self._select_option_value(
-                            value, CLOSED_ENUM_SELECT_OPTIONS[enum_key]
-                        )
+                    self.query_one(selector, Select).value = self._select_option_value(
+                        value, CLOSED_ENUM_SELECT_OPTIONS[enum_key]
                     )
                 except QueryError:
                     pass

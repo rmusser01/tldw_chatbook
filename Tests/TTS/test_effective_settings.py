@@ -1082,9 +1082,14 @@ async def test_default_profile_wins_over_global_and_loses_to_character() -> None
     )
     default_profile = TTSDefaultProfileSelection(
         selection=TTSSelectionOverrides(
-            provider_id="audio_cpp", model_mode="exact", model_id="default-model",
-            voice_mode="exact", voice_id="default-voice", response_format="wav",
-            speed=1.0, provider_options={},
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="default-model",
+            voice_mode="exact",
+            voice_id="default-voice",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
         ),
         repository_generation=4,
         profile_revision=2,
@@ -1112,19 +1117,31 @@ async def test_character_profile_outranks_default_profile() -> None:
     )
     character = TTSCharacterProfileSelection(
         selection=TTSSelectionOverrides(
-            provider_id="audio_cpp", model_mode="exact", model_id="character-model",
-            voice_mode="exact", voice_id="character-voice", response_format="wav",
-            speed=1.0, provider_options={},
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="character-model",
+            voice_mode="exact",
+            voice_id="character-voice",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
         ),
-        repository_generation=9, profile_revision=6,
+        repository_generation=9,
+        profile_revision=6,
     )
     default_profile = TTSDefaultProfileSelection(
         selection=TTSSelectionOverrides(
-            provider_id="audio_cpp", model_mode="exact", model_id="default-model",
-            voice_mode="exact", voice_id="default-voice", response_format="wav",
-            speed=1.0, provider_options={},
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id="default-model",
+            voice_mode="exact",
+            voice_id="default-voice",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
         ),
-        repository_generation=4, profile_revision=2,
+        repository_generation=4,
+        profile_revision=2,
     )
     resolved = await TTSEffectiveSettingsResolver().resolve_non_studio(
         character_profile=character,
@@ -1202,8 +1219,12 @@ async def test_incomplete_default_profile_blocks_instead_of_using_global_values(
 def test_default_profile_revisions_must_travel_together() -> None:
     with pytest.raises(ValueError):
         TTSEffectiveSelectionRevisions(
-            global_preferences=1, studio_preferences=None,
-            character_repository=None, character_profile=None,
-            default_profile_repository=4, default_profile_revision=None,
-            provider_configuration=1, provider_catalog=1,
+            global_preferences=1,
+            studio_preferences=None,
+            character_repository=None,
+            character_profile=None,
+            default_profile_repository=4,
+            default_profile_revision=None,
+            provider_configuration=1,
+            provider_catalog=1,
         )

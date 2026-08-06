@@ -359,9 +359,7 @@ async def test_no_character_voice_with_loadable_default_profile_uses_it() -> Non
     assert resolution.profile_id == _DEFAULT_PROFILE_ID
     assert resolution.profile_revision == 2
     assert resolution.repository_generation == 3
-    assert handler.generated == [
-        ("Exact Console response.", snapshot.message_id, None)
-    ]
+    assert handler.generated == [("Exact Console response.", snapshot.message_id, None)]
 
 
 @pytest.mark.asyncio
@@ -460,9 +458,7 @@ async def test_no_default_profile_configured_leaves_global_axes_unchanged() -> N
     await asyncio.sleep(0)
     await asyncio.sleep(0)
 
-    assert handler.generated == [
-        ("Exact Console response.", snapshot.message_id, None)
-    ]
+    assert handler.generated == [("Exact Console response.", snapshot.message_id, None)]
     assert handler.resolutions[0] is not None
     assert handler.resolutions[0].source == "global"
 

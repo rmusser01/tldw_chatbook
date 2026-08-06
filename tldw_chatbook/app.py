@@ -29,10 +29,7 @@ import multiprocessing as _early_multiprocessing
 # ``__mp_main__`` is the name spawn gives this module while re-importing it
 # in a child; ``parent_process()`` alone is NOT yet populated at that point
 # (live-verified: the flood survived a parent_process()-only guard).
-if (
-    __name__ == "__mp_main__"
-    or _early_multiprocessing.parent_process() is not None
-):
+if __name__ == "__mp_main__" or _early_multiprocessing.parent_process() is not None:
     import logging as _early_logging
     import warnings as _early_warnings
 
@@ -1174,9 +1171,7 @@ class QuickActionsProvider(Provider):
                     {LIBRARY_NAV_CONTEXT_NOTES_CREATE: True},
                 )
             elif action_id == "search_all":
-                _navigate_via_screen(
-                    self.app, TAB_SEARCH, "Opened Library Search/RAG"
-                )
+                _navigate_via_screen(self.app, TAB_SEARCH, "Opened Library Search/RAG")
             elif action_id == "import_media":
                 _navigate_via_screen(
                     self.app, TAB_INGEST, "Opened Import/Export for media import"
@@ -2360,10 +2355,10 @@ class LibraryIngestQueueMixin:
             )
             options["transcription_model_dir"] = selected_model_dir or None
             selected_model = route.model
-            if (
-                selected_model is None
-                and route.requested_provider not in {"default", "transcribe-cpp"}
-            ):
+            if selected_model is None and route.requested_provider not in {
+                "default",
+                "transcribe-cpp",
+            }:
                 selected_model = flat_opts.get("model") or flat_opts.get(
                     "transcription_model"
                 )
@@ -2668,9 +2663,7 @@ class LibraryIngestQueueMixin:
                     error=error_text or "Library ingest parsing failed.",
                     permanent=bool(result.get("permanent", False)),
                     error_detail=error_detail,
-                    stt_failure_provenance=result.get(
-                        "stt_failure_provenance"
-                    ),
+                    stt_failure_provenance=result.get("stt_failure_provenance"),
                 )
         self._top_up_ingest_parse_pool()
 
@@ -3472,9 +3465,7 @@ class LibraryIngestQueueMixin:
                         # (task-2016) The basename, not the absolute path:
                         # the row line already identifies the file and the
                         # details surface carries the full path.
-                        source_name = (
-                            Path(job.source_path).name or job.source_path
-                        )
+                        source_name = Path(job.source_path).name or job.source_path
                         progress = {"message": f"Ingested {source_name}"}
                     self.call_from_thread(
                         self.library_ingest_jobs.mark_done,
@@ -3549,38 +3540,42 @@ class TldwCli(
         f"ctrl+{digit}" for digit in "1234567890"
     )
     SHELL_DESTINATION_FKEYS: tuple[str, ...] = ("f7", "f8", "f9")
-    BINDINGS = [
-        Binding("ctrl+q", "quit", "Quit App", show=True),
-        Binding("ctrl+p", "command_palette", "Palette Menu", show=True),
-        Binding("f1", "show_workbench_help", "Help", show=True),
-        Binding("f6", "focus_next_workbench_pane", "Next Pane", show=True),
-    ] + [
-        Binding(
-            key,
-            f"shell_destination({index})",
-            f"Go to {destination.accessible_label}",
-            show=False,
-        )
-        for index, (key, destination) in enumerate(
-            zip(SHELL_DESTINATION_HOTKEYS, SHELL_DESTINATION_ORDER)
-        )
-    ] + [
-        # 10 = len of the ctrl+digit layer ("1234567890"); a class-body
-        # comprehension cannot reference class-level names, so this stays a
-        # literal.
-        Binding(
-            key,
-            f"shell_destination({10 + fkey_index})",
-            f"Go to {destination.accessible_label}",
-            show=True,
-        )
-        for fkey_index, (key, destination) in enumerate(
-            zip(
-                SHELL_DESTINATION_FKEYS,
-                SHELL_DESTINATION_ORDER[len("1234567890"):],
+    BINDINGS = (
+        [
+            Binding("ctrl+q", "quit", "Quit App", show=True),
+            Binding("ctrl+p", "command_palette", "Palette Menu", show=True),
+            Binding("f1", "show_workbench_help", "Help", show=True),
+            Binding("f6", "focus_next_workbench_pane", "Next Pane", show=True),
+        ]
+        + [
+            Binding(
+                key,
+                f"shell_destination({index})",
+                f"Go to {destination.accessible_label}",
+                show=False,
             )
-        )
-    ]
+            for index, (key, destination) in enumerate(
+                zip(SHELL_DESTINATION_HOTKEYS, SHELL_DESTINATION_ORDER)
+            )
+        ]
+        + [
+            # 10 = len of the ctrl+digit layer ("1234567890"); a class-body
+            # comprehension cannot reference class-level names, so this stays a
+            # literal.
+            Binding(
+                key,
+                f"shell_destination({10 + fkey_index})",
+                f"Go to {destination.accessible_label}",
+                show=True,
+            )
+            for fkey_index, (key, destination) in enumerate(
+                zip(
+                    SHELL_DESTINATION_FKEYS,
+                    SHELL_DESTINATION_ORDER[len("1234567890") :],
+                )
+            )
+        ]
+    )
     COMMANDS = App.COMMANDS | {
         ThemeProvider,
         TabNavigationProvider,
@@ -4991,9 +4986,7 @@ class TldwCli(
             "scheduling", "briefing_schedules_enabled", True
         )
         briefing_projection = (
-            BriefingProjection(subscriptions_db)
-            if briefing_schedules_enabled
-            else None
+            BriefingProjection(subscriptions_db) if briefing_schedules_enabled else None
         )
 
         self.scheduling_service = SchedulingService(
@@ -6036,7 +6029,9 @@ class TldwCli(
                     logs_window = getattr(self.app, "_current_logs_window", None)
                     if logs_window is not None:
                         try:
-                            logs_window.append_record(record.levelname, record.name, msg)
+                            logs_window.append_record(
+                                record.levelname, record.name, msg
+                            )
                             return
                         except Exception:
                             pass  # Widget might not be mounted
@@ -6090,7 +6085,9 @@ class TldwCli(
 
                 _loguru.add(_loguru_to_stdlib, level=0, format="{message}")
             except Exception:  # noqa: BLE001
-                logger.warning("Failed to install loguru->stdlib bridge for Logs screen")
+                logger.warning(
+                    "Failed to install loguru->stdlib bridge for Logs screen"
+                )
 
         # Initialize current log widget reference
         self._current_log_widget = None
@@ -7796,9 +7793,7 @@ class TldwCli(
         # the correct lookup key. Mirrors the guarded apply in
         # `handle_screen_navigation` (~:6672-6687); the screen is always
         # unmounted here, so `apply_navigation_context` takes its sync path.
-        navigation_context = self._LEGACY_ROUTE_LIBRARY_NAV_CONTEXT.get(
-            initial_tab, {}
-        )
+        navigation_context = self._LEGACY_ROUTE_LIBRARY_NAV_CONTEXT.get(initial_tab, {})
         if navigation_context and hasattr(new_screen, "apply_navigation_context"):
             try:
                 result = new_screen.apply_navigation_context(navigation_context)
