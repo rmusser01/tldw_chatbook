@@ -141,8 +141,13 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
             )
 
         table = DataTable(id="items-table")
+        # TASK-2308 AC#2: "Published", not "Created". The column used to read
+        # `created_at` -- the INGEST time -- so every row from one check
+        # carried the same value to the microsecond, and the one date a
+        # reader actually wants (when the article was published) was visible
+        # only in the reader's own byline, disagreeing with the table.
         self._column_keys = table.add_columns(
-            "Title", "Source", "Status", "Created", "Queued"
+            "Title", "Source", "Status", "Published", "Queued"
         )
         filtered = self._filtered_items()
         self._rendered_items = filtered
@@ -164,7 +169,7 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
                 # Displayed through `_status_label` (review wave, Minor 1) so
                 # the column and the filter above it use one vocabulary.
                 escape_markup(self._status_label(item.get("status"))),
-                escape_markup(str(item.get("created_at") or "-")),
+                escape_markup(self.item_published_text(item)),
                 self._QUEUED_GLYPH if item.get("queued_for_briefing") else "",
                 key=str(item.get("id") or id(item)),
             )

@@ -14,6 +14,7 @@ from textual.widgets import Button, DataTable, Static
 from textual.worker import get_current_worker
 
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from .humane_time import humane_timestamp
 from .table_selection import highlight_is_user_driven
 
 
@@ -167,7 +168,10 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         return (
             Text(RunsPane._run_identity(run), style=style),
             Text(str(run.get("status") or "-"), style=style),
-            Text(str(run.get("started_at") or "-"), style=style),
+            # TASK-2308: local, human-scale. The stored value is a UTC ISO
+            # string with microseconds, and it was the widest column in a
+            # table with eight of them.
+            Text(humane_timestamp(run.get("started_at")), style=style),
             Text(str(run.get("duration") or "-"), style=style),
             Text(str(run.get("found_count") or "0"), style=style),
             Text(str(run.get("processed_count") or "0"), style=style),
@@ -225,7 +229,7 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         base = (
             identity
             + f"Status: {run.get('status', '-')}\n"
-            f"Started: {run.get('started_at', '-')}\n"
+            f"Started: {humane_timestamp(run.get('started_at'))}\n"
             f"Duration: {run.get('duration', '-')}\n"
             f"Found: {run.get('found_count', 0)} | "
             f"Processed: {run.get('processed_count', 0)} | "

@@ -63,6 +63,7 @@ from ...Subscriptions.briefing_service import (
 )
 from ...Widgets.prune_safe_select import PruneSafeSelect
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from .humane_time import humane_timestamp
 from .table_selection import highlight_is_user_driven
 
 # A briefing body is model output written from remote feed/site content, so
@@ -1189,7 +1190,12 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 Text(str(row.get("item_count") or 0), style=style),
                 Text(str(row.get("featured_count") or 0), style=style),
                 Text(str(row.get("overflow_count") or 0), style=style),
-                Text(str(row.get("created_at") or "—"), style=style),
+                # TASK-2308. This column is where the UAT found the house
+                # style -- but "2026-08-04 18:22:44" is simply SQLite's
+                # `CURRENT_TIMESTAMP`, i.e. UTC that happens to look humane.
+                # It goes through the same formatter as every other Watchlists
+                # table so the whole screen agrees on one zone.
+                Text(humane_timestamp(row.get("created_at")), style=style),
                 key=row_key,
             )
         if selected_index is not None:
@@ -1286,7 +1292,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 scripts_table.add_row(
                     Text(str(row.get("preset_name") or "—"), style=style),
                     Text(_script_status_text(row) or "—", style=style),
-                    Text(str(row.get("created_at") or "—"), style=style),
+                    Text(humane_timestamp(row.get("created_at")), style=style),
                     self._audio_cell(audio_status, style),
                     key=row_key,
                 )
@@ -1363,7 +1369,11 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
 
         status = _status_text(row)
         header = Text()
-        header.append(str(row.get("created_at") or "unknown time"), style="bold")
+        header.append(
+            humane_timestamp(row.get("created_at")) if row.get("created_at")
+            else "unknown time",
+            style="bold",
+        )
         header.append(" · ")
         header.append(status or "unknown status")
         model_used = row.get("model_used")
@@ -1426,7 +1436,11 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             header.append(" · ")
             header.append(str(model_used))
         header.append("\n")
-        header.append(str(row.get("created_at") or "unknown time"), style="dim")
+        header.append(
+            humane_timestamp(row.get("created_at")) if row.get("created_at")
+            else "unknown time",
+            style="dim",
+        )
         header.append("\n")
 
         if status == STATUS_COMPLETE:

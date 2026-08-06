@@ -12,6 +12,7 @@ from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Static
 
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from .humane_time import humane_timestamp
 from .table_selection import highlight_is_user_driven
 
 
@@ -102,7 +103,9 @@ class NotificationsPane(RecomposeCaptureGuard, Vertical):
                 Text(str(notification.get("title") or "Notification"), style=style),
                 Text(str(notification.get("category") or "-"), style=style),
                 Text(str(notification.get("severity") or "-"), style=style),
-                Text(str(notification.get("created_at") or "-"), style=style),
+                # TASK-2308: one timestamp format across every Watchlists
+                # table, in the viewer's local zone.
+                Text(humane_timestamp(notification.get("created_at")), style=style),
                 key=row_id,
             )
         if selected_index is not None:

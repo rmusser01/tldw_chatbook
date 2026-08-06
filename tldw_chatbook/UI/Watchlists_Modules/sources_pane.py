@@ -20,6 +20,7 @@ from ...Subscriptions.noise_defaults import (
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Widgets.prune_safe_select import PruneSafeSelect
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from .humane_time import humane_timestamp
 from .inspector_pane import CheckNowRequested, PreviewRequested
 
 
@@ -618,11 +619,15 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     def source_last_scraped_text(source: dict[str, Any]) -> str:
         """What the Last scraped column says. Same defect as `status` above:
         the normalizers publish `last_checked_or_scraped_at`, so this column
-        read `-` even immediately after a successful check."""
-        return str(
-            source.get("last_checked_or_scraped_at")
-            or source.get("last_scraped")
-            or "-"
+        read `-` even immediately after a successful check.
+
+        TASK-2308: rendered through `humane_timestamp`, in the viewer's local
+        zone. The stored value is a full UTC ISO-8601 string with
+        microseconds -- 32 characters, in a table whose Name column is the
+        one people actually read.
+        """
+        return humane_timestamp(
+            source.get("last_checked_or_scraped_at") or source.get("last_scraped")
         )
 
     @staticmethod
