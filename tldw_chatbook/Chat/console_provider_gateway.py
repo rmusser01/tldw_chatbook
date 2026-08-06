@@ -420,14 +420,19 @@ class _QueueItem:
     kind: str
     text: str = ""
     payload: Any = None
+    # F5: the real HTTP status, carried alongside the (already-redacted)
+    # text -- never re-derived by parsing that text back out. `None` means
+    # "no real status available" (a bare RuntimeError, say), which the
+    # consumer maps to ChatProviderError's own upstream-error default.
+    status_code: int | None = None
 
     @classmethod
     def content(cls, text: str) -> "_QueueItem":
         return cls("content", text)
 
     @classmethod
-    def error(cls, text: str) -> "_QueueItem":
-        return cls("error", text)
+    def error(cls, text: str, status_code: int | None = None) -> "_QueueItem":
+        return cls("error", text, status_code=status_code)
 
     @classmethod
     def done(cls) -> "_QueueItem":
@@ -1612,20 +1617,27 @@ class ConsoleProviderGateway:
                         # junk 200-body indistinguishable from a legitimate
                         # empty answer. Surface it as a provider error,
                         # feeding the run's existing honest RUN_ERROR path.
+                        no_content_exc = ChatProviderError(
+                            "Provider returned no content and no tool calls.",
+                            provider=resolution.provider,
+                        )
                         enqueue(
                             _QueueItem.error(
                                 self._safe_error_copy(
-                                    resolution.provider,
-                                    ChatProviderError(
-                                        "Provider returned no content and no tool calls.",
-                                        provider=resolution.provider,
-                                    ),
-                                )
+                                    resolution.provider, no_content_exc
+                                ),
+                                status_code=no_content_exc.status_code,
                             )
                         )
             except BaseException as exc:
+                raw_status = getattr(exc, "status_code", None)
                 enqueue(
-                    _QueueItem.error(self._safe_error_copy(resolution.provider, exc))
+                    _QueueItem.error(
+                        self._safe_error_copy(resolution.provider, exc),
+                        status_code=raw_status
+                        if isinstance(raw_status, int)
+                        else None,
+                    )
                 )
             finally:
                 enqueue(_QueueItem.done())
@@ -1637,12 +1649,18 @@ class ConsoleProviderGateway:
                 if item.kind == "done":
                     break
                 if item.kind == "error":
+                    # F5: carry the real status the worker captured -- never
+                    # re-derive it by parsing item.text back out (that text
+                    # is redacted prose, not a machine-readable status).
                     raise ChatProviderError(
                         item.text
                         or safe_provider_error_copy(
                             resolution.provider, ChatProviderError()
                         ),
                         provider=resolution.provider,
+                        status_code=item.status_code
+                        if isinstance(item.status_code, int)
+                        else 502,
                     )
                 if item.kind == "tool_calls":
                     yield ProviderToolCalls(tuple(item.payload))
