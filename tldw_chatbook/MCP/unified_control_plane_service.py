@@ -2462,11 +2462,13 @@ class UnifiedMCPControlPlaneService:
         JSON and has no live ``HubTool`` to fingerprint, which is exactly
         the case that seam exists for. It resolves ``deny``/``ask`` at full
         fidelity; an ``allow`` collapses to ``ask`` UNLESS the server key is
-        in ``HASH_FREE_SERVER_KEYS`` (Fix Round A, Item 1) -- and
-        ``BUILTIN_SERVER_KEY`` always is, so a tool explicitly (or by
-        inherited default) set to Allow resolves as ``allow`` here, same as
-        :meth:`gate_tool_test` would with a live ``HubTool``. A ``deny`` is
-        refused here (nothing runs, a ``decision="denied"`` row is
+        in ``BY_KEY_HASH_FREE_SERVER_KEYS`` (Fix Round A, Item 1; narrowed
+        from the wider ``HASH_FREE_SERVER_KEYS`` in Fix Round C, Item 2 --
+        see that constant's docstring for why) -- and ``BUILTIN_SERVER_KEY``
+        (``"builtin:tldw_chatbook"``) is in both, so a tool explicitly (or
+        by inherited default) set to Allow resolves as ``allow`` here, same
+        as :meth:`gate_tool_test` would with a live ``HubTool``. A ``deny``
+        is refused here (nothing runs, a ``decision="denied"`` row is
         recorded); an ``allow`` executes under ``decision="allowed"``; and
         an ``ask`` executes under ``decision="approved"``, naming the
         Advanced runner's own two-press confirm

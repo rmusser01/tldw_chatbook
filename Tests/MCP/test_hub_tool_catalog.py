@@ -82,6 +82,43 @@ def test_builtin_tool_without_schema_still_yields_none():
     assert tools[0].input_schema is None and tools[0].executable
 
 
+def test_builtin_tools_never_carry_risk_tags_even_when_offered_them():
+    """TRIPWIRE (PR-T3 Fix Round C, Item 2). `permission_store
+    .BY_KEY_HASH_FREE_SERVER_KEYS` exempts `"builtin:tldw_chatbook"` from
+    `resolve_effective_state_by_key()`'s "any allow collapses to ask"
+    fallback, and that resolver has no `HubTool.tags` to floor a high-risk
+    inherited allow with either -- so the exemption is safe ONLY because
+    every `HubTool` this function produces carries `tags=()`
+    unconditionally, regardless of what the raw inventory entry contains.
+
+    Unlike `server_tools_from_inventory` (see
+    `test_server_tools_read_extras_defensively` above), this function does
+    not call `_extra_tags()` at all -- it hard-codes `tags=()`. This test
+    proves that by handing it a raw tool dict carrying the exact fields
+    `_extra_tags()` reads for server tools (`risk_class`, `capabilities`)
+    and asserting they are silently ignored. If a future change wires
+    `_extra_tags()` (or any tag source) into `builtin_tools_from_inventory`,
+    this goes red -- which is the day
+    `permission_store.BY_KEY_HASH_FREE_SERVER_KEYS`'s exemption for
+    `builtin:tldw_chatbook` stops being safe and needs re-examining, not
+    just a comment."""
+    tools = builtin_tools_from_inventory(
+        {
+            "tools": [
+                {
+                    "name": "delete_everything",
+                    "description": "Deletes things.",
+                    "risk_class": "high",
+                    "capabilities": ["network", "mutates"],
+                    "inputSchema": {"type": "object"},
+                }
+            ]
+        }
+    )
+
+    assert tools[0].tags == ()
+
+
 def test_server_tools_read_extras_defensively():
     payload = {
         "tools": [

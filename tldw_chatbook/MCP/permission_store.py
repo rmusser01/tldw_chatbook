@@ -532,6 +532,46 @@ BUILTIN_TOOL_SERVER_KEY = "agent:builtin"
 #: for it; the contents are pinned by test.
 HASH_FREE_SERVER_KEYS = frozenset({BUILTIN_TOOL_SERVER_KEY, "builtin:tldw_chatbook"})
 
+#: Fix Round C (PR-T3 review), Item 2. The subset of ``HASH_FREE_SERVER_KEYS``
+#: for which ``resolve_effective_state_by_key()``'s by-key ``allow``
+#: exemption (see that function) is actually SAFE. Deliberately narrower
+#: than ``HASH_FREE_SERVER_KEYS`` -- ``BUILTIN_TOOL_SERVER_KEY``
+#: (``"agent:builtin"``) is a member of that wider set (it is hash-free too,
+#: for the rug-pull reasons documented above) but is EXCLUDED here:
+#:
+#: * It never reaches ``resolve_effective_state_by_key()`` in production.
+#:   Agent-runtime built-ins resolve exclusively through
+#:   ``resolve_builtin_state()`` (``Agents/builtin_tool_gate.py``); the
+#:   Hub's by-key seam (``UnifiedMCPControlPlaneService.gate_tool_test_by_key()``)
+#:   is only ever called with a key drawn from the Hub tool catalog
+#:   (``mcp_workbench.py``'s ``_last_hub_tools``), which never contains an
+#:   ``agent:builtin`` row -- built-in-tool rows are namespaced under
+#:   ``BUILTIN_TOOL_SERVER_KEY`` in a SIBLING section the matrix never
+#:   threads into ``_last_hub_tools`` (see ``_builtin_permission_matrix_rows()``'s
+#:   own docstring, "Constraint 1/5").
+#: * If it ever did reach this resolver -- a future caller bug, not a
+#:   config a user can produce -- exempting it here would be actively
+#:   UNSAFE, not merely redundant. This function has no ``HubTool.tags`` to
+#:   floor on, so its only defense against an inherited-allow high-risk
+#:   tool is the "any allow collapses to ask" rule it narrows for hash-free
+#:   keys. Real ``agent:builtin`` tools ARE floored -- by
+#:   ``resolve_builtin_state()``'s own ``BUILTIN_HIGH_RISK_TAGS`` check --
+#:   so a stray call landing on this seam for that key and getting the
+#:   exemption would silently skip a floor its production resolver
+#:   enforces.
+#:
+#: ``builtin:tldw_chatbook`` stays exempt here because every ``HubTool``
+#: the Hub catalog can ever produce for it carries ``tags=()``
+#: unconditionally (``hub_tool_catalog.builtin_tools_from_inventory`` never
+#: reads a tags field off the manifest) -- there is nothing this seam's
+#: collapse could ever floor for that key regardless. That invariant is
+#: guarded by a tripwire test
+#: (``test_builtin_tools_never_carry_risk_tags_even_when_offered_them`` in
+#: ``Tests/MCP/test_hub_tool_catalog.py``) that fails the day it stops
+#: being true -- at which point this exemption would need re-examining,
+#: not just this comment.
+BY_KEY_HASH_FREE_SERVER_KEYS = frozenset({"builtin:tldw_chatbook"})
+
 #: Precedence floor for built-in tools: they inherit ``allow`` rather than
 #: the MCP ``global_default``, so changing MCP's posture never starts
 #: prompting for calculator/datetime. High-risk tags still floor it to ask.
@@ -804,25 +844,51 @@ def resolve_effective_state_by_key(
       to hash-compare, so it resolves to ``ask`` instead
       (``config_changed=True``, reusing the rug-pull marker's "review
       before trusting this" UI treatment): safer than silently trusting a
-      stale ``allow``. **Except** for ``server_key in HASH_FREE_SERVER_KEYS``
-      (in-process built-in tools / the built-in MCP server): those keys are
-      already exempt from the hash comparison in
-      ``resolve_effective_state()`` for the reason documented on that
-      constant -- they're app code, not a remote server, so there is no
-      staleness to guard against -- and the rationale for THIS collapse
-      ("cannot be confirmed fresh without a hash to compare") is void when
-      there was never going to be a hash comparison in the first place. An
-      explicit or inherited ``allow`` for one of those keys resolves at
-      full fidelity, same as ``resolve_effective_state()`` would with a
-      live ``HubTool``. Without this exemption, the SAME hash-free tool set
-      to Allow would record ``decision="approved"`` (asked-and-approved)
-      when resolved here and ``decision="allowed"`` when resolved via
-      ``resolve_effective_state()`` -- a cross-surface split in the audit
-      trail.
+      stale ``allow``. **Except** for ``server_key in
+      BY_KEY_HASH_FREE_SERVER_KEYS`` -- today, just
+      ``"builtin:tldw_chatbook"``, the built-in MCP server. This is
+      DELIBERATELY NARROWER than ``HASH_FREE_SERVER_KEYS``: see that
+      constant's own docstring for why ``BUILTIN_TOOL_SERVER_KEY``
+      (``"agent:builtin"``, the OTHER hash-free key) is excluded from the
+      exemption on THIS path even though it is hash-free too. For the keys
+      that remain exempt: they're already exempt from the hash comparison
+      in ``resolve_effective_state()`` for the reason documented on
+      ``HASH_FREE_SERVER_KEYS`` -- they're app code, not a remote server,
+      so there is no staleness to guard against -- and the rationale for
+      THIS collapse ("cannot be confirmed fresh without a hash to compare")
+      is void when there was never going to be a hash comparison in the
+      first place. An explicit or inherited ``allow`` for one of those keys
+      resolves at full fidelity, same as ``resolve_effective_state()``
+      would with a live ``HubTool``. Without this exemption, the SAME
+      hash-free tool set to Allow would record ``decision="approved"``
+      (asked-and-approved) when resolved here and ``decision="allowed"``
+      when resolved via ``resolve_effective_state()`` -- a cross-surface
+      split in the audit trail.
 
-    High-risk-tag flooring is skipped too (no ``HubTool.tags`` to check);
-    that's covered by the "any allow downgrades to ask" rule above, which
-    is strictly more conservative.
+    High-risk-tag flooring has NO coverage on this path for keys in
+    ``BY_KEY_HASH_FREE_SERVER_KEYS``. This function has no ``HubTool.tags``
+    to check, and -- unlike every other server key -- the "any allow
+    downgrades to ask" rule above does not apply to them either, so an
+    inherited allow for one of those keys returns at full fidelity with
+    NOTHING between it and the caller: no hash check, no tag floor, no
+    ask-collapse. This is safe TODAY only because every ``HubTool`` the Hub
+    catalog can ever produce for ``"builtin:tldw_chatbook"`` carries
+    ``tags=()`` unconditionally (``hub_tool_catalog.builtin_tools_from_inventory``
+    never reads a tags field off the manifest) -- there is nothing for a
+    floor to ever catch, so the absence of one is a non-event rather than a
+    gap. If a future release ever gives a ``builtin:tldw_chatbook`` tool a
+    real risk tag, this collapse would start silently returning an
+    un-floored ``allow`` where a live-``HubTool`` resolve would ask; a
+    tripwire test in ``Tests/MCP/test_hub_tool_catalog.py`` fails the day
+    that happens, specifically to surface the regression here rather than
+    let it decay behind this comment.
+
+    For every server key NOT in ``BY_KEY_HASH_FREE_SERVER_KEYS``, flooring
+    genuinely is redundant to check separately: the "any allow downgrades
+    to ask" rule above already collapses every such inherited allow before
+    a tag comparison would ever matter, which is the strictly-more-
+    conservative relationship the phrase originally described here -- it
+    just no longer describes ALL server keys.
 
     Like ``resolve_effective_state()``, every nested container this walks
     is coerced via ``_as_mapping()`` before being read, so a hand-edited
@@ -862,7 +928,7 @@ def resolve_effective_state_by_key(
             if state not in STORE_STATES:
                 state = DEFAULT_GLOBAL
 
-    if state == "allow" and server_key not in HASH_FREE_SERVER_KEYS:
+    if state == "allow" and server_key not in BY_KEY_HASH_FREE_SERVER_KEYS:
         return EffectiveToolState(state="ask", origin=origin, config_changed=True)
     return EffectiveToolState(state=state, origin=origin)
 
