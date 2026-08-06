@@ -168,8 +168,13 @@ _GOTO_PERMISSION_TOOLTIP = "Switch to Permissions mode and select this tool's ro
 # dedicated button -- here the Run Action button itself is the arm), keyed to
 # the exact payload it was shown for so an edited payload re-confirms.
 _ADVANCED_EXECUTE_ACTION = "tool.execute"
+# Fix Round C, Item 4: "Editing anything cancels" undersold what actually
+# cancels the arm -- switching the object Advanced is showing
+# (`set_service_context()`) or the section (`_load_advanced_section()`)
+# disarms too, invisibly, same as an edit. Named all three, still short.
 _ADVANCED_EXECUTE_CONFIRM = (
-    "Runs {tool} now — press Run Action again to confirm. Editing anything cancels."
+    "Runs {tool} now — press Run Action again to confirm. "
+    "Editing, switching object, or changing section cancels."
 )
 # The refusal heading `show_tool_result()` gives a blocked test run (":2254"),
 # reused verbatim so a refusal reads the same wherever it surfaces -- a
@@ -2401,6 +2406,14 @@ class MCPInspector(Vertical):
             return
         self.query_one("#mcp-adv-object", Static).update(self._advanced_object_label())
         self.query_one("#mcp-adv-content", Static).update("")
+        # Fix Round C, Item 4: the confirm sentence
+        # (`_ADVANCED_EXECUTE_CONFIRM`) renders into `#mcp-adv-result`, not
+        # `#mcp-adv-content` -- blanking only the latter left "Runs <tool>
+        # now — press Run Action again to confirm." on screen after a
+        # rebind that had just disarmed it, so the very next press silently
+        # re-arms and re-renders the identical string: the button reads as
+        # dead for one press. Blank both on disarm.
+        self.query_one("#mcp-adv-result", Static).update("")
         section_select = self.query_one("#mcp-adv-section-select", Select)
         with section_select.prevent(Select.Changed):
             section_select.set_options(self._sections)
@@ -2496,6 +2509,17 @@ class MCPInspector(Vertical):
         # section's, and a stale arm from before the switch must not
         # silently satisfy this section's first press.
         self._advanced_confirm_key = None
+        # Fix Round C, Item 4: same reasoning as `set_service_context()`'s
+        # own blank -- the confirm sentence lives in `#mcp-adv-result`, not
+        # `#mcp-adv-content`, so clearing the arm without blanking this too
+        # would leave a stale "press Run Action again to confirm" on screen
+        # describing an arm that no longer exists. Unconditional (ahead of
+        # the `self._service is None` return below), mirroring the
+        # confirm-key clear it sits beside -- this method only ever runs
+        # while Advanced is visible (`set_service_context()`'s own guard,
+        # and `on_select_changed()`'s section-select can't fire unmounted),
+        # so `#mcp-adv-result` is always present to blank.
+        self.query_one("#mcp-adv-result", Static).update("")
         if self._service is None:
             return
         payload = await self._service.load_section(section)

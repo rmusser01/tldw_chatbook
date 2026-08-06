@@ -3996,3 +3996,86 @@ async def test_section_change_disarms_a_pending_confirm():
         assert app.service.action_calls == [
             ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "example"}})
         ]
+
+
+# -- Fix Round C, Item 4: the confirm sentence survives the disarm -----------
+#
+# `set_service_context()` and `_load_advanced_section()` both clear
+# `_advanced_confirm_key` (Item 3 above) but only ever blanked
+# `#mcp-adv-content` -- never `#mcp-adv-result`, which is where
+# `_ADVANCED_EXECUTE_CONFIRM` ("Runs <tool> now — press Run Action again to
+# confirm...") actually renders. A disarm therefore left the confirm
+# sentence on screen describing an arm that no longer existed: the next
+# press silently RE-armed (rendering the identical string back) instead of
+# running, so the button read as dead for one press with no visible change
+# to explain why.
+
+
+@pytest.mark.asyncio
+async def test_set_service_context_blanks_the_stale_confirm_sentence():
+    """A rebind must clear the confirm sentence, not just the arm behind
+    it -- otherwise the screen still reads "press Run Action again to
+    confirm" for a confirm that set_service_context() just disarmed.
+
+    Checked immediately after the synchronous `set_service_context()` call
+    returns, with no intervening `await` -- same isolation as
+    `test_set_service_context_disarms_a_pending_confirm` above, and for the
+    same reason: `set_service_context()` also SCHEDULES
+    `_load_advanced_section()` as a worker, which blanks
+    `#mcp-adv-result` too, so a version of this check that let the worker
+    run first would pass even with `set_service_context()`'s own blank
+    removed."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await pilot.click("#mcp-adv-run")  # arms; renders the confirm sentence
+        await pilot.pause()
+        assert "again" in _adv_result(app)
+
+        inspector.set_service_context(app.service, [("Inventory", "inventory")])
+        # No `await` here -- see the docstring above.
+        assert _adv_result(app) == "", (
+            "the stale confirm sentence must be cleared along with the arm, "
+            "not just the arm's internal state -- and not by relying on the "
+            "_load_advanced_section worker set_service_context() separately "
+            "schedules"
+        )
+
+
+@pytest.mark.asyncio
+async def test_section_change_blanks_the_stale_confirm_sentence():
+    """Same as above for `_load_advanced_section()`'s own disarm, triggered
+    by a direct section change (no rebind)."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        inspector.set_service_context(
+            app.service, [("Inventory", "inventory"), ("Overview", "overview")]
+        )
+        await pilot.pause()
+        await pilot.click("#mcp-adv-run")  # arms; renders the confirm sentence
+        await pilot.pause()
+        assert "again" in _adv_result(app)
+
+        section_select = app.query_one("#mcp-adv-section-select", Select)
+        section_select.value = "overview"
+        await pilot.pause()
+        await pilot.pause()
+
+        assert _adv_result(app) == "", (
+            "the stale confirm sentence must be cleared along with the arm, "
+            "not just the arm's internal state"
+        )
+
+
+def test_advanced_execute_confirm_copy_names_every_cancel_trigger():
+    """The confirm sentence's old copy ("Editing anything cancels") named
+    only one of the ways the arm can be lost -- switching the object
+    Advanced is showing, or its section, cancels too, invisibly (Item 3).
+    Pins the corrected copy names all three, still in the house's short,
+    plain register (no "Owner:"/"Recovery:" verbosity)."""
+    rendered = mcp_inspector_module._ADVANCED_EXECUTE_CONFIRM.format(tool="search_notes")
+    assert "press Run Action again to confirm" in rendered
+    assert "Editing" in rendered
+    assert "switching object" in rendered
+    assert "changing section" in rendered
