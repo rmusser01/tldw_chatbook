@@ -6,6 +6,7 @@ import pytest
 
 from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_DENY_REFUSAL,
+    LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
     LocalToolProvider,
@@ -477,6 +478,16 @@ def test_callback_raise_fails_closed(tmp_path):
 
 
 def test_resolve_state_raise_fails_closed_everywhere(tmp_path):
+    """Fix Round H, Item 1 (PRE-AUTHORIZED CONTRACT CHANGE -- this IS the
+    round's own centre, not an incidental drift): this used to assert
+    `LOCAL_DENY_REFUSAL` ("blocked by local tool permissions (set to Off)")
+    for a RAISING resolver -- a confident, false claim about the tool's
+    configuration told to the calling MODEL, indistinguishable from a
+    genuine user-configured Off. `_verdict_for()`'s resolver-exception
+    branch now returns a distinct "gate_error" verdict, and `invoke()`
+    renders it as `LOCAL_GATE_ERROR_REFUSAL` instead -- still fails closed
+    (the tool does not run), but says the true thing: the permission
+    RESOLVER failed, not that the tool is configured Off."""
     def boom(hub):
         raise RuntimeError("store gone")
 
@@ -485,7 +496,8 @@ def test_resolve_state_raise_fails_closed_everywhere(tmp_path):
     assert p.pending_gate_for("fs_list", {"path": "."}) is None
     # invoke: refuses rather than raising onto the worker thread
     r = p.invoke("local:fs_list", {"path": "."})
-    assert not r.ok and r.error == LOCAL_DENY_REFUSAL
+    assert not r.ok and r.error == LOCAL_GATE_ERROR_REFUSAL
+    assert r.error != LOCAL_DENY_REFUSAL
 
 
 def test_kill_switch_read_failure_fails_closed(tmp_path):

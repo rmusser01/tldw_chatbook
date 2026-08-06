@@ -17,6 +17,7 @@ from typing import Callable, Iterator
 from loguru import logger
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+from tldw_chatbook.MCP.local_runtime_delegate import PERMISSION_STATE_UNRESOLVED_CLAUSE
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
 from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
@@ -30,6 +31,26 @@ LOCAL_SERVER_LABEL = "Local workspace"
 LOCAL_DENY_REFUSAL = "blocked by local tool permissions (set to Off)"
 LOCAL_TIMEOUT_REFUSAL = "user did not approve within the time limit; do not retry"
 LOCAL_KILL_SWITCH_REFUSAL = "blocked — local tools are switched off"
+# Fix Round H (PR-T3 review), Item 1. `_verdict_for()`'s permission-resolver
+# `except` used to collapse a RAISE into the SAME "deny" verdict as a
+# genuine configured Off -- which then rendered `LOCAL_DENY_REFUSAL`, a
+# confident, false claim about the tool's configuration. This is the sixth
+# recurrence of the exact pattern earlier rounds already removed from the
+# Test Tool panel (`mcp_workbench._TOOL_TEST_BLOCKED_UNKNOWN_TEXT`) and the
+# Advanced hatch (`unified_control_plane_service._ADVANCED_EXECUTE_GATE_
+# ERROR_MESSAGE`) -- except THIS string reaches a MODEL, not a human: an
+# agent told its tool is "set to Off" will relay that as fact and stop
+# retrying a tool that may in fact be Allow, and the user then "fixes" a
+# setting that was never wrong.
+#
+# Derived from the SAME shared clause those two surfaces already derive
+# from (`local_runtime_delegate.PERMISSION_STATE_UNRESOLVED_CLAUSE`) so a
+# reword changes all three or none compiles/matches. Written for the actual
+# reader: no configuration-state assertion (unlike `LOCAL_DENY_REFUSAL`),
+# and no "permanently unavailable" implication (unlike `LOCAL_TIMEOUT_
+# REFUSAL`'s "do not retry" -- a resolver crash is plausibly transient,
+# where a genuine unapproved timeout is not).
+LOCAL_GATE_ERROR_REFUSAL = f"blocked — {PERMISSION_STATE_UNRESOLVED_CLAUSE}; retrying may succeed"
 
 _MAX_RESULT_BYTES = 32 * 1024
 _MAX_ERROR_CHARS = 300
@@ -269,17 +290,21 @@ class LocalToolProvider:
 
         Fail-closed: only an explicit "allow" verdict executes; "deny" and
         any unrecognized verdict refuse with LOCAL_DENY_REFUSAL (mirrors
-        MCPToolProvider._apply_verdict's fallthrough), "timeout" with
-        LOCAL_TIMEOUT_REFUSAL, and "no_callback" with the constructor's
-        ``no_callback_refusal`` override when set (LOCAL_TIMEOUT_REFUSAL
-        otherwise).
+        MCPToolProvider._apply_verdict's fallthrough), "gate_error" (Fix
+        Round H, Item 1: the permission resolver raised rather than
+        genuinely resolving) with LOCAL_GATE_ERROR_REFUSAL -- a DIFFERENT
+        string from LOCAL_DENY_REFUSAL, since the tool's actual configured
+        state was never determined and LOCAL_DENY_REFUSAL's "set to Off"
+        claim would be false -- "timeout" with LOCAL_TIMEOUT_REFUSAL, and
+        "no_callback" with the constructor's ``no_callback_refusal``
+        override when set (LOCAL_TIMEOUT_REFUSAL otherwise).
 
         Audit (MCP parity): refusals are recorded via the optional
-        ``record_decision`` seam -- "denied" for kill-switch/deny outcomes,
-        "denied-timeout" for timeout/no_callback (matching the refusal copy
-        the model actually saw). Successful executions record nothing:
-        MCPToolProvider records those service-side via execute_hub_tool,
-        which has no local analogue.
+        ``record_decision`` seam -- "denied" for kill-switch/deny/gate_error
+        outcomes, "denied-timeout" for timeout/no_callback (matching the
+        refusal copy the model actually saw). Successful executions record
+        nothing: MCPToolProvider records those service-side via
+        execute_hub_tool, which has no local analogue.
         """
         name = tool_id.split(":", 1)[1] if ":" in tool_id else tool_id
         spec = self._specs.get(name)
@@ -305,6 +330,17 @@ class LocalToolProvider:
                 else LOCAL_TIMEOUT_REFUSAL
             )
             return ToolResult(ok=False, error=refusal)
+        if verdict == "gate_error":
+            # Fix Round H, Item 1: the resolver raised rather than
+            # genuinely resolving to "deny" -- still fails closed (the tool
+            # does not run), but the reason told to the model is honest:
+            # the permission check itself failed, not a configured Off.
+            # Audit vocabulary is unchanged ("denied" is this seam's only
+            # refusal decision besides "denied-timeout" -- see this
+            # provider's own `record_decision` docstring); only the
+            # returned TEXT distinguishes the two cases.
+            self._record_decision_safe(self.hub_tool_for(name), "denied")
+            return ToolResult(ok=False, error=LOCAL_GATE_ERROR_REFUSAL)
         # "deny" and any unrecognized verdict fail closed the same way.
         self._record_decision_safe(self.hub_tool_for(name), "denied")
         return ToolResult(ok=False, error=LOCAL_DENY_REFUSAL)
@@ -339,7 +375,11 @@ class LocalToolProvider:
             state = self._resolve_state(hub)
         except Exception as exc:  # noqa: BLE001 — fail closed on a resolution failure
             logger.warning(f"LocalToolProvider: resolve_state failed for {name}: {exc}")
-            return "deny"
+            # Fix Round H, Item 1: a distinct verdict from "deny" -- the
+            # resolver crashed, so the tool's actual state was never
+            # determined; it is not necessarily Off at all. invoke() renders
+            # this as LOCAL_GATE_ERROR_REFUSAL, not LOCAL_DENY_REFUSAL.
+            return "gate_error"
         if state.state == "allow":
             return "allow"
         if state.state == "deny":
