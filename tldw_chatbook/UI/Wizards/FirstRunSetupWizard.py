@@ -8,12 +8,14 @@ this module renders them and owns persistence via one exclusive worker.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.compose import compose as _drain_compose_result
 from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import NoMatches
@@ -3121,6 +3123,64 @@ class SetupWizardContainer(WizardContainer):
             screen.action_cancel()
 
 
+class _SettlingGuardedConfirmationDialog(ConfirmationDialog):
+    """TASK-2314: absorb a reflexive double-tap of the finish-later Escape.
+
+    UAT live reproduction: the wizard is pushed while several heavy steps
+    (10 composed steps, the full provider catalog, discovery workers) are
+    still settling, so a user who presses Escape once and perceives no
+    immediate feedback over that render lag reflexively presses it again.
+    ``ConfirmationDialog``'s own binding -- Escape mirrors the Cancel
+    button everywhere else in the app, "dismissing is always the safe
+    outcome" (see that module's docstring), which is the right default for
+    every OTHER use of the widget -- means that second press lands
+    directly on THIS dialog (it is now the top of the screen stack) and
+    silently snaps the wizard back open with no visible sign anything
+    happened: exactly the "silently ignores Escape ... feels frozen" UAT
+    finding, confirmed live by sending two Escape presses within
+    milliseconds of the wizard's first paint (see task-2314's
+    Implementation Notes for the reproduction).
+
+    The fix is scoped to the Escape BINDING only, via a distinct action
+    name -- never ``action_cancel_dialog`` itself, which the Cancel BUTTON
+    also calls (``on_button_pressed``); a deliberate mouse click must stay
+    instant regardless of timing. Escape still opens this dialog on the
+    very first press (the "Escape -> confirm" asymmetry task-2314 asks to
+    preserve is untouched: this only guards a SECOND press arriving too
+    soon after the dialog itself appeared).
+    """
+
+    #: Absorbs a reflexive double-tap (typically well under 300ms apart);
+    #: comfortably shorter than the time it takes to actually read
+    #: "Steps you've already completed are saved...".
+    _ESCAPE_GRACE_SECONDS = 0.5
+
+    BINDINGS = [
+        Binding("escape", "cancel_dialog_if_settled", "Cancel", show=False),
+    ]
+
+    def __init__(
+        self,
+        *args: Any,
+        escape_grace_seconds: float = _ESCAPE_GRACE_SECONDS,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._escape_grace_seconds = escape_grace_seconds
+        self._opened_at: Optional[float] = None
+
+    def on_mount(self) -> None:
+        self._opened_at = time.monotonic()
+
+    async def action_cancel_dialog_if_settled(self) -> None:
+        if (
+            self._opened_at is not None
+            and (time.monotonic() - self._opened_at) < self._escape_grace_seconds
+        ):
+            return  # too soon to be a deliberate second press -- swallow it
+        await self.action_cancel_dialog()
+
+
 class FirstRunSetupWizard(WizardScreen):
     """Full-screen first-run setup wizard. Dismisses dict | None."""
 
@@ -3159,7 +3219,7 @@ class FirstRunSetupWizard(WizardScreen):
             ] = True
 
     def action_cancel(self) -> None:
-        dialog = ConfirmationDialog(
+        dialog = _SettlingGuardedConfirmationDialog(
             title="Finish setup later?",
             message=(
                 "Steps you've already completed are saved. You can finish "

@@ -53,6 +53,7 @@ from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     FirstRunSetupWizard,
     SetupWizardContainer,
+    _SettlingGuardedConfirmationDialog,
 )
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     STEP_MODEL,
@@ -175,7 +176,12 @@ async def test_escape_finish_later_dismisses_and_next_boot_resumes_via_toast(
             await pilot.press("escape")
             await pilot.pause(0.2)
             # The confirm dialog is on top; the wizard must still be mounted.
-            assert type(app.screen).__name__ == "ConfirmationDialog"
+            # TASK-2314: this is now `_SettlingGuardedConfirmationDialog`, a
+            # `ConfirmationDialog` subclass that absorbs a reflexive
+            # double-tap of Escape while the wizard is still settling --
+            # `isinstance` captures the real contract (a confirm dialog is
+            # up) without pinning to the exact subclass name.
+            assert isinstance(app.screen, _SettlingGuardedConfirmationDialog)
             _press(app.screen, "#confirm-button")  # confirm_label="Finish later"
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ != "FirstRunSetupWizard"
