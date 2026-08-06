@@ -23,8 +23,13 @@ fully reused, not reinvented: this module raises the same
 `CharacterTTSResolutionError` type, using two more members
 (`"default_profile_missing"`, `"default_profile_store_unavailable"`) of the
 SAME code table `character_request_resolver.py` already owns, so the
-existing refuse+override UI (`tts_events.py`'s catch site,
-`app.py::_offer_tts_global_override`) needs no changes at all.
+existing refuse+override CONTROL FLOW (`tts_events.py`'s catch site,
+`app.py::_offer_tts_global_override`'s prompt-then-post-decision shape)
+needed no *structural* change. Its confirmation-dialog **copy** did need a
+change -- `CharacterTTSResolutionError.domain` (also computed from this
+same code table) is threaded through `_issue_global_override` /
+`_PendingGlobalOverride` so the dialog names the actual domain that
+failed, matching the toast (`TTSCompleteEvent.error`) it already got right.
 
 **Failure is honest, by name**, following `Subscriptions/briefing_voices.
 py::resolve_roster_voices` -- this module's own precedent for "one stored

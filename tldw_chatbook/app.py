@@ -586,6 +586,29 @@ DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
 # file must agree on one spelling. Private to `app.py`: every event emitted
 # here belongs to the application lifecycle.
 _DIAGNOSTICS_COMPONENT_APP = "app"
+# Task-4 review round 2: `_offer_tts_global_override`'s confirmation dialog
+# must name which configured-voice domain actually failed -- a per-character
+# assignment, or the app-wide default voice profile (slice 3, task 4) --
+# since the user is consenting to hear a different voice than the one they
+# configured. Keyed by `CharacterTTSResolutionError.domain` /
+# `TTSEventHandler.peek_global_override_voice_domain`'s bounded return
+# value; `None` (unknown/expired token, or no handler bound) falls back to
+# the domain-neutral entry below, which stays accurate for both without
+# being vaguer than either domain's own precise copy.
+_TTS_GLOBAL_OVERRIDE_PROMPT_COPY: dict[str | None, str] = {
+    "character": (
+        "The assigned character voice could not be resolved. "
+        "Use the current global TTS voice for this message?"
+    ),
+    "default_profile": (
+        "Your default voice profile could not be used. "
+        "Use the current global TTS voice for this message?"
+    ),
+    None: (
+        "Your configured voice could not be used for this message. "
+        "Use the current global TTS voice instead?"
+    ),
+}
 #
 #######################################################################################################################
 #
@@ -6899,16 +6922,34 @@ class TldwCli(
             )
 
     async def _offer_tts_global_override(self, token: str) -> None:
-        """Prompt for one message-scoped global-voice fallback."""
+        """Prompt for one message-scoped global-voice fallback.
+
+        The dialog's copy names the actual configured-voice domain that
+        refused (a per-character assignment vs. the app-wide default voice
+        profile) -- looked up, without consuming the token, from the
+        issuing handler's still-pending state
+        (`TTSEventHandler.peek_global_override_voice_domain`). Review
+        round 2: the completion toast already used `event.error`'s
+        domain-accurate copy; this dialog previously did not, and always
+        said "character" even for a default-profile refusal on a message
+        with no character context at all.
+        """
+        handler = getattr(self, "_tts_handler", None)
+        voice_domain = (
+            handler.peek_global_override_voice_domain(token)
+            if handler is not None
+            else None
+        )
+        message = _TTS_GLOBAL_OVERRIDE_PROMPT_COPY.get(
+            voice_domain,
+            _TTS_GLOBAL_OVERRIDE_PROMPT_COPY[None],
+        )
         decision = False
         try:
             result = await self.push_screen_wait(
                 ConfirmationDialog(
                     title="Use global voice?",
-                    message=(
-                        "The assigned character voice could not be resolved. "
-                        "Use the current global TTS voice for this message?"
-                    ),
+                    message=message,
                     confirm_label="Use global",
                     cancel_label="Cancel",
                 )

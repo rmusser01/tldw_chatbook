@@ -397,6 +397,13 @@ async def test_missing_default_profile_refuses_with_override_naming_default() ->
     assert completion.global_override_token is not None
     assert handler.generated == []
     assert service.default_calls == [_DEFAULT_PROFILE_ID]
+    # Review round 2: the issued token must carry the DEFAULT_PROFILE
+    # domain, not the character default -- this is what lets
+    # `app.py::_offer_tts_global_override` render domain-accurate copy.
+    assert (
+        handler.peek_global_override_voice_domain(completion.global_override_token)
+        == "default_profile"
+    )
 
 
 @pytest.mark.asyncio
@@ -424,6 +431,10 @@ async def test_unavailable_profile_store_refuses_with_override_for_default() -> 
     assert "character" not in completion.error.lower()
     assert completion.global_override_token is not None
     assert handler.generated == []
+    assert (
+        handler.peek_global_override_voice_domain(completion.global_override_token)
+        == "default_profile"
+    )
 
 
 @pytest.mark.asyncio
@@ -607,6 +618,9 @@ async def test_resolution_failure_offers_single_use_override_without_cooldown() 
     assert completion.error
     assert completion.global_override_token is not None
     token = completion.global_override_token
+    # Review round 2: a character-domain refusal's token must keep
+    # reporting the character domain (not the new default-profile one).
+    assert handler.peek_global_override_voice_domain(token) == "character"
     assert handler.generated == []
     assert handler._request_cooldown == {}
 

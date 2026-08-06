@@ -46,6 +46,18 @@ CharacterTTSResolutionCode: TypeAlias = Literal[
     "default_profile_missing",
     "default_profile_store_unavailable",
 ]
+#: Which configured-voice domain a bounded code's failure is actually about
+#: -- consulted by `tts_events.py::_issue_global_override` /
+#: `app.py::_offer_tts_global_override` (review round 2) so the
+#: confirmation dialog a user must read to consent to a fallback names the
+#: voice that actually failed, not a hardcoded "character" assumption.
+TTSVoiceRefusalDomain: TypeAlias = Literal["character", "default_profile"]
+_DEFAULT_PROFILE_CODES: frozenset[CharacterTTSResolutionCode] = frozenset(
+    {
+        "default_profile_missing",
+        "default_profile_store_unavailable",
+    }
+)
 
 _RESOLUTION_COPY: dict[CharacterTTSResolutionCode, str] = {
     "assignment_invalid": (
@@ -96,6 +108,9 @@ class CharacterTTSResolutionError(RuntimeError):
             raise ValueError("resolution code must be bounded")
         self.code: CharacterTTSResolutionCode = code
         self.allow_global_override = code in _GLOBAL_OVERRIDE_CODES
+        self.domain: TTSVoiceRefusalDomain = (
+            "default_profile" if code in _DEFAULT_PROFILE_CODES else "character"
+        )
         super().__init__(_RESOLUTION_COPY[code])
 
 
@@ -309,4 +324,5 @@ __all__ = [
     "CharacterTTSRequestResolver",
     "CharacterTTSResolutionError",
     "CharacterTTSResolutionSource",
+    "TTSVoiceRefusalDomain",
 ]

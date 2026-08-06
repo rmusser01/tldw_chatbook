@@ -37,6 +37,7 @@ from tldw_chatbook.TTS import (
     TTSRequestedSelectionSnapshot,
     get_tts_service,
 )
+from tldw_chatbook.TTS.character_request_resolver import TTSVoiceRefusalDomain
 from tldw_chatbook.TTS.adapter_types import (
     TTSConfigurationRevisionError,
     TTSOperationError,
@@ -252,11 +253,24 @@ class TTSUsageRecord:
 
 @dataclass(frozen=True, slots=True)
 class _PendingGlobalOverride:
-    """Private admission state retained behind an opaque one-use token."""
+    """Private admission state retained behind an opaque one-use token.
+
+    ``voice_domain`` (review round 2) records which configured-voice
+    domain actually failed and issued this token -- read back, without
+    consuming the token, by `TTSEventHandler.peek_global_override_voice_
+    domain` so `app.py::_offer_tts_global_override` can render a
+    confirmation dialog that names the domain the user is really
+    consenting to bypass, instead of a hardcoded assumption.
+    """
 
     snapshot: TTSMessageSpeechSnapshot
     validator: Callable[[TTSMessageSpeechSnapshot], str]
     created_at: float
+    voice_domain: TTSVoiceRefusalDomain = "character"
+
+    def __post_init__(self) -> None:
+        if self.voice_domain not in ("character", "default_profile"):
+            raise ValueError("voice_domain must be bounded")
 
 
 class CostTracker:
@@ -533,6 +547,7 @@ class TTSEventHandler:
                     token = self._issue_global_override(
                         event.snapshot,
                         event.validator,
+                        error.domain,
                     )
                 logger.warning(
                     "Console speech voice resolution failed (outcome_code={})",
@@ -898,6 +913,7 @@ class TTSEventHandler:
         self,
         snapshot: TTSMessageSpeechSnapshot,
         validator: Callable[[TTSMessageSpeechSnapshot], str],
+        voice_domain: TTSVoiceRefusalDomain = "character",
     ) -> str:
         """Retain bounded private fallback state behind a random capability."""
         current_time = asyncio.get_event_loop().time()
@@ -916,8 +932,30 @@ class TTSEventHandler:
             snapshot=snapshot,
             validator=validator,
             created_at=current_time,
+            voice_domain=voice_domain,
         )
         return token
+
+    def peek_global_override_voice_domain(
+        self,
+        token: str,
+    ) -> TTSVoiceRefusalDomain | None:
+        """Return a still-pending token's voice domain without consuming it.
+
+        Read-only and advisory (review round 2): the sole caller is
+        `app.py::_offer_tts_global_override`, which needs to know whether
+        the refusal that issued this token was about a per-character
+        assignment or the app-wide default voice profile so its
+        confirmation dialog names the right one. Deliberately does not
+        enforce the TTL or remove the entry -- the real admission decision
+        still goes through `_consume_global_override`, the only method
+        that actually spends the capability; a token this call cannot find
+        (unknown, already consumed, or -- in practice never, since this is
+        always called moments after issuance -- expired) simply returns
+        `None`, and the caller falls back to domain-neutral copy.
+        """
+        pending = self._pending_global_overrides.get(token)
+        return None if pending is None else pending.voice_domain
 
     def _consume_global_override(
         self,

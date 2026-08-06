@@ -432,6 +432,23 @@ def test_default_profile_codes_are_bounded_and_overridable(code: str) -> None:
     assert error.allow_global_override is True
     assert "character" not in str(error).lower()
     assert "default voice" in str(error).lower()
+    assert error.domain == "default_profile"
+
+
+@pytest.mark.parametrize(
+    "code",
+    (
+        "assignment_invalid",
+        "authorship_invalid",
+        "authority_missing",
+        "profile_store_unavailable",
+    ),
+)
+def test_character_domain_codes_report_the_character_domain(code: str) -> None:
+    """Review round 2: the dialog must be able to tell the domains apart."""
+    error = CharacterTTSResolutionError(code)  # type: ignore[arg-type]
+
+    assert error.domain == "character"
 
 
 def test_default_profile_resolution_accepts_the_assigned_shaped_request() -> None:
