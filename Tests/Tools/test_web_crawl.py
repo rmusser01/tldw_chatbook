@@ -468,3 +468,101 @@ def test_crawl_warm_write_includes_truncation_marker(crawl_env):
     result = web_fetch("http://example.com/")
     assert result.endswith(f"[... truncated: response exceeded max_bytes={FETCH_MAX_BYTES} ...]")
     assert len(crawl_env.calls) == n_calls  # served from cache, no new request
+
+
+# ---------------------------------------------------------------------------
+# sitemap mode (spec §2)
+# ---------------------------------------------------------------------------
+
+def _sitemap_response(xml: bytes) -> httpx.Response:
+    return httpx.Response(200, content=xml, headers={"content-type": "application/xml"})
+
+
+def test_sitemap_mode_seeds_pages_and_skips_expansion(crawl_env):
+    xml = (
+        b'<?xml version="1.0"?>'
+        b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        b"<url><loc>http://example.com/a</loc></url>"
+        b"<url><loc>http://example.com/b</loc></url>"
+        b"</urlset>"
+    )
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(xml)
+    _site(crawl_env, {
+        "http://example.com/a": ("alpha words", ["/should-not-follow"]),
+        "http://example.com/b": ("beta words", []),
+        "http://example.com/should-not-follow": ("nope", []),
+    })
+    out = web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
+    assert "alpha words" in out and "beta words" in out
+    # sitemap IS the discovery: links on seeded pages are not expanded
+    assert "http://example.com/should-not-follow" not in crawl_env.calls
+    assert "Stopped: sitemap exhausted." in out
+
+
+def test_sitemap_index_one_level(crawl_env):
+    index = (
+        b'<?xml version="1.0"?>'
+        b'<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        b"<sitemap><loc>http://example.com/s1.xml</loc></sitemap>"
+        b"<sitemap><loc>http://cdn-other.com/s2.xml</loc></sitemap>"
+        b"</sitemapindex>"
+    )
+    child = (
+        b'<?xml version="1.0"?>'
+        b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        b"<url><loc>http://example.com/from-child</loc></url>"
+        b"</urlset>"
+    )
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(index)
+    crawl_env.routes["http://example.com/s1.xml"] = _sitemap_response(child)
+    _site(crawl_env, {"http://example.com/from-child": ("child page words", [])})
+    out = web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
+    assert "child page words" in out
+    # off-host child sitemap (different host than sitemap_url) never fetched
+    assert "http://cdn-other.com/s2.xml" not in crawl_env.calls
+
+
+def test_sitemap_offhost_page_urls_filtered(crawl_env):
+    xml = (
+        b'<?xml version="1.0"?>'
+        b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        b"<url><loc>http://example.com/ok</loc></url>"
+        b"<url><loc>http://other.com/evil</loc></url>"
+        b"<url><loc>http://10.0.0.5/internal</loc></url>"
+        b"</urlset>"
+    )
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(xml)
+    _site(crawl_env, {"http://example.com/ok": ("fine", [])})
+    out = web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
+    assert "fine" in out
+    assert "http://other.com/evil" not in crawl_env.calls
+    assert "http://10.0.0.5/internal" not in crawl_env.calls  # off-host AND private
+
+
+def test_sitemap_respects_max_pages(crawl_env):
+    urls = "".join(
+        f"<url><loc>http://example.com/p{i}</loc></url>".encode().decode()
+        for i in range(10)
+    )
+    xml = (
+        '<?xml version="1.0"?>'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        f"{urls}</urlset>"
+    ).encode()
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(xml)
+    _site(crawl_env, {f"http://example.com/p{i}": (f"page {i}", []) for i in range(10)})
+    web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml", max_pages=3)
+    page_calls = [c for c in crawl_env.calls if "/p" in c]
+    assert len(page_calls) == 3
+
+
+def test_sitemap_unfetchable_raises_crawl_failed(crawl_env):
+    crawl_env.routes["http://example.com/sitemap.xml"] = httpx.Response(500)
+    with pytest.raises(LocalToolError, match="crawl-failed"):
+        web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
+
+
+def test_sitemap_garbage_xml_raises_crawl_failed(crawl_env):
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(b"not xml")
+    with pytest.raises(LocalToolError, match="crawl-failed"):
+        web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")

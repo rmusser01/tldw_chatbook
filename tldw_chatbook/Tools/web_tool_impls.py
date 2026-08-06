@@ -719,11 +719,71 @@ def _crawl_fetch_page(
     raise LocalToolError(f"[redirect-limit] exceeded {FETCH_MAX_REDIRECTS} redirects for {url!r}")
 
 
+def _seed_from_sitemap(
+    client: httpx.Client,
+    sitemap_url: str,
+    scope_host: str,
+    max_pages: int,
+    deadline: float,
+) -> list[str]:
+    """Collect up to max_pages same-host page URLs from a sitemap.
+
+    Sitemap fetches are discovery overhead — they do NOT consume the page
+    budget; the deadline bounds a pathological index (spec §2). Host rules:
+    child sitemaps must share sitemap_url's host; page URLs must share the
+    crawl scope host.
+    """
+    final_url, _headers, body, truncated = _crawl_fetch_page(
+        client, sitemap_url, deadline, max_bytes=SITEMAP_MAX_BYTES, html_only=False
+    )
+    if truncated:
+        raise LocalToolError(f"[crawl-failed] sitemap exceeds {SITEMAP_MAX_BYTES} bytes: {sitemap_url!r}")
+    page_urls, children = _parse_sitemap(body)
+    sitemap_host = _crawl_host(final_url)
+
+    urls: list[str] = []
+    seen: set[str] = set()
+
+    def take(candidates: list[str]) -> None:
+        for candidate in candidates:
+            if len(urls) >= max_pages:
+                return
+            if _crawl_host(candidate) != scope_host:
+                continue
+            norm = _normalize_crawl_url(candidate)
+            if norm in seen:
+                continue
+            seen.add(norm)
+            urls.append(candidate)
+
+    take(page_urls)
+    for child in children:
+        if len(urls) >= max_pages or time.monotonic() >= deadline:
+            break
+        if _crawl_host(child) != sitemap_host:
+            continue
+        try:
+            _f, _h, child_body, child_truncated = _crawl_fetch_page(
+                client, child, deadline, max_bytes=SITEMAP_MAX_BYTES, html_only=False
+            )
+        except (LocalToolError, _CrawlDeadline):
+            continue
+        if child_truncated:
+            continue
+        try:
+            child_pages, _nested = _parse_sitemap(child_body)  # one level: nested indexes ignored
+        except LocalToolError:
+            continue
+        take(child_pages)
+    return urls
+
+
 def web_crawl(
     url: str,
     *,
     max_pages: int = CRAWL_DEFAULT_MAX_PAGES,
     max_depth: int = CRAWL_DEFAULT_MAX_DEPTH,
+    sitemap_url: "str | None" = None,
 ) -> str:
     """Same-host breadth-first crawl returning a bounded page list.
 
@@ -732,10 +792,17 @@ def web_crawl(
     Every URL is egress-guarded; budgets bound fetch ATTEMPTS; a wall-clock
     deadline bounds the whole crawl. Ephemeral: no database writes.
 
+    When ``sitemap_url`` is given, sitemap mode replaces link-discovery BFS:
+    the page list comes from the sitemap (urlset, or a one-level
+    sitemapindex); ``max_depth`` is ignored and links on seeded pages are
+    not expanded.
+
     Raises:
-        LocalToolError: [invalid-args] for a bad url/host; [crawl-failed]
-            when the START url cannot be fetched (per-page failures inside
-            the crawl are results, counted in the footer).
+        LocalToolError: [invalid-args] for a bad url/host or a blank
+            sitemap_url; [crawl-failed] when the START url cannot be
+            fetched in BFS mode, or when the sitemap itself cannot be
+            fetched/parsed (per-page failures inside the crawl are
+            results, counted in the footer).
     """
     if not isinstance(url, str) or not url.strip():
         raise LocalToolError("[invalid-args] url must be a non-empty string")
@@ -762,6 +829,22 @@ def web_crawl(
         trust_env=False,
     )
     try:
+        expand_links = sitemap_url is None
+        if sitemap_url is not None:
+            if not isinstance(sitemap_url, str) or not sitemap_url.strip():
+                raise LocalToolError("[invalid-args] sitemap_url must be a non-empty string")
+            try:
+                seeded = _seed_from_sitemap(client, sitemap_url.strip(), scope_host, max_pages, deadline)
+            except _CrawlDeadline:
+                seeded = []
+            except LocalToolError as exc:
+                if "[crawl-failed]" in str(exc):
+                    raise
+                raise LocalToolError(f"[crawl-failed] sitemap could not be fetched: {exc}") from exc
+            queue = deque((u, 0) for u in seeded)
+            visited = {_normalize_crawl_url(u) for u in seeded}
+            stop_reason = "sitemap exhausted"
+
         while queue:
             if attempts >= max_pages:
                 stop_reason = "page budget reached"
@@ -778,7 +861,7 @@ def web_crawl(
                 stop_reason = "deadline reached"
                 break
             except LocalToolError as exc:
-                if is_start:
+                if is_start and sitemap_url is None:
                     raise LocalToolError(f"[crawl-failed] start URL could not be fetched: {exc}") from exc
                 if "[ssrf]" in str(exc):
                     blocked += 1
@@ -820,6 +903,9 @@ def web_crawl(
 
             # Expansion: same-host pages only, within the depth budget. A page
             # that redirected off-host is listed but its links are not followed.
+            # Sitemap mode is discovery-complete: links are never expanded.
+            if not expand_links:
+                continue
             if depth >= max_depth or _crawl_host(final_url) != scope_host:
                 continue
             base = final_url
