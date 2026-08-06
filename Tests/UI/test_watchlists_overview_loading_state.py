@@ -145,12 +145,17 @@ async def test_the_inspector_follows_the_same_three_states():
         )
         # task-1347: the hint container existing is not evidence it says
         # anything -- assert the actual guidance sentence, which names the
-        # two controls (New, then New source) that get a brand-new profile
-        # unstuck.
+        # control (New source) that gets a brand-new profile unstuck.
+        #
+        # TASK-2313, AC#1: shortened from a two-step walkthrough ("New" in
+        # the rail, then "New source" under Sources) that fully duplicated
+        # Overview's own first-run guidance (UAT: three stacked "nothing
+        # yet" messages on one screen) -- this pane's hint now names just
+        # the one action relevant to what IT shows.
         hint_text = str(
             inspector.query_one("#inspector-first-run-hint").renderable
         )
-        assert "start with new in the rail, then new source under sources" in (
+        assert "start with new source under sources" in (
             hint_text.lower()
         ), f"the Inspector's first-run hint is missing or empty; it renders {hint_text!r}"
 

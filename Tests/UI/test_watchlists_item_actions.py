@@ -89,7 +89,13 @@ async def test_selected_item_reports_type_item_and_offers_item_actions():
         assert "Lightsail object storage concerns" in _inspector_text(
             inspector, "inspector-entity-title"
         )
-        assert _inspector_text(inspector, "inspector-entity-type") == "Type: item", (
+        # TASK-2313, AC#5: "Type: item" reworded to a short sentence -- the
+        # underlying regression this pins (TASK-1120: an item reported as
+        # a source, so the actions beneath it were source actions) is
+        # still about the KIND agreeing with what was actually selected.
+        assert _inspector_text(inspector, "inspector-entity-type") == (
+            "This is an item."
+        ), (
             "a fetched watchlist item was reported as a source, so the actions "
             "beneath it were source actions (TASK-1120)"
         )

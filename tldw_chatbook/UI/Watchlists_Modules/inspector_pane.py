@@ -301,6 +301,37 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
     )
     _IGNORE_SELECTORS_MAX_LENGTH = 4000
 
+    #: TASK-2313, AC#5: `f"Type: {kind}"` was a bare, debug-style fragment
+    #: ("Type: source") with no article and no sentence around it -- the
+    #: UAT's own words. Each kind reads as a short sentence instead; the
+    #: `#inspector-entity-type` widget id and its ONE-line shape are both
+    #: unchanged; only the copy inside it grew a subject and a verb.
+    _ENTITY_KIND_PHRASES: dict[str, str] = {
+        "source": "This is a source.",
+        "run": "This is a run.",
+        "item": "This is an item.",
+        "rule": "This is an alert rule.",
+        "notification": "This is a notification.",
+        "watchlist": "This is a watchlist.",
+    }
+
+    @classmethod
+    def _entity_kind_sentence(cls, kind: str) -> str:
+        """The `#inspector-entity-type` line's text for a given entity kind.
+
+        Args:
+            kind: One of the `WatchEntityLevel.kind` values this pane
+                produces (`_resolve_levels`) -- "source"/"run"/"item"/
+                "rule"/"notification"/"watchlist" today.
+
+        Returns:
+            A short sentence naming what is selected. Falls back to a
+            plain capitalized noun for any kind not in the table above,
+            so a future kind added to `_resolve_levels` degrades to
+            readable text instead of a `KeyError`.
+        """
+        return cls._ENTITY_KIND_PHRASES.get(kind, f"This is a {kind}.")
+
     @classmethod
     def _is_paused_subscription(cls, entity: dict[str, Any] | None) -> bool:
         """Whether `entity` is an auto-paused LOCAL subscription (task-2050).
@@ -481,13 +512,23 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
                     id="inspector-empty-state",
                 )
                 yield Static(
-                    # TASK-2303 AC#4: both names are labels that really are
-                    # on screen -- the rail's `New` and the Sources pane's
-                    # `New source`. Pinned by
-                    # `test_watchlists_source_vocabulary.py`.
-                    "Sources, runs, items and rules show their actions here "
-                    "once they exist. Start with New in the rail, then "
-                    "New source under Sources.",
+                    # TASK-2303 AC#4: `New source` is a label that really
+                    # is on screen (the Sources pane's own button) --
+                    # `test_watchlists_source_vocabulary.py` reads it and
+                    # this hint in the same run, so a rename of either
+                    # alone fails that test.
+                    #
+                    # TASK-2313, AC#1: shortened from a two-step walkthrough
+                    # that fully repeated Overview's own first-run guidance
+                    # (UAT: three stacked "nothing yet" messages on one
+                    # screen). This pane's OWN job is narrower than
+                    # Overview's -- explain what appears HERE, not re-teach
+                    # onboarding -- so it now names just the one action
+                    # relevant to what this pane shows (source/run/item/
+                    # rule actions), not the watchlist-creation step
+                    # Overview's numbered list already owns.
+                    "Actions appear here once something exists -- start "
+                    "with New source under Sources.",
                     id="inspector-first-run-hint",
                 )
                 return
@@ -523,7 +564,10 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
                 or "Untitled"
             )
             yield Static(Text(f"Selected: {title}"), id="inspector-entity-title")
-            yield Static(Text(f"Type: {deepest.kind}"), id="inspector-entity-type")
+            yield Static(
+                Text(self._entity_kind_sentence(deepest.kind)),
+                id="inspector-entity-type",
+            )
             # TASK-1362 (spec §2). Only for a url-family SOURCE: an item, a
             # run, a rule or a feed source has no extraction settings for
             # these rules to shape.
@@ -534,7 +578,10 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
                 Text(strip_control_characters(deepest.label)),
                 id="inspector-entity-title",
             )
-            yield Static(Text(f"Type: {deepest.kind.capitalize()}"), id="inspector-entity-type")
+            yield Static(
+                Text(self._entity_kind_sentence(deepest.kind)),
+                id="inspector-entity-type",
+            )
 
         with Vertical(id="inspector-actions"):
             if deepest.kind == "source":

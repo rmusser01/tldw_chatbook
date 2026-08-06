@@ -155,6 +155,160 @@ async def test_watchlists_shell_has_tab_strip_and_panes():
 
 
 @pytest.mark.asyncio
+async def test_the_backend_value_is_stated_exactly_once_on_a_normal_section():
+    """TASK-2313, AC#3: on a section where the Select is a live choice
+    (Sources, not a `_LOCAL_ONLY_SECTIONS` member), the Select's own
+    current value ("Local"/"Server") is the ONLY place that fact appears
+    -- the old always-present `#watchlists-backend-label` restated it a
+    second time as "Backend: local". A `Static("Backend", ...)` label
+    ahead of the Select (the 2310 idiom) still names the axis."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+
+        select = screen.query_one("#watchlists-backend-select", Select)
+        assert select.disabled is False, "precondition: a real, live choice"
+        assert not screen.query("#watchlists-backend-label"), (
+            "the value-restating label must not exist when the Select "
+            "already states it"
+        )
+        header_bar = screen.query_one("#watchlists-header-bar")
+        children = list(header_bar.children)
+        select_index = children.index(select)
+        label = children[select_index - 1]
+        assert isinstance(label, Static)
+        assert str(label.renderable) == "Backend"
+
+
+@pytest.mark.asyncio
+async def test_the_backend_reason_still_shows_on_a_local_only_section():
+    """The counterpart: `#watchlists-backend-label` is NOT pure duplication
+    on a `_LOCAL_ONLY_SECTIONS` member -- it explains WHY the (disabled)
+    Select's value does not matter, which the Select cannot say on its
+    own. That copy must survive TASK-2313's dedup."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen.active_section = "artifacts"
+        await pilot.pause(0.2)
+
+        assert screen.query_one("#watchlists-backend-select", Select).disabled is True
+        label = screen.query_one("#watchlists-backend-label", Static)
+        assert str(label.renderable) == "Artifacts: local"
+
+
+@pytest.mark.asyncio
+async def test_the_inspector_first_run_hint_does_not_repeat_overviews_own_walkthrough():
+    """TASK-2313, AC#1: UAT -- three stacked "nothing yet" messages on one
+    screen (header + Overview pane + Inspector), the Inspector's own hint
+    fully re-teaching the SAME two-step walkthrough ("New" in the rail,
+    then "New source" under Sources) Overview's numbered first-run body
+    already gives in full. The Inspector's hint is now shorter and
+    Inspector-specific (what appears HERE), and must not re-teach the
+    watchlist-creation step that is Overview's job."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = host.screen_stack[-1]
+        for _ in range(60):
+            await pilot.pause(0.02)
+            if screen.query("#inspector-first-run-hint"):
+                break
+        hint = str(
+            screen.query_one("#inspector-first-run-hint", Static).renderable
+        )
+        assert "New source" in hint, (
+            "must still name the one action relevant to this pane"
+        )
+        assert "New in the rail" not in hint, (
+            "must not re-teach Overview's own watchlist-creation step -- "
+            f"the whole walkthrough duplicated there: {hint!r}"
+        )
+        overview_body = str(
+            screen.query_one("#overview-first-run-body", Static).renderable
+        )
+        assert "New" in overview_body, (
+            "precondition: Overview is still the one place that teaches "
+            "the rail step"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_selected_object_block_sits_above_console_actions():
+    """TASK-2313, AC#5: UAT -- the Inspector's Console block permanently
+    outranked the selected object's own actions. `#watchlists-entity-
+    inspector` (the selected-object block: title/type/action buttons) must
+    now come BEFORE the "Console actions" heading in the right rail's DOM
+    order, not after."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        rail = screen.query_one("#watchlists-inspector-pane")
+        children = list(rail.children)
+        inspector_index = next(
+            i for i, child in enumerate(children) if child.id == "watchlists-entity-inspector"
+        )
+        console_heading_index = next(
+            i
+            for i, child in enumerate(children)
+            if isinstance(child, Static) and str(child.renderable) == "Console actions"
+        )
+        assert inspector_index < console_heading_index, (
+            f"the selected-object block (index {inspector_index}) must sit "
+            f"above Console actions (index {console_heading_index})"
+        )
+
+
+@pytest.mark.asyncio
+async def test_import_opml_appears_once_on_the_sources_tab():
+    """TASK-2313, AC#3: UAT -- "Import OPML" twice on one screen. The
+    header's bootstrap actions (New source/Import OPML) are the only
+    entry point from every OTHER section, but on Sources itself its own
+    toolbar already offers the identical pair one row below -- so the
+    header's copy is omitted there specifically, while every other
+    section keeps its one bootstrap path."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        assert screen.query_one("#wc-empty-import-opml"), (
+            "precondition: Overview (the default section) keeps the "
+            "header's bootstrap actions"
+        )
+
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+        assert not screen.query("#wc-empty-import-opml"), (
+            "the header's Import OPML must not duplicate the Sources "
+            "toolbar's own copy"
+        )
+        assert not screen.query("#wc-empty-create-source")
+        assert screen.query_one("#sources-import-opml-button"), (
+            "the Sources toolbar's own Import OPML must still be there"
+        )
+        # The header's STATUS text is not an "action" and stays -- only
+        # the duplicate buttons are gone.
+        assert screen.query_one("#wc-empty-state")
+
+        screen.active_section = "runs"
+        await pilot.pause(0.2)
+        assert screen.query_one("#wc-empty-import-opml"), (
+            "every OTHER section keeps its one bootstrap path"
+        )
+
+
+@pytest.mark.asyncio
 async def test_watchlists_tab_strip_updates_active_section():
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -2511,7 +2665,7 @@ async def test_a_background_snapshot_lands_in_place_without_rebuilding_the_pane(
             "without a screen recompose"
         )
         assert str(screen.query_one("#watchlists-state-summary").renderable) == (
-            "State: unavailable"
+            "Watchlists: error"
         ), "the Inspector's State line must follow the snapshot"
         attach = screen.query_one("#wc-attach-to-console", Button)
         assert attach.disabled is True, (
@@ -3022,7 +3176,7 @@ async def test_loader_results_landing_before_textual_flips_is_mounted_still_pain
                 "the loaded (empty-profile) Overview state must paint"
             )
             assert str(screen.query_one("#watchlists-state-summary").renderable) == (
-                "State: ready"
+                "Watchlists: loaded"
             ), "the Inspector's State line must follow the snapshot here too"
 
             # The tree loader lands in the same window (`on_mount` starts it

@@ -546,7 +546,12 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             str(self.selected_source.get("id")) if self.selected_source else None
         )
         table = DataTable(id="sources-table")
-        table.add_columns("Name", "Type", "Status", "Last scraped", "Active")
+        # TASK-2313, AC#2: "checked"/"Check now" is the vocabulary this
+        # screen uses everywhere else for the same fetch action (the
+        # button here and on the Inspector, toasts like "It will be
+        # checked on its normal schedule."); this column was the one
+        # holdout still saying "scraped".
+        table.add_columns("Name", "Type", "Status", "Last checked", "Active")
         filtered = self._filtered_sources()
         for source in filtered:
             row_key = str(source.get("id") or id(source))

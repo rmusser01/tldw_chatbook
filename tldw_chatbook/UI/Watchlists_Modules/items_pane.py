@@ -212,6 +212,17 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
                 key=str(item.get("id") or id(item)),
             )
         yield table
+        # TASK-2313, AC#6: the Queued column was a bare glyph or a blank
+        # cell with no discoverable meaning anywhere on screen -- UAT. A
+        # persistent legend, matching Sources' rail-count legend
+        # (TASK-2304) for the identical reason: a per-row suffix would
+        # cost width on every row, one caption line costs it once.
+        yield Static(
+            f"{self._QUEUED_GLYPH} = queued for the next briefing "
+            "(toggle from the Inspector).",
+            id="items-queued-legend",
+            classes="watchlists-hint-line",
+        )
 
     def _filtered_items(self) -> list[dict[str, Any]]:
         """Apply the status filter and search query, pinning the open item.

@@ -299,7 +299,7 @@ def test_source_row_cells_render_the_normalizer_status_summary():
         f"Status column rendered {cells[2].plain!r} for an errored source"
     )
     assert cells[3].plain == humane_timestamp("2026-07-28T09:00:00+00:00"), (
-        f"Last scraped column rendered {cells[3].plain!r}, not through "
+        f"Last checked column rendered {cells[3].plain!r}, not through "
         "humane_timestamp"
     )
 

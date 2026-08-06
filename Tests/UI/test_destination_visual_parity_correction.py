@@ -1087,19 +1087,25 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#wc-empty-state")
 
+        # TASK-2313, AC#6: "Mixed | Local/Server" dropped from the title.
         assert (
             _visible_static_text(screen).find(
-                "Watchlists | Monitored sources, runs, alerts, recovery | Mixed | Local/Server"
+                "Watchlists | Monitored sources, runs, alerts, recovery"
             )
             >= 0
         )
         visible_text = _visible_static_text(screen)
         assert screen.query_one("#watchlists-header-bar").region.height == 3
-        assert "Backend: local" in visible_text
+        # TASK-2313, AC#3: on Overview (not a `_LOCAL_ONLY_SECTIONS`
+        # member), the Select's own value is the only place "Local"
+        # appears now -- the old trailing "Backend: local" restated it.
+        assert "Backend" in visible_text
+        assert "Local" in visible_text
+        assert "Backend: local" not in visible_text
         assert "Sources" in visible_text
         assert "Overview" in visible_text
         assert "Inspector" in visible_text
-        assert "State: ready" in visible_text
+        assert "Watchlists: loaded" in visible_text
         assert "Alert rules active:" in visible_text
         assert "Latest run status:" in visible_text
         assert "Collections" not in visible_text
@@ -1123,7 +1129,7 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         # header -- see `WatchlistsCollectionsScreen._hidden_centre_regions`
         # and `_rendered_region_layout`). ITEMS is the one centre region
         # that is always present; the tab strip and snapshot markers this
-        # test already asserted above ("Sources"/"State: ready"/... in
+        # test already asserted above ("Sources"/"Watchlists: loaded"/... in
         # `visible_text`) now come from `#wl-centre-status`
         # (`_build_centre_status_header`) rather than from FEEDS's own body.
         assert screen.query_one("#wl-workbench")
@@ -1725,7 +1731,11 @@ async def test_watchlists_right_rail_does_not_clip_action_labels(size):
         for label in (
             "Stage Watchlists Context in Console",
             "Open current Watchlists",
-            "Console follow unavailable",
+            # TASK-2313, AC#6: reworded from "Console follow unavailable"
+            # to match the enabled state's own "Follow ... in Console"
+            # phrasing, removing the adjacent "Console follow"/"Console
+            # follow" duplication the UAT flagged.
+            "Follow in Console",
         ):
             _assert_label_intact_on_screen(right_rail, label, context=context)
 

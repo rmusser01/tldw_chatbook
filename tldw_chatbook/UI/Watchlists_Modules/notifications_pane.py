@@ -130,6 +130,15 @@ class NotificationsPane(RecomposeCaptureGuard, Vertical):
             # the keyboard cursor where the user left it.
             table.cursor_coordinate = Coordinate(selected_index, 0)
         yield table
+        # TASK-2313, AC#4: one line of guidance for the bare-table state,
+        # matching Runs/Rules' identical fix.
+        if not self.notifications:
+            yield Static(
+                "No notifications yet. An alert rule firing, or a check "
+                "failing, adds one here.",
+                id="notifications-empty-state",
+                classes="watchlists-hint-line",
+            )
 
         selected = self.selected_notification
         yield Static("Notification detail", classes="pane-title")

@@ -385,6 +385,20 @@ async def test_sources_pane_renders_table_and_toolbar():
 
 
 @pytest.mark.asyncio
+async def test_the_last_checked_column_uses_the_check_vocabulary():
+    """TASK-2313, AC#2: "scraped" vs "checked" terminology drift -- this
+    column was the one holdout still saying "Last scraped" while every
+    button/toast elsewhere on this screen says "check"/"Check now"."""
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        table = pane.query_one("#sources-table", DataTable)
+        columns = [str(col.label) for col in table.columns.values()]
+        assert "Last checked" in columns
+        assert "Last scraped" not in columns
+
+
+@pytest.mark.asyncio
 async def test_toolbar_filter_selects_each_carry_a_visible_label():
     """TASK-2310: UAT read the toolbar as "All / All statuses / All",
     two of three filter Selects unlabeled. A persistent sibling `Static`

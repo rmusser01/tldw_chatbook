@@ -11,7 +11,7 @@ entirely in `compose()`.
 import pytest
 from rich.style import Style
 from textual.app import App, ComposeResult
-from textual.widgets import Button, DataTable
+from textual.widgets import Button, DataTable, Static
 
 from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import (
     DismissNotificationRequested,
@@ -88,6 +88,27 @@ async def test_notifications_pane_renders_table_and_toolbar():
         assert pane.query_one("#notifications-refresh-button", Button)
         assert pane.query_one("#notifications-mark-read-button", Button)
         assert pane.query_one("#notifications-dismiss-button", Button)
+
+
+@pytest.mark.asyncio
+async def test_notifications_pane_carries_one_line_of_guidance_when_empty():
+    """TASK-2313, AC#4: matching Runs/Rules' identical fix."""
+    app = NotificationsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(NotificationsPane)
+        assert pane.notifications == [], "precondition: nothing seeded"
+        hint = pane.query_one("#notifications-empty-state", Static)
+        assert "No notifications yet" in str(hint.renderable)
+
+
+@pytest.mark.asyncio
+async def test_notifications_pane_hides_the_guidance_once_rows_exist(sample_notifications):
+    app = NotificationsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(NotificationsPane)
+        pane.notifications = sample_notifications
+        await pilot.pause()
+        assert not pane.query("#notifications-empty-state")
 
 
 @pytest.mark.asyncio

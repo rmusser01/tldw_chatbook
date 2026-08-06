@@ -1085,6 +1085,19 @@ WatchlistPickerDialog {
     color: $text-muted;
 }
 
+/* TASK-2313: a muted, one-line caption -- used for AC#4's empty-table
+ * guidance (Runs/Rules/Notifications, matching in spirit, not literal
+ * reuse, Overview's own first-run guidance so a genuinely empty list
+ * reads as "nothing here yet" rather than "broken") and for AC#6's
+ * persistent column-meaning legends (e.g. Items' Queued glyph).
+ */
+.watchlists-hint-line {
+    width: 100%;
+    height: auto;
+    color: $text-muted;
+    padding: 1 0;
+}
+
 /* `.dialog-buttons` (features/_media.tcss) supplies the side-by-side pair
  * itself -- `layout: horizontal`, and `margin: 0 1; min-width: 12` on each
  * Button -- so this form and `WatchlistNameDialog` pair their Create/Cancel

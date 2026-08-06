@@ -71,6 +71,27 @@ async def test_rules_pane_renders_table_and_toolbar():
 
 
 @pytest.mark.asyncio
+async def test_rules_pane_carries_one_line_of_guidance_when_empty():
+    """TASK-2313, AC#4: matching Runs/Notifications' identical fix."""
+    app = RulesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RulesPane)
+        assert pane.rules == [], "precondition: nothing seeded"
+        hint = pane.query_one("#rules-empty-state", Static)
+        assert "No alert rules yet" in str(hint.renderable)
+
+
+@pytest.mark.asyncio
+async def test_rules_pane_hides_the_guidance_once_rows_exist(sample_rules):
+    app = RulesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RulesPane)
+        pane.rules = sample_rules
+        await pilot.pause()
+        assert not pane.query("#rules-empty-state")
+
+
+@pytest.mark.asyncio
 async def test_rules_pane_populates_table(sample_rules):
     app = RulesPaneHarness()
     async with app.run_test(size=(120, 40)) as pilot:

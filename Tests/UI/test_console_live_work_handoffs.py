@@ -1041,7 +1041,12 @@ async def test_watchlists_destination_keeps_console_follow_disabled_without_acti
         button = screen.query_one("#watchlists-follow-in-console")
 
         assert button.disabled is True
-        assert str(button.label) == "Console follow unavailable"
+        # TASK-2313, AC#6: "Console follow" appeared twice in two
+        # adjacent lines; the disabled button's label now matches the
+        # enabled state's own "Follow ... in Console" phrasing rather
+        # than restating the noun phrase a second time. `disabled=True`
+        # (asserted above) already conveys unavailability visually.
+        assert str(button.label) == "Follow in Console"
         text = _screen_static_text(screen)
         assert "No active Watchlists run is available for Console follow." in text
 

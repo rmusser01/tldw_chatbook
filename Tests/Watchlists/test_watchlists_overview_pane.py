@@ -45,6 +45,39 @@ async def test_overview_pane_renders_summary_cards():
 
 
 @pytest.mark.asyncio
+async def test_a_none_card_value_falls_back_to_the_dash_not_the_literal_word_none():
+    """TASK-2313, AC#2: `latest_run_status` is `None` (not the string
+    "unavailable", which read as a fault -- UAT) when nothing has run yet.
+    `_card_value` must treat a PRESENT `None` value the same as a missing
+    key (falling back to "-"), not print the literal text "None". A
+    present numeric `0` (every other card) must be untouched."""
+    app = OverviewPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(OverviewPane)
+        # A populated profile (>0 sources) that simply has not been
+        # checked yet -- a real, reachable state, and the one that must
+        # render the summary-cards grid rather than first-run guidance.
+        pane.data = {
+            "total_sources": 1,
+            "active_sources": 1,
+            "sources_in_error": 0,
+            "total_items": 0,
+            "new_items": 0,
+            "latest_run_status": None,
+            "active_alert_rules": 0,
+            "failed_runs": [],
+        }
+        await pilot.pause()
+
+        assert "Latest run status\n-" in str(
+            pane.query_one("#overview-latest-run-status").renderable
+        )
+        # A real, present `0` must still render as "0", not fall through
+        # to "-" as if it were also missing.
+        assert "New items\n0" in str(pane.query_one("#overview-new-items").renderable)
+
+
+@pytest.mark.asyncio
 async def test_overview_pane_renders_failed_runs():
     app = OverviewPaneHarness()
     async with app.run_test(size=(120, 40)) as pilot:

@@ -68,6 +68,19 @@ async def test_items_pane_renders_table_and_toolbar():
 
 
 @pytest.mark.asyncio
+async def test_the_queued_column_carries_a_discoverable_legend():
+    """TASK-2313, AC#6: the Queued column was a bare glyph or blank cell
+    with no discoverable meaning anywhere on screen."""
+    app = ItemsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ItemsPane)
+        legend = pane.query_one("#items-queued-legend", Static)
+        text = str(legend.renderable)
+        assert pane._QUEUED_GLYPH in text
+        assert "queued for the next briefing" in text
+
+
+@pytest.mark.asyncio
 async def test_status_select_carries_a_visible_label():
     """TASK-2310: the status filter must not paint as a bare "All statuses"
     with nothing naming what it filters."""

@@ -30,7 +30,16 @@ class OverviewPane(RecomposeCaptureGuard, Vertical):
     }
 
     def _card_value(self, key: str, label: str) -> str:
+        # TASK-2313, AC#2: `None` (as `latest_run_status` now legitimately
+        # is when nothing has run yet -- see `WatchlistsBackendController.
+        # get_overview_data`) is treated the same as a MISSING key, both
+        # falling back to "-". `.get(key, "-")` alone only catches the
+        # missing-key case; a present key holding `None` would otherwise
+        # print the literal text "None". A present numeric `0` (every
+        # other card this method renders) is untouched -- `0 is not None`.
         value = self.data.get(key, "-")
+        if value is None:
+            value = "-"
         return f"{label}\n{value}"
 
     #: The three answers this region can give about a profile (TASK-1020).

@@ -196,6 +196,15 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
                 key=str(rule.get("id") or id(rule)),
             )
         yield table
+        # TASK-2313, AC#4: one line of guidance for the bare-table state,
+        # matching Runs/Notifications' identical fix.
+        if not self.rules:
+            yield Static(
+                "No alert rules yet. Press New Rule to watch for a "
+                "condition like a run failing or items dropping off.",
+                id="rules-empty-state",
+                classes="watchlists-hint-line",
+            )
 
     def on_select_changed(self, event: Select.Changed) -> None:
         """TASK-2310: repaint the Threshold guidance when Condition changes.

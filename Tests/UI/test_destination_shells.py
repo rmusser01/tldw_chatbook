@@ -1107,9 +1107,12 @@ async def test_watchlists_collections_uses_compact_title_and_clear_sections():
         await pilot.pause(0.1)
         screen = _active_destination_screen(host)
 
+        # TASK-2313, AC#6: "Mixed | Local/Server" dropped -- a hardcoded
+        # constant that never reflected the actual backend and duplicated
+        # the labeled Backend Select one row below.
         assert (
             _static_text(screen.query_one("#watchlists-collections-title", Static))
-            == "Watchlists | Monitored sources, runs, alerts, recovery | Mixed | Local/Server"
+            == "Watchlists | Monitored sources, runs, alerts, recovery"
         )
         visible_text = _visible_text(screen)
         assert "Watchlists" in visible_text

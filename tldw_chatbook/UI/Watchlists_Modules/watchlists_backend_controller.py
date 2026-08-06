@@ -314,7 +314,15 @@ class WatchlistsBackendController:
                 "sources_in_error": 0,
                 "total_items": 0,
                 "new_items": 0,
-                "latest_run_status": "unavailable",
+                # TASK-2313, AC#2: `None`, not the string "unavailable" --
+                # a real status value ("unavailable" read as a fault, UAT)
+                # for a watchlist that has simply never run yet. `None`
+                # lets both readers of this dict (`OverviewPane._card_
+                # value`'s "-" default, `WatchlistsCollectionsScreen.
+                # _latest_run_status_text`'s "no runs yet") treat it as the
+                # honest "nothing recorded" state their own vocabulary
+                # already uses for every OTHER missing value.
+                "latest_run_status": None,
                 "failed_runs": [],
                 "active_alert_rules": 0,
             }
@@ -353,7 +361,9 @@ class WatchlistsBackendController:
         total_items = len(items)
         new_items = sum(1 for item in items if str(item.get("status") or "").lower() == "new")
 
-        latest_run_status = "unavailable"
+        # TASK-2313, AC#2: `None`, not "unavailable" -- see the identical
+        # note on the degraded-state dict above.
+        latest_run_status = None
         if runs:
             latest = runs[0]
             latest_run_status = str(latest.get("status") or "unknown")
