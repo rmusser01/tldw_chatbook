@@ -525,6 +525,32 @@ def library_rag_query_shows_full_recovery(query_state: LibraryRagQueryState) -> 
     return bool(query_state.recovery_copy) and not _query_blocked_is_quiet(query_state)
 
 
+def library_rag_query_quiet_text(state: LibraryRagPanelState) -> str:
+    """Return the text of the query region's single reserved quiet row.
+
+    Extracted from `library_rag_query_status_children` (F1) so the screen's
+    NO-`await` snapshot sync can refresh that one row with a plain
+    `Static.update()` without rebuilding the callout block around it. Both
+    callers derive from the SAME `state` the run gate is derived from, so
+    the row can never disagree with the Run button beside it -- Task 4's
+    collapse of "is a paid call ready" into one source of truth
+    (`ready_answer_provider`) survives having two render sites.
+
+    Returns:
+        The quiet line's copy: a gate's quiet blocker, the ready `rag`
+        mode's paid-mode notice, or `""` for every state that reserves the
+        row without filling it.
+    """
+    query_state = state.query_state
+    if query_state.blocked_is_empty_query:
+        return "Enter a question or search query."
+    if query_state.blocked_is_no_scope and state.scope.has_available_sources:
+        return "Select at least one source."
+    if query_state.ready_answer_provider:
+        return library_rag_paid_mode_notice(query_state.ready_answer_provider)
+    return ""
+
+
 def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widget]:
     """Return the query region's status widgets (A1/A2).
 
@@ -547,7 +573,9 @@ def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widge
     was the *blocked* branch's "Select a provider/model..." text, which
     vanishes the instant a provider IS configured. `search` mode's ready
     state is untouched -- it never calls a provider, so the row keeps its
-    original empty-and-reserved behavior there.
+    original empty-and-reserved behavior there. The row's copy comes from
+    `library_rag_query_quiet_text`, which the screen's no-`await` snapshot
+    sync also calls to update the mounted row in place (F1).
 
     Args:
         state: Current Library Search/RAG panel display state.
@@ -557,15 +585,8 @@ def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widge
         widgets for full-recovery failures.
     """
     query_state = state.query_state
-    quiet_text = ""
-    if query_state.blocked_is_empty_query:
-        quiet_text = "Enter a question or search query."
-    elif query_state.blocked_is_no_scope and state.scope.has_available_sources:
-        quiet_text = "Select at least one source."
-    elif query_state.ready_answer_provider:
-        quiet_text = library_rag_paid_mode_notice(query_state.ready_answer_provider)
     quiet_line = Static(
-        quiet_text,
+        library_rag_query_quiet_text(state),
         id="library-rag-query-quiet-line",
         classes="library-rag-quiet-line",
         markup=False,

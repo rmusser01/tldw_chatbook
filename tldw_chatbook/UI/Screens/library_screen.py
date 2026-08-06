@@ -259,6 +259,7 @@ from ...Widgets.Library import (
     library_dim_label_text,
     library_rag_answer_children,
     library_rag_history_children,
+    library_rag_query_quiet_text,
     library_rag_query_shows_full_recovery,
     library_rag_query_status_children,
     library_rag_results_body_children,
@@ -17607,15 +17608,37 @@ class LibraryScreen(BaseAppScreen):
         `Static.update()` -- has no yield points at all, so it can never
         interleave with anything and needs no coordination.
 
-        Trade-off: the query region's quiet-line/blocked-callout/recovery
-        block (`library_rag_query_status_children`) is NOT refreshed here
-        (it requires remove/mount and would visually desync from an
-        unrefreshed callout) -- an ingest-driven scope change that flips
-        the run gate's *reason* text (as opposed to just enabled/disabled)
-        stays stale until the next full refresh. Accepted narrowly for
-        this snapshot-driven path only; every other caller above still
-        runs the full `_refresh_search_rag_panel_state_widgets` and is
-        unaffected.
+        The query region's reserved quiet line IS synced here (F1), by the
+        same yield-free `Static.update()` class of write as the scope
+        summary below -- no remove/mount, so RAG-27's constraint holds.
+        The original trade-off deferred that row along with the callout,
+        on the reasoning that it carried only the run gate's *reason*
+        text. That reasoning expired with PR-T2 Task 4: the same row now
+        also carries the money disclosure (`library_rag_paid_mode_notice`,
+        naming the provider Run would bill), and deferring it produced a
+        silent paid state. A Library revisit past
+        `LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS` composes with all-zero counts
+        -> no scope -> a blocked-but-QUIET gate (no callout, empty row);
+        the snapshot then lands real counts and this method flips Run to
+        enabled, leaving a runnable paid button above an empty row that
+        never said a provider would be billed. Deriving the row's copy
+        from `library_rag_query_quiet_text(panel_state)` -- the same
+        builder `compose()` and the full refresh use, off the same state
+        the run gate above is read from -- keeps the disclosure and the
+        button they sit next to from ever disagreeing.
+
+        Trade-off (narrowed): the blocked-callout/recovery block below the
+        quiet line is still NOT refreshed here -- it is the part that
+        requires remove/mount, and `#library-rag-query-controls`'
+        `has-recovery` class with it. So a snapshot that lifts the
+        quiet no-scope blocker only to land on a LOUD one (rag mode with
+        no provider configured: "Select a provider/model...") still shows
+        no callout until the next full refresh. That residue cannot spend
+        money -- every blocker it covers leaves Run disabled, and the
+        quiet line, derived from the same state, shows no paid notice
+        while one is in force. Accepted narrowly for this snapshot-driven
+        path only; every other caller above still runs the full
+        `_refresh_search_rag_panel_state_widgets` and is unaffected.
 
         (task-2075 D5) The *scope* region's own recovery block --
         `#library-rag-source-scope`'s `has-recovery` class plus its
@@ -17652,6 +17675,19 @@ class LibraryScreen(BaseAppScreen):
         run_button.label = run_action.label
         run_button.disabled = not run_action.enabled
         run_button.tooltip = run_action.tooltip
+
+        # (F1) Written in the SAME pass as the button above, off the SAME
+        # `panel_state`, because this row carries rag mode's paid-mode
+        # notice: enabling Run without refreshing it is exactly how a
+        # revisit-past-the-snapshot-TTL produced a runnable paid button
+        # with no disclosure on screen. Plain `Static.update()` -- no
+        # yield point, so RAG-27's constraint (see the docstring) holds.
+        try:
+            self.query_one("#library-rag-query-quiet-line", Static).update(
+                library_rag_query_quiet_text(panel_state)
+            )
+        except (NoMatches, QueryError):
+            pass
 
         options_by_source_type = {
             option.source_type: option for option in panel_state.scope.options

@@ -1649,6 +1649,94 @@ async def test_library_search_rag_cold_boot_recovery_banner_agrees_with_real_sou
 
 
 @pytest.mark.asyncio
+async def test_library_search_rag_snapshot_that_enables_run_also_lands_paid_notice() -> (
+    None
+):
+    """(F1) A source snapshot may never leave a runnable paid button above a
+    row that never disclosed the spend.
+
+    The live UAT path: leaving Library and returning after
+    ``LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS`` composes the Search canvas from
+    all-zero counts, so `rag` mode with a restored query renders
+    blocked-on-scope -- and no-scope is a *quiet* blocker, so the panel
+    shows no callout and an EMPTY quiet row. The real snapshot then lands
+    through ``_apply_local_source_snapshot``'s in-place branch, whose
+    ``_sync_library_rag_scope_toggle_and_run_gate_widgets`` flips Run to
+    enabled. Before this fix that method deliberately skipped the whole
+    query-status block (RAG-27), so Run went live beside a blank row: the
+    paid-mode notice PR-T2 Task 4 exists to show was nowhere on screen,
+    and pressing Run spent money with no disclosure.
+
+    Arranged from an empty Library rather than a timed revisit because the
+    seam under test is "composed with zero counts, snapshot brings real
+    ones" -- how the zeros got there is not what broke. Asserts the
+    INVARIANT (an enabled Run implies the mounted row says what the state
+    says, and that copy names the billed provider) rather than the literal
+    sentence, so a future divergence between the two render sites fails
+    here even if the copy is rewritten.
+    """
+    from tldw_chatbook.Widgets.Library import library_rag_query_quiet_text
+
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = DestinationHarness(app, "library")
+    query = "Why did the incident happen?"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _switch_to_rag_mode(screen, pilot)
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_until(
+            pilot,
+            lambda: screen._library_rag_query == query,
+            "the restored query never reached the panel state",
+        )
+
+        # Precondition -- the exact live capture: blocked, but QUIETLY.
+        assert screen.query_one("#library-rag-run-query", Button).disabled is True
+        blocked_quiet_line = screen.query_one("#library-rag-query-quiet-line", Static)
+        assert str(blocked_quiet_line.renderable) == ""
+        assert not screen.query("#library-rag-query-blocked-callout")
+
+        screen._apply_local_source_snapshot(
+            {
+                "notes": ({"title": "Research Note", "id": "note-1"},),
+                "media": (),
+                "conversations": (),
+            },
+            {"notes": 1, "media": 0, "conversations": 0},
+            {"notes": True, "media": True, "conversations": True},
+        )
+        await pilot.pause()
+
+        run_button = screen.query_one("#library-rag-run-query", Button)
+        quiet_line = screen.query_one("#library-rag-query-quiet-line", Static)
+        assert run_button.disabled is False, (
+            "arrangement no longer reproduces the flip this pins -- the "
+            "snapshot must take the in-place branch and enable Run"
+        )
+        panel_state = screen._library_rag_panel_state()
+        provider = panel_state.query_state.ready_answer_provider
+        assert provider, (
+            "an enabled Run in rag mode means the next press bills a "
+            "provider -- the state must name it"
+        )
+        assert str(quiet_line.renderable) == library_rag_query_quiet_text(panel_state), (
+            "the mounted quiet row disagrees with the state the run gate "
+            "beside it was derived from"
+        )
+        assert provider in str(quiet_line.renderable), (
+            "Run is enabled for a paid call with no paid disclosure on "
+            "screen (F1)"
+        )
+
+
+@pytest.mark.asyncio
 async def test_library_search_rag_query_updates_action_and_survives_recompose() -> None:
     app = _build_test_app()
     _seed_library_sources(app)
