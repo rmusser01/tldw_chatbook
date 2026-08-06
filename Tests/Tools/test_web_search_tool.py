@@ -1,5 +1,7 @@
 """Regression tests for legacy WebSearchTool result mapping (task-1341)."""
 
+import pytest
+
 from tldw_chatbook.Tools.web_search_tool import WebSearchTool
 
 
@@ -25,7 +27,8 @@ def _real_payload():
     }
 
 
-def test_snippet_falls_back_to_content(monkeypatch):
+def test_snippet_falls_back_to_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Snippet mapping prefers `snippet`, then `content`, then the placeholder."""
     tool = WebSearchTool()
     monkeypatch.setattr(
         "tldw_chatbook.Tools.web_search_tool.perform_websearch",
@@ -39,3 +42,17 @@ def test_snippet_falls_back_to_content(monkeypatch):
     # results fall back to `content` (previously: always "No description
     # available").
     assert snippets == ["the actual body text", "body two"]
+
+
+def test_empty_content_falls_through_to_placeholder(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An empty-string content must not become a blank snippet."""
+    tool = WebSearchTool()
+    payload = {"results": [{"title": "T", "url": "https://x/", "content": ""}]}
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.web_search_tool.perform_websearch",
+        lambda *a, **k: payload,
+    )
+    import asyncio
+
+    out = asyncio.run(tool.execute(query="test"))
+    assert out["results"][0]["snippet"] == "No description available"
