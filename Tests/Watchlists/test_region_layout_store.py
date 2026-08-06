@@ -40,11 +40,12 @@ def test_round_trips_collapsed_regions(monkeypatch):
 def test_load_applies_first_run_default_when_key_was_never_saved(monkeypatch):
     """`get_cli_setting` returns its `default` argument only when the key is
     absent — i.e. this is a genuine "never saved" case, not merely "saved as
-    empty." Phase D wires a real reader into CONTENT, so the first-run
-    default is now `RegionLayout()` (nothing collapsed) like any other
-    region — see `load_region_layout`'s docstring for why the
-    never-saved-vs-saved-empty *distinction* still matters even though both
-    now resolve to the same value."""
+    empty." A new user's Read tab is a reader, not an inspector, so the
+    first-run default starts RIGHT_RAIL (the Inspector) collapsed — opened
+    on demand with `]` — while CONTENT stays expanded like every other
+    region. See `load_region_layout`'s docstring for why the
+    never-saved-vs-saved-empty *distinction* matters: the two cases now
+    resolve to different values."""
     monkeypatch.setattr(
         region_layout_store, "get_cli_setting", lambda section, key, default=None: default
     )
@@ -52,7 +53,7 @@ def test_load_applies_first_run_default_when_key_was_never_saved(monkeypatch):
         region_layout_store, "save_setting_to_cli_config", lambda *a, **k: True
     )
     loaded = region_layout_store.load_region_layout()
-    assert loaded == RegionLayout()
+    assert loaded == RegionLayout(collapsed=frozenset({Region.RIGHT_RAIL}))
 
 
 def test_load_honors_an_explicit_empty_layout_as_everything_expanded(monkeypatch):
@@ -68,6 +69,38 @@ def test_load_honors_an_explicit_empty_layout_as_everything_expanded(monkeypatch
         region_layout_store, "save_setting_to_cli_config", lambda *a, **k: True
     )
     assert region_layout_store.load_region_layout() == RegionLayout()
+
+
+def test_first_run_default_collapses_right_rail(monkeypatch):
+    """No persisted value at all: a genuinely new user's RIGHT_RAIL (the
+    Inspector) starts collapsed — the Read tab opens as a reader, not an
+    inspector, and the rail's management actions recede until `]` opens
+    them."""
+    monkeypatch.setattr(
+        region_layout_store, "get_cli_setting", lambda section, key, default=None: default
+    )
+    monkeypatch.setattr(
+        region_layout_store, "save_setting_to_cli_config", lambda *a, **k: True
+    )
+    assert region_layout_store.load_region_layout().collapsed == frozenset({Region.RIGHT_RAIL})
+
+
+def test_explicitly_empty_persisted_layout_stays_expanded(monkeypatch):
+    """The user saved `[]` deliberately (everything expanded, Inspector
+    included) — the None-vs-`[]` distinction `load_region_layout` documents
+    means that choice must survive exactly, not be overridden back to the
+    first-run default on the next load."""
+    saved = {}
+    monkeypatch.setattr(
+        region_layout_store, "save_setting_to_cli_config",
+        lambda section, key, value: saved.__setitem__((section, key), value) or True,
+    )
+    region_layout_store.save_region_layout(RegionLayout())
+    monkeypatch.setattr(
+        region_layout_store, "get_cli_setting",
+        lambda section, key, default=None: saved.get((section, key), default),
+    )
+    assert region_layout_store.load_region_layout().collapsed == frozenset()
 
 
 def test_load_migrates_a_pre_phase_d_content_collapse_away_on_first_run(monkeypatch):
