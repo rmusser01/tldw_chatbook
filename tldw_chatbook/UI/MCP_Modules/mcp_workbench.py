@@ -246,15 +246,26 @@ def _is_permission_refusal(exc: BaseException) -> bool:
     -- the two lists encode refusal-type knowledge independently and
     nothing besides this comment (and its twin over there) ties them
     together, so a fifth typed refusal added later has both to update.
-    Not a defect today: `MCPHubGateDeniedError` and `RawToolCallRefusedError`
-    are raised only by `execute_advanced_tool()`/`_refuse_raw_tool_call()`,
-    reachable only from the Advanced runner's `tool.execute`/
-    `runtime.request`/`runtime.batch` actions -- never from this Test Tool
-    path (`test_hub_tool()`/`execute_hub_tool()`), which handles its OWN
-    deny short-circuit earlier via `_resolve_test_gate()` instead of
-    catching an exception type. Do not merge the two sets into one: each
-    is correct for its own surface, and the asymmetry is what's true, not
-    an oversight -- see `_run_advanced_action()`'s own comment for why
+    Not a defect today: `MCPHubGateDeniedError` is raised only by
+    `execute_advanced_tool()`. `RawToolCallRefusedError` has TWO raise
+    sites -- `_refuse_raw_tool_call()` (same file as `execute_advanced_
+    tool()`) AND `LocalMCPRuntimeDelegate.request()`'s own `tools/call`
+    branch (`local_runtime_delegate.py`), the durable backstop that module
+    documents at length (Fix Round H, PR-T3 review, Item 4: corrected --
+    this used to say "raised only by `execute_advanced_tool()`/
+    `_refuse_raw_tool_call()`", missing the delegate's own raise site).
+    Both types are reachable only from the Advanced runner's `tool.
+    execute`/`runtime.request`/`runtime.batch` actions and the runtime
+    delegate's own protocol surface -- never from this Test Tool path
+    (`test_hub_tool()`/`execute_hub_tool()`), which handles its OWN deny
+    short-circuit earlier via `_resolve_test_gate()` instead of catching
+    an exception type, and never calls into `LocalMCPRuntimeDelegate.
+    request()` at all (Test Tool execution goes through `execute_hub_
+    tool()` -> `LocalMCPControlService.execute_tool()` ->
+    `LocalMCPRuntimeDelegate.execute_tool()`, not the raw protocol
+    surface). Do not merge the two sets into one: each is correct for its
+    own surface, and the asymmetry is what's true, not an oversight -- see
+    `_run_advanced_action()`'s own comment for why
     `MCPServerSourceDisplayOnlyError` is excluded there.
     """
     return isinstance(exc, (MCPGovernanceDenied, MCPServerSourceDisplayOnlyError))
