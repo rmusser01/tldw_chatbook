@@ -14,4 +14,5 @@
   - Implement the stub actions instead of removing them: rejected for now — the scheduler service has no run-now/pause-resume methods; when it does, bindings return per rule 4.
   - Leave footer stubs as "coming soon" affordances: rejected — advertised-but-dead keys burn trust in the hint system, which is the app's primary discoverability mechanism.
 - Consequences: Schedules rebinds to `c`/`d`/`s`; the run-now and pause/resume stubs are removed until the scheduler service supports them; future screens follow rules 1–5; a test asserts footer-hint truthfulness. The intern-era bindings are retired.
+- Refinement (task-1340): for screens whose keys stay bound screen-wide to provide guidance, the invariant is **advertised ⊆ bound, advertised == working in the active context** — Settings keeps s/r/t bound everywhere (they respond with guidance) but advertises only the keys that work in the active category, re-registering footer hints on category switch; F1 help lists the same per-category set for narrow widths.
 - Links: critique snapshot above; issues UX-001–UX-004 in `output/ux-review/ux-issues-lab-schedules-logs.md`.

@@ -1,4 +1,9 @@
-"""Settings destination shell for global app preferences."""
+"""Settings destination shell for global app preferences.
+
+This is the canonical settings surface (TASK-1346). The legacy
+UI/Tools_Settings_Window.py and the Widgets/enhanced_settings_sidebar.py panel in the
+legacy Chat window are deprecated parallels; new settings belong here.
+"""
 
 import asyncio
 import copy
@@ -66,6 +71,7 @@ from ...Workspaces.registry_service import (
 )
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
+from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Chat.provider_catalog import (
     PROVIDER_CUSTOM_GROUP_KEYS,
     PROVIDER_DISPLAY_NAMES,
@@ -234,6 +240,10 @@ def _internal_prompts_save_target() -> Path:
 
 
 MAX_CATEGORY_SEARCH_QUERY_CHARS = 80
+# At or below this terminal width the Settings workbench switches to its
+# compact layout (fixed-width category sidebar, inspector pane hidden),
+# following the personas-workbench-compact precedent (task-1342).
+SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH = 90
 PROVIDER_ENDPOINT_KEYS = ("api_base_url", "api_base", "base_url", "api_url", "endpoint")
 PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
     "model_profile_temperature": "temperature",
@@ -259,6 +269,33 @@ VERBOSITY_OPTIONS = frozenset({"", "low", "medium", "high"})
 THINKING_EFFORT_OPTIONS = frozenset(
     {"", "off", "low", "medium", "high", "xhigh", "max"}
 )
+# task-1344: closed enums render as Select widgets constrained to these
+# ordered option lists (blank = inherit/not set), so invalid values are
+# impossible by construction instead of rejected at save.
+REASONING_EFFORT_SELECT_OPTIONS = ("none", "minimal", "low", "medium", "high", "xhigh")
+REASONING_SUMMARY_SELECT_OPTIONS = ("auto", "concise", "detailed", "none")
+VERBOSITY_SELECT_OPTIONS = ("low", "medium", "high")
+THINKING_EFFORT_SELECT_OPTIONS = ("off", "low", "medium", "high", "xhigh", "max")
+CLOSED_ENUM_SELECT_OPTIONS = {
+    "reasoning_effort": REASONING_EFFORT_SELECT_OPTIONS,
+    "reasoning_summary": REASONING_SUMMARY_SELECT_OPTIONS,
+    "verbosity": VERBOSITY_SELECT_OPTIONS,
+    "thinking_effort": THINKING_EFFORT_SELECT_OPTIONS,
+}
+# Tri-state profile streaming (inherit/on/off) is a closed 3-value enum, so
+# it also renders as a Select; the console-default streaming fallback is a
+# strict boolean and uses the standard Checkbox toggle idiom.
+MODEL_PROFILE_STREAMING_SELECT_OPTIONS = (("On", "true"), ("Off", "false"))
+# Model-profile fields rendered as Select instead of free-text Input.
+MODEL_PROFILE_SELECT_FIELD_KEYS = frozenset(
+    {
+        "model_profile_reasoning_effort",
+        "model_profile_reasoning_summary",
+        "model_profile_verbosity",
+        "model_profile_thinking_effort",
+        "model_profile_streaming",
+    }
+)
 OPENAI_REASONING_PROVIDER_KEYS = frozenset({"openai"})
 ANTHROPIC_THINKING_PROVIDER_KEYS = frozenset({"anthropic"})
 OPENAI_REASONING_PROFILE_FIELD_KEYS = frozenset(
@@ -283,12 +320,7 @@ MODEL_PROFILE_INPUT_PLACEHOLDERS = {
     "model_profile_seed": "optional whole number",
     "model_profile_presence_penalty": "-2.0 - 2.0",
     "model_profile_frequency_penalty": "-2.0 - 2.0",
-    "model_profile_reasoning_effort": "none, minimal, low, medium, high, xhigh",
-    "model_profile_reasoning_summary": "auto, concise, detailed, none",
-    "model_profile_verbosity": "low, medium, high",
-    "model_profile_thinking_effort": "off, low, medium, high, xhigh, max",
     "model_profile_thinking_budget_tokens": "optional >= 1024",
-    "model_profile_streaming": "true or false",
 }
 PROVIDER_MANUAL_SELECT_VALUE = "__manual__"
 PROVIDER_MANUAL_SELECT_LABEL = "Manual / custom provider"
@@ -322,6 +354,19 @@ MODEL_CATALOG_CHECKBOX_IDS = frozenset(
         f"settings-mc-write-{provider.lower()}"
         for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
     }
+)
+# task-1341: staged save is the default commit model; instant-apply is the
+# labeled exception. One copy pair shared by the inline hints and the
+# focused-field inspector "Save:" rows.
+STAGED_SAVE_BEHAVIOR_COPY = "staged - press s to save, r to revert"
+# Mirrored (with an Enter-to-apply clause) in
+# Widgets/settings_splash_screen_viewer.py, which cannot import this module.
+INSTANT_APPLY_BEHAVIOR_COPY = "applies immediately - no Save needed"
+# Ids of the instant-persist model-catalog controls (checkboxes plus the
+# stale-hours input) so focus tracking and the inspector can name their
+# commit model instead of falling through to the staged default copy.
+MODEL_CATALOG_FIELD_IDS = frozenset(
+    MODEL_CATALOG_CHECKBOX_IDS | {"settings-model-catalog-stale-hours"}
 )
 CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
     {
@@ -1666,6 +1711,29 @@ class SettingsScreen(BaseAppScreen):
         ("t", "test category"),
     )
 
+    @staticmethod
+    def _category_footer_shortcuts(
+        category: SettingsCategoryId,
+    ) -> tuple[tuple[str, str], ...]:
+        """Advertised footer hints for ONE category (task-1340, ADR-031).
+
+        Only working keys are advertised: s/r where the guided save/revert
+        path exists, t only where a test action is implemented -- and with
+        the same per-category verb the live footer uses (task-1714), so the
+        F1 help panel and the footer never disagree. The keys stay bound
+        screen-wide (they respond with guidance everywhere), but only what
+        the active category actually supports is taught.
+        """
+        shortcuts: list[tuple[str, str]] = []
+        if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
+            shortcuts.append(("s", "save category"))
+            shortcuts.append(("r", "revert category"))
+        if category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES:
+            shortcuts.append(
+                ("t", SettingsScreen.TEST_ACTION_LABELS.get(category, "test category"))
+            )
+        return tuple(shortcuts)
+
     #: task-1564: categories whose `t` binding performs a real test action --
     #: everywhere else action_settings_test_category answers with the "No
     #: test action is available" toast, so the footer must not advertise it.
@@ -1754,6 +1822,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_console_threshold = False
         self._syncing_console_max_parallel_runs = False
         self._syncing_console_tool_result_display_chars = False
+        self._syncing_console_paste_toggle = False
         self._syncing_console_defaults = False
         self._syncing_console_background_effects = False
         self._syncing_library_rag_defaults = False
@@ -1853,6 +1922,19 @@ class SettingsScreen(BaseAppScreen):
         #: merely opening the category (never editing anything) never
         #: triggers a load at all.
         self._image_gen_raw_section_cache: Mapping[str, object] | None = None
+        # task-1369: set from the manual-sync confirm callback until the run
+        # worker lands; on_screen_resume skips its sync-rows refresh while
+        # this is True so it cannot overwrite the "running" rows.
+        self._manual_sync_run_in_flight = False
+        # task-1369 (review): monotonic token so a cancelled/stale run
+        # worker's finally cannot clear the flag of a newer confirmed run.
+        self._manual_sync_run_token = 0
+        # task-1369 (review): the sync-rows reactives are recompose=True, so
+        # every row change rebuilds the Overview Collapsibles; persist their
+        # expanded/collapsed state across recomposes instead of snapping
+        # back to collapsed while the user is watching a run.
+        self._overview_sync_details_collapsed = True
+        self._overview_ownership_details_collapsed = True
         self._navigation_provider: str | None = None
         self._navigation_model: str | None = None
         self._navigation_field: str | None = None
@@ -1871,6 +1953,10 @@ class SettingsScreen(BaseAppScreen):
         #: consumed by the post-recompose restore, and reset on
         #: navigation-away via _clear_navigation_provider_context.
         self._pending_navigation_focus_selector: str | None = None
+        #: One-shot category focus intent (task-1338): set when a category
+        #: switch triggers a recompose; consumed by recompose() after the
+        #: fresh children mount so focus survives the rebuild.
+        self._pending_category_focus_value: str | None = None
         self._diagnostics_validation_result = "Config validation: not run"
         self._diagnostics_reload_result = "Config reload: not run"
         self._storage_check_rows: tuple[str, ...] = (
@@ -1965,6 +2051,9 @@ class SettingsScreen(BaseAppScreen):
         # fresh afterward by _on_internal_prompts_modified via the panel's own
         # computed count (no extra live call).
         self._internal_prompts_customized_count: int | None = None
+        # None = not yet synced; _sync_responsive_workbench() applies the
+        # compact classes on first call (on_mount) and on every resize.
+        self._workbench_compact: bool | None = None
         # set_reactive, NOT plain assignment: assigning a recompose=True
         # reactive here fires refresh(recompose=True) on the not-yet-mounted
         # screen; the flag survives into mount and forces a full recompose of
@@ -2103,58 +2192,38 @@ class SettingsScreen(BaseAppScreen):
     def on_descendant_blur(self, event) -> None:
         self._register_footer_shortcuts()
 
-    @staticmethod
-    def _binding_entry_key_action_description(
-        entry: object,
-    ) -> tuple[str, str, str] | None:
-        """(key, action, description) for a BINDINGS entry, or ``None`` if
-        ``entry`` isn't a recognized shape.
+    def watch_active_category(self) -> None:
+        """Re-advertise the honest hint set on every category switch.
 
-        task-567: this used to only handle the tuple/list shape
-        (``(key, action, description=...)``); a ``Binding(...)`` instance --
-        Textual's OTHER valid BINDINGS entry shape -- silently vanished from
-        the flattened help output below.
+        ADR-031 rule 4 (task-1340): the footer teaches only the keys that
+        work in the ACTIVE category, so switching categories re-registers.
+        Safe pre-mount: the persisting API stores the registration and the
+        footer is seeded from it when compose() yields the widget.
         """
-        if isinstance(entry, Binding):
-            return str(entry.key), str(entry.action), str(entry.description)
-        if isinstance(entry, (tuple, list)) and entry:
-            return (
-                str(entry[0]),
-                str(entry[1]),
-                str(entry[2]) if len(entry) > 2 else "",
-            )
-        return None
+        self._register_footer_shortcuts()
 
-    async def action_show_workbench_help(self) -> None:
-        """F1 help, scoped to bindings that actually do something right now.
+    def action_show_workbench_help(self) -> None:
+        """F1 help: list the ACTIVE category's working shortcuts (task-1340).
 
-        `TldwCli.action_show_workbench_help` (app.py) delegates to this hook
-        when it's present instead of falling back to its own generic
-        BINDINGS flattener (`_show_generic_screen_help`), so this mirrors
-        that fallback's output shape (same title/route id/shortcuts) except
-        it drops the RAG profile-workflow accelerators (a/c/b) unless
-        LIBRARY_RAG is the active category -- those bindings are guarded
-        no-ops everywhere else (see action_settings_rag_*), same gating the
-        footer already applies via LIBRARY_RAG_SHORTCUTS (task 6, 541 AC6
-        review, Important).
+        app.py delegates F1 to the screen when this handler exists. Listing
+        the per-category set (not the static BINDINGS superset) keeps help
+        truthful, and keeps the bindings discoverable at narrow widths where
+        the footer collapses the screen hints to an ellipsis.
         """
-        show_rag_accelerators = (
-            self._active_category_id() is SettingsCategoryId.LIBRARY_RAG
+        from ..Workbench.help import (  # noqa: PLC0415 -- lazy: only needed on F1; keeps the help panel off the module import path (mirrors base_app_screen's local-import convention)
+            WorkbenchHelpPanel,
+            WorkbenchHelpState,
         )
-        parsed_entries = (
-            parts
-            for entry in self.BINDINGS
-            if (parts := self._binding_entry_key_action_description(entry)) is not None
-        )
-        shortcuts = tuple(
-            (key, description)
-            for key, action, description in parsed_entries
-            if show_rag_accelerators or action not in self._RAG_ACCELERATOR_ACTION_NAMES
-        )
-        screen_name = type(self).__name__
+
+        category = self._active_category_id()
+        summary = self._category_summary_by_id(category)
+        shortcuts = self._category_footer_shortcuts(category)
+        if category is SettingsCategoryId.LIBRARY_RAG:
+            # Same gating the footer applies: a/c/b only act in LIBRARY_RAG.
+            shortcuts = shortcuts + self.LIBRARY_RAG_SHORTCUTS
         state = WorkbenchHelpState(
-            route_id=str(getattr(self.app, "current_tab", "") or screen_name),
-            title=f"{screen_name} Shortcuts",
+            route_id="settings",
+            title=f"Settings: {summary.title}",
             shortcuts=shortcuts,
         )
         self.app.push_screen(WorkbenchHelpPanel(state))
@@ -2162,6 +2231,7 @@ class SettingsScreen(BaseAppScreen):
     def on_mount(self) -> None:
         super().on_mount()
         self._register_footer_shortcuts()
+        self._sync_responsive_workbench()
         self._queue_sync_rows_refresh()
         # Task 4 (SP3): covers restored state (`restore_state` can set
         # `active_category` to LIBRARY_RAG before this screen is even
@@ -2170,7 +2240,44 @@ class SettingsScreen(BaseAppScreen):
         self._maybe_refresh_rag_index_status_on_show()
         self.call_after_refresh(self._update_inspector_overflow_hint)
 
+    def _workbench_compact_now(self) -> bool:
+        return self.size.width <= SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH
+
+    def _sync_responsive_workbench(self) -> None:
+        """Toggle compact workbench classes to match the terminal width.
+
+        task-1342: follows the personas-workbench-compact precedent. Classes
+        are also applied at compose time (compose_content) so the
+        recompose=True reactives cannot drop them; this sync only handles
+        live resizes between recomposes.
+        """
+        compact = self._workbench_compact_now()
+        if self._workbench_compact == compact:
+            return
+        try:
+            workbench = self.query_one("#settings-workbench")
+        except QueryError:
+            return
+        self._workbench_compact = compact
+        workbench.set_class(compact, "settings-workbench-compact")
+        for pane_id in (
+            "#settings-category-pane",
+            "#settings-detail-pane",
+            "#settings-impact-pane",
+        ):
+            try:
+                self.query_one(pane_id).set_class(
+                    compact, "settings-workbench-compact-pane"
+                )
+            except QueryError:
+                continue
+
     def on_screen_resume(self) -> None:
+        if self._manual_sync_run_in_flight:
+            # task-1369: a manual sync run is in flight; the resume refresh
+            # would overwrite the "running" rows the confirm callback just
+            # set. The run worker applies the result rows itself.
+            return
         self._queue_sync_rows_refresh()
         self._maybe_refresh_rag_index_status_on_show()
         self._maybe_refresh_workspaces_pane_on_show()
@@ -2197,18 +2304,18 @@ class SettingsScreen(BaseAppScreen):
     @staticmethod
     def _server_sync_workspace_handoff_loading_rows() -> tuple[tuple[str, str], ...]:
         return (
-            ("Active server profile", "Loading Settings source contracts"),
-            ("Local/server authority", "Loading Settings source contracts"),
-            ("Sync safety", "Loading Settings source contracts"),
-            ("Sync recovery", "Loading Settings source contracts"),
-            ("Workspace default", "Loading Settings source contracts"),
+            ("Active server profile", "Loading Settings details"),
+            ("Local/server authority", "Loading Settings details"),
+            ("Sync safety", "Loading Settings details"),
+            ("Sync recovery", "Loading Settings details"),
+            ("Workspace default", "Loading Settings details"),
             ("Library visibility", LIBRARY_WORKSPACE_VISIBILITY_COPY),
             (
                 "Handoff policy",
                 "copy/reference/metadata-only by source policy; "
                 "Console staging is limited to the active workspace",
             ),
-            ("ACP handoff readiness", "Loading Settings source contracts"),
+            ("ACP handoff readiness", "Loading Settings details"),
         )
 
     @staticmethod
@@ -2446,6 +2553,7 @@ class SettingsScreen(BaseAppScreen):
     def _domain_category_contracts(self) -> tuple[SettingsDomainCategoryContract, ...]:
         return SETTINGS_DOMAIN_CATEGORY_CONTRACTS
 
+
     def _domain_contract_by_category(
         self,
     ) -> Mapping[SettingsCategoryId, SettingsDomainCategoryContract]:
@@ -2522,7 +2630,7 @@ class SettingsScreen(BaseAppScreen):
                     runtime_owner=contract.owner_destination,
                     boundary_copy=(
                         f"{contract.owner_destination} owns the live workflow; Settings shows "
-                        "read-only defaults/status until a persisted source contract exists."
+                        "read-only defaults and status for now."
                     ),
                     recovery_copy=f"Open {contract.owner_destination} for workflow actions and setup.",
                     read_only_reason=contract.follow_up,
@@ -3055,13 +3163,6 @@ class SettingsScreen(BaseAppScreen):
     def _available_console_background_scope(scope: object) -> str:
         return "transcript" if str(scope) == "workbench" else str(scope or "transcript")
 
-    def _console_background_effect_enabled_label(self) -> str:
-        return (
-            "Enabled"
-            if bool(self._console_background_effect_value("enabled"))
-            else "Disabled"
-        )
-
     def _console_behavior_result_text(self) -> str:
         has_unsaved_changes = self._category_has_unsaved_changes(
             SettingsCategoryId.CONSOLE_BEHAVIOR
@@ -3119,8 +3220,73 @@ class SettingsScreen(BaseAppScreen):
         state = "Enabled" if self._collapse_large_pastes_enabled() else "Disabled"
         return f"{state}: collapse large pastes"
 
-    def _collapse_large_pastes_button_label(self) -> str:
-        return "Enabled" if self._collapse_large_pastes_enabled() else "Disabled"
+    @staticmethod
+    def _select_option_value(value: object, allowed: tuple[str, ...] = ()) -> object:
+        """Map a staged enum string to a Select value (blank/unknown -> NULL)."""
+        text = str(value or "").strip().lower()
+        if not text or (allowed and text not in allowed):
+            return Select.NULL
+        return text
+
+    @staticmethod
+    def _select_text_value(value: object) -> str:
+        """Map a Select value back to a staged enum string (NULL -> "")."""
+        if value is Select.NULL or value is None:
+            return ""
+        return str(value)
+
+    @staticmethod
+    def _streaming_select_value(value: object) -> object:
+        """Map a staged tri-state streaming value to a Select value."""
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        text = str(value or "").strip().lower()
+        return text if text in {"true", "false"} else Select.NULL
+
+    @staticmethod
+    def _streaming_select_text(value: object) -> bool | str:
+        """Map a streaming Select value back to a staged bool or "" (inherit)."""
+        if value is Select.NULL or value is None:
+            return ""
+        return str(value).strip().lower() == "true"
+
+    def _console_default_enum_select(self, key: str) -> Select:
+        """Build the staged closed-enum Select for a console-default field."""
+        return Select(
+            [(value, value) for value in CLOSED_ENUM_SELECT_OPTIONS[key]],
+            value=self._select_option_value(
+                self._console_behavior_value(key),
+                CLOSED_ENUM_SELECT_OPTIONS[key],
+            ),
+            id=f"settings-console-default-{key.replace('_', '-')}",
+            classes="settings-compact-select",
+            allow_blank=True,
+            prompt="Provider default",
+            compact=True,
+        )
+
+    def _model_profile_enum_select(
+        self, provider: object, draft_key: str, values: dict[str, object]
+    ) -> Select:
+        """Build the staged closed-enum Select for a model-profile field."""
+        supported = self._model_profile_field_supported(provider, draft_key)
+        allowed = CLOSED_ENUM_SELECT_OPTIONS[
+            PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
+        ]
+        return Select(
+            [(value, value) for value in allowed],
+            value=(
+                self._select_option_value(values[draft_key], allowed)
+                if supported
+                else Select.NULL
+            ),
+            id=f"settings-{draft_key.replace('_', '-')}",
+            classes="settings-compact-select",
+            allow_blank=True,
+            prompt="Inherit default",
+            compact=True,
+            disabled=not supported,
+        )
 
     def _remote_images_enabled(self) -> bool:
         """Return the live [chat.images].render_remote_images value."""
@@ -3929,7 +4095,7 @@ class SettingsScreen(BaseAppScreen):
         if category == SettingsCategoryId.THEME:
             return "Use the editor's Apply/Save/Reset buttons to manage themes."
         if category == SettingsCategoryId.SPLASH_SCREEN:
-            return "Splash defaults are saved automatically."
+            return f"Splash defaults: {INSTANT_APPLY_BEHAVIOR_COPY}."
         if category == SettingsCategoryId.WORKSPACES:
             return (
                 "Immediate actions: workspace changes apply as you make them; "
@@ -4053,6 +4219,7 @@ class SettingsScreen(BaseAppScreen):
             return
         button.label = self._category_button_label(summary)
 
+
     def _active_category_id(self) -> SettingsCategoryId:
         return SettingsCategoryId(self.active_category)
 
@@ -4066,22 +4233,6 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             pass
         self._update_category_state_banner(category)
-        try:
-            category_status = (
-                "Unsaved"
-                if has_unsaved_changes
-                else self._category_summary_by_id(category).status
-            )
-            category_status_widget = self.query_one(
-                f"#settings-category-{category.value}-status", Static
-            )
-            category_status_widget.update(f"Status: {category_status}")
-            if has_unsaved_changes:
-                category_status_widget.add_class("settings-dirty-category")
-            else:
-                category_status_widget.remove_class("settings-dirty-category")
-        except QueryError:
-            pass
         self._refresh_category_button_label(category)
         if category is self._active_category_id():
             self._update_guided_action_widgets()
@@ -4433,7 +4584,7 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.STORAGE:
             return "Changes apply on next launch; active handles stay unchanged."
         if category is SettingsCategoryId.PRIVACY_SECURITY:
-            return "Secrets stay redacted in validation and diagnostics."
+            return "State: Local privacy | Secrets stay redacted in validation and diagnostics."
         if category is SettingsCategoryId.SPLASH_SCREEN:
             return "Splash changes take effect as you make them."
         if category is SettingsCategoryId.WORKSPACES:
@@ -4444,8 +4595,11 @@ class SettingsScreen(BaseAppScreen):
             return "Each prompt saves and resets on its own."
         if category in DOMAIN_SETTINGS_CATEGORY_IDS:
             contract = self._domain_category_contract(category)
-            return f"Manage this in {contract.owner_destination}."
-        return "Review readiness across Settings categories."
+            return (
+                "State: Read-only | "
+                f"{contract.owner_destination} owns workflow actions and setup."
+            )
+        return "State: Active | Review readiness across Settings categories."
 
     def _render_category_state_banner(self, category: SettingsCategoryId) -> Static:
         banner = Static(
@@ -4573,9 +4727,6 @@ class SettingsScreen(BaseAppScreen):
         if current_theme and current_theme not in seen:
             options.append((f"Current: {current_theme}", current_theme))
         return options
-
-    def _appearance_bool_label(self, key: str) -> str:
-        return "Enabled" if bool(self._appearance_setting_values()[key]) else "Disabled"
 
     def _appearance_summary_text(self) -> str:
         values = self._appearance_setting_values()
@@ -5796,7 +5947,19 @@ class SettingsScreen(BaseAppScreen):
         self.app.call_from_thread(self._apply_manual_sync_rows, rows)
 
     @work(exclusive=True, group="settings-manual-sync-run")
-    async def _manual_sync_run_worker(self) -> None:
+    async def _manual_sync_run_worker(self, run_token: int) -> None:
+        try:
+            await self._run_manual_sync_once()
+        finally:
+            # task-1369: clear the in-flight guard (set by the confirm
+            # callback) so later screen resumes refresh the rows again.
+            # task-1369 (review): this worker is exclusive-group, so a newer
+            # confirmed run cancels it; a stale worker's finally must not
+            # clear the newer run's flag.
+            if run_token == self._manual_sync_run_token:
+                self._manual_sync_run_in_flight = False
+
+    async def _run_manual_sync_once(self) -> None:
         control = getattr(self.app_instance, "manual_sync_control_service", None)
         if control is None:
             self._apply_manual_sync_rows(
@@ -6233,6 +6396,18 @@ class SettingsScreen(BaseAppScreen):
             self.query_one(selector, Static).update(text)
         except QueryError:
             pass
+
+    def _update_focus_help(self, widget: object) -> None:
+        """Surface the focused control's tooltip for keyboard users (task-1374).
+
+        Textual 8.x renders tooltips on hover only; mirroring the focused
+        widget's tooltip text into the shell's focus-help line makes the
+        same content reachable by Tab/j/k without a second display for
+        mouse users (the line only changes on focus, never on hover).
+        """
+        tooltip = getattr(widget, "tooltip", None)
+        text = str(tooltip).strip() if tooltip else ""
+        self._set_static_text("#settings-focus-help", text)
 
     def _run_diagnostics_validation(self) -> None:
         self._diagnostics_validation_result = self._validate_current_config()
@@ -6944,18 +7119,28 @@ class SettingsScreen(BaseAppScreen):
             )
         )
         model_profile_reasoning_effort = self._normalise_model_profile_reasoning_effort(
-            self.query_one("#settings-model-profile-reasoning-effort", Input).value
+            self._select_text_value(
+                self.query_one("#settings-model-profile-reasoning-effort", Select).value
+            )
         )
         model_profile_reasoning_summary = (
             self._normalise_model_profile_reasoning_summary(
-                self.query_one("#settings-model-profile-reasoning-summary", Input).value
+                self._select_text_value(
+                    self.query_one(
+                        "#settings-model-profile-reasoning-summary", Select
+                    ).value
+                )
             )
         )
         model_profile_verbosity = self._normalise_model_profile_verbosity(
-            self.query_one("#settings-model-profile-verbosity", Input).value
+            self._select_text_value(
+                self.query_one("#settings-model-profile-verbosity", Select).value
+            )
         )
         model_profile_thinking_effort = self._normalise_model_profile_thinking_effort(
-            self.query_one("#settings-model-profile-thinking-effort", Input).value
+            self._select_text_value(
+                self.query_one("#settings-model-profile-thinking-effort", Select).value
+            )
         )
         model_profile_thinking_budget_tokens = (
             self._normalise_model_profile_thinking_budget_tokens(
@@ -6964,8 +7149,8 @@ class SettingsScreen(BaseAppScreen):
                 ).value
             )
         )
-        model_profile_streaming = self._normalise_optional_bool(
-            self.query_one("#settings-model-profile-streaming", Input).value
+        model_profile_streaming = self._streaming_select_text(
+            self.query_one("#settings-model-profile-streaming", Select).value
         )
         if not self._provider_supports_openai_reasoning(provider):
             model_profile_reasoning_effort = ""
@@ -7399,16 +7584,40 @@ class SettingsScreen(BaseAppScreen):
         try:
             for draft_key, value in input_values.items():
                 selector = f"#settings-{draft_key.replace('_', '-')}"
-                try:
-                    widget = self.query_one(selector, Input)
-                except QueryError:
-                    continue
                 supported = self._model_profile_field_supported(provider, draft_key)
-                widget.disabled = not supported
-                widget.placeholder = self._model_profile_input_placeholder(
-                    provider, draft_key
-                )
-                widget.value = self._profile_input_value(value) if supported else ""
+                if draft_key in MODEL_PROFILE_SELECT_FIELD_KEYS:
+                    try:
+                        select = self.query_one(selector, Select)
+                    except QueryError:
+                        continue
+                    select.disabled = not supported
+                    if draft_key == "model_profile_streaming":
+                        select.value = (
+                            self._streaming_select_value(value)
+                            if supported
+                            else Select.NULL
+                        )
+                    else:
+                        select.value = (
+                            self._select_option_value(
+                                value,
+                                CLOSED_ENUM_SELECT_OPTIONS[
+                                    PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
+                                ],
+                            )
+                            if supported
+                            else Select.NULL
+                        )
+                else:
+                    try:
+                        widget = self.query_one(selector, Input)
+                    except QueryError:
+                        continue
+                    widget.disabled = not supported
+                    widget.placeholder = self._model_profile_input_placeholder(
+                        provider, draft_key
+                    )
+                    widget.value = self._profile_input_value(value) if supported else ""
                 # task-189: gated rows are hidden (not rendered as disabled
                 # placeholder noise); the disclosure shows one summary line.
                 try:
@@ -8334,18 +8543,49 @@ class SettingsScreen(BaseAppScreen):
         self._refresh_provider_field_guidance()
 
     def _detail_row(
-        self, label: str, value: object, *, identifier: str | None = None
+        self,
+        label: str,
+        value: object,
+        *,
+        identifier: str | None = None,
+        tooltip: str | None = None,
     ) -> Static:
         if isinstance(value, str):
             # task-1583: dotted keys/paths fold at separators, never mid-word.
             value = _fold_long_tokens(value)
-        return Static(
+        row = Static(
             f"{label}: {value}",
             id=identifier,
             classes="settings-detail-row",
         )
+        if tooltip is not None:
+            row.tooltip = tooltip
+        return row
+
+    @staticmethod
+    def _with_save_behavior_row(
+        rows: tuple[tuple[str, str], ...], save_copy: str
+    ) -> tuple[tuple[str, str], ...]:
+        """Insert the commit-model row ahead of Validation (task-1341, AC3).
+
+        All guidance branches keep a uniform row count so the composed
+        inspector widgets line up with later refresh passes.
+        """
+        save_row = (("Save", save_copy),)
+        if rows and rows[-1][0] == "Validation":
+            return rows[:-1] + save_row + rows[-1:]
+        return rows + save_row
 
     def _provider_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
+        rows = self._provider_field_guidance_rows_base()
+        save_copy = (
+            INSTANT_APPLY_BEHAVIOR_COPY
+            if self._active_settings_field_id in MODEL_CATALOG_FIELD_IDS
+            else STAGED_SAVE_BEHAVIOR_COPY
+        )
+        return self._with_save_behavior_row(rows, save_copy)
+
+    def _provider_field_guidance_rows_base(self) -> tuple[tuple[str, str], ...]:
         provider = str(
             self._provider_setting_values_mapping().get("provider") or ""
         ).strip()
@@ -8500,25 +8740,25 @@ class SettingsScreen(BaseAppScreen):
                 "Reasoning effort",
                 "Optional OpenAI Responses reasoning level for reasoning-capable models.",
                 "reasoning_effort",
-                "none, minimal, low, medium, high, xhigh, or blank for inherited default",
+                "choose none, minimal, low, medium, high, or xhigh; Inherit default keeps the inherited default",
             ),
             "settings-model-profile-reasoning-summary": (
                 "Reasoning summary",
                 "Optional OpenAI reasoning summary detail for supported models.",
                 "reasoning_summary",
-                "auto, concise, detailed, none, or blank for inherited default",
+                "choose auto, concise, detailed, or none; Inherit default keeps the inherited default",
             ),
             "settings-model-profile-verbosity": (
                 "Verbosity",
                 "Optional OpenAI text verbosity hint for GPT-5-style Responses models.",
                 "verbosity",
-                "low, medium, high, or blank for inherited default",
+                "choose low, medium, or high; Inherit default keeps the inherited default",
             ),
             "settings-model-profile-thinking-effort": (
                 "Thinking effort",
                 "Optional Anthropic-style thinking level mapped to provider token budgets.",
                 "thinking_effort",
-                "off, low, medium, high, xhigh, max, or blank for inherited default",
+                "choose off, low, medium, high, xhigh, or max; Inherit default keeps the inherited default",
             ),
             "settings-model-profile-thinking-budget-tokens": (
                 "Think budget",
@@ -8560,7 +8800,33 @@ class SettingsScreen(BaseAppScreen):
                     "Saved as",
                     f"{provider_config_prefix}.model_defaults.<model>.streaming",
                 ),
-                ("Validation", "true, false, or blank for inherited default"),
+                ("Validation", "choose On or Off; Inherit default keeps the inherited default"),
+            )
+        if field_id == "settings-model-catalog-stale-hours":
+            return (
+                ("Focused setting", "Refresh after (hours)"),
+                (
+                    "Purpose",
+                    "Sets how stale the model-catalog cache may be before a refetch.",
+                ),
+                ("Saved as", "model_catalog.stale_after_hours"),
+                (
+                    "Validation",
+                    "number of hours, 0 or greater; applies on the next refresh cycle",
+                ),
+            )
+        if field_id in MODEL_CATALOG_FIELD_IDS:
+            return (
+                ("Focused setting", "Automatic refresh"),
+                (
+                    "Purpose",
+                    "Gates the background model-catalog list refresh.",
+                ),
+                ("Saved as", "model_catalog.*"),
+                (
+                    "Validation",
+                    "operational flag; the persisted value applies on the next refresh cycle",
+                ),
             )
         return (
             ("Focused setting", "Provider setup"),
@@ -8582,6 +8848,11 @@ class SettingsScreen(BaseAppScreen):
             )
 
     def _appearance_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
+        return self._with_save_behavior_row(
+            self._appearance_field_guidance_rows_base(), STAGED_SAVE_BEHAVIOR_COPY
+        )
+
+    def _appearance_field_guidance_rows_base(self) -> tuple[tuple[str, str], ...]:
         field_id = self._active_settings_field_id
         if field_id == "settings-appearance-theme":
             return (
@@ -8625,14 +8896,14 @@ class SettingsScreen(BaseAppScreen):
                     "Controls whether optional UI motion is enabled by default.",
                 ),
                 ("Saved as", "appearance.animations_enabled"),
-                ("Validation", "enabled or disabled"),
+                ("Validation", "toggle the checkbox on or off"),
             )
         if field_id == "settings-appearance-smooth-scrolling":
             return (
                 ("Focused setting", "Smooth scrolling"),
                 ("Purpose", "Controls smooth scroll behavior where supported."),
                 ("Saved as", "appearance.smooth_scrolling"),
-                ("Validation", "enabled or disabled"),
+                ("Validation", "toggle the checkbox on or off"),
             )
         return (
             ("Focused setting", "Appearance defaults"),
@@ -8654,6 +8925,11 @@ class SettingsScreen(BaseAppScreen):
             )
 
     def _storage_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
+        return self._with_save_behavior_row(
+            self._storage_field_guidance_rows_base(), STAGED_SAVE_BEHAVIOR_COPY
+        )
+
+    def _storage_field_guidance_rows_base(self) -> tuple[tuple[str, str], ...]:
         field_id = self._active_settings_field_id
         field_by_id = {
             (self._storage_field_selector(key) or "").removeprefix("#"): key
@@ -8901,15 +9177,6 @@ class SettingsScreen(BaseAppScreen):
                         button.add_class("settings-secondary-search-match")
                 button.display = is_visible
                 yield button
-                if summary.status:
-                    status = Static(
-                        f"Status: {self._category_status(summary)}",
-                        id=f"settings-category-{summary.category.value}-status",
-                        classes="destination-section settings-status-row settings-category-status-hidden",
-                    )
-                    if self._category_has_unsaved_changes(summary.category):
-                        status.add_class("settings-dirty-category")
-                    yield status
         empty_state = Static(
             f"No Settings categories match: {self._category_search_text()}",
             id="settings-category-search-empty",
@@ -8919,56 +9186,67 @@ class SettingsScreen(BaseAppScreen):
         empty_state.display = bool(self._category_search_text() and visible_count == 0)
         yield empty_state
 
+    def _overview_sync_summary(self) -> str:
+        """One-line sync status for the Overview front door (task-1369)."""
+        rows = dict(self.manual_sync_rows)
+        status = rows.get("Manual sync status", "loading")
+        if status == "loading":
+            # task-1369 (review): readable first paint, never
+            # "loading; pending outgoing: unknown".
+            return "Loading sync status..."
+        pending = rows.get("Pending outgoing", "unknown")
+        return f"{status}; pending outgoing: {pending}"
+
     def _render_overview_detail(self) -> ComposeResult:
-        # task-181: lead with user-relevant readiness/storage/privacy; Manual
-        # sync and the ownership summary sit at the bottom of the card.
+        # task-1369: the landing card leads with four primary status rows,
+        # each with an Open-category affordance (the sync row carries the
+        # manual sync controls instead). The server/sync/handoff detail and
+        # the ownership summary stay one collapsed disclosure away.
         yield Static("Overview", classes="destination-section settings-column-title")
         with Vertical(id="settings-overview-card", classes="settings-focus-card"):
-            yield Static("Provider readiness", classes="destination-section")
+            yield self._render_category_state_banner(SettingsCategoryId.OVERVIEW)
+            yield Static("Status", classes="destination-section")
             yield self._detail_row(
                 "Active",
                 self._provider_readiness_label().removeprefix("Provider readiness: "),
                 identifier="settings-overview-provider-readiness",
             )
-            yield Static("Storage", classes="destination-section")
+            with Horizontal(classes="settings-action-row"):
+                yield Button(
+                    "Open Providers & Models",
+                    id="settings-overview-open-providers-models",
+                    classes="settings-overview-open-category",
+                    tooltip="Open the Providers & Models category.",
+                )
             yield self._detail_row(
                 "Config path",
                 self._config_path_overview_value(),
                 identifier="settings-overview-storage",
             )
-            yield Static("Privacy", classes="destination-section")
+            with Horizontal(classes="settings-action-row"):
+                yield Button(
+                    "Open Storage",
+                    id="settings-overview-open-storage",
+                    classes="settings-overview-open-category",
+                    tooltip="Open the Storage category.",
+                )
             yield self._detail_row(
                 "Privacy",
                 "local config by default; secret-looking diagnostics are redacted",
                 identifier="settings-overview-privacy",
             )
-            yield self._detail_row(
-                "Console paste collapse",
-                self._collapse_large_pastes_label(),
-                identifier="settings-overview-console-paste-collapse",
-            )
-            yield self._detail_row(
-                "Diagnostics",
-                "validate config before saving raw TOML changes",
-            )
-            yield Static(
-                "Server, sync, workspace, and handoff", classes="destination-section"
-            )
-            for label, value in self.server_sync_workspace_handoff_rows:
-                yield self._detail_row(label, value)
             with Horizontal(classes="settings-action-row"):
                 yield Button(
-                    "Switch Source / Server",
-                    id="settings-switch-runtime-source",
-                    tooltip="Choose local-only or bind a tldw server as the runtime source.",
+                    "Open Privacy & Security",
+                    id="settings-overview-open-privacy-security",
+                    classes="settings-overview-open-category",
+                    tooltip="Open the Privacy & Security category.",
                 )
-            yield Static("Manual sync", classes="destination-section")
-            yield Static(
-                "Preview pending Notes/Chat changes before anything is sent to a server.",
-                classes="settings-help-copy",
+            yield self._detail_row(
+                "Sync",
+                self._overview_sync_summary(),
+                identifier="settings-overview-sync-summary",
             )
-            for label, value in self.manual_sync_rows:
-                yield self._detail_row(label, value)
             with Horizontal(classes="settings-action-row"):
                 yield Button(
                     "Preview manual sync",
@@ -8980,9 +9258,42 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-manual-sync-run",
                     tooltip="Apply the previewed Notes/Chat changes to the server.",
                 )
-            yield Static("Where changes happen", classes="destination-section")
-            for label, value in self._overview_ownership_rows():
-                yield self._detail_row(label, value)
+            with Collapsible(
+                title="Server, sync, workspace, and handoff",
+                collapsed=self._overview_sync_details_collapsed,
+                id="settings-overview-sync-details",
+            ):
+                yield Static("Manual sync", classes="destination-section")
+                yield Static(
+                    "Preview pending Notes/Chat changes before anything is sent to a server.",
+                    classes="settings-help-copy",
+                )
+                for label, value in self.manual_sync_rows:
+                    yield self._detail_row(label, value)
+                for label, value in self.server_sync_workspace_handoff_rows:
+                    yield self._detail_row(label, value)
+                with Horizontal(classes="settings-action-row"):
+                    yield Button(
+                        "Switch Source / Server",
+                        id="settings-switch-runtime-source",
+                        tooltip="Choose local-only or bind a tldw server as the runtime source.",
+                    )
+            with Collapsible(
+                title="Where changes happen",
+                collapsed=self._overview_ownership_details_collapsed,
+                id="settings-overview-ownership-details",
+            ):
+                yield self._detail_row(
+                    "Console paste collapse",
+                    self._collapse_large_pastes_label(),
+                    identifier="settings-overview-console-paste-collapse",
+                )
+                yield self._detail_row(
+                    "Diagnostics",
+                    "validate config before saving raw TOML changes",
+                )
+                for label, value in self._overview_ownership_rows():
+                    yield self._detail_row(label, value)
 
     def _render_provider_detail(self) -> ComposeResult:
         resolved = self._resolve_provider_model_for_settings()
@@ -9197,45 +9508,59 @@ class SettingsScreen(BaseAppScreen):
             # ADR-020: [model_catalog] auto-refresh toggles. Values initialize
             # inline from the saved config (the Connect block pattern) and
             # persist immediately on change via the handlers below.
+            # task-1341: instant-apply is the labeled exception to the staged
+            # default; the bordered group and hint line separate these
+            # operational flags visually from the staged Connect fields.
             model_catalog_settings = load_model_catalog_settings(load_settings())
             # TASK-387: keep the internal decision-record id (ADR-020) out of the
             # user-facing heading; it survives in the code comment above.
-            yield Static("Automatic refresh", classes="destination-section")
-            yield Checkbox(
-                "Auto-refresh model lists on startup",
-                value=model_catalog_settings.auto_refresh_enabled,
-                id="settings-model-catalog-auto-refresh",
-            )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Refresh after (hours):", classes="settings-status-row")
-                yield Input(
-                    f"{model_catalog_settings.stale_after_hours:g}",
-                    id="settings-model-catalog-stale-hours",
-                    type="integer",
-                    tooltip="0 = refetch every launch.",
+            with Vertical(
+                id="settings-model-catalog-group",
+                classes="settings-instant-apply-group",
+            ):
+                yield Static(
+                    "Automatic refresh", classes="destination-section"
                 )
-            for _provider in AUTO_REFRESH_PROVIDER_LIST_KEYS:
-                _provider_key = provider_config_key(_provider)
-                _pid = _provider.lower()
+                yield Static(
+                    INSTANT_APPLY_BEHAVIOR_COPY,
+                    id="settings-model-catalog-instant-hint",
+                    classes="settings-instant-apply-hint",
+                )
+                yield Checkbox(
+                    "Auto-refresh model lists on startup",
+                    value=model_catalog_settings.auto_refresh_enabled,
+                    id="settings-model-catalog-auto-refresh",
+                )
                 with Horizontal(classes="settings-input-row"):
-                    yield Checkbox(
-                        f"{_provider}: auto-refresh",
-                        value=(
-                            _provider_key
-                            not in model_catalog_settings.auto_refresh_disabled
-                        ),
-                        id=f"settings-mc-auto-{_pid}",
+                    yield Static("Refresh after (hours):", classes="settings-status-row")
+                    yield Input(
+                        f"{model_catalog_settings.stale_after_hours:g}",
+                        id="settings-model-catalog-stale-hours",
+                        type="integer",
+                        tooltip="0 = refetch every launch.",
                     )
-                    yield Checkbox(
-                        "save to config",
-                        value=_provider_key in model_catalog_settings.write_to_config,
-                        id=f"settings-mc-write-{_pid}",
-                        tooltip=(
-                            "Append newly discovered models to config.toml — "
-                            "large catalogs like OpenRouter only add newly released "
-                            "models after a first baseline."
-                        ),
-                    )
+                for _provider in AUTO_REFRESH_PROVIDER_LIST_KEYS:
+                    _provider_key = provider_config_key(_provider)
+                    _pid = _provider.lower()
+                    with Horizontal(classes="settings-input-row"):
+                        yield Checkbox(
+                            f"{_provider}: auto-refresh",
+                            value=(
+                                _provider_key
+                                not in model_catalog_settings.auto_refresh_disabled
+                            ),
+                            id=f"settings-mc-auto-{_pid}",
+                        )
+                        yield Checkbox(
+                            "save to config",
+                            value=_provider_key in model_catalog_settings.write_to_config,
+                            id=f"settings-mc-write-{_pid}",
+                            tooltip=(
+                                "Append newly discovered models to config.toml — "
+                                "large catalogs like OpenRouter only add newly released "
+                                "models after a first baseline."
+                            ),
+                        )
             # task-189: sampling and provider-specific tuning live below the
             # Connect block in a collapsed-by-default disclosure.
             with Collapsible(
@@ -9347,25 +9672,14 @@ class SettingsScreen(BaseAppScreen):
                             provider,
                             "model_profile_reasoning_effort",
                         )
-                    ),
+                    )
+                    + " settings-select-row",
                 ):
                     yield Static("Reasoning", classes="settings-input-label")
-                    yield Input(
-                        value=self._model_profile_input_value(
-                            provider,
-                            "model_profile_reasoning_effort",
-                            values["model_profile_reasoning_effort"],
-                        ),
-                        id="settings-model-profile-reasoning-effort",
-                        classes="settings-compact-input",
-                        placeholder=self._model_profile_input_placeholder(
-                            provider,
-                            "model_profile_reasoning_effort",
-                        ),
-                        disabled=not self._model_profile_field_supported(
-                            provider,
-                            "model_profile_reasoning_effort",
-                        ),
+                    yield self._model_profile_enum_select(
+                        provider,
+                        "model_profile_reasoning_effort",
+                        values,
                     )
                 with Horizontal(
                     id="settings-model-profile-reasoning-summary-row",
@@ -9374,25 +9688,14 @@ class SettingsScreen(BaseAppScreen):
                             provider,
                             "model_profile_reasoning_summary",
                         )
-                    ),
+                    )
+                    + " settings-select-row",
                 ):
                     yield Static("Summary", classes="settings-input-label")
-                    yield Input(
-                        value=self._model_profile_input_value(
-                            provider,
-                            "model_profile_reasoning_summary",
-                            values["model_profile_reasoning_summary"],
-                        ),
-                        id="settings-model-profile-reasoning-summary",
-                        classes="settings-compact-input",
-                        placeholder=self._model_profile_input_placeholder(
-                            provider,
-                            "model_profile_reasoning_summary",
-                        ),
-                        disabled=not self._model_profile_field_supported(
-                            provider,
-                            "model_profile_reasoning_summary",
-                        ),
+                    yield self._model_profile_enum_select(
+                        provider,
+                        "model_profile_reasoning_summary",
+                        values,
                     )
                 with Horizontal(
                     id="settings-model-profile-verbosity-row",
@@ -9401,25 +9704,14 @@ class SettingsScreen(BaseAppScreen):
                             provider,
                             "model_profile_verbosity",
                         )
-                    ),
+                    )
+                    + " settings-select-row",
                 ):
                     yield Static("Verbosity", classes="settings-input-label")
-                    yield Input(
-                        value=self._model_profile_input_value(
-                            provider,
-                            "model_profile_verbosity",
-                            values["model_profile_verbosity"],
-                        ),
-                        id="settings-model-profile-verbosity",
-                        classes="settings-compact-input",
-                        placeholder=self._model_profile_input_placeholder(
-                            provider,
-                            "model_profile_verbosity",
-                        ),
-                        disabled=not self._model_profile_field_supported(
-                            provider,
-                            "model_profile_verbosity",
-                        ),
+                    yield self._model_profile_enum_select(
+                        provider,
+                        "model_profile_verbosity",
+                        values,
                     )
                 with Horizontal(
                     id="settings-model-profile-thinking-effort-row",
@@ -9428,25 +9720,14 @@ class SettingsScreen(BaseAppScreen):
                             provider,
                             "model_profile_thinking_effort",
                         )
-                    ),
+                    )
+                    + " settings-select-row",
                 ):
                     yield Static("Thinking", classes="settings-input-label")
-                    yield Input(
-                        value=self._model_profile_input_value(
-                            provider,
-                            "model_profile_thinking_effort",
-                            values["model_profile_thinking_effort"],
-                        ),
-                        id="settings-model-profile-thinking-effort",
-                        classes="settings-compact-input",
-                        placeholder=self._model_profile_input_placeholder(
-                            provider,
-                            "model_profile_thinking_effort",
-                        ),
-                        disabled=not self._model_profile_field_supported(
-                            provider,
-                            "model_profile_thinking_effort",
-                        ),
+                    yield self._model_profile_enum_select(
+                        provider,
+                        "model_profile_thinking_effort",
+                        values,
                     )
                 with Horizontal(
                     id="settings-model-profile-thinking-budget-tokens-row",
@@ -9476,15 +9757,18 @@ class SettingsScreen(BaseAppScreen):
                             "model_profile_thinking_budget_tokens",
                         ),
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(classes="settings-input-row settings-select-row"):
                     yield Static("Streaming", classes="settings-input-label")
-                    yield Input(
-                        value=self._profile_input_value(
+                    yield Select(
+                        list(MODEL_PROFILE_STREAMING_SELECT_OPTIONS),
+                        value=self._streaming_select_value(
                             values["model_profile_streaming"]
                         ),
                         id="settings-model-profile-streaming",
-                        classes="settings-compact-input",
-                        placeholder="true or false",
+                        classes="settings-compact-select",
+                        allow_blank=True,
+                        prompt="Inherit default",
+                        compact=True,
                     )
             yield Static(
                 self._provider_catalog_summary(),
@@ -9526,8 +9810,9 @@ class SettingsScreen(BaseAppScreen):
                 "Collapse large pasted chunks only when they exceed the threshold.",
                 id="settings-console-collapse-large-pastes-label",
             )
-            yield Button(
-                self._collapse_large_pastes_button_label(),
+            yield Checkbox(
+                "Collapse large pastes",
+                value=self._collapse_large_pastes_enabled(),
                 id="settings-console-collapse-large-pastes-toggle",
                 tooltip="Toggle compact display for large pasted Console chunks.",
             )
@@ -9599,13 +9884,11 @@ class SettingsScreen(BaseAppScreen):
             )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Streaming", classes="settings-input-label")
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("streaming")
+                yield Checkbox(
+                    value=coerce_bool_setting(
+                        self._console_behavior_value("streaming"), True
                     ),
                     id="settings-console-default-streaming",
-                    classes="settings-compact-input",
-                    placeholder="true or false",
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Temperature", classes="settings-input-label")
@@ -9695,46 +9978,18 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-console-reasoning-help",
                 classes="settings-detail-row",
             )
-            with Horizontal(classes="settings-input-row"):
+            with Horizontal(classes="settings-input-row settings-select-row"):
                 yield Static("Reasoning", classes="settings-input-label")
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("reasoning_effort")
-                    ),
-                    id="settings-console-default-reasoning-effort",
-                    classes="settings-compact-input",
-                    placeholder="none, minimal, low, medium, high, xhigh",
-                )
-            with Horizontal(classes="settings-input-row"):
+                yield self._console_default_enum_select("reasoning_effort")
+            with Horizontal(classes="settings-input-row settings-select-row"):
                 yield Static("Summary", classes="settings-input-label")
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("reasoning_summary")
-                    ),
-                    id="settings-console-default-reasoning-summary",
-                    classes="settings-compact-input",
-                    placeholder="auto, concise, detailed, none",
-                )
-            with Horizontal(classes="settings-input-row"):
+                yield self._console_default_enum_select("reasoning_summary")
+            with Horizontal(classes="settings-input-row settings-select-row"):
                 yield Static("Verbosity", classes="settings-input-label")
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("verbosity")
-                    ),
-                    id="settings-console-default-verbosity",
-                    classes="settings-compact-input",
-                    placeholder="low, medium, high",
-                )
-            with Horizontal(classes="settings-input-row"):
+                yield self._console_default_enum_select("verbosity")
+            with Horizontal(classes="settings-input-row settings-select-row"):
                 yield Static("Thinking", classes="settings-input-label")
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("thinking_effort")
-                    ),
-                    id="settings-console-default-thinking-effort",
-                    classes="settings-compact-input",
-                    placeholder="off, low, medium, high, xhigh, max",
-                )
+                yield self._console_default_enum_select("thinking_effort")
             with Horizontal(classes="settings-input-row"):
                 yield Static("Think budget", classes="settings-input-label")
                 yield Input(
@@ -9752,8 +10007,9 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-status-row",
             )
             yield Static("Background effects", classes="destination-section")
-            yield Button(
-                self._console_background_effect_enabled_label(),
+            yield Checkbox(
+                "Enable background effects",
+                value=bool(self._console_background_effect_value("enabled")),
                 id="settings-console-background-effect-enabled",
                 tooltip="Toggle optional ambient effects behind the Console transcript.",
             )
@@ -11075,6 +11331,7 @@ class SettingsScreen(BaseAppScreen):
         with Vertical(
             id=f"settings-{category.value}-card", classes="settings-focus-card"
         ):
+            yield self._render_category_state_banner(category)
             yield Static("How this page works", classes="destination-section")
             yield self._detail_row("Owner destination", contract.owner_destination)
             yield self._detail_row(
@@ -11084,13 +11341,13 @@ class SettingsScreen(BaseAppScreen):
                 "Writes allowed",
                 f"No - change this in {contract.owner_destination} instead",
             )
-            yield Static("Source of truth", classes="destination-section")
+            yield Static("Where the data lives", classes="destination-section")
             for index, source in enumerate(contract.source_of_truth, start=1):
                 yield self._detail_row(f"Source {index}", source)
             yield Static("Status and default boundaries", classes="destination-section")
             for label, value in contract.rows:
                 yield self._detail_row(label, value)
-            yield self._detail_row("Follow-up", contract.follow_up)
+            yield self._detail_row("Planned", contract.follow_up)
 
     def _render_workspaces_detail(self) -> ComposeResult:
         registry = getattr(self.app_instance, "workspace_registry_service", None)
@@ -11549,15 +11806,15 @@ class SettingsScreen(BaseAppScreen):
                 yield Static("Motion and scrolling", classes="destination-section")
                 with Horizontal(classes="settings-input-row"):
                     yield Static("Animations", classes="settings-input-label")
-                    yield Button(
-                        self._appearance_bool_label("animations_enabled"),
+                    yield Checkbox(
+                        value=bool(values["animations_enabled"]),
                         id="settings-appearance-animations-enabled",
                         tooltip="Toggle optional UI animation defaults.",
                     )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Smooth scrolling", classes="settings-input-label")
-                    yield Button(
-                        self._appearance_bool_label("smooth_scrolling"),
+                    yield Static("Smooth scroll", classes="settings-input-label")
+                    yield Checkbox(
+                        value=bool(values["smooth_scrolling"]),
                         id="settings-appearance-smooth-scrolling",
                         tooltip="Toggle smooth scrolling defaults where supported.",
                     )
@@ -12052,9 +12309,10 @@ class SettingsScreen(BaseAppScreen):
                 "active Console session, then provider+model profile, then these global fallbacks",
             )
             yield self._detail_row(
-                "Save scope",
+                "Scope",
                 "[chat_defaults] response fallbacks and [console] paste display settings",
             )
+            yield self._detail_row("Save", STAGED_SAVE_BEHAVIOR_COPY)
             return
         elif summary.category is SettingsCategoryId.PROVIDERS_MODELS:
             yield Static(
@@ -12115,6 +12373,7 @@ class SettingsScreen(BaseAppScreen):
                 "10 editable defaults in the active RAG profile",
             )
             yield self._detail_row("Recovery", ownership.recovery_copy)
+            yield self._detail_row("Save", STAGED_SAVE_BEHAVIOR_COPY)
             return
         elif summary.category is SettingsCategoryId.APPEARANCE:
             yield Static(
@@ -12152,7 +12411,7 @@ class SettingsScreen(BaseAppScreen):
             yield Static("Focused field guide", classes="destination-section")
             yield self._detail_row("Save target", f"{_theme_save_target()}{os.sep}")
             yield self._detail_row(
-                "Note", "Use the editor's own Apply/Save/Reset buttons."
+                "Save", "editor-owned - use the editor's Apply/Save/Reset buttons"
             )
             modified = "Yes" if self.theme_editor_modified else "No"
             yield self._detail_row(
@@ -12166,7 +12425,7 @@ class SettingsScreen(BaseAppScreen):
             )
             yield Static("Focused field guide", classes="destination-section")
             yield self._detail_row("Config section", "splash_screen")
-            yield self._detail_row("Note", "Splash defaults are saved automatically.")
+            yield self._detail_row("Save", INSTANT_APPLY_BEHAVIOR_COPY)
         elif summary.category is SettingsCategoryId.INTERNAL_PROMPTS:
             yield Static(
                 "Edit the prompts used by internal tooling.",
@@ -12236,9 +12495,19 @@ class SettingsScreen(BaseAppScreen):
 
     def compose_content(self) -> ComposeResult:
         active_summary = self._active_summary()
+        # task-1342: apply compact classes at compose time too -- the
+        # recompose=True reactives rebuild these widgets and would otherwise
+        # drop classes toggled by on_resize.
+        workbench_compact = self._workbench_compact_now()
+        self._workbench_compact = workbench_compact
+        workbench_classes = "ds-panel destination-workbench"
+        pane_class_suffix = ""
+        if workbench_compact:
+            workbench_classes += " settings-workbench-compact"
+            pane_class_suffix = " settings-workbench-compact-pane"
         with Vertical(id="settings-shell"):
             yield Static(
-                "Settings | Global preferences, appearance, storage | Local",
+                "Settings | Global preferences, appearance, storage, and app behavior | Local",
                 id="settings-title",
                 classes="ds-destination-header",
             )
@@ -12250,11 +12519,10 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-category-label",
                     classes="destination-section",
                 )
-            with Horizontal(
-                id="settings-workbench", classes="ds-panel destination-workbench"
-            ):
+            with Horizontal(id="settings-workbench", classes=workbench_classes):
                 with Vertical(
-                    id="settings-category-pane", classes="destination-workbench-pane"
+                    id="settings-category-pane",
+                    classes="destination-workbench-pane" + pane_class_suffix,
                 ):
                     yield SettingsCategorySearchInput(
                         value=self.category_search_query,
@@ -12280,7 +12548,7 @@ class SettingsScreen(BaseAppScreen):
                     else VerticalScroll
                 )
                 detail_pane = Vertical(
-                    id="settings-detail-pane", classes="destination-workbench-pane"
+                    id="settings-detail-pane", classes="destination-workbench-pane" + pane_class_suffix
                 )
                 # Inline height: same bundle-collapse guard as the impact
                 # pane below.
@@ -12300,7 +12568,7 @@ class SettingsScreen(BaseAppScreen):
                 yield self._column_divider("settings-detail-impact-divider")
                 impact_pane = Vertical(
                     id="settings-impact-pane",
-                    classes="destination-workbench-pane ds-inspector",
+                    classes="destination-workbench-pane ds-inspector" + pane_class_suffix,
                 )
                 # Explicit height: under the real CSS bundle the pane class
                 # sizes a scroll container, not a plain Vertical -- without
@@ -12329,6 +12597,14 @@ class SettingsScreen(BaseAppScreen):
                     overflow_hint.styles.color = "gray"
                     overflow_hint.display = False
                     yield overflow_hint
+            # task-1374: keyboard-reachable mirror of the focused control's
+            # hover-only tooltip; updated by handle_descendant_focus.
+            yield Static(
+                "",
+                id="settings-focus-help",
+                classes="settings-focus-help",
+                markup=False,
+            )
 
     def _category_value_from_button(self, button: Button) -> str | None:
         if not button.id or not button.has_class("settings-category-button"):
@@ -12391,6 +12667,23 @@ class SettingsScreen(BaseAppScreen):
             current_index = 0
         next_index = max(0, min(len(category_values) - 1, current_index + delta))
         self._focus_category(category_values[next_index])
+
+    def _jk_category_navigation_blocked(self) -> bool:
+        """Guard the screen-wide j/k category bindings (task-1373).
+
+        j/k are armed from any focus so power users can move between
+        categories without first focusing the rail, but they must never
+        steal keys from text editing or option search: Input/TextArea
+        consume printable keys before this screen's on_key fires (the
+        isinstance check is belt-and-braces for widgets that do not), a
+        focused Select ignores printable keys, and an OPEN Select overlay
+        type-searches on printable keys. The overlay mounts on the screen
+        rather than under its Select, so expansion is checked directly.
+        """
+        focused = self._focused_widget()
+        if isinstance(focused, (Input, TextArea, Select)):
+            return True
+        return any(select.expanded for select in self.query(Select))
 
     def apply_navigation_context(self, context: Mapping[str, object]) -> None:
         """Apply destination-specific navigation context after cross-screen routing.
@@ -12712,6 +13005,7 @@ class SettingsScreen(BaseAppScreen):
             # (re)composed card at a workspace id a later visit's list may
             # not even show (e.g. after an archive elsewhere).
             self._settings_selected_workspace_id = None
+        category_changed = category_value != self.active_category
         self.active_category = category_value
 
         # task-1565: keep the selection visible -- the rail does not follow
@@ -12744,13 +13038,30 @@ class SettingsScreen(BaseAppScreen):
             # to [image_generation] made while away).
             self._image_gen_raw_section_cache = None
         if restore_focus:
-            self.call_after_refresh(self._focus_category, category_value)
+            if category_changed:
+                # The recompose from assigning active_category destroys the
+                # focused widget; _select_category's call_after_refresh restore
+                # races that recompose (task-1338: focus ended up <none>), so
+                # record an intent consumed by recompose() after the fresh
+                # children mount.
+                self._pending_category_focus_value = category_value
+            else:
+                self.call_after_refresh(self._focus_category, category_value)
         # task-1623: the recompose minted a fresh (hidden) fold indicator;
         # re-evaluate it against the new category's inspector content.
         self.call_after_refresh(self._update_inspector_overflow_hint)
 
+    async def recompose(self) -> None:
+        await super().recompose()
+        category_value = self._pending_category_focus_value
+        if category_value is None:
+            return
+        self._pending_category_focus_value = None
+        self._focus_category(category_value)
+
     @on(DescendantFocus)
     def handle_descendant_focus(self, event: DescendantFocus) -> None:
+        self._update_focus_help(event.widget)
         # Clear the pending navigation focus intent only when SATISFIED (the
         # intended widget landed focus). Clearing on any focus is too eager:
         # the stale category-chip focus the intent is meant to supersede
@@ -12842,6 +13153,9 @@ class SettingsScreen(BaseAppScreen):
             "settings-model-profile-thinking-budget-tokens",
             "settings-model-profile-streaming",
         }
+        # task-1341: model-catalog toggles also surface in the focused-field
+        # inspector so their instant-apply commit model is named (AC3).
+        provider_field_ids |= MODEL_CATALOG_FIELD_IDS
         self._active_settings_field_id = (
             widget_id if widget_id in provider_field_ids else None
         )
@@ -13012,12 +13326,13 @@ class SettingsScreen(BaseAppScreen):
         hint.display = body.virtual_size.height > body.container_size.height
 
     def on_resize(self, event: Resize) -> None:
-        """Re-evaluate the inspector fold indicator on viewport changes.
+        """Re-resolve compact classes and the fold indicator on size changes.
 
         Args:
             event: The resize event; sizes are re-read after the refresh
                 completes, so only the notification matters here.
         """
+        self._sync_responsive_workbench()
         self.call_after_refresh(self._update_inspector_overflow_hint)
 
     def _refresh_theme_modified_widgets(self) -> None:
@@ -13104,22 +13419,24 @@ class SettingsScreen(BaseAppScreen):
         self._stage_appearance_value("density", str(event.value or "normal"))
         self._mark_appearance_settings_staged()
 
-    @on(Button.Pressed, "#settings-appearance-animations-enabled")
+    @on(Checkbox.Changed, "#settings-appearance-animations-enabled")
     def handle_appearance_animations_enabled_changed(
-        self, event: Button.Pressed
+        self, event: Checkbox.Changed
     ) -> None:
         event.stop()
-        next_value = not bool(self._appearance_setting_values()["animations_enabled"])
-        self._stage_appearance_value("animations_enabled", next_value)
-        event.button.label = self._appearance_bool_label("animations_enabled")
+        if self._syncing_appearance_defaults:
+            return
+        self._stage_appearance_value("animations_enabled", bool(event.value))
         self._mark_appearance_settings_staged()
 
-    @on(Button.Pressed, "#settings-appearance-smooth-scrolling")
-    def handle_appearance_smooth_scrolling_changed(self, event: Button.Pressed) -> None:
+    @on(Checkbox.Changed, "#settings-appearance-smooth-scrolling")
+    def handle_appearance_smooth_scrolling_changed(
+        self, event: Checkbox.Changed
+    ) -> None:
         event.stop()
-        next_value = not bool(self._appearance_setting_values()["smooth_scrolling"])
-        self._stage_appearance_value("smooth_scrolling", next_value)
-        event.button.label = self._appearance_bool_label("smooth_scrolling")
+        if self._syncing_appearance_defaults:
+            return
+        self._stage_appearance_value("smooth_scrolling", bool(event.value))
         self._mark_appearance_settings_staged()
 
     @on(Button.Pressed, "#settings-preview-appearance")
@@ -13278,22 +13595,102 @@ class SettingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#settings-manual-sync-run")
     def handle_manual_sync_run(self, event: Button.Pressed) -> None:
         event.stop()
-        self.manual_sync_rows = (
-            ("Manual sync status", "running"),
+        # task-1367: this pushes pending Notes/Chat changes to a server, so
+        # confirm first -- seeded with the pending counts the preview rows
+        # already loaded; only the confirm path runs the sync.
+        pending_copy = next(
             (
-                "Manual sync result",
-                "Manual Sync is running after explicit user request.",
+                value
+                for label, value in self.manual_sync_rows
+                if label == "Pending outgoing"
             ),
-            ("Pending outgoing", "Refreshing"),
+            "unknown",
         )
-        self._manual_sync_run_worker()
+        # task-1369: readable fallback when the preview counts have not
+        # loaded yet -- never interpolate "Loading"/"unknown" into the copy.
+        if pending_copy.strip().lower() in {"", "loading", "refreshing", "unknown"}:
+            pending_line = "Sync will push all pending changes."
+        else:
+            pending_line = f"Pending outgoing: {pending_copy}"
+
+        async def _confirmed_run() -> None:
+            self._manual_sync_run_token += 1
+            run_token = self._manual_sync_run_token
+            self._manual_sync_run_in_flight = True
+            self.manual_sync_rows = (
+                ("Manual sync status", "running"),
+                (
+                    "Manual sync result",
+                    "Manual Sync is running after explicit user request.",
+                ),
+                ("Pending outgoing", "Refreshing"),
+            )
+            try:
+                self._manual_sync_run_worker(run_token)
+            except Exception:
+                # task-1369 (review): a synchronous raise at the call site
+                # (before the worker exists) must not strand the flag.
+                self._manual_sync_run_in_flight = False
+                logger.warning(
+                    "Failed to start Settings manual sync run worker.",
+                    exc_info=True,
+                )
+                self._apply_manual_sync_rows(
+                    (
+                        ("Manual sync status", "failed"),
+                        (
+                            "Manual sync result",
+                            "Manual Sync run could not be started.",
+                        ),
+                        ("Pending outgoing", "unknown"),
+                    )
+                )
+
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Run manual sync",
+                message=(
+                    "Push pending Notes/Chat changes to the server now?\n\n"
+                    f"{pending_line}"
+                ),
+                confirm_label="Push to server",
+                cancel_label="Cancel",
+                confirm_callback=_confirmed_run,
+            )
+        )
+
+    @on(Collapsible.Toggled, "#settings-overview-sync-details")
+    def handle_overview_sync_details_toggled(
+        self, event: Collapsible.Toggled
+    ) -> None:
+        # task-1369 (review): persist disclosure state across recomposes.
+        self._overview_sync_details_collapsed = event.collapsible.collapsed
+
+    @on(Collapsible.Toggled, "#settings-overview-ownership-details")
+    def handle_overview_ownership_details_toggled(
+        self, event: Collapsible.Toggled
+    ) -> None:
+        # task-1369 (review): persist disclosure state across recomposes.
+        self._overview_ownership_details_collapsed = event.collapsible.collapsed
+
+    @on(Button.Pressed, ".settings-overview-open-category")
+    def handle_overview_open_category(self, event: Button.Pressed) -> None:
+        event.stop()
+        # task-1369: Overview status rows carry "Open <category>" affordances;
+        # the button id suffix is the category value.
+        button_id = str(event.button.id or "")
+        category_value = button_id.removeprefix("settings-overview-open-")
+        self._select_category(category_value, restore_focus=True)
 
     @on(Button.Pressed, ".settings-category-button")
     def handle_category_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         category_value = self._category_value_from_button(event.button)
         if category_value is not None:
-            self._select_category(category_value, restore_focus=event.button.has_focus)
+            # task-1338: always restore focus after the recompose. Gating on
+            # has_focus left app.focused at <none> when the press arrived
+            # without prior focus (the recompose destroys the pressed widget).
+            self._select_category(category_value, restore_focus=True)
 
     @on(Button.Pressed, "#settings-category-group-domain-defaults")
     def handle_domain_group_toggle_pressed(self, event: Button.Pressed) -> None:
@@ -13568,14 +13965,14 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self._submit_category_search(event.value)
 
-    @on(Button.Pressed, "#settings-console-collapse-large-pastes-toggle")
+    @on(Checkbox.Changed, "#settings-console-collapse-large-pastes-toggle")
     def handle_console_collapse_large_pastes_changed(
-        self, event: Button.Pressed
+        self, event: Checkbox.Changed
     ) -> None:
         event.stop()
-        next_value = not self._collapse_large_pastes_enabled()
-        self._stage_console_large_paste_value(next_value)
-        event.button.label = self._collapse_large_pastes_button_label()
+        if self._syncing_console_paste_toggle:
+            return
+        self._stage_console_large_paste_value(bool(event.value))
         self._update_console_paste_summary()
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
@@ -13628,15 +14025,14 @@ class SettingsScreen(BaseAppScreen):
         )
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
-    @on(Input.Changed, "#settings-console-default-streaming")
-    def handle_console_default_streaming_changed(self, event: Input.Changed) -> None:
+    @on(Checkbox.Changed, "#settings-console-default-streaming")
+    def handle_console_default_streaming_changed(
+        self, event: Checkbox.Changed
+    ) -> None:
+        event.stop()
         if self._syncing_console_defaults:
             return
-        try:
-            value = self._normalise_console_default_streaming(event.value)
-        except ValueError:
-            value = event.value
-        self._stage_console_default_value("streaming", value)
+        self._stage_console_default_value("streaming", bool(event.value))
         self._mark_console_behavior_settings_staged()
 
     @on(Input.Changed, "#settings-console-default-temperature")
@@ -13710,41 +14106,45 @@ class SettingsScreen(BaseAppScreen):
             self._normalise_model_profile_frequency_penalty,
         )
 
-    @on(Input.Changed, "#settings-console-default-reasoning-effort")
+    @on(Select.Changed, "#settings-console-default-reasoning-effort")
     def handle_console_default_reasoning_effort_changed(
-        self, event: Input.Changed
+        self, event: Select.Changed
     ) -> None:
+        event.stop()
         self._stage_console_default_input(
             "reasoning_effort",
-            event.value,
+            self._select_text_value(event.value),
             self._normalise_model_profile_reasoning_effort,
         )
 
-    @on(Input.Changed, "#settings-console-default-reasoning-summary")
+    @on(Select.Changed, "#settings-console-default-reasoning-summary")
     def handle_console_default_reasoning_summary_changed(
-        self, event: Input.Changed
+        self, event: Select.Changed
     ) -> None:
+        event.stop()
         self._stage_console_default_input(
             "reasoning_summary",
-            event.value,
+            self._select_text_value(event.value),
             self._normalise_model_profile_reasoning_summary,
         )
 
-    @on(Input.Changed, "#settings-console-default-verbosity")
-    def handle_console_default_verbosity_changed(self, event: Input.Changed) -> None:
+    @on(Select.Changed, "#settings-console-default-verbosity")
+    def handle_console_default_verbosity_changed(self, event: Select.Changed) -> None:
+        event.stop()
         self._stage_console_default_input(
             "verbosity",
-            event.value,
+            self._select_text_value(event.value),
             self._normalise_model_profile_verbosity,
         )
 
-    @on(Input.Changed, "#settings-console-default-thinking-effort")
+    @on(Select.Changed, "#settings-console-default-thinking-effort")
     def handle_console_default_thinking_effort_changed(
-        self, event: Input.Changed
+        self, event: Select.Changed
     ) -> None:
+        event.stop()
         self._stage_console_default_input(
             "thinking_effort",
-            event.value,
+            self._select_text_value(event.value),
             self._normalise_model_profile_thinking_effort,
         )
 
@@ -13778,14 +14178,14 @@ class SettingsScreen(BaseAppScreen):
         )
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
-    @on(Button.Pressed, "#settings-console-background-effect-enabled")
+    @on(Checkbox.Changed, "#settings-console-background-effect-enabled")
     def handle_console_background_effect_enabled_changed(
-        self, event: Button.Pressed
+        self, event: Checkbox.Changed
     ) -> None:
         event.stop()
-        next_value = not bool(self._console_background_effect_value("enabled"))
-        self._stage_console_background_effect_value("enabled", next_value)
-        event.button.label = self._console_background_effect_enabled_label()
+        if self._syncing_console_background_effects:
+            return
+        self._stage_console_background_effect_value("enabled", bool(event.value))
         self._mark_console_behavior_settings_staged()
 
     @on(Select.Changed, "#settings-console-background-effect-type")
@@ -14861,41 +15261,45 @@ class SettingsScreen(BaseAppScreen):
             self._normalise_model_profile_frequency_penalty,
         )
 
-    @on(Input.Changed, "#settings-model-profile-reasoning-effort")
+    @on(Select.Changed, "#settings-model-profile-reasoning-effort")
     def handle_model_profile_reasoning_effort_changed(
-        self, event: Input.Changed
+        self, event: Select.Changed
     ) -> None:
+        event.stop()
         self._stage_model_profile_input(
             "model_profile_reasoning_effort",
-            event.value,
+            self._select_text_value(event.value),
             self._normalise_model_profile_reasoning_effort,
         )
 
-    @on(Input.Changed, "#settings-model-profile-reasoning-summary")
+    @on(Select.Changed, "#settings-model-profile-reasoning-summary")
     def handle_model_profile_reasoning_summary_changed(
-        self, event: Input.Changed
+        self, event: Select.Changed
     ) -> None:
+        event.stop()
         self._stage_model_profile_input(
             "model_profile_reasoning_summary",
-            event.value,
+            self._select_text_value(event.value),
             self._normalise_model_profile_reasoning_summary,
         )
 
-    @on(Input.Changed, "#settings-model-profile-verbosity")
-    def handle_model_profile_verbosity_changed(self, event: Input.Changed) -> None:
+    @on(Select.Changed, "#settings-model-profile-verbosity")
+    def handle_model_profile_verbosity_changed(self, event: Select.Changed) -> None:
+        event.stop()
         self._stage_model_profile_input(
             "model_profile_verbosity",
-            event.value,
+            self._select_text_value(event.value),
             self._normalise_model_profile_verbosity,
         )
 
-    @on(Input.Changed, "#settings-model-profile-thinking-effort")
+    @on(Select.Changed, "#settings-model-profile-thinking-effort")
     def handle_model_profile_thinking_effort_changed(
-        self, event: Input.Changed
+        self, event: Select.Changed
     ) -> None:
+        event.stop()
         self._stage_model_profile_input(
             "model_profile_thinking_effort",
-            event.value,
+            self._select_text_value(event.value),
             self._normalise_model_profile_thinking_effort,
         )
 
@@ -14922,17 +15326,14 @@ class SettingsScreen(BaseAppScreen):
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
-    @on(Input.Changed, "#settings-model-profile-streaming")
-    def handle_model_profile_streaming_changed(self, event: Input.Changed) -> None:
+    @on(Select.Changed, "#settings-model-profile-streaming")
+    def handle_model_profile_streaming_changed(self, event: Select.Changed) -> None:
+        event.stop()
         if self._syncing_provider_model_profile:
             return
-        try:
-            value = self._normalise_optional_bool(event.value)
-        except ValueError:
-            value = event.value
         self._stage_provider_value(
             "model_profile_streaming",
-            value,
+            self._streaming_select_text(event.value),
         )
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
@@ -15679,6 +16080,30 @@ class SettingsScreen(BaseAppScreen):
         if not self._category_has_unsaved_changes(category):
             self.app.notify("No Settings changes to revert.", severity="information")
             return
+        # ADR-031 rule 3 (task-1340): revert discards every staged edit in
+        # the category, so a destructive single-letter key needs a
+        # confirmation guard before anything is thrown away.
+        summary = self._category_summary_by_id(category)
+
+        async def _confirmed_revert() -> None:
+            # Stacked-dialog guard: a second confirm landing after the first
+            # revert already cleared the draft must not re-revert (which
+            # would double the "changes reverted" toast).
+            if self._category_has_unsaved_changes(category):
+                self._revert_category(category)
+
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Revert Settings changes",
+                message=(f"Discard all unsaved changes to {summary.title}?"),
+                confirm_label="Discard changes",
+                cancel_label="Keep editing",
+                confirm_callback=_confirmed_revert,
+            )
+        )
+
+    def _revert_category(self, category: SettingsCategoryId) -> None:
+        """Discard a dirty category's staged edits (post-confirmation)."""
         self._settings_drafts.pop(category, None)
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             self._console_behavior_result = (
@@ -15736,10 +16161,23 @@ class SettingsScreen(BaseAppScreen):
                 )
                 for draft_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS:
                     profile_value = values[draft_key]
-                    self.query_one(
-                        f"#settings-{draft_key.replace('_', '-')}",
-                        Input,
-                    ).value = self._profile_input_value(profile_value)
+                    selector = f"#settings-{draft_key.replace('_', '-')}"
+                    if draft_key in MODEL_PROFILE_SELECT_FIELD_KEYS:
+                        select = self.query_one(selector, Select)
+                        if draft_key == "model_profile_streaming":
+                            select.value = self._streaming_select_value(profile_value)
+                        else:
+                            select.value = self._select_option_value(
+                                profile_value,
+                                CLOSED_ENUM_SELECT_OPTIONS[
+                                    PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
+                                ],
+                            )
+                    else:
+                        self.query_one(
+                            selector,
+                            Input,
+                        ).value = self._profile_input_value(profile_value)
             except QueryError:
                 pass
             self._provider_save_result = (
@@ -16278,9 +16716,13 @@ class SettingsScreen(BaseAppScreen):
 
     def _sync_console_behavior_widgets(self) -> None:
         try:
-            self.query_one(
-                "#settings-console-collapse-large-pastes-toggle", Button
-            ).label = self._collapse_large_pastes_button_label()
+            self._syncing_console_paste_toggle = True
+            try:
+                self.query_one(
+                    "#settings-console-collapse-large-pastes-toggle", Checkbox
+                ).value = self._collapse_large_pastes_enabled()
+            finally:
+                self._syncing_console_paste_toggle = False
         except QueryError:
             pass
         try:
@@ -16314,9 +16756,6 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             pass
         input_values = {
-            "#settings-console-default-streaming": self._console_behavior_value(
-                "streaming"
-            ),
             "#settings-console-default-temperature": self._console_behavior_value(
                 "temperature"
             ),
@@ -16333,28 +16772,51 @@ class SettingsScreen(BaseAppScreen):
             "#settings-console-default-frequency-penalty": self._console_behavior_value(
                 "frequency_penalty"
             ),
-            "#settings-console-default-reasoning-effort": self._console_behavior_value(
-                "reasoning_effort"
-            ),
-            "#settings-console-default-reasoning-summary": self._console_behavior_value(
-                "reasoning_summary"
-            ),
-            "#settings-console-default-verbosity": self._console_behavior_value(
-                "verbosity"
-            ),
-            "#settings-console-default-thinking-effort": self._console_behavior_value(
-                "thinking_effort"
-            ),
             "#settings-console-default-thinking-budget-tokens": self._console_behavior_value(
                 "thinking_budget_tokens"
             ),
         }
+        select_values = {
+            "#settings-console-default-reasoning-effort": (
+                "reasoning_effort",
+                self._console_behavior_value("reasoning_effort"),
+            ),
+            "#settings-console-default-reasoning-summary": (
+                "reasoning_summary",
+                self._console_behavior_value("reasoning_summary"),
+            ),
+            "#settings-console-default-verbosity": (
+                "verbosity",
+                self._console_behavior_value("verbosity"),
+            ),
+            "#settings-console-default-thinking-effort": (
+                "thinking_effort",
+                self._console_behavior_value("thinking_effort"),
+            ),
+        }
         self._syncing_console_defaults = True
         try:
+            try:
+                self.query_one(
+                    "#settings-console-default-streaming", Checkbox
+                ).value = coerce_bool_setting(
+                    self._console_behavior_value("streaming"), True
+                )
+            except QueryError:
+                pass
             for selector, value in input_values.items():
                 try:
                     self.query_one(selector, Input).value = self._console_input_value(
                         value
+                    )
+                except QueryError:
+                    pass
+            for selector, (enum_key, value) in select_values.items():
+                try:
+                    self.query_one(selector, Select).value = (
+                        self._select_option_value(
+                            value, CLOSED_ENUM_SELECT_OPTIONS[enum_key]
+                        )
                     )
                 except QueryError:
                     pass
@@ -16364,8 +16826,8 @@ class SettingsScreen(BaseAppScreen):
         try:
             try:
                 self.query_one(
-                    "#settings-console-background-effect-enabled", Button
-                ).label = self._console_background_effect_enabled_label()
+                    "#settings-console-background-effect-enabled", Checkbox
+                ).value = bool(self._console_background_effect_value("enabled"))
             except QueryError:
                 pass
             select_values = {
@@ -16431,14 +16893,14 @@ class SettingsScreen(BaseAppScreen):
                 pass
             try:
                 self.query_one(
-                    "#settings-appearance-animations-enabled", Button
-                ).label = self._appearance_bool_label("animations_enabled")
+                    "#settings-appearance-animations-enabled", Checkbox
+                ).value = bool(values["animations_enabled"])
             except QueryError:
                 pass
             try:
                 self.query_one(
-                    "#settings-appearance-smooth-scrolling", Button
-                ).label = self._appearance_bool_label("smooth_scrolling")
+                    "#settings-appearance-smooth-scrolling", Checkbox
+                ).value = bool(values["smooth_scrolling"])
             except QueryError:
                 pass
         finally:
@@ -16504,19 +16966,24 @@ class SettingsScreen(BaseAppScreen):
                 event.stop()
                 event.prevent_default()
             return
-        if event.key in {"down", "j"} and self._focused_category_value() is not None:
+        if event.key in {"down", "j"} and (
+            self._focused_category_value() is not None
+            or (event.key == "j" and not self._jk_category_navigation_blocked())
+        ):
             self._move_category_focus(1)
             event.stop()
             event.prevent_default()
             return
-        if event.key in {"up", "k"} and self._focused_category_value() is not None:
+        if event.key in {"up", "k"} and (
+            self._focused_category_value() is not None
+            or (event.key == "k" and not self._jk_category_navigation_blocked())
+        ):
             self._move_category_focus(-1)
             event.stop()
             event.prevent_default()
             return
         if event.key == "enter":
             if isinstance(focused, Button) and focused.id in {
-                "settings-console-collapse-large-pastes-toggle",
                 "settings-test-provider",
                 "settings-check-storage",
                 "settings-validate-config",

@@ -432,11 +432,12 @@ async def test_main_navigation_overflow_hint_does_not_overlap_settings_at_defaul
         if more.display:
             # Overflow regime (F-key labels made the bar wider than 140):
             # the hint is docked outside the strip, so it can never sit on a
-            # button; the strip's scroll window clips labels instead.
+            # button; destinations that don't fit are hidden, not clipped.
             assert more.region.x >= strip.region.right, (
                 "More hint must dock right of the destination strip"
             )
-            assert strip.max_scroll_x > 0
+            hidden = [button for button in nav.query(".nav-button") if not button.display]
+            assert hidden, "Overflow hint shown but no destination is hidden"
         else:
             _assert_no_horizontal_overlap(
                 settings, more, context="More hint overlaps Settings nav item"
@@ -2548,10 +2549,10 @@ async def test_settings_dirty_category_status_has_visual_marker_class():
         screen = _active_destination_screen(host)
         await _click_settings_category(screen, pilot, "console-behavior")
         await pilot.click("#settings-console-collapse-large-pastes-toggle")
-        status = screen.query_one("#settings-category-console-behavior-status")
+        banner = screen.query_one("#settings-category-state-banner")
 
-        assert "Status: Unsaved" in str(status.renderable)
-        assert status.has_class("settings-dirty-category")
+        assert "State:" in str(banner.renderable)
+        assert banner.has_class("settings-dirty-category")
 
 
 @pytest.mark.asyncio

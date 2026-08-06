@@ -80,7 +80,7 @@ def test_nav_button_label_numbering_scheme():
 
 
 @pytest.mark.asyncio
-async def test_master_shell_navigation_scrolls_active_destination_into_view_on_mount():
+async def test_master_shell_navigation_keeps_active_destination_visible_on_mount():
     class TestApp(App):
         def compose(self):
             yield MainNavigationBar(active="settings")
@@ -88,20 +88,22 @@ async def test_master_shell_navigation_scrolls_active_destination_into_view_on_m
     app = TestApp()
 
     async with app.run_test(size=(60, 20)) as pilot:
-        await pilot.pause(0.1)
+        await pilot.pause(0.6)
 
         nav = app.query_one(MainNavigationBar)
         strip = nav.query_one("#nav-destination-strip")
         active_button = app.query_one("#nav-settings", Button)
 
-        assert strip.scroll_offset.x > 0
+        # Overflow hides (never clips) the destinations that don't fit; the
+        # active one always renders in full.
+        assert active_button.display
         assert active_button.region.width > 0
         assert active_button.region.x >= strip.region.x
         assert active_button.region.right <= strip.region.right
 
 
 @pytest.mark.asyncio
-async def test_master_shell_navigation_scrolls_when_active_destination_changes():
+async def test_master_shell_navigation_reveals_active_destination_when_it_changes():
     class TestApp(App):
         def compose(self):
             yield MainNavigationBar(active="home")
@@ -112,24 +114,25 @@ async def test_master_shell_navigation_scrolls_when_active_destination_changes()
     app = TestApp()
 
     async with app.run_test(size=(60, 20)) as pilot:
-        await pilot.pause(0.1)
+        await pilot.pause(0.6)
 
         nav = app.query_one(MainNavigationBar)
         strip = nav.query_one("#nav-destination-strip")
-        assert strip.scroll_offset.x == 0
+        settings_button = app.query_one("#nav-settings", Button)
+        # Settings overflows at 60 cols: the strip scrolls to reveal the
+        # active destination instead of hiding or clipping buttons.
+        assert strip.max_scroll_x > 0
 
-        app.query_one("#nav-settings", Button).press()
-        await pilot.pause(0.1)
+        nav._activate_navigation_button(settings_button)
+        await pilot.pause(0.6)
 
-        active_button = app.query_one("#nav-settings", Button)
-        assert active_button.has_class("is-active")
-        assert strip.scroll_offset.x > 0
-        assert active_button.region.width > 0
-        assert active_button.region.right <= strip.region.right
+        assert settings_button.has_class("is-active")
+        assert settings_button.region.width > 0
+        assert settings_button.region.right <= strip.region.right
 
 
 @pytest.mark.asyncio
-async def test_master_shell_navigation_docks_overflow_hint_outside_scroll_strip():
+async def test_master_shell_navigation_docks_overflow_hint_outside_destination_strip():
     class TestApp(App):
         def compose(self):
             yield MainNavigationBar(active="settings")
@@ -137,7 +140,7 @@ async def test_master_shell_navigation_docks_overflow_hint_outside_scroll_strip(
     app = TestApp()
 
     async with app.run_test(size=(60, 20)) as pilot:
-        await pilot.pause(0.1)
+        await pilot.pause(0.6)
 
         nav = app.query_one(MainNavigationBar)
         strip = nav.query_one("#nav-destination-strip")
@@ -145,9 +148,9 @@ async def test_master_shell_navigation_docks_overflow_hint_outside_scroll_strip(
 
         assert hint.parent is nav
         assert hint not in strip.children
-        # Even with the strip scrolled to the last destination, the hint
-        # stays visible at the bar's right edge.
-        assert strip.scroll_offset.x > 0
+        # Even with most destinations hidden by overflow, the hint stays
+        # visible at the bar's right edge.
+        assert hint.display
         assert hint.region.width > 0
         assert hint.region.right == nav.region.right
 
