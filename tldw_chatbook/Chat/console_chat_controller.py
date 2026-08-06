@@ -1214,7 +1214,7 @@ class ConsoleChatController:
         #: outcome`` by ``_ensure_console_chat_controller``, mirroring
         #: ``park_pending_approval``'s wiring and reusing its exact
         #: session-title/workspace-name resolution
-        #: (``ChatScreen._console_workspace_display_name``). ``None`` in
+        #: (``ConsoleWorkspaceController._console_workspace_display_name``). ``None`` in
         #: most controller-only tests, matching every other UI bridge slot
         #: here.
         self.notify_run_outcome: Callable[[str, ConsoleRunStatus], None] | None = None
@@ -1858,7 +1858,7 @@ class ConsoleChatController:
                 )
         else:
             # Task 4 (D2 fix wave, "bonus race"): mirror the mount-time
-            # creator (`ChatScreen._ensure_active_console_session_settings`),
+            # creator (`ConsoleSessionController._ensure_active_console_session_settings`),
             # which always passes `settings=` -- without this, a session
             # bootstrapped from THIS branch (no dispatch-captured session id
             # at all) got `settings=None` while every other creator gave the

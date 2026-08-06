@@ -1649,26 +1649,6 @@ class ConsoleWorkspaceController:
             )
         return rows, total_count, ""
 
-    def _refresh_console_workspace_conversation_search_if_current(
-        self,
-        workspace_id: str,
-        query: str,
-        token: int,
-        *,
-        restore_focus: bool = False,
-    ) -> bool:
-        """Refresh search results when workspace, query, and token still match."""
-        if token != self._console_workspace_conversation_search_token:
-            return False
-        if workspace_id != self._active_console_workspace_id_for_conversation_search():
-            return False
-        if query != self._console_workspace_conversation_query:
-            return False
-        self._sync_console_workspace_context()
-        if restore_focus:
-            self.call_after_refresh(self._focus_console_workspace_conversation_search)
-        return True
-
     async def _refresh_console_workspace_conversation_search(
         self,
         workspace_id: str,
