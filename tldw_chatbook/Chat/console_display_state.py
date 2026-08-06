@@ -633,6 +633,45 @@ def console_prompted_source_count(launch: ConsoleLiveWorkLaunch | None) -> int:
     )
 
 
+def console_prompted_evidence_text(launch: ConsoleLiveWorkLaunch | None) -> str:
+    """Return the staged evidence text a Console send will actually prompt.
+
+    task-6: the Console context/cost estimates used to report zero for
+    staged evidence because nothing carried its TEXT that far --
+    ``ConsoleStagedSource`` is label-only. This is the pure, zero-I/O
+    source of truth for that text, read at estimate time (settings
+    summary, cost chip) before any send happens.
+
+    Applies exactly the same filter as :func:`console_prompted_source_count`
+    (``EvidenceBundle.available_references`` AND ``source_owner == "local"``)
+    because it answers the same question that function counts: "how much
+    reaches the model". ``reference.snippet`` is the right field to read,
+    not a full re-fetch, because the actual send path
+    (``capture_console_staged_evidence_for_chat``) re-validates identity and
+    authority but never re-fetches content -- it hands the provider exactly
+    this (already length-limited, see ``EVIDENCE_SNIPPET_CHAR_LIMIT``)
+    snippet verbatim. That length limit is also why an oversized source
+    (e.g. a 942 KB document) still yields a bounded, non-zero estimate here:
+    the snippet was already capped when the reference was staged.
+
+    Args:
+        launch: Currently staged live-work launch, if any.
+
+    Returns:
+        Prompt-eligible reference snippets joined with blank lines, in
+        bundle order; ``""`` when nothing is staged or nothing is
+        prompt-eligible.
+    """
+    bundle = evidence_bundle_from_launch(launch)
+    if bundle is None:
+        return ""
+    return "\n\n".join(
+        reference.snippet
+        for reference in bundle.available_references()
+        if reference.source_owner.strip().lower() == "local" and reference.snippet
+    )
+
+
 @dataclass(frozen=True)
 class ConsoleStagedEvidenceRow:
     """One compact staged-evidence line for the composer-level strip.

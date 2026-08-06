@@ -15,6 +15,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
 from Tests.UI.test_console_dictionary_send_integration import _CapturingGateway
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -26,6 +27,7 @@ from tldw_chatbook.Chat.citation_evidence_models import (
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleStagedEvidenceStripState,
     build_console_staged_evidence_strip_state,
+    console_prompted_evidence_text,
     console_prompted_source_count,
     console_staged_source_count,
 )
@@ -188,6 +190,28 @@ def test_prompted_source_count_applies_the_captures_own_filter() -> None:
     # ...but one is blocked and one is server-owned, so two are prompted.
     assert console_prompted_source_count(launch) == 2
     assert console_prompted_source_count(None) == 0
+
+
+def test_prompted_evidence_text_applies_the_same_filter_as_the_count() -> None:
+    """task-6: the text the context/cost estimates count must match exactly
+    what `console_prompted_source_count` counts -- same filter, same
+    references. `capture_console_staged_evidence_for_chat` re-validates
+    identity/authority but never re-fetches content, so each reference's
+    (already truncated) `snippet` is exactly what reaches the prompt."""
+    launch = _mixed_launch()
+    text = console_prompted_evidence_text(launch)
+    assert "Body 1" in text
+    assert "Body 3" in text
+    assert "Body 2" not in text  # blocked
+    assert "Body 4" not in text  # server-owned
+    assert console_prompted_evidence_text(None) == ""
+
+
+def test_prompted_evidence_text_is_empty_for_a_bundleless_launch() -> None:
+    bundleless = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG", title="Notes", payload={"source_id": "n1"}
+    )
+    assert console_prompted_evidence_text(bundleless) == ""
 
 
 # --------------------------------------------------------------------------
@@ -696,6 +720,53 @@ def test_workspace_context_falls_back_to_one_row_for_a_bundleless_launch() -> No
     assert len(context.staged_sources) == 1
     assert context.staged_sources[0].label == "Daily papers"
     assert console_staged_source_count(launch) == 1
+
+
+@pytest.mark.asyncio
+async def test_context_estimate_counts_staged_evidence_before_send() -> None:
+    """task-6: reproduces the critique's exact bug -- staged evidence used to
+    move `staged_source_count` (the label suffix) but never `used_tokens`,
+    so the settings summary's context row silently read as if nothing had
+    been staged. Staging a large source must move `used_tokens` off its
+    pre-staging baseline."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
+        screen = pilot.app.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+
+        baseline = screen._active_console_settings_context_estimate()
+        assert baseline.used_tokens is not None
+
+        large_source = EvidenceReference(
+            evidence_id="S1",
+            source_id="media-1",
+            source_type="media",
+            title="Large corpus",
+            snippet="large corpus text " * 300,
+            authority_label="local",
+            status="available",
+            source_owner="local",
+        )
+        bundle = EvidenceBundle(
+            bundle_id="bundle-large",
+            query="question",
+            source="Library Search/RAG",
+            references=(large_source,),
+        )
+        launch = ConsoleLiveWorkLaunch.from_values(
+            source="Library Search/RAG",
+            title="Library Search/RAG retrieval",
+            payload={"query": "question", "evidence_bundle": bundle.to_payload()},
+            status="staged",
+        )
+        screen._stage_console_library_rag_launch(launch)
+        await pilot.pause()
+
+        staged = screen._active_console_settings_context_estimate()
+        assert staged.used_tokens is not None
+        assert staged.used_tokens > baseline.used_tokens
+        assert "1 source staged" in staged.label
 
 
 @pytest.mark.asyncio

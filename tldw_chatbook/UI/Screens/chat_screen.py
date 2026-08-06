@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import threading
 import time
+from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Literal, Optional, TYPE_CHECKING
 from urllib.parse import urlparse
 import uuid
@@ -287,6 +288,7 @@ from ...Chat.console_display_state import (
     build_console_evidence_display_state,
     build_console_staged_evidence_strip_state,
     coerce_non_negative_int,
+    console_prompted_evidence_text,
     console_prompted_source_count,
     console_staged_source_count,
     evidence_bundle_from_launch,
@@ -4085,6 +4087,18 @@ class ChatScreen(BaseAppScreen):
             staged_context_summary=staged_context_state.summary,
             max_tokens_response=settings.max_tokens,
             system_prompt=settings.system_prompt,
+            # task-6: staged evidence used to move only the label's "; N
+            # sources staged" suffix (`staged_source_count` above) while
+            # `used_tokens` silently reported zero for content the send
+            # will actually carry. `console_prompted_evidence_text` reads
+            # the same in-memory, zero-I/O staged bundle
+            # `_current_console_workspace_context` already parses above --
+            # no extra DB round trip -- and applies the exact filter the
+            # send path applies, so the estimate stays true without
+            # simulating a send.
+            staged_text=console_prompted_evidence_text(
+                self._pending_console_launch_context
+            ),
         )
 
     def _build_console_settings_summary_state(self) -> ConsoleSettingsSummaryState:
@@ -9444,6 +9458,25 @@ class ChatScreen(BaseAppScreen):
                 for message in messages
                 if getattr(message, "status", "complete") not in {"pending", "streaming"}
             ]
+            # task-6: staged (not-yet-sent) evidence used to be invisible to
+            # the cost chip entirely -- `ConsoleStagedSource` carries no
+            # text, so a session with zero messages but several staged
+            # sources (even a 942 KB one) showed "0 tok". Feed the same
+            # prompt-eligible staged text the context estimate now counts
+            # (`console_prompted_evidence_text`, pure/zero-I/O) in as one
+            # more transcript row satisfying `build_cost_snapshot`'s
+            # duck-typed contract (`.role`/`.content`/`.usage`) with
+            # `usage=None` -- it prices through the ESTIMATED-row branch,
+            # at the input rate, and flips `has_estimated_entries` so the
+            # chip's `~` prefix (its existing "this includes an unsent
+            # estimate" marker) shows rather than claiming a real total.
+            staged_text = console_prompted_evidence_text(
+                self._pending_console_launch_context
+            )
+            if staged_text:
+                snapshot_messages = snapshot_messages + [
+                    SimpleNamespace(role="user", content=staged_text, usage=None)
+                ]
             provider, model, _settings = self._active_console_provider_model_display()
             snapshot = build_cost_snapshot(snapshot_messages, provider=provider, model=model)
 

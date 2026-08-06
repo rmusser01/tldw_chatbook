@@ -723,10 +723,23 @@ def build_console_context_estimate(
     max_tokens_response: int | None = None,
     system_prompt: str | None = None,
     *,
+    staged_text: str = "",
     token_counter: TokenCounter | None = None,
     token_limit_resolver: TokenLimitResolver | None = None,
 ) -> ConsoleSettingsContextEstimate:
-    """Estimate current context tokens for display in Console settings."""
+    """Estimate current context tokens for display in Console settings.
+
+    Args:
+        staged_text: The staged evidence text a send would actually carry
+            (task-6) -- e.g. the joined snippets of staged, prompt-eligible
+            evidence references. Passed in by the caller so this builder
+            stays pure (no I/O, no bundle parsing here); blank/whitespace
+            text contributes nothing, matching how an unset staged context
+            already behaves. Folded into `used_tokens` as one additional
+            message so the context estimate stops silently reporting zero
+            for content it is about to send -- `staged_source_count` still
+            drives only the label's "; N sources staged" suffix, unchanged.
+    """
     model_name = _string_value(model)
     if not model_name:
         return ConsoleSettingsContextEstimate(
@@ -742,6 +755,8 @@ def build_console_context_estimate(
     if system_prompt:
         estimate_messages.append({"role": "system", "content": system_prompt})
     estimate_messages.extend(messages)
+    if staged_text and staged_text.strip():
+        estimate_messages.append({"role": "user", "content": staged_text})
 
     try:
         counter = token_counter or _estimate_tokens_locally

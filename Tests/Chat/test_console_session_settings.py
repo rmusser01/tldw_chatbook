@@ -692,23 +692,96 @@ def test_readiness_configured_unknown_non_native_provider_is_unknown() -> None:
 
 
 def test_context_estimate_counts_messages_and_staged_sources() -> None:
+    """AUTHORIZED RE-BASELINE (task-6): staged evidence used to affect only
+    the label's "; N sources staged" suffix -- `used_tokens` silently
+    reported zero for content the send will actually carry. `staged_text`
+    now folds into `used_tokens` too; the label-suffix contract this test
+    originally pinned is unchanged and still asserted below."""
+    without_staged = build_console_context_estimate(
+        messages=[{"role": "user", "content": "hello world"}],
+        provider="openai",
+        model="gpt-3.5-turbo",
+        max_tokens_response=512,
+        system_prompt="You are concise.",
+    )
+
     estimate = build_console_context_estimate(
         messages=[{"role": "user", "content": "hello world"}],
         provider="openai",
         model="gpt-3.5-turbo",
         staged_source_count=2,
         staged_context_summary="2 staged sources",
+        staged_text="Evidence body text carried by the two staged sources.",
         max_tokens_response=512,
         system_prompt="You are concise.",
     )
 
     assert estimate.used_tokens is not None
     assert estimate.used_tokens > 0
+    assert estimate.used_tokens > without_staged.used_tokens
     assert estimate.token_limit == 4096
     assert "tokens" in estimate.label
     assert "2 sources staged" in estimate.label
     assert estimate.staged_source_count == 2
     assert estimate.staged_context_summary == "2 staged sources"
+
+
+def test_context_estimate_staged_text_delta_tracks_its_size() -> None:
+    """task-6: more staged evidence text must mean a bigger `used_tokens`
+    delta, not a fixed/ignored bump -- this is what distinguishes "counts
+    the evidence" from a hardcoded placeholder."""
+    short = build_console_context_estimate(
+        messages=[],
+        provider="openai",
+        model="gpt-3.5-turbo",
+        staged_text="short evidence snippet",
+    )
+    long = build_console_context_estimate(
+        messages=[],
+        provider="openai",
+        model="gpt-3.5-turbo",
+        staged_text="short evidence snippet " * 200,
+    )
+
+    assert short.used_tokens is not None
+    assert long.used_tokens is not None
+    assert long.used_tokens > short.used_tokens
+
+
+def test_context_estimate_large_staged_source_is_not_zero() -> None:
+    """task-6: reproduces the critique's exact observation -- '0 tok' with
+    five sources staged including a 942 KB corpus. A source of that class
+    must move `used_tokens` well off zero."""
+    large_source_text = "corpus text " * 80_000  # ~960 KB
+
+    estimate = build_console_context_estimate(
+        messages=[],
+        provider="openai",
+        model="gpt-3.5-turbo",
+        staged_source_count=1,
+        staged_text=large_source_text,
+    )
+
+    assert estimate.used_tokens is not None
+    assert estimate.used_tokens > 1000
+
+
+def test_context_estimate_blank_staged_text_does_not_change_tokens() -> None:
+    """Whitespace-only staged text is treated the same as none -- purity
+    guard: the builder must not fold in an empty/blank contribution."""
+    baseline = build_console_context_estimate(
+        messages=[{"role": "user", "content": "hi"}],
+        provider="openai",
+        model="gpt-3.5-turbo",
+    )
+    blank = build_console_context_estimate(
+        messages=[{"role": "user", "content": "hi"}],
+        provider="openai",
+        model="gpt-3.5-turbo",
+        staged_text="   ",
+    )
+
+    assert blank.used_tokens == baseline.used_tokens
 
 
 def test_context_estimate_uses_longest_matching_token_limit_prefix() -> None:
