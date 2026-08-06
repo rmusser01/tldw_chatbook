@@ -439,31 +439,80 @@ class WatchlistScopeService:
                     # already is: `execute_run` records its own cancellation
                     # (a screen/widget teardown, e.g. the user switching tabs
                     # mid-check) and re-raises, so ordinarily this branch never
-                    # actually has anything left to do -- `record_run_failure`
-                    # below is idempotent (it UPDATEs the same row by id) and
-                    # would simply overwrite the same "failed" state again.
-                    # This exists for whatever escapes `execute_run`'s own
-                    # handler (a service without one, a second cancellation
-                    # while THAT write was in flight) -- the same class of gap
-                    # TASK-1090 already closed for ordinary exceptions, applied
-                    # to the one exception type `except Exception` cannot see.
-                    record_failure = getattr(service, "record_run_failure", None)
-                    if callable(record_failure):
+                    # actually has anything left to WRITE -- the run row is
+                    # already durably `failed` by the time the re-raise gets
+                    # here (`db.transaction()` commits synchronously with no
+                    # interruptible inner await, so there is no race to read
+                    # stale).
+                    #
+                    # Batch-4 review ROUND 2, N1 (Important, introduced by the
+                    # C1 fix). The run ROW update alone being idempotent
+                    # (`record_run_result`'s UPDATE is by id) is not enough:
+                    # calling `record_run_failure` a second time for the SAME
+                    # cancellation also re-evaluates every alert rule against
+                    # the run's stats and re-DISPATCHES a notification for
+                    # each match, and `_dispatch_alert_notification`/
+                    # `ClientNotificationsDB.insert_notification` have no
+                    # deduplicating INSERT -- `dedupe_key` is computed into the
+                    # payload and never read back by anything. So a
+                    # status-agnostic rule (e.g. "no_items", which fires on the
+                    # stats regardless of pass/fail) produced two identical
+                    # notification rows for one cancelled check: one from
+                    # `execute_run`'s write, one from this one.
+                    #
+                    # Checked here instead: whether the run already reached a
+                    # terminal state before writing again. This is the correct
+                    # mechanism, not a dedupe-key lookup -- a dedupe-key check
+                    # would mean teaching the notification store a new
+                    # "does a row with this key already exist" query for a
+                    # value that, today, exists for exactly this one caller,
+                    # and it would still let this layer perform a pointless
+                    # second run-row UPDATE. Checking status reuses a field
+                    # the run row already carries and this method already has
+                    # a service handle to read, and it generalizes correctly
+                    # to the genuine defense-in-depth case this branch exists
+                    # for: if the cancellation struck OUTSIDE `execute_run`'s
+                    # own `try` block (the synchronous section before it, or a
+                    # future local-like service with no `CancelledError`
+                    # handling of its own), the run is still `queued` or
+                    # `running` here, and THIS layer is the only one that will
+                    # ever record it -- exactly the case the write must still
+                    # happen for. "queued"/"running" are the only two
+                    # non-terminal statuses a local run row can ever hold
+                    # before `execute_run` reaches its own `try` block (see
+                    # `launch_run`'s insert and `_mark_run_started`).
+                    already_recorded = False
+                    get_run = getattr(service, "get_run", None)
+                    if callable(get_run):
                         try:
-                            await self._maybe_await(
-                                record_failure(
-                                    resolved_run_id,
-                                    error=(
-                                        "Check cancelled: navigated away "
-                                        "before it finished."
-                                    ),
-                                )
+                            current_run = await self._maybe_await(
+                                get_run(resolved_run_id)
                             )
                         except Exception:
-                            logger.opt(exception=True).warning(
-                                "Watchlists: could not record the cancellation "
-                                f"of run {resolved_run_id}."
+                            current_run = None
+                        if isinstance(current_run, Mapping):
+                            already_recorded = (
+                                str(current_run.get("status") or "").lower()
+                                not in {"queued", "running"}
                             )
+                    if not already_recorded:
+                        record_failure = getattr(service, "record_run_failure", None)
+                        if callable(record_failure):
+                            try:
+                                await self._maybe_await(
+                                    record_failure(
+                                        resolved_run_id,
+                                        error=(
+                                            "Check cancelled: navigated away "
+                                            "before it finished."
+                                        ),
+                                    )
+                                )
+                            except Exception:
+                                logger.opt(exception=True).warning(
+                                    "Watchlists: could not record the cancellation "
+                                    f"of run {resolved_run_id}."
+                                )
                     raise
                 except Exception as exc:
                     # TASK-1090. `execute_run` records its own fetch failures,

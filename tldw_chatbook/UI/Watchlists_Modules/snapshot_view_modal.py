@@ -29,6 +29,22 @@ not remote content, but they are wrapped through `Text` here too rather
 than an f-string handed to `Static` -- one rendering rule for the whole
 modal is simpler to keep correct than a rule that only applies to one of
 its three fields.
+
+**Batch-4 review round 2, N2.** `Text(str(...))` stops Rich MARKUP; it does
+nothing about a raw control byte, which Rich writes through to the terminal
+untouched (`html_text.strip_control_characters`'s own docstring states the
+same gap for the reader). `_snapshot_body` now runs `content` through
+`readable_body_text` instead of a bare `str()` -- the SAME function
+`content_pane.render_article` uses for a feed item's body, for a reason
+that is not merely consistency: `extracted_content` is not guaranteed to
+already be plain text. `URLMonitor._fetch_url_content` only strips HTML
+when the source's `extraction_method` is `"full"` or `"auto"` (the
+default); a source configured for raw extraction stores the page's literal
+HTML in this column, and `readable_body_text` is what converts that to
+readable prose -- `looks_like_html` gates the conversion, so an
+already-plain-text snapshot (the common case) takes the same
+control-stripped-only path a bare `strip_control_characters` call would
+have, with no behavioural change for it.
 """
 
 from __future__ import annotations
@@ -41,6 +57,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
+from ...Subscriptions.html_text import readable_body_text
 from .humane_time import humane_timestamp
 
 #: `_store_snapshot` never writes a NULL `extracted_content` on its one live
@@ -70,14 +87,22 @@ def _snapshot_header(url: Any, created_at: Any) -> Text:
 
 
 def _snapshot_body(content: Any) -> Text:
-    """The snapshot body, rendered as literal text (AC#3 -- see the module
-    docstring for the full doctrine this restates).
+    """The snapshot body, rendered as literal, readable text (AC#3 -- see
+    the module docstring for the full doctrine this restates, and its N2
+    note for why `readable_body_text` is the right call here).
 
-    `Text(str(...))` never parses Rich markup: a captured page's own
+    `Text(...)` never parses Rich markup: a captured page's own
     `[bold red]x[/]`-shaped fragment, or an HTML-extraction artefact that
     happens to be `[link=...]`-shaped, paints as those exact characters.
+    `readable_body_text` additionally strips control characters on every
+    path (Rich protects against markup, not a raw ESC/C1 byte) and converts
+    genuine HTML to prose when `content` turns out to still be HTML rather
+    than already-extracted text.
     """
-    return Text(str(content) if content else _NO_CONTENT)
+    if not content:
+        return Text(_NO_CONTENT)
+    text = readable_body_text(content)
+    return Text(text if text else _NO_CONTENT)
 
 
 class SnapshotViewModal(ModalScreen[None]):
