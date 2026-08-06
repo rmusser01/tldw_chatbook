@@ -71,6 +71,7 @@ def validate_path(
     base_directory: Union[str, Path],
     *,
     redact_paths: bool = False,
+    allow_hidden: bool = False,
 ) -> Path:
     """
     Validates that a user-provided path is within the allowed base directory.
@@ -80,6 +81,10 @@ def validate_path(
         base_directory: The allowed base directory
         redact_paths: Log only bounded failure categories when the path is
             privacy-sensitive.
+        allow_hidden: If True, permit hidden path components (e.g. ``.github/``)
+            as long as the path stays within the base directory. Defaults to
+            False, preserving the original behavior of rejecting hidden files
+            and directories.
 
     Returns:
         Path: The validated absolute path
@@ -125,8 +130,11 @@ def validate_path(
         # Hidden-file check applies only to the user-supplied portion (relative
         # to base_directory) — a base dir that itself lives under a dotted
         # ancestor (e.g. ~/.local/share/...) must not falsely trip this.
+        # allow_hidden opts workspace-confined tools out of this rejection.
         relative_parts = full_path.relative_to(base_directory).parts
-        if any(part.startswith(".") for part in relative_parts if part != "."):
+        if not allow_hidden and any(
+            part.startswith(".") for part in relative_parts if part != "."
+        ):
             if redact_paths:
                 logger.warning("Hidden file/directory access attempt detected.")
             else:
@@ -151,7 +159,9 @@ def validate_path(
         # directory whose own final component is dotted. This deliberately
         # does not walk base_directory's ancestors, so a base dir that lives
         # *under* a dotted ancestor (e.g. ~/.local/share/...) is unaffected.
-        if base_directory.name.startswith("."):
+        # allow_hidden also opts out of this check so workspace-confined
+        # tools can be rooted at a dotted directory.
+        if not allow_hidden and base_directory.name.startswith("."):
             if redact_paths:
                 logger.warning("Hidden base directory rejected.")
             else:

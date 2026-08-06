@@ -892,9 +892,12 @@ def _eligible_skill_entries(context: Mapping[str, Any]) -> list[Mapping[str, Any
 def _non_colliding_skill_entries(
     context: Mapping[str, Any],
     builtin_names: tuple[str, ...],
+    *,
+    local_names: tuple[str, ...] = (),
 ) -> list[Mapping[str, Any]]:
     """Eligible skill entries, excluding any name that collides with a
-    builtin OR one of the loop's own in-loop runtime tool names.
+    builtin, a local tool, OR one of the loop's own in-loop runtime tool
+    names.
 
     Shadowing (Task 11 review note 2 + this task's own allow-list
     ordering): a builtin tool name must always win over a same-named
@@ -920,8 +923,17 @@ def _non_colliding_skill_entries(
     wins that comparison first. Excluding these names too means such a
     skill is simply never registered as a catalog entry at all, matching
     what would happen at invocation time anyway.
+
+    The same dispatch-layer reasoning applies to ``local_names`` (Task 6
+    review): ``AgentService.invoke_tool`` checks
+    ``skill_runner.is_skill_tool(name)`` BEFORE registry dispatch, so the
+    registry's first-registrant-wins order cannot protect a local tool --
+    a skill literally named e.g. ``fs_list`` would be routed to the skill
+    runner and shadow the local tool. Excluding local-name collisions here
+    keeps both call sites (``_compose_run_registry_and_allowed`` and
+    ``run_reply``'s skill-runner name set) in agreement with dispatch.
     """
-    collision_names = set(builtin_names) | RUNTIME_TOOL_NAMES
+    collision_names = set(builtin_names) | set(local_names) | RUNTIME_TOOL_NAMES
     return [
         item
         for item in _eligible_skill_entries(context)
@@ -1143,20 +1155,26 @@ def _compose_run_registry_and_allowed(
     workspace_id: str | None = None,
     ephemeral: bool = False,
     diff_sink: Callable[[tuple[str, str, str, str]], None] | None = None,
-) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...]]:
+    local_provider: Any | None = None,
+) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
     Called once per ``run_reply`` invocation (never cached across runs --
     the per-run freshness doctrine: a skill approved/edited/revoked since
     the last run must take effect on the very next one). Registers
-    ``BuiltinToolProvider`` first, then (only when there is at least one
-    non-colliding eligible entry) a ``SkillToolProvider`` snapshot, then
-    (P5-T6, only when there is at least one non-colliding eligible entry)
-    an already-composed MCP provider -- shadowing order: builtins beat
-    skills beat MCP, matching the allow-list's own
-    ``builtins ∪ skills ∪ mcp`` ordering. For a temporary session
-    (``ephemeral=True``) neither the skill nor the MCP provider is
-    registered at all, and the allow-list is builtins-only.
+    ``BuiltinToolProvider`` first, then the already-composed local
+    provider, then (only when there is at least one non-colliding eligible
+    entry) a ``SkillToolProvider`` snapshot, then (P5-T6, only when there
+    is at least one non-colliding eligible entry) an already-composed MCP
+    provider -- shadowing order: builtins beat local beat skills beat MCP,
+    matching the allow-list's own ``builtins ∪ local ∪ skills ∪ mcp``
+    ordering. Local registers BEFORE skills/MCP (first-registrant-wins),
+    AND local names join the skill/MCP collision sets -- so a malicious
+    MCP server or skill can never shadow the fs_* names at ANY layer (the
+    registry's own resolution, or ``AgentService.invoke_tool``'s
+    skill-runner-first dispatch, which registration order alone cannot
+    protect). For a temporary session (``ephemeral=True``) neither the
+    skill nor the MCP provider is registered at all.
 
     Args:
         context: A fresh ``get_context(mode="local")`` payload.
@@ -1197,14 +1215,21 @@ def _compose_run_registry_and_allowed(
         diff_sink: TASK-1366 -- this run's UI-side diff channel, threaded
             into the freshly-constructed ``BuiltinToolProvider`` (see its
             ``__init__``). ``None`` (the default) means no diff capture.
+        local_provider: This run's already-composed local tool provider
+            (``LocalToolProvider``), or ``None`` when local tools are
+            disabled this run.
 
     Returns:
-        ``(registry, allowed_tools, builtin_names)`` -- the per-run
-        registry, its full allow-list (builtins + eligible skills +
-        eligible MCP tools + spawn), and just the builtin names (needed
-        separately by ``_BridgeSkillRunner`` to intersect a skill's own
-        declared ``allowed_tools`` against -- never against skill names,
-        so a skill's sub-agent can never call another skill).
+        ``(registry, allowed_tools, builtin_names, local_names)`` -- the
+        per-run registry, its full allow-list (builtins + local + eligible
+        skills + eligible MCP tools + spawn), just the builtin names
+        (needed separately by ``_BridgeSkillRunner`` to intersect a
+        skill's own declared ``allowed_tools`` against -- never against
+        skill OR local names, so a skill's sub-agent can never call
+        another skill and skills never narrow/grant local tools), and
+        just the local names (needed by ``run_reply`` to keep its
+        skill-runner name set's collision filtering in agreement with the
+        registry built here).
     """
     registry = ToolCatalogRegistry(ephemeral=ephemeral)
     builtin_provider = BuiltinToolProvider(
@@ -1215,7 +1240,13 @@ def _compose_run_registry_and_allowed(
     )
     registry.register_provider(builtin_provider)
     builtin_names = tuple(entry.name for entry in builtin_provider.list_catalog())
-    eligible = _non_colliding_skill_entries(context, builtin_names)
+    local_names: tuple[str, ...] = ()
+    if local_provider is not None:
+        registry.register_provider(local_provider)
+        local_names = tuple(e.name for e in local_provider.list_catalog())
+    eligible = _non_colliding_skill_entries(
+        context, builtin_names, local_names=local_names
+    )
     # Defense in depth, NOT the guarantee: a temporary session refuses every
     # skill and MCP call at `ToolCatalogRegistry.invoke_by_name` regardless
     # of what is advertised here. Dropping them from the run's catalog and
@@ -1225,9 +1256,11 @@ def _compose_run_registry_and_allowed(
     if eligible and not ephemeral:
         registry.register_provider(SkillToolProvider(eligible))
     skill_names = () if ephemeral else tuple(str(item["name"]) for item in eligible)
-    allowed_tools = tuple(builtin_names) + skill_names
+    allowed_tools = tuple(builtin_names) + local_names + skill_names
     if mcp_provider is not None and not ephemeral:
-        collision_names = set(builtin_names) | set(skill_names) | RUNTIME_TOOL_NAMES
+        collision_names = (
+            set(builtin_names) | set(local_names) | set(skill_names) | RUNTIME_TOOL_NAMES
+        )
         # Single partition call (finding 8, substrate review): the two
         # public wrappers (`_non_colliding_mcp_names`, `shadowed_mcp_names`)
         # each independently call `_partition_mcp_catalog_by_collision`,
@@ -1246,7 +1279,7 @@ def _compose_run_registry_and_allowed(
             )
             allowed_tools += mcp_names
     allowed_tools += (SPAWN_TOOL_NAME,)
-    return registry, allowed_tools, builtin_names
+    return registry, allowed_tools, builtin_names, local_names
 
 
 class _BridgeSkillRunner:
@@ -1402,62 +1435,13 @@ class ConsoleAgentBridge:
         turn_bundle_block: str = "",
         request_skill_install_confirm: Callable[[str], bool] | None = None,
         request_skill_script_confirm: Callable[[dict], dict] | None = None,
+        local_provider: Any | None = None,
     ) -> tuple[str, RunOutcome]:
-        """Run the agent loop as the Console reply engine.
-
-        The primary run row is created with a NULL ``assistant_message_id``
-        (the native ``assistant_message_id`` argument is used only for
-        streaming into the placeholder, never forwarded to ``run_turn`` --
-        see the ``run_turn`` call below for why a native id must never be
-        stored on the run). The caller records the reply's durable persisted
-        id onto the run on every terminal path via
-        ``record_run_assistant_message`` once the reply is persisted; an
-        unfinished/crashed run stays NULL for resume's null->ordinal fallback.
-
-        Concurrency: this bridge does NOT serialize runs. The
-        ``_live``/``_historical_cache`` dicts are per-conversation DISPLAY
-        snapshots, not a mutual-exclusion guard. Serialization is enforced
-        upstream by ``ConsoleChatController`` (its ``_active_run_rejection``
-        / ``run_state.is_send_allowed`` gate -- covered by
-        ``Tests/UI/test_console_run_gate.py``), and that gate is actually
-        CONTROLLER-WIDE (only one run active across the whole controller at
-        a time), which trivially bounds it per conversation too: a second
-        send -- whether to the same conversation or a different, otherwise-
-        idle one -- while any run is live is rejected there before
-        ``run_reply`` is ever called. Do not add a competing guard here.
-
-        task-545/T6: ``builtin_gate`` (when passed) is threaded into this
-        run's freshly-built ``BuiltinToolProvider`` so its ``invoke()``
-        checks the SAME gate instance the caller's review hook
-        (``console_chat_controller.build_tool_review_hook``) already
-        stamped -- see ``_compose_run_registry_and_allowed``'s own
-        docstring for why two independently-built gates would silently
-        desynchronize. Passing ``None`` (the default -- existing callers
-        that don't care about built-in gating are unaffected) leaves a
-        skills/MCP-free run on the shared, construction-time
-        ``self._registry``/``self._allowed_tools`` fast path unchanged.
-
-        task-6 (settings-workspaces-folder-roots spec §3): whenever this
-        run takes the fresh-build branch below, ``self._store``'s own
-        record of ``session_id``'s bound workspace is looked up and
-        threaded into ``_compose_run_registry_and_allowed`` as
-        ``workspace_id`` -- so this run's ``BuiltinToolProvider`` binds
-        THIS session's workspace, not whatever workspace is active in the
-        UI by the time a file tool actually fires. A missing store or an
-        already-closed session degrades to ``None`` (the documented
-        active-workspace fallback) rather than failing the run over an
-        ancillary lookup.
-
-        Returns:
-            A ``(run_id, outcome)`` tuple: the primary run's id (so the
-            caller can record the produced reply's persisted id onto the run
-            via ``record_run_assistant_message`` after the reply is
-            persisted) and its terminal ``RunOutcome``.
-        """
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
-        # MCP, and by task-545/T6 for a per-run builtin_gate): rebuilt FRESH
-        # for this run whenever there is a skills service, an already-
-        # composed MCP provider, OR a builtin_gate for this run (never
+        # MCP, by task-545/T6 for a per-run builtin_gate, and extended again
+        # for local tools): rebuilt FRESH for this run whenever there is a
+        # skills service, an already-composed MCP or local provider, OR a
+        # builtin_gate for this run (never
         # cached across runs, and never the shared self._registry/
         # self._allowed_tools built at construction) -- so a skill or MCP
         # tool approved/edited/revoked since the last run always takes
@@ -1474,8 +1458,9 @@ class ConsoleAgentBridge:
         # gate the run's review hook never stamps -- see
         # `_compose_run_registry_and_allowed`'s own docstring for the
         # desync this would cause. None of skills service, MCP provider,
-        # or builtin_gate: the shipped shared registry/allow-list is used
-        # unchanged -- the no-skills, no-MCP, no-gate path stays
+        # local provider, or builtin_gate: the shipped shared
+        # registry/allow-list is used unchanged -- the no-skills, no-MCP,
+        # no-local-tools, no-gate path stays
         # byte-identical to before this task (existing callers that never
         # pass `builtin_gate` see no behavior change at all).
         registry = self._registry
@@ -1518,6 +1503,7 @@ class ConsoleAgentBridge:
             self._skills_service is not None
             or mcp_provider is not None
             or builtin_gate is not None
+            or local_provider is not None
         ):
             context: Mapping[str, Any] = {}
             if self._skills_service is not None:
@@ -1545,18 +1531,23 @@ class ConsoleAgentBridge:
                     run_is_ephemeral = False
             # TASK-1366: wire this run's diff channel (declared above) into
             # the freshly-built provider.
-            registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(
-                context,
-                mcp_provider=mcp_provider,
-                builtin_gate=builtin_gate,
-                workspace_id=run_workspace_id,
-                ephemeral=run_is_ephemeral,
-                diff_sink=pending_diffs.append,
+            registry, allowed_tools, builtin_names, local_names = (
+                _compose_run_registry_and_allowed(
+                    context,
+                    mcp_provider=mcp_provider,
+                    builtin_gate=builtin_gate,
+                    workspace_id=run_workspace_id,
+                    ephemeral=run_is_ephemeral,
+                    diff_sink=pending_diffs.append,
+                    local_provider=local_provider,
+                )
             )
             if self._skills_service is not None:
                 skill_names = frozenset(
                     str(item["name"])
-                    for item in _non_colliding_skill_entries(context, builtin_names)
+                    for item in _non_colliding_skill_entries(
+                        context, builtin_names, local_names=local_names
+                    )
                 )
                 skill_file_bindings = SkillFileBindings(
                     authorized=set(),
@@ -1910,7 +1901,8 @@ class ConsoleAgentBridge:
         # `_stamps`. Compose whichever exist rather than leaving the gate's
         # state unguarded (it was, before this task, and unlike MCP it has
         # no per-call approval fallback to degrade to: a lost stamp fails
-        # closed outright).
+        # closed outright). ADR-032 adds the local provider's stamp state
+        # to the same composition.
         _scopes = [
             scope
             for scope in (
@@ -1919,6 +1911,9 @@ class ConsoleAgentBridge:
                 else None,
                 getattr(builtin_gate, "stamp_scope", None)
                 if builtin_gate is not None
+                else None,
+                getattr(local_provider, "stamp_scope", None)
+                if local_provider is not None
                 else None,
             )
             if scope is not None
