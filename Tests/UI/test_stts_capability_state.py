@@ -124,3 +124,32 @@ async def test_stts_window_refreshes_local_speech_dependency_flags(monkeypatch):
 
         detail = app.screen.query_one("#speech-capability-status", Static)
         assert str(detail.render()) == "Local TTS and STT dependencies are available."
+
+
+@pytest.mark.asyncio
+async def test_speech_screen_mounts_rail_rows_exactly_once():
+    """TASK-2610 regression: one Mount event must yield exactly one rail.
+
+    Textual dispatches every ``on_mount`` along the MRO for a single Mount
+    event. STTSScreen used to call ``super().on_mount()`` on top of that,
+    running the Lab frame's handler twice — double-mounting the rail rows and
+    crashing the app with ``DuplicateIds`` on every visit to Lab > Speech.
+    """
+    app = _SpeechHarness(_build_test_app())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = app.screen
+        assert isinstance(screen, STTSScreen)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#lab-speech-row-playground")),
+        )
+
+        assert len(screen.query("#lab-speech-row-playground")) == 1
+
+        # The Speech screen's combined footer hints must win over the Lab
+        # frame's plain set — the ordering the removed super() call was
+        # (wrongly) trying to guarantee, now owned by _lab_footer_registration.
+        source, shortcuts = screen._footer_shortcut_registration
+        assert source == "stts"
+        assert shortcuts == screen.STTS_SHORTCUTS + screen.LAB_FOOTER_SHORTCUTS

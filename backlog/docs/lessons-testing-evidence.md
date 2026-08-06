@@ -720,3 +720,32 @@ whether it is set — a reassigned-but-not-yet-live reference passes an `is not 
 check while still being unsafe to use. And before trusting a wiring test built on a
 fake, ask whether the fake reproduces the real object's OWN pre-ready guard, or is
 simply more permissive than production in exactly the window under test.
+
+---
+
+## A test failure dismissed as "pre-existing noise" can be a shipped crash
+
+**TASK-2610, 2026-08-06.** `test_production_settings_actions_cross_the_pushed_screen_boundary`
+failed with `DuplicateIds: lab-speech-row-playground` for weeks. Across many tasks — in
+multiple programs, by multiple sessions — it was checked once ("fails identically on the
+base commit"), labeled "pre-existing, unrelated," and waved through. Every one of those
+dismissals was locally correct and collectively wrong: the failure was a 100%-reproducible
+user-facing crash — navigating to Lab ▸ Speech took the whole app down, making the Speech
+Lab (playground, voice profiles, audiobooks, voice cloning) unreachable. It was found only
+when a live-verification pass tried to drive that navigation for an unrelated feature.
+
+**Mechanism worth knowing on its own:** Textual's `MessagePump._get_dispatch_methods`
+walks the MRO and invokes EVERY class's `on_mount` for a single Mount event. A subclass
+handler that calls `super().on_mount()` therefore runs the parent handler TWICE.
+`STTSScreen.on_mount` did exactly that over `LabFrameScreen.on_mount` — which mounts the
+rail rows — so the second run collided on the row ids. Sibling screens without their own
+`on_mount` never crashed, which is why the bug looked screen-specific. If a parent
+`on_mount` does real work, `super().on_mount()` in a child is a crash, not a courtesy.
+
+**What to do.** "Fails identically on base" proves you didn't cause it — it does not prove
+it's noise. Before re-dismissing a persistently failing test, spend the five minutes to
+classify WHAT the failure would mean for a user if the tested path were driven live; a
+`DuplicateIds`/exception-shaped failure in a screen-mount test is an app crash until shown
+otherwise. Budget one live drive of the affected surface the FIRST time a failure gets the
+"pre-existing" label — that is when it is cheapest, and every later dismissal inherits the
+first one's diligence or its negligence.
