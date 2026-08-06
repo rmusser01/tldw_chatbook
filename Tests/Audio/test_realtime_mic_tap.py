@@ -553,6 +553,127 @@ def test_new1b_expiry_logs_a_warning_with_operation_and_in_flight_count(monkeypa
     producer.join(timeout=5)
 
 
+# ---------------------------------------------------------------------------
+# task-2360: `begin_buffering()` re-arms the pre-ready buffer for a mid-loop
+# RECONNECT, mirroring the entry-time first-words guarantee across a
+# transport drop instead of silently dropping speech captured while the
+# session slot is momentarily None.
+# ---------------------------------------------------------------------------
+
+
+def test_begin_buffering_reroutes_frames_and_mark_ready_flushes_them_in_order():
+    """The core contract: once ready, `begin_buffering()` sends subsequent
+    frames back through the bounded buffer instead of `on_frames`, and the
+    NEXT `mark_ready()` call flushes them in arrival order, then resumes
+    live streaming -- exactly mirroring the entry-time (pre-first-
+    mark_ready) behavior.
+    """
+    received: list[bytes] = []
+    factory = make_factory()
+    tap = RealtimeMicTap(received.append, recorder_factory=factory)
+    tap.start()
+    tap.mark_ready()
+    factory.instance.callback(b"live-before-reconnect")
+    assert received == [b"live-before-reconnect"]
+
+    tap.begin_buffering()
+    factory.instance.callback(b"during-reconnect-1")
+    factory.instance.callback(b"during-reconnect-2")
+    # Buffered, not forwarded, while the reconnect window is open.
+    assert received == [b"live-before-reconnect"]
+
+    tap.mark_ready()
+    assert received == [
+        b"live-before-reconnect",
+        b"during-reconnect-1",
+        b"during-reconnect-2",
+    ]
+
+    factory.instance.callback(b"live-after-reconnect")
+    assert received[-1] == b"live-after-reconnect"
+
+
+def test_begin_buffering_before_first_ready_is_a_noop():
+    """`begin_buffering()` before the tap was ever marked ready has
+    nothing to re-arm (it is already buffering) -- must not raise, and
+    must not disturb the pre-ready buffer already in place.
+    """
+    received: list[bytes] = []
+    factory = make_factory()
+    tap = RealtimeMicTap(received.append, recorder_factory=factory)
+    tap.start()
+
+    factory.instance.callback(b"pre-ready")
+    tap.begin_buffering()  # no-op: never marked ready in the first place
+    factory.instance.callback(b"still-pre-ready")
+
+    tap.mark_ready()
+    assert received == [b"pre-ready", b"still-pre-ready"]
+
+
+def test_begin_buffering_is_idempotent():
+    """Calling `begin_buffering()` twice in a row (e.g. a defensive
+    duplicate call from the wiring) must not lose or duplicate frames.
+    """
+    received: list[bytes] = []
+    factory = make_factory()
+    tap = RealtimeMicTap(received.append, recorder_factory=factory)
+    tap.start()
+    tap.mark_ready()
+
+    tap.begin_buffering()
+    tap.begin_buffering()
+    factory.instance.callback(b"buffered")
+    assert received == []
+
+    tap.mark_ready()
+    assert received == [b"buffered"]
+
+
+def test_stop_after_begin_buffering_discards_the_rebuffered_frames():
+    """A failed reconnect's teardown calls the EXISTING `stop()` -- which
+    already discards any buffered frames as part of its terminal contract
+    (see `test_stop_before_mark_ready_discards_buffered_frames`). This
+    pins that the SAME guarantee holds for frames re-buffered by
+    `begin_buffering()`, not just the tap's very first pre-ready window:
+    no stale reconnect-window audio can ever be replayed into a later
+    session, because `stop()` clears the buffer outright and a subsequent
+    `mark_ready()` call is a no-op once stopped.
+    """
+    received: list[bytes] = []
+    factory = make_factory()
+    tap = RealtimeMicTap(received.append, recorder_factory=factory)
+    tap.start()
+    tap.mark_ready()
+
+    tap.begin_buffering()
+    factory.instance.callback(b"doomed-reconnect-audio")
+    tap.stop()
+    tap.mark_ready()  # a stray call after stop() must not replay anything
+
+    assert received == []
+
+
+def test_begin_buffering_is_not_stop_recorder_keeps_running():
+    """`begin_buffering()` must never be confused with `stop()` (a prior
+    review's binding ruling: `stop()` is terminal, never a pause) -- the
+    underlying recorder is untouched, so frames keep arriving and get
+    buffered rather than the tap going silent/terminal.
+    """
+    received: list[bytes] = []
+    factory = make_factory()
+    tap = RealtimeMicTap(received.append, recorder_factory=factory)
+    tap.start()
+    tap.mark_ready()
+
+    tap.begin_buffering()
+    assert factory.instance.stop_calls == 0
+    factory.instance.callback(b"still-capturing")
+    tap.mark_ready()
+    assert received == [b"still-capturing"]
+    assert factory.instance.stop_calls == 0
+
+
 def test_import_pulls_no_heavy_transcription_dependencies():
     """Import-lightness pin: importing this module alone must never pull
     `faster_whisper`, `torch`, or `nemo` into `sys.modules` -- those are

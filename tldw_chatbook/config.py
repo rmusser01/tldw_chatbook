@@ -1176,11 +1176,28 @@ def load_settings(force_reload: bool = False) -> Dict:
         minimum=MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
         maximum=MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     )
+    final_console_settings_cli["local_tools_enabled"] = coerce_bool_setting(
+        final_console_settings_cli.get("local_tools_enabled", False),
+        False,
+    )
+    workspace_root = final_console_settings_cli.get("workspace_root", "")
+    if not isinstance(workspace_root, str):
+        workspace_root = ""
+    final_console_settings_cli["workspace_root"] = workspace_root.strip()
     background_effects = final_console_settings_cli.get("background_effects")
     if not isinstance(background_effects, dict):
         background_effects = {}
     final_console_settings_cli["background_effects"] = (
         normalize_console_background_effects(background_effects).to_config()
+    )
+
+    # --- MCP Settings ---
+    final_mcp_settings_cli = copy.deepcopy(get_toml_section("mcp"))
+    if not isinstance(final_mcp_settings_cli, dict):
+        final_mcp_settings_cli = {}
+    final_mcp_settings_cli["expose_local_tools"] = coerce_bool_setting(
+        final_mcp_settings_cli.get("expose_local_tools", False),
+        False,
     )
 
     # --- Application Mode ---
@@ -1298,6 +1315,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         "console": final_console_settings_cli,  # For Console behavior settings
         "first_run": final_first_run_settings_cli,  # Wizard setup_started/setup_completed flags
         "image_generation": final_image_generation_settings_cli,  # For Image_Generation/config.py loader
+        "mcp": final_mcp_settings_cli,  # For MCP server settings
         # Single User
         "SINGLE_USER_FIXED_ID": single_user_fixed_id,
         # Auth
@@ -2502,6 +2520,8 @@ users_name = "default_user" # Default user name for the TUI
 [console]
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
+# local_tools_enabled = false   # workspace-local agent tools (fs_*); approvals via MCP permission store
+# workspace_root = ""           # confinement root for fs_* tools; empty = app cwd at startup
 
 [console.background_effects]
 enabled = false  # Optional Console ambience. Off by default for readability.
@@ -3142,6 +3162,15 @@ top_p = 0.95
 min_p = 0.05
 top_k = 50
 strip_thinking_tags = true
+
+# Console transcript view pruning: when the transcript's virtual height (in
+# terminal rows) exceeds prune_high_watermark, the oldest message rows are
+# dropped from the view until the remaining height fits under
+# prune_low_watermark. Scroll position is preserved, the in-progress
+# streaming row is never pruned, and the store keeps the full history
+# (pruning is view-only). Set prune_high_watermark <= 0 to disable pruning.
+prune_high_watermark = 20000
+prune_low_watermark = 12000
 
 # Image attachment settings for chat
 [chat.images]
@@ -3854,6 +3883,8 @@ expose_prompts = true  # Expose prompt templates
 require_auth = false  # Require authentication (not implemented yet)
 rate_limit = 100  # Max requests per minute per client
 max_concurrent_requests = 10  # Max concurrent requests
+
+# expose_local_tools = false   # expose workspace-local agent tools (fs_*/git_*/web_*) to external MCP clients; permission-gated, writes effectively denied until granted
 
 # Tool-specific settings
 [mcp.tools]

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, Mapping
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.message_metadata import MessageMetadata
     from tldw_chatbook.Chat.provider_usage import ProviderUsage
 
 
@@ -435,6 +436,17 @@ class ConsoleChatMessage:
     #: that is not a tool marker, and for a marker whose result was short
     #: enough that ``content`` already shows all of it.
     tool_output_full: str | None = None
+    #: TASK-1366: the raw (file_path, before, after) contents behind a
+    #: file-writing TOOL marker, captured live at the provider's strip seam
+    #: (``BuiltinToolProvider.invoke``) for the transcript's inline diff
+    #: row. Session-only display state: TOOL markers return from
+    #: ``append_message`` before the persistence path, so this is NEVER
+    #: persisted, and it is never echoed to the model or the run log --
+    #: ``content``/``tool_output_full`` (post-strip text) are the only
+    #: forms those consumers see. None for non-diff rows and for
+    #: resume-rebuilt markers (AgentRunsDB holds only the stripped record,
+    #: so a resumed run renders exactly as pre-diff).
+    tool_diff: tuple[str, str, str] | None = None
     #: TASK-1972: set on a change-summary transcript row -- the agent run
     #: whose diff the row reviews. Session-only, never persisted; resume
     #: re-derives it from change_snapshots. The `v` action needs to know
@@ -443,6 +455,13 @@ class ConsoleChatMessage:
     # Normalized token usage for THIS generation (None for user rows, legacy
     # rows, and providers that reported nothing). Persisted as usage_json.
     usage: "ProviderUsage | None" = None
+    # TASK-2364: structured facts ABOUT the turn -- engine provenance, the
+    # interrupted flag, and a voice row's transcript status. None for rows
+    # that predate the field and for every turn with nothing to record.
+    # Persisted as the local-only metadata_json column; the point of the
+    # field is that machine consumers (reseed, exports, summaries) read it
+    # instead of string-matching UI copy in ``content``.
+    metadata: "MessageMetadata | None" = None
 
 
 @dataclass(frozen=True)

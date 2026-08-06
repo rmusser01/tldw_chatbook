@@ -11,7 +11,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
 from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import Button, Input, OptionList, Select, Static, Switch
+from textual.widgets import Button, Checkbox, Input, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
 from ..config import get_cli_setting, save_setting_to_cli_config
@@ -32,7 +32,7 @@ DEFAULT_SPLASH_CONFIG: dict[str, Any] = {
 
 
 def switch_state_label(value: bool) -> str:
-    """Textual state for a Switch: the slider itself carries state by
+    """On/Off word beside a toggle: the widget alone carries state by
     position/color only, which is unreadable in reduced-color terminals and
     violates the text-labeled-states rule (task-1561)."""
     return "On" if value else "Off"
@@ -110,6 +110,17 @@ class SettingsSplashScreenViewer(Vertical):
 
         with Vertical(id="settings-splash-card", classes="settings-focus-card"):
             yield Static("Startup defaults", classes="destination-section")
+            # task-1341: splash defaults persist on change; label the
+            # instant-apply commit model inline (staged is the default).
+            # Mirrors INSTANT_APPLY_BEHAVIOR_COPY in
+            # UI/Screens/settings_screen.py (the widget must not import the
+            # screen); the Enter clause covers the duration/animation-speed
+            # Inputs, which persist on Input.Submitted, not per keystroke.
+            yield Static(
+                "applies immediately - no Save needed; text fields apply on Enter",
+                id="settings-splash-instant-hint",
+                classes="settings-instant-apply-hint",
+            )
             with Horizontal(classes="settings-input-row settings-select-row"):
                 yield Static("Default card", classes="settings-input-label")
                 yield Select(
@@ -126,7 +137,7 @@ class SettingsSplashScreenViewer(Vertical):
                 # labels ("Skip on keypress" showed as "Skip on").
                 label_static.styles.width = 20
                 yield label_static
-                yield Switch(
+                yield Checkbox(
                     value=bool(self._config.get("enabled", True)),
                     id="settings-splash-enabled",
                 )
@@ -141,7 +152,7 @@ class SettingsSplashScreenViewer(Vertical):
                 # labels ("Skip on keypress" showed as "Skip on").
                 label_static.styles.width = 20
                 yield label_static
-                yield Switch(
+                yield Checkbox(
                     value=bool(self._config.get("show_progress", True)),
                     id="settings-splash-show-progress",
                 )
@@ -156,7 +167,7 @@ class SettingsSplashScreenViewer(Vertical):
                 # labels ("Skip on keypress" showed as "Skip on").
                 label_static.styles.width = 20
                 yield label_static
-                yield Switch(
+                yield Checkbox(
                     value=bool(self._config.get("skip_on_keypress", True)),
                     id="settings-splash-skip-on-keypress",
                 )
@@ -195,7 +206,6 @@ class SettingsSplashScreenViewer(Vertical):
 
             with Horizontal(classes="settings-action-row"):
                 yield Button("Play selected", id="settings-splash-play", variant="primary")
-                yield Button("Set as default", id="settings-splash-set-default")
 
             yield Static(
                 "",
@@ -242,27 +252,24 @@ class SettingsSplashScreenViewer(Vertical):
         except ValueError:
             return default
 
-    @on(Switch.Changed, "#settings-splash-enabled")
-    def handle_enabled_changed(self, event: Switch.Changed) -> None:
+    @on(Checkbox.Changed, "#settings-splash-enabled")
+    def handle_enabled_changed(self, event: Checkbox.Changed) -> None:
         self.query_one("#settings-splash-enabled-state", Static).update(
             switch_state_label(bool(event.value))
         )
         if self._save_config_value("enabled", event.value):
             self._update_status("Splash screen enabled setting saved.")
 
-    @on(Switch.Changed, "#settings-splash-show-progress")
-    def handle_show_progress_changed(self, event: Switch.Changed) -> None:
+    @on(Checkbox.Changed, "#settings-splash-show-progress")
+    def handle_show_progress_changed(self, event: Checkbox.Changed) -> None:
         self.query_one("#settings-splash-show-progress-state", Static).update(
             switch_state_label(bool(event.value))
         )
         if self._save_config_value("show_progress", event.value):
             self._update_status("Show progress setting saved.")
 
-    @on(Switch.Changed, "#settings-splash-skip-on-keypress")
-    def handle_skip_on_keypress_changed(self, event: Switch.Changed) -> None:
-        self.query_one("#settings-splash-skip-on-keypress-state", Static).update(
-            switch_state_label(bool(event.value))
-        )
+    @on(Checkbox.Changed, "#settings-splash-skip-on-keypress")
+    def handle_skip_on_keypress_changed(self, event: Checkbox.Changed) -> None:
         if self._save_config_value("skip_on_keypress", event.value):
             self._update_status("Skip on keypress setting saved.")
 
@@ -302,14 +309,6 @@ class SettingsSplashScreenViewer(Vertical):
     def handle_play_pressed(self) -> None:
         self._mount_preview(self.selected_card)
         self._update_status(f"Playing preview of {self.selected_card}.")
-
-    @on(Button.Pressed, "#settings-splash-set-default")
-    def handle_set_default_pressed(self) -> None:
-        if self.selected_card and self.selected_card != "__none__":
-            select = self.query_one("#settings-splash-default-select", Select)
-            select.value = self.selected_card
-            if self._save_config_value("card_selection", self.selected_card):
-                self._update_status(f"{self.selected_card} set as default splash card.")
 
     def _mount_preview(self, card_name: str) -> None:
         container = self.query_one("#settings-splash-preview-scroll", VerticalScroll)

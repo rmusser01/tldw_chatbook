@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import os
 import time
+from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +30,7 @@ from loguru import logger
 from tldw_chatbook.Agents.agent_models import (
     AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
+    DIRECT_DISCLOSE_THRESHOLD,
     FIND_TOOLS_NAME,
     LOAD_TOOLS_NAME,
     RunBudget,
@@ -172,6 +174,16 @@ CONSOLE_RUN_BUDGET = RunBudget(
 
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
 
+# Phase-3a Task 5: one-line pointer to the find/load discovery path, appended
+# to the composed system prompt ONLY when this run's catalog crosses
+# DIRECT_DISCLOSE_THRESHOLD (i.e. initial_disclosure would offer find/load) --
+# under direct disclosure every schema is already in the prompt and the hint
+# would point at tools that are, in fact, shown.
+FIND_LOAD_DISCOVERY_HINT = (
+    "Additional tools (file, web, and more) are available but not shown; "
+    "use find_tools to search the catalog and load_tools to load their "
+    "schemas before calling them."
+)
 
 def _combine_state_scopes(scopes: list) -> "Any | None":
     """Combine per-turn state scopes into the one ``review_state_scope`` seam.
@@ -210,18 +222,25 @@ def _combine_state_scopes(scopes: list) -> "Any | None":
     return _combined
 
 
-def compose_agent_system_prompt(session_prompt: str) -> str:
+def compose_agent_system_prompt(session_prompt: str, *, offer_find_load: bool = False) -> str:
     """Compose the primary system prompt: session prompt first, agent prompt appended.
 
     Args:
         session_prompt: The Console session's own system prompt, if any.
+        offer_find_load: True when this run's registry catalog crosses
+            ``DIRECT_DISCLOSE_THRESHOLD`` (the caller knows the registry;
+            compose does not), appending ``FIND_LOAD_DISCOVERY_HINT`` after
+            the operating prompt.
 
     Returns:
         ``session_prompt`` followed by the (registry-resolved) console agent
         operating prompt (blank-line separated), or just the operating
-        prompt when ``session_prompt`` is blank.
+        prompt when ``session_prompt`` is blank; plus the discovery hint
+        when ``offer_find_load`` is set.
     """
     operating = get_internal_prompt("agents.console_agent_operating")
+    if offer_find_load:
+        operating = f"{operating}\n\n{FIND_LOAD_DISCOVERY_HINT}"
     base = (session_prompt or "").strip()
     if not base:
         return operating
@@ -379,6 +398,60 @@ def full_step_output(
     return text
 
 
+def _pair_step_diff(
+    pending_diffs: deque[tuple[str, str, str, str]],
+    tool_name: str | None,
+) -> tuple[str, str, str] | None:
+    """Pair one STEP_TOOL_RESULT with its queued diff capture (TASK-1366).
+
+    Captures are appended by the provider's ``diff_sink`` at the strip seam,
+    on the tool call's PER-CALL DAEMON THREAD (``AgentService.
+    _call_with_timeout``). That thread is joined before the result step is
+    emitted in the normal case, so the current call's capture -- when it
+    exists -- is the MOST RECENT queued entry for its tool name. On
+    timeout/cancel the thread is abandoned unjoined and a late capture can
+    land AFTER its own result step already passed; that stale entry must
+    never pair with a later call.
+
+    Pairing rule: take the RIGHTMOST (most recent) entry matching
+    ``tool_name`` and drop it together with every older entry -- anything
+    older had its own result step pass already (dispatch and step emission
+    are sequential), so it is stale by construction. When nothing matches,
+    the whole queue is stale for the same reason and is cleared.
+
+    Residual, documented and cosmetic-only: a stale capture from an
+    abandoned call that shares the tool name AND arrives after the current
+    call's own capture can still mis-pair (the two are indistinguishable
+    without threading call identity through invoke()). The consequence is a
+    wrong diff shown under a live marker -- in-memory only, never persisted
+    or replayed, and self-correcting on the next result step.
+
+    Args:
+        pending_diffs: This run's capture queue (mutated in place).
+        tool_name: The result step's tool name.
+
+    Returns:
+        ``(file_path, old_content, new_content)`` for the paired capture,
+        or ``None`` when this call produced no diff.
+    """
+    match_index = next(
+        (
+            index
+            for index in range(len(pending_diffs) - 1, -1, -1)
+            if pending_diffs[index][0] == tool_name
+        ),
+        None,
+    )
+    if match_index is None:
+        pending_diffs.clear()
+        return None
+    _name, diff_path, diff_old, diff_new = pending_diffs[match_index]
+    # deque has no slice-delete; drop the pair and everything older (stale).
+    for _ in range(match_index + 1):
+        pending_diffs.popleft()
+    return (diff_path, diff_old, diff_new)
+
+
 #: TASK-1844: transcript marker kind for an approval that expired. Not an
 #: `AgentStep` kind -- the timeout happens in the approval round, before any
 #: step exists -- but it renders through the same formatter so live and
@@ -473,6 +546,38 @@ def format_agent_step_marker(
     if kind == STEP_ERROR:
         return f"⚠ {summary}"
     return None
+
+
+def format_todo_marker(todos: list[dict]) -> str:
+    """Return the transcript TOOL marker text for one todo_write state change.
+
+    Rendering counterpart to ``format_agent_step_marker`` for the session-
+    scoped todo list (phase-3a Task 4): one line per item with a status
+    glyph, using ``activeForm`` as the label for the in-progress item when
+    present. Kept raw (no escaping) for the same reason as step markers --
+    both transcript consumers render markup-off (see its docstring). Live
+    only: todos are session-lifetime and never persisted, so there is no
+    resume re-derivation path for these markers.
+
+    Render bounds: embedded newlines are flattened to spaces so the marker
+    stays one line per item, and each item's text is truncated at 200
+    chars -- the same convention as step-marker summaries (``_summarize``).
+    """
+    if not todos:
+        return "☰ Todos cleared"
+    glyphs = {"completed": "[x]", "in_progress": "[~]", "pending": "[ ]"}
+    in_progress = 0
+    lines = []
+    for item in todos:
+        status = str(item.get("status") or "pending")
+        if status == "in_progress":
+            in_progress += 1
+        label = item.get("activeForm") if status == "in_progress" else None
+        label = label or str(item.get("content") or "")
+        label = " ".join(str(label).splitlines())[:200]
+        lines.append(f"  {glyphs.get(status, '[ ]')} {label}")
+    header = f"☰ Todos ({in_progress} in progress):"
+    return "\n".join([header, *lines])
 
 
 def inject_resume_agent_markers(
@@ -837,9 +942,12 @@ def _eligible_skill_entries(context: Mapping[str, Any]) -> list[Mapping[str, Any
 def _non_colliding_skill_entries(
     context: Mapping[str, Any],
     builtin_names: tuple[str, ...],
+    *,
+    local_names: tuple[str, ...] = (),
 ) -> list[Mapping[str, Any]]:
     """Eligible skill entries, excluding any name that collides with a
-    builtin OR one of the loop's own in-loop runtime tool names.
+    builtin, a local tool, OR one of the loop's own in-loop runtime tool
+    names.
 
     Shadowing (Task 11 review note 2 + this task's own allow-list
     ordering): a builtin tool name must always win over a same-named
@@ -865,8 +973,17 @@ def _non_colliding_skill_entries(
     wins that comparison first. Excluding these names too means such a
     skill is simply never registered as a catalog entry at all, matching
     what would happen at invocation time anyway.
+
+    The same dispatch-layer reasoning applies to ``local_names`` (Task 6
+    review): ``AgentService.invoke_tool`` checks
+    ``skill_runner.is_skill_tool(name)`` BEFORE registry dispatch, so the
+    registry's first-registrant-wins order cannot protect a local tool --
+    a skill literally named e.g. ``fs_list`` would be routed to the skill
+    runner and shadow the local tool. Excluding local-name collisions here
+    keeps both call sites (``_compose_run_registry_and_allowed`` and
+    ``run_reply``'s skill-runner name set) in agreement with dispatch.
     """
-    collision_names = set(builtin_names) | RUNTIME_TOOL_NAMES
+    collision_names = set(builtin_names) | set(local_names) | RUNTIME_TOOL_NAMES
     return [
         item
         for item in _eligible_skill_entries(context)
@@ -1087,20 +1204,27 @@ def _compose_run_registry_and_allowed(
     builtin_gate: Any | None = None,
     workspace_id: str | None = None,
     ephemeral: bool = False,
-) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...]]:
+    diff_sink: Callable[[tuple[str, str, str, str]], None] | None = None,
+    local_provider: Any | None = None,
+) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
     Called once per ``run_reply`` invocation (never cached across runs --
     the per-run freshness doctrine: a skill approved/edited/revoked since
     the last run must take effect on the very next one). Registers
-    ``BuiltinToolProvider`` first, then (only when there is at least one
-    non-colliding eligible entry) a ``SkillToolProvider`` snapshot, then
-    (P5-T6, only when there is at least one non-colliding eligible entry)
-    an already-composed MCP provider -- shadowing order: builtins beat
-    skills beat MCP, matching the allow-list's own
-    ``builtins ∪ skills ∪ mcp`` ordering. For a temporary session
-    (``ephemeral=True``) neither the skill nor the MCP provider is
-    registered at all, and the allow-list is builtins-only.
+    ``BuiltinToolProvider`` first, then the already-composed local
+    provider, then (only when there is at least one non-colliding eligible
+    entry) a ``SkillToolProvider`` snapshot, then (P5-T6, only when there
+    is at least one non-colliding eligible entry) an already-composed MCP
+    provider -- shadowing order: builtins beat local beat skills beat MCP,
+    matching the allow-list's own ``builtins ∪ local ∪ skills ∪ mcp``
+    ordering. Local registers BEFORE skills/MCP (first-registrant-wins),
+    AND local names join the skill/MCP collision sets -- so a malicious
+    MCP server or skill can never shadow the fs_* names at ANY layer (the
+    registry's own resolution, or ``AgentService.invoke_tool``'s
+    skill-runner-first dispatch, which registration order alone cannot
+    protect). For a temporary session (``ephemeral=True``) neither the
+    skill nor the MCP provider is registered at all.
 
     Args:
         context: A fresh ``get_context(mode="local")`` payload.
@@ -1138,22 +1262,41 @@ def _compose_run_registry_and_allowed(
             and MCP tools out of the run's catalog and allow-list so the
             model is never offered them. ``False`` (the default)
             preserves every pre-existing caller's behavior unchanged.
+        diff_sink: TASK-1366 -- this run's UI-side diff channel, threaded
+            into the freshly-constructed ``BuiltinToolProvider`` (see its
+            ``__init__``). ``None`` (the default) means no diff capture.
+        local_provider: This run's already-composed local tool provider
+            (``LocalToolProvider``), or ``None`` when local tools are
+            disabled this run.
 
     Returns:
-        ``(registry, allowed_tools, builtin_names)`` -- the per-run
-        registry, its full allow-list (builtins + eligible skills +
-        eligible MCP tools + spawn), and just the builtin names (needed
-        separately by ``_BridgeSkillRunner`` to intersect a skill's own
-        declared ``allowed_tools`` against -- never against skill names,
-        so a skill's sub-agent can never call another skill).
+        ``(registry, allowed_tools, builtin_names, local_names)`` -- the
+        per-run registry, its full allow-list (builtins + local + eligible
+        skills + eligible MCP tools + spawn), just the builtin names, and
+        just the local names. ``_BridgeSkillRunner`` intersects a skill's
+        own declared ``allowed_tools`` against builtins + local (never
+        against skill names, so a skill's sub-agent can never call another
+        skill, and never against runtime/MCP names -- a skill narrows, it
+        never grants), and ``run_reply`` uses the local names to keep its
+        skill-runner name set's collision filtering in agreement with the
+        registry built here.
     """
     registry = ToolCatalogRegistry(ephemeral=ephemeral)
     builtin_provider = BuiltinToolProvider(
-        gate=builtin_gate, workspace_id=workspace_id, ephemeral=ephemeral
+        gate=builtin_gate,
+        workspace_id=workspace_id,
+        ephemeral=ephemeral,
+        diff_sink=diff_sink,
     )
     registry.register_provider(builtin_provider)
     builtin_names = tuple(entry.name for entry in builtin_provider.list_catalog())
-    eligible = _non_colliding_skill_entries(context, builtin_names)
+    local_names: tuple[str, ...] = ()
+    if local_provider is not None:
+        registry.register_provider(local_provider)
+        local_names = tuple(e.name for e in local_provider.list_catalog())
+    eligible = _non_colliding_skill_entries(
+        context, builtin_names, local_names=local_names
+    )
     # Defense in depth, NOT the guarantee: a temporary session refuses every
     # skill and MCP call at `ToolCatalogRegistry.invoke_by_name` regardless
     # of what is advertised here. Dropping them from the run's catalog and
@@ -1163,9 +1306,11 @@ def _compose_run_registry_and_allowed(
     if eligible and not ephemeral:
         registry.register_provider(SkillToolProvider(eligible))
     skill_names = () if ephemeral else tuple(str(item["name"]) for item in eligible)
-    allowed_tools = tuple(builtin_names) + skill_names
+    allowed_tools = tuple(builtin_names) + local_names + skill_names
     if mcp_provider is not None and not ephemeral:
-        collision_names = set(builtin_names) | set(skill_names) | RUNTIME_TOOL_NAMES
+        collision_names = (
+            set(builtin_names) | set(local_names) | set(skill_names) | RUNTIME_TOOL_NAMES
+        )
         # Single partition call (finding 8, substrate review): the two
         # public wrappers (`_non_colliding_mcp_names`, `shadowed_mcp_names`)
         # each independently call `_partition_mcp_catalog_by_collision`,
@@ -1184,14 +1329,15 @@ def _compose_run_registry_and_allowed(
             )
             allowed_tools += mcp_names
     allowed_tools += (SPAWN_TOOL_NAME,)
-    return registry, allowed_tools, builtin_names
+    return registry, allowed_tools, builtin_names, local_names
 
 
 class _BridgeSkillRunner:
     """``SkillRunner``: renders a skill, then routes it through THIS run's spawn.
 
     Built fresh per ``run_reply`` invocation from that run's own eligible
-    skill-name set and builtin names (see ``_compose_run_registry_and_allowed``).
+    skill-name set and builtin + local tool names (see
+    ``_compose_run_registry_and_allowed``).
     ``run`` re-verifies trust at render time via ``execute_skill`` -- never
     a cached snapshot -- so a skill approved when the catalog was built but
     revoked before the model actually calls it still refuses (mirrors
@@ -1205,11 +1351,13 @@ class _BridgeSkillRunner:
         skills_service: Any,
         skill_names: frozenset[str],
         builtin_names: tuple[str, ...],
+        local_names: tuple[str, ...] = (),
         skill_file_bindings: SkillFileBindings | None = None,
     ) -> None:
         self._skills_service = skills_service
         self._skill_names = skill_names
         self._builtin_names = builtin_names
+        self._local_names = local_names
         self._skill_file_bindings = skill_file_bindings
 
     def is_skill_tool(self, name: str) -> bool:
@@ -1231,8 +1379,15 @@ class _BridgeSkillRunner:
         declared_allowed_tools = (
             result.get("allowed_tools") if isinstance(result, Mapping) else None
         )
+        # Narrow-only against THIS run's builtin + local tool names: a skill
+        # can never grant its child a tool the parent run doesn't have (no
+        # runtime tools, no MCP tools, no other skills). Local tools in the
+        # child stay approval-gated -- the spawn below shares the parent's
+        # review hook and stamp scope. ``None`` (undeclared) passes the full
+        # builtin + local set through, matching how native spawn_subagent
+        # children already inherit local tools.
         allowed_tools = intersect_skill_tools(
-            declared_allowed_tools, self._builtin_names
+            declared_allowed_tools, self._builtin_names + self._local_names
         )
         # task-4 (skills-fork-reachability): grant the spawned skill's own
         # name skill_file authorization BEFORE spawn -- so the child's very
@@ -1340,62 +1495,13 @@ class ConsoleAgentBridge:
         turn_bundle_block: str = "",
         request_skill_install_confirm: Callable[[str], bool] | None = None,
         request_skill_script_confirm: Callable[[dict], dict] | None = None,
+        local_provider: Any | None = None,
     ) -> tuple[str, RunOutcome]:
-        """Run the agent loop as the Console reply engine.
-
-        The primary run row is created with a NULL ``assistant_message_id``
-        (the native ``assistant_message_id`` argument is used only for
-        streaming into the placeholder, never forwarded to ``run_turn`` --
-        see the ``run_turn`` call below for why a native id must never be
-        stored on the run). The caller records the reply's durable persisted
-        id onto the run on every terminal path via
-        ``record_run_assistant_message`` once the reply is persisted; an
-        unfinished/crashed run stays NULL for resume's null->ordinal fallback.
-
-        Concurrency: this bridge does NOT serialize runs. The
-        ``_live``/``_historical_cache`` dicts are per-conversation DISPLAY
-        snapshots, not a mutual-exclusion guard. Serialization is enforced
-        upstream by ``ConsoleChatController`` (its ``_active_run_rejection``
-        / ``run_state.is_send_allowed`` gate -- covered by
-        ``Tests/UI/test_console_run_gate.py``), and that gate is actually
-        CONTROLLER-WIDE (only one run active across the whole controller at
-        a time), which trivially bounds it per conversation too: a second
-        send -- whether to the same conversation or a different, otherwise-
-        idle one -- while any run is live is rejected there before
-        ``run_reply`` is ever called. Do not add a competing guard here.
-
-        task-545/T6: ``builtin_gate`` (when passed) is threaded into this
-        run's freshly-built ``BuiltinToolProvider`` so its ``invoke()``
-        checks the SAME gate instance the caller's review hook
-        (``console_chat_controller.build_tool_review_hook``) already
-        stamped -- see ``_compose_run_registry_and_allowed``'s own
-        docstring for why two independently-built gates would silently
-        desynchronize. Passing ``None`` (the default -- existing callers
-        that don't care about built-in gating are unaffected) leaves a
-        skills/MCP-free run on the shared, construction-time
-        ``self._registry``/``self._allowed_tools`` fast path unchanged.
-
-        task-6 (settings-workspaces-folder-roots spec §3): whenever this
-        run takes the fresh-build branch below, ``self._store``'s own
-        record of ``session_id``'s bound workspace is looked up and
-        threaded into ``_compose_run_registry_and_allowed`` as
-        ``workspace_id`` -- so this run's ``BuiltinToolProvider`` binds
-        THIS session's workspace, not whatever workspace is active in the
-        UI by the time a file tool actually fires. A missing store or an
-        already-closed session degrades to ``None`` (the documented
-        active-workspace fallback) rather than failing the run over an
-        ancillary lookup.
-
-        Returns:
-            A ``(run_id, outcome)`` tuple: the primary run's id (so the
-            caller can record the produced reply's persisted id onto the run
-            via ``record_run_assistant_message`` after the reply is
-            persisted) and its terminal ``RunOutcome``.
-        """
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
-        # MCP, and by task-545/T6 for a per-run builtin_gate): rebuilt FRESH
-        # for this run whenever there is a skills service, an already-
-        # composed MCP provider, OR a builtin_gate for this run (never
+        # MCP, by task-545/T6 for a per-run builtin_gate, and extended again
+        # for local tools): rebuilt FRESH for this run whenever there is a
+        # skills service, an already-composed MCP or local provider, OR a
+        # builtin_gate for this run (never
         # cached across runs, and never the shared self._registry/
         # self._allowed_tools built at construction) -- so a skill or MCP
         # tool approved/edited/revoked since the last run always takes
@@ -1412,13 +1518,37 @@ class ConsoleAgentBridge:
         # gate the run's review hook never stamps -- see
         # `_compose_run_registry_and_allowed`'s own docstring for the
         # desync this would cause. None of skills service, MCP provider,
-        # or builtin_gate: the shipped shared registry/allow-list is used
-        # unchanged -- the no-skills, no-MCP, no-gate path stays
+        # local provider, or builtin_gate: the shipped shared
+        # registry/allow-list is used unchanged -- the no-skills, no-MCP,
+        # no-local-tools, no-gate path stays
         # byte-identical to before this task (existing callers that never
         # pass `builtin_gate` see no behavior change at all).
         registry = self._registry
         allowed_tools = self._allowed_tools
         skill_runner = None
+        # TASK-1366: this run's UI-side diff channel. When this run takes
+        # the fresh-build branch below, the provider's strip seam
+        # (BuiltinToolProvider.invoke) appends
+        # ``(tool_name, file_path, old, new)`` here BEFORE the raw contents
+        # are removed from the LLM/run-log-bound result; the on_step
+        # handler below pairs each capture with its STEP_TOOL_RESULT (via
+        # ``_pair_step_diff``) and hangs it on the TOOL marker message
+        # (session-only ``tool_diff``). Threading: invoke() runs on the
+        # tool call's PER-CALL DAEMON THREAD (AgentService.
+        # _call_with_timeout) while on_step runs on this run's worker
+        # thread. In the normal case the daemon thread is joined before
+        # the result step is emitted, so a capture always precedes its
+        # step; on timeout/cancel the thread is abandoned unjoined and a
+        # late capture can land cross-thread AFTER its step -- the pairing
+        # rule (most-recent match, everything older is stale) tolerates
+        # both orderings, and deque append/scan/del degrade to a cosmetic
+        # missed pairing at worst. The shared fast path's construction-
+        # time provider has no sink (a cross-run provider must not capture
+        # into one run's queue), so gate-less callers simply get no diff
+        # capture -- their rows render exactly as before. Production always
+        # passes builtin_gate (console_chat_controller), i.e. the
+        # fresh-build branch.
+        pending_diffs: deque[tuple[str, str, str, str]] = deque()
         # task-4 (skills-fork-reachability): one SkillFileBindings per run,
         # handed to BOTH AgentService (the loop's authorization + reader
         # closure -- Task 3) and this run's _BridgeSkillRunner (which grants
@@ -1433,6 +1563,7 @@ class ConsoleAgentBridge:
             self._skills_service is not None
             or mcp_provider is not None
             or builtin_gate is not None
+            or local_provider is not None
         ):
             context: Mapping[str, Any] = {}
             if self._skills_service is not None:
@@ -1458,17 +1589,25 @@ class ConsoleAgentBridge:
                     run_is_ephemeral = self._store.session_is_ephemeral(session_id)
                 except KeyError:
                     run_is_ephemeral = False
-            registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(
-                context,
-                mcp_provider=mcp_provider,
-                builtin_gate=builtin_gate,
-                workspace_id=run_workspace_id,
-                ephemeral=run_is_ephemeral,
+            # TASK-1366: wire this run's diff channel (declared above) into
+            # the freshly-built provider.
+            registry, allowed_tools, builtin_names, local_names = (
+                _compose_run_registry_and_allowed(
+                    context,
+                    mcp_provider=mcp_provider,
+                    builtin_gate=builtin_gate,
+                    workspace_id=run_workspace_id,
+                    ephemeral=run_is_ephemeral,
+                    diff_sink=pending_diffs.append,
+                    local_provider=local_provider,
+                )
             )
             if self._skills_service is not None:
                 skill_names = frozenset(
                     str(item["name"])
-                    for item in _non_colliding_skill_entries(context, builtin_names)
+                    for item in _non_colliding_skill_entries(
+                        context, builtin_names, local_names=local_names
+                    )
                 )
                 skill_file_bindings = SkillFileBindings(
                     authorized=set(),
@@ -1482,6 +1621,7 @@ class ConsoleAgentBridge:
                     skills_service=self._skills_service,
                     skill_names=skill_names,
                     builtin_names=builtin_names,
+                    local_names=local_names,
                     skill_file_bindings=skill_file_bindings,
                 )
         # task-5 (skills-fork-reachability): seed this run's own bindings
@@ -1701,7 +1841,15 @@ class ConsoleAgentBridge:
         )
         config = AgentConfig(
             model=model,
-            system_prompt=compose_agent_system_prompt(session_system_prompt),
+            system_prompt=compose_agent_system_prompt(
+                session_system_prompt,
+                # Same condition initial_disclosure applies inside
+                # AgentService.run_turn: past the threshold, find/load is
+                # the live disclosure mode and the hint points at it.
+                offer_find_load=(
+                    len(registry.list_catalog()) > DIRECT_DISCLOSE_THRESHOLD
+                ),
+            ),
             allowed_tools=allowed_tools,
             budget=CONSOLE_RUN_BUDGET,
             native_tools=native_tools,
@@ -1738,6 +1886,17 @@ class ConsoleAgentBridge:
             live_steps.append(
                 AgentLiveStep(step.kind, self._summarize(step), agent_kind)
             )
+            # TASK-1366: pair this result step with the raw before/after
+            # contents the provider's diff_sink captured at the strip seam,
+            # when this call was a diff-carrying file write. Sub-agent
+            # result steps pair-and-discard too (their writes can ride this
+            # run's provider) even though only primary steps drop markers.
+            # See _pair_step_diff for the threading model and the staleness
+            # rule that keeps an abandoned call's late capture from pairing
+            # with a later write.
+            tool_diff: tuple[str, str, str] | None = None
+            if step.kind == STEP_TOOL_RESULT and pending_diffs:
+                tool_diff = _pair_step_diff(pending_diffs, step.tool_name)
             if agent_kind == AGENT_KIND_PRIMARY:
                 if step.kind == STEP_SPAWN:
                     subagents.append(SubAgentSummary(step.summary or ""))
@@ -1762,6 +1921,7 @@ class ConsoleAgentBridge:
                             summary=step.summary,
                             marker_text=marker_text,
                         ),
+                        tool_diff=tool_diff,
                     )
             # Diagnostic logging for every tool call and result. The actual
             # tool invocation lives inside AgentService, so we observe it
@@ -1810,7 +1970,8 @@ class ConsoleAgentBridge:
         # `_stamps`. Compose whichever exist rather than leaving the gate's
         # state unguarded (it was, before this task, and unlike MCP it has
         # no per-call approval fallback to degrade to: a lost stamp fails
-        # closed outright).
+        # closed outright). ADR-032 adds the local provider's stamp state
+        # to the same composition.
         _scopes = [
             scope
             for scope in (
@@ -1819,6 +1980,9 @@ class ConsoleAgentBridge:
                 else None,
                 getattr(builtin_gate, "stamp_scope", None)
                 if builtin_gate is not None
+                else None,
+                getattr(local_provider, "stamp_scope", None)
+                if local_provider is not None
                 else None,
             )
             if scope is not None
@@ -2361,6 +2525,18 @@ class ConsoleAgentBridge:
             blocks.append((record.get("assistant_message_id"), block))
         return blocks
 
+    def append_todo_marker(self, session_id: str, todos: list[dict]) -> None:
+        """Surface a todo_write state change in the transcript.
+
+        Public seam for the controller's ``on_todo_change`` wiring: the
+        local-tool handler fires it from the same agent worker thread the
+        step markers are appended on, so it reuses ``_append_marker``
+        directly (in-memory store append, ``persist=False``) -- no
+        ``call_from_thread`` marshalling, exactly like the live step-marker
+        path. Session-lifetime only; nothing is re-derived on resume.
+        """
+        self._append_marker(session_id, format_todo_marker(todos))
+
     # -- internals ------------------------------------------------------
 
     def _append_change_markers(
@@ -2436,7 +2612,12 @@ class ConsoleAgentBridge:
         )
 
     def _append_marker(
-        self, session_id: str, text: str, *, full_output: str | None = None
+        self,
+        session_id: str,
+        text: str,
+        *,
+        full_output: str | None = None,
+        tool_diff: tuple[str, str, str] | None = None,
     ) -> None:
         # Kept raw (no escaping): both consumers render markup-off --
         # console_transcript.py's _message_render_text builds a Content via
@@ -2445,12 +2626,18 @@ class ConsoleAgentBridge:
         # markup-parsed). Escaping here for a parser that never runs used to
         # leave literal backslashes in the rendered marker (`fetch [docs]` ->
         # `fetch \[docs]`).
+        # `tool_diff` (TASK-1366) is the raw (path, before, after) capture
+        # for a file-writing marker -- session-only display state for the
+        # transcript's diff row; the store never persists TOOL markers, and
+        # `text`/`full_output` (built from the post-strip result) remain
+        # the only forms the model history and run log ever see.
         try:
             self._store.append_message(
                 session_id,
                 role=ConsoleMessageRole.TOOL,
                 content=text,
                 tool_output_full=full_output,
+                tool_diff=tool_diff,
             )
         except KeyError:
             pass  # session vanished mid-run; the rail still has the live snapshot

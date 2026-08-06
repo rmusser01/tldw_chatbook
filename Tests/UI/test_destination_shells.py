@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Select, Static
+from textual.widgets import Button, Checkbox, Select, Static
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.ACP_Interop.runtime_session import ACPRuntimeSessionState
@@ -3871,21 +3871,24 @@ async def test_settings_destination_uses_three_column_workbench_contract():
         await _wait_for_visible_text(
             screen,
             pilot,
-            "Settings | Global preferences, appearance, storage | Local",
+            "Settings | Global preferences, appearance, storage, and app behavior | Local",
         )
         text = _visible_text(screen)
 
         assert (
-            "Settings | Global preferences, appearance, storage | Local"
+            "Settings | Global preferences, appearance, storage, and app behavior | Local"
             in text
         )
         assert "Mode: Overview | Runtime controls stay in MCP and ACP" in text
         assert "Scope Inspector" in text
         assert "Overview" in text
-        assert "Provider readiness" in text
+        # task-1369: the lead readiness section is titled "Status" now.
+        assert "Status" in text
         assert "Storage" in text
         assert "Privacy" in text
-        assert "Console paste collapse" in text
+        # The console paste-collapse row lives behind the "Where changes
+        # happen" disclosure on the task-1369 overview card.
+        assert "Where changes happen" in text
         assert (
             "Saves apply to your local config file. Nothing is sent to a server "
             "unless you run Manual sync yourself." in text
@@ -3943,17 +3946,17 @@ async def test_settings_appearance_action_routes_to_settings_theme_category():
 
 
 @pytest.mark.parametrize(
-    ("initial_value", "expected_label", "expected_saved_value"),
+    ("initial_value", "expected_checked", "expected_saved_value"),
     [
-        (True, "Enabled", False),
-        ("false", "Disabled", True),
+        (True, True, False),
+        ("false", False, True),
     ],
 )
 @pytest.mark.asyncio
 async def test_settings_console_paste_collapse_toggle_reflects_and_persists_config(
     monkeypatch,
     initial_value,
-    expected_label,
+    expected_checked,
     expected_saved_value,
 ):
     app = _build_test_app()
@@ -3977,10 +3980,10 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
         )
         toggle = screen.query_one(
             "#settings-console-collapse-large-pastes-toggle",
-            Button,
+            Checkbox,
         )
 
-        assert expected_label in str(toggle.label)
+        assert toggle.value is expected_checked
 
         await pilot.click("#settings-console-collapse-large-pastes-toggle")
         await pilot.pause(0.1)

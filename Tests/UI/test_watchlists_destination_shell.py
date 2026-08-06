@@ -948,6 +948,15 @@ async def test_bracket_toggle_preserves_a_cleared_noise_selector_field():
         await pilot.pause()
         screen.query_one("#sources-new-button", Button).press()
         await pilot.pause()
+        # TASK-2302 renders the noise field only for the url family (an RSS
+        # feed has no elements for a CSS rule to match), so this test has to
+        # put the form in the one state the field exists in. `Select.value`
+        # is the same change a click through the overlay makes.
+        screen.query_one("#sources-create-type", Select).value = "url"
+        for _ in range(200):
+            await pilot.pause(0.02)
+            if screen.query("#sources-create-ignore-selectors"):
+                break
 
         field = screen.query_one("#sources-create-ignore-selectors", TextArea)
         assert field.text == default_ignore_selectors_text(), (

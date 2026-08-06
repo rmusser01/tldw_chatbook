@@ -217,6 +217,10 @@ class StatusDashboard(Widget):
         if not self.start_time or not self.show_time:
             return
 
+        # Skip while the screen/tab is inactive so hidden tabs burn no CPU.
+        if not self.is_attached or not self.screen.is_active:
+            return
+
         try:
             elapsed = datetime.now() - self.start_time
             minutes, seconds = divmod(int(elapsed.total_seconds()), 60)

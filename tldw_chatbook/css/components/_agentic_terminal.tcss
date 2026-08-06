@@ -767,6 +767,11 @@ ConsoleRunLogModal {
 #settings-category-pane {
     width: 30;
     max-width: 34;
+    /* min-width (task-1342): worst label is "> Privacy & Security *" (22
+       cells) plus Button line-pad (2), border (2), padding (2), list
+       scrollbar (1) and pane border (2) -- 31; width:30 alone clips the
+       dirty "*" marker off edited categories. */
+    min-width: 32;
     overflow-y: hidden;
     overflow-x: hidden;
 }
@@ -799,7 +804,11 @@ ConsoleRunLogModal {
 }
 
 #settings-impact-pane {
+    /* min-width: longest inspector word is "Read-only/WIP;" (14 cells) plus
+       border (2), padding (2), scrollbar (1) and row padding (2), so words
+       wrap on whitespace instead of folding mid-word (task-1342). */
     width: 2fr;
+    min-width: 21;
     overflow-y: hidden;
     overflow-x: hidden;
 }
@@ -814,6 +823,38 @@ ConsoleRunLogModal {
     scrollbar-color: $ds-grid-line;
     scrollbar-color-hover: $ds-grid-line;
     scrollbar-color-active: $ds-action-focus;
+}
+
+/* Narrow-width compact workbench (task-1342), following the personas
+   precedent (personas-workbench-compact): at <=90 cols the 3:6:2 split
+   leaves slivers, so the category pane becomes a fixed-width sidebar, the
+   inspector pane and its divider drop out, and the detail pane takes the
+   rest. The search help/status rows hide so category rows stay visible at
+   24-row heights. */
+#settings-workbench.settings-workbench-compact {
+    padding: 0;
+}
+
+#settings-category-pane.settings-workbench-compact-pane {
+    width: 32;
+    min-width: 32;
+    padding: 0 1;
+}
+
+#settings-detail-pane.settings-workbench-compact-pane {
+    width: 1fr;
+    min-width: 0;
+    padding: 0 1;
+}
+
+#settings-impact-pane.settings-workbench-compact-pane,
+#settings-workbench.settings-workbench-compact #settings-detail-impact-divider {
+    display: none;
+}
+
+#settings-workbench.settings-workbench-compact .settings-category-search-help,
+#settings-workbench.settings-workbench-compact .settings-category-search-status {
+    display: none;
 }
 
 #home-triage-grid {
@@ -3182,6 +3223,14 @@ with stray left-edge border fragments), and padding 0 1 so the full
     text-style: italic;
 }
 
+/* TASK-1366: inline diff row under an expanded file-write TOOL marker.
+   Indented to read as belonging to the marker above it; height stays
+   auto so the mounted DiffView sizes itself. */
+.console-transcript-tool-diff {
+    height: auto;
+    padding: 0 0 0 4;
+}
+
 .console-transcript-message-system {
     color: $ds-text-muted;
 }
@@ -4051,6 +4100,10 @@ Button.settings-category-button {
     max-height: 1;
     margin: 0;
     padding: 0 1;
+    /* Textual 8 Buttons default to line-pad: 1, reserving one cell on each
+       side of the label (line-pad: 0 is not expressible in CSS). The
+       #settings-category-pane min-width absorbs those 2 cells so labels
+       never wrap into this clipped second line (task-1342). */
     content-align: left middle;
     text-align: left;
     background: $ds-surface-panel;
@@ -4320,7 +4373,10 @@ Button.settings-category-group-toggle:focus {
 
 .settings-compact-input.settings-invalid-input:focus,
 .settings-compact-select.settings-invalid-input:focus {
-    background: $ds-surface-raised;
+    /* task-1369: keep the error tint while focused so the invalid marker is
+       not lost; slightly stronger than the unfocused 18% to still read as
+       focused. */
+    background: $ds-status-error 28%;
     color: $ds-text-primary;
     text-opacity: 1;
     text-style: bold;
@@ -4411,12 +4467,25 @@ Button.settings-category-group-toggle:focus {
     color: $ds-text-muted;
 }
 
-.settings-storage-check-result {
-    min-height: 7;
+/* task-1341: intentional instant-apply controls are visually separated from
+   staged fields with a bordered group plus an inline italic hint.
+   task-1367: explicit height:auto -- the default Vertical 1fr never resolves
+   inside the auto-height providers card and clipped every control. */
+.settings-instant-apply-group {
+    height: auto;
+    border: solid $ds-column-line;
+    background: $ds-surface-panel;
+    padding: 0 1;
 }
 
-.settings-category-status-hidden {
-    display: none;
+.settings-instant-apply-hint {
+    color: $ds-text-muted;
+    text-style: italic;
+    padding: 0 1;
+}
+
+.settings-storage-check-result {
+    min-height: 7;
 }
 
 .settings-dirty-category {
@@ -4473,6 +4542,15 @@ _CredentialClearModal {
     height: auto;
     padding: 1 2;
     border: thick $ds-action-focus;
+    background: $ds-surface-panel;
+}
+
+/* task-1374: keyboard-reachable mirror of the focused control's tooltip,
+   one muted line pinned under the Settings workbench. */
+#settings-focus-help {
+    height: 1;
+    padding: 0 1;
+    color: $ds-text-muted;
     background: $ds-surface-panel;
 }
 

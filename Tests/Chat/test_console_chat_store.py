@@ -2994,3 +2994,122 @@ def test_payload_revision_not_bumped_per_stream_chunk():
     assert store.payload_revision(session.id) == r0  # chunks don't churn
     store.mark_message_complete(message.id)
     assert store.payload_revision(session.id) > r0  # completion does
+
+
+def test_append_message_metadata_rides_the_create_write():
+    """task-2364: structured metadata is written with the row, not by a
+    follow-up update -- a realtime row knows its engine/provider/model at
+    creation."""
+    from tldw_chatbook.Chat.message_metadata import MessageMetadata
+
+    persistence = RecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+    metadata = MessageMetadata(
+        engine="realtime", provider="openai", model="gpt-realtime"
+    )
+
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="spoken answer",
+        persist=True,
+        metadata=metadata,
+    )
+
+    assert message.metadata == metadata
+    assert persistence.created[-1]["metadata_json"] == metadata.to_json()
+
+
+def test_default_metadata_is_never_written():
+    """An all-default instance carries no facts; writing it would store a
+    row of noise indistinguishable from "nothing known"."""
+    from tldw_chatbook.Chat.message_metadata import MessageMetadata
+
+    persistence = RecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="typed, not spoken",
+        persist=True,
+        metadata=MessageMetadata(),
+    )
+
+    assert "metadata_json" not in persistence.created[-1]
+
+
+def test_set_message_metadata_on_an_unpersisted_row_rides_the_later_create():
+    """A realtime user row is created EMPTY (deferred persistence) and only
+    reaches the DB once its transcript lands -- the status recorded in
+    between must travel with that create."""
+    from tldw_chatbook.Chat.message_metadata import MessageMetadata
+
+    persistence = RecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="",
+        persist=True,
+        metadata=MessageMetadata(engine="realtime", transcript_status="pending"),
+    )
+    assert persistence.created == [], "an empty row has nothing to persist yet"
+
+    store.set_message_metadata(
+        message.id,
+        MessageMetadata(engine="realtime", transcript_status="final"),
+    )
+    store.update_message_content(message.id, "what the user said")
+
+    assert persistence.created[-1]["content"] == "what the user said"
+    assert '"transcript_status": "final"' in persistence.created[-1]["metadata_json"]
+
+
+def test_set_message_metadata_flushes_locally_and_leaves_the_version_alone():
+    """Same local-only contract as the usage flush, against a REAL
+    persistence/DB pair: metadata is this device's own observation, so the
+    write must not bump version/last_modified or enqueue a sync_log row.
+    """
+    from tldw_chatbook.Chat.message_metadata import MessageMetadata
+
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.ensure_session(title="Chat 1")
+        message = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+        )
+        store.append_stream_chunk(message.id, "half a sen")
+        store.mark_message_complete(message.id)
+
+        persisted_id = store.get_message(message.id).persisted_message_id
+        assert persisted_id is not None
+        row_before = db.get_message_by_id(persisted_id)
+        assert row_before["metadata_json"] is None
+        change_id = db.get_latest_sync_log_change_id()
+
+        store.set_message_metadata(
+            message.id,
+            MessageMetadata(
+                engine="realtime",
+                provider="openai",
+                model="gpt-realtime",
+                interrupted=True,
+            ),
+        )
+
+        row_after = db.get_message_by_id(persisted_id)
+        assert '"interrupted": true' in row_after["metadata_json"]
+        assert row_after["version"] == row_before["version"]
+        assert row_after["last_modified"] == row_before["last_modified"]
+        assert (
+            db.get_sync_log_entries(since_change_id=change_id, entity_type="messages")
+            == []
+        )
+    finally:
+        db.close_connection()

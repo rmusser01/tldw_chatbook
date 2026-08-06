@@ -472,6 +472,9 @@ class BaseTamagotchi(Static):
         frame_index = [0]
 
         def next_frame():
+            # Skip while the screen/tab is inactive so hidden tabs burn no CPU.
+            if not self.is_attached or not self.screen.is_active:
+                return
             if frame_index[0] < len(frames):
                 self.sprite = frames[frame_index[0]]
                 frame_index[0] += 1

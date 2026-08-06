@@ -432,11 +432,12 @@ async def test_main_navigation_overflow_hint_does_not_overlap_settings_at_defaul
         if more.display:
             # Overflow regime (F-key labels made the bar wider than 140):
             # the hint is docked outside the strip, so it can never sit on a
-            # button; the strip's scroll window clips labels instead.
+            # button; destinations that don't fit are hidden, not clipped.
             assert more.region.x >= strip.region.right, (
                 "More hint must dock right of the destination strip"
             )
-            assert strip.max_scroll_x > 0
+            hidden = [button for button in nav.query(".nav-button") if not button.display]
+            assert hidden, "Overflow hint shown but no destination is hidden"
         else:
             _assert_no_horizontal_overlap(
                 settings, more, context="More hint overlaps Settings nav item"
@@ -1703,7 +1704,15 @@ async def test_watchlists_right_rail_does_not_clip_action_labels(size):
             "url": "http://example.com/feed",
         }
         await pilot.pause()
-        for label in ("Preview", "Check now", "Stage in Console", "Delete"):
+        # TASK-2303 added `Add to watchlist` here, the longest label the
+        # source action set carries.
+        for label in (
+            "Preview",
+            "Check now",
+            "Add to watchlist",
+            "Stage in Console",
+            "Delete",
+        ):
             _assert_label_intact_on_screen(
                 right_rail, label, context=f"{context} (source actions)"
             )
@@ -1711,7 +1720,7 @@ async def test_watchlists_right_rail_does_not_clip_action_labels(size):
         inspector.selected_entity = None
         inspector.scope = TreeScope(kind="watchlist", watchlist_id=1)
         await pilot.pause()
-        for label in ("Check now", "Delete"):
+        for label in ("Add existing", "Check now", "Delete"):
             _assert_label_intact_on_screen(
                 right_rail, label, context=f"{context} (watchlist-scope actions)"
             )
@@ -2540,10 +2549,10 @@ async def test_settings_dirty_category_status_has_visual_marker_class():
         screen = _active_destination_screen(host)
         await _click_settings_category(screen, pilot, "console-behavior")
         await pilot.click("#settings-console-collapse-large-pastes-toggle")
-        status = screen.query_one("#settings-category-console-behavior-status")
+        banner = screen.query_one("#settings-category-state-banner")
 
-        assert "Status: Unsaved" in str(status.renderable)
-        assert status.has_class("settings-dirty-category")
+        assert "State:" in str(banner.renderable)
+        assert banner.has_class("settings-dirty-category")
 
 
 @pytest.mark.asyncio
@@ -3335,7 +3344,12 @@ async def test_watchlists_tree_action_labels_fit_the_rail_intact():
         await pilot.pause()
 
         rail = screen.query_one("#wl-region-left_rail")
-        for label in ("New", "Rename", "Delete", "Add source", "Remove"):
+        # TASK-2303 renamed the membership verb: "Add source" read as a
+        # third way to CREATE one. "Add existing" is the label now, and it is
+        # the longest thing in the rail's action rows. It carries no ellipsis
+        # on purpose -- `_assert_label_intact_on_screen` reads any `…` in a
+        # composited row as clipping and cannot tell a literal one apart.
+        for label in ("New", "Rename", "Delete", "Add existing", "Remove"):
             _assert_label_intact_on_screen(
                 rail, label, context=f"tree action {label!r}"
             )
@@ -3419,14 +3433,14 @@ async def test_watchlists_sources_toolbar_controls_are_actually_visible(size):
 
     `.destination-filter-strip` is `height: 1` (`layout/_panes.tcss`), but a
     bordered `Input`/`Select` is three rows, so the strip carrying the search
-    box, the three filters, `New Source` and `Filters` rendered as its top
+    box, the three filters, `New source` and `Filters` rendered as its top
     border and nothing else. Captured live on a clean profile:
 
         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
             Preview        Check now      Import OPML     Export OPML
 
     That blocked the whole new-user path: create a watchlist, click
-    "Create source", and there is no visible way to add one.
+    "New source", and there is no visible way to add one.
 
     The Rules strip holds only `Button`s and rendered correctly, which is why
     this asserts on the widgets that are three rows tall rather than on the
@@ -3481,7 +3495,7 @@ async def test_watchlists_sources_toolbar_controls_are_actually_visible(size):
         for label in (
             "Search sources...",  # the search Input's placeholder
             "All statuses",  # the status Select's current value
-            "New Source",
+            "New source",  # TASK-2303: the create verb, in its shipped casing
             "Filters",
         ):
             assert label in painted, (

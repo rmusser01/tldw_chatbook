@@ -61,6 +61,7 @@ from tldw_chatbook.Sync_Interop.manual_sync_control import (
     ManualSyncRunResult,
 )
 from tldw_chatbook.Sync_Interop.conflict_review import SyncV2ConflictReviewItem
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.Workspaces.display_state import LIBRARY_WORKSPACE_VISIBILITY_COPY
 from tldw_chatbook.Workspaces.models import (
@@ -679,10 +680,13 @@ async def test_settings_defaults_to_overview_category():
         text = _visible_text(screen)
 
         assert "Overview" in text
-        assert "Provider readiness" in text
+        # task-1369: the lead readiness section is titled "Status" now.
+        assert "Status" in text
         assert "Storage" in text
         assert "Privacy" in text
-        assert "Console paste collapse" in text
+        # The console paste-collapse row lives behind the "Where changes
+        # happen" disclosure on the task-1369 overview card.
+        assert "Where changes happen" in text
 
 
 def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
@@ -1155,16 +1159,12 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
             screen.query_one("#settings-appearance-density", Select).value == "normal"
         )
         assert (
-            str(
-                screen.query_one(
-                    "#settings-appearance-animations-enabled", Button
-                ).label
-            )
-            == "Enabled"
+            screen.query_one("#settings-appearance-animations-enabled", Checkbox).value
+            is True
         )
         assert (
-            str(screen.query_one("#settings-appearance-smooth-scrolling", Button).label)
-            == "Enabled"
+            screen.query_one("#settings-appearance-smooth-scrolling", Checkbox).value
+            is True
         )
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert screen.query_one("#settings-revert-category", Button).disabled is True
@@ -1225,11 +1225,14 @@ async def test_settings_appearance_revert_restores_loaded_values():
         assert "Unsaved" in _visible_text(screen)
 
         screen.action_settings_revert_category()
-        text = _visible_text(screen)
+        await pilot.pause()
+        # task-1340: revert of a dirty category asks for confirmation first.
+        await pilot.click("#confirm-button")
+        await pilot.pause()
 
         assert font_size.value == "12"
-        assert "Appearance defaults reverted to last loaded values." in text
-        assert "No unsaved changes" in text
+        assert not screen._category_has_unsaved_changes(SettingsCategoryId.APPEARANCE)
+        assert "No unsaved changes" in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -1546,11 +1549,13 @@ async def test_settings_storage_save_and_revert_defaults(monkeypatch, tmp_path):
         assert "Unsaved" in _visible_text(screen)
 
         screen.action_settings_revert_category()
+        await pilot.pause()
+        # task-1340: revert of a dirty category asks for confirmation first.
+        await pilot.click("#confirm-button")
+        await pilot.pause()
 
         assert prompts.value.endswith("prompts.db")
-        assert "Storage defaults reverted to last loaded values." in _visible_text(
-            screen
-        )
+        assert not screen._category_has_unsaved_changes(SettingsCategoryId.STORAGE)
 
 
 def test_settings_storage_save_uses_exclusive_thread_worker():
@@ -1747,7 +1752,7 @@ async def test_settings_overview_detail_uses_cached_server_sync_rows(monkeypatch
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
-        assert "Active server profile: Loading Settings source contracts" in text
+        assert "Active server profile: Loading Settings details" in text
 
 
 @pytest.mark.asyncio
@@ -1862,6 +1867,79 @@ def test_settings_manual_sync_rows_block_without_control_service():
 
     assert rows["Manual sync status"] == "blocked"
     assert rows["Manual sync preview"] == "Manual Sync control is not available."
+
+
+@pytest.mark.asyncio
+async def test_settings_manual_sync_run_requires_confirmation_with_pending_counts():
+    """task-1367: Run manual sync pushes pending Notes/Chat to a server, so
+    it must ask first (seeded with the preview's pending counts) and only
+    run the sync on confirm."""
+    run_calls = []
+
+    class FakeManualSyncControl:
+        def preview(self, **kwargs):
+            return ManualSyncPreview(
+                status="ready",
+                can_run=True,
+                pending_total=3,
+                pending_by_domain={"notes": 2, "chat": 1},
+                user_message="Manual Sync preview: 3 pending outgoing changes.",
+            )
+
+        async def run_once(self, **kwargs):
+            run_calls.append(kwargs)
+            return ManualSyncRunResult(
+                status="ok",
+                user_message="Manual Sync completed.",
+                summary={},
+                preview=self.preview(),
+            )
+
+    app = _build_test_app()
+    app.runtime_policy.state = RuntimeSourceState(
+        active_source="server",
+        active_server_id="server-main",
+        server_configured=True,
+    )
+    app.manual_sync_control_service = FakeManualSyncControl()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        # The mount-time refresh loaded the fake preview into the rows.
+        assert dict(screen.manual_sync_rows)["Pending outgoing"] == "notes: 2; chat: 1"
+
+        await pilot.click("#settings-manual-sync-run")
+        await pilot.pause()
+
+        # Confirmation dialog is up, seeded with the pending counts, and
+        # NOTHING was pushed to the server yet.
+        dialog = host.screen
+        assert isinstance(dialog, ConfirmationDialog)
+        assert "notes: 2" in dialog.message
+        assert "chat: 1" in dialog.message
+        assert run_calls == []
+        assert dict(screen.manual_sync_rows)["Manual sync status"] == "ready"
+
+        # Cancel keeps everything untouched.
+        await pilot.click("#cancel-button")
+        await pilot.pause()
+        assert not isinstance(host.screen, ConfirmationDialog)
+        assert run_calls == []
+
+        # Re-invoke and confirm: only now does the sync run.
+        await pilot.click("#settings-manual-sync-run")
+        await pilot.pause()
+        assert isinstance(host.screen, ConfirmationDialog)
+        await pilot.click("#confirm-button")
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert len(run_calls) == 1
+        assert run_calls[0]["server_profile_id"] == "server-main"
+        # Note: no final-row assertion -- popping the dialog resumes the
+        # screen and queues a fresh preview refresh (on_screen_resume), so
+        # the visible rows may show either the run result or the refresh.
 
 
 def test_settings_apply_manual_sync_result_updates_rows():
@@ -2201,7 +2279,7 @@ async def test_settings_provider_test_toast_states_failure_reason(monkeypatch):
         toasts = []
         host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
 
-        screen.action_settings_test_category(allow_text_entry_focus=True)
+        screen.action_settings_test_category()
 
         assert toasts, "provider test produced no toast"
         message, kwargs = toasts[-1]
@@ -2222,7 +2300,7 @@ async def test_settings_provider_test_toast_states_success():
         toasts = []
         host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
 
-        screen.action_settings_test_category(allow_text_entry_focus=True)
+        screen.action_settings_test_category()
 
         assert toasts, "provider test produced no toast"
         message, kwargs = toasts[-1]
@@ -2267,7 +2345,8 @@ async def test_settings_overview_leads_with_readiness_before_manual_sync():
             raise AssertionError(f"{fragment!r} not found in overview card: {statics}")
 
         assert "Manual Sync v2" not in card_text
-        assert _first_index("Provider readiness") < _first_index("Manual sync")
+        # task-1369: the lead readiness section is titled "Status" now.
+        assert _first_index("Status") < _first_index("Manual sync")
         assert _first_index("Config path") < _first_index("Manual sync")
         assert _first_index("Privacy") < _first_index("Manual sync")
         assert _first_index("Manual sync") < _first_index("Where changes happen")
@@ -2430,7 +2509,7 @@ async def test_settings_provider_test_toast_folds_in_reachable_endpoint_probe(
         toasts = []
         host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
 
-        screen.action_settings_test_category(allow_text_entry_focus=True)
+        screen.action_settings_test_category()
 
         deadline = time.monotonic() + 4.0
         while time.monotonic() < deadline and not toasts:
@@ -2467,7 +2546,7 @@ async def test_settings_provider_test_toast_reports_unreachable_endpoint(monkeyp
         toasts = []
         host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
 
-        screen.action_settings_test_category(allow_text_entry_focus=True)
+        screen.action_settings_test_category()
 
         deadline = time.monotonic() + 4.0
         while time.monotonic() < deadline and not toasts:
@@ -2505,7 +2584,7 @@ async def test_settings_provider_test_skips_probe_for_cloud_providers(monkeypatc
         toasts = []
         host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
 
-        screen.action_settings_test_category(allow_text_entry_focus=True)
+        screen.action_settings_test_category()
         await pilot.pause()
 
         assert probe_calls == []
@@ -2535,7 +2614,7 @@ async def test_settings_provider_test_failure_skips_endpoint_probe(monkeypatch):
         toasts = []
         host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
 
-        screen.action_settings_test_category(allow_text_entry_focus=True)
+        screen.action_settings_test_category()
         await pilot.pause()
 
         assert probe_calls == []
@@ -2834,7 +2913,11 @@ def test_settings_invalid_compact_fields_keep_focused_text_readable():
     body = match.group("body")
     assert "color: $ds-text-primary;" in body
     assert "text-opacity: 1;" in body
-    assert "background: $ds-surface-raised;" in body
+    # task-1369: the focused invalid field keeps an error-tinted background
+    # instead of restyling to the normal surface (the highlight must not be
+    # lost exactly while the user edits the field).
+    assert "background: $ds-status-error" in body
+    assert "$ds-surface-raised" not in body
     assert "outline: none;" in body
     assert "outline: heavy" not in body
 
@@ -2998,7 +3081,7 @@ async def test_settings_console_behavior_focus_reveals_full_guide_when_purpose_s
         screen = _active_destination_screen(host)
         pane = screen.query_one("#settings-impact-pane-body", VerticalScroll)
         field = screen.query_one("#settings-console-max-parallel-runs", Input)
-        other_field = screen.query_one("#settings-console-default-streaming", Input)
+        other_field = screen.query_one("#settings-console-default-streaming", Checkbox)
         guide_ids = [f"#settings-console-behavior-field-guide-{i}" for i in range(4)]
 
         # Measure the REAL (focused) guide's total span first, so the pane
@@ -3140,6 +3223,148 @@ async def test_settings_keyboard_category_focus_survives_selection_recompose():
         screen = _active_destination_screen(host)
 
         assert "Appearance" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_settings_jk_category_navigation_arms_from_non_category_focus():
+    """task-1373: j/k moves category focus without first focusing the rail."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        open_theme = screen.query_one("#settings-open-appearance", Button)
+        open_theme.focus()
+        await pilot.pause()
+
+        assert open_theme.has_focus
+
+        await pilot.press("j")
+        focused = pilot.app.focused
+
+        assert isinstance(focused, Button)
+        assert focused.has_class("settings-category-button")
+        assert focused.id != "settings-category-overview"
+
+        await pilot.press("k")
+        focused = pilot.app.focused
+
+        assert isinstance(focused, Button)
+        assert focused.id == "settings-category-overview"
+
+
+@pytest.mark.asyncio
+async def test_settings_jk_never_steals_keys_from_text_input():
+    """task-1373: printable keys stay typed when a text input has focus."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        search = screen.query_one("#settings-category-search", Input)
+        search.focus()
+        await pilot.pause()
+
+        await pilot.press("j")
+        await pilot.press("k")
+
+        assert search.has_focus
+        assert search.value == "jk"
+
+
+@pytest.mark.asyncio
+async def test_settings_jk_never_steals_keys_from_select():
+    """task-1373: j/k does not move category focus from a Select or its overlay."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-appearance")
+        screen = _active_destination_screen(host)
+        theme_select = screen.query_one("#settings-appearance-theme", Select)
+        theme_select.focus()
+        await pilot.pause()
+
+        assert theme_select.has_focus
+
+        await pilot.press("j")
+
+        assert theme_select.has_focus
+
+        # The open overlay type-searches on printable keys; j/k must not
+        # move category focus behind it either.
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert theme_select.expanded
+
+        await pilot.press("j")
+        focused = pilot.app.focused
+
+        assert theme_select.expanded
+        assert not (
+            isinstance(focused, Button)
+            and focused.has_class("settings-category-button")
+        )
+
+        await pilot.press("escape")
+
+
+@pytest.mark.asyncio
+async def test_settings_focus_surfaces_tooltip_in_focus_help_line():
+    """task-1374: keyboard focus mirrors the control's hover-only tooltip."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        help_line = screen.query_one("#settings-focus-help", Static)
+
+        await pilot.press("tab")  # screen on_key focuses the Overview category
+        await pilot.pause()
+        focused = pilot.app.focused
+
+        assert isinstance(focused, Button)
+        assert focused.id == "settings-category-overview"
+        assert str(help_line.renderable) == str(focused.tooltip)
+        assert str(help_line.renderable).strip() != ""
+
+        await pilot.press("j")  # next category button, new tooltip
+        await pilot.pause()
+        focused = pilot.app.focused
+
+        assert isinstance(focused, Button)
+        assert str(help_line.renderable) == str(focused.tooltip)
+
+        search = screen.query_one("#settings-category-search", Input)
+        search.focus()  # no tooltip: the line clears instead of going stale
+        await pilot.pause()
+
+        assert str(help_line.renderable) == ""
+
+
+@pytest.mark.asyncio
+async def test_settings_category_rail_renders_no_hidden_status_rows():
+    """task-1377: the dead per-category Status: rows are gone from the rail."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        assert not screen.query(".settings-category-status-hidden")
+        rail = screen.query_one("#settings-category-list")
+        hidden_status_rows = [
+            child
+            for child in rail.query(Static)
+            if str(child.id or "").startswith("settings-category-")
+            and str(child.id or "").endswith("-status")
+        ]
+        assert hidden_status_rows == []
 
 
 @pytest.mark.asyncio
@@ -3475,14 +3700,14 @@ async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh(monkeypa
         await pilot.press("enter")
         await pilot.pause()
         assert host.focused is toggle
-        assert str(toggle.label) == "Disabled"
+        assert toggle.value is False
         assert "Unsaved" in _visible_text(screen)
 
         await pilot.press("enter")
         await pilot.pause()
 
         assert host.focused is toggle
-        assert str(toggle.label) == "Enabled"
+        assert toggle.value is True
         assert "No unsaved changes" in _visible_text(screen)
 
 
@@ -3795,8 +4020,8 @@ async def test_settings_console_behavior_renders_global_default_controls():
         screen = _active_destination_screen(host)
 
         assert (
-            screen.query_one("#settings-console-default-streaming", Input).value
-            == "false"
+            screen.query_one("#settings-console-default-streaming", Checkbox).value
+            is False
         )
         assert (
             screen.query_one("#settings-console-default-temperature", Input).value
@@ -3823,19 +4048,19 @@ async def test_settings_console_behavior_renders_global_default_controls():
             == "0.3"
         )
         assert (
-            screen.query_one("#settings-console-default-reasoning-effort", Input).value
+            screen.query_one("#settings-console-default-reasoning-effort", Select).value
             == "high"
         )
         assert (
-            screen.query_one("#settings-console-default-reasoning-summary", Input).value
+            screen.query_one("#settings-console-default-reasoning-summary", Select).value
             == "auto"
         )
         assert (
-            screen.query_one("#settings-console-default-verbosity", Input).value
+            screen.query_one("#settings-console-default-verbosity", Select).value
             == "medium"
         )
         assert (
-            screen.query_one("#settings-console-default-thinking-effort", Input).value
+            screen.query_one("#settings-console-default-thinking-effort", Select).value
             == "low"
         )
         assert (
@@ -3877,7 +4102,7 @@ async def test_settings_console_behavior_renders_background_effect_controls():
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
 
-        assert screen.query_one("#settings-console-background-effect-enabled", Button)
+        assert screen.query_one("#settings-console-background-effect-enabled", Checkbox)
         assert screen.query_one("#settings-console-background-effect-type", Select)
         assert screen.query_one("#settings-console-background-effect-scope", Select)
         assert screen.query_one("#settings-console-background-effect-intensity", Select)
@@ -3920,12 +4145,12 @@ async def test_settings_console_background_effects_save_nested_config(monkeypatc
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         enabled = screen.query_one(
-            "#settings-console-background-effect-enabled", Button
+            "#settings-console-background-effect-enabled", Checkbox
         )
         effect = screen.query_one("#settings-console-background-effect-type", Select)
         fps = screen.query_one("#settings-console-background-effect-fps", Input)
 
-        enabled.press()
+        enabled.value = True
         effect.value = "matrix"
         fps.value = "10"
         screen.handle_console_background_effect_fps_changed(
@@ -4239,7 +4464,7 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
-        streaming = screen.query_one("#settings-console-default-streaming", Input)
+        streaming = screen.query_one("#settings-console-default-streaming", Checkbox)
         temperature = screen.query_one("#settings-console-default-temperature", Input)
         top_p = screen.query_one("#settings-console-default-top-p", Input)
         min_p = screen.query_one("#settings-console-default-min-p", Input)
@@ -4253,22 +4478,22 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
             "#settings-console-default-frequency-penalty", Input
         )
         reasoning_effort = screen.query_one(
-            "#settings-console-default-reasoning-effort", Input
+            "#settings-console-default-reasoning-effort", Select
         )
         reasoning_summary = screen.query_one(
-            "#settings-console-default-reasoning-summary", Input
+            "#settings-console-default-reasoning-summary", Select
         )
-        verbosity = screen.query_one("#settings-console-default-verbosity", Input)
+        verbosity = screen.query_one("#settings-console-default-verbosity", Select)
         thinking_effort = screen.query_one(
-            "#settings-console-default-thinking-effort", Input
+            "#settings-console-default-thinking-effort", Select
         )
         thinking_budget = screen.query_one(
             "#settings-console-default-thinking-budget-tokens", Input
         )
 
-        streaming.value = "false"
+        streaming.value = False
         screen.handle_console_default_streaming_changed(
-            Input.Changed(streaming, streaming.value)
+            Checkbox.Changed(streaming, False)
         )
         temperature.value = "0.33"
         screen.handle_console_default_temperature_changed(
@@ -4296,19 +4521,19 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
         )
         reasoning_effort.value = "high"
         screen.handle_console_default_reasoning_effort_changed(
-            Input.Changed(reasoning_effort, reasoning_effort.value)
+            Select.Changed(reasoning_effort, reasoning_effort.value)
         )
         reasoning_summary.value = "auto"
         screen.handle_console_default_reasoning_summary_changed(
-            Input.Changed(reasoning_summary, reasoning_summary.value)
+            Select.Changed(reasoning_summary, reasoning_summary.value)
         )
         verbosity.value = "medium"
         screen.handle_console_default_verbosity_changed(
-            Input.Changed(verbosity, verbosity.value)
+            Select.Changed(verbosity, verbosity.value)
         )
         thinking_effort.value = "low"
         screen.handle_console_default_thinking_effort_changed(
-            Input.Changed(thinking_effort, thinking_effort.value)
+            Select.Changed(thinking_effort, thinking_effort.value)
         )
         thinking_budget.value = "4096"
         screen.handle_console_default_thinking_budget_tokens_changed(
@@ -4399,15 +4624,15 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
         threshold = screen.query_one(
             "#settings-console-paste-collapse-threshold", Input
         )
-        streaming = screen.query_one("#settings-console-default-streaming", Input)
+        streaming = screen.query_one("#settings-console-default-streaming", Checkbox)
 
         threshold.value = "120"
         screen.handle_console_paste_threshold_changed(
             Input.Changed(threshold, threshold.value)
         )
-        streaming.value = "false"
+        streaming.value = False
         screen.handle_console_default_streaming_changed(
-            Input.Changed(streaming, streaming.value)
+            Checkbox.Changed(streaming, False)
         )
 
         await pilot.click("#settings-save-category")
@@ -4431,12 +4656,6 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
 @pytest.mark.parametrize(
     ("field_id", "handler_name", "value", "message"),
     (
-        (
-            "#settings-console-default-streaming",
-            "handle_console_default_streaming_changed",
-            "tru",
-            "Streaming must be true or false.",
-        ),
         (
             "#settings-console-default-temperature",
             "handle_console_default_temperature_changed",
@@ -4549,6 +4768,10 @@ async def test_settings_console_behavior_revert_restores_global_defaults(monkeyp
         assert "Unsaved" in _visible_text(screen)
 
         await pilot.click("#settings-revert-category")
+        await pilot.pause()
+        # task-1340: revert of a dirty category asks for confirmation first.
+        await pilot.click("#confirm-button")
+        await pilot.pause()
 
         await _wait_for_settings_value(
             screen,
@@ -4599,11 +4822,14 @@ async def test_settings_console_behavior_revert_button_works_with_input_focus(
         screen.handle_console_default_temperature_changed(
             Input.Changed(temperature, temperature.value)
         )
-        monkeypatch.setattr(screen, "_settings_text_entry_has_focus", lambda: True)
 
         screen.handle_revert_category(
             Button.Pressed(screen.query_one("#settings-revert-category", Button))
         )
+        await pilot.pause()
+        # task-1340: revert of a dirty category asks for confirmation first.
+        await pilot.click("#confirm-button")
+        await pilot.pause()
 
         assert (
             screen.query_one("#settings-console-default-temperature", Input).value
@@ -4639,6 +4865,10 @@ async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
         assert "Unsaved" in _visible_text(screen)
 
         await pilot.click("#settings-revert-category")
+        await pilot.pause()
+        # task-1340: revert of a dirty category asks for confirmation first.
+        await pilot.click("#confirm-button")
+        await pilot.pause()
         assert "No unsaved changes" in _visible_text(screen)
 
     assert saved == []
@@ -5154,7 +5384,7 @@ async def test_settings_provider_category_saves_selected_model_profile(monkeypat
         screen = _active_destination_screen(host)
         screen.query_one("#settings-model-profile-temperature", Input).value = "0.2"
         screen.query_one("#settings-model-profile-top-p", Input).value = "0.88"
-        screen.query_one("#settings-model-profile-streaming", Input).value = "false"
+        screen.query_one("#settings-model-profile-streaming", Select).value = "false"
         assert "Global fallbacks live under Console Defaults" in _visible_text(screen)
 
         await pilot.click("#settings-save-category")
@@ -5211,21 +5441,25 @@ async def test_settings_provider_category_saves_openai_generation_profile(monkey
             "#settings-model-profile-seed": "123",
             "#settings-model-profile-presence-penalty": "0.2",
             "#settings-model-profile-frequency-penalty": "0.3",
+            "#settings-model-profile-thinking-budget-tokens": "4096",
+        }
+        for selector, value in values.items():
+            screen.query_one(selector, Input).value = value
+        select_values = {
             "#settings-model-profile-reasoning-effort": "high",
             "#settings-model-profile-reasoning-summary": "auto",
             "#settings-model-profile-verbosity": "medium",
             "#settings-model-profile-thinking-effort": "high",
-            "#settings-model-profile-thinking-budget-tokens": "4096",
             "#settings-model-profile-streaming": "false",
         }
-        for selector, value in values.items():
-            screen.query_one(selector, Input).value = value
+        for selector, value in select_values.items():
+            screen.query_one(selector, Select).value = value
 
         text = _visible_text(screen)
         # task-189: gated groups collapse to one summary line; dead rows hide.
         assert "Thinking controls: unavailable for OpenAI." in text
         assert (
-            screen.query_one("#settings-model-profile-thinking-effort", Input).disabled
+            screen.query_one("#settings-model-profile-thinking-effort", Select).disabled
             is True
         )
         assert (
@@ -5267,15 +5501,65 @@ async def test_settings_provider_category_saves_openai_generation_profile(monkey
     ]
 
 
+def test_settings_enum_select_value_clamps_case_and_unknown_values():
+    screen = SettingsScreen(_build_test_app())
+
+    # Case-insensitive: a hand-edited valid value still renders (not nulled).
+    assert (
+        screen._select_option_value(
+            "High", settings_screen_module.REASONING_EFFORT_SELECT_OPTIONS
+        )
+        == "high"
+    )
+    # Unknown saved values clamp to blank instead of raising at the widget.
+    assert (
+        screen._select_option_value(
+            "extreme", settings_screen_module.REASONING_EFFORT_SELECT_OPTIONS
+        )
+        is Select.NULL
+    )
+    assert (
+        screen._select_option_value(
+            "", settings_screen_module.REASONING_EFFORT_SELECT_OPTIONS
+        )
+        is Select.NULL
+    )
+
+
+@pytest.mark.asyncio
+async def test_settings_profile_enum_select_clamps_saved_values():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {
+        "openai": {
+            "model_defaults": {
+                "gpt-4.1": {"reasoning_effort": "High", "verbosity": "extreme"},
+            }
+        }
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        assert (
+            screen.query_one("#settings-model-profile-reasoning-effort", Select).value
+            == "high"
+        )
+        assert (
+            screen.query_one("#settings-model-profile-verbosity", Select).value
+            is Select.NULL
+        )
+
+
 def test_settings_generation_controls_allow_openai_none_reasoning_effort():
     screen = SettingsScreen(_build_test_app())
 
     assert screen._normalise_model_profile_reasoning_effort("none") == "none"
     assert (
         "none"
-        in settings_screen_module.MODEL_PROFILE_INPUT_PLACEHOLDERS[
-            "model_profile_reasoning_effort"
-        ]
+        in settings_screen_module.REASONING_EFFORT_SELECT_OPTIONS
     )
 
 
@@ -5285,9 +5569,7 @@ def test_settings_generation_controls_allow_anthropic_max_thinking_effort():
     assert screen._normalise_model_profile_thinking_effort("max") == "max"
     assert (
         "max"
-        in settings_screen_module.MODEL_PROFILE_INPUT_PLACEHOLDERS[
-            "model_profile_thinking_effort"
-        ]
+        in settings_screen_module.THINKING_EFFORT_SELECT_OPTIONS
     )
 
 
@@ -5315,31 +5597,35 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(monke
 
         values = {
             "#settings-model-profile-max-tokens": "12000",
+            "#settings-model-profile-thinking-budget-tokens": "4096",
+        }
+        for selector, value in values.items():
+            screen.query_one(selector, Input).value = value
+        select_values = {
             "#settings-model-profile-reasoning-effort": "high",
             "#settings-model-profile-reasoning-summary": "auto",
             "#settings-model-profile-verbosity": "medium",
             "#settings-model-profile-thinking-effort": "xhigh",
-            "#settings-model-profile-thinking-budget-tokens": "4096",
             "#settings-model-profile-streaming": "false",
         }
-        for selector, value in values.items():
-            screen.query_one(selector, Input).value = value
+        for selector, value in select_values.items():
+            screen.query_one(selector, Select).value = value
 
         text = _visible_text(screen)
         # task-189: gated groups collapse to one summary line; dead rows hide.
         assert "Reasoning controls: unavailable for Anthropic." in text
         assert (
-            screen.query_one("#settings-model-profile-reasoning-effort", Input).disabled
+            screen.query_one("#settings-model-profile-reasoning-effort", Select).disabled
             is True
         )
         assert (
             screen.query_one(
-                "#settings-model-profile-reasoning-summary", Input
+                "#settings-model-profile-reasoning-summary", Select
             ).disabled
             is True
         )
         assert (
-            screen.query_one("#settings-model-profile-verbosity", Input).disabled
+            screen.query_one("#settings-model-profile-verbosity", Select).disabled
             is True
         )
         assert screen.query_one(
@@ -5409,30 +5695,76 @@ async def test_settings_provider_category_rejects_out_of_range_model_profile(
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_rejects_invalid_streaming_profile(
+async def test_settings_provider_streaming_and_enums_prevent_invalid_input(
     monkeypatch,
 ):
+    """task-1344: streaming and closed-enum profile fields are Select widgets
+    constrained to their allowed values, so invalid input is impossible by
+    construction (previously typed strings rejected only at save)."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {"openai": {"model_defaults": {}}}
-    saved = []
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-model-profile-streaming", Input).value = "tru"
 
-        await pilot.click("#settings-save-category")
+        streaming = screen.query_one("#settings-model-profile-streaming", Select)
+        streaming_values = {
+            str(option[1])
+            for option in streaming._options
+            if option[1] is not Select.NULL
+        }
+        assert streaming_values == {"true", "false"}
+        assert any(option[1] is Select.NULL for option in streaming._options)
 
-        assert "Streaming must be true or false." in _visible_text(screen)
+        enum_expectations = {
+            "#settings-model-profile-reasoning-effort": set(
+                settings_screen_module.REASONING_EFFORT_SELECT_OPTIONS
+            ),
+            "#settings-model-profile-reasoning-summary": set(
+                settings_screen_module.REASONING_SUMMARY_SELECT_OPTIONS
+            ),
+            "#settings-model-profile-verbosity": set(
+                settings_screen_module.VERBOSITY_SELECT_OPTIONS
+            ),
+        }
+        for selector, expected_values in enum_expectations.items():
+            select = screen.query_one(selector, Select)
+            assert any(option[1] is Select.NULL for option in select._options), selector
+            assert {
+                str(option[1])
+                for option in select._options
+                if option[1] is not Select.NULL
+            } == expected_values
 
-    assert saved == []
-    assert app.app_config["api_settings"]["openai"]["model_defaults"] == {}
+        # Console-side booleans/enums use the same constrained widgets.
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        assert isinstance(
+            screen.query_one("#settings-console-default-streaming"), Checkbox
+        )
+        console_enums = {
+            "#settings-console-default-reasoning-effort": set(
+                settings_screen_module.REASONING_EFFORT_SELECT_OPTIONS
+            ),
+            "#settings-console-default-reasoning-summary": set(
+                settings_screen_module.REASONING_SUMMARY_SELECT_OPTIONS
+            ),
+            "#settings-console-default-verbosity": set(
+                settings_screen_module.VERBOSITY_SELECT_OPTIONS
+            ),
+            "#settings-console-default-thinking-effort": set(
+                settings_screen_module.THINKING_EFFORT_SELECT_OPTIONS
+            ),
+        }
+        for selector, expected_values in console_enums.items():
+            select = screen.query_one(selector, Select)
+            assert {
+                str(option[1])
+                for option in select._options
+                if option[1] is not Select.NULL
+            } == expected_values
 
 
 @pytest.mark.asyncio
@@ -5467,7 +5799,7 @@ async def test_settings_provider_model_switch_loads_selected_model_profile():
         )
         assert screen.query_one("#settings-model-profile-top-p", Input).value == "0.9"
         assert (
-            screen.query_one("#settings-model-profile-streaming", Input).value
+            screen.query_one("#settings-model-profile-streaming", Select).value
             == "false"
         )
 
@@ -5493,7 +5825,10 @@ async def test_settings_provider_model_profile_none_values_render_as_blank_input
             screen.query_one("#settings-model-profile-temperature", Input).value == ""
         )
         assert screen.query_one("#settings-model-profile-top-p", Input).value == ""
-        assert screen.query_one("#settings-model-profile-streaming", Input).value == ""
+        assert (
+            screen.query_one("#settings-model-profile-streaming", Select).value
+            is Select.NULL
+        )
 
 
 @pytest.mark.asyncio
@@ -5698,7 +6033,6 @@ async def test_settings_provider_save_button_works_with_endpoint_input_focus(
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
         endpoint.focus()
         endpoint.value = "https://proxy.example.com/v1"
-        monkeypatch.setattr(screen, "_settings_text_entry_has_focus", lambda: True)
 
         screen.handle_save_category(
             Button.Pressed(screen.query_one("#settings-save-category", Button))
@@ -6084,6 +6418,10 @@ async def test_settings_provider_revert_restores_provider_dependent_placeholders
         assert credential.placeholder == "No credential required"
 
         await pilot.click("#settings-revert-category")
+        await pilot.pause()
+        # task-1340: revert of a dirty category asks for confirmation first.
+        await pilot.click("#confirm-button")
+        await pilot.pause()
 
         assert endpoint.placeholder == "https://api.openai.com/v1"
         assert credential.placeholder == "OPENAI_API_KEY"
@@ -8401,3 +8739,212 @@ async def test_reassurance_short_line_off_overview():
         text = _visible_text(screen)
         assert "Local-only: saves write your config file." in text
         assert "Manual sync yourself" not in text
+
+@pytest.mark.asyncio
+async def test_settings_overview_front_door_is_four_status_rows_with_open_affordances():
+    """task-1369: the Overview landing card leads with at most four primary
+    status rows, each with an Open-category affordance (the sync row carries
+    the manual sync controls); the handoff detail and ownership table sit
+    behind collapsed disclosures."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        for row_id in (
+            "#settings-overview-provider-readiness",
+            "#settings-overview-storage",
+            "#settings-overview-privacy",
+            "#settings-overview-sync-summary",
+        ):
+            assert screen.query_one(row_id, Static)
+
+        for button_id in (
+            "#settings-overview-open-providers-models",
+            "#settings-overview-open-storage",
+            "#settings-overview-open-privacy-security",
+        ):
+            assert screen.query_one(button_id, Button)
+
+        # Manual sync controls stay on the front door.
+        assert screen.query_one("#settings-manual-sync-preview", Button)
+        assert screen.query_one("#settings-manual-sync-run", Button)
+
+        sync_details = screen.query_one("#settings-overview-sync-details", Collapsible)
+        ownership_details = screen.query_one(
+            "#settings-overview-ownership-details", Collapsible
+        )
+        assert sync_details.collapsed is True
+        assert ownership_details.collapsed is True
+
+        # The collapsed detail rows still compose (screen readers / search).
+        card_text = " ".join(
+            str(widget.renderable)
+            for widget in screen.query_one("#settings-overview-card").query(Static)
+        )
+        assert "Manual sync" in card_text
+        assert "Where changes happen" in card_text
+
+
+@pytest.mark.asyncio
+async def test_settings_overview_open_category_buttons_switch_category():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        await pilot.click("#settings-overview-open-storage")
+        await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.STORAGE.value
+
+        await _open_settings_category(pilot, "#settings-category-overview")
+        await pilot.click("#settings-overview-open-privacy-security")
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        assert screen.active_category == SettingsCategoryId.PRIVACY_SECURITY.value
+
+        await _open_settings_category(pilot, "#settings-category-overview")
+        await pilot.click("#settings-overview-open-providers-models")
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
+
+
+@pytest.mark.asyncio
+async def test_settings_invalid_input_keeps_error_tint_while_focused():
+    """task-1369: .settings-invalid-input:focus used to restyle to the normal
+    surface, hiding the error marker exactly while the user edits the field."""
+    app = _build_test_app()
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        model_input = screen.query_one("#settings-model-value", Input)
+        model_input.add_class("settings-invalid-input")
+        await pilot.pause()
+
+        unfocused_background = model_input.styles.background
+        assert unfocused_background is not None
+        assert unfocused_background.a < 1, "unfocused invalid input lost its error tint"
+
+        model_input.focus()
+        await pilot.pause()
+        assert model_input.has_focus
+        focused_background = model_input.styles.background
+        assert focused_background is not None
+        assert focused_background.a < 1, (
+            "focused invalid input restyled to the normal surface"
+        )
+
+
+@pytest.mark.asyncio
+async def test_settings_manual_sync_dialog_readable_fallback_when_counts_unloaded():
+    """task-1369: the confirm dialog must not interpolate 'Loading'/'unknown'
+    into its copy when the preview counts have not loaded."""
+    app = _build_test_app()
+    # No manual_sync_control_service -> refresh produces blocked rows; force
+    # the rows back to their pre-preview loading state so the dialog must
+    # fall back to readable copy instead of interpolating "Loading".
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.manual_sync_rows = screen._manual_sync_loading_rows()
+        await pilot.pause()
+        assert dict(screen.manual_sync_rows)["Pending outgoing"] == "Loading"
+
+        await pilot.click("#settings-manual-sync-run")
+        await pilot.pause()
+
+        dialog = host.screen
+        assert isinstance(dialog, ConfirmationDialog)
+        assert "Sync will push all pending changes." in dialog.message
+        assert "unknown" not in dialog.message
+        assert "Loading" not in dialog.message
+
+
+def test_settings_screen_resume_skips_refresh_while_manual_sync_run_in_flight(monkeypatch):
+    """task-1369: popping the confirm dialog resumes the screen; while the
+    run worker is in flight the resume must not overwrite the 'running' rows."""
+    refresh_calls = 0
+
+    def fake_refresh(self):
+        nonlocal refresh_calls
+        refresh_calls += 1
+
+    monkeypatch.setattr(SettingsScreen, "_queue_sync_rows_refresh", fake_refresh)
+    screen = SettingsScreen(_build_test_app())
+
+    screen.on_screen_resume()
+    assert refresh_calls == 1
+
+    screen._manual_sync_run_in_flight = True
+    screen.on_screen_resume()
+    assert refresh_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_settings_overview_disclosures_stay_expanded_across_sync_row_recompose():
+    """task-1369 (review): sync rows are recompose=True reactives, so any row
+    change rebuilds the Overview Collapsibles. An expanded disclosure must
+    stay expanded -- the user expands it precisely to watch a sync run."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        sync_details = screen.query_one("#settings-overview-sync-details", Collapsible)
+        ownership_details = screen.query_one(
+            "#settings-overview-ownership-details", Collapsible
+        )
+        sync_details.collapsed = False
+        ownership_details.collapsed = False
+        await pilot.pause()
+
+        # A sync-row state change (e.g. the confirm callback's "running"
+        # rows) triggers a full recompose.
+        screen.manual_sync_rows = (
+            ("Manual sync status", "running"),
+            ("Manual sync result", "Manual Sync is running after explicit user request."),
+            ("Pending outgoing", "Refreshing"),
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        # The recompose destroyed and recreated both Collapsibles.
+        rebuilt_sync = screen.query_one("#settings-overview-sync-details", Collapsible)
+        rebuilt_ownership = screen.query_one(
+            "#settings-overview-ownership-details", Collapsible
+        )
+        assert rebuilt_sync is not sync_details
+        assert rebuilt_sync.collapsed is False
+        assert rebuilt_ownership.collapsed is False
+
+
+@pytest.mark.asyncio
+async def test_settings_manual_sync_run_token_guards_stale_worker_finally():
+    """task-1369 (review): a stale (cancelled) run worker's finally must not
+    clear the in-flight flag of a newer confirmed run."""
+    screen = SettingsScreen(SimpleNamespace(app_config={}))
+    worker_fn = SettingsScreen.__dict__["_manual_sync_run_worker"]
+    wrapped = getattr(worker_fn, "__wrapped__", worker_fn)
+
+    # Run 2 is the latest confirmed run and is still in flight.
+    screen._manual_sync_run_token = 2
+    screen._manual_sync_run_in_flight = True
+
+    # Stale worker 1 lands its finally first: flag must survive.
+    await wrapped(screen, 1)
+    assert screen._manual_sync_run_in_flight is True
+
+    # The current worker's finally clears it.
+    await wrapped(screen, 2)
+    assert screen._manual_sync_run_in_flight is False

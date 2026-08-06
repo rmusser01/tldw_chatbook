@@ -182,6 +182,9 @@ class ConsoleBackgroundEffect(Widget):
             self._timer = None
 
     def _advance_frame(self) -> None:
+        # Skip while the screen/tab is inactive so hidden tabs burn no CPU.
+        if not self.is_attached or not self.screen.is_active:
+            return
         width = self.size.width
         height = self.size.height
         if not self.is_effect_active or width <= 0 or height <= 0:

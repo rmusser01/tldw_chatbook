@@ -44,8 +44,10 @@ pytest --cov=tldw_chatbook  # With coverage
 - `SearchRAGWindow.py` - RAG search interface
 - `Evals_Window_v3.py` - LLM benchmarking
 - `MediaWindow.py` - Media management hub
-- `Coding_Window.py` - Code-focused chat interface
+- `Screens/chat_screen.py` - The Console: live agent work, approvals, tools, and RAG
 - `IngestTldwApiWindow.py` - Media ingestion forms
+
+**Settings**: `UI/Screens/settings_screen.py` (F9 Settings destination) is the canonical settings surface. The legacy `UI/Tools_Settings_Window.py` and `Widgets/enhanced_settings_sidebar.py` (legacy Chat window only) are deprecated parallels — do not add new settings there.
 
 **Key Widgets**:
 - `chat_message_enhanced.py` - Rich messages with actions
@@ -158,10 +160,11 @@ Key sections:
 ## Special Systems
 
 ### Tool Calling
-- Schema v7 adds tool messages
-- `tool_executor.py` handles execution
-- Provider parsing implemented
-- Status: Detection works, execution pending
+- Schema v7 adds tool messages; `tool_executor.py` runs the builtin tools
+- `Agents/tool_catalog.py` is the provider seam: builtin/local/skill/MCP providers register with one `ToolCatalogRegistry`
+- Local fs_* tools (fs_list/fs_read/fs_write/fs_edit/fs_glob/fs_grep) in `Tools/local_tool_impls.py`, exposed via `Agents/local_tool_provider.py`
+- Approvals flow through the MCP permission store; local tools sit under the `local:__local__` hub
+- Config: `[console] local_tools_enabled` / `workspace_root` (confinement root for fs_*; empty = app cwd)
 
 ### Config Encryption
 - AES-256 with PBKDF2

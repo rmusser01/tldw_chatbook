@@ -52,6 +52,7 @@ from ...Chat.console_voice_input import (
     STATE_LISTENING,
     STATE_PREPARING,
 )
+from ...Chat.prompt_history import PromptHistory
 from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
@@ -286,6 +287,9 @@ class ConsoleComposerBar(Horizontal):
     FALLBACK_DRAFT_WIDTH = 80
     PASTE_TOKEN_STYLE = "bold cyan"
     PASTE_CONFIRM_STYLE = "bold black on yellow"
+    #: TASK-1364: ghost-text history suggestions render in the same dim style
+    #: as the empty-draft placeholder -- visibly "not your text yet".
+    GHOST_TEXT_STYLE = "bright_black"
     CURSOR_GLYPH = "▌"  # LEFT HALF BLOCK, terminal-style caret
     CURSOR_BLINK_INTERVAL = 0.53
     #: TASK-1281: max entries kept per undo/redo stack; the oldest entry is
@@ -440,6 +444,15 @@ class ConsoleComposerBar(Horizontal):
         self._draft_selection_range: tuple[int, int] | None = None
         self._cursor_visible = True
         self._cursor_blink_timer: Any | None = None
+        #: TASK-1364: shared JSONL prompt-history store, injected by the
+        #: owning screen (`set_prompt_history`). Drives fish-shell-style
+        #: ghost text (most-recent prefix match) and Up/Down recall. None
+        #: (e.g. a bare composer in unit tests) disables both.
+        self._prompt_history: PromptHistory | None = None
+        #: Shell-style recall index: 0 is the live draft pseudo-entry (whose
+        #: in-progress text is stashed in the history store while
+        #: navigating), negatives walk backwards through stored entries.
+        self._history_index: int = 0
 
     @property
     def collapse_large_pastes_enabled(self) -> bool:
@@ -1802,6 +1815,7 @@ class ConsoleComposerBar(Horizontal):
         focused: bool = False,
         cursor_visible: bool = True,
         cursor_index: int | None = None,
+        ghost_suffix: str = "",
     ) -> Text:
         if text:
             # While focused, exactly one display cell is always reserved at
@@ -1825,14 +1839,32 @@ class ConsoleComposerBar(Horizontal):
                     if cursor_index is None
                     else max(0, min(cursor_index, len(text)))
                 )
+                # TASK-1364: ghost text is render-only -- appended after the
+                # reserved caret cell (only meaningful with the caret at the
+                # draft's end, its sole offer condition) and dimmed so it
+                # never reads as draft content. It shares the draft's wrap
+                # pass; the caret-following window keeps the caret row
+                # visible and any overflow tail is simply cropped, and the
+                # composer's own row-count math (`_visible_draft_row_count`)
+                # never sees it, so a suggestion can never grow the bar.
+                ghost = ghost_suffix if caret_position == len(text) else ""
                 render_text = (
                     f"{text[:caret_position]}{caret_cell}{text[caret_position:]}"
+                    f"{ghost}"
                 )
                 if style_ranges:
                     style_ranges = cls._shift_style_ranges_for_caret(
                         style_ranges,
                         caret_position,
                     )
+                if ghost:
+                    style_ranges = list(style_ranges or []) + [
+                        (
+                            caret_position + 1,
+                            caret_position + 1 + len(ghost),
+                            cls.GHOST_TEXT_STYLE,
+                        )
+                    ]
             else:
                 caret_position = None
                 render_text = text
@@ -2141,6 +2173,11 @@ class ConsoleComposerBar(Horizontal):
                     if focused and self._segments_initialized
                     else None
                 ),
+                # Ghost text only shows while focused (the caret it trails is
+                # focus-only too) and `_ghost_suffix` self-gates on caret-at-
+                # end/selection/live-draft, so this recomputes cleanly on
+                # every blink tick and edit.
+                ghost_suffix=self._ghost_suffix() if focused else "",
             )
         return self._placeholder_renderable(width=width)
 
@@ -2204,6 +2241,19 @@ class ConsoleComposerBar(Horizontal):
         self._refresh_visible_draft()
         self._sync_interaction_classes()
         self._sync_current_action_state()
+        if self._prompt_history is not None:
+            # TASK-1364: warm the history entries so ghost text and recall
+            # work on the first keystroke; the file IO itself already runs
+            # off the event loop inside `load()`, and the call is idempotent.
+            # Note: recall workers run exclusive=True in this same group and
+            # may cancel this warm load mid-flight — safe because `get_entry`
+            # re-awaits `load()` inline when `_loaded` is still False.
+            self.run_worker(
+                self._prompt_history.load(),
+                exclusive=False,
+                group="console-prompt-history",
+                exit_on_error=False,
+            )
 
     def on_resize(self, event: Any) -> None:
         self._refresh_visible_draft()
@@ -2379,6 +2429,11 @@ class ConsoleComposerBar(Horizontal):
         self._undo_stack = []
         self._redo_stack = []
         self._coalescing_active = False
+        # TASK-1364: an accepted send also ends any prompt-history
+        # navigation -- the next Up restarts from the live draft (and
+        # `PromptHistory.append` clears the stashed index-0 draft on its
+        # own successful write).
+        self._history_index = 0
 
     # -- Undo/redo history (TASK-1281) ------------------------------------
     #
@@ -3181,6 +3236,172 @@ class ConsoleComposerBar(Horizontal):
         if not self._segments_initialized:
             return self._move_cursor_to(self._cursor_index)
         return self._move_cursor_to(len(self._canonical_draft_text()))
+
+    # -- Prompt history: ghost text and recall (TASK-1364) ------------------
+    #
+    # Port of the toad-inspired input UX (`Chat/prompt_history.py` +
+    # the deprecated `ChatInputTextArea`) onto this composer's segment/caret
+    # model. Ghost text is a render-only suffix appended after the caret in
+    # `_draft_renderable` (never part of the draft); recall swaps the whole
+    # draft via `load_draft`, with the live draft stashed in the history
+    # store's index-0 pseudo-entry while navigating.
+
+    def set_prompt_history(self, history: PromptHistory | None) -> None:
+        """Inject the shared prompt-history store used for ghost text/recall.
+
+        Args:
+            history: The store to read suggestions and recalled entries from,
+                or None to disable both (recall keys fall through to ordinary
+                caret movement).
+        """
+        self._prompt_history = history
+        self._history_index = 0
+
+    def _ghost_suffix(self) -> str:
+        """Return the ghost-text suffix for the current draft, or ``""``.
+
+        Offered only on the live draft (recall index 0) with an empty
+        selection, a non-empty draft, and the caret at the very end of the
+        canonical text. Drafts starting with ``/`` never get a suggestion:
+        the slash-command popup owns completion there. Typing dismisses the
+        ghost implicitly -- it is recomputed from the current draft on every
+        render, so a keystroke that breaks the prefix match simply yields no
+        suffix.
+        """
+        history = self._prompt_history
+        if history is None or self._history_index != 0:
+            return ""
+        if not self._segments_initialized:
+            return ""
+        if self._draft_selection_all or self._draft_selection_range is not None:
+            return ""
+        canonical = self._canonical_draft_text()
+        if not canonical or canonical.startswith("/"):
+            return ""
+        if self._cursor_index != len(canonical):
+            return ""
+        match = history.complete(canonical)
+        if match is None:
+            return ""
+        return match[len(canonical) :]
+
+    def accept_ghost_text(self) -> bool:
+        """Insert the visible ghost-text suffix into the draft (Right arrow).
+
+        Returns:
+            True when a suggestion was accepted (the caller consumes the
+            key); False when none is visible, so Right falls back to ordinary
+            caret movement.
+        """
+        suffix = self._ghost_suffix()
+        if not suffix:
+            return False
+        # The ghost is only offered with the caret at the end, so this
+        # inserts exactly the suggested suffix as ordinary typed text.
+        self.insert_text(suffix)
+        return True
+
+    def _caret_visual_row(self) -> tuple[int, int]:
+        """Return the caret's (visual row index, row count) in the full wrap.
+
+        Uses the same full, unwindowed wrap of the display draft as
+        `_move_cursor_vertically` (never the bounded 4-row painted window).
+        An uninitialized composer tracks the caret at the draft tail (every
+        lazy-init entry point places it there), so it reports the last row.
+        """
+        display_text = self._display_draft_text()
+        line_slices = self._wrap_draft_line_slices(
+            display_text, self._draft_render_width()
+        )
+        if not self._segments_initialized:
+            return len(line_slices) - 1, len(line_slices)
+        caret_display_index = max(
+            0, min(self._cursor_display_index(), len(display_text))
+        )
+        return (
+            self._row_index_for_canonical_offset(line_slices, caret_display_index),
+            len(line_slices),
+        )
+
+    def _can_recall_history(self, direction: int) -> bool:
+        """Return whether an Up/Down keypress should recall history instead of moving the caret.
+
+        Recall is gated to the draft's first (Up/older) or last (Down/newer)
+        visual row of the full wrap, with an empty selection and a loaded,
+        non-empty history; anywhere else the key keeps its ordinary caret
+        movement. Down only recalls while actually navigating (index < 0) --
+        at the live draft there is nothing newer, so it always falls through.
+        """
+        history = self._prompt_history
+        if history is None or history.size == 0:
+            return False
+        if direction > 0 and self._history_index >= 0:
+            return False
+        if self._draft_selection_all or self._draft_selection_range is not None:
+            return False
+        row, row_count = self._caret_visual_row()
+        if direction < 0:
+            return row == 0
+        return row == row_count - 1
+
+    def recall_history_previous(self) -> bool:
+        """Consume an Up keypress as older-history recall when gated in.
+
+        Returns:
+            True when recall was triggered (the caller consumes the key);
+            False when the key should fall through to `move_cursor_up`.
+        """
+        if not self._can_recall_history(-1):
+            return False
+        self.run_worker(
+            self._move_history(-1),
+            exclusive=True,
+            group="console-prompt-history",
+            exit_on_error=False,
+        )
+        return True
+
+    def recall_history_next(self) -> bool:
+        """Consume a Down keypress as newer-history recall when gated in.
+
+        Returns:
+            True when recall was triggered (the caller consumes the key);
+            False when the key should fall through to `move_cursor_down`.
+        """
+        if not self._can_recall_history(1):
+            return False
+        self.run_worker(
+            self._move_history(1),
+            exclusive=True,
+            group="console-prompt-history",
+            exit_on_error=False,
+        )
+        return True
+
+    async def _move_history(self, direction: int) -> None:
+        """Move through prompt history, stashing/restoring the live draft.
+
+        Args:
+            direction: -1 for older entries (Up), +1 for newer (Down).
+        """
+        history = self._prompt_history
+        if history is None:
+            return
+        if self._history_index == 0 and direction < 0:
+            # Leaving the live draft -- stash the in-progress text so recall
+            # never loses it (restored when navigation returns to index 0).
+            history.stash_draft(self.draft_text())
+        new_index = history.clamp_index(self._history_index + direction)
+        if new_index == self._history_index:
+            return
+        try:
+            entry = await history.get_entry(new_index)
+        except IndexError:
+            return
+        self._history_index = new_index
+        # A scope swap, not a recorded edit (mirrors session-switch draft
+        # loads): wipes undo/redo and lands the caret at the end.
+        self.load_draft(entry["input"])
 
     def position_cursor_from_display_index(self, display_index: int) -> bool:
         """Set the caret from an unwrapped display-string offset (click-to-position).

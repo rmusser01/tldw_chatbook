@@ -1,4 +1,10 @@
-"""Tools & Settings screen implementation."""
+"""Tools & Settings screen implementation.
+
+DEPRECATED (TASK-1346): This wrapper around the legacy ToolsSettingsWindow is not
+routed — the "tools_settings" route resolves to MCPScreen (see
+UI/Navigation/screen_registry.py). The canonical settings surface is
+UI/Screens/settings_screen.py (the F9 Settings destination).
+"""
 
 from typing import TYPE_CHECKING
 

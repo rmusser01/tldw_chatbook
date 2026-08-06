@@ -97,7 +97,7 @@ python -m tldw_chatbook.app
 2. Type "settings" or "config"
 3. Should see settings options
 4. Try "Open Config File" -> Should show path
-5. Try "Open Settings Tab" -> Should switch to Tools & Settings
+5. Try "Open Settings Tab" -> Should switch to the Settings tab
 ```
 
 **Expected Results:**

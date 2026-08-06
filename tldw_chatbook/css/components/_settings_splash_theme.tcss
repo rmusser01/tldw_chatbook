@@ -52,6 +52,13 @@
     border: solid $ds-grid-line;
 }
 
+/* task-1369: preset swatches are keyboard-activatable (focusable + Enter/
+   Space), so they need a visible focus indicator. */
+.color-preset-swatch:focus {
+    border: solid $ds-focus-accent;
+    text-style: bold;
+}
+
 .preview-button {
     width: 100%;
     height: 1;

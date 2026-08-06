@@ -235,6 +235,15 @@ class WatchlistNameDialog(ModalScreen[str | None]):
         self.dismiss(name)
 
 
+#: TASK-2303 AC#3. Both pickers below are bare lists of buttons, and a bare
+#: list of names does not say what pressing one DOES -- the 2026-08-04 UAT
+#: read the source picker as a place where a source might be created. Each
+#: dialog states the effect and, explicitly, that nothing new is made: the
+#: whole point of this task is that ADD and NEW are different operations, and
+#: the modal is the last place the distinction can be drawn before the write.
+_PICKER_CREATES_NOTHING = "No new source is created."
+
+
 class WatchlistSourcePickerDialog(ModalScreen[int | None]):
     """Pick one source to add to a watchlist (task-895).
 
@@ -268,11 +277,17 @@ class WatchlistSourcePickerDialog(ModalScreen[int | None]):
         with Vertical(id="watchlist-add-source-dialog", classes="opml-dialog"):
             yield Static(
                 Text.from_markup(
-                    f"Add a source to {escape_markup(self.watchlist_name)}"
+                    f"Add an existing source to {escape_markup(self.watchlist_name)}"
                 ),
                 classes="dialog-title",
             )
             if self.candidates:
+                yield Static(
+                    "Choose a source below to add it to this watchlist. "
+                    + _PICKER_CREATES_NOTHING,
+                    id="watchlist-add-source-instructions",
+                    classes="watchlist-picker-instructions",
+                )
                 with VerticalScroll(id="watchlist-add-source-options"):
                     for row in self.candidates:
                         source_id = int(row["id"])
@@ -286,7 +301,7 @@ class WatchlistSourcePickerDialog(ModalScreen[int | None]):
             else:
                 yield Static(
                     "Every source already belongs to this watchlist. "
-                    "Create a source in the Sources tab first.",
+                    "Use New source under Sources to make another one.",
                     id="watchlist-add-source-empty",
                 )
             with Horizontal(classes="dialog-buttons"):
@@ -304,4 +319,100 @@ class WatchlistSourcePickerDialog(ModalScreen[int | None]):
         if button_id.startswith(prefix):
             self.dismiss(int(button_id[len(prefix):]))
         elif button_id == "watchlist-add-source-cancel":
+            self.dismiss(None)
+
+
+class WatchlistPickerDialog(ModalScreen[int | None]):
+    """Pick one watchlist to add a source to (TASK-2303).
+
+    The mirror image of `WatchlistSourcePickerDialog`, and deliberately the
+    same shape: one compact button per candidate, ids built from the
+    watchlist's integer id, labels escaped. It exists because assignment was
+    reachable from exactly one place -- the rail, with a watchlist already in
+    scope -- so a user looking at the source they wanted to file had no way
+    to file it. This is the source-first direction of the same write.
+
+    Args:
+        source_name: Name of the source being added, for the heading.
+        candidates: Watchlist rows (`id`/`name`) the source is not already
+            in. An empty sequence renders an explained empty state with the
+            confirming affordance absent rather than dead.
+        total_watchlists: How many watchlists exist at all. Needed because an
+            empty `candidates` has TWO causes with opposite remedies (review
+            wave, M2), and the dialog cannot tell them apart from the empty
+            list alone. Defaults to the length of `candidates`, so a caller
+            that does not pass it gets the "none exist" reading for an empty
+            list -- the safer of the two, since it never claims membership
+            that is not there.
+    """
+
+    # Escape dismisses, exactly as Cancel does (TASK-1300).
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(
+        self,
+        source_name: str,
+        candidates: Sequence[Mapping[str, Any]],
+        total_watchlists: int | None = None,
+    ) -> None:
+        super().__init__()
+        self.source_name = source_name
+        self.candidates = list(candidates)
+        self.total_watchlists = (
+            len(self.candidates) if total_watchlists is None else int(total_watchlists)
+        )
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="watchlist-pick-dialog", classes="opml-dialog"):
+            yield Static(
+                Text.from_markup(
+                    f"Add {escape_markup(self.source_name)} to a watchlist"
+                ),
+                classes="dialog-title",
+            )
+            if self.candidates:
+                yield Static(
+                    "Choose a watchlist below to add this source to it. "
+                    + _PICKER_CREATES_NOTHING,
+                    id="watchlist-pick-instructions",
+                    classes="watchlist-picker-instructions",
+                )
+                with VerticalScroll(id="watchlist-pick-options"):
+                    for row in self.candidates:
+                        watchlist_id = int(row["id"])
+                        name = escape_markup(str(row.get("name") or "Untitled"))
+                        yield Button(
+                            Text.from_markup(name),
+                            id=f"wl-pick-option-{watchlist_id}",
+                            compact=True,
+                        )
+            else:
+                # Two empty states, not one sentence stretched across both
+                # (review wave, M2). "Already belongs to every watchlist" is
+                # simply false on a profile that has none -- which is exactly
+                # the profile a first-run user reaches this dialog on.
+                yield Static(
+                    (
+                        "This source already belongs to every watchlist. "
+                        "Use New in the rail to make another one."
+                        if self.total_watchlists
+                        else "There are no watchlists yet. Use New in the "
+                        "rail to make one, then add this source to it."
+                    ),
+                    id="watchlist-pick-empty",
+                )
+            with Horizontal(classes="dialog-buttons"):
+                yield Button("Cancel", id="watchlist-pick-cancel")
+
+    def action_cancel(self) -> None:
+        """Back out without applying anything."""
+        self.dismiss(None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        button_id = str(event.button.id)
+        prefix = "wl-pick-option-"
+        if button_id.startswith(prefix):
+            self.dismiss(int(button_id[len(prefix):]))
+        elif button_id == "watchlist-pick-cancel":
             self.dismiss(None)

@@ -105,6 +105,39 @@ setup should fail the way the real broken environment fails.
 
 ---
 
+## A schema bump is a one-way door for every OTHER worktree on this machine (2026-08-04)
+
+**What happened.** task-2364 added `messages.metadata_json` and moved
+ChaChaNotes from v30 to v31. Every checkout on this machine shares ONE real
+database (`~/.local/share/tldw_cli/`), and `CharactersRAGDB._initialize_schema`
+refuses — by design — to open a database whose version is newer than the code:
+
+```
+SchemaError: Database schema 'rag_char_chat_schema' version (31) is newer than
+supported by code (30). Aborting.
+```
+
+So a single live launch of a schema-bumping branch migrates the shared database
+and every concurrent worktree still on the old version stops opening it. There
+is no downgrade path; the fix is restoring a backup or moving every other branch
+forward. The migration itself is additive and idempotent, which is exactly what
+makes this easy to under-rate: the DANGER is not a broken migration, it is a
+correct one applied to a database other work is still reading.
+
+**What to do.** While a schema bump is in flight, verify it with in-memory or
+`tmp_path` databases only — `CharactersRAGDB(":memory:")` and the seeded-old-version
+pattern in `Tests/DB/test_chachanotes_*_migration.py` cover the migration, the
+version bump, the sync-trigger exclusion and the idempotence guard without
+touching a real file. Do not launch the app. `TLDW_CONFIG_PATH` alone does NOT
+protect you here: it redirects the config FILE only, and the database path comes
+from `[paths] data_dir` *inside* that file (`config.get_user_data_dir`), so a
+scratch config that omits `data_dir` still opens the real
+`tldw_chatbook_ChaChaNotes.db` — the same shape as the profile-isolation lesson
+above. Live verification of a schema-bumping branch waits until the branch is
+the one everything else is on.
+
+---
+
 ## A bare interpreter call is not an isolated test
 
 **What happened (TASK-1264/Task 5, first-run wizard skeleton).** After the

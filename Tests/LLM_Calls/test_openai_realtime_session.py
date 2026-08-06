@@ -178,7 +178,8 @@ def _make_is_session_update(
     live-confirmed the API rejects that combination), pcm16 audio in/out at
     the exact given rates (not merely present -- a swapped input/output
     rate must fail this predicate, not just a missing one), input
-    transcription enabled, and server VAD on.
+    transcription enabled with the exact live-confirmed model, and server
+    VAD on.
 
     Args:
         input_rate: Expected `session.audio.input.format.rate`.
@@ -202,7 +203,14 @@ def _make_is_session_update(
             and input_cfg.get("format", {}).get("rate") == input_rate
             and output_cfg.get("format", {}).get("type") == "audio/pcm"
             and output_cfg.get("format", {}).get("rate") == output_rate
-            and input_cfg.get("transcription") is not None
+            # Pinned to the literal, not to `openai_session._TRANSCRIPTION_
+            # MODEL`: importing the production constant here would make
+            # this assertion tautological (it would "pass" even if the
+            # module quietly switched models with nothing re-confirming the
+            # new one against the live API) -- see this module's header,
+            # M9 (c): the fake previously only checked transcription was
+            # enabled at all, not which model.
+            and input_cfg.get("transcription", {}).get("model") == "whisper-1"
             # Either live-accepted mode -- this is the GENERIC handshake
             # matcher, and turn detection became configurable in gate
             # round 5. Still asserted (a missing or garbage block fails);
@@ -390,6 +398,67 @@ async def test_transcripts_route_to_both_callbacks(fake_server):
     assert output_deltas == ["hi "]
 
 
+async def test_input_transcript_completed_with_usage_fires_on_transcription_usage(
+    fake_server,
+):
+    """task-2363 / T2-F12: `conversation.item.input_audio_transcription.
+    completed` carries its OWN `usage` field (`{"type": "duration",
+    "seconds": N}`, live-confirmed -- see this module's header, USAGE
+    section), entirely independent of `response.done`'s token usage. It
+    previously reached nowhere at all -- `_on_input_transcript_completed`
+    only ever read `transcript`."""
+    usage_calls: list[dict] = []
+    callbacks = RealtimeCallbacks(
+        on_transcription_usage=lambda u: usage_calls.append(u),
+    )
+    _, scripted = await _connect_and_handshake(
+        fake_server,
+        [
+            (
+                "send",
+                {
+                    "type": "conversation.item.input_audio_transcription.completed",
+                    "transcript": "hello there",
+                    "usage": {"type": "duration", "seconds": 2},
+                },
+            ),
+        ],
+        callbacks=callbacks,
+    )
+    await scripted.wait_done()
+    await asyncio.sleep(0.05)
+
+    assert usage_calls == [{"type": "duration", "seconds": 2}]
+
+
+async def test_input_transcript_completed_without_usage_does_not_fire_transcription_usage(
+    fake_server,
+):
+    """The event does not always carry `usage` -- must not fire the
+    callback with None/garbage when it's simply absent."""
+    usage_calls: list[dict] = []
+    callbacks = RealtimeCallbacks(
+        on_transcription_usage=lambda u: usage_calls.append(u),
+    )
+    _, scripted = await _connect_and_handshake(
+        fake_server,
+        [
+            (
+                "send",
+                {
+                    "type": "conversation.item.input_audio_transcription.completed",
+                    "transcript": "hello there",
+                },
+            ),
+        ],
+        callbacks=callbacks,
+    )
+    await scripted.wait_done()
+    await asyncio.sleep(0.05)
+
+    assert usage_calls == []
+
+
 async def test_speech_started_fires_during_active_response(fake_server):
     speech_calls = {"n": 0}
     callbacks = RealtimeCallbacks(
@@ -423,6 +492,27 @@ async def test_speech_started_fires_during_active_response(fake_server):
     await asyncio.sleep(0.05)
 
     assert speech_calls["n"] == 1
+
+
+async def test_input_audio_buffer_committed_fires_on_turn_committed(fake_server):
+    """M9 (a): `_on_input_committed` dispatches `on_turn_committed` in
+    production, but no fake script ever sent `input_audio_buffer.committed`
+    -- deleting the dispatch line stayed green. Pinned here so it cannot."""
+    committed_calls = {"n": 0}
+    callbacks = RealtimeCallbacks(
+        on_turn_committed=lambda: committed_calls.__setitem__(
+            "n", committed_calls["n"] + 1
+        )
+    )
+    _, scripted = await _connect_and_handshake(
+        fake_server,
+        [("send", {"type": "input_audio_buffer.committed"})],
+        callbacks=callbacks,
+    )
+    await scripted.wait_done()
+    await asyncio.sleep(0.05)
+
+    assert committed_calls["n"] == 1
 
 
 async def test_cancel_response_sends_cancel_then_truncate_with_played_ms(fake_server):
@@ -996,6 +1086,50 @@ def test_safe_invoke_isolates_exceptions_from_on_error_itself_and_as_reporter():
 
     session._callbacks.on_ready = _raise_on_ready
     session._safe_invoke(session._callbacks.on_ready, op="on_ready")
+
+
+# ---------------------------------------------------------------------------
+# Voice (M9 (b))
+#
+# `_build_session_update` sends `voice` under `session.audio.output` when
+# configured, but no fake script asserted it -- deleting the `output["voice"]
+# = ...` line stayed green.
+# ---------------------------------------------------------------------------
+
+
+def _audio_output_of(event: dict) -> dict:
+    return event.get("session", {}).get("audio", {}).get("output", {})
+
+
+async def test_configured_voice_is_sent_under_audio_output(fake_server):
+    seen: list[dict] = []
+
+    def _capture(event: dict) -> bool:
+        seen.append(_audio_output_of(event))
+        return _is_session_update(event)
+
+    session, scripted = await _connect_and_handshake(
+        fake_server, [], config=_config(voice="marin"), handshake_predicate=_capture
+    )
+    await scripted.wait_done()
+    assert seen[0].get("voice") == "marin"
+
+
+async def test_unset_voice_omits_the_voice_key(fake_server):
+    """An unconfigured voice is the provider's to choose -- proven by the
+    key being ABSENT, not merely falsy/empty, mirroring how the
+    turn-detection knobs are omitted rather than defaulted."""
+    seen: list[dict] = []
+
+    def _capture(event: dict) -> bool:
+        seen.append(_audio_output_of(event))
+        return _is_session_update(event)
+
+    session, scripted = await _connect_and_handshake(
+        fake_server, [], handshake_predicate=_capture
+    )
+    await scripted.wait_done()
+    assert "voice" not in seen[0]
 
 
 # ---------------------------------------------------------------------------

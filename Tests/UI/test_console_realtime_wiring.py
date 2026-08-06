@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import threading
 import time
 from contextlib import contextmanager
@@ -38,6 +39,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
@@ -166,6 +168,9 @@ class FakeRealtimeSession:
 
     def fire_usage(self, payload: dict) -> None:
         self._fire("on_usage", payload)
+
+    def fire_transcription_usage(self, payload: dict) -> None:
+        self._fire("on_transcription_usage", payload)
 
     def fire_closed(self, reason: str = "connection lost") -> None:
         self._fire("on_closed", reason)
@@ -919,6 +924,120 @@ async def test_realtime_usage_records_cached_input_tokens(monkeypatch):
         assert usage.cache_read == 80
         assert usage.uncached_input == 20
         assert usage.output == 20
+
+
+@pytest.mark.asyncio
+async def test_realtime_usage_records_the_audio_token_split(monkeypatch):
+    """task-2363: realtime `response.done` usage splits BOTH input and
+    output tokens into text/audio -- live-confirmed, see openai_session.py's
+    ground-truth header USAGE section. Previously folded into the plain
+    uncached/output buckets with no distinct audio count at all."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+        store = console._ensure_console_chat_store()
+
+        session.fire_turn_committed()
+        session.fire_reply_started("item-1")
+        session.fire_output_transcript_delta("Hi.")
+        await _wait_for(
+            lambda: console._console_realtime.assistant_row_id is not None, pilot
+        )
+        row_id = console._console_realtime.assistant_row_id
+        session.fire_usage(
+            {
+                "total_tokens": 151,
+                "input_tokens": 33,
+                "output_tokens": 118,
+                "input_token_details": {
+                    "text_tokens": 15,
+                    "audio_tokens": 18,
+                    "image_tokens": 0,
+                    "cached_tokens": 0,
+                    "cached_tokens_details": {
+                        "text_tokens": 0,
+                        "audio_tokens": 0,
+                        "image_tokens": 0,
+                    },
+                },
+                "output_token_details": {"text_tokens": 28, "audio_tokens": 90},
+            }
+        )
+        await _wait_for(lambda: store.get_message(row_id).usage is not None, pilot)
+
+        usage = store.get_message(row_id).usage
+        assert usage.uncached_input == 33
+        assert usage.output == 118
+        assert usage.audio_input == 18
+        assert usage.audio_output == 90
+
+
+@pytest.mark.asyncio
+async def test_transcription_usage_attaches_duration_to_the_user_row(monkeypatch):
+    """task-2363 / T2-F12: the input-audio transcription's OWN `usage`
+    field (`{"type": "duration", "seconds": N}`) is about the USER's spoken
+    turn, not the assistant's reply -- it must land on `user_row_id`, not
+    `last_reply_row_id` (the target `on_usage` uses)."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+        store = console._ensure_console_chat_store()
+
+        session.fire_turn_committed()
+        await _wait_for(
+            lambda: console._console_realtime.user_row_id is not None, pilot
+        )
+        row_id = console._console_realtime.user_row_id
+        session.fire_transcription_usage({"type": "duration", "seconds": 2})
+        await _wait_for(lambda: store.get_message(row_id).usage is not None, pilot)
+
+        usage = store.get_message(row_id).usage
+        assert usage.transcription_seconds == 2.0
+
+
+@pytest.mark.asyncio
+async def test_a_late_transcription_usage_never_overwrites_the_next_turn(monkeypatch):
+    """Mirrors `test_a_late_input_transcript_never_overwrites_the_next_turn`
+    for usage: a duration payload that lands after the NEXT turn committed
+    (and already got its own usage) must not clobber it."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+        store = console._ensure_console_chat_store()
+
+        session.fire_turn_committed()
+        await _wait_for(lambda: len(_messages(console)) == 1, pilot)
+        first_row_id = console._console_realtime.user_row_id
+        session.fire_turn_committed()
+        await _wait_for(lambda: len(_messages(console)) == 2, pilot)
+        second_row_id = console._console_realtime.user_row_id
+
+        session.fire_transcription_usage({"type": "duration", "seconds": 3})
+        await _wait_for(
+            lambda: store.get_message(second_row_id).usage is not None, pilot
+        )
+        # Turn one's duration usage finally arrives -- far too late.
+        session.fire_transcription_usage({"type": "duration", "seconds": 1})
+        await pilot.pause()
+        await pilot.pause()
+
+        assert store.get_message(second_row_id).usage.transcription_seconds == 3.0
+        assert store.get_message(first_row_id).usage is None
 
 
 @pytest.mark.asyncio
@@ -1925,6 +2044,91 @@ async def test_transport_drop_reconnects_once_and_reseeds(monkeypatch):
         ), notifications
 
 
+# ---------------------------------------------------------------------------
+# task-2360: reconnect must buffer, not drop, mic audio -- the tap's
+# entry-time first-words guarantee extended across a mid-loop RECONNECT.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconnect_buffers_mic_audio_and_flushes_to_the_new_session(monkeypatch):
+    """Speech captured during the RECONNECTING window (old session gone,
+    new one not yet ready) must not be dropped -- the SAME tap (never
+    rebuilt across a reconnect) re-buffers it and flushes it, in order,
+    to the new session the moment it goes ready, mirroring the entry-time
+    first-words guarantee (`test_first_words_buffer_until_ready_then_
+    flush_in_order`)."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+        recorder = rig.recorder  # the tap survives the reconnect unchanged
+
+        session.fire_closed("connection lost")
+        await _wait_for(lambda: len(rig.sessions) == 2, pilot)
+        assert console._console_realtime.controller.state == "reconnecting"
+
+        # The old session is gone and the new one has not connected yet --
+        # exactly the window where frames used to be silently dropped.
+        recorder.push(b"during-reconnect-1")
+        recorder.push(b"during-reconnect-2")
+        assert rig.sessions[0].audio_frames == []
+        assert rig.sessions[1].audio_frames == []
+
+        await _wait_for(lambda: rig.sessions[1].connected, pilot)
+        rig.sessions[1].fire_ready()
+        await _wait_for(
+            lambda: console._console_realtime.controller.state == "live", pilot
+        )
+
+        assert rig.sessions[1].audio_frames == [
+            b"during-reconnect-1",
+            b"during-reconnect-2",
+        ]
+
+        # Streaming resumes live afterward, unaffected by the buffering.
+        recorder.push(b"after-reconnect")
+        assert rig.sessions[1].audio_frames[-1] == b"after-reconnect"
+
+
+@pytest.mark.asyncio
+async def test_failed_reconnect_never_forwards_the_buffered_audio(monkeypatch):
+    """The other direction: when the reconnect ITSELF fails (the same
+    give-up exit `test_auth_failure_during_reconnect_gives_up_instead_of_
+    hanging` pins), any audio buffered during that doomed reconnect window
+    must never reach the failed session -- and the loop's ordinary
+    teardown (which already stops, and thereby discards, the tap's buffer
+    -- see `Tests/Audio/test_realtime_mic_tap.py::
+    test_stop_after_begin_buffering_discards_the_rebuffered_frames`) is
+    all that is needed; no separate discard path exists."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+        recorder = rig.recorder
+
+        session.fire_closed("connection lost")
+        await _wait_for(lambda: len(rig.sessions) == 2, pilot)
+        assert console._console_realtime.controller.state == "reconnecting"
+
+        recorder.push(b"buffered-during-doomed-reconnect")
+
+        await _wait_for(lambda: rig.sessions[1].connected, pilot)
+        rig.sessions[1].fire_closed(_INVALID_KEY_REASON)  # the reconnect itself fails
+        await _wait_for(lambda: console._console_realtime is None, pilot)
+        await _wait_for(lambda: recorder.stop_calls == 1, pilot)
+
+        assert rig.sessions[1].audio_frames == []
+
+
 @pytest.mark.asyncio
 async def test_idle_timeout_exits_with_a_reasoned_toast(monkeypatch):
     _patch_realtime_config(monkeypatch, idle_timeout_seconds=120.0)
@@ -2097,3 +2301,403 @@ async def test_unmount_abandons_the_realtime_loop(monkeypatch):
         assert console._console_realtime is None
         assert rig.recorder.stop_calls == 1
         assert session.closed is True
+
+
+# ---------------------------------------------------------------------------
+# task-2364: structured message metadata instead of parsed UI copy
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_realtime_rows_carry_engine_provenance(monkeypatch):
+    """The V4 spec's engine/provider/model provenance now has a field to
+    live in, so it stops riding usage-attach and a visible marker."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        session.fire_turn_committed()
+        await _wait_for(lambda: len(_messages(console)) == 1, pilot)
+        session.fire_reply_started("item-1")
+        session.fire_output_transcript_delta("spoken answer")
+        session.fire_input_transcript("what is the weather")
+        await _wait_for(lambda: len(_messages(console)) == 2, pilot)
+        await _wait_for(
+            lambda: _messages(console)[0].content == "what is the weather", pilot
+        )
+
+        user, assistant = _messages(console)
+        assert user.metadata is not None
+        assert user.metadata.engine == "realtime"
+        assert user.metadata.provider == "openai"
+        # The user row is attributed to the TRANSCRIPTION model, matching
+        # how its usage (spoken-audio duration) is attributed.
+        assert (
+            user.metadata.model
+            == chat_screen_module.CONSOLE_REALTIME_TRANSCRIPTION_MODEL
+        )
+        assert assistant.metadata is not None
+        assert assistant.metadata.engine == "realtime"
+        assert assistant.metadata.model == "gpt-realtime"
+
+
+@pytest.mark.asyncio
+async def test_barge_in_sets_the_structured_interrupted_flag(monkeypatch):
+    """The visible marker stays for the human reader; machine consumers
+    read the flag."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        session.fire_turn_committed()
+        session.fire_reply_started("item-1")
+        session.fire_output_transcript_delta("Half a sen")
+        await _wait_for(
+            lambda: any(
+                row.role is ConsoleMessageRole.ASSISTANT and row.content
+                for row in _messages(console)
+            ),
+            pilot,
+        )
+
+        console._console_realtime.controller.on_keypress()
+        await pilot.pause()
+
+        assistant = [
+            row for row in _messages(console) if row.role is ConsoleMessageRole.ASSISTANT
+        ][0]
+        assert assistant.content.endswith("interrupted"), assistant.content
+        assert assistant.metadata is not None
+        assert assistant.metadata.interrupted is True
+
+
+@pytest.mark.asyncio
+async def test_a_completed_reply_is_not_marked_interrupted(monkeypatch):
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        session.fire_turn_committed()
+        session.fire_reply_started("item-1")
+        session.fire_output_transcript_delta("A whole answer.")
+        session.fire_reply_done()
+        await _wait_for(
+            lambda: any(
+                row.role is ConsoleMessageRole.ASSISTANT and row.status == "complete"
+                for row in _messages(console)
+            ),
+            pilot,
+        )
+
+        assistant = [
+            row for row in _messages(console) if row.role is ConsoleMessageRole.ASSISTANT
+        ][0]
+        assert assistant.metadata is not None
+        assert assistant.metadata.interrupted is False
+
+
+@pytest.mark.asyncio
+async def test_seed_trims_the_marker_from_a_flagged_interrupted_reply(monkeypatch):
+    """The ordinary interrupted case: a reply the engine cut short carries
+    both the flag and the trailing marker, and the marker never reaches the
+    model -- it is our chrome for the human reader."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        store.append_message(
+            session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=(
+                "Half a sentence"
+                + chat_screen_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
+            ),
+            metadata=MessageMetadata(engine="realtime", interrupted=True),
+        )
+
+        await _enter_live_realtime(console, pilot, rig)
+
+        items, _instructions = rig.session.seeds[0]
+        assert items == [("assistant", "Half a sentence")]
+
+
+@pytest.mark.asyncio
+async def test_seed_keeps_marker_shaped_text_a_user_actually_said(monkeypatch):
+    """The marker is trimmed as a SUFFIX, so text merely CONTAINING it
+    survives: the old global replace mangled any row whose words held the
+    marker string, which is live user text, not chrome."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        store.append_message(
+            session_id,
+            role=ConsoleMessageRole.USER,
+            content="type ⏹ interrupted into the log",
+            metadata=MessageMetadata(engine="realtime", transcript_status="final"),
+        )
+
+        await _enter_live_realtime(console, pilot, rig)
+
+        items, _instructions = rig.session.seeds[0]
+        assert items == [("user", "type ⏹ interrupted into the log")]
+
+
+@pytest.mark.asyncio
+async def test_turn_commit_records_a_pending_transcript_status(monkeypatch):
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        session.fire_turn_committed()
+        await _wait_for(lambda: len(_messages(console)) == 1, pilot)
+
+        user = _messages(console)[0]
+        assert user.content == ""
+        assert user.metadata is not None
+        assert user.metadata.transcript_status == "pending"
+
+        session.fire_input_transcript("what is the weather")
+        await _wait_for(lambda: _messages(console)[0].content, pilot)
+        assert _messages(console)[0].metadata.transcript_status == "final"
+
+
+@pytest.mark.asyncio
+async def test_an_empty_transcript_records_why_the_row_is_empty(monkeypatch):
+    """The strand case: the provider transcribed the turn and it held no
+    words. Before the field, the row sat empty forever with nothing saying
+    whether the user was silent or the pipeline broke."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        session.fire_turn_committed()
+        await _wait_for(lambda: len(_messages(console)) == 1, pilot)
+        session.fire_input_transcript("   ")
+        await _wait_for(
+            lambda: _messages(console)[0].metadata is not None
+            and _messages(console)[0].metadata.transcript_status == "empty",
+            pilot,
+        )
+
+        user = _messages(console)[0]
+        assert user.content == ""
+        assert user.metadata.engine == "realtime"
+
+
+@pytest.mark.asyncio
+async def test_a_late_empty_transcript_never_restates_a_filled_row(monkeypatch):
+    """`on_input_transcript` carries no item id (see F5). An empty payload
+    landing after the row was filled must not relabel a good transcript as
+    'empty'."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        session.fire_turn_committed()
+        await _wait_for(lambda: len(_messages(console)) == 1, pilot)
+        session.fire_input_transcript("what is the weather")
+        await _wait_for(lambda: _messages(console)[0].content, pilot)
+
+        session.fire_input_transcript("")
+        await pilot.pause()
+        await pilot.pause()
+
+        user = _messages(console)[0]
+        assert user.content == "what is the weather"
+        assert user.metadata.transcript_status == "final"
+
+
+@pytest.mark.asyncio
+async def test_seed_keeps_marker_text_typed_by_a_user_with_no_metadata(monkeypatch):
+    """F1: only realtime rows are ever stamped with metadata, so every TYPED
+    Console turn takes the no-metadata path -- permanently, not just until
+    pre-v31 rows age out. A global `replace` there ate the marker string out
+    of the middle of text a user actually typed."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        store.append_message(
+            store.active_session_id,
+            role=ConsoleMessageRole.USER,
+            content="the docs say ⏹ interrupted means cut off",
+        )
+
+        await _enter_live_realtime(console, pilot, rig)
+
+        items, _instructions = rig.session.seeds[0]
+        assert items == [("user", "the docs say ⏹ interrupted means cut off")]
+
+
+@pytest.mark.asyncio
+async def test_seed_still_trims_a_marker_suffix_on_a_row_without_metadata(monkeypatch):
+    """The no-metadata path must keep doing its job for rows the engine
+    genuinely cut short before the field existed: the marker is only ever
+    APPENDED, so trimming the suffix covers every one of them."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        store.append_message(
+            store.active_session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=(
+                "Half a sentence"
+                + chat_screen_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
+            ),
+        )
+
+        await _enter_live_realtime(console, pilot, rig)
+
+        items, _instructions = rig.session.seeds[0]
+        assert items == [("assistant", "Half a sentence")]
+
+
+@pytest.mark.asyncio
+async def test_seed_trims_a_marker_suffix_even_when_the_flag_says_otherwise(monkeypatch):
+    """F2: the marker append and the metadata write are separate calls, each
+    independently swallowed on failure. A row carrying the marker but no flag
+    must still not seed chrome into the model."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        store.append_message(
+            store.active_session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=(
+                "Half a sentence"
+                + chat_screen_module.CONSOLE_REALTIME_INTERRUPTED_MARKER
+            ),
+            metadata=MessageMetadata(engine="realtime", interrupted=False),
+        )
+
+        await _enter_live_realtime(console, pilot, rig)
+
+        items, _instructions = rig.session.seeds[0]
+        assert items == [("assistant", "Half a sentence")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "seconds",
+    [-1, float("nan"), float("inf"), float("-inf")],
+    ids=["negative", "nan", "inf", "-inf"],
+)
+async def test_a_nonsense_transcription_duration_is_sanitized_before_it_persists(
+    monkeypatch, seconds
+):
+    """Qodo Q2: the duration comes off the wire and went straight into
+    `ProviderUsage.transcription_seconds` via a bare `float()`, so a
+    negative or non-finite value propagated through `plus()` and into the
+    JSON written to the database."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+        store = console._ensure_console_chat_store()
+
+        session.fire_turn_committed()
+        await _wait_for(
+            lambda: console._console_realtime.user_row_id is not None, pilot
+        )
+        row_id = console._console_realtime.user_row_id
+        session.fire_transcription_usage({"type": "duration", "seconds": seconds})
+        await _wait_for(lambda: store.get_message(row_id).usage is not None, pilot)
+
+        usage = store.get_message(row_id).usage
+        assert math.isfinite(usage.transcription_seconds)
+        assert usage.transcription_seconds == 0.0
+        # And the record it produces is still round-trippable: `json.dumps`
+        # emits bare NaN/Infinity, which strict JSON readers reject.
+        assert "Infinity" not in usage.to_json()
+        assert "NaN" not in usage.to_json()
+
+
+@pytest.mark.asyncio
+async def test_a_duration_payload_with_no_seconds_attaches_nothing(monkeypatch):
+    """The sanitizer maps unusable values to 0.0, so the ABSENT-key case
+    needs its own guard: attaching a 0.0-second record would occupy the
+    row's single usage slot and make the real duration -- if it followed --
+    look like a late duplicate."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+        store = console._ensure_console_chat_store()
+
+        session.fire_turn_committed()
+        await _wait_for(
+            lambda: console._console_realtime.user_row_id is not None, pilot
+        )
+        row_id = console._console_realtime.user_row_id
+        session.fire_transcription_usage({"type": "duration"})
+        await pilot.pause()
+        await pilot.pause()
+        assert store.get_message(row_id).usage is None
+
+        # ...and the real duration that follows is still accepted.
+        session.fire_transcription_usage({"type": "duration", "seconds": 2})
+        await _wait_for(lambda: store.get_message(row_id).usage is not None, pilot)
+        assert store.get_message(row_id).usage.transcription_seconds == 2.0

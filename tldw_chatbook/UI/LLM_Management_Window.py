@@ -333,6 +333,10 @@ class LLMManagementWindow(Container):
         The banner already says "requires running service"; without gating,
         every dependent action fails at click-time (UX-091).
         """
+        # Skip while the screen/tab is inactive so hidden tabs burn no CPU
+        # (the probe hits the local Ollama HTTP endpoint on every tick).
+        if not self.is_attached or not self.screen.is_active:
+            return
         excluded = {
             "ollama-start-service-button",
             "ollama-stop-service-button",

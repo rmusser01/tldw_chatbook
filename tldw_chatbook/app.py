@@ -762,7 +762,7 @@ class TabNavigationProvider(Provider):
         TAB_MCP: "Open MCP for servers, tools, permissions, auth, and audit",
         TAB_ACP: "Open ACP for agents, sessions, runtimes, diffs, and terminals",
         TAB_SKILLS: "Open Skills for Agent Skills discovery, validation, and attachments",
-        TAB_SETTINGS: "Open global preferences, appearance, accounts, storage, and app behavior",
+        TAB_SETTINGS: "Open global preferences, appearance, storage, and app behavior",
         TAB_CCP: "Switch to Roleplay for characters, personas, dictionaries, and world books",
         TAB_MEDIA: "Switch to media library",
         TAB_SEARCH: "Switch to Library search and RAG",
@@ -1186,7 +1186,7 @@ class SettingsProvider(Provider):
             (
                 "Settings & Preferences: Open Settings Tab",
                 "open_settings",
-                "Navigate to Tools & Settings tab",
+                "Navigate to the Settings tab",
             ),
         ]
 
@@ -1205,7 +1205,7 @@ class SettingsProvider(Provider):
             (
                 "Settings & Preferences: Open Settings Tab",
                 "open_settings",
-                "Navigate to Tools & Settings tab",
+                "Navigate to the Settings tab",
             ),
             (
                 "Settings & Preferences: Open Config File",
@@ -6491,6 +6491,17 @@ class TldwCli(
     async def _handle_screen_navigation_locked(self, message: NavigateToScreen) -> None:
         """Body of `handle_screen_navigation`, run under its FIFO lock."""
         requested_screen = message.screen_name
+        if not getattr(self, "_initial_screen_pushed", False):
+            # Until the initial screen exists (splash screen still up, or the
+            # post-splash startup push still in flight) the screen stack has
+            # no result callback to pop and switch_screen raises IndexError.
+            # Swallow the request; the user can re-issue it once the app is
+            # interactive.
+            logger.info(
+                f"Ignoring navigation to {requested_screen}: "
+                "initial screen not yet mounted"
+            )
+            return
         screen_name, current_tab_value, screen_class = (
             self._resolve_screen_navigation_target(requested_screen)
         )

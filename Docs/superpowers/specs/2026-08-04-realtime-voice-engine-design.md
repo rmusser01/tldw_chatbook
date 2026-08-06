@@ -147,11 +147,13 @@ handsfree_engine = "auto"     # "auto" | "pipeline" | "realtime"
   - User speech: the user-message row is created at `on_turn_committed` with
     a pending placeholder and its text fills on `on_input_transcript` —
     ordering in the pane stays correct even though the server's transcription
-    arrives after the reply has begun (review amendment #2).
+    arrives after the reply has begun (review amendment #2). The placeholder
+    carries `transcript_status = "pending"` from the moment it exists, and
+    resolves to `final`/`empty`/`failed` — see "Turn metadata" below.
   - Model speech: `on_output_transcript_delta` streams into an assistant
     message through the store's existing streaming-append path. Provenance
-    (provider, model) rides the usage attached to the row, not message-level
-    metadata — see "Turn metadata deferred" below.
+    (`engine`/`provider`/`model`) is stored ON the row — see "Turn metadata"
+    below.
 - **Interruption honesty (review amendment #1):** precise text-at-cut
   trimming is not implementable — transcript streams ahead of audio and no
   ms→chars mapping exists; the API truncates its own context but returns no
@@ -159,13 +161,39 @@ handsfree_engine = "auto"     # "auto" | "pipeline" | "realtime"
   streamed text **marked interrupted** (metadata + visible marker). Documented
   divergence: the model remembers less than the transcript shows, and
   post-reconnect reseeding sends slightly more than the model previously had.
-- **Turn metadata deferred (task 5, fix round 1 / F4):** the per-turn
-  `engine`/`provider`/`model` and `interrupted` metadata above has no field to
-  live in — `ConsoleChatStore`'s message row exposes no metadata column, and
-  adding one is a schema change well outside a wiring task. Deferred pending
-  that field; today the provenance a reader actually needs is carried by the
-  visible `⏹ interrupted` marker on the cut reply and by the usage attached to
-  the row (recorded against the realtime provider/model).
+- **Turn metadata — SHIPPED (task-2364; was "deferred", task 5 / F4):** every
+  row the loop writes carries a structured `MessageMetadata`
+  (`Chat/message_metadata.py`), persisted as the local-only
+  `messages.metadata_json` column (ChaChaNotes schema **v31**, added the same
+  way as `usage_json`: never in a `messages_sync_*` payload, written
+  version-neutrally by `update_message_metadata_local`).
+  - `engine` = `"realtime"`, `provider` = the realtime provider, `model` = the
+    realtime model on a reply row and the transcription model on a user row —
+    the same attribution its usage gets. An adopted pipeline capture claims no
+    transcription model (its words came from local STT).
+  - `interrupted` is the recorded FACT that a reply was cut short — what
+    exports, summaries and any later reader consult instead of inferring it
+    from UI copy. The visible `⏹ interrupted` marker stays in the content for
+    the human reader.
+  - Seeding trims that marker as a **suffix**, on every row, with no
+    condition attached, because `_finish_console_realtime_reply_row` only ever
+    *appends* it: the trim removes every marker this app has written while
+    leaving the same characters alone inside a turn's actual words, so a user
+    who types "the docs say ⏹ interrupted means cut off" has their sentence
+    seeded intact (the old global `replace` ate it). The trim is deliberately
+    **not gated on the flag**: only the realtime loop stamps metadata, so every
+    ordinary typed turn reaches the seed builder with none at all — a gate
+    reading "no metadata ⇒ legacy interrupted reply" would mangle live user
+    text forever, and a gate reading the flag alone would leak chrome whenever
+    the marker append succeeded but the metadata write was swallowed. Removing
+    chrome this code appended is a mechanical undo, not an inference; where
+    marker and flag disagree, in either direction, that is logged rather than
+    acted on.
+  - `transcript_status` (`pending` → `final`/`empty`/`failed`) closes the
+    empty-user-row strand: a transcript that legitimately came back empty now
+    records that it did, instead of leaving a blank row with no explanation.
+  Metadata survives both round trips — conversation resume (read back off
+  `metadata_json`) and screen-state snapshots.
 - Accepted oddity: reply text finishes rendering before the voice finishes
   speaking; the chip's `speaking` state carries the truth.
 

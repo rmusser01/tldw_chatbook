@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import functools
+import os
 import re
 import threading
 import time
@@ -12,8 +13,11 @@ from collections import OrderedDict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Protocol
 from uuid import uuid4
+
+from loguru import logger
 
 from tldw_chatbook.Chat.attachment_core import (
     image_url_part,
@@ -74,9 +78,10 @@ from tldw_chatbook.Chat.console_skill_resolver import (
     find_embedded_mentions,
     resolve_skill_command,
 )
-from loguru import logger
+from tldw_chatbook.Chat.prompt_history import PromptHistory
 
 from tldw_chatbook.Agents.builtin_tool_gate import build_builtin_gate
+from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
 from tldw_chatbook.config import get_cli_setting
@@ -104,6 +109,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.agent_models import ToolCall
     from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 
 
 #: Fallback used when no `mcp_approval_timeout_seconds` seam is injected --
@@ -679,6 +685,110 @@ def build_tool_review_hook(
     return review_tool_calls
 
 
+def build_local_review_hook(
+    provider: "LocalToolProvider",
+    request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
+) -> Callable[[list["ToolCall"]], dict[str, str]]:
+    """Build this run's review_tool_calls hook for the local provider.
+
+    Identical discipline to build_mcp_review_hook (see its docstring for
+    the full rationale -- every binding point applies unchanged here):
+    clear-first stamps at entry (I3: a raising approval round trip must
+    never leave a stale prior-turn stamp live for the fail-open runtime
+    to hand to `invoke()`), exactly ONE approval round trip per batch,
+    and verdicts only ever "proceed" -- `LocalToolProvider.invoke()`
+    single-sources refusals (pinned LOCAL_* refusal strings) and the
+    persistence side effects of approve_session/always_allow stamps, so
+    this hook never returns a refusal string itself. Calls the provider
+    doesn't own resolve `None` from `pending_gate_for` and never enter
+    the batch.
+
+    Args:
+        provider: This run's already-composed `LocalToolProvider` (built
+            by `_compose_local_provider` on the main loop before the
+            run's worker thread starts).
+        request_approvals: The bound `ConsoleChatController.
+            request_mcp_approvals` method for THIS run -- the same
+            approval-card bridge the MCP hook uses; it consumes
+            `MCPPendingCall` payloads regardless of origin.
+
+    Returns:
+        A `review_tool_calls`-shaped callable suitable for `LoopDeps`/
+        `AgentService(review_tool_calls=...)`.
+    """
+
+    def review_tool_calls(calls: list["ToolCall"]) -> dict[str, str]:
+        # I3: clear THIS turn's stamps FIRST -- see build_mcp_review_hook.
+        provider.apply_batch_decisions({})
+        pending: list["MCPPendingCall"] = []
+        for call in calls:
+            gate = provider.pending_gate_for(call.name, call.args)
+            if gate is not None:
+                pending.append(gate)
+        if not pending:
+            return {}
+        decisions = request_approvals(pending)
+        provider.apply_batch_decisions(decisions)
+        return {call.llm_name: "proceed" for call in pending}
+
+    return review_tool_calls
+
+
+def build_combined_review_hook(
+    hooks: list[Callable[[list["ToolCall"]], dict[str, str]]],
+) -> Callable[[list["ToolCall"]], dict[str, str]]:
+    """Fan one batch through every provider's hook; merge verdict maps.
+
+    Each hook gates only the calls its provider owns (pending_gate_for
+    returns None for foreign tools), so merging is collision-free --
+    except when two providers own the SAME name (not possible today:
+    local names carry fs_/web_/todo_ prefixes, MCP names mcp__*), where
+    the later hook's "proceed" would simply win; both stamps are still
+    applied by each provider's own hook regardless.
+
+    I3 across providers: every hook runs even when an earlier one RAISES.
+    `run_agent_loop` fails the batch OPEN on hook exception
+    (agent_runtime.py:367-376), and each hook's clear-first stamp wipe is
+    the only thing standing between a stale prior-turn stamp and the
+    fail-open runtime handing it to `invoke()`. A naive sequential loop
+    would let one hook's raising approval round trip (the documented I3
+    mid-shutdown case) skip every LATER hook -- including its entry clear
+    -- stranding that provider's stale stamp. So each hook is invoked
+    under its own try/except and the FIRST exception is re-raised after
+    all hooks have run: every provider gets its clear (and, when its own
+    round trip succeeds, its fresh this-turn decisions), and the runtime
+    still sees the raise and applies its fail-open policy against stamps
+    that are guaranteed non-stale.
+
+    Args:
+        hooks: The per-provider review hooks to fan each batch through,
+            in application order.
+
+    Returns:
+        A `review_tool_calls`-shaped callable that merges every hook's
+        verdict map into one.
+    """
+
+    def review_tool_calls(calls: list["ToolCall"]) -> dict[str, str]:
+        verdicts: dict[str, str] = {}
+        first_exc: Exception | None = None
+        for hook in hooks:
+            try:
+                verdicts.update(hook(calls))
+            except Exception as exc:  # noqa: BLE001 -- re-raised after ALL hooks ran
+                logger.opt(exception=True).warning(
+                    "combined review_tool_calls: a provider hook raised; "
+                    "running remaining hooks so their entry clears still fire"
+                )
+                if first_exc is None:
+                    first_exc = exc
+        if first_exc is not None:
+            raise first_exc
+        return verdicts
+
+    return review_tool_calls
+
+
 def _split_skill_command_word(text: str) -> tuple[str, str]:
     """Split a ``$word rest`` string into its leading token and the remainder.
 
@@ -952,6 +1062,13 @@ class ConsoleChatController:
         #: persisted, run about to start) so the composer can clear immediately
         #: instead of holding the sent text for the whole run.
         self.on_submission_accepted: Callable[[], None] | None = None
+        #: TASK-1364: optional shared JSONL prompt-history store, assigned by
+        #: the owning screen (mirroring ``on_submission_accepted``). An
+        #: ACCEPTED send's cleaned draft is appended here -- never a blocked,
+        #: refused, or empty (attachment-only) one -- so the composer's ghost
+        #: text and Up/Down recall can offer it later. ``None`` (e.g. in
+        #: controller-only tests) disables recording.
+        self.prompt_history: PromptHistory | None = None
         # Task 3b: PER-SESSION maps, mirroring `_run_states`' own keying --
         # two sessions can each have their own in-flight stream/cancel state
         # without clobbering each other. Written/cleared at the SAME
@@ -1890,6 +2007,12 @@ class ConsoleChatController:
         # never reach this hook -- this ordering just extends that same
         # rule to cover it too.
         self._notify_submission_accepted()
+        # TASK-1364: record the accepted send to the shared prompt history.
+        # Same placement rule as the accepted-hook above: only a send that is
+        # confirmed to proceed is recorded -- every `_block`/refusal path
+        # returns before this point, and `_record_prompt_history` itself
+        # skips empty (attachment-only) drafts.
+        await self._record_prompt_history(clean_draft)
         # TASK-485: the turn is confirmed to proceed — flush the deferred USER
         # echo to durable storage now (creating the conversation), BEFORE the
         # assistant row, so a reload shows the user's prompt ahead of its reply.
@@ -3065,6 +3188,159 @@ class ConsoleChatController:
             return None
         self._publish_mcp_inspector_counts(len(catalog), provider.not_connected_count)
         return provider
+
+    def _compose_local_provider(
+        self,
+        session_id: str | None = None,
+    ) -> tuple[
+        LocalToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None
+    ]:
+        """Build THIS run's LocalToolProvider + review hook, or ``(None, None)``.
+
+        Sync, unlike ``_compose_mcp_provider``: ``LocalToolProvider``'s
+        specs are static (no async catalog composition), so there is no
+        main-loop I/O constraint -- but it is still called from
+        ``_run_agent_reply`` alongside the MCP composition, before the
+        bridge is dispatched onto ``asyncio.to_thread``.
+
+        Returns ``(None, None)`` whenever local tools should not be
+        offered this run:
+
+        - ``[console] local_tools_enabled`` is false (the master flag);
+        - no ``unified_mcp_service`` on the app -- ADR-032 reuses the MCP
+          permission store under the synthetic ``local:__local__`` server
+          key, so without the service there is no state source, no
+          session-approval cache, and no persistence path;
+        - the kill switch is on, or reading it raised (fail closed --
+          mirrors ``_compose_mcp_provider``).
+
+        Wiring (all straight MCP parity): ``resolve_state`` is the
+        service's own ``gate_tool_test`` -- the exact payload source the
+        MCP gate uses (fresh ``store.load()`` + ``resolve_effective_
+        state`` per call, fail-closed to "ask" with no store);
+        ``persist_approval`` routes ``approve_session`` to the in-memory
+        session cache and ``always_allow`` to ``set_tool_state``, which
+        fingerprints ``definition_hash(description, input_schema)``
+        itself (the rug-pull guard, spec §3.2); ``record_decision`` is
+        the same ``record_tool_decision`` audit path the MCP provider
+        uses (``initiator="agent"``), recording local refusals as
+        "denied"/"denied-timeout" under the ``local:__local__`` server
+        key.
+
+        Todo wiring (phase-3a Task 4): when ``session_id`` resolves to a
+        live session, the provider is handed THAT session's own ``todos``
+        list (replaced in place by ``todo_write``) plus an
+        ``on_todo_change`` that renders the updated list into the
+        transcript via ``ConsoleAgentBridge.append_todo_marker`` -- the
+        same in-memory, worker-thread, persist-free path the agent step
+        markers use. Without a session (or without a bridge), the
+        provider stays context-free and no ``todo_write`` spec is
+        registered.
+
+        Args:
+            session_id: THIS run's owning session id, bound into the
+                approval bridge exactly as ``_compose_mcp_provider`` and
+                the built-in review hook bind it, so cancellation checks
+                and card parking scope to this run's own session.
+
+        Returns:
+            ``(provider, review_tool_calls)`` when eligible -- a
+            ``LocalToolProvider`` confined to the resolved workspace root
+            and this run's ``build_local_review_hook``-built batch-review
+            closure; ``(None, None)`` otherwise.
+        """
+        if not get_cli_setting("console", "local_tools_enabled", False):
+            return None, None
+        service = getattr(self.app, "unified_mcp_service", None)
+        if service is None:
+            return None, None
+        try:
+            kill_switch = service.get_kill_switch()
+        except Exception:  # noqa: BLE001 -- fail closed to "no local tools this run"
+            logger.opt(exception=True).warning(
+                "ConsoleChatController: get_kill_switch failed; skipping local tools this run"
+            )
+            return None, None
+        if kill_switch:
+            return None, None
+
+        bound_request_approvals = functools.partial(
+            self.request_mcp_approvals, session_id=session_id
+        )
+
+        def _kill_switch() -> bool:
+            # invoke()-time read, mirroring MCPToolProvider._kill_switch_
+            # engaged: never raises, and a read failure must not block
+            # execution (compose-time read above already failed closed).
+            try:
+                return bool(service.get_kill_switch())
+            except Exception as exc:  # noqa: BLE001 -- invoke must never raise
+                logger.warning(
+                    f"ConsoleChatController: get_kill_switch failed during local invoke: {exc}"
+                )
+                return False
+
+        def _persist_approval(hub: "HubTool", decision: str) -> None:
+            if decision == "approve_session":
+                service.approve_for_session(hub.server_key, hub.name)
+            elif decision == "always_allow":
+                # set_tool_state computes definition_hash(hub.description,
+                # hub.input_schema) itself -- required for the rug-pull guard.
+                service.set_tool_state(hub.server_key, hub.name, "allow", tool=hub)
+
+        def _record_decision(hub: "HubTool", decision: str) -> None:
+            # Same audit path MCPToolProvider._record_decision_safe uses;
+            # the provider guards the call (never-raise seam).
+            service.record_tool_decision(
+                hub.server_key,
+                hub.name,
+                decision=decision,
+                initiator="agent",
+            )
+
+        # expanduser() before resolve(): a configured "~/repo" must land
+        # under the user's home, not literal "~" under the cwd.
+        raw_root = (get_cli_setting("console", "workspace_root", "") or "").strip()
+        root = (
+            Path(raw_root).expanduser().resolve()
+            if raw_root
+            else Path(os.getcwd()).resolve()
+        )
+        provider = LocalToolProvider(
+            workspace_root=root,
+            resolve_state=service.gate_tool_test,
+            kill_switch=_kill_switch,
+            approval_callback=bound_request_approvals,
+            is_session_approved=lambda hub: service.is_session_approved(
+                hub.server_key, hub.name
+            ),
+            persist_approval=_persist_approval,
+            record_decision=_record_decision,
+            **self._todo_wiring(session_id),
+        )
+        return provider, build_local_review_hook(provider, bound_request_approvals)
+
+    def _todo_wiring(self, session_id: str | None) -> dict:
+        """The todo_store/on_todo_change kwargs for ``_compose_local_provider``.
+
+        Empty dict (no todo capability) when there is no session context,
+        the session is unknown, or there is no bridge to render through.
+        """
+        if session_id is None:
+            return {}
+        bridge = self._agent_bridge
+        if bridge is None:
+            return {}
+        session = next(
+            (s for s in self.store.sessions() if s.id == session_id), None
+        )
+        if session is None:
+            return {}
+
+        def _on_todo_change(todos: list) -> None:
+            bridge.append_todo_marker(session_id, todos)
+
+        return {"todo_store": session.todos, "on_todo_change": _on_todo_change}
 
     def resolve_pending_approval(
         self, decisions: dict[str, str], *, round_id: str | None = None
@@ -5909,6 +6185,27 @@ class ConsoleChatController:
             # must never abort an already-accepted provider run.
             pass
 
+    async def _record_prompt_history(self, text: str) -> None:
+        """Append an accepted send's draft to the shared prompt history.
+
+        Best-effort (TASK-1364): ``PromptHistory.append`` already logs and
+        swallows its own IO failures, and the guard here keeps even an
+        unexpected raise from breaking an already-accepted run. Empty or
+        whitespace-only drafts (attachment-only sends) record nothing.
+
+        Args:
+            text: The cleaned draft text that was just accepted for sending.
+        """
+        history = self.prompt_history
+        if history is None or not text.strip():
+            return
+        try:
+            await history.append(text)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Prompt-history recording failed for an accepted send."
+            )
+
     _IMAGE_REJECTION_RECOVERY_HINT = (
         " This conversation includes an image attachment; if the model can't "
         "accept images, remove that message (select it and use Delete) or "
@@ -6960,6 +7257,17 @@ class ConsoleChatController:
             kill_switch=self._console_tool_kill_switch_reader(),
         )
 
+        # Local tools (ADR-032): same per-run composition point. Both
+        # hooks see every batch; each gates only what its provider owns,
+        # so the combined hook is a collision-free merge.
+        local_provider, local_review_hook = self._compose_local_provider(
+            session_id=session_id
+        )
+        if local_review_hook is not None:
+            review_hook = build_combined_review_hook(
+                [review_hook, local_review_hook]
+            )
+
         # TASK-1971 (Agent Change Review): THIS run's tracked roots -- the
         # same workspace folder bindings the file tools resolve against.
         # Best-effort: an unavailable registry yields no roots and an
@@ -7003,6 +7311,7 @@ class ConsoleChatController:
                 mcp_provider=mcp_provider,
                 builtin_gate=builtin_gate,
                 review_tool_calls=review_hook,
+                local_provider=local_provider,
                 change_roots=change_roots,
                 turn_skill_bindings=skill_bindings,
                 turn_bundle_block=skill_bundle_block,

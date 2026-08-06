@@ -2,8 +2,9 @@
 
 Footer: global hints (F1/F6/palette/quit) are always present, screen
 context prepends instead of replacing, and narrow widths degrade
-gracefully without mid-word clipping. Nav bar: overflow indicators track
-real scroll state, and all 13 destination labels fit at 140 columns.
+gracefully without mid-word clipping. Nav bar: overflow is explicit —
+destinations that do not fit are hidden behind the More hint, never
+clipped mid-word, and all 13 destination labels fit at 156 columns.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Static
 
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
-from tldw_chatbook.UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
+from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 
 
@@ -104,12 +105,12 @@ async def test_nav_bar_fits_all_destinations_at_156() -> None:
     async with app.run_test(size=(156, 24)) as pilot:
         await pilot.pause()
         strip = app.query_one("#nav-destination-strip")
-        # No overflow -> no indicators, and the strip fits every label.
-        assert strip.max_scroll_x == 0
-        await pilot.pause(0.6)  # let the hint interval fire
+        await pilot.pause(0.6)  # let the overflow interval fire
+        # No overflow -> no indicator, and every destination is displayed whole.
         assert app.query_one("#nav-overflow-hint").display is False
-        assert app.query_one("#nav-overflow-hint-left").display is False
-        # Rightmost destination fully inside the strip's visible window.
+        for destination in SHELL_DESTINATION_ORDER:
+            button = app.query_one(f"#nav-{destination.destination_id}")
+            assert button.display, f"{destination.destination_id} hidden at 156 cols"
         settings = app.query_one("#nav-settings")
         assert settings.region.right <= strip.content_region.right
 
@@ -137,10 +138,12 @@ async def test_nav_bar_overflow_indicators_at_80() -> None:
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         strip = app.query_one("#nav-destination-strip")
-        assert strip.max_scroll_x > 0
         await pilot.pause(0.6)
-        # Active destination scrolled into view -> something hidden left.
-        assert app.query_one("#nav-overflow-hint-left").display is True
+        assert app.query_one("#nav-overflow-hint").display is True
+        # Active destination stays visible even though most are hidden.
+        logs = app.query_one("#nav-logs")
+        assert logs.display
+        assert logs.region.right <= strip.content_region.right
 
 
 @pytest.mark.asyncio
