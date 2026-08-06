@@ -60,8 +60,10 @@ from ...Subscriptions.briefing_selection import MODE_AUTO_FEATURED, VALID_MODES
 from ...Subscriptions.briefing_service import (
     GenerationInFlightError,
     STATUS_COMPLETE,
+    STATUS_FAILED,
     STATUS_GENERATING,
     active_briefing_claim_row_ids,
+    default_briefing_provider,
     extract_citation_ids,
     fail_interrupted_briefings,
     generate_briefing,
@@ -2051,6 +2053,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             artifacts_pane.selected_briefing = self._selected_briefing
             artifacts_pane.scope_label = self._briefing_scope_label()
             artifacts_pane.can_generate = self._can_generate_briefing()
+            artifacts_pane.default_provider_display = self._briefing_provider_display()
             artifacts_pane.selection_mode = self._briefing_selection_mode
             artifacts_pane.presets = self._loaded_briefing_presets
             artifacts_pane.default_preset_id = self._briefing_default_preset_id
@@ -5314,6 +5317,60 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._briefing_watchlist_id() is not None
         )
 
+    def _briefing_provider_display(self) -> str:
+        """TASK-2311, AC#3: the provider Generate will actually use, for
+        display BEFORE the user presses it.
+
+        UAT: Generate silently used whatever `default_briefing_provider()`
+        resolved to (openai, in that run) with no indication anywhere in
+        the UI of what provider was about to be charged/attempted. Mirrors
+        `generate_briefing`'s own resolution order exactly (explicit
+        `provider` arg is never used by this screen's call site, so it is
+        skipped here): the watchlist's stored default preset's provider,
+        else the app's configured default endpoint.
+        """
+        from ...Chat.provider_catalog import provider_display_name
+
+        preset_id = self._briefing_default_preset_id
+        provider_key = ""
+        if preset_id is not None:
+            for preset in self._loaded_briefing_presets:
+                if preset.get("id") == preset_id:
+                    provider_key = str(preset.get("provider") or "")
+                    break
+        if not provider_key:
+            provider_key = default_briefing_provider()
+        return provider_display_name(provider_key)
+
+    def _notify_briefing_failure(self, row: Mapping[str, Any]) -> None:
+        """TASK-2311: surface a failed generation's reason at failure time,
+        without requiring the user to click the row.
+
+        `row`'s `model_used`/`error` are `briefing_service._finish_failure`'s
+        own record of what actually happened -- read directly rather than
+        recomputed, so this always names the provider that was ACTUALLY
+        attempted (which can differ from `_briefing_provider_display()`'s
+        prospective answer if the default preset changed mid-flight), and
+        the provider's own failure text. `markup=False`: a provider's error
+        message is untrusted, remote-influenced text.
+        """
+        from ...Chat.provider_catalog import provider_display_name
+
+        model_used = str(row.get("model_used") or "")
+        provider_key = model_used.split("/", 1)[0] if model_used else ""
+        provider = (
+            provider_display_name(provider_key)
+            if provider_key
+            else self._briefing_provider_display()
+        )
+        reason = str(row.get("error") or "").strip() or "no reason was recorded"
+        self._notify_watchlists(
+            f"Briefing generation failed using {provider}: {reason}. Check "
+            "Settings ▸ Providers & Models, then press Generate again.",
+            severity="error",
+            markup=False,
+        )
+
     def _chachanotes_db(self) -> Any:
         """The live ChaChaNotes handle, or `None` (task-1780, Task 5).
 
@@ -5760,6 +5817,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         pane.selected_briefing = self._selected_briefing
         pane.scope_label = self._briefing_scope_label()
         pane.can_generate = self._can_generate_briefing()
+        pane.default_provider_display = self._briefing_provider_display()
         pane.selection_mode = self._briefing_selection_mode
         pane.presets = self._loaded_briefing_presets
         pane.default_preset_id = self._briefing_default_preset_id
@@ -7015,6 +7073,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         except NoMatches:
             return
         pane.default_preset_id = preset_id
+        # TASK-2311, AC#3: a preset's own provider can differ from the app
+        # default (or from the PREVIOUS preset's provider) -- without this,
+        # picking a new default preset would leave the scope note naming
+        # whatever provider was displayed before this write.
+        pane.default_provider_display = self._briefing_provider_display()
 
     @on(BriefingCadenceChanged)
     def handle_briefing_cadence_changed(self, event: BriefingCadenceChanged) -> None:
@@ -7495,6 +7558,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             try:
                 row = await generate_briefing(db, watchlist_id, preset_id=preset_id)
                 generated_id = (row or {}).get("id")
+                # TASK-2311: `generate_briefing` never raises for a PROVIDER
+                # failure -- it turns it into a `failed` row instead (see
+                # this method's own docstring) -- so this is the one place
+                # that outcome is actually observable. UAT: Generate with no
+                # provider configured produced a bare "failed" row with no
+                # toast; the reason ("OpenAI API Key is required but not
+                # found") only appeared after clicking the row, and the
+                # provider had silently defaulted to openai. `markup=False`:
+                # a provider's own error text is untrusted.
+                if str((row or {}).get("status") or "").strip().lower() == STATUS_FAILED:
+                    self._notify_briefing_failure(row or {})
             except GenerationInFlightError as exc:
                 # The race `_sweep_and_guard` cannot close: another
                 # in-process caller claimed this watchlist AFTER the sweep

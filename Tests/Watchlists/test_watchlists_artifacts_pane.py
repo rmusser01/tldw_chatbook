@@ -997,6 +997,79 @@ async def test_a_database_error_during_generation_does_not_exit_the_app(monkeypa
         ), "and must have left a finished briefing behind"
 
 
+# --- TASK-2311: a failed generation surfaces its reason proactively --------
+
+
+@pytest.mark.asyncio
+async def test_a_failed_generation_toasts_its_reason_without_row_selection(monkeypatch):
+    """UAT: Generate with no provider configured produced a bare "failed"
+    row -- no toast, no reason. The actual cause ("OpenAI API Key is
+    required but not found") only appeared after clicking the row, and the
+    provider had silently defaulted to openai. This reproduces exactly
+    that provider exception and asserts the toast fires at failure time,
+    names the provider actually attempted, and points at Settings --
+    without the test ever selecting the row."""
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+
+    class _ExplodingChat:
+        """A provider call that always raises -- `generate_briefing`'s own
+        `_invoke_chat` try/except turns this into a `failed` row rather
+        than letting it propagate (see that method's docstring)."""
+
+        def __call__(self, **kwargs):
+            raise RuntimeError("OpenAI API Key is required but not found")
+
+    _use_fake_chat(monkeypatch, _ExplodingChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        await _press_generate(screen, pilot, app, watchlist_id)
+
+        rows = _briefing_rows(app, watchlist_id)
+        assert any(row["status"] == "failed" for row in rows), (
+            "the generation must actually have failed for this test to mean "
+            "anything"
+        )
+
+        assert app.notify.called, (
+            "a failed generation must toast its reason at failure time, "
+            "without requiring the row to be clicked"
+        )
+        args, kwargs = app.notify.call_args
+        message = args[0]
+        assert kwargs.get("severity") == "error"
+        assert kwargs.get("markup") is False, (
+            "a provider's own error text is untrusted"
+        )
+        assert "OpenAI" in message, "must name the provider actually attempted"
+        assert "API Key is required but not found" in message, (
+            "must carry the provider's own reason"
+        )
+        assert "Settings" in message, (
+            "a configuration-class failure must point at where to fix it"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_provider_is_visible_before_generating():
+    """TASK-2311, AC#3: the provider Generate will use must be visible
+    BEFORE the user presses it, not only afterward in a finished row."""
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.default_provider_display, (
+            "the pane must know which provider Generate will use"
+        )
+        scope_note = screen.query_one("#artifacts-scope-note", Static)
+        painted = str(scope_note.renderable)
+        assert pane.default_provider_display in painted, (
+            f"the always-visible scope line must name the provider -- got "
+            f"{painted!r}"
+        )
+
+
 # --- Every status has a body of its own ------------------------------------
 
 

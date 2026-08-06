@@ -660,6 +660,12 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: False when no single watchlist is in scope -- briefings are per
     #: watchlist by schema, so there is nothing for Generate to act on.
     can_generate = reactive(False, recompose=True)
+    #: TASK-2311, AC#3: the display name of the provider Generate will
+    #: actually use (the watchlist's default preset's provider, else the
+    #: app default) -- screen-supplied via `WatchlistsCollectionsScreen.
+    #: _briefing_provider_display`, so it stays visible BEFORE the user
+    #: presses Generate, not just after in the finished row's `model_used`.
+    default_provider_display = reactive("", recompose=True)
     #: The watchlist's stored `briefing_selection_mode` (spec #2 phase 2a,
     #: Task 4). Defaults to the same fallback `briefing_service.
     #: _selection_mode` uses for a NULL/unrecognized column, so a pane that
@@ -904,14 +910,24 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         # `Text` -- which is never re-parsed -- is the whole fix, and it also
         # avoids `escape_markup`, whose backslashes would corrupt every
         # ordinary bracket a real name contains.
-        yield Static(
-            Text(
-                self.scope_label
-                or "Briefings are written on this device from the local "
-                "watchlist store."
-            ),
-            id="artifacts-scope-note",
+        #
+        # TASK-2311, AC#3: the provider Generate will use is appended to
+        # this SAME always-visible line rather than a new row (this pane's
+        # toolbars are already at their `.destination-filter-strip` height
+        # budget) -- `default_provider_display` is screen-computed, app-
+        # controlled text, safe to concatenate before the one `Text(...)`
+        # wrap that protects `scope_label` (user-authored) above.
+        scope_text = (
+            self.scope_label
+            or "Briefings are written on this device from the local "
+            "watchlist store."
         )
+        if self.can_generate and self.default_provider_display:
+            scope_text = (
+                f"{scope_text} Generate will use "
+                f"{self.default_provider_display}."
+            )
+        yield Static(Text(scope_text), id="artifacts-scope-note")
         with Horizontal(id="artifacts-toolbar", classes="destination-filter-strip"):
             # `compact=True` for the reason TASK-995 records for the Sources
             # toolbar: `.destination-filter-strip` is `height: 1`, and a
