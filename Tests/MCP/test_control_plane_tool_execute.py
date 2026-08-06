@@ -442,7 +442,24 @@ async def test_advanced_tool_execute_refuses_a_tool_set_to_off(tmp_path):
 
 @pytest.mark.asyncio
 async def test_advanced_tool_execute_refusal_is_recorded_as_denied(tmp_path):
-    """A refusal is part of the audit trail too -- a blocked row, not silence."""
+    """A refusal is part of the audit trail too -- a blocked row, not silence.
+
+    Fix Round A, Item 5: the ``record_tool_decision(...)`` call for this
+    refusal used to omit ``error=``, so ``error_category`` fell to the bare
+    "denied" fallback -- indistinguishable from any other denied row, with
+    no signal that THIS one carries a reason. Passing the refusal message
+    through as ``error=`` (the SAME mechanism `record_tool_decision()`'s
+    other callers already use to get "approval_cancelled" instead of plain
+    "denied" -- see ``test_record_tool_decision_writes_denied_record`` in
+    test_control_plane_bridge.py, and ``console_chat_controller.py``'s
+    shutdown-mid-approval recorder) makes this row distinguishable the same
+    way, following that EXISTING vocabulary rather than inventing a new
+    category. The message text itself still never reaches the row --
+    ``build_record()``'s ``error_category`` is a sanitized token
+    (``safe_metadata_token()``), never exception/free text, by the
+    metadata-only design the whole execution log is built on; ``error_category``
+    is the only signal that survives.
+    """
     service, fake, client, store = _service(tmp_path)
     service.set_tool_state("builtin:tldw_chatbook", "calculator", "deny")
 
@@ -455,6 +472,12 @@ async def test_advanced_tool_execute_refusal_is_recorded_as_denied(tmp_path):
     assert records[0]["ok"] is False
     assert records[0]["server_key"] == "builtin:tldw_chatbook"
     assert records[0]["tool_name"] == "calculator"
+    # New (Item 5): a reason is now attached, distinguishing this row from
+    # a bare unexplained "denied". "error" itself (the raw refusal
+    # sentence) must never land on the row -- only the derived category.
+    assert records[0]["error_category"] == "approval_cancelled"
+    assert "error" not in records[0]
+    assert "Off in Permissions" not in repr(records[0])
 
 
 @pytest.mark.asyncio

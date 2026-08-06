@@ -2477,17 +2477,30 @@ class UnifiedMCPControlPlaneService:
             state = EffectiveToolState(state="deny", origin="gate_error")
 
         if state.state == "deny":
+            blocked_message = _ADVANCED_EXECUTE_BLOCKED_MESSAGE.format(
+                tool=normalized_tool_name or "This tool"
+            )
+            # Fix Round A, Item 5: `error=` is what makes this row
+            # distinguishable from a bare, unexplained "denied" --
+            # `record_tool_decision()` maps `decision="denied"` plus a
+            # truthy `error` to `error_category="approval_cancelled"`
+            # instead of the generic "denied" fallback, the SAME existing
+            # vocabulary its other callers already rely on for a "denied,
+            # and we have a reason" row (see
+            # `test_record_tool_decision_writes_denied_record` and
+            # `console_chat_controller.py`'s shutdown-mid-approval
+            # recorder). The message text itself is never persisted --
+            # `error` only selects the category; the row's `error_category`
+            # is a sanitized token, never free text, by the execution log's
+            # metadata-only design.
             self.record_tool_decision(
                 BUILTIN_SERVER_KEY,
                 normalized_tool_name,
                 decision="denied",
                 initiator="test",
+                error=blocked_message,
             )
-            raise PermissionError(
-                _ADVANCED_EXECUTE_BLOCKED_MESSAGE.format(
-                    tool=normalized_tool_name or "This tool"
-                )
-            )
+            raise PermissionError(blocked_message)
 
         return await self.execute_hub_tool(
             BUILTIN_SERVER_KEY,
