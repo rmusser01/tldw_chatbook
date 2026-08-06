@@ -463,3 +463,41 @@ def test_fetch_html_types_unaffected(fetch_env):
     """Regression guard: ordinary HTML still goes through trafilatura/tag-strip."""
     fetch_env.routes["http://example.com/page"] = _html_page()
     assert "main article body sentence" in web_fetch("http://example.com/page")
+
+
+# ---------------------------------------------------------------------------
+# Multi-chunk streaming (coverage gap: every fixture above yields one chunk,
+# so _fetch_once's mid-stream %PDF- sniff and short-body fallback were never
+# actually exercised across multiple response.iter_bytes() iterations)
+# ---------------------------------------------------------------------------
+
+@requires_pymupdf
+def test_fetch_pdf_dribbled_one_byte_at_a_time_still_sniffed(fetch_env):
+    """Spec §1: 'The sniff buffers until at least 5 body bytes have
+    arrived before deciding — a server dribbling one byte per chunk must
+    not defeat it.' Mislabel content-type so detection depends entirely on
+    the sniff (not the `declared == "application/pdf"` shortcut), and feed
+    the body as one httpx chunk per byte."""
+    body = _make_pdf(["dribbled content"])
+    fetch_env.routes["http://example.com/dribble.pdf"] = httpx.Response(
+        200,
+        content=iter(bytes([b]) for b in body),
+        headers={"content-type": "application/octet-stream"},
+    )
+    result = web_fetch("http://example.com/dribble.pdf")
+    assert "dribbled content" in result
+
+
+def test_fetch_short_body_under_pdf_magic_length_extracts_as_text(fetch_env):
+    """A body shorter than len(_PDF_MAGIC) == 5 bytes must fall through
+    _fetch_once's post-loop fallback sniff (`is_pdf is None` never gets
+    resolved inside the loop) without error, and extract as plain text —
+    not be misdetected as a PDF. Delivered one byte per chunk."""
+    body = b"abc"  # 3 bytes: shorter than the %PDF- magic prefix
+    fetch_env.routes["http://example.com/short"] = httpx.Response(
+        200,
+        content=iter(bytes([b]) for b in body),
+        headers={"content-type": "text/plain"},
+    )
+    result = web_fetch("http://example.com/short")
+    assert result == "abc"
