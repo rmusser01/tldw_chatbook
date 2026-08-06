@@ -102,9 +102,26 @@ class FakeLocalService:
         }
 
     async def run_runtime_batch(self, requests):
+        # Fix Round H (PR-T3 review), Item 2b: mirrors
+        # `LocalMCPControlService.run_runtime_batch()`'s own
+        # `dict(request)` coercion (`local_control_service.py:500`) --
+        # this used to only accept a literal `dict` (`isinstance(request,
+        # dict)`) and silently drop anything else (a `Mapping` that isn't a
+        # `dict` subclass, or a list-of-pairs) to `{}`, which is exactly
+        # the divergence dimension `test_raw_tools_call_as_a_list_of_
+        # pairs_inside_a_batch_is_refused_before_anything_runs` below had
+        # to route around by wiring a REAL `LocalMCPControlService`
+        # instead of this fake -- this fake could not exercise that bug
+        # either way. `dict(request)` raises the SAME TypeError/ValueError
+        # the real method would for a genuinely non-coercible item, which
+        # is correct: by the time `run_action()` calls this method the
+        # requests are already normalized by `_normalize_batch_requests()`
+        # one layer up, so in practice every item here is already a plain
+        # dict -- this only matters for a caller that reaches this fake
+        # directly, bypassing that normalization.
         results = []
         for index, request in enumerate(requests):
-            entry = request if isinstance(request, dict) else {}
+            entry = dict(request)
             method = str(entry.get("method") or "")
             if method == "tools/call":
                 params = entry.get("params") if isinstance(entry.get("params"), dict) else {}
@@ -134,6 +151,40 @@ def _service(
         local_service=fake, server_service=None, target_store=None, context_store=None
     )
     return service, fake, client, store
+
+
+@pytest.mark.asyncio
+async def test_fake_local_service_run_runtime_batch_coerces_like_the_real_one(tmp_path):
+    """Fix Round H (PR-T3 review), Item 2b. Direct-call proof that
+    `FakeLocalService.run_runtime_batch()`'s `dict(request)` coercion now
+    matches `LocalMCPControlService.run_runtime_batch()`'s own -- called
+    DIRECTLY on the fake, bypassing `run_action()`'s own
+    `_normalize_batch_requests()` pre-dispatch scan. Every OTHER batch test
+    in this file goes through that scan, which already coerces every item
+    to a plain `dict` before the fake ever sees it -- so none of them could
+    tell this fake's own coercion apart from the old `isinstance(request,
+    dict) else {}` fallback it silently carried. A non-dict `Mapping` and a
+    list-of-pairs must both be recognized as a genuine `tools/call` request
+    when the fake is exercised on its own: the old code dropped both to
+    `{}`, reporting `method=""` and never dispatching to `execute_tool`."""
+    _service_ignored, fake, _client, _store = _service(tmp_path)
+    non_dict_request = MappingProxyType(
+        {"method": "tools/call", "params": {"name": "calculator"}}
+    )
+    list_of_pairs_request = [
+        ["method", "tools/call"], ["params", {"name": "calculator"}]
+    ]
+
+    result = await fake.run_runtime_batch([non_dict_request, list_of_pairs_request])
+
+    assert result["results"] == [
+        {"index": 0, "method": "tools/call", "ok": True},
+        {"index": 1, "method": "tools/call", "ok": True},
+    ]
+    assert fake.execute_tool_calls == [
+        ("calculator", {}),
+        ("calculator", {}),
+    ]
 
 
 def _log_records(store: LocalMCPStore) -> list[dict]:
