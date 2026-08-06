@@ -41,6 +41,7 @@ class _TreeApp(App):
         active_scope=None,
         expanded=(),
         write_disabled_reason=None,
+        source_counts=None,
     ):
         super().__init__()
         self._data = data
@@ -48,6 +49,7 @@ class _TreeApp(App):
         self._active_scope = active_scope
         self._expanded = expanded
         self._write_disabled_reason = write_disabled_reason
+        self._source_counts = source_counts
         self.scopes: list[TreeScope] = []
         self.write_requests: list[Message] = []
 
@@ -59,6 +61,7 @@ class _TreeApp(App):
             active_scope=self._active_scope,
             expanded=self._expanded,
             write_disabled_reason=self._write_disabled_reason,
+            source_counts=self._source_counts,
             id="wl-tree",
         )
 
@@ -123,6 +126,38 @@ async def test_permanent_roots_render_their_unread_counts():
         # (4) must not leak in where unread (37 / 1) belongs.
         assert str(all_button.label) == "All sources  37"
         assert str(unassigned_button.label) == "Unassigned  1"
+
+
+@pytest.mark.asyncio
+async def test_source_node_shows_unread_badge_only_when_positive():
+    """task-2511 Task 8: per-feed unread badges, NNW-style.
+
+    A source with unread items shows the number after its name; a source
+    with none shows no number at all (roots and watchlists keep their
+    always-show behaviour). The tooltip always says it in words, including
+    the zero case.
+    """
+    app = _TreeApp(
+        _tree_data(),
+        source_rows={
+            1: [
+                {"id": 10, "name": "Feed A", "type": "rss"},
+                {"id": 11, "name": "Feed B", "type": "rss"},
+            ]
+        },
+        expanded=frozenset({1}),
+        source_counts={
+            10: {"total": 5, "unread": 3},
+            11: {"total": 2, "unread": 0},
+        },
+    )
+    async with app.run_test():
+        feed_a = app.query_one("#wl-tree-node-source-1-10", Button)
+        feed_b = app.query_one("#wl-tree-node-source-1-11", Button)
+        assert str(feed_a.label) == "    Feed A  3"
+        assert str(feed_b.label) == "    Feed B"
+        assert "3 unread items" in (feed_a.tooltip or "")
+        assert "No unread items" in (feed_b.tooltip or "")
 
 
 @pytest.mark.asyncio

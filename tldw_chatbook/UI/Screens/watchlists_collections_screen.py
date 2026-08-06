@@ -1552,6 +1552,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             active_tag=self._tree_active_tag,
             active_scope=self.tree_scope,
             write_disabled_reason=self._tree_write_disabled_reason(),
+            source_counts=self._tree_source_counts,
             id="wl-tree",
         )
 

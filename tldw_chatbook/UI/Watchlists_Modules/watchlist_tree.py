@@ -152,6 +152,7 @@ class WatchlistTree(Vertical):
         active_tag: str | None = None,
         active_scope: "TreeScope | None" = None,
         write_disabled_reason: str | None = None,
+        source_counts: Mapping[int, Mapping[str, int]] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -159,6 +160,11 @@ class WatchlistTree(Vertical):
         self._watchlists = list(watchlists)
         self._counts = dict(counts)
         self._load_source_rows = source_rows_loader
+        # Per-source {total, unread} for the source-node badges (task-2511
+        # Task 8). `counts` above is keyed by watchlist/bucket and cannot
+        # answer for a source; a source missing here renders no badge,
+        # which is the honest state for "no items yet".
+        self._source_counts: dict[int, Mapping[str, int]] = dict(source_counts or {})
         self._source_cache: dict[int, list[Mapping[str, Any]]] = {}
         # `set_reactive`, not plain assignment: both reactives are
         # `recompose=True`, so assigning here would queue a recompose of a
@@ -431,14 +437,21 @@ class WatchlistTree(Vertical):
                 # ambiguous besides.
                 source_id = int(row["id"])
                 source_name = escape_markup(str(row["name"]))
+                # task-2511 Task 8: the per-feed unread badge. Unlike roots
+                # and watchlists (which always show their count), a source
+                # shows the number only when it is positive — a permanent
+                # "0" on every feed is noise in the rail's narrowest indent,
+                # and the tooltip still answers the zero case in words.
+                source_unread = self._source_counts.get(source_id, {}).get("unread", 0)
+                badge = f"  {source_unread}" if source_unread > 0 else ""
                 source = Button(
                     # TASK-1091 left-aligns tree labels. Four spaces plus the
                     # Button line pad keep the source name one column past
                     # the parent name after the expander's three columns.
-                    f"    {source_name}",
+                    f"    {source_name}{badge}",
                     id=f"wl-tree-node-source-{watchlist_id}-{row['id']}",
                     compact=True,
-                    tooltip=f"Show items from {source_name}.",
+                    tooltip=f"Show items from {source_name}. {self._unread_phrase(source_unread)}.",
                 )
                 source.add_class("watchlist-tree-source")
                 if self.active_scope == TreeScope(
