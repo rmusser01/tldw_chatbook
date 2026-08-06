@@ -401,6 +401,23 @@ class LocalToolProvider:
             gate = self.pending_gate_for(name, args)
             if gate is None:
                 # state re-resolution failed or flipped mid-call; fail closed.
+                #
+                # Fix Round H, Item 1 (checked, not fixed -- reported): this
+                # is a SECOND, narrower resolve_state collapse. A resolver
+                # crash HERE (this call's top-of-function resolve already
+                # succeeded with "ask", moments earlier) renders
+                # LOCAL_TIMEOUT_REFUSAL ("... do not retry") via the
+                # "timeout" verdict below -- a lesser overclaim than
+                # LOCAL_DENY_REFUSAL's "set to Off" (no configuration-state
+                # assertion), but "do not retry" is still not quite true for
+                # a transient failure. Left as-is: pending_gate_for() does
+                # not expose WHY it returned None (resolve failure vs. a
+                # genuine state flip vs. -- ruled out here, since line
+                # ~398 just confirmed False moments earlier -- a session
+                # approval racing in), so distinguishing them cleanly would
+                # mean widening pending_gate_for()'s return contract, a
+                # larger change than this item's stated scope (the
+                # LOCAL_DENY_REFUSAL "set to Off" pattern).
                 return "timeout"
             try:
                 decisions = self._approval_callback([gate])
