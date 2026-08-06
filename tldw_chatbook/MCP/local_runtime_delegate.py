@@ -94,12 +94,22 @@ class LocalMCPRuntimeDelegate:
     #: rather than raising "unsupported method") and is reported
     #: `supported: False` in diagnostics -- but that is a two-way flag, not
     #: the tools bucket's three-way `implemented`/`unavailable`/`missing`
-    #: split (Fix Round E, Item 5: the shapes differ -- a reader of THIS
-    #: surface alone cannot tell a policy refusal like this one from a
-    #: method that is simply not implemented, the way `unavailable` vs.
-    #: `missing` distinguishes those two cases for tools). The flag itself
-    #: is honest and load-bearing; only the old "same shape" claim here was
-    #: not. See `get_protocol_diagnostics()` for where this is read.
+    #: split (Fix Round E, Item 5: the shapes differ). `supported: False`
+    #: here can ONLY mean a policy refusal, though: every entry in
+    #: `get_protocol_diagnostics()`'s `methods` list is built by iterating
+    #: `_REQUEST_METHODS` -- this class's own fixed roster of methods it
+    #: recognizes -- so a method that is simply not implemented never gets
+    #: a `methods` entry at all; it is ABSENT, not present with `supported:
+    #: False`. Fix Round G (review of Fix Round E): the prior wording here
+    #: -- "a reader of THIS surface alone cannot tell a policy refusal like
+    #: this one from a method that is simply not implemented" -- overstated
+    #: the gap. The two cases ARE distinguishable, by presence vs. absence
+    #: in the list; what the two-way/three-way shape difference actually
+    #: means is narrower: absence is not itself LABELED "unimplemented" the
+    #: way the tools bucket's own `missing` key spells it out. The flag
+    #: itself is honest and load-bearing either way; only that framing was
+    #: not quite right. See `get_protocol_diagnostics()` for where this is
+    #: read.
     _UNAVAILABLE_DIRECT_METHODS = frozenset({"tools/call"})
     _RESOURCE_URI_PREFIXES = (
         "conversation://",
