@@ -4298,7 +4298,12 @@ async def test_gate_check_exception_fails_closed():
     about the tool's configured state, directly above `_decision_note()`'s
     own honest admission (checked by the sibling test below) that no state
     could be resolved at all. The blocked body is now origin-aware: a
-    `gate_error` renders `_TOOL_TEST_BLOCKED_UNKNOWN_TEXT` instead."""
+    `gate_error` renders `_TOOL_TEST_BLOCKED_UNKNOWN_TEXT` instead.
+
+    Item 6 (PR-T3 fix round D): `_TOOL_TEST_BLOCKED_UNKNOWN_TEXT` dropped
+    its redundant "; the tool did not run" clause (doubled against the
+    "Blocked · not run" heading rendered directly above it) -- updated
+    here to match."""
     app = ToolTestApp()
 
     def _raise(tool: Any) -> Any:
@@ -4321,10 +4326,7 @@ async def test_gate_check_exception_fails_closed():
         assert app.unified_mcp_service.test_calls == []
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
         assert "Blocked — this tool is set to Off in Permissions." not in result
-        assert (
-            "Blocked — permission state could not be determined; the tool did not run."
-            in result
-        )
+        assert "Blocked — permission state could not be determined." in result
 
 
 @pytest.mark.asyncio
@@ -4385,7 +4387,7 @@ async def test_gate_check_exception_decision_note_suppressed_after_real_run():
         assert app.unified_mcp_service.test_calls == []
         result_widget = app.query_one("#mcp-inspector-test-result", Static)
         assert (
-            "Blocked — permission state could not be determined; the tool did not run."
+            "Blocked — permission state could not be determined."
             in str(result_widget.renderable)
         )
 

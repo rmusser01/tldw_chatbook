@@ -333,9 +333,18 @@ _TOOL_TEST_BLOCKED_TEXT = "Blocked — this tool is set to Off in Permissions."
 # (`_UNKNOWN_ORIGIN_SENTENCE`) that no state could be resolved at all --
 # two contradictory lines stacked on top of each other. task-2270's rider
 # fixed the quiet note; this fixes the loud body it sits under.
-_TOOL_TEST_BLOCKED_UNKNOWN_TEXT = (
-    "Blocked — permission state could not be determined; the tool did not run."
-)
+#
+# Item 6 (PR-T3 fix round D): this used to end "; the tool did not run" --
+# doubling BOTH "Blocked" and "not run" against the heading it renders
+# under (`MCPInspector._ADVANCED_BLOCKED_HEADING`, "Blocked · not run"),
+# stacking as "Blocked · not run\nBlocked — permission state could not be
+# determined; the tool did not run." Dropped: the heading already says the
+# tool did not run, so this clause was pure repetition, not information.
+# Kept the SAME "Blocked — <clause>." shape `_TOOL_TEST_BLOCKED_TEXT` above
+# uses (a doubled "Blocked" against the heading is fine -- it is what the
+# genuine-deny text above does too, deliberately unchanged here) -- only
+# the redundant back half is gone.
+_TOOL_TEST_BLOCKED_UNKNOWN_TEXT = "Blocked — permission state could not be determined."
 # Arm notice shown under the Run button (Task 5) when an "ask" resolution
 # carries `config_changed` -- an explicit tool-level allow that the rug-pull
 # guard downgraded because the tool's live definition no longer matches what
