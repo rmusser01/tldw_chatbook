@@ -815,8 +815,13 @@ async def test_dispatch_console_command_blocks_generate_image_when_ephemeral():
     store.switch_session(temp.id)
 
     screen = _bare_generation_screen(store)
-    screen._console_initial_session_title_for_workspace = (
-        lambda workspace_id: "Console"
+    # `_bare_generation_screen` bypasses `ChatScreen.__init__` (`__new__`, no
+    # mounted app), so `screen._workspace` -- the real `ConsoleWorkspace
+    # Controller` -- was never constructed. Stub the one method this path
+    # reaches, the same narrow-seam discipline the helper's own docstring
+    # describes for `_sync_native_console_chat_ui`/`app_instance.notify`.
+    screen._workspace = SimpleNamespace(
+        _console_initial_session_title_for_workspace=lambda workspace_id: "Console"
     )
 
     handler_calls: list = []

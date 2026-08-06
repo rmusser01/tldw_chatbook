@@ -645,7 +645,7 @@ async def test_activate_console_session_for_workspace_keeps_temporary_chip_hones
         assert chip.display is True
 
         # "switch to an existing session in the workspace" branch.
-        console._activate_console_session_for_workspace("workspace-b")
+        console._workspace._activate_console_session_for_workspace("workspace-b")
         await pilot.pause()
         assert store.active_session_id == normal.id
         assert chip.display is False, (
@@ -653,7 +653,7 @@ async def test_activate_console_session_for_workspace_keeps_temporary_chip_hones
         )
 
         # Same branch, opposite direction.
-        console._activate_console_session_for_workspace("workspace-a")
+        console._workspace._activate_console_session_for_workspace("workspace-a")
         await pilot.pause()
         assert store.active_session_id == temp.id
         assert chip.display is True
@@ -663,7 +663,7 @@ async def test_activate_console_session_for_workspace_keeps_temporary_chip_hones
         # workspace with no existing session. `create_session` here never
         # passes `ephemeral=True`, so switching there from the ephemeral
         # session must also hide the chip.
-        console._activate_console_session_for_workspace("workspace-c")
+        console._workspace._activate_console_session_for_workspace("workspace-c")
         await pilot.pause()
         assert store.active_session_id not in (normal.id, temp.id)
         assert chip.display is False

@@ -935,7 +935,8 @@ def test_get_conversation_tree_carries_system_prompt_through_real_db(tmp_path):
     """Full production path: real DB row -> get_conversation_tree()["conversation"].
 
     This is the exact seam Console's resume handler
-    (``ChatScreen._resume_console_workspace_conversation``) reads from. A
+    (``ConsoleWorkspaceController._resume_console_workspace_conversation``)
+    reads from. A
     fake/static conversation-tree service in a UI-level test would hide a
     regression here (``normalize_conversation_row`` silently drops any key
     it doesn't explicitly allow-list), so this exercises the real

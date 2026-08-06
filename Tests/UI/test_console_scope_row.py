@@ -703,7 +703,7 @@ async def test_resume_console_workspace_conversation_refreshes_row_and_chip():
             )
             assert console.query_one(f"#{SCOPE_CHIP_ID}").display is False
 
-            resumed = await console._resume_console_workspace_conversation(
+            resumed = await console._workspace._resume_console_workspace_conversation(
                 conversation_id
             )
             await pilot.pause()
@@ -778,7 +778,7 @@ async def test_initial_mount_of_restored_persisted_scoped_session_warms_row_and_
         saved_state: dict | None = None
         async with host.run_test(size=(240, 64)) as pilot:
             console = host.screen_stack[-1]
-            resumed = await console._resume_console_workspace_conversation(
+            resumed = await console._workspace._resume_console_workspace_conversation(
                 conversation_id
             )
             assert resumed is True
@@ -1096,7 +1096,7 @@ async def test_workspace_rag_scope_save_persists_via_registry():
             items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"
         )
 
-        await console._apply_console_workspace_scope_save(active.workspace_id, scope)
+        await console._workspace._apply_console_workspace_scope_save(active.workspace_id, scope)
         await pilot.pause()
 
         assert registry.get_workspace_scope(active.workspace_id) == scope
@@ -1124,7 +1124,7 @@ async def test_workspace_rag_scope_save_catches_workspace_not_found():
             items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"
         )
 
-        await console._apply_console_workspace_scope_save("workspace-default", scope)
+        await console._workspace._apply_console_workspace_scope_save("workspace-default", scope)
         await pilot.pause()
 
         assert notifications, "expected an honest notify on WorkspaceNotFound"

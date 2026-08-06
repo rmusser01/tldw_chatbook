@@ -59,6 +59,7 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     ChatScreen,
 )
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Widgets.Console import (
@@ -214,7 +215,7 @@ def test_console_workspace_conversation_search_clear_button_stops_pending_timer(
 
 def test_console_workspace_conversation_search_selection_refresh_invalidates_token():
     source = inspect.getsource(
-        ChatScreen._refresh_console_workspace_conversation_search_after_selection
+        ConsoleWorkspaceController._refresh_console_workspace_conversation_search_after_selection
     )
     active_query_branch = source.split("if not query.strip():", 1)[1]
     before_refresh = active_query_branch.split(
@@ -1800,7 +1801,7 @@ def _console_conversation_browser_rows(console):
     always the dataclass default (``""``). Rebuilding the full context state
     is the seam that actually feeds the rendered row label.
     """
-    browser = console._build_console_workspace_context_state().conversation_browser
+    browser = console._workspace._build_console_workspace_context_state().conversation_browser
     rows = []
     for section in browser.sections:
         rows.extend(section.rows)
@@ -7988,7 +7989,7 @@ async def test_console_workspace_conversation_search_ignores_stale_workspace_res
         stale_token = console._console_workspace_conversation_search_token + 1
         console._console_workspace_conversation_search_token = stale_token
         service.set_active_workspace("ws-stale-b")
-        await console._refresh_console_workspace_conversation_search(
+        await console._workspace._refresh_console_workspace_conversation_search(
             active_workspace.workspace_id,
             "Alpha",
             stale_token,
@@ -8133,7 +8134,7 @@ async def test_console_workspace_conversation_search_uses_current_workspace_cont
         service.set_active_workspace("ws-search-b")
 
         assert (
-            console._active_console_workspace_id_for_conversation_search()
+            console._workspace._active_console_workspace_id_for_conversation_search()
             == "ws-search-b"
         )
 
@@ -8584,7 +8585,7 @@ async def test_console_resume_restores_server_character_identity_without_local_l
         console._resolve_resumed_character_name = local_lookup
 
         assert (
-            await console._resume_console_workspace_conversation("server-scoped")
+            await console._workspace._resume_console_workspace_conversation("server-scoped")
             is True
         )
         scoped = store.switch_session(store.active_session_id)
@@ -8598,7 +8599,7 @@ async def test_console_resume_restores_server_character_identity_without_local_l
         assert scoped.settings.character_label == ""
 
         assert (
-            await console._resume_console_workspace_conversation("server-unscoped")
+            await console._workspace._resume_console_workspace_conversation("server-unscoped")
             is True
         )
         unscoped = store.switch_session(store.active_session_id)
@@ -8612,7 +8613,7 @@ async def test_console_resume_restores_server_character_identity_without_local_l
         assert unscoped.settings.character_label == ""
 
         assert (
-            await console._resume_console_workspace_conversation(
+            await console._workspace._resume_console_workspace_conversation(
                 "malformed-local-scalars"
             )
             is True
@@ -8626,7 +8627,7 @@ async def test_console_resume_restores_server_character_identity_without_local_l
         assert malformed.character_ref() is None
 
         assert (
-            await console._resume_console_workspace_conversation(
+            await console._workspace._resume_console_workspace_conversation(
                 "noncanonical-local-id"
             )
             is True
@@ -8684,7 +8685,7 @@ async def test_console_resume_rejects_character_identity_without_valid_source(
         console._resolve_resumed_character_name = local_lookup
 
         assert (
-            await console._resume_console_workspace_conversation("invalid-source")
+            await console._workspace._resume_console_workspace_conversation("invalid-source")
             is True
         )
 
@@ -8729,7 +8730,7 @@ async def test_console_resume_rehydrates_local_character_name_from_local_project
         console._resolve_resumed_character_name = name_lookup
 
         assert (
-            await console._resume_console_workspace_conversation("local-character")
+            await console._workspace._resume_console_workspace_conversation("local-character")
             is True
         )
 
@@ -9075,7 +9076,7 @@ async def test_console_workspace_conversation_resume_hydrates_generation_metadat
             console = host.screen_stack[-1]
             await _wait_for_selector(console, pilot, "#console-native-transcript")
 
-            resumed = await console._resume_console_workspace_conversation(
+            resumed = await console._workspace._resume_console_workspace_conversation(
                 conversation_id
             )
             await pilot.pause()

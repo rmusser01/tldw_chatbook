@@ -1,22 +1,21 @@
 """Characterisation + boundary tests for the Console workspace cluster.
 
-Written before the wave-2 Task 2 extraction of `ConsoleWorkspaceController`
-(`tldw_chatbook/UI/Console_Modules/workspace.py`) lands, driving the resume
-flow and the conversation-search debounce through REAL interactions against
-the pre-move `ChatScreen` -- the same "real production coroutine, not a
-rebuilt double" discipline `test_console_native_chat_flow.py`'s own resume
-coverage uses. Search-token/error state is exactly where a
-snapshot-vs-live binding bug would hide (see wave 1's
-`ConsoleDictationController` review history), so these assert the
+Originally written before the wave-2 Task 2 extraction of `ConsoleWorkspace
+Controller` (`tldw_chatbook/UI/Console_Modules/workspace.py`) landed, driving
+the resume flow and the conversation-search debounce through REAL
+interactions against the (at the time) still-monolithic `ChatScreen` -- the
+same "real production coroutine, not a rebuilt double" discipline
+`test_console_native_chat_flow.py`'s own resume coverage uses. Search-token/
+error state is exactly where a snapshot-vs-live binding bug would hide (see
+wave 1's `ConsoleDictationController` review history), so these assert the
 token/error lifecycle explicitly, not just the visible rows.
 
-Method calls below (`console._resume_console_workspace_conversation(...)`,
-`console._refresh_console_workspace_conversation_search(...)`, etc.) move to
-`console._workspace.<method>(...)` once the extraction lands; the six
-`_console_workspace_conversation_*` state reads/writes below are expected to
-keep working completely unchanged -- `ChatScreen` keeps get/set proxy
-properties for them, exactly as `ConsoleDictationController`'s cluster did in
-wave 1 (see that module's docstring).
+Now that the extraction has landed, the moved-method calls below go through
+`console._workspace.<method>(...)`; the six `_console_workspace_conversation_
+*` state reads/writes stay exactly as they were pre-move -- `ChatScreen`
+keeps get/set proxy properties for them, exactly as `ConsoleDictation
+Controller`'s cluster did in wave 1 (see that module's docstring), so no
+test here needed to change for the state accesses, only the method calls.
 """
 
 from __future__ import annotations
@@ -156,7 +155,7 @@ async def test_search_refresh_populates_rows_from_scope_service():
 
         console._console_workspace_conversation_query = "alpha"
         token = console._console_workspace_conversation_search_token
-        await console._refresh_console_workspace_conversation_search(
+        await console._workspace._refresh_console_workspace_conversation_search(
             active_workspace.workspace_id, "alpha", token
         )
         await pilot.pause()
@@ -200,7 +199,7 @@ async def test_search_refresh_ignores_stale_token():
         current_token = console._console_workspace_conversation_search_token + 1
         console._console_workspace_conversation_search_token = current_token
 
-        await console._refresh_console_workspace_conversation_search(
+        await console._workspace._refresh_console_workspace_conversation_search(
             active_workspace.workspace_id, "late", current_token - 1
         )
 
@@ -227,7 +226,7 @@ async def test_resume_workspace_conversation_restores_native_session():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
-        resumed = await console._resume_console_workspace_conversation(
+        resumed = await console._workspace._resume_console_workspace_conversation(
             "conv-resume-1"
         )
         await pilot.pause()
@@ -252,7 +251,7 @@ async def test_resume_workspace_conversation_missing_record_returns_false():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
-        resumed = await console._resume_console_workspace_conversation(
+        resumed = await console._workspace._resume_console_workspace_conversation(
             "conv-missing"
         )
         await pilot.pause()
@@ -272,6 +271,6 @@ async def test_active_workspace_id_for_conversation_search_reads_registry():
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
         assert (
-            console._active_console_workspace_id_for_conversation_search()
+            console._workspace._active_console_workspace_id_for_conversation_search()
             == active_workspace.workspace_id
         )

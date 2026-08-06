@@ -690,7 +690,7 @@ async def test_console_rail_badge_and_chip_report_the_same_staged_count() -> Non
         screen._stage_console_library_rag_launch(_launch(4))
         await pilot.pause()
 
-        workspace_context = screen._current_console_workspace_context()
+        workspace_context = screen._workspace._current_console_workspace_context()
         assert len(workspace_context.staged_sources) == 4
         assert [source.label for source in workspace_context.staged_sources] == [
             "Source 1",
@@ -716,7 +716,9 @@ def test_workspace_context_falls_back_to_one_row_for_a_bundleless_launch() -> No
         _pending_console_launch_context=launch,
         app_instance=SimpleNamespace(),
     )
-    context = chat_screen_module.ChatScreen._current_console_workspace_context(screen)
+    context = chat_screen_module.ConsoleWorkspaceController._current_console_workspace_context(
+        screen
+    )
     assert len(context.staged_sources) == 1
     assert context.staged_sources[0].label == "Daily papers"
     assert console_staged_source_count(launch) == 1
