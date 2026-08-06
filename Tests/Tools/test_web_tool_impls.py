@@ -314,3 +314,130 @@ def test_cache_entry_cap_evicts_earliest_expiry(fetch_env):
     assert len(web_tool_impls._fetch_cache) == FETCH_CACHE_MAX_ENTRIES
     assert ("http://example.com/p0", FETCH_MAX_BYTES) not in web_tool_impls._fetch_cache
     assert ("http://example.com/extra", FETCH_MAX_BYTES) in web_tool_impls._fetch_cache
+
+
+# ---------------------------------------------------------------------------
+# PDF fetch (spec 2026-08-06 §1)
+# ---------------------------------------------------------------------------
+
+pymupdf = pytest.importorskip("pymupdf")
+
+
+def _make_pdf(pages: list[str]) -> bytes:
+    doc = pymupdf.open()
+    for text in pages:
+        page = doc.new_page()
+        page.insert_text((72, 72), text)
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+def _pdf_response(body: bytes, content_type: str = "application/pdf") -> httpx.Response:
+    headers = {"content-type": content_type} if content_type else {}
+    return httpx.Response(200, content=body, headers=headers)
+
+
+def test_fetch_extracts_pdf_text(fetch_env):
+    body = _make_pdf(["alpha page one text", "beta page two text"])
+    fetch_env.routes["http://example.com/doc.pdf"] = _pdf_response(body)
+    result = web_fetch("http://example.com/doc.pdf")
+    assert "alpha page one text" in result
+    assert "beta page two text" in result
+
+
+def test_fetch_pdf_sniff_beats_mislabeled_content_type(fetch_env):
+    body = _make_pdf(["sniffed content"])
+    for ctype in ("application/octet-stream", "text/html", ""):
+        fetch_env.routes["http://example.com/mislabeled"] = _pdf_response(body, ctype)
+        web_tool_impls._reset_state_for_tests()
+        result = web_fetch("http://example.com/mislabeled")
+        assert "sniffed content" in result, f"failed for content-type {ctype!r}"
+
+
+def test_fetch_pdf_reads_past_html_cap(fetch_env):
+    """Mid-stream cap raise: a >max_bytes PDF must be read in full (spec §1)."""
+    filler = "lorem ipsum dolor sit amet " * 40
+    body = _make_pdf([f"page {i} {filler}" for i in range(400)])
+    assert len(body) > 64 * 1024
+    fetch_env.routes["http://example.com/big.pdf"] = _pdf_response(body)
+    result = web_fetch("http://example.com/big.pdf", max_bytes=64 * 1024)
+    assert "page 0" in result  # parsed => the full byte stream was read
+
+
+def test_fetch_pdf_over_ceiling_refused(fetch_env, monkeypatch):
+    monkeypatch.setattr(web_tool_impls, "PDF_MAX_BYTES", 1024)
+    body = _make_pdf(["x" * 500] * 20)
+    assert len(body) > 1024
+    fetch_env.routes["http://example.com/huge.pdf"] = _pdf_response(body)
+    with pytest.raises(LocalToolError, match=r"too-large.*media ingestion"):
+        web_fetch("http://example.com/huge.pdf")
+
+
+def test_fetch_pdf_extracted_text_truncated_with_page_count(fetch_env):
+    body = _make_pdf([f"page {i} " + "words " * 200 for i in range(30)])
+    fetch_env.routes["http://example.com/long.pdf"] = _pdf_response(body)
+    result = web_fetch("http://example.com/long.pdf", max_bytes=2048)
+    assert "truncated: extracted text exceeded max_bytes=2048" in result
+    assert "of 30 pages" in result
+    # early stop: not every page was processed
+    assert "processed 30 of 30" not in result
+
+
+def test_fetch_pdf_encrypted_refused(fetch_env):
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 72), "secret")
+    body = doc.tobytes(encryption=pymupdf.PDF_ENCRYPT_AES_256, user_pw="hunter2")
+    doc.close()
+    fetch_env.routes["http://example.com/locked.pdf"] = _pdf_response(body)
+    with pytest.raises(LocalToolError, match=r"pdf-error.*encrypted"):
+        web_fetch("http://example.com/locked.pdf")
+
+
+def test_fetch_pdf_textless_points_at_ocr(fetch_env):
+    doc = pymupdf.open()
+    doc.new_page()  # one blank page, no text layer
+    body = doc.tobytes()
+    doc.close()
+    fetch_env.routes["http://example.com/scan.pdf"] = _pdf_response(body)
+    with pytest.raises(LocalToolError, match=r"empty-content.*OCR"):
+        web_fetch("http://example.com/scan.pdf")
+
+
+def test_fetch_pdf_damaged_bytes_error(fetch_env):
+    # pymupdf is sometimes lenient with garbage after a valid header: it may
+    # raise at open (-> pdf-error) or yield a zero-page doc (-> empty-content).
+    # Either way the caller gets a structured refusal, never a crash.
+    fetch_env.routes["http://example.com/junk.pdf"] = _pdf_response(b"%PDF-1.7 garbage not a real pdf")
+    with pytest.raises(LocalToolError, match=r"pdf-error|empty-content"):
+        web_fetch("http://example.com/junk.pdf")
+
+
+def test_fetch_pdf_missing_dep_message(fetch_env, monkeypatch):
+    import builtins
+    real_import = builtins.__import__
+
+    def no_pymupdf(name, *a, **k):
+        if name == "pymupdf":
+            raise ImportError("nope")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", no_pymupdf)
+    fetch_env.routes["http://example.com/doc.pdf"] = _pdf_response(_make_pdf(["hi"]))
+    with pytest.raises(LocalToolError, match=r"missing-dep.*tldw_chatbook\[pdf\]"):
+        web_fetch("http://example.com/doc.pdf")
+
+
+def test_fetch_pdf_result_is_cached(fetch_env):
+    body = _make_pdf(["cache me"])
+    fetch_env.routes["http://example.com/doc.pdf"] = _pdf_response(body)
+    first = web_fetch("http://example.com/doc.pdf")
+    second = web_fetch("http://example.com/doc.pdf")
+    assert first == second
+    assert fetch_env.calls.count("http://example.com/doc.pdf") == 1
+
+
+def test_fetch_html_types_unaffected(fetch_env):
+    """Regression guard: ordinary HTML still goes through trafilatura/tag-strip."""
+    fetch_env.routes["http://example.com/page"] = _html_page()
+    assert "main article body sentence" in web_fetch("http://example.com/page")

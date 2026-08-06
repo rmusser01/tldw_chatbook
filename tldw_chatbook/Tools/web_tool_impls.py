@@ -105,6 +105,7 @@ FETCH_HARD_MAX_BYTES = 5 * 1024 * 1024     # absolute ceiling for max_bytes arg
 FETCH_CACHE_TTL_SECONDS = 900.0
 FETCH_CACHE_MAX_ENTRIES = 256
 RATE_LIMIT_INTERVAL_SECONDS = 1.0          # per-domain min interval
+PDF_MAX_BYTES = 20 * 1024 * 1024  # refusal threshold, never a truncation (spec §1)
 
 _USER_AGENT = "tldw-chatbook-web-fetch/1.0"
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
@@ -176,27 +177,52 @@ def _enforce_rate_limit(host: str) -> None:
     _domain_last_fetch[host] = now
 
 
-def _fetch_once(client: httpx.Client, url: str, max_bytes: int) -> tuple[int, httpx.Headers, bytes, bool]:
-    """One GET with a bounded streaming read; redirects are NOT followed."""
+_PDF_MAGIC = b"%PDF-"
+
+
+def _fetch_once(
+    client: httpx.Client,
+    url: str,
+    max_bytes: int,
+    *,
+    pdf_max_bytes: "int | None" = None,
+    html_only: bool = False,
+) -> tuple[int, httpx.Headers, bytes, bool, bool]:
+    """One GET with a bounded streaming read; redirects are NOT followed.
+
+    Returns (status, headers, body, truncated, is_pdf). The read cap is
+    decided MID-STREAM (spec §1): a response identified as PDF — by header
+    or by a %PDF- prefix sniff on the first >=5 buffered bytes — reads up
+    to ``pdf_max_bytes`` instead of ``max_bytes``, because a byte-truncated
+    PDF is unparseable. ``html_only`` (web_crawl) stops the body read after
+    the sniff buffer when the declared main type is non-empty and not HTML.
+    """
     with client.stream("GET", url) as response:
         status = response.status_code
         if status in _REDIRECT_STATUSES:
-            return status, response.headers, b"", False
+            return status, response.headers, b"", False, False
+        declared = (response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
         chunks: list[bytes] = []
         downloaded = 0
-        truncated = False
+        is_pdf: "bool | None" = True if declared == "application/pdf" else None
         for chunk in response.iter_bytes():
-            remaining = max_bytes - downloaded
-            if remaining <= 0:
-                truncated = True
-                break
-            if len(chunk) > remaining:
-                chunks.append(chunk[:remaining])
-                truncated = True
-                break
             chunks.append(chunk)
             downloaded += len(chunk)
-        return status, response.headers, b"".join(chunks), truncated
+            if is_pdf is None and downloaded >= len(_PDF_MAGIC):
+                is_pdf = b"".join(chunks)[: len(_PDF_MAGIC)] == _PDF_MAGIC
+            if html_only and declared and declared not in _HTML_TYPES:
+                break  # crawl only needs the type (PDFs included); don't drain the body
+            cap = pdf_max_bytes if (is_pdf and pdf_max_bytes is not None) else max_bytes
+            if downloaded > cap:
+                break  # overshoot by at most one chunk; sliced below
+        if is_pdf is None:  # body shorter than the magic prefix
+            is_pdf = b"".join(chunks)[: len(_PDF_MAGIC)] == _PDF_MAGIC
+        body = b"".join(chunks)
+        cap = pdf_max_bytes if (is_pdf and pdf_max_bytes is not None) else max_bytes
+        truncated = len(body) > cap
+        if truncated:
+            body = body[:cap]
+        return status, response.headers, body, truncated, is_pdf
 
 
 def _decode_body(body: bytes, content_type: str) -> str:
@@ -252,6 +278,59 @@ def _extract_text(body: bytes, content_type: str) -> str:
     return cleaned
 
 
+def _extract_pdf_text(body: bytes, max_bytes: int) -> str:
+    """Ephemeral PDF text extraction: bytes in, text out, nothing on disk.
+
+    Stops the page loop as soon as accumulated text passes ``max_bytes`` —
+    a 20 MB PDF can be thousands of pages and the tail is about to be
+    thrown away anyway (spec §1).
+    """
+    try:
+        import pymupdf  # local import: optional heavy dep (pdf extra)
+    except ImportError as exc:
+        raise LocalToolError(
+            "[missing-dep] PDF support requires pymupdf — pip install tldw_chatbook[pdf]"
+        ) from exc
+    try:
+        doc = pymupdf.open(stream=body, filetype="pdf")
+    except Exception as exc:
+        raise LocalToolError(f"[pdf-error] could not parse PDF: {exc}") from exc
+    try:
+        if doc.needs_pass and not doc.authenticate(""):
+            raise LocalToolError("[pdf-error] PDF is encrypted")
+        total_pages = doc.page_count
+        parts: list[str] = []
+        size = 0
+        processed = 0
+        for page in doc:
+            text = page.get_text()
+            processed += 1
+            if text.strip():
+                parts.append(text.strip())
+                size += len(text.encode("utf-8"))
+            if size > max_bytes:
+                break
+    except LocalToolError:
+        raise
+    except Exception as exc:  # damaged page trees surface mid-iteration
+        raise LocalToolError(f"[pdf-error] could not parse PDF: {exc}") from exc
+    finally:
+        doc.close()
+    joined = "\n\n".join(parts)
+    if not joined:
+        raise LocalToolError(
+            "[empty-content] PDF contains no extractable text (scanned document?) "
+            "— use media ingestion with OCR"
+        )
+    if size > max_bytes or processed < total_pages:
+        raw = joined.encode("utf-8")[:max_bytes]
+        joined = raw.decode("utf-8", errors="ignore") + (
+            f"\n\n[... truncated: extracted text exceeded max_bytes={max_bytes}; "
+            f"processed {processed} of {total_pages} pages ...]"
+        )
+    return joined
+
+
 def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
     """Fetch ``url`` and return extracted text (trafilatura), byte-capped.
 
@@ -297,7 +376,9 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
             # to redirect into private/denied address space.
             _validate_hop(current_url)
             _enforce_rate_limit(urlsplit(current_url).hostname or "unknown")
-            status, headers, body, truncated = _fetch_once(client, current_url, max_bytes)
+            status, headers, body, truncated, is_pdf = _fetch_once(
+                client, current_url, max_bytes, pdf_max_bytes=PDF_MAX_BYTES
+            )
             if status in _REDIRECT_STATUSES:
                 location = headers.get("location")
                 if not location:
@@ -323,9 +404,14 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
     if status >= 400:
         raise LocalToolError(f"[http-{status}] upstream returned status {status} for {url!r}")
 
-    text = _extract_text(body, headers.get("content-type", ""))
-    if truncated:
-        text += f"\n\n[... truncated: response exceeded max_bytes={max_bytes} ...]"
+    if is_pdf:
+        if truncated:  # hit the 20 MB PDF ceiling: refuse, never truncate bytes
+            raise LocalToolError("[too-large] PDF exceeds 20 MB — use media ingestion for large documents")
+        text = _extract_pdf_text(body, max_bytes)
+    else:
+        text = _extract_text(body, headers.get("content-type", ""))
+        if truncated:
+            text += f"\n\n[... truncated: response exceeded max_bytes={max_bytes} ...]"
     _cache_put((url, max_bytes), text)
     return text
 
