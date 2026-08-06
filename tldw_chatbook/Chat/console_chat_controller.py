@@ -3342,8 +3342,9 @@ class ConsoleChatController:
 
         return {"todo_store": session.todos, "on_todo_change": _on_todo_change}
 
-    def resolve_pending_approval(self, decisions: dict[str, str]) -> None:
->>>>>>> 19668fb4a (feat: todo_write session todos with transcript rendering)
+    def resolve_pending_approval(
+        self, decisions: dict[str, str], *, round_id: str | None = None
+    ) -> None:
         """UI THREAD: apply the user's batch decision, releasing the waiting worker thread.
 
         Called by ``ChatScreen``'s ``ChatApprovalCard.ApprovalDecided``
