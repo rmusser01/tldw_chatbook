@@ -284,3 +284,33 @@ def test_fetch_httpx_invalid_url_becomes_local_tool_error(fetch_env):
     # so it must be caught explicitly.
     with pytest.raises(LocalToolError, match="invalid-url"):
         web_fetch("http://example.com/\x7f")
+
+
+def test_cache_keyed_by_max_bytes(fetch_env):
+    """A small-cap fetch must not poison a later full-cap fetch (spec §1)."""
+    body = b"y" * 600
+    fetch_env.routes["http://example.com/sized"] = _text_page(body)
+    small = web_fetch("http://example.com/sized", max_bytes=100)
+    assert "truncated" in small
+    fetch_env.clock.now += 2.0  # clear the rate-limit interval
+    full = web_fetch("http://example.com/sized")
+    assert "truncated" not in full
+    # Two distinct requests: different caps are different cache entries.
+    assert fetch_env.calls.count("http://example.com/sized") == 2
+
+
+def test_cache_entry_cap_evicts_earliest_expiry(fetch_env):
+    from tldw_chatbook.Tools.web_tool_impls import FETCH_CACHE_MAX_ENTRIES
+
+    for i in range(FETCH_CACHE_MAX_ENTRIES):
+        url = f"http://example.com/p{i}"
+        fetch_env.routes[url] = _text_page(f"page {i}".encode())
+        web_fetch(url)
+        fetch_env.clock.now += 2.0
+    assert len(web_tool_impls._fetch_cache) == FETCH_CACHE_MAX_ENTRIES
+    # One more insert evicts the earliest-expiry entry (p0).
+    fetch_env.routes["http://example.com/extra"] = _text_page(b"extra")
+    web_fetch("http://example.com/extra")
+    assert len(web_tool_impls._fetch_cache) == FETCH_CACHE_MAX_ENTRIES
+    assert ("http://example.com/p0", FETCH_MAX_BYTES) not in web_tool_impls._fetch_cache
+    assert ("http://example.com/extra", FETCH_MAX_BYTES) in web_tool_impls._fetch_cache

@@ -103,6 +103,7 @@ FETCH_TIMEOUT_SECONDS = 30.0
 FETCH_MAX_BYTES = 1 * 1024 * 1024          # default cap
 FETCH_HARD_MAX_BYTES = 5 * 1024 * 1024     # absolute ceiling for max_bytes arg
 FETCH_CACHE_TTL_SECONDS = 900.0
+FETCH_CACHE_MAX_ENTRIES = 256
 RATE_LIMIT_INTERVAL_SECONDS = 1.0          # per-domain min interval
 
 _USER_AGENT = "tldw-chatbook-web-fetch/1.0"
@@ -122,7 +123,9 @@ _WS_RE = re.compile(r"[ \t ]+")
 _BLANKLINES_RE = re.compile(r"\n{3,}")
 
 # Module-level state (per-process). Cleared by _reset_state_for_tests().
-_fetch_cache: dict[str, tuple[float, str]] = {}
+# Keyed by (url, effective max_bytes): a small-cap fetch must not poison a
+# later full-cap call. Bounded because web_crawl bulk-loads it (spec §1).
+_fetch_cache: dict[tuple[str, int], tuple[float, str]] = {}
 _domain_last_fetch: dict[str, float] = {}
 
 # Test seam: tests set this to an httpx.MockTransport.
@@ -133,6 +136,14 @@ def _reset_state_for_tests() -> None:
     """Clear the module-level fetch cache and rate-limit state."""
     _fetch_cache.clear()
     _domain_last_fetch.clear()
+
+
+def _cache_put(key: tuple[str, int], text: str) -> None:
+    """Insert into cache, evicting earliest-expiry entry if at capacity."""
+    if key not in _fetch_cache and len(_fetch_cache) >= FETCH_CACHE_MAX_ENTRIES:
+        oldest = min(_fetch_cache, key=lambda k: _fetch_cache[k][0])
+        _fetch_cache.pop(oldest)
+    _fetch_cache[key] = (time.monotonic() + FETCH_CACHE_TTL_SECONDS, text)
 
 
 def _validate_hop(url: str) -> None:
@@ -262,13 +273,13 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
     except (TypeError, ValueError) as exc:
         raise LocalToolError(f"[invalid-url] max_bytes must be an integer: {max_bytes!r}") from exc
 
-    cached = _fetch_cache.get(url)
+    cached = _fetch_cache.get((url, max_bytes))
     if cached is not None:
         expires_at, text = cached
         if time.monotonic() < expires_at:
             _validate_hop(url)  # re-check policy on cache hits (cheap, no body)
             return text
-        _fetch_cache.pop(url, None)
+        _fetch_cache.pop((url, max_bytes), None)
 
     client = httpx.Client(
         follow_redirects=False,
@@ -315,7 +326,7 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
     text = _extract_text(body, headers.get("content-type", ""))
     if truncated:
         text += f"\n\n[... truncated: response exceeded max_bytes={max_bytes} ...]"
-    _fetch_cache[url] = (time.monotonic() + FETCH_CACHE_TTL_SECONDS, text)
+    _cache_put((url, max_bytes), text)
     return text
 
 
