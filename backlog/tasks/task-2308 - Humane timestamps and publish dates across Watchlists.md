@@ -1,7 +1,7 @@
 ---
 id: TASK-2308
 title: Humane timestamps and publish dates across Watchlists
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04'
 labels:

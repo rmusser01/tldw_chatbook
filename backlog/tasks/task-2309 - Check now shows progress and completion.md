@@ -1,7 +1,7 @@
 ---
 id: TASK-2309
 title: Check now shows progress and completion
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04'
 labels:
