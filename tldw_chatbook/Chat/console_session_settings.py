@@ -26,6 +26,7 @@ from tldw_chatbook.Chat.provider_readiness import (
     provider_config_key,
 )
 from tldw_chatbook.Utils.input_validation import validate_url
+from tldw_chatbook.Utils.token_counter import count_tokens_messages
 
 
 NATIVE_CONSOLE_PROVIDER_KEYS = DIRECT_CONSOLE_PROVIDER_KEYS
@@ -95,11 +96,6 @@ CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS = {
     "google": 30720,
     "openai": 4096,
     "mistral": 32000,
-}
-CONSOLE_TOKEN_CHAR_RATIOS = {
-    "google": 0.3,
-    "huggingface": 0.3,
-    "default": 0.25,
 }
 _REASONING_EFFORT_VALUES = frozenset(
     {"none", "minimal", "low", "medium", "high", "xhigh"}
@@ -1079,16 +1075,24 @@ def _estimate_tokens_locally(
     model: str,
     provider: str,
 ) -> int:
-    del model
-    ratio = CONSOLE_TOKEN_CHAR_RATIOS.get(
-        provider, CONSOLE_TOKEN_CHAR_RATIOS["default"]
-    )
-    total_chars = 0
-    for message in messages:
-        total_chars += len(str(message.get("role", "")))
-        total_chars += len(str(message.get("content", "")))
-    message_overhead = len(messages) * 10
-    return int((total_chars + message_overhead) * ratio)
+    """Estimate a message list's token count with the real counter.
+
+    Delegates to :func:`count_tokens_messages` (custom tokenizer -> tiktoken
+    -> conservative chars floor, never a whitespace word count -- see
+    ``Utils/token_counter.py``), which both `model` and `provider` actually
+    drive: `model` selects the tokenizer/encoding and the chat-format
+    per-message framing convention below; `provider` selects the chars-floor
+    ratio table when no tokenizer is installed.
+
+    The previous placeholder's fake `len(messages) * 10` *chars* overhead is
+    retired outright, not replaced: `count_tokens_messages` already supplies
+    a real per-message allowance (OpenAI's documented chat-format framing --
+    3 tokens/message + 3 base for `gpt-3.5`/`gpt-4` models, 2/2 for others),
+    the same convention this codebase already uses for dispatch-time history
+    budgeting (`console_history_budget.py`) and agent runs
+    (`Agents/agent_service.py`) -- so no bespoke overhead is invented here.
+    """
+    return count_tokens_messages(list(messages), model, provider)
 
 
 def _resolve_token_limit_locally(model: str, provider: str) -> int:
