@@ -22,6 +22,12 @@ class _WorkbenchApp(App):
         self.toggles.append(message.region)
 
 
+def test_region_titles_cover_exactly_the_live_regions():
+    # No FEEDS entry left over from the five-region era (task-2511), and no
+    # live region missing a title -- `_region_widget` would KeyError.
+    assert set(REGION_TITLES) == set(Region)
+
+
 @pytest.mark.asyncio
 async def test_all_regions_render_expanded_by_default():
     app = _WorkbenchApp(RegionLayout())
@@ -49,11 +55,11 @@ async def test_collapsed_header_is_focusable_so_collapse_is_not_one_way():
 
 @pytest.mark.asyncio
 async def test_clicking_a_collapsed_header_posts_region_toggled():
-    app = _WorkbenchApp(RegionLayout(collapsed=frozenset({Region.FEEDS})))
+    app = _WorkbenchApp(RegionLayout(collapsed=frozenset({Region.CONTENT})))
     async with app.run_test() as pilot:
-        await pilot.click("#wl-header-feeds")
+        await pilot.click("#wl-header-content")
         await pilot.pause()
-        assert app.toggles == [Region.FEEDS]
+        assert app.toggles == [Region.CONTENT]
 
 
 @pytest.mark.asyncio
@@ -75,13 +81,36 @@ async def test_updating_the_layout_reactive_re_renders():
 
 @pytest.mark.asyncio
 async def test_every_centre_region_may_be_collapsed_at_once():
-    app = _WorkbenchApp(RegionLayout(collapsed=frozenset(CENTRE := {Region.FEEDS, Region.ITEMS, Region.CONTENT})))
+    app = _WorkbenchApp(RegionLayout(collapsed=frozenset(CENTRE := {Region.ITEMS, Region.CONTENT})))
     async with app.run_test():
         for region in CENTRE:
             assert app.query(f"#wl-header-{region.value}")
         # The rails survive, so the screen is never empty.
         assert app.query("#wl-region-left_rail")
         assert app.query("#wl-region-right_rail")
+
+
+@pytest.mark.asyncio
+async def test_a_hidden_centre_region_is_unmounted_not_collapsed():
+    """The screen gates CONTENT off every non-Read tab this way
+    (`WatchlistsCollectionsScreen._hidden_centre_regions`, TASK-1344 AC#4):
+    hidden means no DOM presence at all -- no body, not even a one-line
+    header."""
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(
+                RegionLayout(),
+                hidden=frozenset({Region.CONTENT}),
+                id="wl-workbench",
+            )
+
+    app = _App()
+    async with app.run_test():
+        assert app.query("#wl-region-left_rail")
+        assert app.query("#wl-region-items")
+        assert app.query("#wl-region-right_rail")
+        assert not app.query("#wl-region-content")
+        assert not app.query("#wl-header-content")
 
 
 @pytest.mark.asyncio
@@ -95,15 +124,15 @@ async def test_supplied_content_is_mounted_into_its_region():
         def compose(self) -> ComposeResult:
             yield WatchlistsWorkbench(
                 RegionLayout(),
-                content={Region.FEEDS: lambda: Label("real feeds table", id="my-real-feeds")},
+                content={Region.ITEMS: lambda: Label("real items table", id="my-real-items")},
                 id="wl-workbench",
             )
 
     app = _App()
     async with app.run_test():
-        assert app.query("#my-real-feeds"), "supplied content should be mounted"
-        region = app.query_one("#wl-region-feeds")
-        assert app.query_one("#my-real-feeds") in region.walk_children()
+        assert app.query("#my-real-items"), "supplied content should be mounted"
+        region = app.query_one("#wl-region-items")
+        assert app.query_one("#my-real-items") in region.walk_children()
 
 
 @pytest.mark.asyncio
@@ -156,7 +185,7 @@ async def test_supplied_content_with_nested_children_survives_recompose():
     class _App(App):
         def compose(self) -> ComposeResult:
             yield WatchlistsWorkbench(
-                RegionLayout(), content={Region.FEEDS: build_nested}, id="wl-workbench"
+                RegionLayout(), content={Region.ITEMS: build_nested}, id="wl-workbench"
             )
 
     app = _App()
@@ -165,7 +194,7 @@ async def test_supplied_content_with_nested_children_survives_recompose():
 
         workbench = app.query_one(WatchlistsWorkbench)
         # Toggle an UNRELATED region. Because the reactive recomposes the
-        # whole workbench, this rebuilds FEEDS too, even though FEEDS itself
+        # whole workbench, this rebuilds ITEMS too, even though ITEMS itself
         # was never toggled.
         workbench.region_layout = RegionLayout(collapsed=frozenset({Region.LEFT_RAIL}))
         await pilot.pause()
@@ -181,18 +210,18 @@ async def test_a_region_with_supplied_content_does_not_double_title():
     from textual.widgets import Static
 
     def factory():
-        return Static("Sources", classes="pane-title")
+        return Static("Items", classes="pane-title")
 
     class _App(App):
         def compose(self) -> ComposeResult:
             yield WatchlistsWorkbench(
-                RegionLayout(), content={Region.FEEDS: factory}, id="wl-workbench"
+                RegionLayout(), content={Region.ITEMS: factory}, id="wl-workbench"
             )
 
     app = _App()
     async with app.run_test():
         titles = [str(n.renderable) for n in app.query(".watchlists-region-title")]
-        assert "Feeds" not in titles, (
+        assert "Items" not in titles, (
             "a region whose content supplies its own heading should not add a second one"
         )
 
@@ -216,7 +245,7 @@ async def test_left_rail_keeps_its_heading_when_its_content_supplies_none():
                 content={
                     # Stands in for `WatchlistTree`: real content, no heading.
                     Region.LEFT_RAIL: lambda: Label("All sources  0", id="headingless"),
-                    Region.FEEDS: lambda: Label("Sources", id="self-headed"),
+                    Region.ITEMS: lambda: Label("Items", id="self-headed"),
                 },
                 id="wl-workbench",
             )
@@ -229,7 +258,7 @@ async def test_left_rail_keeps_its_heading_when_its_content_supplies_none():
             "the left rail's content supplies no heading of its own, so the "
             f"region must still label it: {titles}"
         )
-        assert "Feeds" not in titles, (
+        assert "Items" not in titles, (
             "a region whose pane DOES supply its own heading must not add a "
             f"second one: {titles}"
         )
@@ -239,30 +268,27 @@ async def test_left_rail_keeps_its_heading_when_its_content_supplies_none():
 async def test_a_soloed_centre_region_is_marked_for_css():
     """Fix round 3, Finding 3: `RegionLayout.solo` only collapses the soloed
     region's *siblings*, so nothing in the DOM distinguished a soloed region
-    from an ordinarily-expanded one — and FEEDS, the one capped region, stayed
-    pinned at its `max-height` with the rest of the centre blank. This class
-    is the hook `.watchlists-region-sole-centre` keys off (see
-    `_watchlists.tcss`); the geometry it produces is asserted against the real
-    stylesheet in
+    from an ordinarily-expanded one — and a capped region stayed pinned at
+    its `max-height` with the rest of the centre blank. This class is the
+    hook `.watchlists-region-sole-centre` keys off (see `_watchlists.tcss`);
+    the geometry it produces is asserted against the real stylesheet in
     `Tests/UI/test_destination_visual_parity_correction.py::
-    test_watchlists_soloed_feeds_fills_the_centre`.
+    test_watchlists_soloed_centre_region_fills_the_centre`.
     """
-    app = _WorkbenchApp(RegionLayout().solo(Region.FEEDS))
+    app = _WorkbenchApp(RegionLayout().solo(Region.CONTENT))
     async with app.run_test():
-        feeds = app.query_one("#wl-region-feeds")
-        assert feeds.has_class("watchlists-region-sole-centre"), sorted(feeds.classes)
+        content = app.query_one("#wl-region-content")
+        assert content.has_class("watchlists-region-sole-centre"), sorted(content.classes)
         # The rails are still expanded, and solo never applies to them.
         for rail in ("left_rail", "right_rail"):
             rail_region = app.query_one(f"#wl-region-{rail}")
             assert not rail_region.has_class("watchlists-region-sole-centre")
 
     # Reaching the same DOM by hand must get the same treatment: `z` on ITEMS
-    # and CONTENT leaves FEEDS just as alone as `Z` on FEEDS does.
-    manual = _WorkbenchApp(
-        RegionLayout(collapsed=frozenset({Region.ITEMS, Region.CONTENT}))
-    )
+    # leaves CONTENT just as alone as `Z` on CONTENT does.
+    manual = _WorkbenchApp(RegionLayout(collapsed=frozenset({Region.ITEMS})))
     async with manual.run_test():
-        assert manual.query_one("#wl-region-feeds").has_class(
+        assert manual.query_one("#wl-region-content").has_class(
             "watchlists-region-sole-centre"
         )
 
@@ -277,25 +303,12 @@ async def test_a_soloed_centre_region_is_marked_for_css():
 
 
 @pytest.mark.asyncio
-async def test_feeds_height_is_capped_and_scrollable_when_content_overflows():
-    """Fix round 1 (human-ruled): removing FEEDS's duplicate title (the test
-    above) exposed a pre-existing bug where FEEDS's `height: auto` grew
-    without any limit. That is fine for the empty state, but Task 7 gives
-    FEEDS the real, scope-driven feeds list -- potentially dozens of
-    sources -- which would push ITEMS/CONTENT clean off the bottom of the
-    viewport. `_watchlists.tcss` now caps `.watchlists-region-feeds` at
-    `max-height: 12` with `overflow-y: auto`: it grows to fit small lists,
-    stops at the cap, and scrolls past it rather than either clipping
-    silently or displacing its neighbours.
-
-    (Fix round 2 raised the cap from round 1's `10`, which sat one row
-    BELOW the real empty state's own 11-row need, so even zero sources
-    scrolled. The shipped `12` is one under the maximum that holds at
-    160x42, chosen so the invariant also survives a 41-row terminal. See
-    `Tests/UI/test_destination_visual_parity_correction.py::
-    test_watchlists_feeds_empty_state_fits_without_scrolling` (which checks
-    this against the real production screen, not synthetic content) and the
-    derivation comment on `.watchlists-region-feeds` in `_watchlists.tcss`.)
+async def test_content_height_is_capped_and_scrollable_when_content_overflows():
+    """`.watchlists-region-content` is the one capped region left (FEEDS is
+    gone, task-2511): `height: auto` + `max-height: 12` + `overflow-y: auto`
+    in `_watchlists.tcss`, so the reader grows to fit small content, stops at
+    the cap, and scrolls past it rather than either clipping silently or
+    displacing ITEMS.
 
     Unlike this file's other tests, this one loads the REAL production
     stylesheet (`CSS_PATH`) -- a bare `App` with no CSS at all would never
@@ -314,16 +327,16 @@ async def test_feeds_height_is_capped_and_scrollable_when_content_overflows():
         / "tldw_cli_modular.tcss"
     )
 
-    def overflowing_feeds() -> Vertical:
-        # 40 rows: far more than any reasonable cap, standing in for
-        # Task 7's real feeds list once a watchlist has dozens of sources.
+    def overflowing_reader() -> Vertical:
+        # 40 rows: far more than any reasonable cap, standing in for a long
+        # article opened in the reader.
         body = Vertical(
-            *[Static(f"source-{i:02d}") for i in range(40)],
-            id="feeds-overflow-probe",
+            *[Static(f"paragraph-{i:02d}") for i in range(40)],
+            id="content-overflow-probe",
         )
-        # Mirrors the production companion fix on `#watchlists-list-pane`
+        # Mirrors the production companion fix on `#watchlists-content-pane`
         # in `_watchlists.tcss`: a bare `Vertical` defaults to
-        # `height: 1fr`, which is circular inside FEEDS's `height: auto`
+        # `height: 1fr`, which is circular inside CONTENT's `height: auto`
         # region -- it must size to its own content instead.
         body.styles.height = "auto"
         return body
@@ -334,30 +347,30 @@ async def test_feeds_height_is_capped_and_scrollable_when_content_overflows():
         def compose(self) -> ComposeResult:
             yield WatchlistsWorkbench(
                 RegionLayout(),
-                content={Region.FEEDS: overflowing_feeds},
+                content={Region.CONTENT: overflowing_reader},
                 id="wl-workbench",
             )
 
     app = _App()
     async with app.run_test(size=(100, 40)) as pilot:
-        feeds = app.query_one("#wl-region-feeds")
+        content = app.query_one("#wl-region-content")
         items = app.query_one("#wl-region-items")
 
-        assert feeds.region.height <= 12, (
-            f"FEEDS should stop growing at the cap once its content "
-            f"overflows it: {feeds.region}"
+        assert content.region.height <= 12, (
+            f"CONTENT should stop growing at the cap once its content "
+            f"overflows it: {content.region}"
         )
-        assert items.region.height > feeds.region.height, (
-            f"ITEMS must stay the taller reading area even when FEEDS's "
+        assert items.region.height > content.region.height, (
+            f"ITEMS must stay the taller reading area even when CONTENT's "
             f"content would otherwise dwarf it: items={items.region} "
-            f"feeds={feeds.region}"
+            f"content={content.region}"
         )
 
         # Confirm it SCROLLS rather than clips: all 40 supplied rows must
         # be reachable, not silently cut off past the cap.
         def painted_rows() -> list[str]:
-            strips = feeds.screen._compositor.render_strips()
-            region = feeds.region
+            strips = content.screen._compositor.render_strips()
+            region = content.region
             return [
                 "".join(segment.text for segment in strips[y])[
                     region.x : region.x + region.width
@@ -366,7 +379,7 @@ async def test_feeds_height_is_capped_and_scrollable_when_content_overflows():
             ]
 
         rows = painted_rows()
-        assert any("source-00" in row for row in rows), (
+        assert any("paragraph-00" in row for row in rows), (
             f"expected the first supplied row on screen initially: {rows!r}"
         )
         # Fix round 3, Finding 2: the region owns the border AND the scroll,
@@ -377,12 +390,12 @@ async def test_feeds_height_is_capped_and_scrollable_when_content_overflows():
         assert rows[0].startswith("╭") and rows[0].endswith("╮"), rows[0]
         assert rows[-1].startswith("╰") and rows[-1].endswith("╯"), rows[-1]
 
-        feeds.scroll_end(animate=False)
+        content.scroll_end(animate=False)
         await pilot.pause()
         await pilot.pause()
 
         rows = painted_rows()
-        assert any("source-39" in row for row in rows), (
+        assert any("paragraph-39" in row for row in rows), (
             f"the last supplied row should be reachable by scrolling, not "
             f"lost past the cap: {rows!r}"
         )
@@ -395,12 +408,12 @@ async def test_feeds_height_is_capped_and_scrollable_when_content_overflows():
         )
 
 
-# --- Task 7: `refresh_region_content` ---------------------------------------
+# --- `refresh_region_content` ---------------------------------------------
 #
-# `WatchlistsCollectionsScreen.watch_selected_scope` needs FEEDS to follow a
-# tree-scope change without recomposing the whole workbench (a full
-# recompose would also replace the Inspector, breaking its "same instance,
-# updated in place" contract -- see that method's docstring). These pin the
+# `WatchlistsCollectionsScreen` needs a region to follow new data without
+# recomposing the whole workbench (a full recompose would also replace the
+# Inspector, breaking its "same instance, updated in place" contract -- see
+# `WatchlistsCollectionsScreen.watch_selected_scope`). These pin the
 # primitive it relies on, independent of the screen.
 
 
@@ -408,11 +421,11 @@ async def test_feeds_height_is_capped_and_scrollable_when_content_overflows():
 async def test_refresh_region_content_rebuilds_only_the_named_region():
     from textual.widgets import Label
 
-    calls = {"feeds": 0}
+    calls = {"content": 0}
 
-    def feeds_factory():
-        calls["feeds"] += 1
-        return Label(f"feeds-{calls['feeds']}", id="feeds-content")
+    def content_factory():
+        calls["content"] += 1
+        return Label(f"content-{calls['content']}", id="reader-content")
 
     items_widget_ids: list[int] = []
 
@@ -425,25 +438,25 @@ async def test_refresh_region_content_rebuilds_only_the_named_region():
         def compose(self) -> ComposeResult:
             yield WatchlistsWorkbench(
                 RegionLayout(),
-                content={Region.FEEDS: feeds_factory, Region.ITEMS: items_factory},
+                content={Region.CONTENT: content_factory, Region.ITEMS: items_factory},
                 id="wl-workbench",
             )
 
     app = _App()
     async with app.run_test() as pilot:
         workbench = app.query_one(WatchlistsWorkbench)
-        first_feeds = app.query_one("#feeds-content", Label)
+        first_content = app.query_one("#reader-content", Label)
         first_items = app.query_one("#items-content", Label)
-        assert str(first_feeds.renderable) == "feeds-1"
+        assert str(first_content.renderable) == "content-1"
 
-        await workbench.refresh_region_content(Region.FEEDS)
+        await workbench.refresh_region_content(Region.CONTENT)
         await pilot.pause()
 
-        refreshed_feeds = app.query_one("#feeds-content", Label)
-        assert str(refreshed_feeds.renderable) == "feeds-2", (
+        refreshed_content = app.query_one("#reader-content", Label)
+        assert str(refreshed_content.renderable) == "content-2", (
             "the factory should run again, reflecting whatever changed"
         )
-        assert refreshed_feeds is not first_feeds, (
+        assert refreshed_content is not first_content, (
             "the old content widget should be replaced, not mutated in place"
         )
 
@@ -451,7 +464,7 @@ async def test_refresh_region_content_rebuilds_only_the_named_region():
         assert still_items is first_items, (
             "an unrelated region's content must not be touched"
         )
-        assert calls["feeds"] == 2
+        assert calls["content"] == 2
         assert len(items_widget_ids) == 1, "ITEMS's factory must not run again"
 
 
@@ -459,28 +472,28 @@ async def test_refresh_region_content_rebuilds_only_the_named_region():
 async def test_refresh_region_content_is_a_noop_when_the_region_is_collapsed():
     from textual.widgets import Label
 
-    calls = {"feeds": 0}
+    calls = {"content": 0}
 
-    def feeds_factory():
-        calls["feeds"] += 1
-        return Label("feeds", id="feeds-content")
+    def content_factory():
+        calls["content"] += 1
+        return Label("content", id="reader-content")
 
     class _App(App):
         def compose(self) -> ComposeResult:
             yield WatchlistsWorkbench(
-                RegionLayout(collapsed=frozenset({Region.FEEDS})),
-                content={Region.FEEDS: feeds_factory},
+                RegionLayout(collapsed=frozenset({Region.CONTENT})),
+                content={Region.CONTENT: content_factory},
                 id="wl-workbench",
             )
 
     app = _App()
     async with app.run_test():
         workbench = app.query_one(WatchlistsWorkbench)
-        assert calls["feeds"] == 0, "a collapsed region should not build its content at all"
+        assert calls["content"] == 0, "a collapsed region should not build its content at all"
 
-        await workbench.refresh_region_content(Region.FEEDS)
+        await workbench.refresh_region_content(Region.CONTENT)
 
-        assert calls["feeds"] == 0, "refreshing a collapsed region must be a no-op"
+        assert calls["content"] == 0, "refreshing a collapsed region must be a no-op"
 
 
 @pytest.mark.asyncio
@@ -493,8 +506,8 @@ async def test_refresh_region_content_keeps_a_non_self_headed_regions_title():
     "Watchlists" heading for it -- which the blanket remove then threw away,
     leaving an unlabelled bordered rail until the next region toggle happened
     to rebuild it. That is the exact defect `SELF_HEADED_REGIONS`' own
-    comment records having shipped once already; both of Task 7's original
-    tests used self-headed regions, so neither could see it.
+    comment records having shipped once already; both of the original tests
+    used self-headed regions, so neither could see it.
     """
     from textual.widgets import Label
 
@@ -546,17 +559,17 @@ async def test_refresh_region_content_never_leaves_the_region_empty_on_a_build_f
 
     calls = {"n": 0}
 
-    def feeds_factory():
+    def content_factory():
         calls["n"] += 1
         if calls["n"] > 1:
             raise RuntimeError("scope resolution blew up")
-        return Label("feeds", id="feeds-content")
+        return Label("content", id="reader-content")
 
     class _App(App):
         def compose(self) -> ComposeResult:
             yield WatchlistsWorkbench(
                 RegionLayout(),
-                content={Region.FEEDS: feeds_factory},
+                content={Region.CONTENT: content_factory},
                 id="wl-workbench",
             )
 
@@ -565,24 +578,22 @@ async def test_refresh_region_content_never_leaves_the_region_empty_on_a_build_f
         workbench = app.query_one(WatchlistsWorkbench)
 
         with pytest.raises(RuntimeError):
-            await workbench.refresh_region_content(Region.FEEDS)
+            await workbench.refresh_region_content(Region.CONTENT)
         await pilot.pause()
 
-        assert app.query_one("#feeds-content", Label), (
+        assert app.query_one("#reader-content", Label), (
             "a failed rebuild must leave the previous content mounted"
         )
 
 
 # --- task-1344 fix wave (Qodo correctness): `refresh_header_content` -------
 #
-# Off the Read tab, FEEDS is unmounted (`hidden=`) and `header=` carries the
-# section tab strip plus the snapshot summary instead
-# (`WatchlistsCollectionsScreen._build_centre_status_header`). Nothing used
-# to rebuild that header in place when its content went stale (e.g. the tree
-# scope moving) -- `refresh_region_content` only ever reaches FEEDS's own
-# inline copy, which is unmounted exactly when `header` exists at all. These
-# pin the primitive independent of the screen, the same way Task 7's
-# `refresh_region_content` tests above do for FEEDS.
+# The workbench's `header=` carries the section tab strip plus the snapshot
+# summary on EVERY tab (`WatchlistsCollectionsScreen._build_centre_status_
+# header` is wired unconditionally since task-2511). Nothing used to rebuild
+# that header in place when its content went stale (e.g. the tree scope
+# moving) -- these pin the primitive independent of the screen, the same way
+# the `refresh_region_content` tests above do for a region.
 
 
 @pytest.mark.asyncio
@@ -600,7 +611,7 @@ async def test_refresh_header_content_rebuilds_the_header_in_place():
             yield WatchlistsWorkbench(
                 RegionLayout(),
                 content={Region.ITEMS: lambda: Label("items", id="items-content")},
-                hidden=frozenset({Region.FEEDS, Region.CONTENT}),
+                hidden=frozenset({Region.CONTENT}),
                 header=header_factory,
                 id="wl-workbench",
             )

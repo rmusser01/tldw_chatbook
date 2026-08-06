@@ -7,7 +7,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_round_trips_collapsed_regions(monkeypatch):
-    """Uses FEEDS/RIGHT_RAIL, deliberately not CONTENT: this test is about
+    """Uses ITEMS/RIGHT_RAIL, deliberately not CONTENT: this test is about
     generic round-tripping, and CONTENT now goes through the one-time
     migration in `load_region_layout` (see the dedicated migration tests
     below), which would make a CONTENT-collapsed input diverge from what
@@ -22,19 +22,19 @@ def test_round_trips_collapsed_regions(monkeypatch):
 
     monkeypatch.setattr(region_layout_store, "save_setting_to_cli_config", fake_save)
     region_layout_store.save_region_layout(
-        RegionLayout(collapsed=frozenset({Region.FEEDS, Region.RIGHT_RAIL}))
+        RegionLayout(collapsed=frozenset({Region.ITEMS, Region.RIGHT_RAIL}))
     )
 
     # Flat section, not "watchlists.layout" — a dotted section silently no-ops.
     assert ("watchlists", "collapsed_regions") in saved
-    assert sorted(saved[("watchlists", "collapsed_regions")]) == ["feeds", "right_rail"]
+    assert sorted(saved[("watchlists", "collapsed_regions")]) == ["items", "right_rail"]
 
     monkeypatch.setattr(
         region_layout_store, "get_cli_setting",
         lambda section, key, default=None: saved.get((section, key), default),
     )
     loaded = region_layout_store.load_region_layout()
-    assert loaded.collapsed == frozenset({Region.FEEDS, Region.RIGHT_RAIL})
+    assert loaded.collapsed == frozenset({Region.ITEMS, Region.RIGHT_RAIL})
 
 
 def test_load_applies_first_run_default_when_key_was_never_saved(monkeypatch):
@@ -264,6 +264,21 @@ def test_load_ignores_unknown_region_names(monkeypatch):
     assert loaded.collapsed == frozenset({Region.CONTENT, Region.LEFT_RAIL})
 
 
+def test_load_drops_the_retired_feeds_region(monkeypatch):
+    # task-2511 removed the FEEDS region with no migration code: a persisted
+    # "feeds" string from before the removal is just an unknown region name
+    # now, dropped by the same guard the test above pins (ADR-042).
+    monkeypatch.setattr(
+        region_layout_store, "get_cli_setting",
+        lambda section, key, default=None: {
+            "collapsed_regions": ["feeds", "items"],
+            "content_reader_migrated": True,
+        }.get(key, default),
+    )
+    loaded = region_layout_store.load_region_layout()
+    assert loaded.collapsed == frozenset({Region.ITEMS})
+
+
 def test_load_tolerates_a_non_list_value(monkeypatch):
     monkeypatch.setattr(
         region_layout_store, "get_cli_setting", lambda section, key, default=None: "content"
@@ -274,14 +289,14 @@ def test_load_tolerates_a_non_list_value(monkeypatch):
 def test_save_never_persists_solo(monkeypatch):
     """`solo_region` itself must never round-trip through config.
 
-    NOTE (PR #926 review, Bug 1 fix): before the fix this test asserted
-    `["content", "feeds"]` — the solo-DERIVED collapse of the other centre
-    panes — as the persisted value. That encoded the bug: restoring that on
-    the next launch would have applied a plain (non-solo) collapse of FEEDS
-    and CONTENT with no `_pre_solo` baseline left to `Z`-restore from, even
-    though the user never configured that layout by hand. The correct
-    persisted value while soloed is the PRE-solo baseline, which for a solo
-    called directly on a fresh `RegionLayout()` is "nothing collapsed" — see
+    NOTE (PR #926 review, Bug 1 fix): before the fix this test asserted the
+    solo-DERIVED collapse of the other centre panes as the persisted value.
+    That encoded the bug: restoring it on the next launch would have applied
+    a plain (non-solo) collapse of those panes with no `_pre_solo` baseline
+    left to `Z`-restore from, even though the user never configured that
+    layout by hand. The correct persisted value while soloed is the PRE-solo
+    baseline, which for a solo called directly on a fresh `RegionLayout()`
+    is "nothing collapsed" — see
     `test_save_while_soloed_persists_the_pre_solo_baseline_not_the_solo_derived_collapse`
     below for a case where the baseline is non-empty.
     """

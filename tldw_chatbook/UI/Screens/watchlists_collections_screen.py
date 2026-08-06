@@ -386,13 +386,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     """Monitored sources, runs, alerts, and recovery."""
 
     BINDINGS = [
-        ("1", "switch_section('overview')", "Overview"),
+        ("1", "switch_section('items')", "Read"),
         ("2", "switch_section('sources')", "Sources"),
-        ("3", "switch_section('items')", "Items"),
-        ("4", "switch_section('runs')", "Runs"),
-        ("5", "switch_section('rules')", "Rules"),
-        ("6", "switch_section('notifications')", "Notifications"),
-        ("7", "switch_section('artifacts')", "Artifacts"),
+        ("3", "switch_section('runs')", "Runs"),
+        ("4", "switch_section('rules')", "Rules"),
+        ("5", "switch_section('notifications')", "Notifications"),
+        ("6", "switch_section('artifacts')", "Artifacts"),
+        ("7", "switch_section('overview')", "Overview"),
         ("question", "show_help", "Help"),
         ("n", "new_source", "New source"),
         # Round 2, O3: the label names BOTH verbs because the key performs
@@ -413,7 +413,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ("right_square_bracket", "toggle_right_rail", "Right rail"),
     ]
 
-    active_section = reactive("overview")
+    active_section = reactive("items")
     runtime_backend = reactive("local")
     selected_source = reactive(None)
     selected_run = reactive(None)
@@ -440,13 +440,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # saved before this change, since that could only be a leftover of the
     # old stub-era default, never a deliberate choice about the real reader.
     region_layout = reactive(RegionLayout())
-    focused_region = reactive(Region.FEEDS)
+    focused_region = reactive(Region.ITEMS)
     # Two scopes, deliberately: they answer different questions and they
     # diverge (fix round 1, Finding 2).
     #
     # `tree_scope` is where the user has NAVIGATED -- the tree node in view.
-    # It drives the Feeds region (`scoped_source_rows`), and only a tree
-    # click or a breadcrumb promotion moves it.
+    # It drives the scoped readouts (`scoped_source_rows`: the centre
+    # header's summary line and the Sources table), and only a tree click
+    # or a breadcrumb promotion moves it.
     #
     # `selected_scope` is the ancestry the Inspector is entitled to CLAIM
     # for whatever is currently selected. It follows `tree_scope` on a tree
@@ -455,13 +456,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # asserting one would put a breadcrumb over an entity that may not
     # belong to it (Task 5 fix round 2, Finding 1).
     #
-    # Task 7 made `selected_scope` drive Feeds as well, which silently
-    # merged the two: clicking a pane row to inspect it then reset the Feeds
-    # region back to "All sources", discarding tree navigation the user had
-    # done in another region. Splitting them keeps both properties -- the
-    # Feeds region follows the tree, and the Inspector still claims no
-    # ancestry it does not know. Clearing `_breadcrumb_labels` alone would
-    # NOT have been enough: `InspectorPane._scope_levels` derives an
+    # Task 7 made `selected_scope` drive the scoped readout as well, which
+    # silently merged the two: clicking a pane row to inspect it then reset
+    # the scope back to "All sources", discarding tree navigation the user
+    # had done in another region. Splitting them keeps both properties --
+    # the scoped readout follows the tree, and the Inspector still claims
+    # no ancestry it does not know. Clearing `_breadcrumb_labels` alone
+    # would NOT have been enough: `InspectorPane._scope_levels` derives an
     # ancestor level from `scope` alone and falls back to a `Watchlist {id}`
     # label, so the crumb would still render, just anonymously.
     #
@@ -477,7 +478,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     _SECTION_DETAIL_TITLE = {
         "overview": "Overview",
         "sources": "Sources",
-        "items": "Items",
+        "items": "Read",
         "runs": "Runs",
         "rules": "Rules",
         "notifications": "Notifications",
@@ -1126,9 +1127,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         * The rail itself (`_tree_watchlists`/`_tree_counts`) — rebuilt from
           `_build_tree_pane`, which re-seeds the expansion, tag filter and
           scope the user had, exactly as the full recompose did.
-        * FEEDS and the centre header, whose scope heading resolves a
-          watchlist's display name out of `_tree_watchlists` (a rename would
-          otherwise sit stale) and whose source rows are re-queried.
+        * The centre header, whose scoped summary resolves a watchlist's
+          display name out of `_tree_watchlists` (a rename would otherwise
+          sit stale) and whose source count is re-queried.
         * The Inspector's breadcrumb labels, and — in the ITEMS region — the
           Overview's watchlist count and the Artifacts pane's scope label,
           all pushed into the live panes the way `watch_selected_scope` and
@@ -1145,7 +1146,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         the whole-branch review (I1): it resolves a watchlist DISPLAY NAME via
         `_briefing_scope_label` -> `_watchlist_display_name` -> the same
         `_tree_watchlists` list, so renaming the scoped watchlist while the
-        Artifacts tab was open repainted the rail, the FEEDS heading and the
+        Artifacts tab was open repainted the rail, the header summary and the
         breadcrumb but left `#artifacts-scope-note` naming the old one — two
         surfaces on one screen disagreeing about the same watchlist.
 
@@ -1155,7 +1156,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         self._request_surface_refresh(
             self._SURFACE_RAIL,
-            self._SURFACE_FEEDS,
             self._SURFACE_HEADER,
             self._SURFACE_INSPECTOR,
         )
@@ -1280,12 +1280,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         The snapshot's loading/error/empty/summary marker
         (`_watchlists_status_marker_widgets`) is rendered in exactly one
-        place as of TASK-2312 (the centre header, on every section
-        including Read) -- this still requests both the FEEDS and HEADER
-        surfaces, since Read's FEEDS pane still has its own scope-derived
-        heading/rows that need a refresh independent of the header. Each
-        call is a no-op where that surface is not mounted, so no tab test
-        is needed here.
+        place -- the centre header, mounted on every tab since task-2511 --
+        and this rebuilds it. (The Read tab used to have a second, inline
+        copy inside the FEEDS region; that region is gone.)
 
         The Inspector's two snapshot-derived widgets are patched rather than
         rebuilt, following `_repaint_item_status_cell`'s discipline: the
@@ -1296,7 +1293,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if not self._dom_is_live:
             return
         self._request_surface_refresh(
-            self._SURFACE_FEEDS, self._SURFACE_HEADER, self._SURFACE_INSPECTOR
+            self._SURFACE_HEADER, self._SURFACE_INSPECTOR
         )
         try:
             summary = self.query_one("#watchlists-state-summary", Static)
@@ -1417,16 +1414,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         Asks the tree scope as well as the async snapshot (fix round 1,
         Finding 1). Staging now sends `scoped_source_rows()`, so a gate that
         only consulted the snapshot could disable the Stage button -- and
-        render "No sources yet." -- directly underneath a Feeds list that
-        was showing rows. That split is not hypothetical: the two paths
+        render "No sources yet." -- directly underneath a scoped readout
+        that was showing rows. That split is not hypothetical: the two paths
         resolve their `SubscriptionsDB` independently, and in the UI
         harnesses they land on different temp files entirely.
 
         The snapshot stays the *health* probe (`_wc_loaded` /
-        `_wc_lookup_error` in `_wc_attach_state` and `_build_list_pane` are
-        untouched): it is the only caller that can distinguish "the service
-        is unavailable" or "policy denied" from "there are no rows", which a
-        synchronous local query cannot report.
+        `_wc_lookup_error` in `_wc_attach_state` and
+        `_watchlists_status_marker_widgets` are untouched): it is the only
+        caller that can distinguish "the service is unavailable" or "policy
+        denied" from "there are no rows", which a synchronous local query
+        cannot report.
         """
         if self._local_watchlist_count > 0:
             return True
@@ -1438,10 +1436,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         Fix round 1, Finding 1: the block used to enumerate
         `_local_watchlist_records`, which reaches `get_all_subscriptions`
         through `WatchlistScopeService.list_watch_items` -- the *same* table
-        `scoped_source_rows()` reads. FEEDS therefore printed every source
-        twice in one box (once scoped, once not), in identical typography.
-        Staging now follows the tree scope instead, so the block only has to
-        say what pressing the button would send.
+        `scoped_source_rows()` reads. The screen's scoped readout therefore
+        printed every source twice in one box (once scoped, once not), in
+        identical typography. Staging now follows the tree scope instead, so
+        the block only has to say what pressing the button would send.
 
         Args:
             rows: The current scope's rows, as returned by
@@ -1460,10 +1458,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _snapshot_body(self) -> str:
         """The Console handoff body: the sources the tree scope covers.
 
-        Reads the same `scoped_source_rows()` the Feeds region renders (fix
-        round 1, Finding 1), so selecting "Morning AI Brief" and then
-        staging stages Morning AI Brief -- not, as before, every local
-        source regardless of where the user had navigated.
+        Reads the same `scoped_source_rows()` the centre header's summary
+        line renders (fix round 1, Finding 1), so selecting "Morning AI
+        Brief" and then staging stages Morning AI Brief -- not, as before,
+        every local source regardless of where the user had navigated.
 
         Names still go through `_record_title` (and therefore `_safe_text`'s
         sanitise + validate pass), unchanged: a source name can come
@@ -1511,8 +1509,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _wc_attach_state(self) -> tuple[bool, str]:
         """Whether "Stage Watchlists Context in Console" should be enabled,
         and its tooltip — the same loading/error/empty/populated branching
-        `_build_list_pane` uses, split out so `compose_content` can get it
-        without constructing (and discarding) a pane widget just to read it.
+        `_watchlists_status_marker_widgets` uses, split out so
+        `compose_content` can get it without constructing (and discarding) a
+        pane widget just to read it.
         """
         if not self._wc_loaded:
             return True, "Stage local Watchlists context after the local snapshot loads."
@@ -1712,53 +1711,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 return f"Source {scope.source_id}"
         return "All sources"
 
-    def _scoped_feeds_heading(self, rows: Sequence[Mapping[str, Any]]) -> Text:
-        """The scope-named Feeds heading, e.g. ``Feeds in Morning AI Brief (3)``.
-
-        Replaces the previous hardcoded "Sources" title (Task 7): with the
-        Sources tab active, that hardcoded word duplicated ITEMS's own
-        `_SECTION_DETAIL_TITLE["sources"]` heading in the adjacent box. This
-        also makes the heading say what Feeds is actually showing, since a
-        tree click now changes that.
-
-        Args:
-            rows: The current scope's rows, as returned by
-                `scoped_source_rows()` -- passed in rather than re-resolved
-                so the caller (which needs the rows anyway, to render them)
-                does not pay for the query twice.
-
-        Returns:
-            A single-line ``Text``, pre-parsed via `Text.from_markup` over
-            an escaped label -- the same "escape untrusted content, then
-            build a `Text` rather than hand a raw f-string to `Static`"
-            convention `_build_inspector_pane`'s follow-in-Console line
-            already uses, since the label may come straight from a remote
-            feed's own title.
-        """
-        label = escape_markup(self._tree_scope_label(rows))
-        return Text.from_markup(f"Feeds in {label} ({len(rows)})")
-
     def _watchlists_status_marker_widgets(
         self, scoped_rows: Sequence[Mapping[str, Any]]
     ) -> list[Widget]:
         """The snapshot's own loading/error/empty/summary marker.
 
-        Extracted (TASK-1344) so the same service-state readout could
-        appear on every tab once FEEDS itself started being hidden on all
-        but the Read tab (`_hidden_centre_regions`) -- before that, FEEDS
-        was unconditionally mounted, so this state was already visible
-        everywhere; the extraction avoided a real regression (Sources/
-        Runs/... silently losing all visibility into "snapshot still
-        loading" / "service unavailable" / "no sources yet") rather than
-        introducing new behaviour.
-
-        TASK-2312: called from exactly one place now,
-        `_build_centre_status_header`, on every section including Read.
-        `_build_list_pane` (FEEDS's own content) used to carry an inline
-        second copy of this same call specifically for the Read tab -- that
-        duplication, and the different DOM position it produced, is what
-        this task removed; see `_build_centre_status_header`'s own
-        docstring for the full history.
+        Rendered in exactly one place: `_build_centre_status_header`, the
+        centre header mounted on every tab. (TASK-1344 extracted this so the
+        readout could also live inline in the FEEDS region's Read-tab body --
+        avoiding a real regression, Sources/Runs/... silently losing all
+        visibility into "snapshot still loading" / "service unavailable" /
+        "no sources yet"; task-2511 removed that region, leaving the header
+        as the only home.)
 
         Keyed on the async snapshot, NOT on `scoped_source_rows()`: the
         snapshot is the only service-health probe on this screen -- it is
@@ -1769,7 +1733,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         cases, and `#wc-loading-state` has no meaning for it at all. In
         production the two agree anyway: both read `subscriptions`.
 
-        Called fresh on every region/header rebuild, so it must stay
+        Called fresh on every header rebuild, so it must stay
         side-effect-free (same discipline as every other content factory
         here -- see `WatchlistsWorkbench.__init__`'s docstring on why
         `content` holds factories, not instances).
@@ -1777,8 +1741,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         Args:
             scoped_rows: The current tree scope's source rows
                 (`scoped_source_rows()`), used only by the summary-line
-                branch. Passed in rather than re-resolved so a caller that
-                already has it (both callers do) does not query twice.
+                branch. Passed in rather than re-resolved so the caller
+                does not query twice.
 
         Returns:
             One widget (the loading/error/empty-state text, or the
@@ -1855,8 +1819,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `#wc-watchlists-summary` keeps its id -- it is the "snapshot
         # finished loading" terminal selector the guard suites wait on --
         # and says what pressing Stage would send, which is the scope
-        # `_build_list_pane`/`_build_centre_status_header` names just above
-        # it. `#wc-snapshot-title` is folded into this same line rather than
+        # `_build_centre_status_header` names just above it.
+        # `#wc-snapshot-title` is folded into this same line rather than
         # kept as a separate heading; no test referenced it, and a one-line
         # block does not need a title row.
         return [
@@ -1871,18 +1835,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """Build the ALWAYS-rendered centre header: the section tab strip
         plus the snapshot's own loading/error/empty/summary marker.
 
-        TASK-1344 AC#1 hides FEEDS on every tab except Read
-        (`_hidden_centre_regions`), but the tab strip and the snapshot
-        markers are cross-cutting chrome, not FEEDS-specific "feed content"
-        — before that task FEEDS was unconditionally mounted, so both were
-        already visible on every tab. This is what carries that forward:
-        `WatchlistsWorkbench`'s `header=` factory (`compose_content`), wired
-        UNCONDITIONALLY as of TASK-2312 — it used to be skipped on the Read
-        tab in favour of an inline copy `_build_list_pane` mounted INSIDE
-        the bordered FEEDS box, which visibly moved the tab strip and the
-        status line between sections (UAT F2/F22/F23). `_build_list_pane`
-        no longer builds that copy, so this factory is now the ONE place
-        either widget is ever constructed, on every section including Read.
+        The tab strip and the snapshot markers are cross-cutting chrome,
+        not region content, so they live here rather than inside any
+        region: `WatchlistsWorkbench`'s `header=` factory, wired
+        unconditionally (`compose_content`) since task-2511 removed the
+        FEEDS region, whose Read-tab body used to carry an identical-
+        looking inline copy of both — mounting both would duplicate
+        `#wl-tabs`.
 
         Called fresh on every workbench rebuild, so it must stay
         side-effect-free, like every other factory here.
@@ -1901,76 +1860,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             *children,
             id="wl-centre-status",
             classes="watchlists-centre-status",
-        )
-
-    def _build_list_pane(self) -> Vertical:
-        """Build the FEEDS-region content: a heading naming the current tree
-        scope, and that scope's source rows.
-
-        Read-tab-only (`_hidden_centre_regions` hides FEEDS everywhere
-        else), and unchanged in shape from before TASK-1344 widened FEEDS's
-        gating: every Read-tab geometry test pinned to this pane's exact
-        row counts (`_watchlists.tcss`'s `.watchlists-region-feeds` cap
-        derivation) still applies untouched.
-
-        The source list appears ONCE (fix round 1, Finding 1). Task 7 added
-        the scoped rows above a block that already enumerated
-        `_local_watchlist_records` -- which resolve, via
-        `WatchlistScopeService.list_watch_items` ->
-        `local_watchlists_service.list_sources` -> `get_all_subscriptions`,
-        to the same `subscriptions` table the scope resolvers read. Every
-        source therefore printed twice in one box, in identical typography.
-        Staging now follows the tree scope (see `_snapshot_body`), so that
-        block collapses to a single line.
-
-        TASK-2312: this pane no longer builds its own copy of the section
-        tab strip or the snapshot's loading/error/empty/summary marker.
-        Before this task it did -- an inline copy, mounted INSIDE this
-        bordered FEEDS box -- while `_build_centre_status_header` built an
-        independent SECOND copy, mounted OUTSIDE every region box, for
-        every OTHER section. Both widgets therefore visibly changed
-        position depending on which tab was active (UAT F2/F22/F23): the
-        tab strip sat inside a bordered region on Read and outside every
-        region everywhere else, and the snapshot line moved with it.
-        `_build_centre_status_header` is now the ONE place either is ever
-        built, unconditionally (`compose_content`'s `header=`) -- this pane
-        keeps only the content that is genuinely FEEDS-specific.
-
-        Byte-identical logic to the pre-rehost inline composition for the
-        snapshot itself; only the `yield` calls became list appends and a
-        `Vertical(...)` return so the result can be handed to
-        `WatchlistsWorkbench` as a content factory instead of being mounted
-        directly by `compose_content`.
-
-        This is called fresh on every region rebuild (see
-        `WatchlistsWorkbench.__init__`'s docstring on why `content` holds
-        factories, not instances), so it must stay side-effect-free.
-        """
-        scoped_rows = self.scoped_source_rows()
-        children: list[Widget] = [
-            Static(
-                self._scoped_feeds_heading(scoped_rows),
-                classes="destination-section watchlists-column-title",
-                id="wl-feeds-scope-heading",
-            ),
-        ]
-        for row in scoped_rows:
-            # Source names are untrusted (imported OPML, a remote feed's own
-            # title, ...), so they must be escaped before reaching a
-            # rendered label -- this repo has shipped that bug before.
-            name = escape_markup(str(row.get("name") or ""))
-            source_type = escape_markup(str(row.get("type") or ""))
-            children.append(
-                Static(
-                    Text.from_markup(f"{name}  ({source_type})"),
-                    id=f"wl-feeds-source-{row.get('id')}",
-                    classes="watchlist-feed-source-row",
-                )
-            )
-        return Vertical(
-            *children,
-            id="watchlists-list-pane",
-            classes="destination-workbench-pane",
         )
 
     def _build_detail_pane(self) -> Vertical:
@@ -2569,15 +2458,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     # remounted a second time comes back childless (verified
                     # empirically — see `WatchlistsWorkbench.__init__`).
                     Region.LEFT_RAIL: self._build_tree_pane,
-                    Region.FEEDS: self._build_list_pane,
                     Region.ITEMS: self._build_detail_pane,
                     Region.CONTENT: self._build_content_pane,
                     Region.RIGHT_RAIL: self._build_inspector_region,
                 },
                 hidden=self._hidden_centre_regions(),
-                # TASK-2312: unconditional on every section, including Read
-                # -- see `_build_centre_status_header`'s own docstring for
-                # why this used to be `None` on Read and what that cost.
+                # Unconditional since task-2511: the tab strip and the
+                # snapshot markers are cross-cutting chrome carried by the
+                # centre header on every tab, Read included -- see
+                # `_build_centre_status_header`. (They used to ride inside
+                # the FEEDS region's own body on Read; that region is gone.)
                 header=self._build_centre_status_header,
                 id="wl-workbench",
             )
@@ -2591,35 +2481,33 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `active_section == "items"` is this implementation's Read tab (the
         spec's five sections don't literally match today's six — Overview
         and Notifications aren't in the spec's list either — but Items is
-        unambiguously the one with an items-to-read relationship). FEEDS
-        (the scoped source list) and CONTENT (the reader) are both
-        meaningless outside that relationship, so both are hidden on every
-        other tab (TASK-1344 AC#1 generalises the CONTENT-only gating Task 4
-        introduced to cover FEEDS too, which had the identical violation
-        from Phase C and was never fixed alongside it).
+        unambiguously the one with an items-to-read relationship). CONTENT
+        (the reader) is meaningless outside that relationship, so it is
+        hidden on every other tab (Task 4's gating; the FEEDS region, gated
+        the same way by TASK-1344, was removed outright in task-2511).
 
         TASK-1344 AC#4: hidden means UNMOUNTED, not collapsed to a one-row
         header — see `_rendered_region_layout`'s docstring for why a header
         was rejected. `WatchlistsWorkbench.compose()` skips anything in the
         returned set entirely; nothing here touches `self.region_layout`
-        (the real, persisted preference), so a CONTENT/FEEDS collapse or
-        solo the user set on Read is untouched by which OTHER tab they
-        happen to be looking at.
+        (the real, persisted preference), so a CONTENT collapse or solo the
+        user set on Read is untouched by which OTHER tab they happen to be
+        looking at.
 
         Returns:
-            `{Region.FEEDS, Region.CONTENT}` on every section except Read,
-            otherwise the empty set.
+            `{Region.CONTENT}` on every section except Read, otherwise the
+            empty set.
         """
         if self.active_section == "items":
             return frozenset()
-        return frozenset({Region.FEEDS, Region.CONTENT})
+        return frozenset({Region.CONTENT})
 
     def _rendered_region_layout(self) -> RegionLayout:
         """`self.region_layout`, adjusted for what this tab can actually show.
 
-        FEEDS and CONTENT no longer need adjusting here at all (TASK-1344):
-        `_hidden_centre_regions` unmounts them outright on every non-Read
-        tab, regardless of their real collapsed/solo state, so the old
+        CONTENT no longer needs adjusting here at all (TASK-1344):
+        `_hidden_centre_regions` unmounts it outright on every non-Read
+        tab, regardless of its real collapsed/solo state, so the old
         "force CONTENT into `collapsed`, rebased onto the pre-solo baseline
         when CONTENT itself is soloed" derivation this method used to need
         (Task 4's fix round 1) is gone -- unmounting is orthogonal to
@@ -2644,18 +2532,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         covering ITEMS too, that mutation can no longer happen -- but
         `region_layout.collapsed` can still legitimately contain ITEMS from
         a real Read-tab action: a `z` on ITEMS while soloing CONTENT there
-        (`solo(CONTENT)` collapses the OTHER two centre regions, ITEMS
-        included) leaves `collapsed` containing ITEMS even after the user
-        switches away, and that is a genuine user preference this method
-        must still honor on Read without rendering it as a dead end
-        elsewhere. Rendering that verbatim would collapse e.g. the
-        Sources tab down to a focusable "▸ Items" header over an otherwise
-        empty centre -- the exact dead-end AC#3 exists to rule out, just
-        reached from CONTENT's solo bookkeeping rather than FEEDS's. Forcing
-        ITEMS out of `collapsed` on every non-Read tab closes that: the
-        section's pane is always what actually renders there, and
-        `self.region_layout` itself is untouched, so Read still shows
-        whatever ITEMS state the user really left behind.
+        (`solo(CONTENT)` collapses the OTHER centre region, ITEMS) leaves
+        `collapsed` containing ITEMS even after the user switches away, and
+        that is a genuine user preference this method must still honor on
+        Read without rendering it as a dead end elsewhere. Rendering that
+        verbatim would collapse e.g. the Sources tab down to a focusable
+        "▸ Items" header over an otherwise empty centre -- the exact
+        dead-end AC#3 exists to rule out, reached from CONTENT's solo
+        bookkeeping. Forcing ITEMS out of `collapsed` on every non-Read tab
+        closes that: the section's pane is always what actually renders
+        there, and `self.region_layout` itself is untouched, so Read still
+        shows whatever ITEMS state the user really left behind.
 
         Returns:
             `self.region_layout` verbatim on the Read tab; otherwise a copy
@@ -2766,7 +2653,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             region: The region a gesture (chevron click, `z`, `Z`) targets.
 
         Returns:
-            `True` when `region` is FEEDS or CONTENT and the active section
+            `True` when `region` is CONTENT and the active section
             is not Read (`"items"`), `False` otherwise.
         """
         return region in self._hidden_centre_regions()
@@ -2776,11 +2663,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         Generalized from `_refuse_content_toggle_off_read_tab` (TASK-1344
         AC#2): that name special-cased `Region.CONTENT`, which was the only
-        gated region when it was written. FEEDS is now gated identically
-        (`_hidden_centre_regions`), so a stray `focused_region` left over
-        from the Read tab (e.g. the user last touched FEEDS there, then
+        gated region when it was written. A stray `focused_region` left over
+        from the Read tab (e.g. the user last touched CONTENT there, then
         switched to Sources without moving focus) must be refused the same
-        way CONTENT already was — this is the ONE place both `action_toggle_
+        way -- this is the ONE place both `action_toggle_
         region`/`action_solo_region`/`_on_region_toggled` consult, per the
         prompt's "one source of truth for is region R visible on section S".
 
@@ -2825,16 +2711,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         section pane -- `on_descendant_focus` sets exactly that while using
         Sources/Runs/...) toggled and PERSISTED a real ITEMS collapse with
         zero visible feedback on the current tab, and -- combined with
-        FEEDS+CONTENT already collapsed on Read -- returning to Read
-        rendered three headers over an empty centre: the exact dead-end
-        AC#3 exists to rule out, written to disk, surviving a restart.
+        CONTENT already collapsed on Read -- returning to Read rendered
+        headers over an empty centre: the exact dead-end AC#3 exists to
+        rule out, written to disk, surviving a restart.
         Region-layout gestures (collapse/solo of the three-pane centre)
         simply do not apply to ANY centre region off Read, not just the
         ones that happen to be unmounted there, so the gate now refuses
         every `region in CENTRE_REGIONS` off Read unconditionally. The
         notify copy forks on whether the region is actually hidden here:
-        FEEDS/CONTENT keep the "only shown on the Read tab" copy (true for
-        them), while ITEMS -- visible, just not collapsible from this tab
+        CONTENT keeps the "only shown on the Read tab" copy (true for
+        it), while ITEMS -- visible, just not collapsible from this tab
         -- gets copy that says so honestly instead of claiming it is not
         shown at all.
 
@@ -3530,9 +3416,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `_build_inspector_pane` covers the rebuild case by seeding a
         freshly-constructed `InspectorPane` from this same screen state.
 
-        Does NOT refresh FEEDS; `watch_tree_scope` owns that (fix round 1,
-        Finding 2). `selected_scope` also moves when a pane row is selected,
-        which is not navigation and must leave the Feeds region alone.
+        Does NOT refresh the scoped readouts; `watch_tree_scope` owns that
+        (fix round 1, Finding 2). `selected_scope` also moves when a pane
+        row is selected, which is not navigation and must leave the tree
+        scope's surfaces alone.
         """
         if not self.is_mounted:
             return
@@ -3544,8 +3431,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             pass
 
     def watch_tree_scope(self) -> None:
-        """Rebuild FEEDS (or the centre header) in place so it follows the
-        tree selection (Task 7; header half added task-1344 fix wave).
+        """Keep the scope-driven surfaces in step with the tree selection
+        (Task 7; header half added task-1344 fix wave; items reload added
+        task-2511).
 
         Deliberately does NOT do what `watch_active_section` does
         (`self.refresh(recompose=True)`): that rebuilds every region,
@@ -3555,43 +3443,36 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         holds a reference to the Inspector from *before* a scope change and
         asserts against it *after*, which a full recompose would silently
         break by handing that reference a defunct, unmounted widget.
-        `WatchlistsWorkbench.refresh_region_content` instead rebuilds only
-        FEEDS's own supplied content -- the one region whose display this
-        task makes scope-dependent -- leaving the Tree and Inspector
-        instances untouched.
 
-        Off the Read tab, FEEDS is unmounted (`_hidden_centre_regions`) and
-        `_build_centre_status_header` carries the SAME scoped summary
-        instead (`_watchlists_status_marker_widgets`), so
-        `_refresh_feeds_region_for_scope` alone is a silent no-op there --
-        `WatchlistsWorkbench.refresh_region_content` cannot find
-        `#wl-region-feeds` to replace, since it is not mounted. Before this
-        fix the header was left showing the PREVIOUS scope's summary until
-        some unrelated recompose came along and rebuilt it for a different
-        reason. `_refresh_centre_header_for_scope` is the header's
-        equivalent -- called UNCONDITIONALLY as of TASK-2312, since the
-        header now exists on every section including Read (see
-        `_build_centre_status_header`'s own docstring); both refreshes run
-        on Read too, one per surface, exactly like everywhere else.
+        What moves instead, in place:
 
-        Also pushes the new scope into the still-mounted `WatchlistTree`
-        (task-876): since this watcher is the single reconciliation point
-        for BOTH a real tree click and a breadcrumb promotion (the latter
-        never touches the tree widget at all -- see
-        `handle_breadcrumb_scope_selected`), and neither one rebuilds the
-        Tree instance (only FEEDS/the header refresh above), the tree's own
-        `active_scope` would otherwise go stale the moment the scope changes
-        by any path other than a fresh `_build_tree_pane` construction.
+        * The centre header (`_refresh_centre_header_for_scope`), which
+          carries the scoped summary on every tab since task-2511. (The
+          FEEDS region, whose inline copy this used to refresh, is gone.)
+        * The items list on the Read tab: a scope move changes which items
+          are in view, so `_load_items` is re-dispatched. (task-2511's
+          minimal wiring; the reload becomes fully scope-plumbed in the
+          follow-up task.)
+        * The Sources table (`_push_scoped_sources_to_pane`), an in-place
+          push on the pane's own reactive, not a region rebuild.
+        * The still-mounted `WatchlistTree` itself (task-876): since this
+          watcher is the single reconciliation point for BOTH a real tree
+          click and a breadcrumb promotion (the latter never touches the
+          tree widget at all -- see `handle_breadcrumb_scope_selected`),
+          and neither one rebuilds the Tree instance, the tree's own
+          `active_scope` would otherwise go stale the moment the scope
+          changes by any path other than a fresh `_build_tree_pane`
+          construction.
         """
         if not self.is_mounted:
             return
-        self._refresh_feeds_region_for_scope()
         self._refresh_centre_header_for_scope()
-        # TASK-2304 AC#2. The Sources table follows the same scope the FEEDS
-        # heading and the centre header just took, so the two counts of "how
-        # many sources are in view" cannot disagree. An in-place push on the
-        # pane's own reactive, not a region rebuild -- see
-        # `_push_scoped_sources_to_pane`.
+        if self.active_section == "items":
+            self.run_worker(self._load_items(), exclusive=True)
+        # TASK-2304 AC#2. The Sources table follows the same scope the
+        # centre header just took, so the two counts of "how many sources
+        # are in view" cannot disagree. An in-place push on the pane's own
+        # reactive, not a region rebuild -- see `_push_scoped_sources_to_pane`.
         self._push_scoped_sources_to_pane()
         try:
             self.query_one("#wl-tree", WatchlistTree).active_scope = self.tree_scope
@@ -3609,28 +3490,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self._load_briefings(), exclusive=True, group="wl-briefings-load"
             )
 
-    def _refresh_feeds_region_for_scope(self) -> None:
-        """Queue a FEEDS rebuild so it follows the tree selection.
-
-        Was its own `@work(exclusive=True, group="wc_feeds_scope_refresh")`
-        worker until TASK-2200. It now records intent on the shared surface
-        queue instead, because it is no longer the only actor that rebuilds
-        FEEDS: `_apply_local_wc_snapshot` and `_load_tree_data` both changed
-        from a full-screen recompose to a FEEDS/header rebuild, and three
-        independent `exclusive=True` workers swapping the SAME region would
-        either interleave two remove/mount pairs over one `#watchlists-list-
-        pane` id or -- with a shared group -- cancel one of them between its
-        `remove()` and its `mount()`, leaving an empty bordered box. See
-        `_request_surface_refresh`.
-        """
-        self._request_surface_refresh(self._SURFACE_FEEDS)
-
     def _refresh_centre_header_for_scope(self) -> None:
-        """Queue a centre-header rebuild, the header's twin of the above.
+        """Queue a centre-header rebuild so the scoped summary follows the
+        tree selection (task-1344 fix wave, Qodo correctness; made the only
+        scoped readout by task-2511).
 
-        Off the Read tab FEEDS is unmounted and `_build_centre_status_header`
-        carries the same scoped summary, so a FEEDS-only refresh is a silent
-        no-op there (task-1344 fix wave, Qodo correctness).
+        Records intent on the shared surface queue rather than swapping the
+        DOM itself: `_apply_local_wc_snapshot` and `_load_tree_data` also
+        rebuild the header, and independent `exclusive=True` workers
+        swapping the SAME surface would either interleave two remove/mount
+        pairs over one `#wl-centre-status` id or -- with a shared group --
+        cancel one of them between its `remove()` and its `mount()`,
+        leaving nothing mounted. See `_request_surface_refresh`.
         """
         self._request_surface_refresh(self._SURFACE_HEADER)
 
@@ -3648,7 +3519,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     #: every background load would destroy a half-typed selector set -- the
     #: same class of harm this task removes from the Sources create form.
     _SURFACE_RAIL = "rail"
-    _SURFACE_FEEDS = "feeds"
     _SURFACE_HEADER = "header"
     _SURFACE_INSPECTOR = "inspector"
 
@@ -3672,12 +3542,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         next loop rather than starting -- or cancelling -- anything.
 
         Args:
-            surfaces: Any of `_SURFACE_RAIL`, `_SURFACE_FEEDS`,
-                `_SURFACE_HEADER` (each an unconditional rebuild of that
-                surface) or `_SURFACE_INSPECTOR` (conditional -- the right
-                rail is rebuilt only when the Console-follow row no longer
-                matches the adapter; see `_resolve_console_follow_drift`).
-                Unknown names are ignored by the drainer.
+            surfaces: Any of `_SURFACE_RAIL`, `_SURFACE_HEADER` (each an
+                unconditional rebuild of that surface) or
+                `_SURFACE_INSPECTOR` (conditional -- the right rail is
+                rebuilt only when the Console-follow row no longer matches
+                the adapter; see `_resolve_console_follow_drift`). Unknown
+                names are ignored by the drainer.
         """
         if not self._dom_is_live:
             return
@@ -3689,7 +3559,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `_drain_surface_refresh`'s `finally` ever lowers this flag, and it
         # never runs if `run_worker` raises synchronously; the flag would then
         # be stuck True for the life of the screen, every later request would
-        # queue and return, and the rail/FEEDS/header would silently stop
+        # queue and return, and the rail/header would silently stop
         # following every background loader. Arming *after* scheduling is not
         # the fix either: the drainer's `finally` could already have lowered
         # the flag by the time we raised it.
@@ -3736,11 +3606,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     await self._rebuild_surface(
                         workbench.refresh_region_content(Region.LEFT_RAIL),
                         "the Watchlists rail",
-                    )
-                if self._SURFACE_FEEDS in surfaces:
-                    await self._rebuild_surface(
-                        workbench.refresh_region_content(Region.FEEDS),
-                        "the Feeds region",
                     )
                 if self._SURFACE_HEADER in surfaces:
                     await self._rebuild_surface(
@@ -5108,10 +4973,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         screen, disagreeing -- because only one of them was scoped.
 
         Resolved through `scoped_source_rows()`, which is the SAME resolver
-        `_staging_summary_line` and `_scoped_feeds_heading` count, so the
-        header and the table cannot drift by construction; making the table
-        agree by re-deriving the scope some other way would just create a
-        third answer. That call costs one query, and the `all` scope short
+        `_staging_summary_line` counts, so the header and the table cannot
+        drift by construction; making the table agree by re-deriving the
+        scope some other way would just create a third answer. That call costs one query, and the `all` scope short
         -circuits before paying it -- it is the default, and its answer is
         "everything" regardless.
 
@@ -8612,7 +8476,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         calls `_refresh_overview_data()`, which used to set `overview_data`,
         then a `reactive({}, recompose=True)` -- a SCREEN-level recompose,
         which rebuilt every region via its factory
-        (`_build_list_pane`/`_build_content_pane`/etc.), replacing the live
+        (`_build_detail_pane`/`_build_content_pane`/etc.), replacing the live
         `ItemsPane`/`DataTable` instances wholesale. Proven live: with the
         default refresh, one item selection detached the old `ItemsPane`,
         reset the table cursor to 0, cleared screen focus, and a SECOND
@@ -9821,8 +9685,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def action_show_help(self) -> None:
         """Show a notification with available keyboard shortcuts."""
         self.app_instance.notify(
-            "1=Overview 2=Sources 3=Items 4=Runs 5=Rules 6=Notifications "
-            "7=Artifacts | n=new d=delete/ignore c=check p=preview ?=help",
+            "1=Read 2=Sources 3=Runs 4=Rules 5=Notifications 6=Artifacts "
+            "7=Overview | n=new d=delete/ignore c=check p=preview ?=help",
             severity="information",
             timeout=8,
         )

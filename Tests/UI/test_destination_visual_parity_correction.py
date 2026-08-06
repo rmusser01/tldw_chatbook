@@ -970,19 +970,20 @@ SOURCE_PREP_WORKBENCHES = {
     # `WatchlistsWorkbench` (rails around a VERTICALLY stacked centre — see
     # `watchlists_workbench.py`'s docstring on why the shared
     # `DestinationWorkbench`/3-column-ASCII contract can't express this
-    # layout). `#watchlists-list-pane` and `#watchlists-detail-pane` are now
-    # stacked one above the other inside `#wl-centre`, not side by side, so
-    # this entry is kept for the `markers`/`marker_container`/`actions` keys
-    # (still valid — those panes still exist, just not horizontally arranged)
-    # but excluded from the two horizontal-geometry parametrizations below via
+    # layout). `#watchlists-detail-pane` and the reader now stack one above
+    # the other inside `#wl-centre`, not side by side, so this entry is kept
+    # for the `markers`/`marker_container`/`actions` keys (still valid --
+    # those panes still exist, just not horizontally arranged) but excluded
+    # from the two horizontal-geometry parametrizations below via
     # `SOURCE_PREP_WORKBENCHES_HORIZONTAL`, the same way "personas" above
     # excluded itself from the retired snapshot-worker markers.
+    # task-2511: `#watchlists-list-pane` died with the FEEDS region; the
+    # snapshot markers live in the always-mounted centre header now.
     "watchlists_collections": {
         "workbench": "#wl-workbench",
         "strip": "#watchlists-header-bar",
         "strip_max_height": 3,
         "panes": (
-            "#watchlists-list-pane",
             "#watchlists-detail-pane",
             "#watchlists-inspector-pane",
         ),
@@ -1000,7 +1001,7 @@ SOURCE_PREP_WORKBENCHES = {
             "#watchlists-follow-in-console",
         ),
         "markers": ("#wc-empty-state", "#wc-service-error", "#wc-loading-state"),
-        "marker_container": "#watchlists-list-pane",
+        "marker_container": "#wl-centre-status",
     },
     "skills": {
         "workbench": "#skills-workbench",
@@ -1018,7 +1019,7 @@ SOURCE_PREP_WORKBENCHES = {
 
 #: `SOURCE_PREP_WORKBENCHES` minus destinations that no longer lay their
 #: list/detail/inspector panes out horizontally. Watchlists' rehost onto
-#: `WatchlistsWorkbench` stacks FEEDS/ITEMS/CONTENT vertically inside a
+#: `WatchlistsWorkbench` stacks ITEMS/CONTENT vertically inside a
 #: centre column by deliberate design (see `watchlists_workbench.py`), so it
 #: cannot satisfy `_assert_horizontal_panes` — that is a real, intentional
 #: geometry change, not a regression to paper over.
@@ -1086,6 +1087,10 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
     async with host.run_test(size=(160, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#wc-empty-state")
+        # The default section is Read since task-2511; the Overview pane's
+        # own copy ("Alert rules active:", ...) lives behind its tab now.
+        screen.active_section = "overview"
+        await pilot.pause(0.2)
 
         # TASK-2313, AC#6: "Mixed | Local/Server" dropped from the title.
         assert (
@@ -1120,18 +1125,14 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         # structural landmarks instead: the workbench container, and each
         # region wrapper.
         #
-        # FEEDS and CONTENT are both unmounted on this screen's default
-        # section (Overview), not Items -- per the approved design spec
-        # ("### Tabs"), only Read (this implementation's Items tab) uses the
-        # three-pane split; every other section gets the full centre width
-        # (TASK-1344 AC#1 widened Task 4's CONTENT-only gating to cover
-        # FEEDS too, and AC#4 unmounts both rather than leaving a one-row
-        # header -- see `WatchlistsCollectionsScreen._hidden_centre_regions`
-        # and `_rendered_region_layout`). ITEMS is the one centre region
-        # that is always present; the tab strip and snapshot markers this
-        # test already asserted above ("Sources"/"Watchlists: loaded"/... in
-        # `visible_text`) now come from `#wl-centre-status`
-        # (`_build_centre_status_header`) rather than from FEEDS's own body.
+        # CONTENT is unmounted on every tab except Read
+        # (`WatchlistsCollectionsScreen._hidden_centre_regions`), and the
+        # FEEDS region was removed outright in task-2511, so it has no DOM
+        # presence anywhere. ITEMS is the one centre region that is always
+        # present; the tab strip and snapshot markers this test already
+        # asserted above ("Sources"/"State: ready"/... in `visible_text`)
+        # come from `#wl-centre-status` (`_build_centre_status_header`),
+        # mounted on every tab.
         assert screen.query_one("#wl-workbench")
         assert screen.query_one("#wl-centre-status")
         for region_id in (
@@ -1145,15 +1146,24 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         assert not screen.query("#wl-region-content")
         assert not screen.query("#wl-header-content")
 
+        # ... and on Read (the default), the reader IS part of the stack.
+        screen.active_section = "items"
+        await pilot.pause(0.2)
+        assert screen.query_one("#wl-region-content")
+        assert not screen.query("#wl-region-feeds")
+
 
 @pytest.mark.asyncio
 async def test_watchlists_centre_regions_stack_vertically_in_order():
     """Vertical-geometry replacement for the horizontal contract Watchlists
     was excluded from (see `SOURCE_PREP_WORKBENCHES_HORIZONTAL` above): its
-    rehost onto `WatchlistsWorkbench` stacks FEEDS/ITEMS/CONTENT vertically
-    inside the centre column by deliberate design, so `_assert_horizontal_panes`
+    rehost onto `WatchlistsWorkbench` stacks ITEMS/CONTENT vertically inside
+    the centre column by deliberate design, so `_assert_horizontal_panes`
     (which asserts `left.region.x < right.region.x`) can never apply — but
     that must not mean Watchlists has zero automated geometry coverage.
+
+    task-2511: the always-mounted centre header (`#wl-centre-status`, the
+    tab strip + snapshot markers) sits above the stack on every tab.
     """
     app = _build_test_app()
     host = _visual_destination_harness(app, "watchlists_collections")
@@ -1163,29 +1173,28 @@ async def test_watchlists_centre_regions_stack_vertically_in_order():
         await _wait_for_selector(screen, pilot, "#wl-workbench")
 
         # CONTENT only occupies space on the Items (Read) tab -- Task 4 fix
-        # round 1, `WatchlistsCollectionsScreen._visible_region_layout`. This
-        # test is specifically about the three-region stack, so it must be
-        # on that tab, independent of whatever the section otherwise
-        # defaults to.
+        # round 1. This test is specifically about the centre stack, so it
+        # must be on that tab (the default since task-2511), independent of
+        # whatever the section otherwise defaults to.
         screen.active_section = "items"
         await pilot.pause()
 
-        # Force every region open so all three centre regions have real
-        # geometry to compare — independent of whatever CONTENT's first-run
-        # collapse default happens to be (region_layout_store.load_region_layout).
+        # Force every region open so both centre regions have real
+        # geometry to compare — independent of whatever CONTENT's persisted
+        # collapse state happens to be (region_layout_store.load_region_layout).
         screen._apply_layout(RegionLayout())
         await pilot.pause()
 
-        feeds = screen.query_one("#wl-region-feeds")
+        header = screen.query_one("#wl-centre-status")
         items = screen.query_one("#wl-region-items")
         content = screen.query_one("#wl-region-content")
 
-        assert feeds.region.y < items.region.y < content.region.y, (
+        assert header.region.y < items.region.y < content.region.y, (
             f"centre regions are not stacked top-to-bottom: "
-            f"feeds={feeds.region} items={items.region} content={content.region}"
+            f"header={header.region} items={items.region} content={content.region}"
         )
         for selector, pane in (
-            ("#wl-region-feeds", feeds),
+            ("#wl-centre-status", header),
             ("#wl-region-items", items),
             ("#wl-region-content", content),
         ):
@@ -1194,7 +1203,7 @@ async def test_watchlists_centre_regions_stack_vertically_in_order():
             _assert_visible_in_viewport(pane, height=42, context=selector)
 
         # No two centre regions may overlap.
-        for top, bottom in ((feeds, items), (items, content)):
+        for top, bottom in ((header, items), (items, content)):
             assert top.region.y + top.region.height <= bottom.region.y, (
                 f"centre regions overlap: {top.region} vs {bottom.region}"
             )
@@ -1220,9 +1229,9 @@ async def test_watchlists_collapsing_both_rails_keeps_every_region_in_viewport()
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#wl-workbench")
 
-        # FEEDS only occupies the centre on the Read tab (TASK-1344 AC#1),
-        # and this test needs it present for its "every region stays inside
-        # the viewport" sweep.
+        # Read (the default since task-2511) is where every centre region
+        # is present for the "every region stays inside the viewport"
+        # sweep.
         screen.active_section = "items"
         await pilot.pause()
 
@@ -1233,8 +1242,8 @@ async def test_watchlists_collapsing_both_rails_keeps_every_region_in_viewport()
 
         for selector in (
             "#wl-header-left_rail",
-            "#wl-region-feeds",
             "#wl-region-items",
+            "#wl-region-content",
             "#wl-header-right_rail",
         ):
             _assert_visible_in_viewport(
@@ -1256,13 +1265,15 @@ async def test_watchlists_collapsing_both_rails_keeps_every_region_in_viewport()
 
 
 @pytest.mark.asyncio
-async def test_watchlists_items_region_is_taller_than_feeds_region_when_expanded():
-    """Fix round 2, Finding 5 (human-ruled, CSS-only rebalance): FEEDS only
-    ever hosts a short (<=5-line) source-count summary but shared an equal
-    `1fr` with ITEMS -- which hosts all six section panes and their
-    DataTables -- and CONTENT, before this rebalance. `height: auto` on
-    FEEDS lets it take only what its content needs so ITEMS (still `1fr`)
-    gets the space FEEDS no longer claims.
+async def test_watchlists_items_region_is_taller_than_content_region_when_idle():
+    """Reader-first geometry (task-2511): with nothing open in the reader,
+    CONTENT idles at its structural floor (border 2 + the generic "Content"
+    heading 1 + the one-line placeholder 1 = 4 rows, via `height: auto` +
+    `max-height: 12` on `.watchlists-region-content` in `_watchlists.tcss`)
+    while ITEMS -- the `2fr` region hosting the items table -- takes
+    everything the centre header and CONTENT leave. The list is the main
+    reading area; the reader only grows once an item is open. (FEEDS, the
+    other small region this used to be compared against, is gone.)
     """
     app = _build_test_app()
     host = _visual_destination_harness(app, "watchlists_collections")
@@ -1271,108 +1282,58 @@ async def test_watchlists_items_region_is_taller_than_feeds_region_when_expanded
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#wl-workbench")
 
-        # FEEDS only occupies the centre on the Read tab (TASK-1344 AC#1).
+        # Both centre regions only occupy space together on the Read tab --
+        # the default since task-2511.
         screen.active_section = "items"
         await pilot.pause()
 
         screen._apply_layout(RegionLayout())
         await pilot.pause()
 
-        feeds = screen.query_one("#wl-region-feeds")
         items = screen.query_one("#wl-region-items")
+        content = screen.query_one("#wl-region-content")
 
-        assert items.region.height > feeds.region.height, (
-            f"ITEMS should be taller than FEEDS once FEEDS is content-fit: "
-            f"feeds={feeds.region} items={items.region}"
+        assert content.region.height == 4, (
+            f"CONTENT's idle floor (border 2 + heading 1 + placeholder 1) "
+            f"should not depend on terminal height: content={content.region}"
+        )
+        assert items.region.height > content.region.height, (
+            f"ITEMS should stay the taller reading area while the reader "
+            f"idles: items={items.region} content={content.region}"
         )
 
 
 @pytest.mark.parametrize("size", [(160, 42), (235, 52)])
 @pytest.mark.asyncio
-async def test_watchlists_feeds_empty_state_fits_without_scrolling(size):
-    """Fix round 2, regression pin: round 1 shipped `max-height: 10`, one row
-    BELOW the real empty state's measured content need at the time (a
-    scope heading, "No Watchlists sources yet.", the Create/Import button
-    row, inside the pane's own border -- TASK-2312 later moved the section
-    tab strip that used to also live in this list, out to the shared
-    `#wl-centre-status` header, so this pane's own content is shorter than
-    the row count that originally motivated the cap) -- so a watchlist
-    with zero sources rendered a scrollbar. That was a ceiling below its
-    own minimum content, not the intended "grows to fit, caps, then
-    scrolls" behaviour.
-
-    `max-height` is 12 (see `.watchlists-region-feeds` in `_watchlists.tcss`
-    for the full derivation), comfortable headroom over the pane's real
-    content either way: the pane's real content must sit entirely inside
-    FEEDS -- the cap never engages, nothing is clipped -- and there must be
-    nothing left to scroll, at both the guard suite's 160x42 and the app's
-    real 235x52.
-
-    Fix round 3 restated the containment check. It was
-    `feeds.region.height == pane.region.height`, which silently also encoded
-    "the PANE draws FEEDS's only border" -- true only while round 1's border
-    decision stood. Round 3 inverted that decision (the region draws the box,
-    `#watchlists-list-pane` is stripped by ID; see `_watchlists.tcss`), so
-    the region is now exactly its own 2 border rows taller than the pane:
-    measured 160x42 feeds=11 pane=9, 235x52 feeds=11 pane=9. `contains_region`
-    asserts the same property -- the pane fits, unclipped -- without pinning
-    which widget happens to own the border rows.
+async def test_watchlists_empty_state_fits_inside_the_centre_header(size):
+    """The snapshot's empty state renders inside the always-mounted centre
+    header (`#wl-centre-status`, `height: auto` in `_watchlists.tcss`) --
+    fully, on the default Read tab as on every other, with nothing clipped
+    and nothing left to scroll. (The FEEDS-cap regression this assertion
+    used to run against died with the region in task-2511.)
     """
     app = _build_test_app()
     host = _visual_destination_harness(app, "watchlists_collections")
 
     async with host.run_test(size=size) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#wl-workbench")
+        await _wait_for_selector(screen, pilot, "#wc-empty-state")
 
-        # FEEDS only occupies the centre on the Read tab (TASK-1344 AC#1).
-        screen.active_section = "items"
-        await pilot.pause()
+        header = screen.query_one("#wl-centre-status")
+        empty = screen.query_one("#wc-empty-state")
+        actions = screen.query_one("#wc-empty-actions")
 
-        screen._apply_layout(RegionLayout())
-        await pilot.pause()
-
-        feeds = screen.query_one("#wl-region-feeds")
-        pane = screen.query_one("#watchlists-list-pane")
-
-        assert feeds.region.contains_region(pane.region), (
-            f"the empty state's real content should fit inside FEEDS's cap "
-            f"without being clipped: feeds={feeds.region} pane={pane.region}"
+        assert header.region.contains_region(empty.region), (
+            f"the empty state's text should fit inside the header without "
+            f"being clipped: header={header.region} empty={empty.region}"
         )
-        assert feeds.max_scroll_y == 0, (
+        assert header.region.contains_region(actions.region), (
+            f"... and so should its Create/Import action row: "
+            f"header={header.region} actions={actions.region}"
+        )
+        assert header.max_scroll_y == 0, (
             f"the empty state should have nothing left to scroll: "
-            f"max_scroll_y={feeds.max_scroll_y} feeds={feeds.region}"
-        )
-
-
-#: Watchlists' 40-source stand-in for a populated FEEDS list. Enough rows to
-#: force the region past any plausible `max-height`.
-_WL_OVERFLOW_RECORDS = tuple(
-    {"name": f"source-{index:02d}", "title": f"source-{index:02d}"}
-    for index in range(40)
-)
-
-
-def _seed_overflow_sources(app, count: int = 40) -> None:
-    """Put `count` real sources in FEEDS's own list.
-
-    Task 7 fix round 1, Finding 1 moved the long list in FEEDS: the
-    Console-staging block used to render one row per
-    `_local_watchlist_records` entry and now collapses to a single line, so
-    `_apply_local_wc_snapshot(_WL_OVERFLOW_RECORDS, ...)` alone no longer
-    produces enough rows to reach the cap. The rows that remain are
-    `scoped_source_rows()`, which reads the bundle service's own
-    `subscriptions` table -- an isolated temp file per `_build_test_app()`,
-    never the developer's database.
-
-    Setup only: every assertion in the tests below is unchanged.
-    """
-    db = app.watchlist_bundle_service._db
-    for index in range(count):
-        db.add_subscription(
-            name=f"source-{index:02d}",
-            type="rss",
-            source=f"https://feed-{index:02d}.example/rss",
+            f"max_scroll_y={header.max_scroll_y} header={header.region}"
         )
 
 
@@ -1385,14 +1346,15 @@ async def test_watchlists_every_region_draws_exactly_one_round_border():
     """Task 6 fix round 3, Finding 2: one box per region, all the same shape.
 
     Round 1 kept the *pane's* border and dropped the *region's* in three of
-    the five regions. Region borders are `round` and the shared destination
+    the regions. Region borders are `round` and the shared destination
     pane's is `solid`, so the screen drew round corners on LEFT_RAIL/CONTENT
-    and square ones on FEEDS/ITEMS/RIGHT_RAIL. Round 3 inverted it: the region
-    wrapper draws the box everywhere, and `#watchlists-list-pane`/
-    `#watchlists-detail-pane`/`#watchlists-inspector-pane` are stripped by ID
+    and square ones on the paned regions. Round 3 inverted it: the region
+    wrapper draws the box everywhere, and `#watchlists-detail-pane`/
+    `#watchlists-inspector-pane` are stripped by ID
     in `features/_watchlists.tcss` (an ID rule that beats the shared block in
     `components/_agentic_terminal.tcss` on source order, touching no other
-    destination).
+    destination). (`#watchlists-list-pane` was the third stripped id; it
+    died with the FEEDS region in task-2511.)
 
     Counting corners in the compositor's output catches both failure modes at
     once: a doubled border shows more than four corners inside a region, and a
@@ -1438,7 +1400,6 @@ async def test_watchlists_every_region_draws_exactly_one_round_border():
         #    exists to remove. (Inner content may still draw its own cards,
         #    e.g. the Overview grid; only the pane's own frame is checked.)
         for pane_id in (
-            "watchlists-list-pane",
             "watchlists-detail-pane",
             "watchlists-inspector-pane",
         ):
@@ -1450,8 +1411,8 @@ async def test_watchlists_every_region_draws_exactly_one_round_border():
             )
 
         # 3. Nothing in the workbench draws a square-cornered box, so the
-        #    five outer boxes and everything nested in them read as one
-        #    family. Round 1's split left FEEDS/ITEMS/RIGHT_RAIL square while
+        #    outer boxes and everything nested in them read as one
+        #    family. Round 1's split left the paned regions square while
         #    LEFT_RAIL and CONTENT stayed round.
         workbench_rows = _composited_rows(screen.query_one("#wl-workbench"))
         squares = {ch for row in workbench_rows for ch in row if ch in _SQUARE_CORNERS}
@@ -1514,7 +1475,7 @@ async def test_watchlists_active_section_tab_label_is_visible():
         await pilot.pause()
 
         strip = screen.query_one("#wl-tabs")
-        active = screen.query_one("#wl-tab-overview", Button)
+        active = screen.query_one("#wl-tab-items", Button)
         assert active.has_class("is-active"), sorted(active.classes)
 
         rows = _composited_rows(strip)
@@ -1523,7 +1484,7 @@ async def test_watchlists_active_section_tab_label_is_visible():
             f"a border inside the one-row strip eats the row the labels need: "
             f"{rows[0]!r}"
         )
-        for label in ("Overview", "Sources", "Items", "Runs", "Rules", "Notifications"):
+        for label in ("Read", "Sources", "Runs", "Rules", "Notifications", "Artifacts", "Overview"):
             _assert_label_intact_on_screen(
                 strip, label, context="watchlists section tab strip"
             )
@@ -1531,20 +1492,21 @@ async def test_watchlists_active_section_tab_label_is_visible():
 
 @pytest.mark.parametrize("size", [(160, 42), (100, 40)])
 @pytest.mark.asyncio
-async def test_watchlists_soloed_feeds_fills_the_centre(size):
-    """Task 6 fix round 3, Finding 3: `Z` soloed FEEDS into a degenerate view.
+async def test_watchlists_soloed_centre_region_fills_the_centre(size):
+    """Task 6 fix round 3, Finding 3, kept current by task-2511: a soloed
+    region must fill the centre, not stay pinned at its cap.
 
-    Solo (`action_solo_region` -> `RegionLayout.solo`) collapses the other two
-    centre regions to one-line headers. FEEDS is the only capped region, so it
-    stayed pinned at `max-height: 13` while the rest of the centre went blank
-    -- measured pre-fix at 100x40 with 40 sources: `feeds=13@y0, items=1,
-    content=1`, 17 of the centre's 32 rows empty while FEEDS scrolled a 13-row
-    window over 44 rows of content. Solo-ITEMS and solo-CONTENT filled
-    correctly; only the capped region was broken.
+    Solo (`action_solo_region` -> `RegionLayout.solo`) collapses the other
+    centre region to a one-line header. CONTENT is the only capped region
+    left (FEEDS, whose solo first exposed this, is gone), so a soloed
+    CONTENT would stay pinned at `max-height: 12` while the collapsed
+    header took one row -- the same degenerate view FEEDS once produced.
+    `_region_widget` adds `.watchlists-region-sole-centre` for exactly that
+    state and the stylesheet lifts the cap there.
 
-    Nothing in the DOM distinguished the state, so `_region_widget` now adds
-    `.watchlists-region-sole-centre` and the stylesheet lifts the cap there.
-    No solo geometry was tested anywhere before this.
+    The invariant now includes the always-mounted centre header
+    (`#wl-centre-status`): header + soloed body + collapsed header(s) must
+    cover the centre exactly, with nothing left blank.
     """
     app = _build_test_app()
     host = _visual_destination_harness(app, "watchlists_collections")
@@ -1553,17 +1515,16 @@ async def test_watchlists_soloed_feeds_fills_the_centre(size):
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#wl-workbench")
 
-        # CONTENT only occupies space on the Items (Read) tab -- Task 4 fix
-        # round 1. Soloing/un-soloing it below needs it genuinely present.
+        # CONTENT only occupies space on the Items (Read) tab -- the
+        # default since task-2511. Soloing/un-soloing it below needs it
+        # genuinely present.
         screen.active_section = "items"
         await pilot.pause()
 
         screen._apply_layout(RegionLayout())
         await pilot.pause()
-        screen._apply_local_wc_snapshot(_WL_OVERFLOW_RECORDS, 40, True)
-        await pilot.pause()
 
-        for soloed in (Region.FEEDS, Region.ITEMS, Region.CONTENT):
+        for soloed in (Region.ITEMS, Region.CONTENT):
             screen._apply_layout(RegionLayout().solo(soloed))
             await pilot.pause()
             await pilot.pause()
@@ -1572,142 +1533,29 @@ async def test_watchlists_soloed_feeds_fills_the_centre(size):
             # reactive is `recompose=True`, so the previous iteration's
             # references are unmounted and report a zero-sized region.
             centre = screen.query_one("#wl-centre")
-            # TASK-2312: `#wl-centre` now ALSO contains the shared header
-            # (tab strip + snapshot summary) on the Read tab, exactly like
-            # every other section -- it did not before, since Read used to
-            # carry its own inline copy of both INSIDE FEEDS's own body.
-            # Its rows are real content of `#wl-centre` and must count
-            # toward "covered", or this assertion would demand the three
-            # region widgets alone fill space the header is legitimately
-            # occupying.
-            centre_header = screen.query_one("#wl-centre-status")
+            # `#wl-centre` also contains the shared header (tab strip +
+            # snapshot summary) on every tab, Read included. Its rows are
+            # real content of `#wl-centre` and must count toward "covered",
+            # or this assertion would demand the region widgets alone fill
+            # space the header is legitimately occupying.
+            header = screen.query_one("#wl-centre-status")
             body = screen.query_one(f"#wl-region-{soloed.value}")
             headers = [
                 screen.query_one(f"#wl-header-{other.value}")
-                for other in (Region.FEEDS, Region.ITEMS, Region.CONTENT)
+                for other in (Region.ITEMS, Region.CONTENT)
                 if other is not soloed
             ]
             covered = (
-                centre_header.region.height
+                header.region.height
                 + body.region.height
                 + sum(h.region.height for h in headers)
             )
             assert covered == centre.region.height, (
                 f"solo({soloed.value}) leaves "
                 f"{centre.region.height - covered} of the centre's "
-                f"{centre.region.height} rows blank: "
-                f"centre_header={centre_header.region} body={body.region} "
-                f"headers={[h.region for h in headers]}"
+                f"{centre.region.height} rows blank: header={header.region} "
+                f"body={body.region} headers={[h.region for h in headers]}"
             )
-
-
-@pytest.mark.parametrize("height,budget", [(42, 34), (41, 33)])
-@pytest.mark.asyncio
-async def test_watchlists_feeds_cap_keeps_items_taller_when_it_actually_binds(
-    height: int, budget: int
-):
-    """Task 6 fix round 3, Finding 4: the cap's derivation, made executable.
-
-    `test_watchlists_items_region_is_taller_than_feeds_region_when_expanded`
-    (above) runs the EMPTY state, where FEEDS's natural 11 rows never reach
-    the 12-row cap -- so the constraint that actually chose the cap has never
-    been exercised by a test. This forces FEEDS past its cap inside the real
-    chrome-wrapped screen and pins the resulting split.
-
-    Re-derived for Task 4 (the numbers below are NOT the pre-Phase-D ones):
-    CONTENT stopped being a `1fr` co-claimant on the ITEMS/CONTENT split (see
-    `.watchlists-region-content` in `_watchlists.tcss`) and became `auto` +
-    `max-height`, content-sized like FEEDS rather than budget-sized like
-    ITEMS. With no item selected -- true here, this test never selects one --
-    `ContentPane` composes just its one-line placeholder, so CONTENT sits at
-    its structural floor (border 2 + the generic "Content" heading 1 + the
-    placeholder line 1 = 4 rows) regardless of terminal height. ITEMS is
-    therefore the `.watchlists-centre` Vertical's ONLY real `fr` sibling
-    among the three CENTRE REGIONS, and takes what FEEDS, CONTENT, and (as
-    of TASK-2312) the shared header above all three leave:
-    `items = budget - feeds_cap - content_floor - header_rows
-    = budget - 12 - 4 - 2`. The header is 2 rows in this scenario -- the
-    tab strip plus the one-line snapshot summary
-    (`_watchlists_status_marker_widgets`'s "loaded, has data" branch) -- now
-    mounted on the Read tab too, exactly like every other section (before
-    that task, Read alone had NO separate header row: its own inline copy
-    of the tab strip/summary lived INSIDE FEEDS's own bordered pane, so
-    `budget` was never shared with anything above the three regions). At
-    budget 34 `items` is 16; at budget 33, 15 -- both comfortably above
-    FEEDS's 12, so this split has real margin rather than the pre-Phase-D
-    derivation's razor-thin one-cap-value-wide window (that fragility was a
-    direct consequence of `fr`-splitting a shrinking pool two ways; a fixed
-    content floor does not have that problem).
-    """
-    app = _build_test_app()
-    # Setup change only (Task 7 fix round 1, Finding 1) -- see
-    # `_seed_overflow_sources`. Every assertion below is unchanged.
-    _seed_overflow_sources(app)
-    host = _visual_destination_harness(app, "watchlists_collections")
-
-    async with host.run_test(size=(160, height)) as pilot:
-        screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#wl-workbench")
-
-        # CONTENT only occupies space on the Items (Read) tab -- Task 4 fix
-        # round 1. This derivation is specifically about the three-region
-        # split, so it must be on that tab.
-        screen.active_section = "items"
-        await pilot.pause()
-
-        screen._apply_layout(RegionLayout())
-        await pilot.pause()
-        screen._apply_local_wc_snapshot(_WL_OVERFLOW_RECORDS, 40, True)
-        await pilot.pause()
-        await pilot.pause()
-
-        feeds = screen.query_one("#wl-region-feeds")
-        items = screen.query_one("#wl-region-items")
-        content = screen.query_one("#wl-region-content")
-
-        assert feeds.max_scroll_y > 0, (
-            "40 sources should overflow FEEDS -- if they do not, this test is "
-            f"no longer exercising the cap: feeds={feeds.region}"
-        )
-        assert feeds.region.height == 12, (
-            f"FEEDS should sit exactly at its `max-height: 12` at 160x{height}: "
-            f"{feeds.region}"
-        )
-        assert content.region.height == 4, (
-            f"CONTENT's idle floor (border 2 + heading 1 + placeholder 1) "
-            f"should not depend on terminal height: content={content.region}"
-        )
-        expected_items = {34: 16, 33: 15}[budget]
-        assert items.region.height == expected_items, (
-            f"ITEMS should take exactly what FEEDS (pinned at its 12-row "
-            f"cap), CONTENT (idle at its 4-row floor), and the shared "
-            f"2-row header (tab strip + snapshot summary, TASK-2312) leave "
-            f"of the {budget}-row budget -- {budget} - 12 - 4 - 2 = "
-            f"{expected_items}: feeds={feeds.region} items={items.region} "
-            f"content={content.region}"
-        )
-        assert items.region.height > feeds.region.height, (
-            f"ITEMS must stay the taller reading area even when FEEDS is "
-            f"pinned at its cap: feeds={feeds.region} items={items.region}"
-        )
-        # TASK-2312: `budget` is `#wl-centre`'s total height, which now also
-        # has to cover the shared header (tab strip + snapshot summary) --
-        # not just the three centre regions -- since Read no longer carries
-        # an inline copy of either inside FEEDS's own body.
-        centre_header = screen.query_one("#wl-centre-status")
-        assert (
-            centre_header.region.height
-            + feeds.region.height
-            + items.region.height
-            + content.region.height
-            == budget
-        ), (
-            f"the centre budget moved; the cap's derivation needs redoing: "
-            f"centre_header={centre_header.region} feeds={feeds.region} "
-            f"items={items.region} content={content.region}"
-        )
-
-
 @pytest.mark.parametrize("size", [(235, 52), (160, 42)])
 @pytest.mark.asyncio
 async def test_watchlists_right_rail_does_not_clip_action_labels(size):
@@ -2076,7 +1924,7 @@ SOURCE_PREP_LOADING_CONTRACTS = [
     # but `_assert_ascii_workbench_contract` requires the list/detail/
     # inspector panes to be laid out horizontally, which Watchlists' rehost
     # onto the collapsible WatchlistsWorkbench deliberately no longer does
-    # (FEEDS/ITEMS/CONTENT stack vertically inside a centre column — see
+    # (ITEMS/CONTENT stack vertically inside a centre column — see
     # watchlists_workbench.py). See `SOURCE_PREP_WORKBENCHES_HORIZONTAL`
     # above for the same exclusion applied to the two sibling tests.
     (
@@ -2727,12 +2575,10 @@ COMPACT_DESTINATION_CONTRACTS = {
     "watchlists_collections": {
         "identity": "#watchlists-collections-title",
         "workbench": "#wl-workbench",
-        # `#watchlists-list-pane` (FEEDS) is gated to the Read tab (TASK-1344
-        # AC#1) and unmounted everywhere else (AC#4), so it is not visible
-        # at this test's default section. `#wl-region-left_rail` (the
-        # watchlist tree) is the rail-as-"object" analogue "chat" and
-        # "library" already use above for the same reason -- always
-        # present, regardless of active section.
+        # `#watchlists-list-pane` died with the FEEDS region in task-2511.
+        # `#wl-region-left_rail` (the watchlist tree) is the rail-as-"object"
+        # analogue "chat" and "library" already use above for the same
+        # reason -- always present, regardless of active section.
         "object": "#wl-region-left_rail",
         "detail": "#watchlists-detail-pane",
         # `#nav-overview` retired with the left-rail navigator -- see the
@@ -2938,14 +2784,15 @@ VISIBLE_FOCUS_TARGETS = {
 }
 
 #: Tab-order search budget per destination, default 24. Watchlists needs a
-#: few more presses: `WatchlistsWorkbench`'s five regions are each
+#: few more presses: `WatchlistsWorkbench`'s four regions are each
 #: individually focusable (`can_focus = True`, so `z` can target whichever
-#: one has focus — see `watchlists_workbench.py`), adding five stops on top
-#: of everything the pre-rehost tree already had. Measured empirically at 29
-#: presses to `wc-open-watchlists` with the default `_build_test_app()`
-#: empty-state fixture; 32 leaves a small margin.
+#: one has focus — see `watchlists_workbench.py`), and the Read tab's own
+#: Items toolbar (refresh/search/status/table) adds four more stops on the
+#: default section since task-2511 made it the landing tab. Measured
+#: empirically at 35 presses to `wc-open-watchlists` with the default
+#: `_build_test_app()` empty-state fixture; 38 leaves a small margin.
 TAB_ORDER_ATTEMPTS = {
-    "watchlists_collections": 32,
+    "watchlists_collections": 38,
 }
 
 
@@ -3012,60 +2859,6 @@ async def test_tab_order_reaches_visible_primary_action(route, targets):
                 return
         pytest.fail(
             f"{route} did not focus a visible primary action from {sorted(enabled_targets)}"
-        )
-
-
-@pytest.mark.asyncio
-async def test_watchlists_feed_source_row_stays_one_row_however_long_the_name():
-    """Task 7 fix round 1, Finding 1 (CSS half): `watchlist-feed-source-row`
-    shipped as a class name with no rule behind it.
-
-    It now has one, and `height: 1` is the load-bearing declaration. FEEDS is
-    capped at `max-height: 12` and that cap was derived against one-row
-    children; a bare `Static` sizes to `auto`, so a long feed title -- these
-    arrive from remote feeds and OPML imports, not from us -- would wrap and
-    silently eat the region's budget. Measured through the production
-    stylesheet, since a bare `App` with no CSS cannot see this at all.
-    """
-    app = _build_test_app()
-    app.watchlist_scope_service = StaticWatchlistsScopeService([])
-    service = app.watchlist_bundle_service
-    watchlist = service.create("Morning AI Brief")
-    long_name = " ".join(
-        ["A remote feed title that runs on well past the feeds column"] * 6
-    )
-    source_id = service._db.add_subscription(
-        name=long_name, type="rss", source="https://long.example/f"
-    )
-    service.add_source(watchlist["id"], source_id)
-
-    host = _visual_destination_harness(app, "watchlists_collections")
-    async with host.run_test(size=(160, 42)) as pilot:
-        screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#wl-workbench")
-        # FEEDS only occupies the centre on the Read tab (TASK-1344 AC#1).
-        screen.active_section = "items"
-        await pilot.pause()
-        screen._tree_watchlists = [{"id": watchlist["id"], "name": "Morning AI Brief"}]
-        screen._apply_layout(RegionLayout())
-        await pilot.pause()
-
-        screen.post_message(
-            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
-        )
-        for _ in range(20):
-            await pilot.pause()
-            if list(screen.query(f"#wl-feeds-source-{source_id}")):
-                break
-
-        row = screen.query_one(f"#wl-feeds-source-{source_id}", Static)
-        assert row.region.height == 1, (
-            f"a long feed name must not wrap the row to {row.region.height} rows; "
-            "FEEDS's max-height was derived against one-row children"
-        )
-        feeds = screen.query_one("#wl-region-feeds")
-        assert feeds.region.contains_region(row.region), (
-            f"the row should sit inside FEEDS: feeds={feeds.region} row={row.region}"
         )
 
 
@@ -3318,7 +3111,7 @@ async def test_watchlists_sources_toolbar_does_not_starve_its_table(size):
     section is the screen's main list of what a user is monitoring, so it
     showed one source at a time.
 
-    Same shape as the FEEDS clipping bug: a height that is fine in
+    Same shape as the old capped-region clipping bug: a height that is fine in
     isolation and wrong once the widget is nested in the real layout. Which
     is why this runs in the full shell under the production stylesheet -- a
     bare `App` with no CSS cannot see it, and on this screen that blind spot
@@ -3639,18 +3432,15 @@ async def test_watchlists_tab_strip_hit_regions_match_its_painted_labels(size):
         await pilot.pause(0.2)
 
         for section_id, label in SECTIONS:
-            # Recomputed every iteration, not captured once up front: even
-            # though the tab strip now lives in the same borderless
-            # `#wl-centre-status` header on every section (TASK-2312 --
-            # before it, Read alone mounted an inline copy inside FEEDS's
-            # own bordered body, which is exactly the positioning bug that
-            # task fixed), OTHER content above it (e.g. a scope-dependent
-            # summary line whose text length can wrap) could still shift
-            # its row between sections. A stale row/painted pair captured
-            # on one tab and reused after switching to another is exactly
-            # the kind of harness coordinate error this test exists to
-            # catch in the *app* -- it must not reintroduce the same class
-            # of bug in the *test*.
+            # Recomputed every iteration, not captured once up front: the
+            # tab strip's own row can legitimately move between tabs -- it
+            # lives in the borderless `#wl-centre-status` header on every
+            # tab since task-2511, and the panes below it change height
+            # section by section. A stale row/painted pair captured on one
+            # tab and reused after switching to a structurally different
+            # one is exactly the kind of harness coordinate error this test
+            # exists to catch in the *app* -- it must not reintroduce the
+            # same class of bug in the *test*.
             strip = screen.query_one("#wl-tabs")
             row = strip.region.y
             painted = "".join(
@@ -3824,6 +3614,10 @@ async def test_watchlists_first_run_replaces_empty_cards_with_guidance():
 
     async with host.run_test(size=(160, 42)) as pilot:
         screen = _active_destination_screen(host)
+        # The default section is Read since task-2511; the overview
+        # first-run panel lives behind its own tab now.
+        screen.active_section = "overview"
+        await pilot.pause(0.2)
         await _wait_for_selector(screen, pilot, "#overview-first-run")
         assert screen.active_section == "overview"
 
@@ -3896,6 +3690,10 @@ async def test_watchlists_populated_overview_and_inspector_are_unchanged():
 
     async with host.run_test(size=(160, 42)) as pilot:
         screen = _active_destination_screen(host)
+        # The default section is Read since task-2511; the Overview pane
+        # lives behind its own tab now.
+        screen.active_section = "overview"
+        await pilot.pause(0.2)
         await _wait_for_selector(screen, pilot, "#watchlists-overview-grid")
 
         overview = screen.query_one("#watchlists-overview-pane", OverviewPane)
@@ -3952,6 +3750,10 @@ async def test_watchlists_overview_cards_paint_their_labels_and_numbers(size):
 
     async with host.run_test(size=size) as pilot:
         screen = _active_destination_screen(host)
+        # The default section is Read since task-2511; the Overview pane
+        # lives behind its own tab now.
+        screen.active_section = "overview"
+        await pilot.pause(0.2)
         await _wait_for_selector(screen, pilot, "#watchlists-overview-grid")
 
         card = screen.query_one("#overview-total-sources")

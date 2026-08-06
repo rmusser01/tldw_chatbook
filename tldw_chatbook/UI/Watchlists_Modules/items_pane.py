@@ -156,7 +156,12 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
         than recomposing (a recompose destroys the live table and drops focus).
         """
         with Horizontal(id="items-toolbar", classes="destination-filter-strip"):
-            yield Button("Refresh", id="items-refresh-button", variant="primary")
+            yield Button(
+                "Refresh",
+                id="items-refresh-button",
+                variant="primary",
+                tooltip="Reload the items list.",
+            )
             # TASK-995: same one-row-strip/three-row-child clipping the
             # Sources toolbar had -- `.destination-filter-strip` is
             # `height: 1`. See `sources_pane.compose()` for the full note.

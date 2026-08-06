@@ -17,13 +17,13 @@ from textual.widgets import Button
 
 
 SECTIONS: tuple[tuple[str, str], ...] = (
-    ("overview", "Overview"),
+    ("items", "Read"),
     ("sources", "Sources"),
-    ("items", "Items"),
     ("runs", "Runs"),
     ("rules", "Rules"),
     ("notifications", "Notifications"),
     ("artifacts", "Artifacts"),
+    ("overview", "Overview"),
 )
 
 
@@ -38,7 +38,7 @@ class SectionSelected(Message):
 class WatchlistsTabStrip(Horizontal):
     """Compact one-row tab strip across the top of the centre stack."""
 
-    def __init__(self, active_section: str = "overview", **kwargs: Any) -> None:
+    def __init__(self, active_section: str = "items", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.add_class("watchlists-tab-strip")
         self.active_section = active_section
