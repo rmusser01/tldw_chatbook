@@ -668,3 +668,168 @@ def _format_crawl_result(pages: list[dict], failed: int, blocked: int, stop_reas
         total += block_bytes
     footer = f"Crawled {len(pages)} pages ({failed} failed, {blocked} blocked). Stopped: {stop_reason}."
     return "\n\n".join(blocks + [footer]) if blocks else footer
+
+
+class _CrawlDeadline(Exception):
+    """Internal: the wall-clock budget expired mid-fetch."""
+
+
+def _crawl_fetch_page(
+    client: httpx.Client,
+    url: str,
+    deadline: float,
+    *,
+    max_bytes: int = FETCH_MAX_BYTES,
+    html_only: bool = True,
+) -> tuple[str, "httpx.Headers", bytes, bool]:
+    """Guarded, rate-limited GET with the crawl's redirect loop.
+
+    Returns (final_url, headers, body, truncated). Checks the deadline
+    between redirect hops — one page's full chain must not overshoot the
+    crawl budget by minutes (spec §2).
+    """
+    current = url
+    for _hop in range(FETCH_MAX_REDIRECTS + 1):
+        if time.monotonic() >= deadline:
+            raise _CrawlDeadline()
+        _validate_hop(current)
+        _enforce_rate_limit(urlsplit(current).hostname or "unknown")
+        try:
+            status, headers, body, truncated, _is_pdf = _fetch_once(
+                client, current, max_bytes, html_only=html_only
+            )
+        except httpx.TimeoutException as exc:
+            raise LocalToolError(f"[timeout] fetch timed out: {current!r}") from exc
+        except httpx.InvalidURL as exc:
+            raise LocalToolError(f"[invalid-url] {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise LocalToolError(f"[fetch-failed] {exc}") from exc
+        if status in _REDIRECT_STATUSES:
+            location = headers.get("location")
+            if not location:
+                raise LocalToolError(f"[http-{status}] redirect without a Location header")
+            current = urljoin(current, location)
+            continue
+        if status >= 400:
+            raise LocalToolError(f"[http-{status}] upstream returned status {status} for {current!r}")
+        return current, headers, body, truncated
+    raise LocalToolError(f"[redirect-limit] exceeded {FETCH_MAX_REDIRECTS} redirects for {url!r}")
+
+
+def web_crawl(
+    url: str,
+    *,
+    max_pages: int = CRAWL_DEFAULT_MAX_PAGES,
+    max_depth: int = CRAWL_DEFAULT_MAX_DEPTH,
+) -> str:
+    """Same-host breadth-first crawl returning a bounded page list.
+
+    Each listed page carries URL, title, and a short excerpt; the model is
+    expected to follow up with web_fetch on pages that matter (spec §2).
+    Every URL is egress-guarded; budgets bound fetch ATTEMPTS; a wall-clock
+    deadline bounds the whole crawl. Ephemeral: no database writes.
+
+    Raises:
+        LocalToolError: [invalid-args] for a bad url/host; [crawl-failed]
+            when the START url cannot be fetched (per-page failures inside
+            the crawl are results, counted in the footer).
+    """
+    if not isinstance(url, str) or not url.strip():
+        raise LocalToolError("[invalid-args] url must be a non-empty string")
+    url = url.strip()
+    max_pages = _coerce_budget(max_pages, CRAWL_DEFAULT_MAX_PAGES, CRAWL_MAX_PAGES_CEILING)
+    max_depth = _coerce_budget(max_depth, CRAWL_DEFAULT_MAX_DEPTH, CRAWL_MAX_DEPTH_CEILING)
+    scope_host = _crawl_host(url)
+    if not scope_host:
+        raise LocalToolError(f"[invalid-args] url has no host: {url!r}")
+
+    deadline = time.monotonic() + CRAWL_DEADLINE_SECONDS
+    queue: "deque[tuple[str, int]]" = deque([(url, 0)])
+    visited = {_normalize_crawl_url(url)}
+    pages: list[dict] = []
+    failed = blocked = 0
+    attempts = 0
+    stop_reason = "no more links within depth"
+
+    client = httpx.Client(
+        follow_redirects=False,
+        timeout=CRAWL_PAGE_TIMEOUT_SECONDS,
+        headers={"User-Agent": _CRAWL_USER_AGENT},
+        transport=_transport,
+        trust_env=False,
+    )
+    try:
+        while queue:
+            if attempts >= max_pages:
+                stop_reason = "page budget reached"
+                break
+            if time.monotonic() >= deadline:
+                stop_reason = "deadline reached"
+                break
+            current, depth = queue.popleft()
+            is_start = attempts == 0
+            attempts += 1
+            try:
+                final_url, headers, body, _truncated = _crawl_fetch_page(client, current, deadline)
+            except _CrawlDeadline:
+                stop_reason = "deadline reached"
+                break
+            except LocalToolError as exc:
+                if is_start:
+                    raise LocalToolError(f"[crawl-failed] start URL could not be fetched: {exc}") from exc
+                if "[ssrf]" in str(exc):
+                    blocked += 1
+                else:
+                    failed += 1
+                continue
+            visited.add(_normalize_crawl_url(final_url))
+
+            ctype = (headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+            if ctype and ctype not in _HTML_TYPES:
+                pages.append({"url": final_url, "title": "", "excerpt": "", "marker": f"[{ctype}]"})
+                continue
+
+            html = _decode_body(body, headers.get("content-type", ""))
+            parser = _CrawlLinkParser()
+            try:
+                parser.feed(html)
+                parser.close()
+            except Exception:  # noqa: BLE001 — keep whatever was collected
+                pass
+            try:
+                full_text = _extract_text(body, headers.get("content-type", ""))
+            except LocalToolError:
+                full_text = ""
+            if full_text:
+                _cache_put((final_url, FETCH_MAX_BYTES), full_text)
+            pages.append({
+                "url": final_url,
+                "title": parser.title.strip(),
+                "excerpt": full_text[:CRAWL_EXCERPT_MAX_CHARS].strip(),
+                "marker": None,
+            })
+
+            # Expansion: same-host pages only, within the depth budget. A page
+            # that redirected off-host is listed but its links are not followed.
+            if depth >= max_depth or _crawl_host(final_url) != scope_host:
+                continue
+            base = urljoin(final_url, parser.base_href) if parser.base_href else final_url
+            for href in parser.links:
+                absolute = urljoin(base, href)
+                try:
+                    scheme = urlsplit(absolute).scheme.lower()
+                except ValueError:
+                    continue
+                if scheme not in _ALLOWED_SCHEMES:
+                    continue
+                if _crawl_host(absolute) != scope_host:
+                    continue
+                norm = _normalize_crawl_url(absolute)
+                if norm in visited:
+                    continue
+                visited.add(norm)
+                queue.append((absolute, depth + 1))
+    finally:
+        client.close()
+
+    return _format_crawl_result(pages, failed, blocked, stop_reason)
