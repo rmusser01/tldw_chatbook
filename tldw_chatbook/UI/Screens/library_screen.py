@@ -162,7 +162,6 @@ from ...Widgets.Prompts.prompt_block_editor_state import (
 from ...Library.library_rag_answer_service import (
     LibraryRagAnswer,
     generate_library_rag_answer,
-    library_rag_answer_provider_ready,
     resolve_library_rag_answer_provider,
 )
 from ...Library.library_rag_service import (
@@ -3860,32 +3859,25 @@ class LibraryScreen(BaseAppScreen):
             dependencies_ready=True,
             index_ready=True,
             # `provider_ready` joined this contract in task-249 as a
-            # hardcoded `True` -- PR-3 task 2 activates the gate for real:
-            # `library_rag_answer_provider_ready()` resolves whether a
-            # provider is actually configured
-            # (`Library/library_rag_answer_service.py`, precedent
-            # `Subscriptions/briefing_service.py:315 _default_provider()`),
-            # so a Library with no default LLM endpoint configured now sees
-            # the pre-existing "Select a provider/model before asking for a
-            # RAG answer." copy (`Library/library_rag_state.py:893-897`)
-            # instead of a Run button that silently could not answer.
-            # rag-mode-only by construction (`LibraryRagQueryState.
-            # from_values`'s `normalized_mode == "rag"` check) -- keyword
-            # Search mode never calls a provider and stays unaffected.
-            provider_ready=library_rag_answer_provider_ready(),
-            # PR-T2 Task 4: named for the ready-state quiet line's paid-mode
-            # notice (`library_rag_paid_mode_notice`) -- the ONLY provider-
-            # adjacent copy on this panel used to be the *blocked* branch's
-            # "Select a provider/model..." text above, which disappears the
-            # instant a provider IS configured, the exact inversion of what
-            # a keyboard-fast user needs before pressing a button that
-            # spends real money. A second `resolve_library_rag_answer_
-            # provider()` call (rather than threading the one above's
-            # discarded provider name through) keeps this diff to an
-            # addition beside the pre-existing line instead of restructuring
-            # it -- both calls read the same cheap, no-I/O config attribute
-            # within the same render, so they cannot disagree.
-            provider_name=resolve_library_rag_answer_provider()[0] or "",
+            # hardcoded `True` -- PR-3 task 2 activated the gate for real,
+            # and PR-T2 Task 4 review collapsed it into this single
+            # `provider_name` argument (readiness IS "a real name was
+            # resolved" now, derived inside `LibraryRagQueryState.
+            # from_values` -- see its docstring): a Library with no default
+            # LLM endpoint configured (`resolve_library_rag_answer_
+            # provider()` returns `(None, None)`) sees the pre-existing
+            # "Select a provider/model before asking for a RAG answer."
+            # copy, and once one IS configured, this same value also names
+            # it in the ready-state quiet line's paid-mode notice
+            # (`library_rag_paid_mode_notice`) -- the ONLY provider-adjacent
+            # copy on this panel used to be that blocked-branch text, which
+            # disappeared the instant a provider was configured, the exact
+            # inversion of what a keyboard-fast user needs before pressing
+            # a button that spends real money. rag-mode-only by construction
+            # (`LibraryRagQueryState.from_values`'s `normalized_mode ==
+            # "rag"` check) -- keyword Search mode never calls a provider
+            # and stays unaffected regardless of this value.
+            provider_name=resolve_library_rag_answer_provider()[0],
             selected_source_types=selected_source_types,
             history=self._library_search_history,
             history_collapsed=self._library_rag_history_collapsed,
@@ -17437,10 +17429,10 @@ class LibraryScreen(BaseAppScreen):
         chat_kwargs = self._library_rag_answer_chat_kwargs()
         if chat_kwargs is None:
             return
-        # Resolved ONCE and reused: `library_rag_answer_provider_ready()`
-        # (the run gate) and this call are two facets of one resolution, so
-        # the tuple travels into generation rather than the boolean being
-        # re-derived into a second provider lookup that could disagree.
+        # The run gate (`_library_rag_panel_state`'s `provider_name=
+        # resolve_library_rag_answer_provider()[0]`) and this call both
+        # resolve from the same underlying config read; `provider is None`
+        # below means the gate would already have blocked `rag` mode.
         provider, model = resolve_library_rag_answer_provider()
         if provider is None:
             # The run gate blocks rag mode without a provider, so this is

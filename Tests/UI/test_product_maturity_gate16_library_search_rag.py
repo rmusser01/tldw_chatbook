@@ -267,6 +267,7 @@ def test_empty_status_renders_quiet_two_line_state_not_full_dump() -> None:
         source_counts={"notes": 1, "media": 1},
         query="unicorn migration guide",
         retrieval_status="empty",
+        provider_name="openai",
     )
     empty_children = library_rag_results_body_children(empty_state)
     assert len(empty_children) == 1
@@ -286,6 +287,7 @@ def test_empty_status_renders_quiet_two_line_state_not_full_dump() -> None:
         source_counts={"notes": 1},
         query="unicorn migration guide",
         retrieval_status="failed",
+        provider_name="openai",
     )
     failed_children = library_rag_results_body_children(failed_state)
     assert len(failed_children) == 1
@@ -365,7 +367,6 @@ def test_query_quiet_line_names_the_paid_provider_when_rag_mode_is_ready() -> No
         source_counts={"notes": 1},
         query="What changed?",
         mode="rag",
-        provider_ready=True,
         provider_name="openai",
     )
     quiet_line = next(
@@ -393,7 +394,6 @@ def test_query_quiet_line_stays_empty_in_search_mode() -> None:
         source_counts={"notes": 1},
         query="What changed?",
         mode="search",
-        provider_ready=True,
         provider_name="openai",
     )
     quiet_line = next(
@@ -402,6 +402,13 @@ def test_query_quiet_line_stays_empty_in_search_mode() -> None:
         if child.id == "library-rag-query-quiet-line"
     )
     assert str(quiet_line.renderable) == ""
+    # Cheap Minor (review round): pin the no-layout-shift property
+    # directly -- the reserved row's fixed height is load-bearing (2026-07
+    # UAT finding, the Run button used to jump ~2 rows) and was previously
+    # preserved only by inspection. Mirrors the ingest-canvas quiet line's
+    # own height pin (`Tests/UI/test_library_shell.py`).
+    assert quiet_line.styles.height is not None
+    assert quiet_line.styles.height.value == 1
 
 
 def test_query_quiet_line_omits_the_paid_notice_when_run_is_blocked() -> None:
@@ -419,7 +426,6 @@ def test_query_quiet_line_omits_the_paid_notice_when_run_is_blocked() -> None:
         source_counts={"notes": 1},
         query="What changed?",
         mode="rag",
-        provider_ready=False,
     )
     quiet_line = next(
         child
@@ -453,6 +459,41 @@ def test_mode_toggle_tooltip_names_the_paid_mode_fact() -> None:
     assert _mode_toggle_tooltip(rag_state) == (
         "Cycle Search/RAG mode. Next: Search — stays local."
     )
+
+
+@pytest.mark.parametrize("provider", ["openai", "anthropic", "local-vllm"])
+def test_query_quiet_line_invariant_always_names_a_ready_providers(
+    provider: str,
+) -> None:
+    """(PR-T2 Task 4 review) The render-layer half of the footgun-fix
+    invariant: for ANY provider a ready `rag`-mode state names (not just
+    the "openai" happy-path example above), the quiet line's notice
+    contains that exact name. `provider_ready`/`provider_name` used to be
+    two independently settable parameters that could disagree -- this
+    would have caught a regression where the state derived `ready_answer_
+    provider` correctly but a render-layer change stopped using it, or
+    vice versa.
+    """
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
+        library_rag_query_status_children,
+    )
+
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="What changed?",
+        mode="rag",
+        provider_name=provider,
+    )
+    assert state.query_state.status == "ready"
+    quiet_line = next(
+        child
+        for child in library_rag_query_status_children(state)
+        if child.id == "library-rag-query-quiet-line"
+    )
+    text = str(quiet_line.renderable)
+    assert text != ""
+    assert provider in text
 
 
 # --- PR-3 Task 3: answer region ---------------------------------------------
@@ -755,6 +796,7 @@ def test_answer_region_shows_generating_indicator_while_answering() -> None:
         query="Why did the incident happen?",
         mode="rag",
         retrieval_status="answering",
+        provider_name="openai",
     )
     region = library_rag_answer_children(state)[0]
     assert region.id == "library-rag-answer"
@@ -821,6 +863,7 @@ def test_answer_region_asking_indicator_names_the_billed_provider_while_answerin
         query="Why did the incident happen?",
         mode="rag",
         retrieval_status="answering",
+        provider_name="anthropic",
         in_flight_answer_provider="anthropic",
     )
     region = library_rag_answer_children(state)[0]

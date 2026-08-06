@@ -995,13 +995,14 @@ class LibraryRagQueryState:
     #: (PR-T2 Task 4) -- `""` whenever there is nothing pending to
     #: announce: Search mode never calls a provider, and any blocked `rag`
     #: state (empty query, no scope, missing deps/index, no provider) has
-    #: no run about to happen. Non-empty ONLY when `mode == "rag"`,
-    #: `status == "ready"`, AND a caller actually supplied a provider name
-    #: -- a `provider_ready=True` call site that forgot to name one (every
-    #: call site that predates this field) leaves this `""` rather than
-    #: fabricate a fact nobody actually confirmed. Feeds the quiet line's
-    #: `library_rag_paid_mode_notice` (`library_search_rag_panel.py`'s
-    #: `library_rag_query_status_children`).
+    #: no run about to happen. Non-empty if and only if `mode == "rag"` and
+    #: `status == "ready"` -- `from_values` derives BOTH readiness and this
+    #: field from the same single `provider_name` argument (review round:
+    #: an earlier revision took readiness and the name as two independently
+    #: settable parameters, which let them disagree -- "ready to spend
+    #: money" while the quiet line stayed silent about it). Feeds the quiet
+    #: line's `library_rag_paid_mode_notice` (`library_search_rag_panel.
+    #: py`'s `library_rag_query_status_children`).
     ready_answer_provider: str = ""
 
     @property
@@ -1034,8 +1035,7 @@ class LibraryRagQueryState:
         has_source_scope: bool = True,
         dependencies_ready: bool = True,
         index_ready: bool = True,
-        provider_ready: bool = True,
-        provider_name: str = "",
+        provider_name: str | None = None,
     ) -> "LibraryRagQueryState":
         """Build query-control display state from UI or service values.
 
@@ -1047,18 +1047,25 @@ class LibraryRagQueryState:
             has_source_scope: Whether at least one source is selected.
             dependencies_ready: Whether Search/RAG optional dependencies are available.
             index_ready: Whether the selected source scope has an index.
-            provider_ready: Whether a provider/model is ready for RAG-answer mode.
             provider_name: The provider `resolve_library_rag_answer_provider`
-                resolved (PR-T2 Task 4), or `""` (the default -- every call
-                site that predates this parameter). Feeds `ready_answer_
-                provider`, which is only ever non-empty when this is also
-                non-empty -- a truthy `provider_ready` with no name here
-                still leaves the quiet line silent rather than guessing.
+                resolved, or `None`/blank when none is configured. This is
+                the SOLE source of RAG-mode provider readiness (PR-T2 Task 4
+                review) -- an earlier revision took a separate `provider_
+                ready: bool` alongside this, which let a caller pass
+                `provider_ready=True` with no name (or vice versa) and
+                silently produce "the mode can spend money and the quiet
+                line says nothing", the exact inversion this task exists to
+                fix. Collapsing to one parameter makes that combination
+                impossible to construct: readiness is derived here as
+                `bool((provider_name or "").strip())`, so "ready" and "has
+                a name to show" can no longer disagree.
 
         Returns:
             Display state for query controls and the run action.
         """
 
+        normalized_provider_name = (provider_name or "").strip()
+        provider_ready = bool(normalized_provider_name)
         normalized_query, unsafe_query = _sanitize_query(query)
         normalized_mode = _normalize_mode(mode)
         mode_label = "Search" if normalized_mode == "search" else "RAG Answer"
@@ -1109,10 +1116,14 @@ class LibraryRagQueryState:
                 recovery_action=recovery_action,
                 owner=owner,
             )
+        # Reuses `normalized_provider_name`/`enabled` rather than
+        # re-deriving readiness: in `rag` mode, `enabled` is `True` only
+        # when the gate ladder above never hit the provider branch, which
+        # itself only happens when `provider_ready` (== `bool(normalized_
+        # provider_name)`) was already `True` -- so "ready" and "has a name
+        # to show" cannot diverge by construction (PR-T2 Task 4 review).
         ready_answer_provider = (
-            provider_name
-            if normalized_mode == "rag" and enabled and provider_name
-            else ""
+            normalized_provider_name if normalized_mode == "rag" and enabled else ""
         )
         return cls(
             query=normalized_query,
@@ -1622,8 +1633,7 @@ class LibraryRagPanelState:
         recovery_selector: Any = "",
         dependencies_ready: bool = True,
         index_ready: bool = True,
-        provider_ready: bool = True,
-        provider_name: str = "",
+        provider_name: str | None = None,
         selected_source_types: Sequence[str] | None = None,
         history: Sequence[str] = (),
         history_collapsed: bool = False,
@@ -1663,12 +1673,19 @@ class LibraryRagPanelState:
             recovery_selector: Stable selector used for explicit retrieval recovery.
             dependencies_ready: Whether Search/RAG optional dependencies are available.
             index_ready: Whether the selected source scope has an index.
-            provider_ready: Whether a provider/model is ready for RAG-answer mode.
             provider_name: The provider `resolve_library_rag_answer_provider`
-                resolved (PR-T2 Task 4), threaded to `query_state.ready_
-                answer_provider` for the quiet line's paid-mode notice.
-                `""` (the default -- every call site that predates this
-                parameter) leaves that notice silent.
+                resolved, or `None`/blank when none is configured -- the
+                SOLE source of RAG-mode provider readiness, forwarded
+                unchanged to `LibraryRagQueryState.from_values` (PR-T2
+                Task 4 review: collapsed from two independently settable
+                parameters, `provider_ready: bool` and this, which could
+                disagree -- see that method's docstring). `None` is the
+                default, so `rag` mode is now BLOCKED by default (a
+                behavior change from the pre-collapse `provider_ready:
+                bool = True` default) -- every call site that wants a
+                ready `rag`-mode state must now name a provider
+                explicitly, which is the whole point: readiness can no
+                longer be asserted without a name to back it up.
             selected_source_types: Selected source type IDs. `None` selects all available
                 source types; an empty sequence represents no selected sources.
             history: Prior submitted queries, most recent first.
@@ -1709,7 +1726,6 @@ class LibraryRagPanelState:
             has_source_scope=scope.has_selected_sources,
             dependencies_ready=dependencies_ready,
             index_ready=index_ready,
-            provider_ready=provider_ready,
             provider_name=provider_name,
         )
         normalized_searched_query, _ = _sanitize_query(
