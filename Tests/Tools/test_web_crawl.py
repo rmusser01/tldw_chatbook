@@ -595,3 +595,73 @@ def test_sitemap_deadline_during_child_fetch_reports_deadline_reached(crawl_env)
     crawl_env.routes["http://example.com/s1.xml"] = slow_child
     out = web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
     assert out.endswith("Stopped: deadline reached.")
+
+
+# ---------------------------------------------------------------------------
+# Fix wave (whole-branch review): sniffed-PDF cache poisoning, unbounded
+# frontier, sitemap child-fetch amplification
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("ctype", ["application/pdf", "text/html", ""])
+def test_crawl_pdf_sniff_not_poisoned_into_html_branch(crawl_env, ctype):
+    """CRITICAL: a PDF served with a misleading (or absent) content-type
+    must be classified via `_fetch_once`'s is_pdf sniff, not the declared
+    content-type alone. Pre-fix, `_crawl_fetch_page` dropped the sniff
+    result entirely, so a PDF labeled `text/html` (or unlabeled) fell
+    through to the HTML branch: it was listed as a normal page (raw PDF
+    bytes decoded into its 'excerpt' for the unlabeled case) and its
+    garbage 'extracted text' warm-wrote the shared web_fetch cache under
+    (url, FETCH_MAX_BYTES) — the exact key a later web_fetch(url) reads."""
+    pdf_body = b"%PDF-1.7 pretend pdf body padding " + b"z" * 20
+    headers = {"content-type": ctype} if ctype else {}
+    _site(crawl_env, {"http://example.com/": ("root", ["/doc"])})
+    crawl_env.routes["http://example.com/doc"] = httpx.Response(200, content=pdf_body, headers=headers)
+    out = web_crawl("http://example.com/")
+    expected_marker = f"[{ctype or 'application/pdf'}]"
+    assert expected_marker in out
+    assert "%PDF-" not in out
+    assert ("http://example.com/doc", web_tool_impls.FETCH_MAX_BYTES) not in web_tool_impls._fetch_cache
+
+
+def test_crawl_caps_links_enqueued_per_page(crawl_env, monkeypatch):
+    """IMPORTANT: an unbounded frontier lets one page's link spam blow up
+    visited/queue memory (52,975 entries measured from a single page in the
+    review). A page must stop contributing links to the queue once it hits
+    CRAWL_MAX_LINKS_PER_PAGE."""
+    monkeypatch.setattr(web_tool_impls, "CRAWL_MAX_LINKS_PER_PAGE", 5)
+    links = [f"/p{i}" for i in range(20)]
+    _site(crawl_env, {
+        "http://example.com/": ("root", links),
+        **{f"http://example.com/p{i}": (f"page {i}", []) for i in range(20)},
+    })
+    web_crawl("http://example.com/", max_pages=100)
+    # root fetch + at most the capped number of links enqueued from it.
+    assert len(crawl_env.calls) <= 6
+
+
+def test_sitemap_index_caps_children_fetched(crawl_env, monkeypatch):
+    """IMPORTANT: the sitemapindex child loop is bounded only by deadline +
+    rate limit today — off-host children never trip max_pages's early
+    exit, so a same-host index with ~119 children can pull ~600 MB in one
+    call (5 MiB SITEMAP_MAX_BYTES each). Cap the number of child sitemaps
+    actually fetched at SITEMAP_MAX_CHILDREN."""
+    monkeypatch.setattr(web_tool_impls, "SITEMAP_MAX_CHILDREN", 3)
+    children_locs = "".join(
+        f"<sitemap><loc>http://example.com/s{i}.xml</loc></sitemap>" for i in range(10)
+    )
+    index = (
+        '<?xml version="1.0"?>'
+        '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        f"{children_locs}</sitemapindex>"
+    ).encode()
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(index)
+    empty_child = (
+        b'<?xml version="1.0"?>'
+        b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>'
+    )
+    for i in range(10):
+        crawl_env.routes[f"http://example.com/s{i}.xml"] = _sitemap_response(empty_child)
+    web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml", max_pages=100)
+    child_calls = [c for c in crawl_env.calls if c != "http://example.com/sitemap.xml"]
+    assert len(child_calls) == 3

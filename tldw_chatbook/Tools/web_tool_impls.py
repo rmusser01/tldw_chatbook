@@ -19,7 +19,6 @@ import ipaddress
 import re
 import socket
 import time
-import xml.etree.ElementTree as xET
 from collections import deque
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
@@ -28,6 +27,24 @@ import httpx
 from loguru import logger
 
 from .local_tool_impls import LocalToolError
+
+# XXE hardening for attacker-controlled sitemap XML (mirrors
+# tldw_chatbook/Subscriptions/security.py's pattern): defusedxml is an
+# optional dep (websearch/ebook/subscriptions extras), so fall back to the
+# stdlib parser rather than hard-failing this core module when it's absent.
+# defusedxml.ElementTree re-exports xml.etree.ElementTree's ParseError object
+# unchanged (verified: `xET.ParseError is xml.etree.ElementTree.ParseError`
+# == True across both branches), so `_parse_sitemap`'s `except xET.ParseError`
+# catches parse failures from either library without modification.
+try:
+    import defusedxml.ElementTree as xET
+except ImportError:
+    import xml.etree.ElementTree as xET
+
+    logger.warning(
+        "defusedxml not available, using standard xml.etree for sitemap parsing. "
+        "Install defusedxml for better security."
+    )
 
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
 
@@ -557,7 +574,9 @@ CRAWL_PAGE_TIMEOUT_SECONDS = 10.0   # per page; a hung page must not eat the cra
 CRAWL_EXCERPT_MAX_CHARS = 200
 CRAWL_RESULT_MAX_BYTES = 24 * 1024
 CRAWL_BLOCK_MAX_BYTES = 1024
+CRAWL_MAX_LINKS_PER_PAGE = 500      # frontier bound: cap links enqueued FROM one page
 SITEMAP_MAX_BYTES = 5 * 1024 * 1024
+SITEMAP_MAX_CHILDREN = 20           # cap child sitemaps actually fetched from an index
 
 _CRAWL_USER_AGENT = "tldw-chatbook-web-crawl/1.0"
 
@@ -681,12 +700,17 @@ def _crawl_fetch_page(
     *,
     max_bytes: int = FETCH_MAX_BYTES,
     html_only: bool = True,
-) -> tuple[str, "httpx.Headers", bytes, bool]:
+) -> tuple[str, "httpx.Headers", bytes, bool, bool]:
     """Guarded, rate-limited GET with the crawl's redirect loop.
 
-    Returns (final_url, headers, body, truncated). Checks the deadline
-    between redirect hops — one page's full chain must not overshoot the
-    crawl budget by minutes (spec §2).
+    Returns (final_url, headers, body, truncated, is_pdf). Checks the
+    deadline between redirect hops — one page's full chain must not
+    overshoot the crawl budget by minutes (spec §2). ``is_pdf`` is
+    ``_fetch_once``'s sniff result and MUST be consulted by callers before
+    treating a response as HTML: a PDF mislabeled (or unlabeled) as
+    text/html must not fall through to HTML extraction, or its raw bytes
+    become the page excerpt and its garbage "extracted text" warm-writes
+    the shared web_fetch cache (see web_crawl's marker branch).
     """
     current = url
     for _hop in range(FETCH_MAX_REDIRECTS + 1):
@@ -695,7 +719,7 @@ def _crawl_fetch_page(
         _validate_hop(current)
         _enforce_rate_limit(urlsplit(current).hostname or "unknown")
         try:
-            status, headers, body, truncated, _is_pdf = _fetch_once(
+            status, headers, body, truncated, is_pdf = _fetch_once(
                 client, current, max_bytes, html_only=html_only
             )
         except httpx.TimeoutException as exc:
@@ -715,7 +739,7 @@ def _crawl_fetch_page(
             continue
         if status >= 400:
             raise LocalToolError(f"[http-{status}] upstream returned status {status} for {current!r}")
-        return current, headers, body, truncated
+        return current, headers, body, truncated, is_pdf
     raise LocalToolError(f"[redirect-limit] exceeded {FETCH_MAX_REDIRECTS} redirects for {url!r}")
 
 
@@ -733,7 +757,7 @@ def _seed_from_sitemap(
     child sitemaps must share sitemap_url's host; page URLs must share the
     crawl scope host.
     """
-    final_url, _headers, body, truncated = _crawl_fetch_page(
+    final_url, _headers, body, truncated, _is_pdf = _crawl_fetch_page(
         client, sitemap_url, deadline, max_bytes=SITEMAP_MAX_BYTES, html_only=False
     )
     if truncated:
@@ -757,13 +781,20 @@ def _seed_from_sitemap(
             urls.append(candidate)
 
     take(page_urls)
+    children_fetched = 0
     for child in children:
         if len(urls) >= max_pages or time.monotonic() >= deadline:
             break
         if _crawl_host(child) != sitemap_host:
             continue
+        if children_fetched >= SITEMAP_MAX_CHILDREN:
+            # Amplification guard: a pathological same-host index (~119
+            # children measured in the review, ~600 MB at 5 MiB each) is
+            # bounded here instead of relying solely on the deadline.
+            break
+        children_fetched += 1
         try:
-            _f, _h, child_body, child_truncated = _crawl_fetch_page(
+            _f, _h, child_body, child_truncated, _is_pdf = _crawl_fetch_page(
                 client, child, deadline, max_bytes=SITEMAP_MAX_BYTES, html_only=False
             )
         except (LocalToolError, _CrawlDeadline):
@@ -862,7 +893,7 @@ def web_crawl(
             is_start = attempts == 0
             attempts += 1
             try:
-                final_url, headers, body, truncated = _crawl_fetch_page(client, current, deadline)
+                final_url, headers, body, truncated, is_pdf = _crawl_fetch_page(client, current, deadline)
             except _CrawlDeadline:
                 stop_reason = "deadline reached"
                 break
@@ -877,8 +908,13 @@ def web_crawl(
             visited.add(_normalize_crawl_url(final_url))
 
             ctype = (headers.get("content-type") or "").split(";", 1)[0].strip().lower()
-            if ctype and ctype not in _HTML_TYPES:
-                pages.append({"url": final_url, "title": "", "excerpt": "", "marker": f"[{ctype}]"})
+            # is_pdf (the %PDF- sniff) takes priority over the declared
+            # content-type: a PDF mislabeled as text/html (or unlabeled)
+            # must never fall through to HTML extraction below, or its raw
+            # bytes become the excerpt and its "extracted text" warm-writes
+            # the shared web_fetch cache with binary garbage.
+            if is_pdf or (ctype and ctype not in _HTML_TYPES):
+                pages.append({"url": final_url, "title": "", "excerpt": "", "marker": f"[{ctype or 'application/pdf'}]"})
                 continue
 
             html = _decode_body(body, headers.get("content-type", ""))
@@ -920,7 +956,13 @@ def web_crawl(
                     base = urljoin(final_url, parser.base_href)
                 except ValueError:
                     base = final_url  # malformed <base href>: fall back to the page URL
+            enqueued_from_page = 0
             for href in parser.links:
+                if enqueued_from_page >= CRAWL_MAX_LINKS_PER_PAGE:
+                    # Frontier bound: a hostile/spammy page must not grow
+                    # visited/queue without limit (52,975 entries measured
+                    # from one page in the review).
+                    break
                 try:
                     absolute = urljoin(base, href)
                     scheme = urlsplit(absolute).scheme.lower()
@@ -935,6 +977,7 @@ def web_crawl(
                     continue
                 visited.add(norm)
                 queue.append((absolute, depth + 1))
+                enqueued_from_page += 1
     finally:
         client.close()
 
