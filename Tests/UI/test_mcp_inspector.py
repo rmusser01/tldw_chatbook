@@ -3810,16 +3810,44 @@ async def test_advanced_non_execute_action_still_runs_on_the_first_press():
 # from a PREVIOUS object satisfy a DIFFERENT object's very first press, with
 # no confirm text ever shown for it: a raw-JSON tool execution firing from a
 # single click.
+#
+# Fix Round C, Item 3 (review of Fix Round A): the fix clears the arm in
+# THREE places -- `set_service_context()`, `_load_advanced_section()`
+# (which `set_service_context()` also schedules as a worker on every call),
+# and `_hide_advanced()`. Mutation-testing each clear individually found
+# `set_service_context()`'s own clear and `_hide_advanced()`'s own clear
+# were NOT independently pinned: reverting either one alone left every test
+# in this section green, because `set_service_context()`'s scheduled
+# `_load_advanced_section()` worker clears the arm again before any test's
+# assertions ran (both the rebind test and the hide-then-REVEAL test call
+# `set_service_context()`, directly or via `_reveal_advanced()`). Only
+# `_load_advanced_section()`'s own clear was actually pinned, by
+# `test_section_change_disarms_a_pending_confirm` below (its only trigger
+# between arm and check is a direct section-value change, which never
+# touches the other two clears). This inverts the original commit
+# message's framing of `set_service_context()` as "the headline case" and
+# `_load_advanced_section()` as "redundant with the above, harmless" -- the
+# opposite was true of the tests, not the code (the belt-and-braces clears
+# are all real and correct; only the evidence for two of them was hollow).
+#
+# Fixed by isolating each seam so reverting THAT clear alone turns THAT
+# test red, confirmed by re-running the same revert-and-check mutation
+# table below.
 
 
 @pytest.mark.asyncio
 async def test_set_service_context_disarms_a_pending_confirm():
-    """The headline case: a rebind (reload / source-target switch /
-    selection change -- `set_service_context()`'s only caller,
-    `MCPWorkbench`, invokes it unconditionally for all three) must disarm
-    any confirm left over from whatever was showing before it, even when
-    the new object's `tool.execute` template renders byte-identical JSON to
-    what was just armed.
+    """`set_service_context()`'s OWN clear, isolated from the
+    `_load_advanced_section()` worker it also schedules (which clears too --
+    see the section banner comment above). Checks `_advanced_confirm_key`
+    immediately after the synchronous `set_service_context()` call returns,
+    with no intervening `await`: `run_worker(...)` schedules the section
+    worker onto the event loop but cannot run it inline, so at that exact
+    point only `set_service_context()`'s own body has had a chance to run.
+
+    Also exercises the full round-trip (a real re-arm and a real run) so
+    this remains the end-to-end regression test the original title
+    promised, not just a white-box state peek.
 
     Uses `_press_run_again` (not a bare second `pilot.click`) for every
     press past the first -- `Button._on_click()` ignores a click still
@@ -3833,11 +3861,21 @@ async def test_set_service_context_disarms_a_pending_confirm():
         await pilot.click("#mcp-adv-run")  # arms against the default payload
         await pilot.pause()
         assert app.service.action_calls == []
+        assert inspector._advanced_confirm_key is not None  # sanity: really armed
 
         # The workbench rebinds Advanced on every reload/selection change --
         # simulate that here with the SAME service, so the re-rendered
         # tool.execute template is byte-identical to what was just armed.
         inspector.set_service_context(app.service, [("Inventory", "inventory")])
+        # No `await` between the call above and this assertion: the
+        # `_load_advanced_section` worker `set_service_context()` schedules
+        # cannot have run yet, so this can only be `set_service_context()`'s
+        # own clear at work.
+        assert inspector._advanced_confirm_key is None, (
+            "set_service_context() itself must clear the arm synchronously -- "
+            "this must not depend on the _load_advanced_section worker it "
+            "separately schedules"
+        )
         await pilot.pause()
 
         await _press_run_again(pilot)
@@ -3856,11 +3894,43 @@ async def test_set_service_context_disarms_a_pending_confirm():
 
 
 @pytest.mark.asyncio
+async def test_hide_advanced_disarms_a_pending_confirm():
+    """`_hide_advanced()`'s OWN clear, isolated from `_reveal_advanced()`'s
+    subsequent `set_service_context()` replay (which independently clears
+    too -- see the section banner comment above, and
+    `test_advanced_hide_then_reveal_disarms_a_pending_confirm` below for the
+    full round trip). Calls `_hide_advanced()` directly and checks
+    immediately, with the panel never revealed again in this test, so only
+    `_hide_advanced()`'s own clear can be responsible for the result."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await pilot.click("#mcp-adv-run")  # arms against the default payload
+        await pilot.pause()
+        assert app.service.action_calls == []
+        assert inspector._advanced_confirm_key is not None  # sanity: really armed
+
+        await inspector._hide_advanced()
+
+        assert inspector._advanced_confirm_key is None, (
+            "_hide_advanced() itself must clear the arm -- this must not "
+            "depend on a later reveal's set_service_context() replay"
+        )
+
+
+@pytest.mark.asyncio
 async def test_advanced_hide_then_reveal_disarms_a_pending_confirm():
-    """The Advanced panel's hide/show toggle (F-053) is another
-    attention-moved transition: a user backing out of the legacy runner and
-    returning later must not find a stale arm from before they left ready
-    to fire on the first press after showing it again."""
+    """End-to-end coverage of the full F-053 toggle round trip: the
+    Advanced panel's hide/show is an attention-moved transition, and a user
+    backing out of the legacy runner and returning later must not find a
+    stale arm ready to fire on the first press after showing it again.
+
+    This exercises BOTH clears in the hide-then-reveal path
+    (`_hide_advanced()`'s own, and `_reveal_advanced()`'s
+    `set_service_context()` replay) together, so on its own it does not
+    prove which one is responsible -- that isolation is
+    `test_hide_advanced_disarms_a_pending_confirm` above (hide) and
+    `test_set_service_context_disarms_a_pending_confirm` (the replay)."""
     app = ToolExecuteInspectorApp()
     async with app.run_test(size=(100, 60)) as pilot:
         await pilot.click("#mcp-adv-run")  # arms
