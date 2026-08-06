@@ -449,11 +449,19 @@ def test_legacy_API_section_only_mistral_key_satisfies_readiness_and_spend(
     """I4: `mistral` IS bridged (a prior revision wrongly excluded it).
 
     `chat_with_mistral` (`LLM_API_Calls.py:~4617-4621`) reads `api_settings.
-    mistral` -- not the shipped default's decorative `[api_settings.
-    mistralai]` table -- so `"mistral"` (what `provider_config_key
-    ("Mistral")` computes, and what this bridge writes into) IS the live
-    table the spend path already reads; bridging under it closes a real
-    gap rather than creating a disconnected table.
+    mistral` -- via `get_runtime_config_snapshot().values.get("api_
+    settings", {}).get("mistral", {})`, and `RuntimeConfigSnapshot.values`
+    is a deep copy of `load_settings()`'s own return value (`config.py`'s
+    `get_runtime_config_snapshot`), so `settings["api_settings"]["mistral"]`
+    here IS that exact table -- NOT the `mistral_api` dict, and NOT the
+    shipped default's decorative `[api_settings.mistralai]` table. `
+    "mistral"` (what `provider_config_key("Mistral")` computes, and what
+    this bridge writes into) IS the live table the spend path already
+    reads; bridging under it closes a real gap rather than creating a
+    disconnected table. (`settings["mistral_api"]["api_key"]` also ends up
+    holding the same value -- the bridge's whole point -- but that dict is
+    NOT what `chat_with_mistral` reads, so asserting against it would pin
+    the wrong artifact as evidence.)
     """
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
     with _real_config(
@@ -466,4 +474,8 @@ def test_legacy_API_section_only_mistral_key_satisfies_readiness_and_spend(
 
     assert readiness.ready is True
     assert readiness.api_key == "sk-mistral-legacy-only-key"
-    assert settings["mistral_api"]["api_key"] == "sk-mistral-legacy-only-key"
+    # The exact table `chat_with_mistral` reads (see docstring above).
+    assert (
+        settings["api_settings"]["mistral"]["api_key"]
+        == "sk-mistral-legacy-only-key"
+    )

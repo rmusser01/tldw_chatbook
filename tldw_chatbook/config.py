@@ -782,6 +782,52 @@ def resolve_tldw_api_config(app_config) -> Dict:
 TLDW_API_PLACEHOLDER_BASE_URL = "http://127.0.0.1:8000"
 TLDW_API_PLACEHOLDER_AUTH_TOKEN = "default-secret-key-for-single-user"
 
+#: Canonical "this is not a real credential" values for provider API keys --
+#: PR-T2 Task 7. Shared by `_normalize_legacy_provider_api_key` below and
+#: `Chat/provider_readiness.get_provider_readiness`, which imports these
+#: three names FROM this module rather than the reverse.
+#:
+#: (Review round 2 finding: the first fix round had `config.py` import
+#: `is_valid_provider_api_key` FROM `Chat/provider_readiness.py`, which
+#: reproduced a real cycle -- `config` -> `Chat/__init__` -> `server_chat_
+#: conversation_service` -> `runtime_policy.bootstrap` -> back into
+#: `config` -- breaking standalone collection of `Tests/RuntimePolicy/`
+#: even though the shipped app and the full-suite alphabetical collect
+#: order happened to hide it. `config.py` is the dependency ROOT nearly
+#: everything else in this app already imports directly (verified: none of
+#: this module's own top-level imports -- the `DB.*`/`Utils.*` modules --
+#: reach back into `Chat` or `runtime_policy`), so the shared definition
+#: belongs here, with `Chat/provider_readiness.py` importing it -- not the
+#: reverse. This keeps the actual property Task 7 exists for -- exactly
+#: ONE definition of "valid key", consumed by both the credential bridge
+#: and the readiness reader -- while fixing the layering.)
+PROVIDER_API_KEY_PLACEHOLDERS = frozenset(
+    {
+        "",
+        "<API_KEY_HERE>",
+        "YOUR_KEY",
+        "your_key",
+        "your-api-key",
+    }
+)
+
+
+def resolve_provider_api_key(value: object) -> Optional[str]:
+    """Return `value` stripped, or `None` if it is not a usable provider API
+    key (not a string, blank, or one of `PROVIDER_API_KEY_PLACEHOLDERS`)."""
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    if stripped in PROVIDER_API_KEY_PLACEHOLDERS:
+        return None
+    return stripped or None
+
+
+def is_valid_provider_api_key(value: object) -> bool:
+    """Return whether `value` is a usable provider API key."""
+    return resolve_provider_api_key(value) is not None
+
+
 #: Providers whose legacy `[API] <provider>_api_key` TOML key and
 #: `<PROVIDER>_API_KEY` environment variable both follow the plain
 #: `_normalize_legacy_provider_api_key` convention, keyed by the SAME
@@ -877,21 +923,31 @@ def _normalize_legacy_provider_api_key(
     an actual TOML-sourced value to write into it -- never eagerly, since
     several tests pin an untouched config's `api_settings` as exactly `{}`.
 
-    "Non-placeholder" is delegated to `Chat/provider_readiness.is_valid_
-    provider_api_key` -- NOT a locally re-declared placeholder set. An
-    earlier revision of this function defined its own single-value
-    placeholder check (`value != "<API_KEY_HERE>"`), which missed `provider
-    _readiness`'s other four recognized placeholders (`""`, `"YOUR_KEY"`,
-    `"your_key"`, `"your-api-key"`). Concretely: `[api_settings.anthropic]
-    api_key = "YOUR_KEY"` alongside a REAL `[API] anthropic_api_key` used
-    to have the bridge treat `"YOUR_KEY"` as "explicit modern config wins"
-    and write it into the legacy `anthropic_api` dict `chat_with_anthropic`
-    spends through, while `get_provider_readiness` (which DOES recognize
-    `"YOUR_KEY"`) correctly reported not-ready -- recreating, inside the
-    very function meant to end it, the exact kind of two-readers-disagree
-    split this task exists to close. Importing the shared check instead of
-    hand-rolling a second one is what makes "modern config is valid" mean
-    the same thing everywhere.
+    "Non-placeholder" is delegated to THIS module's own `is_valid_provider_
+    api_key` (see its definition above, near `PROVIDER_API_KEY_
+    PLACEHOLDERS`) -- the SAME function `Chat/provider_readiness.get_
+    provider_readiness` uses (it imports the name from here). An earlier
+    revision of this function defined its own single-value placeholder
+    check (`value != "<API_KEY_HERE>"`), which missed four of the five
+    placeholders that function recognizes (`""`, `"YOUR_KEY"`, `"your_
+    key"`, `"your-api-key"`). Concretely: `[api_settings.anthropic] api_key
+    = "YOUR_KEY"` alongside a REAL `[API] anthropic_api_key` used to have
+    the bridge treat `"YOUR_KEY"` as "explicit modern config wins" and
+    write it into the legacy `anthropic_api` dict `chat_with_anthropic`
+    spends through, while readiness (which DID recognize `"YOUR_KEY"`)
+    correctly reported not-ready -- recreating, inside the very function
+    meant to end it, the exact kind of two-readers-disagree split this
+    task exists to close. A review round then found a second layering bug
+    in the first fix for that: routing the import through `Chat/provider_
+    readiness.py` (i.e. `config` importing FROM `Chat`) created a real
+    cycle back through `Chat/__init__` -> `server_chat_conversation_
+    service` -> `runtime_policy.bootstrap` -> `config`, breaking
+    standalone collection of `Tests/RuntimePolicy/` (masked in the
+    full-suite run only by alphabetical import ordering). The definition
+    now lives here instead, with `provider_readiness.py` importing it --
+    matching the rest of the codebase's dependency direction (nearly every
+    other module already imports `config` directly; `config` importing
+    from a submodule of `Chat` was the anomaly).
 
     Args:
         api_settings_section: The (already TOML-loaded) `api_settings`
@@ -911,19 +967,6 @@ def _normalize_legacy_provider_api_key(
         built just below each call site), or `None` when no source
         resolves one.
     """
-    # Local import: `Chat/provider_readiness.py` itself has zero
-    # `tldw_chatbook`-internal imports (leaf module), but resolving
-    # `tldw_chatbook.Chat.provider_readiness` still initializes the
-    # `tldw_chatbook.Chat` PACKAGE first, which imports several sibling
-    # modules -- one of which (`server_chat_conversation_service.py`, via
-    # `runtime_policy.bootstrap`) imports back from `tldw_chatbook.config`.
-    # Deferring the import to here (called only from inside `load_settings
-    # ()`, itself only invoked once this module's own top-level names are
-    # already bound -- see the module-level `settings = load_settings()`
-    # call near the bottom of this file) avoids resolving that chain while
-    # THIS module is still mid-import.
-    from .Chat.provider_readiness import is_valid_provider_api_key
-
     provider_table = api_settings_section.get(provider_key)
     modern_value = (
         provider_table.get("api_key") if isinstance(provider_table, dict) else None
