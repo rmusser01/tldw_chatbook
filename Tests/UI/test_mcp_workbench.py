@@ -4328,7 +4328,7 @@ async def test_gate_check_exception_fails_closed():
 
 
 @pytest.mark.asyncio
-async def test_gate_check_exception_decision_note_uses_honest_unresolved_sentence():
+async def test_gate_check_exception_decision_note_suppressed_after_real_run():
     """task-2270's rider (PR-T3 task 3) plus task-2536's follow-up (fix
     round B, item 2), end to end: the deny short-circuit's decision note
     used to say "This tool is set to Off." for `_resolve_test_gate()`'s
@@ -4346,7 +4346,20 @@ async def test_gate_check_exception_decision_note_uses_honest_unresolved_sentenc
     pins that); only this one call site no longer surfaces it, because the
     body above already said it. Mirrors `test_gate_check_exception_fails_
     closed`'s setup, checking the NOTE widget instead of the status widget
-    it already covers."""
+    it already covers.
+
+    Item 3 (PR-T3 fix round D): this test used to assert ONLY the note
+    widget's absence (`renderable == ""`, `display is False`) -- which is
+    ALSO that widget's MOUNT-TIME INITIAL STATE
+    (`_build_test_result_note_static()`, mcp_inspector.py). Proven
+    vacuous by deleting the `#mcp-inspector-test-run` click below: the
+    test still passed, because it was never distinguishing "the deny
+    short-circuit ran and suppressed the note" from "nothing ran at all".
+    The two absence assertions stay (they are still part of what's true),
+    but now sit alongside a POSITIVE anchor -- the result widget's body,
+    which starts empty at mount and can only contain the honest blocked
+    text if `show_tool_result()` actually executed -- so the test can no
+    longer pass without the click actually dispatching."""
     app = ToolTestApp()
 
     def _raise(tool: Any) -> Any:
@@ -4365,6 +4378,16 @@ async def test_gate_check_exception_decision_note_uses_honest_unresolved_sentenc
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
+
+        # Positive anchor: proves the deny short-circuit actually ran
+        # (`show_tool_result()` was called) -- not just that the note is
+        # absent, which is equally true before anything has happened.
+        assert app.unified_mcp_service.test_calls == []
+        result_widget = app.query_one("#mcp-inspector-test-result", Static)
+        assert (
+            "Blocked — permission state could not be determined; the tool did not run."
+            in str(result_widget.renderable)
+        )
 
         note_widget = app.query_one("#mcp-inspector-test-result-note", Static)
         assert str(note_widget.renderable) == ""
