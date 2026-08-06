@@ -188,6 +188,42 @@ async def test_hub_tool_builtin_routes_to_execute_tool(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_hub_tool_governance_denial_records_honest_blocked_row(tmp_path):
+    """Item 1 (PR-T3 fix round D). Before this item, an `MCPGovernanceDenied`
+    raised inside `coro` (here: the builtin `execute_tool()` path) fell into
+    `execute_hub_tool()`'s generic `except Exception` branch and was recorded
+    as a crashed execution -- `status="error"`, `error_category=
+    "execution_failed"`, `duration_ms` measured as if the call ran, and the
+    caller's pre-computed `decision="allowed"` left untouched -- three false
+    statements about an event that never dispatched at all; governance
+    refused it outright, before the tool ever ran. Recorded honestly instead,
+    reusing `record_tool_decision()`'s own never-executed vocabulary
+    (`status="blocked"`, `duration_ms=0`) and overriding `decision` to
+    `"denied"`. `error_category="governance_denied"` is asserted against the
+    RECORD READ BACK OFF THE PERSISTED JSONL (`_log_records()`), not the
+    in-memory value passed to `_record_tool_execution()` -- proving the token
+    survives `safe_metadata_token()` (execution_log.py's `build_record()`)
+    unmodified; that sanitizer rejects any value containing whitespace, so a
+    token with a space would silently come back as `"invalid"` instead of
+    failing loudly."""
+    service, fake, client, store = _service(tmp_path)
+    fake.builtin_error = control_plane_module.MCPGovernanceDenied(
+        "Denied by local governance: tool.execute"
+    )
+
+    with pytest.raises(control_plane_module.MCPGovernanceDenied):
+        await service.test_hub_tool("builtin:tldw_chatbook", "calculator", {"x": 1})
+
+    records = _log_records(store)
+    assert records and records[0]["ok"] is False
+    assert records[0]["status"] == "blocked"
+    assert records[0]["duration_ms"] == 0
+    assert records[0]["decision"] == "denied"
+    assert records[0]["exception_type"] == "MCPGovernanceDenied"
+    assert records[0]["error_category"] == "governance_denied"
+
+
+@pytest.mark.asyncio
 async def test_hub_tool_unknown_prefix_raises_value_error_display_only(tmp_path):
     service, fake, client, store = _service(tmp_path)
 

@@ -15,6 +15,7 @@ from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 from .execution_log import MCPExecutionLog, build_record
 from .hub_tool_catalog import HubTool
+from .local_control_service import MCPGovernanceDenied
 from .local_runtime_delegate import RAW_TOOL_CALL_REFUSED_MESSAGE
 from .permission_store import (
     EffectiveToolState,
@@ -2267,6 +2268,13 @@ class UnifiedMCPControlPlaneService:
             MCPServerSourceDisplayOnlyError: If ``server_key`` is not a
                 local/builtin key. A ``ValueError`` subclass -- any
                 existing ``except ValueError`` handler still catches it.
+            MCPGovernanceDenied: If the in-process runtime-governance
+                profile denies the call (raised inside ``coro`` by
+                ``local_control_service._require_runtime_governance_
+                allowed()``). Recorded honestly (item 1, fix round D) and
+                re-raised -- a ``PermissionError`` subclass, so any
+                existing ``except PermissionError`` handler upstream still
+                catches it.
             RuntimeError: If the tool call fails or exceeds the
                 effective timeout.
         """
@@ -2315,6 +2323,51 @@ class UnifiedMCPControlPlaneService:
                 decision=decision,
             )
             raise RuntimeError(message) from None
+        except MCPGovernanceDenied as exc:
+            # Item 1 (PR-T3 fix round D). Without this branch, a governance
+            # refusal fell into the generic `except Exception` below and was
+            # recorded as three false statements about one event: `status=
+            # "error"`/`error_category="execution_failed"` (the tool RAN and
+            # crashed -- it never ran at all), `duration_ms` measured from
+            # `started` (timing a call that never dispatched), and the
+            # caller's PRE-COMPUTED `decision` left untouched (describes
+            # what the caller expected going in, not what happened -- the
+            # governance check that just denied it runs INSIDE `coro`,
+            # after this method already committed to that value). Recorded
+            # honestly instead, reusing `record_tool_decision()`'s own
+            # "never executed" vocabulary (`status="blocked"`,
+            # `duration_ms=0`) rather than this method's own "attempted and
+            # timed" shape.
+            #
+            # `error_category="governance_denied"` is a NEW token, not Fix
+            # Round B's `"gate_denied"` (`execute_advanced_tool()`'s deny
+            # branch, a few hundred lines down): that token names the Hub's
+            # OWN Allow/Ask/Off permission gate. This denial comes from the
+            # in-process runtime-governance profile
+            # (`local_control_service._require_runtime_governance_
+            # allowed()`) -- a different system, checked at a different
+            # seam, for a different reason -- and reusing "gate_denied"
+            # here would conflate the two exactly the way Round B's own
+            # docstring warned "policy_denied" would falsely cross-
+            # reference the unrelated `runtime_policy` engine's
+            # `PolicyDeniedError`. "governance_denied" mirrors this
+            # exception's own name (`MCPGovernanceDenied`) instead.
+            self._record_tool_execution(
+                normalized_key,
+                normalized_tool_name,
+                ok=False,
+                duration_ms=0,
+                status="blocked",
+                error_category="governance_denied",
+                exception_type=type(exc).__name__,
+                status_code=None,
+                arguments=normalized_arguments,
+                registered_argument_names=registered_argument_names,
+                result=None,
+                initiator=initiator,
+                decision="denied",
+            )
+            raise
         except Exception as exc:
             duration_ms = int((time.monotonic() - started) * 1000)
             response = getattr(exc, "response", None)
