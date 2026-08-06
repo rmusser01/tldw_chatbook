@@ -412,8 +412,16 @@ class ConsoleHandsFreeController:
     @property
     def _console_pending_voice_action(self) -> str | None:
         """Write-only: see `__init__`'s docstring for
-        `set_pending_voice_action`."""
-        raise AttributeError(
+        `set_pending_voice_action`.
+
+        Raises `RuntimeError`, deliberately NOT `AttributeError`: this is a
+        property, and `hasattr()`/`getattr(obj, name, default)` swallow
+        `AttributeError` specifically. A defensive
+        `getattr(self._hands_free, "_console_pending_voice_action", None)`
+        would then read None forever regardless of the real value, with no
+        error ever surfacing. `RuntimeError` propagates instead.
+        """
+        raise RuntimeError(
             "_console_pending_voice_action is write-only on "
             "ConsoleHandsFreeController"
         )

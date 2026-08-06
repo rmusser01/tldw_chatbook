@@ -893,8 +893,16 @@ class ConsoleDictationController:
     @property
     def _console_hands_free_vad_degraded(self) -> bool:
         """Write-only: see `__init__`'s docstring for
-        `set_hands_free_vad_degraded`."""
-        raise AttributeError(
+        `set_hands_free_vad_degraded`.
+
+        Raises `RuntimeError`, deliberately NOT `AttributeError`: this is a
+        property, and `hasattr()`/`getattr(obj, name, default)` swallow
+        `AttributeError` specifically. A defensive
+        `getattr(self._dictation, "_console_hands_free_vad_degraded", False)`
+        would then read False forever regardless of the real flag, with no
+        error ever surfacing. `RuntimeError` propagates instead.
+        """
+        raise RuntimeError(
             "_console_hands_free_vad_degraded is write-only on "
             "ConsoleDictationController"
         )
