@@ -40,36 +40,52 @@ live on the class that receives the message). Every other one of the 20
 moves with no residue left on the screen.
 
 The controller boundary is the state attribute, not the file: dictation's
-own methods stay entangled with the hands-free loop (`ChatScreen._console_
-hands_free` and friends -- a sibling cluster this wave does not touch; the
-design spec's decomposition table does not yet give "hands-free" its own
-row) and with two not-yet-extracted composer/workspace attributes
+own methods stay entangled with the hands-free loop (`_console_hands_free`
+and friends) and with two not-yet-extracted composer/workspace attributes
 (`_console_undo_histories`, `_console_visible_draft_session_id`). Rather
 than reach through a bare screen handle ad hoc at each of those call
-sites, this module's constructor binds a property or a bound method for
-each, under the SAME name the original `ChatScreen` method used. That is
-what lets every one of the 20 method bodies below be a byte-for-byte copy
-of the pre-extraction source: no internal line needed to change, because
-every name a body references still resolves -- either to this
-controller's own moved state, or to one of these bound names.
+sites, this module's constructor binds a NAMED CALLABLE for each, under
+the SAME name the original `ChatScreen` method or attribute used, exposed
+back to the 20 method bodies below as a thin property. That is what lets
+every one of those bodies be a byte-for-byte copy of the pre-extraction
+source: no internal line needed to change, because every name a body
+references still resolves -- either to this controller's own moved state,
+or to one of these bound names.
 
-Conversely, eleven `ChatScreen` methods that are NOT part of this cluster
-(general voice-status/hands-free/composer-sync/dispatch code:
-`_speak_status`, `_deliver_console_hands_free_capture_ended`, `_console_
-read_last_response_back`, `action_toggle_console_hands_free`, `_teardown_
-console_hands_free_loop`, `_console_hands_free_request_stop_and_send`,
-`_console_hands_free_open_capture`, `_console_hands_free_close_capture`,
-`_repaint_console_hands_free_chip`, `_sync_console_composer_action_state`,
-`on_button_pressed`) read `_console_dictation_state` (or, in one case,
-write/read `_console_pending_voice_action` / `_console_dictation_origin_
-session_id`). None of them are dictation-shaped -- they own hands-free's
-FSM, the giant screen-level button dispatcher, or general composer sync --
-so none of them moved. `ChatScreen` keeps a small set of read/write
-properties under the original attribute names (see `ChatScreen`'s own
-"Dictation state (owned by `ConsoleDictationController`)" section) so
-those eleven method bodies also needed zero edits: the attribute now
-lives on `self._dictation`, but `self._console_dictation_state` still
-reads and writes it transparently.
+Wave 1 shipped six of these bindings (`_console_hands_free` and its
+`_console_hands_free_vad_degraded` sibling, `_enter_console_hands_free_
+loop`, `_console_hands_free_force_immediate_send`, `_deliver_console_
+hands_free_capture_ended`, and `_run_pending_console_voice_action`) as
+live `@property`s reaching straight through `screen`, explicitly disclosed
+as a temporary exception: hands-free had no controller of its own yet to
+hand a named dependency to. It does now (`ConsoleHandsFreeController`,
+`hands_free.py`, wave-2 console decomposition task 1). That exception is
+over -- every one of those, plus `_console_realtime_adopt_transcript`
+(same shape, same reason, even though its target -- the realtime engine --
+stays screen-owned) and the two composer/workspace accessors above, is a
+named keyword-only constructor callable now, wired by `ChatScreen.__init__`
+as a late-binding lambda, matching this file's `composer_accessor`/`chat_
+store_accessor`/`speak_status` from wave 1. See each parameter's own
+docstring below for exactly which of these are read-only, write-only
+(`set_hands_free_vad_degraded`, since no moved body here ever reads it),
+or call-through.
+
+Eleven `ChatScreen` methods are NOT part of this cluster but still read
+`_console_dictation_state` (general voice-status/composer-sync/dispatch
+code: `_speak_status`, `_console_read_last_response_back`, `_sync_console_
+composer_action_state`, `on_button_pressed`, plus seven now living on
+`ConsoleHandsFreeController` instead of `ChatScreen` -- `action_toggle_
+console_hands_free`, `_teardown_console_hands_free_loop`, `_console_hands_
+free_request_stop_and_send`, `_console_hands_free_open_capture`, `_console_
+hands_free_close_capture`, `_repaint_console_hands_free_chip`, and
+`_deliver_console_hands_free_capture_ended`). None of them are
+dictation-shaped -- they own hands-free's FSM, the giant screen-level
+button dispatcher, or general composer sync -- so none of them moved.
+`ChatScreen` keeps a small set of read/write properties under the original
+attribute names (see `ChatScreen`'s own "Dictation state (owned by
+`ConsoleDictationController`)" section) so those eleven method bodies also
+needed zero edits: the attribute now lives on `self._dictation`, but
+`self._console_dictation_state` still reads and writes it transparently.
 """
 
 from __future__ import annotations
@@ -625,6 +641,15 @@ class ConsoleDictationController:
         composer_accessor: Callable[[], ConsoleComposerBar | None],
         chat_store_accessor: Callable[[], Any],
         speak_status: Callable[[str], None],
+        hands_free_session_accessor: Callable[[], Any],
+        set_hands_free_vad_degraded: Callable[[bool], None],
+        enter_hands_free_loop: Callable[..., None],
+        hands_free_force_immediate_send: Callable[[], None],
+        deliver_hands_free_capture_ended: Callable[[Any, bool], Any],
+        realtime_adopt_transcript: Callable[[str], bool],
+        run_pending_voice_action: Callable[[str | None], Any],
+        undo_histories_accessor: Callable[[], dict[str, Any]],
+        visible_draft_session_id_accessor: Callable[[], str | None],
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -635,8 +660,9 @@ class ConsoleDictationController:
         that is not this controller's own state, under the SAME name the
         original method used.
 
-        Three kinds of binding, one rule each, not one rule for
-        everything:
+        Two kinds of binding, one rule each (a wave-1 third kind, "reach
+        through `screen` because the target has no controller of its own
+        yet," is retired as of wave 2 -- see the module docstring):
 
         1. **Framework services** (`run_worker`, `post_message`,
            `set_timer`, `set_interval`, `is_mounted`) live-read from
@@ -646,49 +672,37 @@ class ConsoleDictationController:
            over) goes stale the instant a test replaces the attribute on
            the SCREEN INSTANCE afterward, confirmed for `set_timer`/
            `set_interval` by this cluster's own test suite.
-        2. **Hands-free's reach-backs** (`_console_hands_free` and its
-           siblings, `_enter_console_hands_free_loop`,
-           `_console_hands_free_force_immediate_send`,
-           `_deliver_console_hands_free_capture_ended`) and one general
-           screen-orchestration method (`_run_pending_console_voice_
-           action`) are the SAME live-`@property`-through-`screen` shape,
-           for the same staleness reason -- but they are a disclosed,
-           temporary exception, not a controller dependency: they belong
-           to sibling clusters this wave does not touch (hands-free is
-           not yet its own controller), so there is no named-parameter
-           home for them yet. `screen` is the only handle that reaches
-           them.
-        3. **Everything else dictation genuinely depends on that is not
-           its own state** -- the composer accessor, the chat-store
-           accessor, and the speak-status gate -- is a NAMED constructor
-           dependency (`composer_accessor`/`chat_store_accessor`/
-           `speak_status` below), matching the design spec's rule that
-           "a controller's dependencies are its signature": discoverable
-           by reading the constructor, not by reading every `@property`
-           on the class. Each is a zero-arg callable the CALLER
-           constructs to close over the screen's own attribute lookup at
-           CALL time, not at construction time -- see `ChatScreen.
-           __init__`'s `lambda: self._console_composer_or_none()` (not
-           `composer_accessor=self._console_composer_or_none`, which
-           would freeze the bound method the same way `run_worker` used
-           to) -- so the same staleness guarantee kind 1 gets from a
-           property, kind 3 gets from the lambda's own late attribute
-           lookup. The controller's own `_console_composer_or_none`/
-           `_ensure_console_chat_store`/`_speak_status` properties below
-           are thin returns of these stored callables, kept under their
-           original names so every one of the 20 moved method bodies
-           still calls `self._console_composer_or_none()` etc. unchanged.
+        2. **Everything else dictation genuinely depends on that is not
+           its own state** is a NAMED constructor dependency, matching the
+           design spec's rule that "a controller's dependencies are its
+           signature": discoverable by reading the constructor, not by
+           reading every `@property` on the class. Each is a callable the
+           CALLER constructs to close over the screen's own attribute
+           lookup at CALL time, not at construction time -- see
+           `ChatScreen.__init__`'s `lambda: self._console_composer_or_
+           none()` (not `composer_accessor=self._console_composer_or_
+           none`, which would freeze the bound method the same way
+           `run_worker` used to) -- so the same staleness guarantee kind 1
+           gets from a property, kind 2 gets from the lambda's own late
+           attribute lookup. The controller's own properties below are
+           thin wrappers around these stored callables, kept under the
+           ORIGINAL attribute/method names so every one of the 20 moved
+           method bodies still reads/calls `self._console_composer_or_
+           none()`, `self._console_hands_free`, etc. unchanged. Most
+           return the callable itself, for bodies that already called it
+           with `()`; `_console_undo_histories`/`_console_visible_draft_
+           session_id` were bare-attribute reads in the pre-move source,
+           so those two properties CALL the stored accessor internally and
+           return the value instead.
 
-        `app_instance` is the one plain-attribute exception to all three
-        rules above: see its own line below for why.
+        `app_instance` is the one plain-attribute exception to both rules
+        above: see its own line below for why.
 
         Args:
             screen: The Console screen. Used ONLY for the framework
-                services in binding kind 1 above and the disclosed,
-                temporary hands-free/orchestration reach-backs in kind 2.
-                None of this is `query_one` traffic -- dictation owns no
-                DOM of its own, so there is no region boundary for it to
-                cross.
+                services in binding kind 1 above. None of this is
+                `query_one` traffic -- dictation owns no DOM of its own,
+                so there is no region boundary for it to cross.
             app_instance: For `notify()`, posting TTS events, and the
                 once-per-app-run notification latches the moved event
                 handler stores on it (`_console_dictation_override_
@@ -713,12 +727,65 @@ class ConsoleDictationController:
                 non-dictation voice paths too (hands-free's queued-send
                 ack, "read that back"), so it stays screen-owned;
                 dictation only calls it.
+            hands_free_session_accessor: Reads `ConsoleHandsFreeController.
+                _console_hands_free`, the pipeline loop's live session (or
+                None). Wave 1's disclosed, temporary exception, closed out
+                now that hands-free has its own controller (wave-2 console
+                decomposition, task 1) -- see the module docstring.
+            set_hands_free_vad_degraded: Writes `ConsoleHandsFreeController.
+                _console_hands_free_vad_degraded`. Setter-only: only
+                `_handle_console_dictation_event`'s `VoiceVadUnavailable`
+                branch touches this attribute, and it only ever assigns to
+                it, never reads it.
+            enter_hands_free_loop: `ConsoleHandsFreeController._enter_
+                console_hands_free_loop`, the engine fork -- reached by a
+                spoken "Console, hands free." mid-capture.
+            hands_free_force_immediate_send: `ConsoleHandsFreeController.
+                _console_hands_free_force_immediate_send`, reached by a
+                spoken "send" mid-loop.
+            deliver_hands_free_capture_ended: `ConsoleHandsFreeController.
+                _deliver_console_hands_free_capture_ended`, scheduled (not
+                awaited) by `_handle_console_dictation_limit` when a
+                limit-triggered stop finds nothing captured.
+            realtime_adopt_transcript: `ChatScreen._console_realtime_adopt_
+                transcript` -- the realtime engine's own entry point. Same
+                shape and staleness reason as the five hands-free callables
+                above, but its target stays screen-owned (not extracted
+                this wave): the realtime loop (V4) owns whether a capture's
+                transcript becomes its first spoken turn instead of
+                composer text.
+            run_pending_voice_action: `ChatScreen._run_pending_console_
+                voice_action` -- general screen-orchestration (chat store,
+                send button, tab creation, TTS read-back), well beyond a
+                controller's "handful of well-known ids," so it stays
+                screen-owned; only `_stop_console_dictation`'s tail calls
+                it, unconditionally (a no-op when nothing was queued).
+                `ConsoleHandsFreeController` has an identically-shaped,
+                identically-named dependency pointed at the SAME screen
+                method.
+            undo_histories_accessor: Reads `ChatScreen._console_undo_
+                histories` -- per-session composer undo history, screen-
+                owned (not extracted this wave). Returns the actual dict
+                (not a copy): `_insert_console_dictation` mutates it in
+                place via `.pop(...)`.
+            visible_draft_session_id_accessor: Reads `ChatScreen._console_
+                visible_draft_session_id` -- the session id the mounted
+                composer's draft currently reflects, screen-owned.
         """
         self._screen = screen
         self.app_instance = app_instance
         self._composer_accessor = composer_accessor
         self._chat_store_accessor = chat_store_accessor
         self._speak_status_fn = speak_status
+        self._hands_free_session_accessor = hands_free_session_accessor
+        self._set_hands_free_vad_degraded_fn = set_hands_free_vad_degraded
+        self._enter_hands_free_loop_fn = enter_hands_free_loop
+        self._hands_free_force_immediate_send_fn = hands_free_force_immediate_send
+        self._deliver_hands_free_capture_ended_fn = deliver_hands_free_capture_ended
+        self._realtime_adopt_transcript_fn = realtime_adopt_transcript
+        self._run_pending_voice_action_fn = run_pending_voice_action
+        self._undo_histories_accessor = undo_histories_accessor
+        self._visible_draft_session_id_accessor = visible_draft_session_id_accessor
 
         # Dictation's own state, moved verbatim from `ChatScreen.__init__`.
         self._console_dictation_session: Any | None = None
@@ -783,70 +850,71 @@ class ConsoleDictationController:
 
     @property
     def _enter_console_hands_free_loop(self) -> Any:
-        """Hands-free's own entry point (sibling cluster). See `__init__`."""
-        return self._screen._enter_console_hands_free_loop
+        """The injected `enter_hands_free_loop`. See `__init__`'s docstring."""
+        return self._enter_hands_free_loop_fn
 
     @property
     def _console_hands_free_force_immediate_send(self) -> Any:
-        """Hands-free's own entry point (sibling cluster). See `__init__`."""
-        return self._screen._console_hands_free_force_immediate_send
+        """The injected `hands_free_force_immediate_send`. See `__init__`'s
+        docstring."""
+        return self._hands_free_force_immediate_send_fn
 
     @property
     def _deliver_console_hands_free_capture_ended(self) -> Any:
-        """Hands-free's own entry point (sibling cluster). See `__init__`."""
-        return self._screen._deliver_console_hands_free_capture_ended
+        """The injected `deliver_hands_free_capture_ended`. See `__init__`'s
+        docstring."""
+        return self._deliver_hands_free_capture_ended_fn
 
     @property
     def _console_realtime_adopt_transcript(self) -> Any:
-        """Realtime's own entry point (sibling cluster). See `__init__`.
-
-        Live `@property` through `screen`, never snapshotted, for the same
-        staleness reason as the hands-free reach-backs above: the realtime
-        loop (V4) owns whether a capture's transcript becomes its first
-        spoken turn instead of composer text.
+        """The injected `realtime_adopt_transcript`. See `__init__`'s
+        docstring: the realtime loop (V4) owns whether a capture's
+        transcript becomes its first spoken turn instead of composer text.
         """
-        return self._screen._console_realtime_adopt_transcript
+        return self._realtime_adopt_transcript_fn
 
     @property
     def _run_pending_console_voice_action(self) -> Any:
-        """Fire a capture-ending `VoiceCommand`'s queued action.
-
-        `ChatScreen`'s own, not dictation's: its body reaches the chat
-        store, the send button, tab creation, and TTS read-back -- well
-        beyond a controller's "handful of well-known ids." Only
+        """The injected `run_pending_voice_action`. See `__init__`'s
+        docstring: `ChatScreen`'s own, not dictation's -- its body reaches
+        the chat store, the send button, tab creation, and TTS read-back,
+        well beyond a controller's "handful of well-known ids." Only
         `_stop_console_dictation`'s tail calls it, unconditionally (a
         no-op when nothing was queued).
         """
-        return self._screen._run_pending_console_voice_action
+        return self._run_pending_voice_action_fn
 
     @property
     def _console_hands_free(self) -> Any:
-        """The hands-free loop's live session, or None. Screen-owned."""
-        return self._screen._console_hands_free
+        """Calls the injected `hands_free_session_accessor`. The pipeline
+        loop's live session, or None. See `__init__`'s docstring."""
+        return self._hands_free_session_accessor()
 
     @property
     def _console_hands_free_vad_degraded(self) -> bool:
-        """Whether VAD is unavailable, degrading the hands-free loop.
-
-        Screen-owned state; the moved `_handle_console_dictation_event`
-        writes it (the VAD-unavailable notice arrives mid-capture), so
-        this needs a setter, unlike the read-only properties below.
-        """
-        return self._screen._console_hands_free_vad_degraded
+        """Write-only: see `__init__`'s docstring for
+        `set_hands_free_vad_degraded`."""
+        raise AttributeError(
+            "_console_hands_free_vad_degraded is write-only on "
+            "ConsoleDictationController"
+        )
 
     @_console_hands_free_vad_degraded.setter
     def _console_hands_free_vad_degraded(self, value: bool) -> None:
-        self._screen._console_hands_free_vad_degraded = value
+        self._set_hands_free_vad_degraded_fn(value)
 
     @property
     def _console_undo_histories(self) -> Any:
-        """Per-session composer undo history. Screen-owned (not extracted this wave)."""
-        return self._screen._console_undo_histories
+        """Calls the injected `undo_histories_accessor`. See `__init__`'s
+        docstring: per-session composer undo history, screen-owned (not
+        extracted this wave)."""
+        return self._undo_histories_accessor()
 
     @property
     def _console_visible_draft_session_id(self) -> Any:
-        """The session id the mounted composer's draft currently reflects."""
-        return self._screen._console_visible_draft_session_id
+        """Calls the injected `visible_draft_session_id_accessor`. See
+        `__init__`'s docstring."""
+        return self._visible_draft_session_id_accessor()
 
     async def teardown(self) -> None:
         """Release dictation's own resources during screen unmount.
