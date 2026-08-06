@@ -14,6 +14,7 @@ from textual.widgets.data_table import CellDoesNotExist, ColumnKey
 
 from ...Widgets.prune_safe_select import PruneSafeSelect
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from .humane_time import humane_timestamp
 from .table_selection import highlight_is_user_driven
 
 
@@ -99,6 +100,39 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
         if not text:
             return "-"
         return cls._STATUS_LABELS.get(text.lower(), text)
+
+    @staticmethod
+    def item_published_text(item: dict[str, Any]) -> str:
+        """What the "Published" column says for one item.
+
+        TASK-2308 AC#2 (UAT F20/F24). `created_at` is INGEST time -- every
+        item a single check produces carries the same value to the
+        microsecond -- and it was shown under a column a reader reasonably
+        reads as "when was this published". `content_pane.render_article`'s
+        byline already reads the real field, `published_date`, which is
+        `None` whenever the feed itself omitted a date (RSS/Atom/JSON-Feed
+        parsing in `monitoring_engine.py` returns `None` rather than
+        defaulting to "now" -- see `_parse_date`).
+
+        Args:
+            item: A normalized watchlist item (see `normalize_watchlist_item`).
+                `published_date` and `created_at` are read; both may be
+                missing or `None`.
+
+        Returns:
+            `humane_timestamp(published_date)` when the feed supplied one.
+            Otherwise `"added <humane_timestamp(created_at)>"` -- ingest
+            time, but labelled as ingest time, never presented silently as a
+            publish date under a "Published" heading. `"-"` when the item
+            carries neither.
+        """
+        published = item.get("published_date")
+        if published:
+            return humane_timestamp(published)
+        created = item.get("created_at")
+        if created:
+            return f"added {humane_timestamp(created)}"
+        return "-"
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)

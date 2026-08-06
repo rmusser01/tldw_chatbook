@@ -331,7 +331,17 @@ def test_stats_text_omits_the_withheld_percentage_when_nothing_was_withheld():
 def test_stats_text_without_dispositions_key_is_unchanged():
     """A feed run (no `dispositions` key at all) must render exactly the
     pre-Task-7 text -- no empty `Checks:` line tacked on.
+
+    TASK-2308: `Started:` used to interpolate `run.get('started_at')`
+    verbatim; it now goes through `humane_timestamp`, so this asserts via
+    that formatter rather than pinning one of its outputs -- see the
+    identical note on `test_source_row_cells_render_the_normalizer_status_
+    summary` in `Tests/UI/test_watchlists_check_now_failure.py`, and
+    `Tests/Watchlists/test_humane_time.py` for that formatter's own,
+    clock-controlled coverage.
     """
+    from tldw_chatbook.UI.Watchlists_Modules.humane_time import humane_timestamp
+
     run = {
         "id": "run-2",
         "source_title": "AI News RSS",
@@ -350,7 +360,7 @@ def test_stats_text_without_dispositions_key_is_unchanged():
     assert RunsPane._stats_text(run) == (
         "Source: AI News RSS\n"
         "Status: completed\n"
-        "Started: 2026-07-18 10:00\n"
+        f"Started: {humane_timestamp('2026-07-18 10:00')}\n"
         "Duration: 5m\n"
         "Found: 12 | Processed: 10 | Filtered: 2 | Errors: 0"
     )
