@@ -155,3 +155,30 @@ async def test_notification_selection_highlight_moves_on_reselection(
         table = pane.query_one("#notifications-table", DataTable)
         assert not _cell_style(table, "1", 0).reverse
         assert _cell_style(table, "2", 0).reverse
+
+
+@pytest.mark.asyncio
+async def test_notification_title_strips_control_characters():
+    """Batch-4 review, I1. A notification's title can carry remote-derived
+    content (an alert fired against a feed item's own title/snippet), and
+    `Text(...)` protects only against Rich markup, not a raw control byte.
+    """
+    app = NotificationsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(NotificationsPane)
+        pane.notifications = [
+            {
+                "id": 1,
+                "title": "Evil\x9b31mAlert",
+                "category": "research",
+                "severity": "info",
+                "created_at": "2026-07-18 10:00",
+                "is_read": False,
+            },
+        ]
+        await pilot.pause()
+
+        table = pane.query_one("#notifications-table", DataTable)
+        cell = table.get_cell_at((0, 1))
+        assert "\x9b" not in cell.plain
+        assert "Evil" in cell.plain and "31mAlert" in cell.plain

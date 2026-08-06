@@ -41,6 +41,8 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
+from .humane_time import humane_timestamp
+
 #: `_store_snapshot` never writes a NULL `extracted_content` on its one live
 #: write path, but a pre-migration or hand-edited row is not ruled out --
 #: degrade honestly rather than showing a blank scroll region.
@@ -48,11 +50,22 @@ _NO_CONTENT = "This snapshot recorded no page text."
 
 
 def _snapshot_header(url: Any, created_at: Any) -> Text:
-    """The modal's header line: the page's URL, then when it was captured."""
+    """The modal's header line: the page's URL, then when it was captured.
+
+    Batch-4 review, I2: task-2308's own scope ("every Watchlists table
+    timestamp") missed this modal -- it opens from the Full page/Previous
+    snapshot buttons in the SAME `#content-actions` row this batch's reader
+    byline already humanizes, so a raw `2026-08-04T18:15:22.123456+00:00`
+    here sat one row below "Today 00:34", the exact "two clocks disagreeing"
+    shape task-2308 exists to eliminate. `created_at` goes through
+    `humane_timestamp`, the same formatter every other Watchlists timestamp
+    uses.
+    """
     header = Text()
     header.append(str(url) if url else "Unknown URL", style="bold")
     header.append("\n")
-    header.append(f"Captured {created_at or 'at an unknown time'}", style="dim")
+    when = humane_timestamp(created_at) if created_at else "at an unknown time"
+    header.append(f"Captured {when}", style="dim")
     return header
 
 

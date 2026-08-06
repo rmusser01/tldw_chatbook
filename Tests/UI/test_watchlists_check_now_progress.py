@@ -333,3 +333,79 @@ async def test_the_inspector_check_now_button_shows_the_same_busy_state():
                 break
         assert str(inspector_button.label) == "Check now"
         assert not inspector_button.disabled
+
+
+@pytest.mark.asyncio
+async def test_leaving_the_screen_mid_check_reaches_a_terminal_status_not_stuck_running():
+    """C1 (batch-4 whole-branch review, CRITICAL).
+
+    Textual's `Widget._on_unmount` cancels every worker registered on the
+    widget being torn down (`self.workers.cancel_node(self)`), regardless of
+    the worker's group name -- the named "wc_check_now" group only protects
+    against a SECOND `run_worker` call in the same group; it does nothing
+    about the screen itself going away. This app's screens are never cached
+    (`app.py`'s own `_create_navigation_screen` docstring), so switching tabs
+    while a check is running -- an entirely ordinary action -- reaches
+    exactly this path.
+
+    `asyncio.CancelledError` is `BaseException`, not `Exception` (Python
+    >=3.8), so before this fix neither `LocalWatchlistsService.execute_run`'s
+    nor `WatchlistScopeService.launch_run`'s `except Exception` guard ever
+    saw it: the run row `_mark_run_started` set to `running` moments earlier
+    was never transitioned to anything else, silently, forever.
+    """
+    app = _build_test_app()
+    source_id = _seed_source(app)
+    app.notify = Notified()
+
+    gate = asyncio.Event()
+    app.local_watchlists_service.run_executor = _gated_run_executor(gate)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _open_sources(pilot, host)
+        pane.select_source_by_id(str(pane.sources[0]["id"]))
+        await pilot.pause(0.2)
+
+        pane.query_one("#sources-check-now-button", Button).press()
+
+        # Precondition: the run really is at `running` before we leave.
+        runs: list = []
+        for _ in range(60):
+            await pilot.pause()
+            runs = await app.local_watchlists_service.list_runs(source_id=source_id)
+            if runs and runs[0]["status"] == "running":
+                break
+        assert runs and runs[0]["status"] == "running", (
+            f"precondition not met -- the run never reached 'running': {runs!r}"
+        )
+
+        # Leave the screen the way the app actually does: unmount it, the
+        # same teardown `switch_screen` performs on the outgoing screen.
+        await screen.remove()
+        await pilot.pause(0.3)
+
+        # Release the gate anyway, in case anything survived the unmount --
+        # the worker should already be cancelled and nothing should be
+        # listening on the other side of it.
+        gate.set()
+        await pilot.pause(0.3)
+
+        runs = await app.local_watchlists_service.list_runs(source_id=source_id)
+        assert runs, "the run must not vanish just because the screen did"
+        assert runs[0]["status"] != "running", (
+            "a run must never be left 'running' after the user navigates "
+            f"away; got {runs[0]!r}"
+        )
+        assert runs[0]["status"] == "failed"
+        assert "cancel" in str(runs[0].get("error_msg") or "").lower(), (
+            "the recorded reason must say the check was cancelled, not "
+            f"blame the feed: {runs[0].get('error_msg')!r}"
+        )
+
+        db = app.local_watchlists_service._db()
+        row = db.get_subscription(source_id)
+        assert row["last_error"], (
+            "the source must record that the attempt failed too, the same "
+            "as any other failed check"
+        )

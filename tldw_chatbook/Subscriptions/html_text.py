@@ -75,7 +75,18 @@ _PARAGRAPH_TAGS: frozenset[str] = frozenset(
 #: Control characters that must never reach the terminal. C0 minus tab and
 #: newline (a feed body legitimately contains both), DEL, and the C1 range --
 #: an 8-bit CSI/OSC introducer is just as capable as `ESC [` / `ESC ]`.
-_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+#:
+#: Batch-4 review, M1: CR (0x0D) is included -- it is neither tab nor
+#: newline, so "C0 minus tab and newline" always meant to cover it, but the
+#: range below used to jump `\x0c` -> `\x0e-\x1f` and skip it by one code
+#: point, letting a bare CR survive (a weaker primitive than ESC/OSC -- it
+#: can only overwrite characters earlier on the same terminal line -- but a
+#: real mismatch between what this module documents and what it did, on a
+#: module whose whole purpose is inertness). Deleting CR rather than
+#: replacing it with anything is what keeps a `\r\n` feed body from becoming
+#: a doubled blank line: the `\n` in that pair survives untouched as the one
+#: line break, exactly as if the body had used `\n` alone.
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
 #: A tag-shaped or entity-shaped fragment. Requires a letter (or `/`) directly
 #: after the `<` AND a closing `>`, so ordinary prose containing "a < b" is not

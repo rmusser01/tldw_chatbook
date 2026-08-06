@@ -61,6 +61,7 @@ from ...Subscriptions.briefing_service import (
     STATUS_FAILED,
     STATUS_GENERATING,
 )
+from ...Subscriptions.html_text import strip_control_characters
 from ...Widgets.prune_safe_select import PruneSafeSelect
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .humane_time import humane_timestamp
@@ -1290,7 +1291,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 )
                 audio_status = self.scripts_with_audio.get(row.get("id"))
                 scripts_table.add_row(
-                    Text(str(row.get("preset_name") or "—"), style=style),
+                    Text(strip_control_characters(row.get("preset_name") or "—"), style=style),
                     Text(_script_status_text(row) or "—", style=style),
                     Text(humane_timestamp(row.get("created_at")), style=style),
                     self._audio_cell(audio_status, style),
@@ -1376,10 +1377,13 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         )
         header.append(" · ")
         header.append(status or "unknown status")
+        # Batch-4 review, I1: stripped for the same reason every other
+        # identity cell touched by this batch is -- `Text.append` protects
+        # only against Rich markup, not a raw control byte.
         model_used = row.get("model_used")
         if model_used:
             header.append(" · ")
-            header.append(str(model_used))
+            header.append(strip_control_characters(model_used))
         header.append("\n")
         header.append(_window_text(row), style="dim")
         header.append("\n")
@@ -1428,13 +1432,16 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         # would have -- see the compose()-site comment on why there is no
         # separate title `Static` here.
         header.append("Script: ", style="dim")
-        header.append(str(row.get("preset_name") or "Untitled preset"), style="bold")
+        header.append(strip_control_characters(row.get("preset_name") or "Untitled preset"), style="bold")
         header.append(" · ")
         header.append(status or "unknown status")
+        # Batch-4 review, I1: stripped for the same reason every other
+        # identity cell touched by this batch is -- `Text.append` protects
+        # only against Rich markup, not a raw control byte.
         model_used = row.get("model_used")
         if model_used:
             header.append(" · ")
-            header.append(str(model_used))
+            header.append(strip_control_characters(model_used))
         header.append("\n")
         header.append(
             humane_timestamp(row.get("created_at")) if row.get("created_at")

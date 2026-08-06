@@ -26,6 +26,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, Static, TextArea
 
+from ...Subscriptions.html_text import strip_control_characters
 from ...Subscriptions.noise_defaults import (
     first_invalid_selector,
     invalid_selector_message,
@@ -509,7 +510,13 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
         deepest = levels[-1]
         if deepest.entity is not None:
             entity = deepest.entity
-            title = (
+            # Batch-4 review, I1. `title` is remote-derived (a source's OPML-
+            # imported name, an item's feed-supplied title) -- the same hole
+            # `sources_pane._source_row_cells` closes, for the same reason:
+            # `Text.append`/`Text(...)` only protects against Rich markup,
+            # not raw control bytes, and this cell is the SAME entity's name
+            # rendered a second place.
+            title = strip_control_characters(
                 entity.get("name")
                 or entity.get("source_title")
                 or entity.get("title")
@@ -523,7 +530,10 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
             if deepest.kind == "source" and self._is_url_family_source(entity):
                 yield from self._noise_selectors_editor(entity)
         else:
-            yield Static(Text(deepest.label), id="inspector-entity-title")
+            yield Static(
+                Text(strip_control_characters(deepest.label)),
+                id="inspector-entity-title",
+            )
             yield Static(Text(f"Type: {deepest.kind.capitalize()}"), id="inspector-entity-type")
 
         with Vertical(id="inspector-actions"):

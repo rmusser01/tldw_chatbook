@@ -1553,6 +1553,87 @@ async def test_the_mark_unread_button_is_compact():
         assert button.compact, "the reader's button must not cost three rows"
 
 
+@pytest.mark.asyncio
+async def test_the_expand_button_posts_the_request():
+    """Batch-4 review, I5 (half 1/2). task-2307's own Implementation Notes
+    honestly disclose that `ExpandReaderRequested` has no SCREEN-level
+    handler yet (AC#2 stays unchecked for exactly that reason -- not tested
+    here, on purpose). But the PANE-level half -- the button existing and
+    posting the message on press -- had zero test coverage at all:
+    mutation-verified by the review, gutting the `content-expand-button`
+    branch of `on_button_pressed` left all 52 tests in this file green.
+    """
+    from textual.app import App
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import (
+        ContentPane,
+        ExpandReaderRequested,
+    )
+
+    class _PaneHost(App):
+        def __init__(self) -> None:
+            super().__init__()
+            self.captured: list[str] = []
+
+        def compose(self):
+            pane = ContentPane()
+            pane.item = {"title": "x", "content": "y", "content_kind": "article"}
+            yield pane
+
+        def on_expand_reader_requested(self, message: ExpandReaderRequested) -> None:
+            self.captured.append("expand_reader_requested")
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        button = app.query_one("#content-expand-button", Button)
+        assert str(button.label) == "Expand", (
+            "the button must read Expand while the pane is not expanded"
+        )
+
+        button.press()
+        await pilot.pause()
+
+        assert app.captured == ["expand_reader_requested"], (
+            "pressing the button must post ExpandReaderRequested exactly once"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_expand_button_label_reflects_expanded_when_seeded():
+    """Batch-4 review, I5 (half 2/2). `expanded` is a plain reactive, not
+    `recompose=True` -- by design (see its own docstring): in production the
+    screen's region-solo toggle rebuilds the whole workbench through the
+    region factories, which constructs a brand new `ContentPane` and seeds
+    `expanded` on it BEFORE it mounts, so a second, pane-local recompose
+    would be pure churn. This mirrors that exact seeding shape -- set before
+    the pane is yielded -- rather than mutating the reactive on an
+    already-mounted pane, which would not be a fair test of how this
+    reactive is actually meant to be driven.
+    """
+    from textual.app import App
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+
+    class _PaneHost(App):
+        def compose(self):
+            pane = ContentPane()
+            pane.item = {"title": "x", "content": "y", "content_kind": "article"}
+            pane.expanded = True
+            yield pane
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        button = app.query_one("#content-expand-button", Button)
+        assert str(button.label) == "Restore", (
+            "a pane seeded with expanded=True must offer to give the room "
+            "back, not offer to expand again"
+        )
+
+
 # --- PR #1091 review ---------------------------------------------------------
 
 
@@ -1860,6 +1941,43 @@ def test_a_hostile_markdown_body_never_emits_a_terminal_hyperlink():
     # And the destination is disclosed rather than hidden behind the label.
     assert "https://evil.test/steal" in plain
     assert "https://evil.test/autolink" in plain
+
+
+def test_a_raw_control_byte_in_a_markdown_body_is_stripped_before_rendering():
+    """Batch-4 review, I4. Every existing hostile-markdown test (including
+    the one directly above) attacks the `Markdown(hyperlinks=False)` OSC-8
+    suppression through `[label](url)` LINK SYNTAX -- none embeds a raw
+    control byte directly in the markdown source, so nothing had proven the
+    `strip_control_characters(raw_body)` call in `render_article`'s markdown
+    branch (`_is_markdown(item)` true) does anything at all. Mutation-
+    verified by the review: replacing that branch with unstripped
+    `str(raw_body or "")` left the whole content-pane suite green.
+
+    A raw OSC-8 sequence has no CommonMark significance -- to the parser it
+    is ordinary inline text, so `Markdown` would hand it straight through to
+    the terminal exactly as written unless stripped first.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
+
+    payload = "before \x1b]8;;http://evil.test\x07label\x1b]8;;\x07 after"
+    plain, ansi = _render_to_console(
+        render_article(
+            {
+                "title": "Raw control byte in markdown",
+                "source_name": "Hostile Feed",
+                "content": payload,
+                "content_kind": "article",
+                "content_format": "markdown",
+            }
+        ),
+        width=200,
+    )
+    assert "\x1b" not in plain, "the raw ESC byte must not reach the rendered text"
+    assert "\x1b]8;;" not in ansi, (
+        "no OSC-8 hyperlink may be manufactured from a raw byte sequence "
+        "embedded directly in the markdown source"
+    )
+    assert "before" in plain and "label" in plain and "after" in plain
 
 
 # --- TASK-1494: the reader's `[full page]`/`[previous snapshot]` affordances -

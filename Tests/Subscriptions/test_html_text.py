@@ -206,6 +206,32 @@ def test_tab_and_newline_survive_control_stripping():
     assert out == "line one\nline two\tindented"
 
 
+def test_carriage_return_does_not_survive_control_stripping():
+    """Batch-4 review, M1. The docstring's own claim ("C0 minus tab and
+    newline") always meant to cover CR (0x0D, neither tab nor newline), but
+    the regex range used to jump `\\x0c` -> `\\x0e-\\x1f` and skip it by one
+    code point -- a much weaker primitive than ESC/OSC (a bare CR can only
+    overwrite characters earlier on the same terminal line, a line-overwrite
+    spoof), but a real mismatch between what this module documents and what
+    it did.
+    """
+    out = strip_control_characters("Real Title\rEVIL OVERWRITE")
+    assert "\r" not in out
+    assert out == "Real TitleEVIL OVERWRITE"
+
+
+def test_a_crlf_feed_body_is_not_left_with_doubled_blank_lines():
+    """The reviewer's own condition for the fix: stripping CR must not turn
+    a `\\r\\n` line ending into a doubled blank line -- the `\\n` in the pair
+    is the one line break and it must survive untouched, exactly as if the
+    body had used `\\n` alone.
+    """
+    with_crlf = strip_control_characters("line one\r\nline two\r\nline three")
+    with_lf = strip_control_characters("line one\nline two\nline three")
+    assert with_crlf == with_lf == "line one\nline two\nline three"
+    assert "\n\n" not in with_crlf
+
+
 def test_none_becomes_empty_string():
     assert strip_control_characters(None) == ""
     assert html_to_display_text(None) == ""
@@ -248,3 +274,56 @@ def test_readable_body_text_hostile_end_to_end():
     assert "label" in out
     assert "steal()" not in out
     assert "\x1b" not in out and "\x07" not in out
+
+
+# --- Batch-4 review, I3: self-closed (XHTML-style) void tags -------------
+#
+# Real RSS/Atom feeds commonly emit the self-closed form of a void element
+# (`<br/>`, `<img .../>`, `<hr/>`) rather than the bare `<br>`/`<img>` shape
+# every other test in this file uses -- these arrive at
+# `handle_startendtag`, not `handle_starttag` (`_DisplayTextExtractor`'s own
+# docstring says so), and that method had zero test coverage: mutation-
+# verified by the review to gut to a no-op with all 84 tests in this file
+# plus `test_watchlists_content_pane.py` staying green.
+
+
+def test_self_closed_br_becomes_a_line_break():
+    out = html_to_display_text("Line one<br/>Line two")
+    assert out == "Line one\nLine two", (
+        "the self-closed <br/> must become an actual line break, not a "
+        f"space-join or dropped tag: {out!r}"
+    )
+
+
+def test_self_closed_img_alt_text_is_kept_as_a_caption():
+    out = html_to_display_text('<p>Before</p><img alt="A chart of Q3 revenue"/><p>After</p>')
+    assert "A chart of Q3 revenue" in out
+    assert "<img" not in out
+    assert "Before" in out and "After" in out
+
+
+def test_self_closed_img_with_no_alt_text_produces_nothing_visible():
+    out = html_to_display_text('<img src="x.png"/>')
+    assert "<img" not in out
+
+
+def test_self_closed_hr_becomes_a_line_break_not_dropped_content():
+    out = html_to_display_text("<p>Above</p><hr/><p>Below</p>")
+    assert "Above" in out and "Below" in out
+    assert "<hr" not in out
+
+
+def test_self_closed_void_tag_inside_drop_content_is_still_dropped():
+    """The self-closed path must respect `_drop_depth` too -- an `<img/>`
+    inside a `<script>` must not leak an `[image: ...]` caption."""
+    out = html_to_display_text('<script>var x = "<img alt=leak/>";</script><p>Safe</p>')
+    assert "leak" not in out
+    assert "Safe" in out
+
+
+def test_a_self_closed_void_tag_is_bracket_shaped_text_that_still_survives_inert():
+    """The hostile-payload discipline this whole file exists for, through
+    the self-closed path specifically: an `alt` attribute shaped like Rich
+    markup must reach the caller as literal characters."""
+    out = html_to_display_text('<img alt="[bold red]not a style[/]"/>')
+    assert "[bold red]not a style[/]" in out

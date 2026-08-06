@@ -5901,3 +5901,81 @@ async def test_kept_briefings_button_notifies_when_chachanotes_missing_at_press_
     _args, kwargs = app.notify.call_args
     assert kwargs.get("severity") == "error"
     assert kwargs.get("markup") is False
+
+
+def test_briefing_detail_model_used_strips_control_characters():
+    """Batch-4 review, I1. `model_used`/`preset_name` are appended straight
+    into the detail header's `Text`, which protects only against Rich
+    markup, not a raw control byte -- the same discipline this batch already
+    applies to every other identity cell it touches.
+    """
+    from rich.console import Group
+
+    pane = ArtifactsPane()
+    pane.selected_briefing = {
+        "status": "complete",
+        "model_used": "Evil\x9b31mModel",
+        "body_markdown": "hello",
+        "created_at": "2026-07-18 10:00",
+    }
+    rendered = pane._detail_renderable()
+    header = rendered.renderables[0] if isinstance(rendered, Group) else rendered
+    assert "\x9b" not in header.plain
+    assert "Evil" in header.plain and "31mModel" in header.plain
+
+
+@pytest.mark.asyncio
+async def test_scripts_table_preset_column_strips_control_characters():
+    """Batch-4 review, I1. The Scripts table's own Preset cell is a
+    SEPARATE write site from the script detail header (`_script_detail_
+    renderable`) -- both read `preset_name`, but the table row is built
+    inline in `compose()`, not through that method, so it needs its own
+    stripping and its own coverage.
+    """
+    from textual.app import App
+    from textual.widgets import DataTable
+
+    class _Harness(App):
+        def compose(self):
+            yield ArtifactsPane()
+
+    app = _Harness()
+    async with app.run_test(size=(180, 50)) as pilot:
+        pane = app.query_one(ArtifactsPane)
+        # The Scripts section only renders once a briefing is selected.
+        pane.selected_briefing = {"id": 1, "status": "complete"}
+        pane.scripts = [
+            {
+                "id": 1,
+                "preset_name": "Evil\x9b31mPreset",
+                "status": "complete",
+                "created_at": "2026-07-18 10:00",
+            }
+        ]
+        await pilot.pause()
+
+        table = pane.query_one("#artifacts-scripts-table", DataTable)
+        cell = table.get_cell_at((0, 0))
+        assert "\x9b" not in cell.plain
+        assert "Evil" in cell.plain and "31mPreset" in cell.plain
+
+
+def test_script_detail_preset_name_and_model_used_strip_control_characters():
+    """Batch-4 review, I1. Same as the briefing detail header, for the
+    script detail's own `preset_name`/`model_used` cells.
+    """
+    from rich.console import Group
+
+    pane = ArtifactsPane()
+    pane.selected_script = {
+        "status": "complete",
+        "preset_name": "Evil\x9b31mPreset",
+        "model_used": "Evil\x9b31mModel",
+        "created_at": "2026-07-18 10:00",
+        "script_json": "[]",
+    }
+    rendered = pane._script_detail_renderable()
+    header = rendered.renderables[0] if isinstance(rendered, Group) else rendered
+    assert "\x9b" not in header.plain
+    assert "Evil" in header.plain
+    assert "31mPreset" in header.plain and "31mModel" in header.plain

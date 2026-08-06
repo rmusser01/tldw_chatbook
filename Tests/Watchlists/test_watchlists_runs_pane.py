@@ -570,3 +570,34 @@ async def test_a_run_identity_reaches_the_table_inert():
         cell = pane.query_one("#runs-table", DataTable).get_cell_at((0, 0))
         assert cell.plain == hostile
         assert cell.spans == []
+
+
+def test_run_identity_strips_control_characters_from_source_and_watchlist_names():
+    """Batch-4 review, I1. `_run_identity` wraps its result in a `Text(...)`,
+    which stops Rich markup but not a raw control byte -- `source_title` is
+    remote-derived (an imported source's name) the same way an item's title
+    is, and `watchlist_names` is user-typed free text with the same gap.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
+
+    cell = RunsPane._run_identity(
+        {
+            "source_title": "Evil\x9b31mFeed",
+            "watchlist_names": ["Morning\x1bread"],
+        }
+    )
+    assert "\x9b" not in cell and "\x1b" not in cell
+    assert "Evil" in cell and "31mFeed" in cell
+    assert "Morning" in cell and "read" in cell
+
+
+def test_run_item_row_title_strips_control_characters():
+    """Batch-4 review, I1. An item title is remote content (a feed entry's
+    own `<title>`); the same stripping the reader applies must reach this
+    cell too.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
+
+    cells = RunsPane._run_item_row_cells({"title": "Evil\x9b31mTitle"})
+    assert "\x9b" not in cells[0].plain
+    assert "Evil" in cells[0].plain and "31mTitle" in cells[0].plain

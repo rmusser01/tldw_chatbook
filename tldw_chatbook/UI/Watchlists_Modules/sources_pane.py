@@ -12,6 +12,7 @@ from textual.reactive import reactive
 from textual.css.query import NoMatches
 from textual.widgets import Button, DataTable, Input, Select, Static, Switch, TextArea
 
+from ...Subscriptions.html_text import strip_control_characters
 from ...Subscriptions.noise_defaults import (
     default_ignore_selectors_text,
     first_invalid_selector,
@@ -659,8 +660,23 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         which must not rebuild the table) so both draw an identical row.
         """
         style = SourcesPane._SELECTED_ROW_STYLE if highlighted else ""
+        # Batch-4 review, I1. `name` is remote-derived: OPML import
+        # (`WatchlistOpmlService.parse`) hands an `<outline text=...>`
+        # attribute straight to this field with zero sanitization, and a C1
+        # control byte (0x80-0x9F, e.g. a single-byte CSI introducer) is
+        # valid in XML 1.0's character range -- it survives the OPML parse
+        # untouched and would otherwise reach this `Text` cell (and Rich's
+        # real render) verbatim. `Text.append`/`Text(...)` only protects
+        # against Rich MARKUP, not raw control bytes -- see
+        # `html_text.strip_control_characters`'s own docstring, which closed
+        # this exact hole for the reader; it did not extend to this pane.
         return (
-            Text(str(source.get("name") or source.get("title") or "Untitled"), style=style),
+            Text(
+                strip_control_characters(
+                    source.get("name") or source.get("title") or "Untitled"
+                ),
+                style=style,
+            ),
             Text(str(source.get("source_type") or "-"), style=style),
             Text(SourcesPane.source_status_text(source), style=style),
             Text(SourcesPane.source_last_scraped_text(source), style=style),

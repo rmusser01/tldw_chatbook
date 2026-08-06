@@ -11,6 +11,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Static
 
+from ...Subscriptions.html_text import strip_control_characters
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .humane_time import humane_timestamp
 from .table_selection import highlight_is_user_driven
@@ -98,9 +99,17 @@ class NotificationsPane(RecomposeCaptureGuard, Vertical):
             # somewhere -- including on a row this pane does not consider
             # selected (task-876).
             style = self._SELECTED_ROW_STYLE if row_id == selected_id else ""
+            # Batch-4 review, I1. `title` can carry remote-derived content
+            # (an alert fired against a feed item's own title/snippet), and
+            # `Text(...)` protects only against Rich markup, not a raw
+            # control byte -- the same hole `sources_pane`/`inspector_pane`
+            # close for their own name/title cells.
             table.add_row(
                 Text("Read" if notification.get("is_read") else "Unread", style=style),
-                Text(str(notification.get("title") or "Notification"), style=style),
+                Text(
+                    strip_control_characters(notification.get("title") or "Notification"),
+                    style=style,
+                ),
                 Text(str(notification.get("category") or "-"), style=style),
                 Text(str(notification.get("severity") or "-"), style=style),
                 # TASK-2308: one timestamp format across every Watchlists

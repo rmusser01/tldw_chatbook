@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from enum import Enum
 from typing import Any, Mapping
@@ -430,6 +431,40 @@ class WatchlistScopeService:
                 resolved_run_id = self._run_id_from_item_id(run_id)
                 try:
                     return await self._maybe_await(execute_run(resolved_run_id))
+                except asyncio.CancelledError:
+                    # Batch-4 review, C1 (CRITICAL) -- the second-layer
+                    # counterpart of `LocalWatchlistsService.execute_run`'s own
+                    # `except asyncio.CancelledError` branch, kept for the
+                    # identical reason TASK-1090's `except Exception` below
+                    # already is: `execute_run` records its own cancellation
+                    # (a screen/widget teardown, e.g. the user switching tabs
+                    # mid-check) and re-raises, so ordinarily this branch never
+                    # actually has anything left to do -- `record_run_failure`
+                    # below is idempotent (it UPDATEs the same row by id) and
+                    # would simply overwrite the same "failed" state again.
+                    # This exists for whatever escapes `execute_run`'s own
+                    # handler (a service without one, a second cancellation
+                    # while THAT write was in flight) -- the same class of gap
+                    # TASK-1090 already closed for ordinary exceptions, applied
+                    # to the one exception type `except Exception` cannot see.
+                    record_failure = getattr(service, "record_run_failure", None)
+                    if callable(record_failure):
+                        try:
+                            await self._maybe_await(
+                                record_failure(
+                                    resolved_run_id,
+                                    error=(
+                                        "Check cancelled: navigated away "
+                                        "before it finished."
+                                    ),
+                                )
+                            )
+                        except Exception:
+                            logger.opt(exception=True).warning(
+                                "Watchlists: could not record the cancellation "
+                                f"of run {resolved_run_id}."
+                            )
+                    raise
                 except Exception as exc:
                     # TASK-1090. `execute_run` records its own fetch failures,
                     # but anything that escapes it -- a subscription deleted
