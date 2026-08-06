@@ -88,12 +88,52 @@ _PARAGRAPH_TAGS: frozenset[str] = frozenset(
 #: line break, exactly as if the body had used `\n` alone.
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
-#: A tag-shaped or entity-shaped fragment. Requires a letter (or `/`) directly
-#: after the `<` AND a closing `>`, so ordinary prose containing "a < b" is not
-#: mistaken for markup and mangled.
+#: A tag-shaped or entity-shaped fragment.
+#:
+#: Batch-4 review, Qodo Q5 (real content loss). The tag-shaped alternative
+#: used to be `<\s*/?[a-zA-Z][^<>]*>` -- a letter after `<`, THEN ANY
+#: characters at all up to a closing `>`. That accepted a plain-text
+#: angle-bracket autolink (`<https://example.com>`, `<mailto:a@b>` --
+#: standard in mailing-list and plain-text feed bodies, RFC 2822 "obs-angle-
+#: addr") as tag-shaped, since a URL scheme is a run of letters and `://...`
+#: is just more `[^<>]` characters up to the `>`. `looks_like_html` then
+#: routed the WHOLE body through `html.parser`, which does not know a URL is
+#: not a namespace-prefixed tag (`<xlink:href>` is real HTML, and `:` is a
+#: legal tag-name character to it) -- it tokenizes `<https://example.com>`
+#: as a start tag named `https:` with a bare attribute, and
+#: `_DisplayTextExtractor.handle_starttag` has no branch for an unknown tag,
+#: so the ENTIRE URL is silently dropped. Exactly the false-positive-
+#: corrupts-what-the-user-sees failure this function's own conservatism
+#: exists to avoid.
+#:
+#: Tightened to require a plausible tag NAME (letters/digits only -- no `:`,
+#: `/`, `.`, or other URL-shaped punctuation) immediately followed by a real
+#: tag delimiter: whitespace (an attribute is coming), `/` (self-close), or
+#: `>` (immediate close). `<https://x>` now fails here: the name-shaped
+#: prefix is "https", and the next character is `:`, which is none of
+#: those three delimiters. Verified against `<b>bold</b>`, `<BR/>`,
+#: `<div class="x">` (all still match) and `a < b and c > d` (still a
+#: harmless false positive exactly as before -- `< ` with a following space
+#: is not a valid tag start to the real parser either, so it round-trips
+#: unchanged regardless of what this pre-filter decides).
+#:
+#: This alone does not fix a body that mixes a real tag with an autolink
+#: (`looks_like_html` correctly stays True because of the real tag, so the
+#: body still reaches `html.parser`, which still cannot see an autolink
+#: embedded inside markup it IS parsing) -- see `_AUTOLINK` and its use in
+#: `html_to_display_text` for that half.
 _HTML_SHAPED = re.compile(
-    r"<\s*/?[a-zA-Z][^<>]*>|<!--|&(?:[a-zA-Z][a-zA-Z0-9]{1,31}|#\d{1,7}|#[xX][0-9a-fA-F]{1,6});"
+    r"<\s*/?[a-zA-Z][a-zA-Z0-9]*(?:\s|/|>)|<!--|&(?:[a-zA-Z][a-zA-Z0-9]{1,31}|#\d{1,7}|#[xX][0-9a-fA-F]{1,6});"
 )
+
+#: A plain-text angle-bracket autolink (RFC 2822 "obs-angle-addr" shape):
+#: `<https://example.com>`, `<mailto:a@b>`. Restricted to a small allowlist
+#: of schemes actually seen in feed/mailing-list bodies rather than any
+#: RFC 3986 scheme -- matching `looks_like_html`'s own "deliberately
+#: conservative" stance: this recognizes a known-safe shape, it does not
+#: validate URIs in general. `[^\s<>]+` (no whitespace, no nested angle
+#: brackets) keeps it from reaching across unrelated markup.
+_AUTOLINK = re.compile(r"<((?:https?|ftp|mailto):[^\s<>]+)>")
 
 #: Runs of spaces/tabs, collapsed inside a line. Newlines are structure here
 #: and are handled separately.
@@ -278,13 +318,37 @@ def html_to_display_text(value: Any) -> str:
     if value is None:
         return ""
     source = str(value)
+    # Batch-4 review, Qodo Q5 (the other half -- see `_AUTOLINK`'s own
+    # comment). A body can legitimately mix a plain-text autolink with real
+    # HTML elsewhere, which correctly keeps `looks_like_html` True and sends
+    # the whole body through `html.parser` -- and `html.parser`'s tag-name
+    # tokenizer accepts `:` (for namespace-prefixed tags), so it reads
+    # `<https://example.com>` as a start tag named `https:` with a bare
+    # attribute `example.com`, which `_DisplayTextExtractor.handle_starttag`
+    # has no branch for and silently drops. Autolinks are protected here,
+    # before the parser ever sees them: swapped for a placeholder in the
+    # Unicode Private Use Area (never present in real feed text, and never
+    # tag-shaped, so it always survives as ordinary `handle_data` output --
+    # including correctly vanishing along with the rest of a `<script>`/
+    # `<style>` block if that is where it happened to sit) and restored,
+    # verbatim, once parsing is done.
+    autolinks: list[str] = []
+
+    def _protect_autolink(match: re.Match[str]) -> str:
+        autolinks.append(match.group(1))
+        return f"{len(autolinks) - 1}"
+
+    protected_source = _AUTOLINK.sub(_protect_autolink, source)
     parser = _DisplayTextExtractor()
     try:
-        parser.feed(source)
+        parser.feed(protected_source)
         parser.close()
     except Exception:  # pragma: no cover - defensive, see the docstring
         return strip_control_characters(source)
-    return strip_control_characters(parser.text())
+    text = parser.text()
+    for index, url in enumerate(autolinks):
+        text = text.replace(f"{index}", url)
+    return strip_control_characters(text)
 
 
 def readable_body_text(value: Any) -> str:

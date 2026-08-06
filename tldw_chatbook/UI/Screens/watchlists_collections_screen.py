@@ -128,6 +128,7 @@ from ..Watchlists_Modules.artifacts_pane import (
 from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
 from ..Watchlists_Modules.content_pane import (
     ContentPane,
+    ExpandReaderRequested,
     UnreadToggleRequested,
     ViewSnapshotRequested,
 )
@@ -2094,9 +2095,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `ContentPane` does not draw its own heading (see `SELF_HEADED_REGIONS`
         in `watchlists_workbench.py`), so `WatchlistsWorkbench` prepends the
         generic "Content" title above whatever this returns.
+
+        Batch-4 review, Qodo Q4. `pane.expanded` is seeded from the live
+        `region_layout` (matching `_build_inspector_pane`'s `selected_entity`
+        seeding note above): this factory reruns on every region rebuild,
+        including the one `handle_expand_reader_requested` itself triggers
+        by calling `_apply_layout`, so the freshly-built pane must be told
+        whether CONTENT is the soloed region or its "Expand"/"Restore" label
+        would go stale the instant the layout that produced it changes.
         """
         pane = ContentPane(id="watchlists-content-pane")
         pane.item = self._selected_content_item
+        pane.expanded = self.region_layout.solo_region == Region.CONTENT
         return pane
 
     def _watchlists_are_empty(self) -> bool:
@@ -4568,6 +4578,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         documents: a cancelled `execute_run` leaves its row at `running`
         forever). `run_worker` below uses a named group instead, so a second,
         DIFFERENT source's check is unaffected by this one either way.
+
+        Args:
+            event: Carries the source entity to check (`event.entity`), or
+                `None` if the pane posting it had nothing selected -- see
+                `SourcesPane`/`InspectorPane`'s own `CheckNowRequested`
+                call sites.
         """
         event.stop()
         entity = event.entity
@@ -8476,6 +8492,37 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if item_id is None:
             return
         self._dispatch_item_status(item_id, _ItemStatusIntent(status="new", gate=True))
+
+    @on(ExpandReaderRequested)
+    def handle_expand_reader_requested(self, event: ExpandReaderRequested) -> None:
+        """Give the reader the whole centre stack, or give it back (AC#2).
+
+        Batch-4 review, Qodo Q4: this was task-2307's own disclosed gap --
+        `ContentPane` posted `ExpandReaderRequested` and nothing handled it,
+        a dead button. Task-1344 already built the mechanism this needs
+        (`action_solo_region`, bound to `Z`): isolate one centre pane,
+        collapsing the other two around it, and calling `solo` again on the
+        same region restores them (`RegionLayout.solo`'s own docstring).
+        Routed through THAT mechanism rather than a second one -- same
+        `_apply_layout` call `action_solo_region` makes, just with
+        `Region.CONTENT` as the target instead of reading it off
+        `self.focused_region`, since a button press already names its
+        target unambiguously and does not need the focus-tracking
+        indirection a keyboard shortcut does.
+
+        `_refuse_region_gesture_off_read_tab` is consulted anyway, for the
+        same "one source of truth for is a region-layout gesture allowed"
+        reason `action_toggle_region`/`action_solo_region`/`_on_region_
+        toggled` all do (see that method's own docstring) -- in practice
+        this button cannot be pressed off the Read tab at all (CONTENT is
+        unmounted everywhere else), so the refusal is defensive rather than
+        reachable, not a second, independent gate someone could drift out
+        of sync with the other three.
+        """
+        event.stop()
+        if self._refuse_region_gesture_off_read_tab(Region.CONTENT):
+            return
+        self._apply_layout(self.region_layout.solo(Region.CONTENT))
 
     @on(ViewSnapshotRequested)
     def handle_view_snapshot_requested(self, event: ViewSnapshotRequested) -> None:

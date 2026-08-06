@@ -1634,6 +1634,111 @@ async def test_the_expand_button_label_reflects_expanded_when_seeded():
         )
 
 
+@pytest.mark.asyncio
+async def test_pressing_expand_actually_solos_content_and_restores_on_a_second_press():
+    """Batch-4 review round 3, Qodo Q4. Closes the gap I5 deliberately left
+    open (AC#2's screen-level handler, "honestly unwired" at the time):
+    `ExpandReaderRequested` now routes to the SAME `RegionLayout.solo`
+    mechanism `Z`/`action_solo_region` already uses (task-1344), so pressing
+    the button must produce the identical, real effect a `Z` keypress does
+    -- not a second, parallel maximize implementation.
+    """
+    from textual.widgets import Button
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+
+    item = {
+        "id": 11,
+        "title": "Expand me",
+        "source_name": "Feed",
+        "content": "body",
+        "content_kind": "article",
+        "content_format": "text",
+    }
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen.active_section = "items"
+        await pilot.pause(0.2)
+
+        items_pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        items_pane.items = [item]
+        await pilot.pause(0.2)
+        items_pane.select_item_by_id("11")
+        await pilot.pause(0.3)
+
+        assert screen.query("#wl-region-feeds"), "precondition: FEEDS starts visible"
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        expand_button = content_pane.query_one("#content-expand-button", Button)
+        assert str(expand_button.label) == "Expand"
+
+        expand_button.press()
+        await pilot.pause(0.3)
+
+        assert screen.region_layout.solo_region is Region.CONTENT, (
+            "the SAME solo mechanism Z uses must actually have run"
+        )
+        assert screen.query("#wl-region-content")
+        assert not screen.query("#wl-region-feeds"), (
+            "soloing CONTENT must actually collapse FEEDS around it -- the "
+            "real, visible effect, not just a state flag"
+        )
+        assert not screen.query("#wl-region-items")
+
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        restore_button = content_pane.query_one("#content-expand-button", Button)
+        assert str(restore_button.label) == "Restore", (
+            "the freshly-rebuilt pane must be seeded from the live layout, "
+            "not silently reset to Expand"
+        )
+
+        restore_button.press()
+        await pilot.pause(0.3)
+
+        assert screen.region_layout.solo_region is None, "a second press must restore"
+        assert screen.query("#wl-region-feeds")
+        assert screen.query("#wl-region-items")
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        assert str(
+            content_pane.query_one("#content-expand-button", Button).label
+        ) == "Expand"
+
+
+@pytest.mark.asyncio
+async def test_expand_reader_requested_off_the_read_tab_is_refused_defensively():
+    """The button cannot actually be pressed off Read (CONTENT is unmounted
+    everywhere else), so this drives the message directly -- the same
+    defensive-gate shape `test_solo_on_content_off_the_read_tab_is_refused`
+    already pins for `Z`, now pinned for this second entry point into the
+    identical gate.
+    """
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ExpandReaderRequested
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+        before = screen.region_layout
+
+        screen.post_message(ExpandReaderRequested())
+        await pilot.pause(0.3)
+
+        assert screen.region_layout == before
+        assert screen.region_layout.solo_region is None
+
+
 # --- PR #1091 review ---------------------------------------------------------
 
 

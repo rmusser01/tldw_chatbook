@@ -28,7 +28,7 @@ UAT findings F26 (high), F27.
       converted; links presented legibly), while remote-derived text remains
       inert against markup/injection — the escaping-terminal rule holds at
       the NEW final render step.
-- [ ] The reader advertises how to give itself more room (or provides a
+- [x] The reader advertises how to give itself more room (or provides a
       visible expand affordance).
 - [x] Regression tests cover HTML-to-text rendering and the injection-
       inertness of rendered remote content.
@@ -81,22 +81,57 @@ property through `render_article` and, end to end, through a mounted
 reader shows "Article URL: https://buttondown.com/blog/..." as legible
 prose, not `<p>Article URL: <a href=...>`.
 
-**AC#2 -- NOT done; left unchecked on purpose.** The button renders and
-carries the right tooltip, but nothing in `watchlists_collections_screen.py`
-imports or handles `ExpandReaderRequested` -- confirmed by grep and by
-mutation (there is no `@on(ExpandReaderRequested)` anywhere). Pressing
-Expand currently does nothing. This batch's dispatch explicitly scoped the
-remaining work to the Items publish column (task-2308) and Check-now
-progress (task-2309) plus tests, and did not include finishing this AC's
-region-solo wiring (`_apply_layout`/`Region.CONTENT`, per this task's own
-step 4) -- so it was left alone rather than expanding scope past what was
-asked. Filed as a gap for a follow-up task rather than silently checked off.
+**AC#2 -- done, closed in the Qodo re-review round (Q4).** Was left
+unchecked through two review rounds (the button rendered and posted
+`ExpandReaderRequested`, but nothing handled it) because it was out of
+those rounds' explicit scope. Qodo flagged the dead button as worse than no
+button at all and asked for a decision: wire it to the existing mechanism
+or remove it. Read task-1344's region-solo machinery
+(`action_solo_region`/`RegionLayout.solo`, bound to `Z`) first, per the
+review's instruction, and it was a clean fit -- `handle_expand_reader_
+requested` now calls the exact same `self._apply_layout(self.region_
+layout.solo(Region.CONTENT))` `action_solo_region` calls for a `Z`
+keypress, through `_refuse_region_gesture_off_read_tab` for the same
+defense-in-depth every other region-layout entry point goes through. No
+second maximize mechanism was built. `_build_content_pane` also now seeds
+`pane.expanded` from `self.region_layout.solo_region == Region.CONTENT`,
+which the earlier rounds had not done either -- without it the button's
+label would silently go stale across the very rebuild pressing it causes.
+Live-verified: pressing Expand collapses Feeds and Items to one-line
+headers and gives Content the whole centre stack (visible: the reader
+showed more of the item, e.g. a "# Comments: 1" line that had been
+scrolled off before); the button relabels to "Restore"; a second press
+restores the three-pane view exactly.
 
 **AC#3 -- done.** See above; 32 unit tests + 4 content-pane tests, all
 passing, including a mutation-verified check that a link whose label already
 IS the destination is not printed twice.
 
-Modified/added: `Tests/Subscriptions/test_html_text.py` (new),
-`Tests/UI/test_watchlists_content_pane.py` (4 tests appended). No production
-code changed for this task in this session -- `html_text.py` and
-`content_pane.py`'s HTML wiring were already complete in the WIP commit.
+Modified/added: `Tests/Subscriptions/test_html_text.py` (new, later
+extended), `Tests/UI/test_watchlists_content_pane.py` (tests appended
+across rounds). No production code changed for AC#1/#3 in the original
+session -- `html_text.py` and `content_pane.py`'s HTML wiring were already
+complete in the WIP commit.
+
+**Qodo Q5 (later round, same module):** `_HTML_SHAPED` (the `looks_like_
+html` classifier) accepted a plain-text angle-bracket autolink
+(`<https://x>`, `<mailto:a@b>` -- RFC 2822, standard in mailing-list/
+plain-text feed bodies) as tag-shaped, so `html.parser` read it as a
+namespace-prefixed start tag (`:` is a legal tag-name character) and
+silently dropped the whole URL -- real content loss, the exact failure
+`looks_like_html`'s own conservatism exists to avoid. Fixed in two parts:
+`_HTML_SHAPED`'s tag alternative now requires a plausible tag name
+(letters/digits only) immediately followed by a real delimiter
+(whitespace/`/`/`>`), which excludes a bare autolink from classification
+entirely; and a new `_AUTOLINK`-based protect/restore step inside
+`html_to_display_text` covers the case tightening the classifier alone
+cannot -- a body that legitimately mixes an autolink WITH real HTML (the
+real tag correctly keeps the whole body routed through the parser, which
+still cannot tell an autolink from a tag on its own). Verified against
+every case Qodo listed, `Tests/Subscriptions/test_html_text.py` grew 8
+tests, and both mechanisms are independently mutation-verified.
+
+**Qodo Q4 (docstrings, Q1-Q3):** unrelated docstring completeness findings
+on `watchlists_collections_screen.handle_check_now_requested`,
+`sources_pane.source_last_scraped_text`, and `sources_pane.watch_busy_
+source_ids` -- `Args:`/`Returns:` sections added, no behavioural change.

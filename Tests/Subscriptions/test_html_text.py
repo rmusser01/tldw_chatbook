@@ -54,6 +54,91 @@ def test_empty_and_none_are_not_html():
     assert not looks_like_html(None)
 
 
+# --- Batch-4 review, Qodo Q5: angle-bracket autolinks are not tags -------
+#
+# `<https://x>`/`<mailto:a@b>` (RFC 2822 "obs-angle-addr") are standard in
+# mailing-list and plain-text feed bodies. The old `_HTML_SHAPED` regex
+# accepted any letter-then-anything-up-to-`>` as tag-shaped, so these were
+# misclassified as HTML and routed through `html.parser`, which reads
+# `<https://x>` as a start tag named `https:` (`:` is a legal tag-name
+# character, for namespace-prefixed tags like `<xlink:href>`) with a bare
+# attribute -- and silently drops the whole URL, since nothing handles an
+# unrecognized tag. Real content loss, not just a classification quibble.
+
+
+def test_a_bare_autolink_is_not_classified_as_html():
+    assert not looks_like_html("<https://x>")
+    assert not looks_like_html("<mailto:a@b>")
+
+
+def test_a_bare_autolink_survives_readable_body_text_verbatim():
+    """The end-to-end path a feed body actually takes. Not classified as
+    HTML at all, so it never reaches the parser that used to eat it."""
+    assert "https://x" in readable_body_text("<https://x>")
+    assert "a@b" in readable_body_text("<mailto:a@b>")
+
+
+def test_real_tags_are_still_classified_as_html():
+    """The fix must not overcorrect -- these must all still match."""
+    assert looks_like_html("<b>bold</b>")
+    assert looks_like_html("<BR/>")
+    assert looks_like_html('<div class="x">')
+
+
+def test_the_stray_angle_bracket_prose_case_is_unaffected_by_the_tightening():
+    """`a < b and c > d` was ALREADY a harmless false positive before this
+    fix (`< b and c >` reads as tag-shaped to the old regex too) and stays
+    one after it -- `< ` (space right after `<`) is not a valid tag start to
+    the real parser either way, so the text round-trips unchanged regardless
+    of which regex flags it. Pinned so a future tightening cannot silently
+    start corrupting this common prose shape while "fixing" something else.
+    """
+    assert html_to_display_text("a < b and c > d") == "a < b and c > d"
+    assert readable_body_text("a < b and c > d") == "a < b and c > d"
+
+
+def test_an_autolink_mixed_with_real_html_still_converts_and_keeps_the_url():
+    """The case tightening `_HTML_SHAPED` alone does NOT fix: real HTML
+    elsewhere in the body correctly keeps `looks_like_html` True, so the
+    whole body still reaches `html.parser` -- which still cannot tell an
+    autolink from a namespace-prefixed tag on its own. The body must still
+    convert (the real HTML must still become prose) AND the autolink's URL
+    must still survive, verbatim.
+    """
+    body = "Check out <https://example.com> for more, or <b>bold</b> stuff."
+    assert looks_like_html(body)
+    out = html_to_display_text(body)
+    assert "<b>" not in out and "</b>" not in out, "the real tag must still convert"
+    assert "bold" in out
+    assert "https://example.com" in out, "the autolink's URL must survive verbatim"
+    assert "<https://example.com>" not in out, (
+        "the raw tag-shaped form must not leak through unconverted"
+    )
+
+
+def test_two_autolinks_in_one_body_both_survive():
+    """Guards the placeholder-restoration loop against only handling one
+    match -- each occurrence gets its own index."""
+    body = "See <https://a.example> and also <https://b.example>, or <i>this</i>."
+    out = html_to_display_text(body)
+    assert "https://a.example" in out
+    assert "https://b.example" in out
+    assert "this" in out
+
+
+def test_an_autolink_inside_dropped_content_does_not_leak():
+    """The protect-before-parse step must not accidentally rescue an
+    autolink that legitimately belongs inside a `<script>` block -- it has
+    to vanish along with the rest of that content, not leak through the
+    placeholder-restoration step as an exception to the drop rule.
+    """
+    out = html_to_display_text(
+        '<script>var x = "<https://evil.example>";</script><p>Safe</p>'
+    )
+    assert "evil.example" not in out
+    assert "Safe" in out
+
+
 # --- html_to_display_text: readability ----------------------------------
 
 

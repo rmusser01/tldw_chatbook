@@ -646,6 +646,16 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         zone. The stored value is a full UTC ISO-8601 string with
         microseconds -- 32 characters, in a table whose Name column is the
         one people actually read.
+
+        Args:
+            source: A normalized source dict; `last_checked_or_scraped_at`
+                (the current normalizer field) is preferred, falling back to
+                the older `last_scraped` for any hand-built row that still
+                uses it.
+
+        Returns:
+            `humane_timestamp` of whichever of the two fields is present, or
+            `"-"` when neither is.
         """
         return humane_timestamp(
             source.get("last_checked_or_scraped_at") or source.get("last_scraped")
@@ -1256,6 +1266,13 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
 
         TASK-2309. Mirrors `watch_selected_source`'s repaint-not-rebuild
         choice above, for the identical reason.
+
+        Args:
+            _busy_source_ids: The reactive's new value (Textual's watcher
+                convention passes it), unused directly -- `_update_action_
+                buttons`/`_is_check_now_busy` re-read the current value off
+                `self.busy_source_ids` instead, the same indirection
+                `watch_selected_source` already uses for its own reactive.
         """
         self._update_action_buttons()
 
