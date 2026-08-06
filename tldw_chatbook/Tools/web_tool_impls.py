@@ -708,7 +708,10 @@ def _crawl_fetch_page(
             location = headers.get("location")
             if not location:
                 raise LocalToolError(f"[http-{status}] redirect without a Location header")
-            current = urljoin(current, location)
+            try:
+                current = urljoin(current, location)
+            except ValueError as exc:
+                raise LocalToolError(f"[invalid-url] malformed redirect Location: {location!r}") from exc
             continue
         if status >= 400:
             raise LocalToolError(f"[http-{status}] upstream returned status {status} for {current!r}")
@@ -770,7 +773,7 @@ def web_crawl(
             is_start = attempts == 0
             attempts += 1
             try:
-                final_url, headers, body, _truncated = _crawl_fetch_page(client, current, deadline)
+                final_url, headers, body, truncated = _crawl_fetch_page(client, current, deadline)
             except _CrawlDeadline:
                 stop_reason = "deadline reached"
                 break
@@ -801,7 +804,13 @@ def web_crawl(
             except LocalToolError:
                 full_text = ""
             if full_text:
-                _cache_put((final_url, FETCH_MAX_BYTES), full_text)
+                # Parity with web_fetch: a body already sliced to FETCH_MAX_BYTES
+                # must carry the same marker web_fetch would have appended, or a
+                # default web_fetch() cache hit silently hands back a cut page.
+                cache_text = full_text
+                if truncated:
+                    cache_text += f"\n\n[... truncated: response exceeded max_bytes={FETCH_MAX_BYTES} ...]"
+                _cache_put((final_url, FETCH_MAX_BYTES), cache_text)
             pages.append({
                 "url": final_url,
                 "title": parser.title.strip(),
@@ -813,13 +822,18 @@ def web_crawl(
             # that redirected off-host is listed but its links are not followed.
             if depth >= max_depth or _crawl_host(final_url) != scope_host:
                 continue
-            base = urljoin(final_url, parser.base_href) if parser.base_href else final_url
-            for href in parser.links:
-                absolute = urljoin(base, href)
+            base = final_url
+            if parser.base_href:
                 try:
+                    base = urljoin(final_url, parser.base_href)
+                except ValueError:
+                    base = final_url  # malformed <base href>: fall back to the page URL
+            for href in parser.links:
+                try:
+                    absolute = urljoin(base, href)
                     scheme = urlsplit(absolute).scheme.lower()
                 except ValueError:
-                    continue
+                    continue  # malformed href (e.g. unbalanced IPv6 brackets): skip it
                 if scheme not in _ALLOWED_SCHEMES:
                     continue
                 if _crawl_host(absolute) != scope_host:

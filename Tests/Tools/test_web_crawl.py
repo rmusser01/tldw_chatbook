@@ -402,3 +402,69 @@ def test_crawl_invalid_args(crawl_env):
         web_crawl("")
     with pytest.raises(LocalToolError, match="invalid-args"):
         web_crawl("   ")
+
+
+# ---------------------------------------------------------------------------
+# Fix-round: unguarded urljoin() ValueError + unmarked truncated cache write
+# ---------------------------------------------------------------------------
+
+
+def test_crawl_survives_malformed_href_in_link_loop(crawl_env):
+    """A malformed href (urljoin raises ValueError: 'Invalid IPv6 URL') must
+    be skipped, not crash the whole crawl."""
+    _site(crawl_env, {
+        "http://example.com/": ("root", ["http://[", "/good"]),
+        "http://example.com/good": ("good page words", []),
+    })
+    out = web_crawl("http://example.com/")
+    assert "good page words" in out
+    assert "Crawled 2 pages (0 failed, 0 blocked)" in out
+
+
+def test_crawl_survives_malformed_base_href(crawl_env):
+    """A malformed <base href> must fall back to final_url as the resolution
+    base, not crash the whole crawl."""
+    crawl_env.routes["http://example.com/"] = httpx.Response(
+        200,
+        content=(
+            b"<html><head><title>T</title><base href='http://['></head>"
+            b"<body><a href='/good'>g</a></body></html>"
+        ),
+        headers={"content-type": "text/html"},
+    )
+    _site(crawl_env, {"http://example.com/good": ("good page words", [])})
+    out = web_crawl("http://example.com/")
+    assert "good page words" in out
+    assert "http://example.com/good" in crawl_env.calls
+
+
+def test_crawl_malformed_redirect_location_counted_as_failed(crawl_env):
+    """A redirect Location that urljoin cannot parse becomes a per-page
+    [invalid-url] failure, not an uncaught ValueError."""
+    _site(crawl_env, {
+        "http://example.com/": ("root", ["/trap", "/ok"]),
+        "http://example.com/ok": ("fine words", []),
+    })
+    crawl_env.routes["http://example.com/trap"] = httpx.Response(
+        302, headers={"location": "http://["}
+    )
+    out = web_crawl("http://example.com/")
+    assert "1 failed" in out
+    assert "fine words" in out
+
+
+def test_crawl_warm_write_includes_truncation_marker(crawl_env):
+    """A truncated HTML page must warm-write the SAME truncation marker
+    web_fetch would produce, so a later default web_fetch() cache hit does
+    not silently hand back a cut page as if it were complete."""
+    from tldw_chatbook.Tools.web_tool_impls import FETCH_MAX_BYTES, web_fetch
+
+    big_html = "<html><body><p>" + ("y " * ((FETCH_MAX_BYTES + 5000) // 2)) + "</p></body></html>"
+    crawl_env.routes["http://example.com/"] = httpx.Response(
+        200, content=big_html.encode(), headers={"content-type": "text/html"}
+    )
+    web_crawl("http://example.com/")
+    n_calls = len(crawl_env.calls)
+    result = web_fetch("http://example.com/")
+    assert result.endswith(f"[... truncated: response exceeded max_bytes={FETCH_MAX_BYTES} ...]")
+    assert len(crawl_env.calls) == n_calls  # served from cache, no new request
