@@ -34,7 +34,7 @@ def test_catalog_lists_default_specs_with_local_ids(tmp_path):
         "local:fs_patch", "local:fs_glob", "local:fs_grep",
         "local:git_status", "local:git_diff", "local:git_log",
         "local:git_blame", "local:git_branches",
-        "local:web_fetch", "local:web_search",
+        "local:web_fetch", "local:web_search", "local:web_crawl",
     ]
     assert entries[0].name == "fs_list" and entries[0].source == "local"
     schema = p.load_schema("local:fs_list")
@@ -685,6 +685,34 @@ def test_web_search_spec_schema(tmp_path):
     assert "duckduckgo" in props["search_engine"]["enum"]
     assert props["result_count"]["type"] == "integer"
     assert p.hub_tool_for("web_search").tags == ()
+
+
+def test_web_crawl_spec_schema(tmp_path):
+    p = make_provider(root=tmp_path)
+    schema = p.load_schema("local:web_crawl")
+    assert schema.parameters["required"] == ["url"]
+    props = schema.parameters["properties"]
+    assert props["url"]["type"] == "string"
+    assert props["max_pages"]["type"] == "integer"
+    assert props["max_depth"]["type"] == "integer"
+    assert props["sitemap_url"]["type"] == "string"
+    for optional in ("max_pages", "max_depth", "sitemap_url"):
+        assert optional not in schema.parameters["required"]
+    # network-classed: default ask comes from the global permission default.
+    assert p.hub_tool_for("web_crawl").tags == ()
+
+
+def test_web_crawl_description_states_contract(tmp_path):
+    p = make_provider(root=tmp_path)
+    desc = p.hub_tool_for("web_crawl").description
+    assert "web_fetch" in desc          # points the model at the follow-up tool
+    assert "sitemap_url" in desc
+    assert "max_depth" in desc          # documents the sitemap-mode exception
+
+
+def test_web_fetch_description_mentions_pdf(tmp_path):
+    p = make_provider(root=tmp_path)
+    assert "PDF" in p.hub_tool_for("web_fetch").description
 
 
 def _fake_search_payload(count, snippet_len=50, snippet_char="x"):

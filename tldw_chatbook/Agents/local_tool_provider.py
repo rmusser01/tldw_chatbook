@@ -527,11 +527,16 @@ def _default_specs(
     )
     from tldw_chatbook.Tools.patch_tool_impls import patch_files
     from tldw_chatbook.Tools.web_tool_impls import (
+        CRAWL_DEFAULT_MAX_DEPTH,
+        CRAWL_DEFAULT_MAX_PAGES,
+        CRAWL_MAX_DEPTH_CEILING,
+        CRAWL_MAX_PAGES_CEILING,
         FETCH_MAX_BYTES,
         SEARCH_DEFAULT_ENGINE,
         SEARCH_DEFAULT_RESULT_COUNT,
         SEARCH_ENGINES,
         SEARCH_MAX_RESULT_COUNT,
+        web_crawl,
         web_fetch,
         web_search,
     )
@@ -786,7 +791,12 @@ def _default_specs(
         ),
         LocalToolSpec(
             name="web_fetch",
-            description="Fetch a web page and return its extracted text. SSRF-guarded (public http(s) only), redirect-capped, byte-capped, cached.",
+            description=(
+                "Fetch a web page and return its extracted text; PDFs are "
+                "text-extracted too (up to 20 MB, ephemeral — nothing is "
+                "ingested). SSRF-guarded (public http(s) only), "
+                "redirect-capped, byte-capped, cached."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -818,6 +828,37 @@ def _default_specs(
                 result_count=args.get("result_count", SEARCH_DEFAULT_RESULT_COUNT),
             ),
             tags=(),  # network-classed, read-only: no risk tags
+        ),
+        LocalToolSpec(
+            name="web_crawl",
+            description=(
+                "Crawl a website breadth-first from a start URL and return a "
+                "bounded page list (URL, title, short excerpt per page) — "
+                "follow up with web_fetch on pages that matter. Same-host "
+                "only, SSRF-guarded, rate-limited (~1 page/sec), wall-clock "
+                "capped (120s). Optional sitemap_url seeds the page list "
+                "from a sitemap instead of link discovery (max_depth is "
+                "ignored in that mode)."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "Start URL; its host defines the crawl scope."},
+                    "max_pages": {"type": "integer", "default": CRAWL_DEFAULT_MAX_PAGES, "minimum": 1, "maximum": CRAWL_MAX_PAGES_CEILING, "description": "Fetch-attempt budget."},
+                    "max_depth": {"type": "integer", "default": CRAWL_DEFAULT_MAX_DEPTH, "minimum": 1, "maximum": CRAWL_MAX_DEPTH_CEILING, "description": "Link depth from the start URL (start = 0)."},
+                    "sitemap_url": {"type": "string", "description": "Optional sitemap.xml URL to seed pages from instead of link discovery."},
+                },
+                "required": ["url"],
+            },
+            handler=lambda args: web_crawl(
+                args["url"],
+                max_pages=args.get("max_pages", CRAWL_DEFAULT_MAX_PAGES),
+                max_depth=args.get("max_depth", CRAWL_DEFAULT_MAX_DEPTH),
+                sitemap_url=args.get("sitemap_url"),
+            ),
+            # network-classed: default ask from the permission store's global
+            # default; read-only, so no risk tags.
+            tags=(),
         ),
     ]
     if todo_store is not None:
