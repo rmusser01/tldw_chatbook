@@ -2574,6 +2574,26 @@ class UnifiedMCPControlPlaneService:
         improvement for the same "check everything before running
         anything" reason the scan exists at all.
 
+        Fix Round H (PR-T3 review), Item 5: called here, in ``run_action()``
+        (line ~1271), BEFORE ``local_service.run_runtime_batch()``'s own
+        ``_require_allowed("mcp.runtime.trigger.local")`` check (nested one
+        layer down, ``local_control_service.py:499``) ever runs. A
+        non-``dict``-coercible item (e.g. a bare ``5``) therefore raises
+        ``TypeError`` HERE, before the capability check, so a caller
+        lacking ``mcp.runtime.trigger.local`` who submits a malformed batch
+        gets a shape error instead of a policy denial. DECISION (not a
+        defect, left as-is): nothing runs either way -- both paths refuse
+        the whole batch before any item dispatches -- and this is
+        consistent with the pre-existing ``_refuse_raw_tool_call()`` scan
+        immediately below, which ALSO runs at this layer, before the same
+        nested permission check, for the identical "validate the whole
+        batch before dispatching or gating it" reason (see the comment
+        above this call site). Reordering to gate first would mean parsing
+        malformed, potentially adversarial batch items before knowing the
+        caller may even act -- worse, not better. If this needs revisiting,
+        it should move with `_refuse_raw_tool_call()`'s ordering too, not
+        change alone.
+
         Args:
             requests: The raw ``requests`` list from the ``runtime.batch``
                 payload.
