@@ -1158,6 +1158,47 @@ async def test_no_default_profile_still_falls_through_to_global() -> None:
     assert resolved.revisions.default_profile_revision is None
 
 
+@pytest.mark.asyncio
+async def test_incomplete_default_profile_blocks_instead_of_using_global_values() -> (
+    None
+):
+    runtime = _ResolutionRuntime()
+    default_profile = TTSDefaultProfileSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp",
+            model_mode="exact",
+            model_id=None,
+            voice_mode="server_default",
+            response_format="wav",
+            speed=1.0,
+            provider_options={},
+        ),
+        repository_generation=2,
+        profile_revision=3,
+    )
+
+    with pytest.raises(TTSEffectiveResolutionError) as caught:
+        await TTSEffectiveSettingsResolver().resolve_non_studio(
+            default_profile=default_profile,
+            global_preferences=_global_preferences(
+                provider_id="audio_cpp",
+                model_mode="exact",
+                model_id="global-model",
+                voice_mode="server_default",
+                voice_id=None,
+                response_format="wav",
+                speed=1.0,
+            ),
+            global_preferences_revision=7,
+            provider_revision_reader=runtime.provider_revision,
+            catalog_reader=runtime.read_catalog,
+        )
+
+    assert caught.value.code == "missing_exact"
+    assert caught.value.axis == "model_id"
+    assert caught.value.source is TTSSelectionSource.DEFAULT_PROFILE
+
+
 def test_default_profile_revisions_must_travel_together() -> None:
     with pytest.raises(ValueError):
         TTSEffectiveSelectionRevisions(
