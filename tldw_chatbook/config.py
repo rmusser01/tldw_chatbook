@@ -937,6 +937,15 @@ def load_settings(force_reload: bool = False) -> Dict:
         normalize_console_background_effects(background_effects).to_config()
     )
 
+    # --- MCP Settings ---
+    final_mcp_settings_cli = copy.deepcopy(get_toml_section("mcp"))
+    if not isinstance(final_mcp_settings_cli, dict):
+        final_mcp_settings_cli = {}
+    final_mcp_settings_cli["expose_local_tools"] = coerce_bool_setting(
+        final_mcp_settings_cli.get("expose_local_tools", False),
+        False,
+    )
+
     # --- Application Mode ---
     single_user_mode_str = os.getenv(
         "APP_MODE", _get_typed_value(processing_section, "app_mode", "single")
@@ -1033,6 +1042,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         "console": final_console_settings_cli,  # For Console behavior settings
         "first_run": final_first_run_settings_cli,  # Wizard setup_started/setup_completed flags
         "image_generation": final_image_generation_settings_cli,  # For Image_Generation/config.py loader
+        "mcp": final_mcp_settings_cli,  # For MCP server settings
         # Single User
         "SINGLE_USER_FIXED_ID": single_user_fixed_id,
         # Auth
@@ -3600,6 +3610,8 @@ expose_prompts = true  # Expose prompt templates
 require_auth = false  # Require authentication (not implemented yet)
 rate_limit = 100  # Max requests per minute per client
 max_concurrent_requests = 10  # Max concurrent requests
+
+# expose_local_tools = false   # expose workspace-local agent tools (fs_*/git_*/web_*) to external MCP clients; permission-gated, writes effectively denied until granted
 
 # Tool-specific settings
 [mcp.tools]
