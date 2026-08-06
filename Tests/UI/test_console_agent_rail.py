@@ -934,7 +934,7 @@ async def test_activate_native_console_session_clears_stale_drilldown():
         store.create_session(title="Other")
         console._console_agent_drilldown_run_id = "run-1"
 
-        await console._activate_native_console_session(first_session.id)
+        await console._session._activate_native_console_session(first_session.id)
 
         assert console._console_agent_drilldown_run_id is None
 

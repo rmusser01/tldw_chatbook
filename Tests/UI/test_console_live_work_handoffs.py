@@ -27,6 +27,7 @@ from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
+from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
@@ -1832,6 +1833,7 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
     screen = ChatScreen.__new__(ChatScreen)
     screen.app_instance = app_instance
     screen._console_chat_store = ConsoleChatStore()
+    screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     screen._console_visible_draft_session_id = None
     screen._console_composer_or_none = lambda: None
     screen._task_resume_state = TaskResumeState()

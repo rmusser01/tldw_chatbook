@@ -435,7 +435,7 @@ async def test_replacement_composer_inherits_screen_state_and_active_session_dra
         store = console._ensure_console_chat_store()
         composer.load_draft("canonical session draft")
         console._console_composer_collapsed = True
-        console._sync_console_session_draft()
+        console._session._sync_console_session_draft()
 
         await console.recompose()
         await pilot.pause()

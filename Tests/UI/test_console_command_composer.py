@@ -139,7 +139,7 @@ async def test_system_command_rejects_recipe_before_session_or_draft_mutation() 
         _open_console_system_prompt_editor=AsyncMock(),
         _open_console_prompt_picker_for_apply_system=AsyncMock(),
         _append_native_console_system_message=AsyncMock(),
-        _apply_console_session_system_prompt=Mock(),
+        _session=SimpleNamespace(_apply_console_session_system_prompt=Mock()),
         _clear_console_composer_draft=Mock(),
         _is_recipe_prompt_record=ChatScreen._is_recipe_prompt_record,
         _RECIPE_EXECUTION_BLOCKED_COPY=ChatScreen._RECIPE_EXECUTION_BLOCKED_COPY,
@@ -149,7 +149,7 @@ async def test_system_command_rejects_recipe_before_session_or_draft_mutation() 
         screen, SimpleNamespace(args="Outcome first")
     )
 
-    screen._apply_console_session_system_prompt.assert_not_called()
+    screen._session._apply_console_session_system_prompt.assert_not_called()
     screen._clear_console_composer_draft.assert_not_called()
     screen._open_console_prompt_picker_for_apply_system.assert_not_awaited()
     screen._append_native_console_system_message.assert_awaited_once()
@@ -846,7 +846,7 @@ async def test_console_resume_triggered_prompt_insert_survives_stale_session_swi
         # sites (periodic transcript polling, another send/stop cycle, a
         # settings-modal callback) route through this same method. It must
         # not retroactively wipe the insert by reloading the stale draft.
-        console._sync_console_session_draft()
+        console._session._sync_console_session_draft()
         assert "resume-triggered insert" in composer.draft_text()
         assert console._console_visible_draft_session_id == second_session.id
 

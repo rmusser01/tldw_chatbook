@@ -80,7 +80,7 @@ async def test_popover_apply_refreshes_the_provider_chip():
 
         await _wait_for(pilot, chip_text, "initial provider chip")
 
-        settings = chat_screen._ensure_active_console_session_settings()
+        settings = chat_screen._session._ensure_active_console_session_settings()
         chat_screen._apply_console_model_popover_result(
             replace(
                 settings,

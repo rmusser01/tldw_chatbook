@@ -14,6 +14,7 @@ from tldw_chatbook.config import load_settings
 from tldw_chatbook.Constants import TAB_CHAT
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
@@ -159,7 +160,7 @@ async def test_native_console_chat_handoff_settles_exact_claim_and_keeps_replace
     continue_first = asyncio.Event()
 
     async def wait_before_native_staging(
-        self: ChatScreen,
+        self: ConsoleSessionController,
         payload: ChatHandoffPayload,
     ) -> bool:
         first_started.set()
@@ -167,7 +168,7 @@ async def test_native_console_chat_handoff_settles_exact_claim_and_keeps_replace
         return False
 
     monkeypatch.setattr(
-        ChatScreen,
+        ConsoleSessionController,
         "_start_character_console_session",
         wait_before_native_staging,
     )
@@ -234,7 +235,7 @@ async def test_native_console_chat_handoff_settles_exact_claim_and_keeps_replace
 
             with monkeypatch.context() as cancellation_patch:
                 cancellation_patch.setattr(
-                    chat,
+                    chat._session,
                     "_start_character_console_session",
                     hold_character_start,
                 )

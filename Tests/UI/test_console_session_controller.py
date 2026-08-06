@@ -1,38 +1,39 @@
-"""Characterisation tests for the Console session cluster, written BEFORE the
-wave-2 Task 3 extraction of `ConsoleSessionController`
-(`tldw_chatbook/UI/Console_Modules/session.py`) lands.
+"""Characterisation tests for the Console session cluster.
+
+Originally written BEFORE the wave-2 Task 3 extraction of
+`ConsoleSessionController` (`tldw_chatbook/UI/Console_Modules/session.py`)
+landed -- all 8 tests below passed against the unmodified, still-monolithic
+`ChatScreen` (commit `08f0f5479`) before the extraction touched any
+production file. Call sites were then retargeted from `console.<method>(...)`
+to `console._session.<method>(...)` to follow the move; every assertion is
+byte-for-byte unchanged from the pre-move version.
 
 Drives `_activate_native_console_session`, `_apply_console_switcher_choice`,
-and `_promote_console_temporary_session` through REAL interactions against
-the still-monolithic `ChatScreen` -- the same "real production coroutine, not
-a rebuilt double" discipline `test_console_native_chat_flow.py`'s own resume
+and `_promote_console_temporary_session` through REAL interactions against a
+real mounted `ChatScreen` -- the same "real production coroutine, not a
+rebuilt double" discipline `test_console_native_chat_flow.py`'s own resume
 coverage and `test_console_workspace_controller.py` (wave-2 Task 2's own
 characterisation file) use. No method under test is monkeypatched.
 
 Two things this file exists specifically to pin, per the wave-2 Task 3 brief:
 
 1. **Session activation's workspace-alignment seam**
-   (`_activate_native_console_session` -> `_set_active_workspace_for_console_
-   session`, which after the extraction becomes a session-controller ->
-   workspace-controller named-callable call): activating a session that
-   belongs to a DIFFERENT workspace than the currently active one must also
-   switch the active workspace. Existing coverage
-   (`test_console_cost_chip_screen.py::test_cost_chip_state_isolated_across_
-   session_tabs`, `test_console_agent_rail.py::test_activate_native_console_
-   session_clears_stale_drilldown`, `test_console_scope_row.py`) exercises the
-   SAME entry point but never with two DIFFERENT workspaces in play, so none
-   of it would catch a snapshot-vs-live binding bug in that one call.
+   (`_activate_native_console_session` -> `_set_active_workspace_for_
+   session`, a session-controller -> workspace-controller named-callable
+   call): activating a session that belongs to a DIFFERENT workspace than
+   the currently active one must also switch the active workspace. Existing
+   coverage (`test_console_cost_chip_screen.py::test_cost_chip_state_
+   isolated_across_session_tabs`, `test_console_agent_rail.py::test_
+   activate_native_console_session_clears_stale_drilldown`, `test_console_
+   scope_row.py`) exercises the SAME entry point but never with two
+   DIFFERENT workspaces in play, so none of it would have caught a
+   snapshot-vs-live binding bug in that one call.
 2. **Temporary-session promotion writes a DURABLE database row.** Every
    existing `_promote_console_temporary_session` test
    (`Tests/UI/test_console_composer_menu.py`) stubs `store.
    promote_ephemeral_session` outright and asserts only chip/widget state --
    none of them ever let a real write reach `chachanotes_db`. The brief is
    explicit: assert the DATABASE, not widget state.
-
-Method calls below (`console._activate_native_console_session(...)`,
-`console._promote_console_temporary_session()`,
-`console._apply_console_switcher_choice(...)`, etc.) move to
-`console._session.<method>(...)` once the extraction lands.
 """
 
 from __future__ import annotations
@@ -120,7 +121,7 @@ async def test_activate_native_console_session_realigns_active_workspace():
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
         store = console._ensure_console_chat_store()
-        home_session = console._active_native_console_session()
+        home_session = console._session._active_native_console_session()
         assert home_session is not None
         assert registry_service.get_active_workspace().workspace_id == (
             default_workspace.workspace_id
@@ -141,14 +142,14 @@ async def test_activate_native_console_session_realigns_active_workspace():
         assert other_session.workspace_id == "ws-other"
         assert store.active_session_id == other_session.id
 
-        await console._activate_native_console_session(home_session.id)
+        await console._session._activate_native_console_session(home_session.id)
         await pilot.pause()
         assert store.active_session_id == home_session.id
         assert registry_service.get_active_workspace().workspace_id == (
             default_workspace.workspace_id
         )
 
-        await console._activate_native_console_session(other_session.id)
+        await console._session._activate_native_console_session(other_session.id)
         await pilot.pause()
 
         assert store.active_session_id == other_session.id
@@ -156,7 +157,7 @@ async def test_activate_native_console_session_realigns_active_workspace():
 
         # Hop back: the home session's own workspace must be restored too,
         # not just left on "ws-other" because nothing re-checks it.
-        await console._activate_native_console_session(home_session.id)
+        await console._session._activate_native_console_session(home_session.id)
         await pilot.pause()
 
         assert store.active_session_id == home_session.id
@@ -181,7 +182,7 @@ async def test_activate_native_console_session_noop_still_focuses_composer(
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
-        session = console._active_native_console_session()
+        session = console._session._active_native_console_session()
         assert session is not None
 
         focus_calls: list[bool] = []
@@ -195,10 +196,10 @@ async def test_activate_native_console_session_noop_still_focuses_composer(
             type(console), "_focus_console_composer_if_needed", _spy_focus
         )
 
-        await console._activate_native_console_session(session.id)
+        await console._session._activate_native_console_session(session.id)
         await pilot.pause()
 
-        assert console._active_native_console_session().id == session.id
+        assert console._session._active_native_console_session().id == session.id
         assert focus_calls == [True]
 
 
@@ -224,7 +225,7 @@ async def test_apply_console_switcher_choice_activate_uses_shared_activation_pat
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
         store = console._ensure_console_chat_store()
-        home = console._active_native_console_session()
+        home = console._session._active_native_console_session()
         assert home is not None
         target = store.create_session(
             title="Switcher target", workspace_id="ws-switcher"
@@ -232,7 +233,7 @@ async def test_apply_console_switcher_choice_activate_uses_shared_activation_pat
         assert home.id != target.id
         # `create_session` activates what it creates -- go back home first so
         # the switcher choice below is a real transition, not a no-op.
-        await console._activate_native_console_session(home.id)
+        await console._session._activate_native_console_session(home.id)
         await pilot.pause()
         assert store.active_session_id == home.id
 
@@ -240,7 +241,7 @@ async def test_apply_console_switcher_choice_activate_uses_shared_activation_pat
             kind="activate",
             entry=_switcher_entry(native_session_id=target.id, title=target.title),
         )
-        await console._apply_console_switcher_choice(choice)
+        await console._session._apply_console_switcher_choice(choice)
         await pilot.pause()
 
         assert store.active_session_id == target.id
@@ -267,7 +268,7 @@ async def test_apply_console_switcher_choice_rename_opens_rename_modal():
             kind="rename",
             entry=_switcher_entry(native_session_id=session.id, title=session.title),
         )
-        await console._apply_console_switcher_choice(choice)
+        await console._session._apply_console_switcher_choice(choice)
         await pilot.pause()
 
         top = host.screen_stack[-1]
@@ -290,7 +291,7 @@ async def test_apply_console_switcher_choice_none_is_a_noop():
         active_before = store.active_session_id
         depth_before = len(host.screen_stack)
 
-        await console._apply_console_switcher_choice(None)
+        await console._session._apply_console_switcher_choice(None)
         await pilot.pause()
 
         assert store.active_session_id == active_before
@@ -337,7 +338,7 @@ async def test_promote_console_temporary_session_writes_durable_rows_to_the_data
             )
             assert session.persisted_conversation_id is None
 
-            await console._promote_console_temporary_session()
+            await console._session._promote_console_temporary_session()
             await pilot.pause()
 
             assert session.ephemeral is False
@@ -379,13 +380,13 @@ async def test_promote_console_temporary_session_second_call_does_not_duplicate_
                 session.id, role=ConsoleMessageRole.USER, content="hi", persist=True
             )
 
-            await console._promote_console_temporary_session()
+            await console._session._promote_console_temporary_session()
             await pilot.pause()
             conversation_id = session.persisted_conversation_id
             assert conversation_id is not None
             assert db.get_conversation_by_id(conversation_id) is not None
 
-            await console._promote_console_temporary_session()
+            await console._session._promote_console_temporary_session()
             await pilot.pause()
 
             assert session.persisted_conversation_id == conversation_id
@@ -412,5 +413,5 @@ async def test_promote_console_temporary_session_no_active_session_touches_nothi
         store.active_session_id = None
 
         # Must not raise even though there is nothing to promote.
-        await console._promote_console_temporary_session()
+        await console._session._promote_console_temporary_session()
         await pilot.pause()

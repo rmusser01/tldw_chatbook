@@ -44,6 +44,7 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSPlaybackEvent,
 )
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
@@ -113,6 +114,7 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
     """
     screen = ChatScreen.__new__(ChatScreen)
     screen._console_chat_store = store
+    screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     screen._console_message_action_service = ConsoleMessageActionService()
     screen._pending_console_delete_message_id = None
     screen.app_instance = SimpleNamespace(notify=lambda *a, **k: None)
@@ -875,7 +877,7 @@ async def test_generate_image_handler_threads_prepared_fields_into_batch(monkeyp
     def _mock_default_settings():
         return ConsoleSessionSettings(provider="openai")
 
-    screen._default_console_session_settings = _mock_default_settings
+    screen._session._default_console_session_settings = _mock_default_settings
 
     # Stub conversation pairs helper to return a simple test pair
     def _mock_conversation_pairs(store, session_id):
@@ -1090,7 +1092,7 @@ def _wired_generate_image_screen(store, *, batch_calls, batch_data=b"generated_i
     path needs, matching `test_generate_image_handler_threads_prepared_
     fields_into_batch`'s established stubbing style."""
     screen = _bare_generation_screen(store)
-    screen._default_console_session_settings = lambda: ConsoleSessionSettings(
+    screen._session._default_console_session_settings = lambda: ConsoleSessionSettings(
         provider="openai"
     )
     screen._console_composer_or_none = lambda: None
@@ -1165,7 +1167,7 @@ async def test_generate_image_handler_no_prompt_uses_llm_composed_context_end_to
     messages = store.messages_for_session(
         store.ensure_session(
             workspace_id=store.workspace_context.active_workspace_id,
-            settings=screen._default_console_session_settings(),
+            settings=screen._session._default_console_session_settings(),
         ).id
     )
     generation_messages = [m for m in messages if m.content.startswith("[image] ")]
@@ -1410,7 +1412,7 @@ async def test_generate_image_handler_restores_draft_when_batch_raises(monkeypat
 
     from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 
-    screen._default_console_session_settings = lambda: ConsoleSessionSettings(
+    screen._session._default_console_session_settings = lambda: ConsoleSessionSettings(
         provider="openai"
     )
     screen._console_generate_image_conversation_pairs = lambda store, session_id: []

@@ -160,7 +160,7 @@ async def test_real_console_consumes_typed_provider_intents_and_opens_real_picke
                 "notify",
                 lambda message, *args, **kwargs: notifications.append(str(message)),
             )
-            original = screen._ensure_active_console_session_settings()
+            original = screen._session._ensure_active_console_session_settings()
             store = screen._ensure_console_chat_store()
             session_id = store.active_session_id
             assert session_id is not None
@@ -267,7 +267,7 @@ async def test_settings_save_preserves_user_session_then_away_command_hands_off(
         async with app.run_test(size=(140, 48)) as pilot:
             chat = await _wait_for_screen(app, pilot, ChatScreen)
             store = chat._ensure_console_chat_store()
-            initial = chat._ensure_active_console_session_settings()
+            initial = chat._session._ensure_active_console_session_settings()
             session_id = store.active_session_id
             assert session_id is not None
             store.replace_session_settings(

@@ -171,7 +171,7 @@ async def test_retrieval_scope_row_reflects_held_scope_for_unpersisted_session()
         console = host.screen_stack[-1]
         row = await _open_inspector_and_get_row(console, pilot)
 
-        session = console._active_native_console_session()
+        session = console._session._active_native_console_session()
         assert session is not None
         session.rag_scope_holder.set(
             RagScope(
@@ -216,7 +216,7 @@ async def test_retrieval_scope_row_zero_db_on_forced_recompose():
         assert _static_plain_text(row.query_one(f"#{LABEL_ID}", Static)) == "Scope: everything"
         assert console.query_one(f"#{SCOPE_CHIP_ID}").display is False
 
-        session = console._active_native_console_session()
+        session = console._session._active_native_console_session()
         session.persisted_conversation_id = "conv-not-cached"
         raising_db = _RaisingDB()
         app.chachanotes_db = raising_db
@@ -320,7 +320,7 @@ async def test_edit_button_seeds_modal_from_held_scope():
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
         await _open_inspector_and_get_row(console, pilot)
-        session = console._active_native_console_session()
+        session = console._session._active_native_console_session()
         session.rag_scope_holder.set(
             RagScope(items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z")
         )
@@ -346,7 +346,7 @@ async def test_save_unpersisted_stores_in_holder_and_refreshes_row():
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
         row = await _open_inspector_and_get_row(console, pilot)
-        session = console._active_native_console_session()
+        session = console._session._active_native_console_session()
         assert session.persisted_conversation_id is None
         scope = RagScope(items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z")
 
@@ -386,7 +386,7 @@ async def test_scope_saved_unpersisted_then_first_send_flush_refreshes_row():
             console = host.screen_stack[-1]
             row = await _open_inspector_and_get_row(console, pilot)
             store = console._ensure_console_chat_store()
-            session = console._active_native_console_session()
+            session = console._session._active_native_console_session()
             assert session.persisted_conversation_id is None
             scope = RagScope(
                 items=(ScopeItem("media", "m1"), ScopeItem("note", note_id)),
@@ -440,7 +440,7 @@ async def test_save_persisted_writes_through_refreshes_row_and_run_recipe():
             console = host.screen_stack[-1]
             await _open_inspector_and_get_row(console, pilot)
             store = console._ensure_console_chat_store()
-            session = console._active_native_console_session()
+            session = console._session._active_native_console_session()
             conversation_id = store.persist_session_if_needed(session.id)
             assert conversation_id is not None
             scope = RagScope(
@@ -475,7 +475,7 @@ async def test_save_persisted_corrupt_metadata_surfaces_honest_notify():
             console = host.screen_stack[-1]
             await _open_inspector_and_get_row(console, pilot)
             store = console._ensure_console_chat_store()
-            session = console._active_native_console_session()
+            session = console._session._active_native_console_session()
             conversation_id = store.persist_session_if_needed(session.id)
             record = db.get_conversation_by_id(conversation_id)
             db.update_conversation(
@@ -524,7 +524,7 @@ async def test_save_persisted_conflict_error_surfaces_specific_notify():
             console = host.screen_stack[-1]
             await _open_inspector_and_get_row(console, pilot)
             store = console._ensure_console_chat_store()
-            session = console._active_native_console_session()
+            session = console._session._active_native_console_session()
             conversation_id = store.persist_session_if_needed(session.id)
 
             def _raise_conflict(*args, **kwargs):
@@ -565,7 +565,7 @@ async def test_save_persisted_conversation_not_found_surfaces_specific_notify():
             console = host.screen_stack[-1]
             await _open_inspector_and_get_row(console, pilot)
             store = console._ensure_console_chat_store()
-            session = console._active_native_console_session()
+            session = console._session._active_native_console_session()
             conversation_id = store.persist_session_if_needed(session.id)
             db.soft_delete_conversation(conversation_id, expected_version=1)
             scope = RagScope(
@@ -590,7 +590,7 @@ async def test_clear_button_unpersisted_session():
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
         row = await _open_inspector_and_get_row(console, pilot)
-        session = console._active_native_console_session()
+        session = console._session._active_native_console_session()
         session.rag_scope_holder.set(
             RagScope(items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z")
         )
@@ -620,7 +620,7 @@ async def test_clear_button_persisted_session():
             console = host.screen_stack[-1]
             await _open_inspector_and_get_row(console, pilot)
             store = console._ensure_console_chat_store()
-            session = console._active_native_console_session()
+            session = console._session._active_native_console_session()
             conversation_id = store.persist_session_if_needed(session.id)
             scope = RagScope(
                 items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"
@@ -709,7 +709,7 @@ async def test_resume_console_workspace_conversation_refreshes_row_and_chip():
             await pilot.pause()
 
             assert resumed is True
-            session = console._active_native_console_session()
+            session = console._session._active_native_console_session()
             assert session is not None
             assert session.persisted_conversation_id == conversation_id
 
@@ -792,7 +792,7 @@ async def test_initial_mount_of_restored_persisted_scoped_session_warms_row_and_
             console = restored_host.screen_stack[-1]
             await _wait_for_selector(console, pilot, "#console-native-composer")
 
-            session = console._active_native_console_session()
+            session = console._session._active_native_console_session()
             assert session is not None
             assert session.persisted_conversation_id == conversation_id
 
@@ -849,7 +849,7 @@ async def test_scope_chip_shows_count_and_tooltip_when_scoped():
         console = host.screen_stack[-1]
         await _open_console_inspector(console, pilot)
 
-        session = console._active_native_console_session()
+        session = console._session._active_native_console_session()
         assert session is not None
         session.rag_scope_holder.set(
             RagScope(
@@ -879,7 +879,7 @@ async def test_scope_chip_refreshes_on_modal_save():
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
         await _open_console_inspector(console, pilot)
-        session = console._active_native_console_session()
+        session = console._session._active_native_console_session()
         assert session.persisted_conversation_id is None
         scope = RagScope(items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z")
 
@@ -908,7 +908,7 @@ async def test_scope_chip_refreshes_on_persist_transition_flush():
             console = host.screen_stack[-1]
             await _open_console_inspector(console, pilot)
             store = console._ensure_console_chat_store()
-            session = console._active_native_console_session()
+            session = console._session._active_native_console_session()
             scope = RagScope(
                 items=(ScopeItem("media", "m1"), ScopeItem("note", note_id)),
                 updated_at="2026-01-01T00:00:00Z",
@@ -948,7 +948,7 @@ async def test_scope_chip_click_opens_picker_modal():
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
         await _open_console_inspector(console, pilot)
-        session = console._active_native_console_session()
+        session = console._session._active_native_console_session()
         session.rag_scope_holder.set(
             RagScope(items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z")
         )
@@ -1190,7 +1190,7 @@ async def test_chip_tooltip_shows_intersection_breakdown_when_both_levels_set():
                 ),
             )
             store = console._ensure_console_chat_store()
-            session = console._active_native_console_session()
+            session = console._session._active_native_console_session()
             store.persist_session_if_needed(session.id)
             conv_scope = RagScope(
                 items=(ScopeItem("media", "m1"), ScopeItem("note", note_id)),
@@ -1225,7 +1225,7 @@ async def test_chip_tooltip_shows_workspace_only_breakdown():
             active.workspace_id,
             RagScope(items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"),
         )
-        session = console._active_native_console_session()
+        session = console._session._active_native_console_session()
 
         await console._resolve_console_effective_scope_state(session)
         console._sync_console_retrieval_scope_row()
@@ -1261,7 +1261,7 @@ async def test_no_workspace_overlap_renders_empty_state_on_row_and_chip():
                 ),
             )
             store = console._ensure_console_chat_store()
-            session = console._active_native_console_session()
+            session = console._session._active_native_console_session()
             store.persist_session_if_needed(session.id)
             conv_scope = RagScope(
                 items=(ScopeItem("media", "m-conv"),), updated_at="2026-01-01T00:00:00Z"
@@ -1312,7 +1312,7 @@ async def test_switch_between_resumed_sessions_refreshes_stale_workspace_scope()
         active = registry.get_active_workspace()
         store = console._ensure_console_chat_store()
 
-        first_session = console._active_native_console_session()
+        first_session = console._session._active_native_console_session()
         assert first_session is not None
         second_session = store.create_session(title="Second")
         assert second_session.workspace_id == first_session.workspace_id
@@ -1346,10 +1346,10 @@ async def test_switch_between_resumed_sessions_refreshes_stale_workspace_scope()
             ),
         )
 
-        await console._activate_native_console_session(first_session.id)
+        await console._session._activate_native_console_session(first_session.id)
         await pilot.pause()
 
-        assert console._active_native_console_session().id == first_session.id
+        assert console._session._active_native_console_session().id == first_session.id
         row = console.query_one(f"#{ROW_ID}")
         assert (
             _static_plain_text(row.query_one(f"#{LABEL_ID}", Static))

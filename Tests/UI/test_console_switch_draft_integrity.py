@@ -30,13 +30,13 @@ async def _settle_window_swap(console, pilot, *, type_during_window: str):
     await pilot.pause()
 
     composer.load_draft("old draft")
-    console._sync_console_session_draft()  # settle tracker onto A
+    console._session._sync_console_session_draft()  # settle tracker onto A
 
     # Hold the coalescing guard: the new-tab path's inline sync defers, so
     # the draft swap runs only on a LATER pass — the real settle window.
     console._console_sync_in_progress = True
     try:
-        await console._create_native_console_session_from_active_context()
+        await console._session._create_native_console_session_from_active_context()
         if type_during_window:
             composer.insert_text(type_during_window)
     finally:
@@ -44,7 +44,7 @@ async def _settle_window_swap(console, pilot, *, type_during_window: str):
 
     session_b_id = store.active_session_id
     assert session_b_id != session_a.id
-    console._sync_console_session_draft()
+    console._session._sync_console_session_draft()
     return store, session_a, session_b_id, composer
 
 

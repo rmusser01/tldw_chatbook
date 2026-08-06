@@ -132,6 +132,7 @@ def test_swap_seeds_greeting_only_into_an_empty_chat():
     """
     from dataclasses import dataclass, replace as dc_replace
 
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     @dataclass
@@ -169,14 +170,14 @@ def test_swap_seeds_greeting_only_into_an_empty_chat():
     screen = ChatScreen.__new__(ChatScreen)
 
     empty = _Store([])
-    assert ChatScreen._swap_console_session_character(
+    assert ConsoleSessionController._swap_console_session_character(
         screen, empty, 7, "Lana", "SYS", "Hello!"
     )
     assert [a["content"] for a in empty.appended] == ["Hello!"]
     assert empty.settings.system_prompt == "SYS"
 
     busy = _Store(["an existing message"])
-    assert ChatScreen._swap_console_session_character(
+    assert ConsoleSessionController._swap_console_session_character(
         screen, busy, 7, "Lana", "SYS", "Hello!"
     )
     assert busy.appended == [], "greeting must not interrupt a live chat"

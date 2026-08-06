@@ -220,7 +220,7 @@ async def test_pressing_detected_server_saves_config_and_unlocks_card(
                 },
             }
         ]
-        settings = console._active_console_session_settings()
+        settings = console._session._active_console_session_settings()
         assert settings is not None
         assert settings.provider == "llama_cpp"
         assert settings.model == "srv-model-a"

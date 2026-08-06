@@ -57,6 +57,7 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
     PersonaProfileUpdate,
 )
 from tldw_chatbook.UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
+from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
@@ -8650,7 +8651,7 @@ class TestPersonaHumanIdentityRemoval:
             lambda self: store,
         )
         monkeypatch.setattr(
-            ChatScreen,
+            ConsoleSessionController,
             "_default_console_session_settings",
             lambda self: baseline,
         )
@@ -8685,7 +8686,7 @@ class TestPersonaHumanIdentityRemoval:
             },
         )
 
-        assert await screen._start_character_console_session(payload) is True
+        assert await screen._session._start_character_console_session(payload) is True
         assert store.session is not None
         assert not hasattr(store.session.settings, "user_profile_label")
         assert [message["content"] for message in store.messages] == [
