@@ -725,7 +725,7 @@ class SettingsThemeEditor(Vertical):
 
             self.load_theme("textual-dark")
         except Exception as e:
-            logger.error(f"Failed to delete theme: {e}")
+            logger.error(f"Failed to delete theme '{theme_name}': {e}")
             self.app.notify(f"Failed to delete theme: {e}", severity="error")
 
     @on(Button.Pressed, "#settings-theme-export")
@@ -779,7 +779,13 @@ class SettingsThemeEditor(Vertical):
         self._apply_preset_swatch(event.control)
 
     def on_key(self, event: Key) -> None:
-        """task-1369: Enter/Space on a focused preset swatch applies it."""
+        """Apply a focused color preset swatch on Enter/Space (task-1369).
+
+        Args:
+            event: The key event; only ``enter`` and ``space`` are handled,
+                and only when a preset swatch Static has focus. All other
+                keys pass through untouched.
+        """
         if event.key not in ("enter", "space"):
             return
         focused = self.app.focused
