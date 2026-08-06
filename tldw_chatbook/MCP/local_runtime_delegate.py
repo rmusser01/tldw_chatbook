@@ -147,25 +147,38 @@ class LocalMCPRuntimeDelegate:
         `tools/call` branch and `RAW_TOOL_CALL_REFUSED_MESSAGE`).
 
         Item 4 (PR-T3 fix round D), closing the scope Fix Round C
-        deliberately left open (see that round's own commit message): an
-        agent reading ONLY this method -- never cross-referencing
-        `get_protocol_diagnostics()` -- used to see `tools/call` in
-        `request_methods` with nothing here to say it would be refused, and
-        could plan a `runtime.request` call the enforcement would then
-        reject. `request_methods` itself is UNCHANGED (Fix Round C's own
-        reasoning still holds: dropping `tools/call` from it would itself
-        be inaccurate, since `request()` recognizes the method by name
-        rather than raising the generic "unsupported method" `KeyError`).
-        Instead, `unavailable_request_methods` is a NEW field, using the
-        same `_UNAVAILABLE_DIRECT_METHODS` vocabulary
-        `get_protocol_diagnostics()` already uses for its per-method
-        `supported` flag -- so the "recognized but refused" distinction is
-        now visible on THIS surface directly, without requiring the reader
-        to already know to check the other one. `get_protocol_diagnostics()`
-        remains the surface with full per-method detail (a real `supported`
-        flag on every entry, not just the unavailable ones); this field is
-        the minimal signal needed so `get_protocol_capabilities()` alone no
-        longer misleads.
+        deliberately left open (see that round's own commit message):
+        `request_methods` listed `tools/call` with nothing on THIS
+        method's own return value to say it is refused -- that signal
+        lived only on `get_protocol_diagnostics()`'s per-method
+        `supported` flag. `request_methods` itself is UNCHANGED (Fix
+        Round C's own reasoning still holds: dropping `tools/call` from
+        it would itself be inaccurate, since `request()` recognizes the
+        method by name rather than raising the generic "unsupported
+        method" `KeyError`). Instead, `unavailable_request_methods` is a
+        NEW field, using the same `_UNAVAILABLE_DIRECT_METHODS`
+        vocabulary `get_protocol_diagnostics()` already uses -- so the
+        "recognized but refused" distinction is visible on THIS method's
+        own payload, not only the sibling one. `get_protocol_diagnostics()`
+        remains the surface with full per-method detail (a real
+        `supported` flag on every entry, not just the unavailable ones).
+
+        Item 3 (PR-T3 fix round F): the paragraph above used to justify
+        this by describing "an agent reading ONLY this method, never
+        cross-referencing `get_protocol_diagnostics()`" -- overclaiming a
+        reader that does not exist. This method has exactly ONE
+        production consumer, `LocalMCPControlService.get_advanced()`
+        (`local_control_service.py:329`), which already returns this
+        method's output and `get_protocol_diagnostics()`'s output
+        together, as sibling keys (`"protocol"` / `"protocol_diagnostics"`)
+        of the SAME payload -- nothing in this codebase ever sees one
+        without the other. The field is still worth having: a caller that
+        renders or forwards only the `"protocol"` slice of that payload
+        (or any future consumer of this method taken in isolation) would
+        otherwise have to reconstruct "which methods are unavailable"
+        from the diagnostics' full per-method list instead of reading it
+        directly here. The change was never in question, only its
+        justification -- say what this actually does.
         """
         return {
             "adapter": "direct_in_process",

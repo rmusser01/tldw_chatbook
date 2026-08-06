@@ -258,6 +258,38 @@ class FakeLocalRuntimeDelegate:
         ]
 
 
+def test_fake_local_runtime_delegate_protocol_shapes_match_the_real_delegate():
+    """Item 3 (PR-T3 fix round F). `FakeLocalRuntimeDelegate.get_protocol_
+    capabilities()`/`get_protocol_diagnostics()` above are hand-maintained
+    to mirror `LocalMCPRuntimeDelegate`'s real methods of the same name --
+    enforced by nothing but a comment at each ("this fake's own shape must
+    not drift", "fake mirrors that shape"). Not hypothetical on this
+    branch: an earlier round's two fake-based tests stayed GREEN while the
+    real-delegate test went RED for the identical scenario, and the
+    fake-based assertions were briefly mistaken (by a reviewer, and in
+    relaying it) for real-delegate coverage. A fake that drifts from
+    reality is how a suite ends up certifying a lie.
+
+    Pins the top-level key SETS only, not values -- the fake's values are
+    hardcoded literals (`protocol_version="2025-03-26"`,
+    `mcp_sdk_available=False`, ...) while the real ones are computed
+    (`self._PROTOCOL_VERSION`, `MCP_AVAILABLE`, a manifest-derived
+    `methods`/`implementation`), so those legitimately differ and this
+    test does not compare them. What must never drift is WHICH FIELDS
+    exist: a future change to either real method (a renamed or added key)
+    that this fake does not also get would otherwise stay invisible to
+    every test written against the fake, exactly as it did before."""
+    real_delegate = LocalMCPRuntimeDelegate(manifest_provider=lambda: {})
+    fake_delegate = FakeLocalRuntimeDelegate()
+
+    assert set(fake_delegate.get_protocol_capabilities().keys()) == set(
+        real_delegate.get_protocol_capabilities().keys()
+    )
+    assert set(fake_delegate.get_protocol_diagnostics().keys()) == set(
+        real_delegate.get_protocol_diagnostics().keys()
+    )
+
+
 class FakeMCPClient:
     def __init__(self) -> None:
         self.connected = []
