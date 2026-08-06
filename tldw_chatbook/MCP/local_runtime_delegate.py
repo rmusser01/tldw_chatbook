@@ -88,13 +88,18 @@ class LocalMCPRuntimeDelegate:
     #: `run_action("runtime.protocol.inspect")`). An agent that saw
     #: `{"name": "tools/call", "supported": true}` there had no way to learn
     #: the call would be refused short of trying it. Mirrors
-    #: `_UNAVAILABLE_DIRECT_TOOLS` above: `tools/call` stays a *recognized*
-    #: method (still enumerated in `_REQUEST_METHODS`, since `request()`
-    #: genuinely understands it well enough to refuse it by name rather than
-    #: raising "unsupported method") but is reported `supported: False` in
-    #: diagnostics, same shape the tools bucket already uses for
-    #: "exists, but you cannot call it directly." See
-    #: `get_protocol_diagnostics()` for where this is read.
+    #: `_UNAVAILABLE_DIRECT_TOOLS` above in NAME only: `tools/call` stays a
+    #: *recognized* method (still enumerated in `_REQUEST_METHODS`, since
+    #: `request()` genuinely understands it well enough to refuse it by name
+    #: rather than raising "unsupported method") and is reported
+    #: `supported: False` in diagnostics -- but that is a two-way flag, not
+    #: the tools bucket's three-way `implemented`/`unavailable`/`missing`
+    #: split (Fix Round E, Item 5: the shapes differ -- a reader of THIS
+    #: surface alone cannot tell a policy refusal like this one from a
+    #: method that is simply not implemented, the way `unavailable` vs.
+    #: `missing` distinguishes those two cases for tools). The flag itself
+    #: is honest and load-bearing; only the old "same shape" claim here was
+    #: not. See `get_protocol_diagnostics()` for where this is read.
     _UNAVAILABLE_DIRECT_METHODS = frozenset({"tools/call"})
     _RESOURCE_URI_PREFIXES = (
         "conversation://",
