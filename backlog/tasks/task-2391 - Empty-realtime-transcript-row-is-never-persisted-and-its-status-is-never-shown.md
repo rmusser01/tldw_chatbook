@@ -149,4 +149,86 @@ rewind_summarize, composer_menu, chat_store, realtime_wiring, resume_active_path
 message_metadata) all green; contract trio (test_console_hands_free.py,
 test_console_hands_free_wiring.py, test_console_dictation.py) confirmed byte-identical via
 `git status` and all pass unmodified.
+
+PR #1366 Qodo round (same day, HEAD f134ea109 -- task-2390 landed on this branch in between,
+verified before editing): 5 findings, 2 real bugs fixed, 1 trivial fix, 2 judgement calls.
+
+Q4 (BUG, fixed): `_mark_console_realtime_transcript_empty`'s early return
+(`_console_realtime_row_has_text`) treated the PLACEHOLDER itself as "already has text" and
+bailed -- so once the content write landed but the FOLLOWING metadata write failed (reachable
+because `_set_console_realtime_transcript_status` deliberately swallows its own exceptions),
+every later retry hit the same early return and could never reach the status write again. A
+row stuck with placeholder content but no `transcript_status="empty"` is invisible to
+`_is_empty_transcript_row` and reaches providers as a fabricated user turn -- reopening the
+exact leak the prior fix-now commit closed, by a different route. Fixed by reading the row's
+actual content and branching three ways: non-blank and NOT the placeholder -> return (a real
+transcript, never overwritten, unchanged behavior); blank -> write the placeholder then stamp
+the status; already the placeholder -> skip the (redundant) content write but still (re-)stamp
+the status, so a stranded row recovers on the next event instead of being permanently stuck.
+`_console_realtime_row_has_text` is now dead (its only caller) and was removed rather than left
+orphaned. RED test (`Tests/UI/test_console_realtime_wiring.py::test_an_empty_transcript_
+retries_the_status_after_a_swallowed_metadata_failure`) monkeypatches `store.set_message_
+metadata` to raise exactly once, drives the exact partial state, and proves a SECOND empty
+event reaches `transcript_status == "empty"` and that `_is_empty_transcript_row` then
+recognizes the row -- failed against the pre-fix code (confirmed), passes after.
+
+Q5 (BUG, fixed): `_is_empty_transcript_row` read `.metadata` via `getattr` (duck-type-safe) but
+then read `.transcript_status` off that metadata object via a plain attribute access -- so a
+metadata object missing that one attribute raised `AttributeError` inside all three model-facing
+builders this helper guards (send/summarize/impersonate), i.e. a crash reachable from the main
+send path, not just a narrow test double. Fixed: `getattr(metadata, "transcript_status", None)
+== "empty"` (also simplifies away the now-redundant `metadata is not None` check, since
+`getattr(None, ..., None)` already resolves to `None`). RED test
+(`Tests/Chat/test_console_chat_controller.py::test_is_empty_transcript_row_tolerates_a_metadata_
+object_without_the_attribute`) passes a `SimpleNamespace` metadata with no `transcript_status` --
+raised before, returns `False` after.
+
+Q1 (trivial, fixed): `Tests/Chat/test_console_chat_store.py`'s
+`test_an_empty_transcript_placeholder_persists_through_the_deferred_create` hardcoded
+`"(no speech detected)"` instead of importing `CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER` --
+now imports the constant, so the test can't silently drift from the real chrome text.
+
+Q2 (JUDGEMENT, evidence-based decision -- keep the existing test on `RecordingPersistence`,
+ADD a new real-DB test rather than converting): checked this file's own convention first, same
+as the earlier `transaction()` precedent. `Tests/Chat/test_console_chat_store.py` uses
+`RecordingPersistence` in 9 tests and a real `CharactersRAGDB`/`ChatPersistenceService` pair in
+5 -- and each of the 5 carries its own docstring explaining WHY a fake can't stand in
+(`test_persist_session_if_needed_flushes_held_rag_scope_through_real_db`: "not a hand-rolled
+fake... end to end"; `test_stop_path_usage_flush_uses_local_write_and_leaves_version_unchanged`:
+"proving the usage-only flush actually lands... rather than only through a fake that can't
+observe that distinction"). My test's direct precedent/sibling,
+`test_set_message_metadata_on_an_unpersisted_row_rides_the_later_create` (same file, tests the
+identical "unpersisted row rides the later create" claim for the `"final"` case), already uses
+`RecordingPersistence` -- converting only the `"empty"`-case sibling would make it the odd one
+out against its own precedent, worse than declining outright. BUT weighing the substance
+honestly: `RecordingPersistence` records exactly which kwargs `create_message`/
+`update_message_content` were called with, which is what BOTH tests actually claim ("the row is
+durably created" == "create_message got called with this content") -- it is not, in itself, a
+version/sync_log/local-only-column nuance a fake can't represent, unlike the 5 tests above. So
+the sibling stays as-is (declined). The one place Qodo's concern has real teeth: neither this
+test NOR the existing real-DB coverage
+(`Tests/UI/test_console_resume_active_path.py::test_resume_restores_an_empty_transcript_row_
+and_its_explanation`) actually drives `update_message_content`'s deferred-create flush against a
+REAL DB and reads the row back -- the resume test HAND-SEEDS the row via `db.add_message(...)`
+directly, so it proves resume reconstructs an already-durable row correctly, not that the
+deferred-flush mechanism itself durably writes one. Closed that specific gap with a new test,
+`test_empty_transcript_placeholder_reaches_a_real_db_through_the_deferred_create`, mirroring
+this file's own two cited real-DB tests: drives the real flow (deferred row -> content write ->
+status write) against a real `ChatPersistenceService`/`CharactersRAGDB` pair and reads the
+persisted row straight off the DB (`db.get_message_by_id`). Net effect: both of Qodo's concerns
+addressed -- the established per-file convention respected, and the actual durability claim now
+has real-DB coverage that didn't exist before in either file.
+
+Q3 (DECLINED, coordinator's adjudication, recorded verbatim): Qodo wants Google-style Args/
+Returns docstrings on the new zero-arg test functions. Declined -- their narrative docstrings
+carry the WHY (the bug, the mechanism, the review finding they close), which is more valuable
+here than Args/Returns boilerplate on a function with neither; Qodo itself rated this Moderate
+with "no clear precedent... may be tolerated narrative test docstrings," and every test suite in
+this repo already uses narrative-only test docstrings uniformly. Not churned.
+
+Second foreground verification round (never background, per repo convention): `Tests/Chat/
+test_console_chat_controller.py` + `test_console_chat_store.py` + `test_console_rewind_
+summarize.py` (319 passed); `Tests/UI/test_console_realtime_wiring.py` (75 passed, was 74 before
+the new Q4 RED test); contract trio (103 passed, confirmed byte-identical via `git status` both
+before and after this round).
 <!-- SECTION:NOTES:END -->

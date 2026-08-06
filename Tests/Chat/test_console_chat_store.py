@@ -3081,8 +3081,11 @@ def test_an_empty_transcript_placeholder_persists_through_the_deferred_create():
     a follow-up metadata-only patch (mirroring the "final" case's own
     two-step order: content write, then status write) marks it "empty"."""
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
+    from tldw_chatbook.UI.Screens.chat_screen import (
+        CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+    )
 
-    placeholder = "(no speech detected)"
+    placeholder = CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
     persistence = RecordingPersistence()
     store = ConsoleChatStore(persistence=persistence)
     session = store.ensure_session(title="Chat 1")
@@ -3106,6 +3109,63 @@ def test_an_empty_transcript_placeholder_persists_through_the_deferred_create():
         MessageMetadata(engine="realtime", transcript_status="empty"),
     )
     assert '"transcript_status": "empty"' in persistence.updated[-1]["metadata_json"]
+
+
+def test_empty_transcript_placeholder_reaches_a_real_db_through_the_deferred_create():
+    """Qodo Q2 (task-2391 review): the sibling test above proves WHICH
+    persistence calls happen and with what kwargs via `RecordingPersistence`
+    -- this file's established seam for that class of claim (see also its
+    own direct precedent, `test_set_message_metadata_on_an_unpersisted_row_
+    rides_the_later_create`, and the file-wide count: 9 `RecordingPersistence`
+    call-shape tests vs. 5 real-DB tests, each of the latter carrying its own
+    docstring explaining why a fake can't stand in there). A fake cannot
+    observe whether a REAL DB actually accepts and durably stores the row,
+    though, and `Tests/UI/test_console_resume_active_path.py::test_resume_
+    restores_an_empty_transcript_row_and_its_explanation` -- the existing
+    real-DB coverage for this exact row shape -- HAND-SEEDS the row directly
+    via `db.add_message(...)`; it never exercises `update_message_content`'s
+    deferred-create flush at all, so it does not close this gap either. This
+    test does: drives the real flow (deferred row -> content write -> status
+    write) against a real `ChatPersistenceService`/`CharactersRAGDB` pair and
+    reads the row straight back off the DB, mirroring this file's own
+    established real-DB pattern (`test_persist_session_if_needed_flushes_
+    held_rag_scope_through_real_db`, `test_stop_path_usage_flush_uses_local_
+    write_and_leaves_version_unchanged`) for exactly this kind of durability
+    claim."""
+    from tldw_chatbook.Chat.message_metadata import MessageMetadata
+    from tldw_chatbook.UI.Screens.chat_screen import (
+        CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+    )
+
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.ensure_session(title="Chat 1")
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="",
+            persist=True,
+            metadata=MessageMetadata(engine="realtime", transcript_status="pending"),
+        )
+        assert message.persisted_message_id is None, "deferred, not yet durable"
+
+        store.update_message_content(
+            message.id, CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
+        )
+        store.set_message_metadata(
+            message.id,
+            MessageMetadata(engine="realtime", transcript_status="empty"),
+        )
+
+        persisted_id = store.get_message(message.id).persisted_message_id
+        assert persisted_id is not None, "the deferred create must have flushed"
+        row = db.get_message_by_id(persisted_id)
+        assert row["content"] == CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
+        assert '"transcript_status": "empty"' in row["metadata_json"]
+    finally:
+        db.close_connection()
 
 
 def test_set_message_metadata_flushes_locally_and_leaves_the_version_alone():

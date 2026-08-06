@@ -8347,28 +8347,6 @@ class ChatScreen(BaseAppScreen):
         self._set_console_realtime_transcript_status(row_id, "final")
         session.transcript_dirty = True
 
-    def _console_realtime_row_has_text(self, row_id: str) -> bool:
-        """Whether a transcript row already holds text; never raises.
-
-        Args:
-            row_id: Native store id of the row.
-
-        Returns:
-            True when the row exists and its content is non-blank. An
-            unreadable row reports True so a late empty payload is treated
-            as "leave it alone" rather than relabelling a row it cannot
-            see.
-        """
-        store = self._ensure_console_chat_store()
-        try:
-            return bool(str(store.get_message(row_id).content or "").strip())
-        except Exception:  # noqa: BLE001 - an unreadable row is left untouched
-            logger.opt(exception=True).debug(
-                "Console realtime: could not read a transcript row's text: "
-                f"op=realtime_transcript_status row_id={row_id}"
-            )
-            return True
-
     def _mark_console_realtime_transcript_empty(
         self, session: ConsoleRealtimeSession, row_id: str | None
     ) -> None:
@@ -8388,10 +8366,27 @@ class ChatScreen(BaseAppScreen):
         order and same reason as the "final" branch: a status of "empty" on
         a row whose placeholder never landed would be a lie.
 
-        Idempotent and race-safe via `_console_realtime_row_has_text`: a
-        row that already carries text -- a real transcript that landed
-        first, or an earlier call already having written the placeholder --
-        is left alone, matching the late-final-transcript guard above.
+        Race-safe against a REAL transcript (matching the late-final-
+        transcript guard above): a row already carrying different non-blank
+        text is left alone, never overwritten.
+
+        Retry-safe against a SWALLOWED status write (Qodo review, task-2391
+        follow-up): the content write and the status write are two separate
+        store calls, and `_set_console_realtime_transcript_status` (below)
+        deliberately never raises -- a metadata-write failure there is
+        logged and swallowed, not surfaced. An earlier version of this
+        method used "does the row already have text" as its sole retry
+        guard, which -- once the placeholder itself IS that text -- also
+        blocked every later retry from ever reaching the status write
+        again, permanently stranding a row whose content says "empty" but
+        whose `transcript_status` never does (invisible to
+        `_is_empty_transcript_row`, and so reachable by a provider as a
+        fabricated user turn: the exact leak the placeholder was written to
+        avoid, reopened by a different route). So content and status are
+        each retried independently: content is written only when the row
+        is genuinely still blank; status is (re-)written whenever the
+        content is blank OR already the placeholder, never when it holds
+        something else.
 
         Args:
             session: The live realtime loop state, for the repaint flag.
@@ -8401,18 +8396,33 @@ class ChatScreen(BaseAppScreen):
         """
         if row_id is None:
             return
-        if self._console_realtime_row_has_text(row_id):
-            return
         store = self._ensure_console_chat_store()
         try:
-            store.update_message_content(
-                row_id, CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
-            )
-        except Exception:  # noqa: BLE001 - transcript upkeep is never fatal
-            logger.opt(exception=True).warning(
-                "Console realtime: could not record the empty-transcript row"
+            existing = str(store.get_message(row_id).content or "").strip()
+        except Exception:  # noqa: BLE001 - an unreadable row is left untouched
+            logger.opt(exception=True).debug(
+                "Console realtime: could not read a transcript row's text: "
+                f"op=realtime_transcript_status row_id={row_id}"
             )
             return
+        if existing and existing != CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER:
+            # A real transcript is already there -- never relabel it "empty".
+            return
+        if not existing:
+            try:
+                store.update_message_content(
+                    row_id, CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
+                )
+            except Exception:  # noqa: BLE001 - transcript upkeep is never fatal
+                logger.opt(exception=True).warning(
+                    "Console realtime: could not record the empty-transcript row"
+                )
+                return
+        # Reached with the placeholder now in place -- either just written
+        # above, or already there from an earlier call whose status write
+        # was swallowed. Either way, (re-)stamp the status: idempotent when
+        # it already succeeded, and the only way a stranded row recovers
+        # when it did not.
         self._set_console_realtime_transcript_status(row_id, "empty")
         session.transcript_dirty = True
 

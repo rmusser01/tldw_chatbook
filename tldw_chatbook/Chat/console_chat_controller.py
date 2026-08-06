@@ -871,11 +871,13 @@ def _is_empty_transcript_row(message: ConsoleChatMessage) -> bool:
     hiding it would defeat this task's own AC#1.
 
     Args:
-        message: A transcript row to test. Read via ``getattr`` (never a
-            plain attribute access) so a narrow test double that duck-types
-            only ``role``/``content``/``status`` -- several already exist in
-            this codebase -- returns False rather than raising
-            ``AttributeError`` on a ``.metadata`` it never declared.
+        message: A transcript row to test. Both ``.metadata`` and
+            ``.metadata.transcript_status`` are read via ``getattr`` (never
+            a plain attribute access), so a narrow test double that duck-
+            types only some fields -- several already exist in this
+            codebase, and this helper runs on every row of three model-
+            facing send paths -- returns False rather than raising
+            ``AttributeError`` on an attribute it never declared.
 
     Returns:
         True when the row's ``metadata.transcript_status`` is ``"empty"``.
@@ -883,7 +885,7 @@ def _is_empty_transcript_row(message: ConsoleChatMessage) -> bool:
         at all and returns False without inspecting content.
     """
     metadata = getattr(message, "metadata", None)
-    return metadata is not None and metadata.transcript_status == "empty"
+    return getattr(metadata, "transcript_status", None) == "empty"
 
 
 class ConsoleProviderGatewayProtocol(Protocol):

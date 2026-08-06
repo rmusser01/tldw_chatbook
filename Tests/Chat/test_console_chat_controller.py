@@ -1889,6 +1889,26 @@ def test_image_budget_excludes_failed_send_blocked_echo(monkeypatch):
     assert decoded == b"real"
 
 
+def test_is_empty_transcript_row_tolerates_a_metadata_object_without_the_attribute():
+    """Qodo Q5 (task-2391 review): the docstring promised duck-typed safety
+    via `getattr` on `.metadata`, but the INNER `.transcript_status` read
+    was a plain attribute access -- a metadata object that duck-types some
+    fields but not that one raised `AttributeError` there. This helper runs
+    on every row of three model-facing send paths (`_provider_message_
+    payloads`, `summarize_up_to`, `impersonate_user_reply`), so that crash
+    reached the main send path, not just a narrow test double."""
+    from tldw_chatbook.Chat.console_chat_controller import _is_empty_transcript_row
+
+    message = SimpleNamespace(
+        role=ConsoleMessageRole.USER,
+        content="hello",
+        status="complete",
+        metadata=SimpleNamespace(engine="realtime"),  # no transcript_status
+    )
+
+    assert _is_empty_transcript_row(message) is False
+
+
 def test_provider_payloads_exclude_an_empty_transcript_placeholder():
     """task-2391 fix-now: a committed voice turn whose transcript came back
     empty persists real placeholder CONTENT ("(no speech detected)") so the
