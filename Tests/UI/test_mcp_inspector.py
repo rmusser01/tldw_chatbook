@@ -3676,6 +3676,18 @@ class ToolExecuteAdvService(FakeAdvService):
     def __init__(self, *, error: Exception | None = None) -> None:
         super().__init__()
         self.error = error
+        # Fix Round E, Item 4: an explicit, observable call count for
+        # `load_section()` -- the surface `_load_advanced_section()`'s
+        # scheduled worker calls once it actually runs. Used by the
+        # isolation tests below as direct proof the worker has NOT run yet
+        # at the point they check `_advanced_confirm_key`, rather than
+        # inferring that purely from `set_service_context()`'s own
+        # synchronous clear also happening to leave the key `None`.
+        self.load_section_calls = 0
+
+    async def load_section(self, section=None):
+        self.load_section_calls += 1
+        return await super().load_section(section)
 
     def available_actions(self):
         return [
@@ -3946,6 +3958,12 @@ async def test_set_service_context_disarms_a_pending_confirm():
         assert app.service.action_calls == []
         assert inspector._advanced_confirm_key is not None  # sanity: really armed
 
+        # Fix Round E, Item 4: baseline BEFORE the rebind -- the initial
+        # `on_mount()` schedule already ran `_load_advanced_section()` once
+        # during app startup, so `load_section_calls` is not zero here; the
+        # observable is the DELTA across this call, not an absolute count.
+        calls_before_rebind = app.service.load_section_calls
+
         # The workbench rebinds Advanced on every reload/selection change --
         # simulate that here with the SAME service, so the re-rendered
         # tool.execute template is byte-identical to what was just armed.
@@ -3954,6 +3972,22 @@ async def test_set_service_context_disarms_a_pending_confirm():
         # `_load_advanced_section` worker `set_service_context()` schedules
         # cannot have run yet, so this can only be `set_service_context()`'s
         # own clear at work.
+        #
+        # Fix Round E, Item 4: that ordering guarantee holds TODAY only
+        # because `Worker._start` uses `asyncio.create_task` -- if a future
+        # change added `thread=True` to the `run_worker(...)` call below,
+        # a real OS thread could race ahead and run `_load_advanced_section`
+        # (and its own `_advanced_confirm_key = None` clear) before this
+        # assertion, silently re-hollowing this test's isolation without
+        # either assertion here going red. Pin the assumption directly with
+        # an observable that WOULD notice: the fake's own call count for the
+        # method that worker calls once it actually runs.
+        assert app.service.load_section_calls == calls_before_rebind, (
+            "the scheduled _load_advanced_section worker must not have run "
+            "yet at this point -- if it had, the assertion below would no "
+            "longer isolate set_service_context()'s own clear from that "
+            "worker's independent one"
+        )
         assert inspector._advanced_confirm_key is None, (
             "set_service_context() itself must clear the arm synchronously -- "
             "this must not depend on the _load_advanced_section worker it "
@@ -4115,8 +4149,24 @@ async def test_set_service_context_blanks_the_stale_confirm_sentence():
         await pilot.pause()
         assert "again" in _adv_result(app)
 
+        # Fix Round E, Item 4: baseline BEFORE the rebind -- see
+        # `test_set_service_context_disarms_a_pending_confirm`'s matching
+        # comment for why this is a delta, not an absolute-zero check (the
+        # initial `on_mount()` schedule already ran the worker once).
+        calls_before_rebind = app.service.load_section_calls
+
         inspector.set_service_context(app.service, [("Inventory", "inventory")])
-        # No `await` here -- see the docstring above.
+        # No `await` here -- see the docstring above. Fix Round E, Item 4:
+        # same observable-call-count pin as
+        # `test_set_service_context_disarms_a_pending_confirm` above -- see
+        # that test for why an inference from state alone would not notice
+        # a future `thread=True` letting the scheduled worker win the race.
+        assert app.service.load_section_calls == calls_before_rebind, (
+            "the scheduled _load_advanced_section worker must not have run "
+            "yet at this point -- if it had, this check would no longer "
+            "isolate set_service_context()'s own blank from that worker's "
+            "independent one"
+        )
         assert _adv_result(app) == "", (
             "the stale confirm sentence must be cleared along with the arm, "
             "not just the arm's internal state -- and not by relying on the "
