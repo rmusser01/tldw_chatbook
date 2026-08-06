@@ -4495,18 +4495,32 @@ def test_decision_note_off_gate_appends_origin_sentence():
     )
 
 
-def test_decision_note_unknown_origin_degrades_to_bare_sentence():
-    """`_resolve_test_gate()`'s synthetic fail-closed origin ("gate_error")
-    means the PERMISSION RESOLVER failed -- not that the tool is actually
-    set to Off. task-2270's rider (PR-T3 task 3, AUTHORIZED CONTRACT
-    CHANGE): the old "This tool is set to Off." rendering (falling through
-    the `ui_label == "Off"` branch like any other deny) was dishonest --
-    this pins the NEW, honest `_UNKNOWN_ORIGIN_SENTENCE` value instead."""
-    gate = EffectiveToolState(state="deny", origin="gate_error")
-    assert (
-        mcp_workbench_module._decision_note(gate, ask_approved=False)
-        == "Permission state could not be resolved."
-    )
+# Fix Round H (PR-T3 review), Item 6: `test_decision_note_unknown_origin_
+# degrades_to_bare_sentence` (task-2270's rider, PR-T3 task 3) used to pin
+# `_decision_note()`'s own `gate.origin == "gate_error"` special case,
+# which returned the honest `_UNKNOWN_ORIGIN_SENTENCE` instead of falling
+# through to the dishonest "This tool is set to Off." -- necessary at the
+# time, because the deny short-circuit below called `_decision_note()` for
+# EVERY deny, `gate_error` included. task-2536 (fix round B) changed that
+# caller to pass `decision_note=None` for `gate_error` directly instead
+# (building its own honest body text), bypassing `_decision_note()`
+# entirely for that origin -- proven, not assumed: `EffectiveToolState.
+# origin="gate_error"` is produced ONLY by `_resolve_test_gate()`'s two
+# `except` branches, both paired unconditionally with `state="deny"`, and
+# neither of `_decision_note()`'s two remaining production callers can
+# reach it with that combination (the deny short-circuit below guards it
+# explicitly; `_run_tool_test()`'s caller routes every deny, gate_error
+# included, through that same short-circuit before `_run_tool_test()` is
+# ever scheduled). The special case is REMOVED from `_decision_note()`
+# itself (see its own docstring) -- dead honesty-vocabulary is a trap: a
+# future author could "fix" a bug by editing a branch nothing runs. This
+# test retired along with it, rather than kept pinning a hand-built input
+# combination no production caller can produce. The REAL end-to-end path
+# stays covered by `test_gate_check_exception_fails_closed` (the body
+# text) and `test_gate_check_exception_decision_note_suppressed_after_
+# real_run` (the note staying suppressed) below, both of which drive a
+# genuinely raising `gate_tool_test()` through the real dispatch, not a
+# hand-built `EffectiveToolState`.
 
 
 def test_decision_note_no_gate_returns_none():

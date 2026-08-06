@@ -58,7 +58,6 @@ from tldw_chatbook.MCP.unified_control_plane_service import (
 from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
     _ORIGIN_SENTENCES,
-    _UNKNOWN_ORIGIN_SENTENCE,
     MCPInspector,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
@@ -444,31 +443,44 @@ def _decision_note(gate: EffectiveToolState | None, ask_approved: bool) -> str |
 
     Pure and unit-testable without the UI -- reused by `_run_tool_test()`
     (Allow/Ask-approved runs) and `on_mcp_inspector_tool_test_requested()`
-    (the Off/blocked short-circuit) alike. `_ORIGIN_SENTENCES` (`mcp_
+    (the genuine-deny short-circuit) alike. `_ORIGIN_SENTENCES` (`mcp_
     inspector.py`) is the SAME origin-clause copy `_render_permission_
     container()` already renders in the Permissions block -- reused here
     rather than duplicated.
 
-    task-2270's rider (PR-T3 task 3): `_resolve_test_gate()`'s synthetic
-    fail-closed gate (`state="deny", origin="gate_error"`) used to fall
-    through to the `ui_label == "Off"` branch below like any other deny --
-    "This tool is set to Off." -- but that's dishonest: the tool is not
-    necessarily set to Off at all, the PERMISSION RESOLVER failed (a
-    `gate_tool_test()`/`gate_tool_test_by_key()` call raised). This is
-    checked first and degrades to the honest, origin-neutral
-    `_UNKNOWN_ORIGIN_SENTENCE` ("Permission state could not be resolved.")
-    instead of guessing a state that was never actually resolved.
-    AUTHORIZED CONTRACT CHANGE: `test_decision_note_unknown_origin_
-    degrades_to_bare_sentence` (`Tests/UI/test_mcp_workbench.py`) pins the
-    NEW value.
-
     `None` (no gate resolved at all -- the Phase-3 "run immediately" case)
     means no note to show, distinct from an empty string.
+
+    Fix Round H (PR-T3 review), Item 6: this function used to special-case
+    `gate.origin == "gate_error"` (task-2270's rider, PR-T3 task 3) to
+    degrade to the honest `_UNKNOWN_ORIGIN_SENTENCE` instead of falling
+    through to the `ui_label == "Off"` branch's dishonest "This tool is
+    set to Off." -- necessary at the time, because `on_mcp_inspector_
+    tool_test_requested()`'s deny short-circuit called this function for
+    EVERY deny, `gate_error` included. A later round (task-2536, fix round
+    B) changed that caller to pass `decision_note=None` for the
+    `gate_error` case directly, building its own honest body text instead
+    (`_TOOL_TEST_BLOCKED_UNKNOWN_TEXT`) and bypassing this function
+    entirely for that origin -- see that call site below, still the ONLY
+    other place `EffectiveToolState.origin="gate_error"` is ever produced
+    (`_resolve_test_gate()`'s two `except` branches, both paired
+    UNCONDITIONALLY with `state="deny"`). PROVEN dead by tracing both of
+    this function's remaining production callers: the call below (only
+    reached for a NON-gate_error deny, guarded by the `is_gate_error`
+    branch) and `_run_tool_test()`'s call (only ever reached with `gate.
+    state` "ask" or "allow" -- the caller already routes every "deny",
+    `gate_error` included, through the short-circuit above before
+    `_run_tool_test()` is ever scheduled). Neither can pass a `gate_error`
+    origin to this function anymore, so the special case was removed
+    rather than left as an untested, unreachable trap for a future author
+    to "fix" a bug by editing a branch nothing runs. If a future caller
+    ever needs to pass this function a `gate_error`-origin gate directly,
+    it must handle that origin itself (or reintroduce this special case
+    with a comment naming the new caller) -- this function no longer
+    guards against it.
     """
     if gate is None:
         return None
-    if gate.origin == "gate_error":
-        return _UNKNOWN_ORIGIN_SENTENCE
     origin = _ORIGIN_SENTENCES.get(gate.origin, "")
     if gate.ui_label == "Ask" and ask_approved:
         return "Ran because you approved this run (the tool is set to Ask)."
