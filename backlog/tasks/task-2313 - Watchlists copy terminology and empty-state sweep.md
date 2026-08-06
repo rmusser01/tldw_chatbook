@@ -1,7 +1,7 @@
 ---
 id: TASK-2313
 title: Watchlists copy terminology and empty-state sweep
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04'
 labels:

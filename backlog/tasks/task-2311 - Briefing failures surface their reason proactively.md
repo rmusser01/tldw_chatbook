@@ -1,7 +1,7 @@
 ---
 id: TASK-2311
 title: Briefing failures surface their reason proactively
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04'
 labels:
