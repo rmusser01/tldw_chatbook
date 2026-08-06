@@ -4014,14 +4014,43 @@ async def test_set_service_context_disarms_a_pending_confirm():
         # own clear at work.
         #
         # Fix Round E, Item 4: that ordering guarantee holds TODAY only
-        # because `Worker._start` uses `asyncio.create_task` -- if a future
-        # change added `thread=True` to the `run_worker(...)` call below,
-        # a real OS thread could race ahead and run `_load_advanced_section`
-        # (and its own `_advanced_confirm_key = None` clear) before this
-        # assertion, silently re-hollowing this test's isolation without
-        # either assertion here going red. Pin the assumption directly with
-        # an observable that WOULD notice: the fake's own call count for the
-        # method that worker calls once it actually runs.
+        # because `Worker._start` uses `asyncio.create_task`.
+        #
+        # Fix Round G, Item 4 (review of Fix Round E): the rationale above
+        # used to continue "...if a future change added `thread=True` to
+        # the `run_worker(...)` call below, a real OS thread could race
+        # ahead and run `_load_advanced_section` (and its own
+        # `_advanced_confirm_key = None` clear) before this assertion,
+        # silently re-hollowing this test's isolation WITHOUT EITHER
+        # ASSERTION HERE GOING RED." Not reproducible: adding `thread=True`
+        # to that `run_worker(...)` call reddened 5/5 runs, but at a
+        # DIFFERENT, PRE-EXISTING assertion three lines above this one --
+        # `assert inspector._advanced_confirm_key is not None  # sanity:
+        # really armed` -- because the initial on-MOUNT `set_service_
+        # context()` call (`ToolExecuteInspectorApp.on_mount()`) ALSO
+        # schedules a `_load_advanced_section` worker, and a genuine OS
+        # thread can win the race against the pilot's own arming click:
+        # the mount-time worker's clear lands AFTER the click has armed the
+        # key, wiping it back to `None` before this test ever reaches the
+        # code below. So a real thread does reddened the suite -- just not
+        # silently, and not at the pin this comment worried about.
+        #
+        # The pin below is still worth keeping regardless: it is genuinely
+        # non-vacuous (fires on the simulated `thread=True` race just
+        # demonstrated in a DIFFERENT reachable way, and on the realistic
+        # re-hollowing of a maintainer inserting `await pilot.pause()`
+        # before this assertion, which lets the ALREADY-SCHEDULED
+        # `asyncio.create_task` worker run first even without `thread=True`
+        # -- verified separately: adding a bare `await pilot.pause()` here
+        # reddens this exact assertion, 5/5, with no code mutation at all).
+        # Residual, not fixed here (cheap-only per this round's brief): the
+        # observable is `load_section()`, which `_load_advanced_section()`
+        # reaches a few statements AFTER the clear being isolated -- under
+        # a genuine thread there is a narrow window where the clear has
+        # landed but the counter has not yet incremented, which this
+        # delta-based pin cannot see. No cheap fix found that doesn't move
+        # the production clear's own position; noted here for the next
+        # round rather than worked around.
         assert app.service.load_section_calls == calls_before_rebind, (
             "the scheduled _load_advanced_section worker must not have run "
             "yet at this point -- if it had, the assertion below would no "
