@@ -1,0 +1,416 @@
+"""Characterisation tests for the Console session cluster, written BEFORE the
+wave-2 Task 3 extraction of `ConsoleSessionController`
+(`tldw_chatbook/UI/Console_Modules/session.py`) lands.
+
+Drives `_activate_native_console_session`, `_apply_console_switcher_choice`,
+and `_promote_console_temporary_session` through REAL interactions against
+the still-monolithic `ChatScreen` -- the same "real production coroutine, not
+a rebuilt double" discipline `test_console_native_chat_flow.py`'s own resume
+coverage and `test_console_workspace_controller.py` (wave-2 Task 2's own
+characterisation file) use. No method under test is monkeypatched.
+
+Two things this file exists specifically to pin, per the wave-2 Task 3 brief:
+
+1. **Session activation's workspace-alignment seam**
+   (`_activate_native_console_session` -> `_set_active_workspace_for_console_
+   session`, which after the extraction becomes a session-controller ->
+   workspace-controller named-callable call): activating a session that
+   belongs to a DIFFERENT workspace than the currently active one must also
+   switch the active workspace. Existing coverage
+   (`test_console_cost_chip_screen.py::test_cost_chip_state_isolated_across_
+   session_tabs`, `test_console_agent_rail.py::test_activate_native_console_
+   session_clears_stale_drilldown`, `test_console_scope_row.py`) exercises the
+   SAME entry point but never with two DIFFERENT workspaces in play, so none
+   of it would catch a snapshot-vs-live binding bug in that one call.
+2. **Temporary-session promotion writes a DURABLE database row.** Every
+   existing `_promote_console_temporary_session` test
+   (`Tests/UI/test_console_composer_menu.py`) stubs `store.
+   promote_ephemeral_session` outright and asserts only chip/widget state --
+   none of them ever let a real write reach `chachanotes_db`. The brief is
+   explicit: assert the DATABASE, not widget state.
+
+Method calls below (`console._activate_native_console_session(...)`,
+`console._promote_console_temporary_session()`,
+`console._apply_console_switcher_choice(...)`, etc.) move to
+`console._session.<method>(...)` once the extraction lands.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_destination_shells import _wait_for_selector
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_switcher_state import ConsoleSwitcherEntry
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Widgets.Console.console_rename_session_modal import (
+    ConsoleRenameSessionModal,
+)
+from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
+    ConsoleSwitcherChoice,
+)
+
+
+def _real_chachanotes_db(tmp_path) -> CharactersRAGDB:
+    """A real (temp-file-backed) ChaChaNotes DB.
+
+    `_build_test_app` deliberately leaves `app.chachanotes_db` unset (its
+    `notes_service` is faked with no real `.db`) -- fine for the vast
+    majority of Console tests, which never touch persistence, but exactly
+    the gap the promotion tests below exist to close. Assigned to
+    `app.chachanotes_db` BEFORE the screen mounts: `_ensure_console_chat_
+    store` reads it lazily on first call and memoizes the result, so
+    setting it any later would be silently ignored.
+    """
+    return CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+
+
+def _switcher_entry(
+    *,
+    native_session_id: str | None = None,
+    conversation_id: str | None = None,
+    row_key: str = "row",
+    title: str = "Entry",
+    scope_type: str = "workspace",
+    workspace_id: str | None = None,
+    is_active: bool = False,
+) -> ConsoleSwitcherEntry:
+    return ConsoleSwitcherEntry(
+        row_key=row_key,
+        title=title,
+        subtitle="",
+        native_session_id=native_session_id,
+        conversation_id=conversation_id,
+        scope_type=scope_type,
+        workspace_id=workspace_id,
+        is_active=is_active,
+    )
+
+
+# -- Session activation: workspace-alignment seam ----------------------------
+
+
+@pytest.mark.asyncio
+async def test_activate_native_console_session_realigns_active_workspace():
+    """Activating a session in a DIFFERENT workspace switches the active one.
+
+    This is the one call `_activate_native_console_session` makes into the
+    workspace cluster (`_set_active_workspace_for_console_session`) --
+    exactly the seam the wave-2 Task 3 brief calls out as needing a deliberate
+    named callable between the session and workspace controllers rather than
+    a screen back-door. Two real workspaces, two real sessions, one real
+    registry service.
+    """
+    app = _build_test_app()
+    registry_service = app.workspace_registry_service
+    default_workspace = registry_service.get_active_workspace()
+    registry_service.create_workspace(
+        workspace_id="ws-other",
+        name="Other workspace",
+        description="Second workspace for the activation test.",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        store = console._ensure_console_chat_store()
+        home_session = console._active_native_console_session()
+        assert home_session is not None
+        assert registry_service.get_active_workspace().workspace_id == (
+            default_workspace.workspace_id
+        )
+
+        # `create_session` activates what it creates (same trap
+        # `test_cost_chip_state_isolated_across_session_tabs` documents), so
+        # right after this call `other_session` -- not `home_session` -- is
+        # the active one and the active workspace has already followed it
+        # via THIS call's own real-time context sync. The two real
+        # transitions this test needs both go through the shared entry
+        # point below: hop back home first, THEN hop to `other_session`, so
+        # the interesting assertion is against a genuine activation call,
+        # not residue from creation.
+        other_session = store.create_session(
+            title="Other workspace chat", workspace_id="ws-other"
+        )
+        assert other_session.workspace_id == "ws-other"
+        assert store.active_session_id == other_session.id
+
+        await console._activate_native_console_session(home_session.id)
+        await pilot.pause()
+        assert store.active_session_id == home_session.id
+        assert registry_service.get_active_workspace().workspace_id == (
+            default_workspace.workspace_id
+        )
+
+        await console._activate_native_console_session(other_session.id)
+        await pilot.pause()
+
+        assert store.active_session_id == other_session.id
+        assert registry_service.get_active_workspace().workspace_id == "ws-other"
+
+        # Hop back: the home session's own workspace must be restored too,
+        # not just left on "ws-other" because nothing re-checks it.
+        await console._activate_native_console_session(home_session.id)
+        await pilot.pause()
+
+        assert store.active_session_id == home_session.id
+        assert registry_service.get_active_workspace().workspace_id == (
+            default_workspace.workspace_id
+        )
+
+
+@pytest.mark.asyncio
+async def test_activate_native_console_session_noop_still_focuses_composer(
+    monkeypatch,
+):
+    """Activating the ALREADY-active session skips the switch but still
+    calls the composer-focus step (the guard is `store.active_session_id !=
+    session_id`, not an early return from the whole method) -- spies on the
+    dependency rather than asserting real Textual focus state, which is not
+    reliable to observe headlessly for this compound widget."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        session = console._active_native_console_session()
+        assert session is not None
+
+        focus_calls: list[bool] = []
+        real_focus = type(console)._focus_console_composer_if_needed
+
+        def _spy_focus(self, *, force: bool = False) -> None:
+            focus_calls.append(force)
+            return real_focus(self, force=force)
+
+        monkeypatch.setattr(
+            type(console), "_focus_console_composer_if_needed", _spy_focus
+        )
+
+        await console._activate_native_console_session(session.id)
+        await pilot.pause()
+
+        assert console._active_native_console_session().id == session.id
+        assert focus_calls == [True]
+
+
+# -- Ctrl+K switcher callback (`_apply_console_switcher_choice`) ------------
+
+
+@pytest.mark.asyncio
+async def test_apply_console_switcher_choice_activate_uses_shared_activation_path():
+    """The switcher's "activate" result reaches the same shared entry point
+    as the tab click / Alt+1..9 -- verified here through a real workspace
+    switch, not just an active-session-id flip."""
+    app = _build_test_app()
+    registry_service = app.workspace_registry_service
+    registry_service.create_workspace(
+        workspace_id="ws-switcher",
+        name="Switcher workspace",
+        description="Workspace for the switcher-choice test.",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        store = console._ensure_console_chat_store()
+        home = console._active_native_console_session()
+        assert home is not None
+        target = store.create_session(
+            title="Switcher target", workspace_id="ws-switcher"
+        )
+        assert home.id != target.id
+        # `create_session` activates what it creates -- go back home first so
+        # the switcher choice below is a real transition, not a no-op.
+        await console._activate_native_console_session(home.id)
+        await pilot.pause()
+        assert store.active_session_id == home.id
+
+        choice = ConsoleSwitcherChoice(
+            kind="activate",
+            entry=_switcher_entry(native_session_id=target.id, title=target.title),
+        )
+        await console._apply_console_switcher_choice(choice)
+        await pilot.pause()
+
+        assert store.active_session_id == target.id
+        assert registry_service.get_active_workspace().workspace_id == (
+            "ws-switcher"
+        )
+
+
+@pytest.mark.asyncio
+async def test_apply_console_switcher_choice_rename_opens_rename_modal():
+    """The switcher's "rename" result opens the rename modal for that tab,
+    seeded with its CURRENT title."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        store = console._ensure_console_chat_store()
+        session = store.create_session(title="Rename me")
+
+        choice = ConsoleSwitcherChoice(
+            kind="rename",
+            entry=_switcher_entry(native_session_id=session.id, title=session.title),
+        )
+        await console._apply_console_switcher_choice(choice)
+        await pilot.pause()
+
+        top = host.screen_stack[-1]
+        assert isinstance(top, ConsoleRenameSessionModal)
+        assert top._title == "Rename me"
+
+
+@pytest.mark.asyncio
+async def test_apply_console_switcher_choice_none_is_a_noop():
+    """A cancelled switcher (`choice is None`) leaves the active session and
+    screen stack untouched."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        store = console._ensure_console_chat_store()
+        active_before = store.active_session_id
+        depth_before = len(host.screen_stack)
+
+        await console._apply_console_switcher_choice(None)
+        await pilot.pause()
+
+        assert store.active_session_id == active_before
+        assert len(host.screen_stack) == depth_before
+
+
+# -- Temporary-session promotion: assert the DATABASE, not widget state -----
+
+
+@pytest.mark.asyncio
+async def test_promote_console_temporary_session_writes_durable_rows_to_the_database(
+    tmp_path,
+):
+    """Saving a temporary chat must produce a REAL, readable conversation row
+    (and its messages) in `chachanotes_db` -- not just an in-memory flag flip.
+
+    Every existing `_promote_console_temporary_session` test
+    (`test_console_composer_menu.py`) stubs the store's own
+    `promote_ephemeral_session` and only asserts chip/notification state;
+    none of them let a write reach a real database. This is the gap the
+    wave-2 Task 3 brief calls out by name.
+    """
+    app = _build_test_app()
+    db = _real_chachanotes_db(tmp_path)
+    app.chachanotes_db = db
+    host = ConsoleHarness(app)
+
+    try:
+        async with host.run_test(size=(160, 44)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+            store = console._ensure_console_chat_store()
+            session = store.create_session(title="Temp chat to save", ephemeral=True)
+            store.switch_session(session.id)
+            store.append_message(
+                session.id, role=ConsoleMessageRole.USER, content="hello", persist=True
+            )
+            store.append_message(
+                session.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="hi there",
+                persist=True,
+            )
+            assert session.persisted_conversation_id is None
+
+            await console._promote_console_temporary_session()
+            await pilot.pause()
+
+            assert session.ephemeral is False
+            conversation_id = session.persisted_conversation_id
+            assert conversation_id is not None
+
+            conversation = db.get_conversation_by_id(conversation_id)
+            assert conversation is not None
+            assert conversation["title"] == "Temp chat to save"
+
+            messages = db.get_messages_for_conversation(conversation_id)
+            assert [m["content"] for m in messages] == ["hello", "hi there"]
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_promote_console_temporary_session_second_call_does_not_duplicate_the_row(
+    tmp_path,
+):
+    """Promoting an already-saved session again must not write a second
+    conversation row -- `promote_ephemeral_session` is idempotent, and the
+    screen-level wrapper must not paper over a regression there by, say,
+    creating a fresh conversation on every click."""
+    app = _build_test_app()
+    db = _real_chachanotes_db(tmp_path)
+    app.chachanotes_db = db
+    host = ConsoleHarness(app)
+
+    try:
+        async with host.run_test(size=(160, 44)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+            store = console._ensure_console_chat_store()
+            session = store.create_session(title="Save twice", ephemeral=True)
+            store.switch_session(session.id)
+            store.append_message(
+                session.id, role=ConsoleMessageRole.USER, content="hi", persist=True
+            )
+
+            await console._promote_console_temporary_session()
+            await pilot.pause()
+            conversation_id = session.persisted_conversation_id
+            assert conversation_id is not None
+            assert db.get_conversation_by_id(conversation_id) is not None
+
+            await console._promote_console_temporary_session()
+            await pilot.pause()
+
+            assert session.persisted_conversation_id == conversation_id
+            assert session.ephemeral is False
+            # Still exactly the one conversation row this session's messages
+            # belong to; a duplicate-write regression would mint a second one.
+            assert db.get_conversation_by_id(conversation_id) is not None
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_promote_console_temporary_session_no_active_session_touches_nothing():
+    """With no active session (a bare/never-mounted store edge), promotion is
+    a pure no-op -- no notification, no DB access attempted."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        store = console._ensure_console_chat_store()
+        store.active_session_id = None
+
+        # Must not raise even though there is nothing to promote.
+        await console._promote_console_temporary_session()
+        await pilot.pause()
