@@ -6959,6 +6959,92 @@ async def test_audit_mode_syncs_execution_log_entries_into_canvas():
         assert app.query_one("#mcp-audit-empty").display is False
 
 
+# -- Task 5 (PR-T3, F3): a completed tool run repopulates the Audit
+# entries table without pressing `r` -- before this task, `_sync_audit_
+# mode()` had exactly ONE caller (the tail of `_sync_children()`), so
+# `_run_tool_test()` completing a run never resynced it, even though the
+# JSONL log already had the new row by the time the run finished (real
+# `test_hub_tool()`/`execute_hub_tool()` record BEFORE returning).
+
+
+class AuditRunAppendsHubService(AuditHubService):
+    """`test_hub_tool()` mimics the real service's own side effect
+    (`execute_hub_tool()` -> `_record_tool_execution()`): the execution
+    log already has a new row for THIS run by the time `test_hub_tool()`
+    returns -- a test built on this can then check whether the workbench
+    re-reads that log after the run, without touching `r`/reload."""
+
+    async def test_hub_tool(
+        self, server_key, tool_name, arguments=None, *, decision="allowed",
+        registered_argument_names=None,
+    ):
+        result = await super().test_hub_tool(
+            server_key, tool_name, arguments, decision=decision,
+            registered_argument_names=registered_argument_names,
+        )
+        self.execution_log._records.insert(
+            0, _audit_record(server_key=server_key, tool_name=tool_name)
+        )
+        return result
+
+
+class AuditRunAppendsApp(App):
+    def __init__(self, records: list[dict] | None = None) -> None:
+        super().__init__()
+        self.unified_mcp_service = AuditRunAppendsHubService(records)
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_completed_run_repopulates_audit_entries_without_manual_refresh():
+    app = AuditRunAppendsApp([])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._last_audit_entries == []
+
+        tools = workbench._last_hub_tools
+        tool = next(t for t in tools if t.name == "search")
+        event = MCPInspector.ToolTestRequested(tool.server_key, tool.name, {"query": "hello"})
+        workbench.on_mcp_inspector_tool_test_requested(event)
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench._last_audit_entries, (
+            "audit entries stayed empty after a completed run -- no manual "
+            "refresh was performed"
+        )
+        assert workbench._last_audit_entries[0]["tool_name"] == "search"
+
+
+@pytest.mark.asyncio
+async def test_completed_run_repopulates_audit_table_when_audit_mode_is_active():
+    """Same fix, checked at the rendered-table level (not just the internal
+    `_last_audit_entries` list) -- switch to Audit mode FIRST, then run a
+    tool test, and confirm the table itself grows without pressing `r`."""
+    app = AuditRunAppendsApp([])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        table = app.query_one("#mcp-audit-table", DataTable)
+        assert table.row_count == 0
+
+        tools = workbench._last_hub_tools
+        tool = next(t for t in tools if t.name == "search")
+        event = MCPInspector.ToolTestRequested(tool.server_key, tool.name, {"query": "hello"})
+        workbench.on_mcp_inspector_tool_test_requested(event)
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert table.row_count == 1
+
+
 @pytest.mark.asyncio
 async def test_audit_mode_guarded_when_service_has_no_execution_log_attribute():
     """The plain `FakeHubService` (default `WorkbenchApp`) has no

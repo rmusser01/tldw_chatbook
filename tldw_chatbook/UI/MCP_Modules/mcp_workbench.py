@@ -1315,12 +1315,39 @@ class MCPWorkbench(Container):
             await self._sync_audit_mode()
 
     async def _sync_audit_mode(self) -> None:
-        """Push the current execution-log window into `MCPAuditMode`.
+        """Push the current execution-log window AND Findings into `MCPAuditMode`.
 
         Mirrors `_sync_tools_mode()`/`_sync_permissions_mode()`: runs on
         every `_sync_children()` pass (the ContentSwitcher never unmounts
         the inactive canvas, only hides it) so switching INTO Audit mode
         never shows a stale window from before the last background resync.
+
+        Task 5 (PR-T3, F3): the entries half is split out into
+        `_sync_audit_log_entries()` so `_run_tool_test()`'s `finally` can
+        resync JUST that half after a completed run -- without also
+        re-fetching the server-source Findings sub-view below, a separate,
+        source-scoped concern unrelated to "did my run just land in the
+        audit trail" (and one a Test Tool run can never affect: server-
+        source tools are display-only, `execute_hub_tool()` refuses them
+        before any run reaches here).
+        """
+        await self._sync_audit_log_entries()
+
+        # T8 (MCP Hub Phase 5): Findings sub-view -- server source only.
+        service = self._service()
+        findings = await self._server_findings(service)
+        self._last_audit_findings = findings or []
+        await self.query_one(MCPAuditMode).update_findings(findings, source=self._source)
+
+    async def _sync_audit_log_entries(self) -> None:
+        """Push the current execution-log window into `MCPAuditMode`.
+
+        Task 5 (PR-T3, F3): split out of `_sync_audit_mode()` so a
+        completed tool run (`_run_tool_test()`'s `finally`) can resync
+        JUST this half -- the JSONL log already has the new row by the
+        time `test_hub_tool()` returns (it records before returning/
+        raising), so re-reading it here is all a completed run needs to
+        show up in the Audit table without pressing `r`.
 
         `service.execution_log` is a PROPERTY on
         `UnifiedMCPControlPlaneService` that can itself raise (see that
@@ -1331,7 +1358,7 @@ class MCPWorkbench(Container):
         getter). No log configured (a service too old to expose the
         property, a fake in older tests, or the property itself resolving
         to `None` -- e.g. no local store yet) renders an empty window
-        rather than raising out of `_sync_children()`.
+        rather than raising out of the caller.
         """
         service = self._service()
         entries: list[dict[str, Any]] = []
@@ -1350,11 +1377,6 @@ class MCPWorkbench(Container):
                 entries = []
         self._last_audit_entries = entries
         await self.query_one(MCPAuditMode).update_entries(entries)
-
-        # T8 (MCP Hub Phase 5): Findings sub-view -- server source only.
-        findings = await self._server_findings(service)
-        self._last_audit_findings = findings or []
-        await self.query_one(MCPAuditMode).update_findings(findings, source=self._source)
 
     async def _server_findings(self, service: Any) -> list[dict[str, Any]] | None:
         """T8: this pass's server-source Audit-mode Findings listing,
@@ -3514,6 +3536,22 @@ class MCPWorkbench(Container):
                 )
         finally:
             self._tool_test_in_flight.discard((server_key, tool_name))
+            # Task 5 (PR-T3, F3): `test_hub_tool()` records this run to the
+            # execution log BEFORE returning/raising, on every exit path
+            # above (success, service-call failure, and formatting failure
+            # alike) -- so the JSONL log already has the new row by the
+            # time this `finally` runs. Resync just the entries half here
+            # (not the full `_sync_audit_mode()` -- see that method's
+            # docstring for why the Findings half is deliberately left
+            # out) so a completed run shows up in the Audit table without
+            # the user pressing `r`. Own try/except: a render/log-read
+            # hiccup here must not escape this `finally` and panic the
+            # worker (Textual 8.2.7's `exit_on_error=True`), nor mask
+            # whatever this `finally` block is otherwise cleaning up after.
+            try:
+                await self._sync_audit_log_entries()
+            except Exception as exc:
+                logger.warning(f"MCP audit entries resync after tool test failed: {exc}")
 
     def _show_tool_test_result(
         self, *, server_key: str, tool_name: str, ok: bool, duration_ms: int,
